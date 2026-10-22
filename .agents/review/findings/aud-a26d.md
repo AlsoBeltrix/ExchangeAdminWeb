@@ -2,7 +2,7 @@
 
 **Severity**: LOW - nothing is mutated, but administrators receive an `ADAttributeEditor_Update`
 notice that no audit event can be reconciled to.
-**Status**: Merged to master (`20ef8984`); closed on guard proof; codex review pending
+**Status**: Merged to master (`20ef8984`); closed on guard proof; codex attr-batch-2 clean
 **Branch**: `worktree-agent-a4f347c5f99ae060f`
 **Commit**: `511df4f8` (merged `20ef8984`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-1, `prompt-attr-batch-1.md`, 2026-10-22)
