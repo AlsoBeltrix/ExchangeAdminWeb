@@ -3,7 +3,7 @@
 **Severity**: LOW - the write is correct; the user-facing notice is ambiguous. A mailbox owner in
 another zone, or the operator later, cannot tell whether the window is mailbox time, server time,
 operator time or Exchange's reading of the submitted value.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress
+**Status**: Fixed on branch `worktree-agent-ab28c8810a2e397d6`, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-ab28c8810a2e397d6` (forked at `1049f839`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (ops-batch-5, `prompt-ops-batch-5.md`, 2026-10-22)
@@ -91,4 +91,111 @@ handed one: the value is the explicit UTC instant. That the Exchange Online modu
 
 ## Guard proof
 
-Pending.
+Built as the Plan. **Zone: the operator's browser time zone** - capture was feasible with a
+moderate page change (one injected `IJSRuntime`, one first-render read, one label, the schedule
+fields gated on a known zone), so the server-zone fallback was not needed. The page states it
+beside the fields as "Times are in your browser's time zone, <IANA id>."; the request carries the
+wall-clock times plus that `TimeZoneInfo`; the service converts to UTC before borrowing a
+connection; the notice prints each time as `<time> (<IANA id>, UTC<offset at that time>)`. If the
+browser cannot say, or this server cannot resolve its id, scheduling is refused with the reason on
+the page - never a guessed zone.
+
+The zone was resolved on this host before relying on it: under .NET 10.0.12,
+`TimeZoneInfo.FindSystemTimeZoneById('America/New_York')` returns Id `America/New_York`,
+`HasIanaId` true; `Asia/Kolkata` resolves at +05:30; New York reads 2026-10-30 09:00 as UTC-04:00
+and 2026-11-06 17:00 as UTC-05:00; 2026-03-08 02:30 there is an invalid (skipped) time, which
+`ConvertTimeToUtc` would throw on - hence `ToUtc` returns null for it and both the page and the
+service refuse it.
+
+| Test | Pins |
+| --- | --- |
+| `OutOfOfficeRequestCaptureTests.TheOwnersNotice_NamesTheZone_AndTheOffsetOfEachTime` (Asia/Kolkata; America/New_York across the DST end) | **the finding**: From and Until each carry the zone and that time's offset (`UTC-04:00` then `UTC-05:00` for New York) |
+| `AScheduleEnteredInTheBrowsersZone_IsWrittenAsTheSameInstant_InUtc` (same two cases) | **the write boundary**: `-StartTime`/`-EndTime` are bound with the literal UTC instants, Kind Utc |
+| `ThePageLabelAndTheNotice_NameTheSameZone_TheOneTheTimesWereEnteredIn` | the page's rendered label (its compiled render tree) names the browser's zone, two schedule inputs are offered, and the notice's From and Until name the same zone |
+| `WithoutTheBrowsersZone_AScheduleIsRefused_BeforeAnythingIsAuditedNotifiedOrWritten` | an unreadable browser zone: no schedule inputs, the reason shown, a Scheduled submit refused by validation - nothing read, written, audited or notified, form usable |
+| `AnEditDuringTheOperation_ChangesNeitherWhatIsWrittenNorWhatIsRecorded` (auth, read, write; changed) | now asserts the UTC instants; the edit also moves `scheduleZone`, so the write must use the captured zone |
+| `TheRequestKeepsOnlyWhatItsStateWrites` (changed) | the zone is kept only when Scheduled |
+| `OutOfOfficeWriteIdentityTests.AScheduleThatNamesNoInstant_WritesNothing_AndBorrowsNoConnection` (no zone; a skipped time) | the service refuses at the write boundary without the page: no call, no connection |
+| `OofScheduleValidationTests.Scheduled_WithNoTimeZone_ReturnsError`, `Scheduled_AtATimeTheZoneSkips_ReturnsError` | the page's validation; the five existing cases pass a zone and keep their expectations |
+| `OutOfOfficeTargetCaptureTests.SetOof_CapturesEveryBoundInputOnce_BeforeTheFirstAwait_AndNeverRereadsOne` (changed) | `scheduleZone` joins the inputs captured once, before the first await, and never re-read |
+
+The existing `aud-a7d` test (`TheMailboxOwnerIsToldWhatWasWritten_AScheduleWithItsWindow`) passes
+unchanged: the time it looks for is still printed, now followed by its zone.
+
+Mutations at the call sites, each by exact-text replacement asserted to match once, md5 recorded,
+the solution rebuilt (Release) and the `OutOfOffice` tests run (`OofSchedule` too for M7), the file
+restored from a saved copy, touched (a restored copy keeps its old mtime and MSBuild would skip the
+rebuild), md5 re-confirmed equal; after the last one the solution was rebuilt and 448 targeted tests
+(`OutOfOffice`, `OofSchedule`, `ProgressRegistry`, `ClickGate`, `GlobalProgressWiring`,
+`ValidatedWriteCallSite`) passed. Pre-comment md5s (LF bytes): page
+`9aff4ed144eac2389783b02a7cd0b390`, `Services/EmailService.cs` `8be96ce3e885a1df4221158272190d29`,
+`Services/OutOfOfficeService.cs` `9222c9270a2c81b8d66fe6929299e864`.
+
+| Mutation | File | md5 after mutation | Failed |
+| --- | --- | --- | --- |
+| M1: the notice drops the zone (`When` prints the bare time) | EmailService | `e8fd7373f967ce83b445ab386a5d5f2e` | 3: `TheOwnersNotice_NamesTheZone_...` (both), `ThePageLabelAndTheNotice_...` |
+| M2: the write passes the unconverted wall clock (`startTime!.Value` for `startUtc.Value`) | service | `8e9709146be77500ab47800769316ca5` | 5: `AScheduleEnteredInTheBrowsersZone_...` (both), `AnEditDuringTheOperation_...` (auth, read, write) |
+| M3: the label names `TimeZoneInfo.Local` (the server's zone) | page | `08ada95944bb467bf979cb08fc3f9cdc` | 1: `ThePageLabelAndTheNotice_...` |
+| M4: the capture passes no zone into the request | page | `005b7d3db8fdcf4ed53fc96c5fdd7d62` | 12: every Scheduled harness test (validation now refuses them) and the `aud-a7b` capture scan |
+| M5: an unreadable browser zone falls back to the server's | page | `3684e8866cb117fdce65d0381fc3b0f8` | 1: `WithoutTheBrowsersZone_...` |
+| M6: the service reads a zoneless schedule as UTC instead of refusing | service | `d6d5bdd8bbf30310175fddc12a86fd1d` | 1: `AScheduleThatNamesNoInstant_...` (no zone) |
+| M7: validation lets a zoneless schedule through (the service still refuses) | page | `2ead194fa925732a45a23843df07b0f5` | 2: `Scheduled_WithNoTimeZone_ReturnsError`; `WithoutTheBrowsersZone_...` - the refusal arrives only after the mailbox is read, and is audited and notified |
+
+M1 and M2 are the two the Approach names; M3 to M7 pin the zone's single definition and the fail-
+closed paths. Comments were written after the round. Final md5s (LF bytes): page
+`b3f35dbce309c72f47efb1b36686a5a7`, `Services/EmailService.cs` `09f1bf8c92d6ab103758813f244c16ab`,
+`Services/OutOfOfficeService.cs` `4d3edb308a4d1e5403891d3e9cc071f8`, `Models/LookupModels.cs`
+`6268e56b6660d924ed219d1f40beb4c7`, `Components/App.razor` `0df37b820d09296b2b038f21933406d3`.
+
+**Pins.** `ProgressRegistry`: the four Reported calls on `SetOof`, `Email.SendOofNotificationAsync(`
+included, are unchanged; the page's new `OnAfterRenderAsync` is an `Exempt` entry with its reason,
+as condition 4 requires of every lifecycle method. `ClickGateRegistry`: the page is `"tier 3, not
+approved"` with no line-keyed entries, so its added lines move nothing - confirmed by the
+`ClickGate*` tests passing after the edit. `ValidatedWriteCallSite` (the write and the read still
+take `protectedValidation.Mailbox`) passes.
+
+## Gates
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release` (non-incremental): 0 errors, 61 warnings - the
+  count `aud-a7b`/`aud-a7d` recorded; none in a changed file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m`, on the final bytes:
+  5090 passed, 3 skipped (the known `ADDirectorySearchServiceTests ...WhenAdUnavailable` cases),
+  0 failed - 5093 in all, 10 of them new cases; no hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean (exit 0).
+- `git diff --check HEAD` clean; `tools/Test-AsciiOnly.ps1` passed after `git add -A`.
+
+## Files changed
+
+- `Models/LookupModels.cs` - `OutOfOfficeRequest.ScheduleZone`; `FromForm` keeps it (and wall-clock
+  times) only when Scheduled; `ToUtc`, `ZoneName`, `OffsetAt`.
+- `Services/OutOfOfficeService.cs` - converts to UTC before borrowing; refuses no zone or a skipped
+  time.
+- `Services/EmailService.cs` - From and Until with zone and offset.
+- `Components/Pages/OutOfOffice.razor` - `IJSRuntime`; `OnAfterRenderAsync` / `ReadScheduleZoneAsync`;
+  the label; fields gated on a known zone; the zone in the capture and the validation.
+- `Components/App.razor` - `getBrowserTimeZone()`.
+- `ExchangeAdminWeb.Tests/OutOfOfficeRequestCaptureTests.cs`, `OutOfOfficeWriteIdentityTests.cs`,
+  `LookupValidationTests.cs`, `OutOfOfficeTargetCaptureTests.cs`, `ProgressRegistry.cs`.
+- This record.
+
+## Known gaps
+
+- **Assumption, unverified (no live Exchange call):** that the Exchange Online module carries a
+  Kind-Utc `DateTime` to the service as that instant. The fix no longer depends on how an unzoned
+  value is read, because it never sends one.
+- **No browser ran.** `getBrowserTimeZone` and the first-render read were driven through a fake
+  `IJSRuntime`. `Intl.DateTimeFormat().resolvedOptions().timeZone` is standard (ECMA-402); a browser
+  without it, or a host whose .NET cannot resolve IANA ids (ICU absent, NLS mode), gets scheduling
+  refused with the reason - Enable and Disable still work.
+- An hour the clocks repeat (the autumn change) is read as standard time - one of its two instants.
+  Documented on `ToUtc`; not separately refused.
+- The Check Status tab still prints a read schedule's times with no zone (the read path - not this
+  finding). Candidate.
+- The notice's "Date:" line is the server's clock with no zone. Candidate.
+- `Components/App.razor` is shared by location; the helper is called only by this page. Module
+  version bump (Out of Office) is the supervisor's; whether the base version moves too is the
+  supervisor's call.
+
+## Closeout
+
+Fixed on branch; not merged, not pushed. Out of Office module version bump due at merge.

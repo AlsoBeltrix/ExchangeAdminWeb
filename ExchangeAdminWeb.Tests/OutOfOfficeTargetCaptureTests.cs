@@ -113,9 +113,12 @@ public class OutOfOfficeTargetCaptureTests
         Assert.DoesNotMatch(@"\bcheckEmail\b", code[(at + capture.Length)..]);
     }
 
-    /// <summary>Every field the Set / Clear form binds, and so every one an edit can move.</summary>
+    /// <summary>
+    /// Every field the Set / Clear form binds, and so every one an edit can move - plus the schedule's
+    /// zone (aud-a7e), which no control binds but which is an input to the same capture.
+    /// </summary>
     private static readonly string[] BoundFields =
-        ["setEmail", "oofState", "internalMessage", "externalMessage", "startTime", "endTime", "ticketNumber"];
+        ["setEmail", "oofState", "internalMessage", "externalMessage", "startTime", "endTime", "scheduleZone", "ticketNumber"];
 
     [Fact]
     public void SetOof_CapturesEveryBoundInputOnce_BeforeTheFirstAwait_AndNeverRereadsOne()

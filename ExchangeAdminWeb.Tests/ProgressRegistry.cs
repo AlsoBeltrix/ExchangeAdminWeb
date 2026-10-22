@@ -2204,7 +2204,15 @@ public static class ProgressRegistry
                 + "the write are named between them because each is a remote call an entry that "
                 + "did not name it would hold with nothing"),
         ],
-        Exempt = [new("OnInitializedAsync", AuthPreambleOnly)],
+        Exempt =
+        [
+            new("OnInitializedAsync", AuthPreambleOnly),
+            new("OnAfterRenderAsync",
+                "reads the browser's own time zone once, on the first interactive render, so the "
+                + "schedule fields can name the zone their times are in (aud-a7e): one JS interop "
+                + "call the browser answers itself, with no directory, Exchange, Graph, disk or "
+                + "config-store call behind it, and nothing the operator started or waits on"),
+        ],
     };
 
     private static PageEntry RecipientLookup => new()
