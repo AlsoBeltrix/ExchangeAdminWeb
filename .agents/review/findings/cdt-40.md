@@ -6,7 +6,7 @@ dev host's version). A later release would change the runner's behaviour on ever
 commit in the repo explaining it, and could fail or silently change what the suites assert.
 **Status**: Fixed on branch; closed on guard proof; review pending
 **Branch**: `worktree-agent-ab74c2738ad037db4` (forked at `dc0555e2`)
-**Commit**: -
+**Commit**: `0f185411` (fix, tests, guard proof); plan `9bb69900`; comments in the commit after the fix
 **Reviewer**: implementer (surfaced by the cdt-39 agent, 2026-10-22, its one candidate)
 
 ## Evidence
@@ -78,12 +78,14 @@ then `tools/Test-AsciiOnly.ps1`; `tools/Install-ExchangeAdminWeb.ps1` still neve
 
 ## Fix
 
-As planned. `.github/workflows/ci.yml`, the Pester step (79-107): the install at 90 carries
-`-RequiredVersion 6.2.0` where it had `-MinimumVersion 5.5`, its other flags and the loop (88-97)
-unchanged; `Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop` at 98, a top-level
-statement between the loop and `$result = Invoke-Pester tests/ps -CI -PassThru` (99); 100-107
-unchanged. The analyzer step is unchanged. `tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI
-gates'` (1988-2154): the version test (2124-2153) runs two cases; the retry test (2073-2122) is
+As planned. Line numbers after the comments commit (at `0f185411` the why-comment's four lines are
+absent from `ci.yml` and one comment line from the test, so the lines below them sit higher).
+`.github/workflows/ci.yml`, the Pester step (79-111): the why-comment at 88-91; the install at 94
+carries `-RequiredVersion 6.2.0` where it had `-MinimumVersion 5.5`, its other flags and the loop
+(92-101) unchanged; `Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop` at 102, a
+top-level statement between the loop and `$result = Invoke-Pester tests/ps -CI -PassThru` (103);
+104-111 unchanged. The analyzer step is unchanged. `tests/ps/DeployInvariants.Tests.ps1`, `Describe
+'CI gates'` (1988-2155): the version test (2124-2154) runs two cases; the retry test (2073-2122) is
 unchanged.
 
 Behaviour probe of the step itself (scratch, `cdt40-stepprobe/probe.ps1`): its loop and import
@@ -126,7 +128,55 @@ Extra probe, same driver: the pre-fix `ci.yml` (`dc0555e2`, md5 `A34104CA659CD81
 the driver's reconstruction checked against git's blob) fails the Pester case on the install's
 version and nothing else. The analyzer case passed on all three.
 
+The comments were written after the round, in their own commit, so the md5s above are the fix
+commit's bytes. Post-comment `ci.yml` md5 `2D0E88E95A0730375B7BF905AAA89D8A` (LF; the CRLF working
+copy is `9C5A04F06A4FB2013B72D44096284E32`); the comments are PowerShell `#` lines inside the
+step's `run: |` block, which the parser ignores. The test's only change in that commit is the
+version test's comment, widened to both cases. The whole suite was rerun on the final tree (Gates).
+
 ## Files changed
 
 `.github/workflows/ci.yml`, `tests/ps/DeployInvariants.Tests.ps1`, this record. No version bump:
 CI and tests only.
+
+## Gates - 2026-10-22
+
+One pwsh 7.6.6 session (scratch, `cdt40-gates/gates.ps1`), Pester 6.2.0 imported before the
+analyzer, PSScriptAnalyzer 1.25.0, on the final tree, comments included; the same script on the fix
+commit's tree gave the same counts.
+
+- `Invoke-ScriptAnalyzer -Path tests/ps/DeployInvariants.Tests.ps1 -Severity Error`: 0. Its
+  warnings: 15, the same 15 as the `dc0555e2` file, all at 1645-1679, untouched.
+- `Invoke-Pester tests/ps`: 478 passed, 0 failed, 0 skipped, 0 not run (128 s), against the
+  Release build of the app (`dotnet build ExchangeAdminWeb.csproj -c Release`, exit 0).
+  `DeployInvariants.Tests.ps1` alone (the driver's baseline): 115, cdt-39's 114 plus the Pester
+  case.
+- Windows PowerShell 5.1.20348.5756 `ParseFile` of `tests/ps/DeployInvariants.Tests.ps1`: 0
+  errors, at the fix commit's bytes and again with the comments.
+- `git diff --check HEAD`: clean. `git add -A`, then `tools/Test-AsciiOnly.ps1`: passed; `ci.yml`
+  and this record hold no non-ASCII byte either.
+- `tools/Install-ExchangeAdminWeb.ps1`: unchanged since `dc0555e2`, and still never contains
+  `deploy.ps1`.
+
+Not run: `dotnet build ExchangeAdminWeb.slnx` and `dotnet test` (no .NET source changed); the CI
+step's repo-wide analyzer run (the test file is the only PowerShell file changed, analyzed above);
+any GitHub run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- Nothing ran on a GitHub runner; the guard parses `ci.yml`, and the step was probed on the dev
+  host. The next CI run is the first real execution of the pinned install and the import.
+- Assumption, not inspected: CI already ran Pester 6.2.0 (it is what `-MinimumVersion 5.5 -Force`
+  installs, and the CurrentUser path is first on a default pwsh `PSModulePath`). The runner image's
+  own Pester copies and its `PSModulePath` order were not inspected; the versioned import makes the
+  step independent of both, and fails it if 6.2.0 is missing.
+- The pin's cost: if 6.2.0 ever became unavailable on the Gallery, the install would fail its three
+  attempts and the step would fail loudly - a visible failure, not the silent drift this finding
+  closes.
+
+## Candidates noticed, not fixed
+
+- LOW, the same class: the workflow's other inputs float - `runs-on: windows-latest`, the
+  `actions/checkout`, `actions/setup-dotnet` and `actions/upload-artifact` `@v4` major tags, and
+  `dotnet-version: '10.0.x'` - so an image, action or SDK release changes CI with nothing in the
+  repo changing. Pinning each has an upkeep cost; an owner call, not a clear defect.

@@ -2125,10 +2125,11 @@ Describe 'CI gates' {
         @{ Step = 'PSScriptAnalyzer'; Module = 'PSScriptAnalyzer'; Version = '1.25.0'; Runner = 'Invoke-ScriptAnalyzer'; Finding = 'cdt-39' }
         @{ Step = 'Pester'; Module = 'Pester'; Version = '6.2.0'; Runner = 'Invoke-Pester'; Finding = 'cdt-40' }
     ) {
-        # So CI and a local run apply the same rules, and a new analyzer release cannot change
-        # CI's verdict with nothing in the repo changing. The number is pinned here too, so a
-        # bump is deliberate. The import is the pin that decides: auto-loading takes the first
-        # copy on PSModulePath, not the newest (probed in cdt-39), so an install alone does not.
+        # So CI and a local run apply the same analyzer rules (cdt-39) and the same test runner
+        # (cdt-40), and a new release of either cannot change CI's verdict with nothing in the
+        # repo changing. The numbers are pinned here too, so a bump is deliberate. The import is
+        # the pin that decides: auto-loading takes the first copy on PSModulePath, not the newest
+        # (probed in cdt-39, and for Pester in cdt-40), so an install alone does not.
         $run = Get-CiStepScript $Step
         $run.Errors | Should -BeNullOrEmpty
         $commands = @($run.Ast.FindAll({
