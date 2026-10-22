@@ -202,8 +202,8 @@ public class OperationTraceService
             || lowered.Contains("client_secret");
     }
 
-    private static string SamName(string identity) =>
-        identity.Contains('\\') ? identity.Split('\\')[1] : identity;
+    private static string SamName(string? identity) =>
+        identity is null ? "unknown" : identity.Contains('\\') ? identity.Split('\\')[1] : identity;
 
     internal sealed record OperationContext(
         string OperationId,

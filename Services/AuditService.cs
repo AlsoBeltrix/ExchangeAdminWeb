@@ -520,6 +520,6 @@ public class AuditService
     private static bool IsSuccessfulAuditResult(string? result)
         => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);
 
-    private static string SamName(string identity) =>
-        identity.Contains('\\') ? identity.Split('\\')[1] : identity;
+    private static string SamName(string? identity) =>
+        identity is null ? "unknown" : identity.Contains('\\') ? identity.Split('\\')[1] : identity;
 }

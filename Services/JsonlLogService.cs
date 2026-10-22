@@ -65,12 +65,13 @@ public class JsonlLogService
 
     private void WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
-        var filtered = evt.Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);
-        var json = JsonSerializer.Serialize(filtered, JsonOpts);
         var logPath = "(unresolved)";
 
         try
         {
+            var filtered = evt.Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);
+            var json = JsonSerializer.Serialize(filtered, JsonOpts);
+
             lock (_lock)
             {
                 logPath = GetWritableLogPath(stream);
@@ -81,9 +82,14 @@ public class JsonlLogService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to write JSONL event to {Path}", logPath);
+            _logger.LogError(ex,
+                "Failed to write a JSONL {Stream} event (action {Action}, category {Category}) to {Path}; the event was not written",
+                stream, TextField(evt, "action"), TextField(evt, "category") ?? TextField(evt, "module"), logPath);
         }
     }
+
+    private static string? TextField(Dictionary<string, object?>? evt, string key) =>
+        evt is not null && evt.TryGetValue(key, out var value) ? value as string : null;
 
     private string GetWritableLogPath(LogStream stream)
     {
