@@ -7,7 +7,7 @@ returns no outcome. The operation trace therefore says an audit row was written 
 reviewer reconciling trace to audit finds a step with no row.
 **Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-a906aa98bce748ee5`
-**Commit**: -
+**Commit**: `23a88f20` (fix, tests, record; comments `258e8b96`; plan `7dcf2815`)
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidate 3 of its hand-back)
 
 ## Evidence
@@ -156,6 +156,59 @@ written after the round, in their own commit, so the MD5s above are this commit'
 
 No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, push or deployment: a real writer over a temp
 folder, a counting telemetry sink. No coder self-review verdict is claimed.
+
+## Comments after the round
+
+Written after both rounds, in their own commit (`258e8b96`) with aud-a26r's. Checked by `check-comment-diff.ps1`
+(session scratchpad) over `git diff --cached -U0` of the staged change before that commit, each file asked about on its
+own, its count matching `--numstat`, and a file with no change failing the check: every added or removed line of the
+four code files is a comment or blank (79 lines), so each file's code lines are the fix commits'. (Its first run passed
+vacuously - `pwsh -File` handed it the list as one path - and was repaired before the result above was taken.) This
+record's files: `Services/JsonlLogService.cs` `9B4D3FDC39F1DEFFFDBB219913C1033F` -> `A068CC284F3EB46BD219F597AD507118`
+(20 lines: why the write says what became of the record and judges a drop by how far it got, why the report of a drop
+is guarded and serves both streams, the enum's summary and each value's); `Services/AuditService.cs`
+`DFF50B115BE7BB56F9A98F8C51775E35` -> `0CF7E1F0051235F68C196F1D1481D01F` (11 added, 2 removed: why the step follows the
+outcome while the operation's completion does not, why the action is counted only when its row was written -
+correcting aud-a28q's note that it was counted either way - and AuditWrittenDetails' reason). The test file carries its
+comments from its own commit.
+
+## Branch-tip gates - 2026-10-22 (`258e8b96`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none in
+  a touched file of the branch.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 5,721 passed / 3 skipped
+  (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 5,724 total,
+  5m28s; nothing hung, no Sequence file. Baseline at `6fc94167`: 5,685 / 3 / 0, 5,688 total; the thirty-six new cases
+  are this branch's (aud-a28u thirty-one, aud-a26r five).
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, each run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- Against master as it stood at hand-back (`22088cf2`): none of this branch's files changed there but this record
+  (the "Folded in" section), and no other caller of `JsonlLogService.Write`/`WriteAudit`/`WriteTrace` - none as a
+  method group - so the new return type meets no code of theirs.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a906aa98bce748ee5`, not merged, not pushed. A shared-infrastructure change - the writer
+every audit and trace call ends in, and the audit service's common path - so the base app version is due; no module's
+own behaviour changed beyond that. The bump is the supervisor's, at merge: `ExchangeAdminWeb.csproj` and
+`Modules/ModuleCatalog.cs` were outside this brief. This record starts from master's text (`c3bc0c24`) and keeps its
+"Folded in" section, and the `Pending.` line above it, byte-identical, so the merge meets the same change on both sides.
+
+## Known gaps
+
+- A trace record the writer drops - a step whose details cannot be serialised - is the writer's logged error and
+  nothing more: there is no step about a step. By design.
+- When the logging provider is what fails, a dropped audit row is reported only by the trace's Failed "AuditWritten"
+  step, and not at all if the trace file cannot be written either: nothing is left to report it to.
+- The usage count now skips an action whose audit row was dropped: it under-counts an action that happened rather than
+  claim one the audit log has no row for.
+- aud-a28q's second gap stands: a value whose ToString throws, under a field WriteAuditEvent reads by GetString
+  (category, action, user, ip, target, ticket, section, result), still throws there - before the write, and in
+  AuditWrittenDetails. Not this finding's cause, and no caller passes one.
+- `Services/ExtendedLogService.cs` has its own unguarded recovery logging: `Write` logs a failed detail factory on the
+  caller's thread, so a throwing provider escapes into the caller, and the catch in `ProcessQueueAsync`, the background
+  consumer, would end the consumer. The fold-in names `JsonlLogService.WriteToFile`; a candidate, not changed here.
 
 ## Codex review
 

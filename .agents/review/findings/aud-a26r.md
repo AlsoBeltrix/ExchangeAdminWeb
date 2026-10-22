@@ -8,7 +8,7 @@ refused as "holds N values", where N is the byte count: the outcome is safe, the
 returns (the aud-a26o loading guard outlives the panel).
 **Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-a906aa98bce748ee5`
-**Commit**: -
+**Commit**: `00e71f2d` (fix, tests, record; comments `258e8b96`; plan `7dcf2815`)
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidates 4, 6 and 7 of its hand-back)
 
 ## Evidence
@@ -181,3 +181,40 @@ No AD, EXO, Graph, DHCP or IIS call, no real module, directory, Delinea, SMTP, p
 stand-ins for the AD cmdlets. The page was not rendered in a browser and no live circuit was run: ShowUndoPreview and
 CloseUndoPanel are driven through the compiled page by reflection on a do-nothing renderer (aud-a28m's harness). No
 coder self-review verdict is claimed.
+
+## Comments after the round
+
+Written after both rounds, in their own commit (`258e8b96`), checked comment-only as aud-a28u's record says (79 lines
+over four files). This record's files: `Services/ADAttributeEditorService.cs` `5E2FAF128A45BA8618E0FFDBB66E3469` ->
+`15AE497CCF247FA8E0362607C01778BA` (21 added, 10 removed: why the lookup reads through ReadDirectoryValue and what it
+shows for several and binary values, why ReadDirectoryValue names a binary value, why a byte array is one value, the
+refusal's two rules and its assumption, and the pre-write refusal's and the preview re-read's notes naming the binary
+case and the new name); `Components/Pages/AdminEventLog.razor` `9FEB4661573C9F0801D15CD82E1797ED` ->
+`B876C90AAA4B32ED8535814CBC14B64F` (12 added, 3 removed: the request token's purpose, why an answer is its request's and
+not its entry's, why only the panel's request lowers the flag, why a close lowers it; 1,588 lines -> 1,597, still
+NotYetConverted, no key to move). The tests carry their comments from their own commit.
+
+## Branch-tip gates - 2026-10-22 (`258e8b96`: both fixes and the comments)
+
+As aud-a28u's record: Release build 0 errors / 61 warnings, none in this record's files; the full suite 5,721 / 3 / 0,
+5,724 total, 5m28s, the five cases here among the branch's thirty-six; `ClickGate*` 316/316 and `ProgressRegistryTests`
+35/35 alone; format, `git diff --check HEAD` and `tools/Test-AsciiOnly.ps1` exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a906aa98bce748ee5`, not merged, not pushed. Two module-scoped behaviour changes: the AD
+Attribute Editor (the lookup's reading, the binary naming and refusal) and the Admin Event Log (the preview's request
+token, the close lowering the loading flag): both module versions are due. No shared code changed here, so no base app
+bump from this record (aud-a28u's brings one). The bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs` and
+`ExchangeAdminWeb.csproj` were outside this brief.
+
+## Known gaps
+
+- *Assumption, not probed*: the module answers a binary attribute with a `byte[]`, and a multi-valued binary one with a
+  collection of them. Several binary values are refused as several values, under the single-valued rule: accurate, but
+  the binary rule is not named for them.
+- The lookup now shows several values joined ("a; b") and a binary value as "binary (N bytes)" in the editor's form, as
+  editable text. Saving either is refused before the write, so nothing is lost, but the form does not mark such a field
+  read-only. `Components/Pages/ADAttributeEditor.razor` was outside this brief; a candidate.
+- A closed preview's progress activity ("Building undo preview") stays in the status bar beside the next one's until its
+  handler returns; its answer is dropped. Cosmetic.
