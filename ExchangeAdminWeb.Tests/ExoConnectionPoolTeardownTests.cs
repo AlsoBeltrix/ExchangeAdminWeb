@@ -341,4 +341,52 @@ public partial class ExoConnectionPoolSharedConfigTests
             () => pool.BorrowAsync(TestContext.Current.CancellationToken));
         Assert.Equal(0, connects);
     }
+
+    // aud-a6e. A borrow that passed the entry check and then queued for a slot used to resume after
+    // Dispose with nothing checking the stop again, and connect a fresh session from a stopped pool.
+    // Two orderings: the pool stops while the borrow still waits, or after its slot was granted but
+    // before it resumed (the continuation is held between the wait and its next line). Nothing frees
+    // a slot after the first Return, so the seventh borrow can only finish if the refused sixth gave
+    // its slot back.
+    [Theory]
+    [InlineData("stopped while queued")]
+    [InlineData("stopped after the slot was granted")]
+    public async Task ABorrowQueuedWhenThePoolStops_IsRefusedWithoutConnecting(string order)
+    {
+        var log = NewDisconnectLog();
+        var connects = 0;
+        using var pool = NewPool(connect: (_, generation, _) =>
+            DisconnectStubRunspace(generation, $"conn-{Interlocked.Increment(ref connects)}", "ok", log));
+        var held = await BorrowMany(pool, 5);
+
+        var context = new HeldContinuations();
+        var sixth = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        var seventh = context.Start(() => pool.BorrowAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        Assert.False(sixth.IsCompleted || seventh.IsCompleted, "With every slot held, both borrows must be waiting for one.");
+
+        if (order == "stopped while queued")
+        {
+            pool.Dispose();
+            pool.Return(held[0]);
+        }
+        else
+        {
+            pool.Return(held[0]);
+            pool.Dispose();
+        }
+
+        await context.PumpUntil(sixth, TestContext.Current.CancellationToken);
+        var sixthFailure = await Record.ExceptionAsync(() => sixth);
+        Assert.Equal(5, Volatile.Read(ref connects));
+        Assert.IsType<ObjectDisposedException>(sixthFailure);
+
+        await context.PumpUntil(seventh, TestContext.Current.CancellationToken);
+        Assert.IsType<ObjectDisposedException>(await Record.ExceptionAsync(() => seventh));
+        Assert.Equal(5, Volatile.Read(ref connects));
+
+        foreach (var runspace in held.Skip(1))
+            pool.Return(runspace);
+        Assert.Equal(0, pool.AvailableCount);
+        Assert.Equal(["conn-1", "conn-2", "conn-3", "conn-4", "conn-5"], Disconnected(log));
+    }
 }

@@ -190,9 +190,11 @@ public sealed class ExoConnectionPool : IDisposable
     /// </summary>
     public async Task<PooledRunspace> BorrowAsync(TimeSpan waitTimeout, CancellationToken ct = default)
     {
-        // aud-a6c: a stopped pool opens no new sessions. Best effort by design - a borrow already
-        // past this line comes back through Return, which refuses a stopped pool and destroys the
-        // runspace. That refusal, not this check, is what keeps a connection from being stranded.
+        // aud-a6c: a stopped pool opens no new sessions. Checked again once a slot is held
+        // (aud-a6e), because the wait for one can outlast the stop. Best effort by design - a
+        // borrow already past both checks comes back through Return, which refuses a stopped pool
+        // and destroys the runspace. That refusal, not these checks, is what keeps a connection
+        // returned after the stop out of the pool.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
 
         if (!_enablement.IsModuleEnabled("ExchangeOnline"))
@@ -217,6 +219,12 @@ public sealed class ExoConnectionPool : IDisposable
 
         try
         {
+            // aud-a6e: a borrow that passed the entry check while every slot was held used to
+            // resume after Dispose and connect a fresh session from a stopped pool. So the stop is
+            // checked again here, before anything is taken from the pool or connected; the catch
+            // below gives the slot back.
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
+
             // scdi-1: a save on the other instance never reaches this process's DrainPool, so
             // the pool retires its own runspaces when the connection config it just read
             // differs from the one they connected under.
@@ -869,7 +877,8 @@ public sealed class ExoConnectionPool : IDisposable
     /// Audit finding aud-a6c. The stop is recorded under <c>_poolLock</c> BEFORE the drain, which
     /// is what lets <see cref="TryPool"/> promise that nothing is added after the drain has looked.
     /// Anything borrowed, still connecting, or held by a sweep in progress comes back through
-    /// <see cref="TryPool"/>, is refused, and is destroyed by whoever was holding it.
+    /// <see cref="TryPool"/>, is refused, and is destroyed by whoever was holding it. A borrow
+    /// still waiting for a slot is refused when it gets one, and gives the slot back (aud-a6e).
     ///
     /// The finding suggested retiring the generation here instead. That cannot hold by itself: a
     /// borrow that read the generation AFTER such a retire would stamp its connection with the new
