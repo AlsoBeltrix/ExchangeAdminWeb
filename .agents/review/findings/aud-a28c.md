@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM (proposed). Same class as `aud-a28` - an attempt with no durable audit - on
 the path aud-a28 did not reach: a failure that throws instead of returning.
-**Status**: Merged to master (`5e55e6aa`); codex review pending
+**Status**: Merged to master (`5e55e6aa`); closed on guard proof; codex attr-batch-1 clean
 **Branch**: `worktree-agent-acad2a289bd002e11`
 **Commit**: `df6a378d` (merged `5e55e6aa`)
 **Reviewer**: implementer (found while fixing aud-a26b/aud-a28b, 2026-10-21)

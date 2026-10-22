@@ -1,6 +1,6 @@
 # psl-6 - one search base's error decides the whole attribute lookup, and only if it is the last
 
-Status: Merged to master (`5e55e6aa`); codex review pending. Commit `b7ef9d39`.
+Status: Merged to master (`5e55e6aa`); closed on guard proof; codex attr-batch-1 clean. Commit `b7ef9d39`.
 Severity: MEDIUM (proposed). Reviewer: implementer (surfaced by the psl agent, 2026-10-21; first
 noted as the "Adjacent observation" in psl-5 on master). Adjacent to psl-2..psl-5 - a PowerShell's
 diagnostics are read for the wrong operation - but not their stale-record class: no record

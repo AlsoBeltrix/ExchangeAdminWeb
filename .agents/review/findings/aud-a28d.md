@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM (proposed). Same class as `aud-a28`, in the service aud-a28 did not sweep,
 and it includes the case the Constitution names: a protected-principal denial that is not audited.
-**Status**: Merged to master (`5e55e6aa`); codex review pending
+**Status**: Merged to master (`5e55e6aa`); closed on guard proof; codex attr-batch-1 clean
 **Branch**: `worktree-agent-acad2a289bd002e11`
 **Commit**: `db140a29` (merged `5e55e6aa`)
 **Reviewer**: implementer (found while fixing aud-a26b, 2026-10-21)

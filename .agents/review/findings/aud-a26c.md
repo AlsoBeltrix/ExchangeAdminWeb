@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM (proposed). The page states a reversal that did not happen and removes the
 control that would retry it. Nothing is mis-mutated.
-**Status**: Merged to master (`5e55e6aa`); codex review pending
+**Status**: Merged to master (`5e55e6aa`); closed on guard proof; codex attr-batch-1 clean
 **Branch**: `worktree-agent-acad2a289bd002e11`
 **Commit**: `9cfd996c` (merged `5e55e6aa`)
 **Reviewer**: implementer (found while fixing aud-a28d, 2026-10-22)
