@@ -12,9 +12,9 @@ fallback set, clearing the secret id writes an empty value and the page then sho
 again, so the admin cannot tell the clear took. (6) Comments in `ModuleConfig.razor` (~696) and
 `AdminSettings.razor` (~346) say dictionary copies keep the store's case-insensitive comparer; on
 .NET 10 they do not (harmless today).
-**Status**: Fixed on the branch; closed on guard proof; awaiting merge and codex review
+**Status**: Merged to master (`7b65d27e`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a3c115693e85a6623`
-**Commit**: `bec91eeb` (plan `ff78ff27`; comments `389a34a2`)
+**Commit**: `bec91eeb` (plan `ff78ff27`; comments `389a34a2`; merged `7b65d27e`)
 **Reviewer**: implementer (surfaced by the aud-a28n/a26k agent, 2026-10-22, candidates 2 to 7 of its hand-back)
 
 ## Evidence
