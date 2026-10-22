@@ -6,7 +6,7 @@ intermittent "Package failed to download" (seen 2026-10-21 on the Pester install
 ConfigDbToolInApp S2 with a three-attempt retry, and again 2026-10-22 on run 39847030059 for the
 analyzer) fails the job on a docs-only commit. The two installs now behave differently for the same
 transient cause.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch; closed on guard proof; review pending
 **Branch**: `worktree-agent-a05fc8e899ba981d1` (forked at `34c7ccd4`)
 **Commit**: -
 **Reviewer**: implementer (CI run 39847030059 on `e9a59ed4`, 2026-10-22; rerun requested)
@@ -89,6 +89,49 @@ then `tools/Test-AsciiOnly.ps1`; `tools/Install-ExchangeAdminWeb.ps1` still neve
 `deploy.ps1`. Also the CI step's own analyzer run under 1.25.0 (`Invoke-ScriptAnalyzer -Path .
 -Recurse -Severity Error,Warning`), zero errors, since that pinned run is what CI will now do.
 
+## Fix
+
+As planned. `.github/workflows/ci.yml`, the `PSScriptAnalyzer` step (47-66): the loop at 50-59,
+the install at 52 (`-RequiredVersion 1.25.0 -ErrorAction Stop` added to the original flags), the
+import at 60, `Invoke-ScriptAnalyzer` at 61; 62-66 unchanged. The Pester step (now 74-101) is
+unchanged. `tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI gates'`: `Get-CiStepScript` in its
+BeforeAll (1998-2026), the retry test (2068-2110), the version test (2112-2134).
+
+Behaviour probe of the step itself (scratch, `cdt39-stepprobe`): its loop and import lifted from
+`ci.yml` and run in a fresh pwsh 7.6.6 behind GitHub's `$ErrorActionPreference = 'stop'` prefix.
+With `-WhatIf` on the install, PowerShellGet resolved "Version '1.25.0' of module
+'PSScriptAnalyzer'" on the Gallery and the step's import loaded 1.25.0 (exit 0). With
+`-RequiredVersion 9.9.9` and `Start-Sleep` shadowed: attempts 1 and 2 each warned with the
+`Install-Package` error ("No match was found ...") and asked for 10 s then 20 s; the third rethrew
+it and ended the script before the line after the loop (exit 1). Assumption, not reproduced: a
+"Package failed to download" reaches the catch the same way - it is raised by the same
+`Install-Package` (the CI log names it), and cannot be produced on demand.
+
 ## Guard proof
 
-Pending.
+| Test (`tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI gates'`) | Pins |
+| --- | --- |
+| `retries the <Module> install three times, rethrowing the last failure (cdt-39)`, cases PSScriptAnalyzer and Pester | The step's `run: \|` block, parsed: one `Install-Module <Module>` with `-ErrorAction Stop`, the first statement of a try body whose second is `break`; the try a direct statement of `for ($attempt = 1; $attempt -le 3; $attempt++)`; one catch-all whose first statement is `if ($attempt -eq 3) { throw }` (bare) and which calls `Start-Sleep` once |
+| `runs PSScriptAnalyzer 1.25.0, the version the dev host runs (cdt-39)` | The install's `-RequiredVersion 1.25.0`; one top-level `Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -ErrorAction Stop`, after the install and before `Invoke-ScriptAnalyzer` |
+
+Session-local driver (scratch, `cdt39-mutations/mutate.ps1`); each run is the whole
+`DeployInvariants.Tests.ps1` in a fresh pwsh under Pester 6.2.0. Fixed `ci.yml` md5
+`080138727EFBC40F6C20B007F5505575` (LF content, as git stores it - this commit's bytes; the CRLF
+working copy is `A34718014A3354E103C176BA1D8491F7`); baseline 114 passed, 0 failed, 0 skipped. After
+each mutant the fixed bytes were copied back, both md5s re-matched, the file was touched and the
+file rerun: 114 passed, 0 failed, 0 skipped, every time.
+
+| Mutation (call site, `ci.yml`) | md5 after (LF) | Failed |
+| --- | --- | --- |
+| M1 the analyzer loop replaced by its own install line | `272066097C93E52D5D1997D4791E0A9C` | `retries the PSScriptAnalyzer install three times, rethrowing the last failure (cdt-39)` only ("Expected the value to have type [System.Management.Automation.Language.TryStatementAst] ..., because the PSScriptAnalyzer install must run inside the retry's try") |
+| M2 `-RequiredVersion 1.25.0` dropped from the install | `4BD604E760A67A26C4446A331178C47F` | `runs PSScriptAnalyzer 1.25.0, the version the dev host runs (cdt-39)` only ("Expected '1.25.0', because CI installs the analyzer the dev host runs, but got $null.") |
+
+Extra probes, same driver: the pre-fix `ci.yml` (`34c7ccd4`, md5 `97FA06E7448C75660F9C5DB534F1E709`)
+fails both analyzer tests (the retry case on the missing `-ErrorAction Stop`, the version test on
+the missing pin) and nothing else; M1's shape applied to the Pester step
+(`2F9E101E7ED3F950D16F93B16E8572CA`) fails the Pester case and nothing else.
+
+## Files changed
+
+`.github/workflows/ci.yml`, `tests/ps/DeployInvariants.Tests.ps1`, this record. No version bump:
+CI and tests only.

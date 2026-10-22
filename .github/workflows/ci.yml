@@ -47,7 +47,17 @@ jobs:
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -RequiredVersion 1.25.0 -ErrorAction Stop
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Write-Warning "Install-Module PSScriptAnalyzer failed (attempt $attempt of 3): $($_.Exception.Message). Retrying."
+              Start-Sleep -Seconds (10 * $attempt)
+            }
+          }
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -ErrorAction Stop
           $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning
           $results | Format-Table RuleName, Severity, ScriptName, Line -AutoSize
           if ($results | Where-Object Severity -eq 'Error') {

@@ -1994,6 +1994,36 @@ Describe 'CI gates' {
         $script:ci = Get-Content (Join-Path $RepoRoot '.github/workflows/ci.yml') -Raw
         $psJobAt = $script:ci.IndexOf("`n  powershell:")
         $script:psJob = if ($psJobAt -ge 0) { $script:ci.Substring($psJobAt) } else { '' }
+
+        function Get-CiStepScript {
+            param([string]$Name)
+            $lines = $script:psJob -split '\r?\n'
+            $at = [array]::IndexOf($lines, "      - name: $Name")
+            if ($at -lt 0) { throw "the powershell job has no '$Name' step" }
+            $runAt = -1
+            for ($i = $at + 1; $i -lt $lines.Count -and $lines[$i] -notmatch '^      - '; $i++) {
+                if ($lines[$i] -eq '        run: |') { $runAt = $i; break }
+            }
+            if ($runAt -lt 0) { throw "the '$Name' step has no 'run: |' block" }
+
+            $body = [System.Collections.Generic.List[string]]::new()
+            $indent = $null
+            for ($i = $runAt + 1; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                if ($line.Trim().Length -eq 0) { $body.Add(''); continue }
+                $lead = $line.Length - $line.TrimStart(' ').Length
+                if ($null -eq $indent) { $indent = $lead }
+                if ($lead -lt $indent -or $lead -le 8) { break }
+                $body.Add($line.Substring($indent))
+            }
+            if ($null -eq $indent -or $indent -le 8) { throw "the '$Name' step's 'run: |' block is empty" }
+
+            $text = $body -join "`n"
+            $tokens = $null
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+            [pscustomobject]@{ Text = $text; Ast = $ast; Errors = $errors }
+        }
     }
 
     It 'builds the app before running Pester' {
@@ -2033,6 +2063,74 @@ Describe 'CI gates' {
         foreach ($f in @('deploy.ps1', 'tools/SqliteConfigBackup.psm1', 'tools/JobStateWarning.psm1', 'tools/AppPoolControl.psm1')) {
             $script:ci | Should -Match ([regex]::Escape($f))
         }
+    }
+
+    It 'retries the <Module> install three times, rethrowing the last failure (cdt-39)' -TestCases @(
+        @{ Step = 'PSScriptAnalyzer'; Module = 'PSScriptAnalyzer' }
+        @{ Step = 'Pester'; Module = 'Pester' }
+    ) {
+        $run = Get-CiStepScript $Step
+        $run.Errors | Should -BeNullOrEmpty -Because "the $Step step's script must parse"
+
+        $installs = @($run.Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Install-Module'
+                }, $true))
+        $installs.Count | Should -Be 1 -Because "the $Step step must install $Module exactly once, inside the retry"
+        $install = $installs[0]
+        $install.CommandElements[1].Extent.Text | Should -Be $Module
+        Get-NamedArgumentText $install 'ErrorAction' | Should -Be 'Stop' -Because 'without it a failed download is a non-terminating error the catch never sees'
+
+        $try = $install.Parent.Parent.Parent
+        $try | Should -BeOfType ([System.Management.Automation.Language.TryStatementAst]) -Because "the $Module install must run inside the retry's try"
+        [object]::ReferenceEquals($try.Body.Statements[0], $install.Parent) | Should -BeTrue -Because 'the install is the first statement of the try'
+        $try.Body.Statements[1] | Should -BeOfType ([System.Management.Automation.Language.BreakStatementAst]) -Because 'a successful install must leave the loop'
+
+        $for = $try.Parent.Parent
+        $for | Should -BeOfType ([System.Management.Automation.Language.ForStatementAst]) -Because 'the try must be a statement of the attempt loop'
+        $for.Initializer.Extent.Text | Should -Be '$attempt = 1'
+        $for.Condition.Extent.Text | Should -Be '$attempt -le 3'
+        $for.Iterator.Extent.Text | Should -Be '$attempt++'
+
+        $try.CatchClauses.Count | Should -Be 1
+        $catch = $try.CatchClauses[0]
+        $catch.IsCatchAll | Should -BeTrue -Because 'any install failure is retried'
+        $last = $catch.Body.Statements[0]
+        $last | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
+        $last.Clauses[0].Item1.Extent.Text | Should -Be '$attempt -eq 3'
+        $rethrow = $last.Clauses[0].Item2.Statements[0]
+        $rethrow | Should -BeOfType ([System.Management.Automation.Language.ThrowStatementAst]) -Because 'the third failure must fail the step'
+        $rethrow.Pipeline | Should -BeNullOrEmpty -Because 'a bare throw rethrows the install error itself'
+        @($catch.Body.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq 'Start-Sleep'
+                }, $true)).Count | Should -Be 1 -Because 'each retry waits before the next attempt'
+    }
+
+    It 'runs PSScriptAnalyzer 1.25.0, the version the dev host runs (cdt-39)' {
+        $run = Get-CiStepScript 'PSScriptAnalyzer'
+        $run.Errors | Should -BeNullOrEmpty
+        $commands = @($run.Ast.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.CommandAst]
+                }, $true))
+
+        $install = @($commands | Where-Object { $_.GetCommandName() -eq 'Install-Module' })
+        $install.Count | Should -Be 1
+        Get-NamedArgumentText $install[0] 'RequiredVersion' | Should -Be '1.25.0' -Because 'CI installs the analyzer the dev host runs'
+
+        $import = @($commands | Where-Object { $_.GetCommandName() -eq 'Import-Module' -and $_.CommandElements[1].Extent.Text -eq 'PSScriptAnalyzer' })
+        $import.Count | Should -Be 1 -Because 'installing a version does not make it the copy that loads; the import does'
+        Get-NamedArgumentText $import[0] 'RequiredVersion' | Should -Be '1.25.0'
+        Get-NamedArgumentText $import[0] 'ErrorAction' | Should -Be 'Stop' -Because 'a missing 1.25.0 must fail the step, not fall back to another copy'
+        $import[0].Parent.Parent | Should -BeOfType ([System.Management.Automation.Language.NamedBlockAst]) -Because 'the import runs on every path, not inside the loop or a branch'
+
+        $analyze = @($commands | Where-Object { $_.GetCommandName() -eq 'Invoke-ScriptAnalyzer' })
+        $analyze.Count | Should -Be 1
+        $import[0].Extent.StartOffset | Should -BeGreaterThan $install[0].Extent.EndOffset -Because 'the import follows the install'
+        $import[0].Extent.EndOffset | Should -BeLessThan $analyze[0].Extent.StartOffset -Because 'the pinned analyzer is loaded before it runs'
     }
 }
 
