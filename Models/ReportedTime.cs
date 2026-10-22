@@ -48,15 +48,23 @@ public sealed record ReportedTime
     /// naming what came back and its text.
     /// </summary>
     /// <remarks>
-    /// The marker is spelled here once, so every page that shows a reported time says the same thing
-    /// about one it cannot read, and none can show such a value as blank.
+    /// The marker is spelled once, in <see cref="Marker"/>, so every page that shows a reported time says
+    /// the same thing about one it cannot read, and none can show such a value as blank.
     /// </remarks>
     public string Show(Func<DateTime, string> readable) =>
-        Time is { } time
-            ? readable(time)
-            : UnreadableText is null
-                ? $"reported in a form this app cannot read ({UnreadableType})"
-                : $"reported in a form this app cannot read ({UnreadableType}): {UnreadableText}";
+        Time is { } time ? readable(time) : Marker(UnreadableType, UnreadableText);
+
+    /// <summary>
+    /// The marker for a reported value this app cannot read: its type name and, when it has any, its text.
+    /// </summary>
+    /// <remarks>
+    /// aud-a23f: shared with <see cref="ReportedCount"/>, so a Migration batch says the same thing about a
+    /// count it cannot read as about a time - one spelling, where a copy would drift.
+    /// </remarks>
+    internal static string Marker(string? typeName, string? text) =>
+        text is null
+            ? $"reported in a form this app cannot read ({typeName})"
+            : $"reported in a form this app cannot read ({typeName}): {text}";
 
     /// <summary>
     /// aud-a23d. A time already held as a <see cref="DateTime"/> - a default, or a test's value. Not a
@@ -84,8 +92,48 @@ public sealed record ReportedTime
     /// <remarks>
     /// Text in any other form is not read because reading it would be a guess: <c>01/02/2026</c> is a
     /// different day in different cultures, and nothing here says which wrote it. ISO 8601 puts the year
-    /// first in a fixed order, so the invariant culture reads it the same whoever wrote it. A wrapped
-    /// value that cannot be read is named by a wrapper's first type name, which for a deserialized
+    /// first in a fixed order, so the invariant culture reads it the same whoever wrote it. A value that
+    /// cannot be read is named and quoted by <see cref="Describe"/>.
+    /// </remarks>
+    public static ReportedTime? Read(object? reported)
+    {
+        switch (Unwrap(reported))
+        {
+            case null:
+                return null;
+            case DateTime time:
+                return new(time, null, null);
+            case DateTimeOffset instant:
+                return new(instant.UtcDateTime, null, null);
+            case string text when DateTime.TryParseExact(text, IsoForms, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AllowWhiteSpaces,
+                    out var parsed):
+                return new(parsed, null, null);
+            default:
+                var (typeName, shownText) = Describe(reported!);
+                return new(null, typeName, shownText);
+        }
+    }
+
+    /// <summary>
+    /// What a reported value is beneath its <c>PSObject</c> wrappers, unwrapped one at a time; null when
+    /// nothing was reported.
+    /// </summary>
+    /// <remarks>aud-a23f: shared with <see cref="ReportedCount"/> and Migration's flag reader, so all three read one way.</remarks>
+    internal static object? Unwrap(object? reported)
+    {
+        var value = reported;
+        while (value is System.Management.Automation.PSObject wrapped)
+            value = wrapped.ImmediateBaseObject;
+        return value;
+    }
+
+    /// <summary>
+    /// The type name and the text the marker carries for a reported value this app cannot read.
+    /// </summary>
+    /// <remarks>
+    /// aud-a23f: moved out of <see cref="Read"/>, unchanged, so <see cref="ReportedCount"/> names a value
+    /// the same way. A wrapped value is named by a wrapper's first type name, which for a deserialized
     /// object says what it was, where its base object (a property bag) would not.
     /// <para>
     /// Which wrapper's (codex, folded into aud-a7i): wrappers are unwrapped one at a time, and the name
@@ -97,7 +145,7 @@ public sealed record ReportedTime
     /// its property bag has none.
     /// </para>
     /// </remarks>
-    public static ReportedTime? Read(object? reported)
+    internal static (string TypeName, string? Text) Describe(object reported)
     {
         var value = reported;
         System.Management.Automation.PSObject? innermost = null;
@@ -111,25 +159,11 @@ public sealed record ReportedTime
             value = wrapped.ImmediateBaseObject;
         }
 
-        switch (value)
-        {
-            case null:
-                return null;
-            case DateTime time:
-                return new(time, null, null);
-            case DateTimeOffset instant:
-                return new(instant.UtcDateTime, null, null);
-            case string text when DateTime.TryParseExact(text, IsoForms, System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AllowWhiteSpaces,
-                    out var parsed):
-                return new(parsed, null, null);
-            default:
-                var typeName = deserializedName
-                    ?? (innermost is null ? null : FirstTypeName(innermost))
-                    ?? value.GetType().FullName
-                    ?? value.GetType().Name;
-                return new(null, typeName, TextOf(innermost ?? value));
-        }
+        var typeName = deserializedName
+            ?? (innermost is null ? null : FirstTypeName(innermost))
+            ?? value.GetType().FullName
+            ?? value.GetType().Name;
+        return (typeName, TextOf(innermost ?? value));
     }
 
     private static string? FirstTypeName(System.Management.Automation.PSObject wrapped) =>

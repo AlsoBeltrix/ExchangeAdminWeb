@@ -88,7 +88,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
     public async Task AnUnstartedBatchRendersItsPendingCountWithoutInventingMailboxRows(int pendingCount)
     {
         var service = CreateService(failQuery: false, pendingCount: pendingCount);
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var page = CreatePage(service);
         PageField("migrationBatches").SetValue(page, new List<MigrationBatchInfo> { batch });
 
@@ -109,9 +109,9 @@ public sealed class MigrationMailboxLoadTests : IDisposable
     public async Task EmptyUserResultsUseTheBatchState(int totalCount, string stage, bool started, string expected)
     {
         var service = CreateService(failQuery: false, pendingCount: 1);
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
-        batch.TotalCount = totalCount;
-        batch.PendingCount = totalCount;
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
+        batch.TotalCount = ReportedCount.Of(totalCount);
+        batch.PendingCount = ReportedCount.Of(totalCount);
         batch.WorkflowStage = stage;
         batch.StartDateTime = started ? ReportedTime.Of(DateTime.UtcNow) : null;
         var page = CreatePage(service);
@@ -150,7 +150,7 @@ public sealed class MigrationMailboxLoadTests : IDisposable
         PageField("expandedBatch").SetValue(page, "Wave 12 / Operations");
         PageField("migrationBatches").SetValue(page, new List<MigrationBatchInfo>
         {
-            new() { BatchName = "Wave 12 / Operations", Status = "Synced", TotalCount = 1205 }
+            new() { BatchName = "Wave 12 / Operations", Status = "Synced", TotalCount = ReportedCount.Of(1205) }
         });
         ((HashSet<string>)PageField("selectedBatches").GetValue(page)!).Add("Wave 12 / Operations");
         return page;

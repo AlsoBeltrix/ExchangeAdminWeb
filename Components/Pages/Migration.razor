@@ -463,7 +463,7 @@
                 {
                     @PendingActionConfirm
                 }
-
+                @if (!isLoadingStatus && unreadableBatches.Count > 0) { <div class="alert alert-warning" role="alert">@UnreadableMigrationBatch.Warning(unreadableBatches)</div> } @* aud-a23f. Rows the load could not read as batches, named here - never silently left out of the list. *@
 
                 @if (isLoadingStatus)
                 {
@@ -484,14 +484,14 @@
                 }
                 else if ((migrationBatches == null || !migrationBatches.Any()) && batchActionResult == null)
                 {
-                    @* R28. Three distinct empty states, and this is the first: no batches AT ALL.
-                       The other two are "no batch matches the filter" (in the left pane, below)
-                       and "no mailbox matches the filter" (in the right pane). One message for
-                       all three would hide whether the filter or the data is the problem, and
-                       the operator's next move differs in each case. *@
+                    @* R28. Three distinct empty states, and this is the first: no batches AT ALL. The
+                       others are "no batch matches the filter" (left pane) and "no mailbox matches the
+                       filter" (right pane): one message would hide whether the filter or the data is
+                       the problem, and the operator's next move differs. aud-a23f: when every row was
+                       unreadable there ARE batches, so it says none could be read, under the warning. *@
                     <div class="alert alert-info">
-                        <strong>No migration batches found</strong>
-                        <p class="mb-0 mt-2">There are currently no migration batches. Create one using the Single User Check or Bulk CSV Check tabs.</p>
+                        <strong>@(unreadableBatches.Count > 0 ? "No migration batch could be read" : "No migration batches found")</strong>
+                        <p class="mb-0 mt-2">@(unreadableBatches.Count > 0 ? "Exchange returned only rows this page could not read; the warning above names each one." : "There are currently no migration batches. Create one using the Single User Check or Bulk CSV Check tabs.")</p>
                     </div>
                 }
                 else
@@ -667,8 +667,8 @@
                                                 <td class="mig-count">
                                                     <span class="text-success fw-bold">@batch.SyncedCount</span>
                                                 </td>
-                                                <td class="mig-count">
-                                                    @if (batch.FailedCount > 0)
+                                                <td class="mig-count">@* aud-a23f: "is not 0", not "> 0" - an unreadable count shows its marker, never the "0" below. *@
+                                                    @if (batch.FailedCount.Count is not 0)
                                                     {
                                                         <span class="text-danger fw-bold">@batch.FailedCount</span>
                                                     }
@@ -1045,13 +1045,13 @@
                                         <p class="text-muted text-center my-5">No mailbox details available.</p>
                                     }
                                     else if (!batchUsers.Any())
-                                    {
-                                        @if (openBatch is { PendingCount: > 0, StartDateTime: null }
+                                    { @* aud-a23f: an unreadable count is neither more than 0 nor 0, so such a batch is told neither of the first two. *@
+                                        @if (openBatch is { PendingCount.Count: > 0, StartDateTime: null }
                                             && string.Equals(openBatch.WorkflowStage, "Injection", StringComparison.OrdinalIgnoreCase))
                                         {
-                                            <p class="text-muted text-center my-5">@openBatch.PendingCount @(openBatch.PendingCount == 1 ? "mailbox" : "mailboxes") pending. Batch not started.</p>
+                                            <p class="text-muted text-center my-5">@openBatch.PendingCount @(openBatch.PendingCount.Count == 1 ? "mailbox" : "mailboxes") pending. Batch not started.</p>
                                         }
-                                        else if (openBatch is { TotalCount: 0 })
+                                        else if (openBatch is { TotalCount.Count: 0 })
                                         {
                                             <p class="text-muted text-center my-5">This batch contains no mailboxes.</p>
                                         }
@@ -1587,9 +1587,9 @@
     private bool bulkAutoStart = false;
     private bool bulkAutoComplete = false;
     private PermissionResult? createResult;
-
-    // Migration status
+    // Migration status. aud-a23f: unreadableBatches holds the rows the last load could not read as batches.
     private List<MigrationBatchInfo>? migrationBatches;
+    private List<UnreadableMigrationBatch> unreadableBatches = [];
     private bool isLoadingStatus = false;
     private bool batchesLoaded = false;
     private bool accessDenied = false;
@@ -2289,7 +2289,7 @@
 
         try
         {
-            migrationBatches = await MigrationSvc.GetMigrationBatchesAsync();
+            (migrationBatches, unreadableBatches) = await MigrationSvc.GetMigrationBatchesAsync();
             batchActionResult = null;
         }
         catch (Exception ex)
@@ -4158,9 +4158,9 @@
             "Name" => batchSortAsc ? rows.OrderBy(b => b.BatchName) : rows.OrderByDescending(b => b.BatchName),
             "Status" => batchSortAsc ? rows.OrderBy(b => b.Status) : rows.OrderByDescending(b => b.Status),
             "Direction" => batchSortAsc ? rows.OrderBy(b => b.Direction) : rows.OrderByDescending(b => b.Direction),
-            "Total" => batchSortAsc ? rows.OrderBy(b => b.TotalCount) : rows.OrderByDescending(b => b.TotalCount),
-            "Synced" => batchSortAsc ? rows.OrderBy(b => b.SyncedCount) : rows.OrderByDescending(b => b.SyncedCount),
-            "Failed" => batchSortAsc ? rows.OrderBy(b => b.FailedCount) : rows.OrderByDescending(b => b.FailedCount),
+            "Total" => rows.OrderBy(b => b.TotalCount, ReportedCount.Order(batchSortAsc)), // aud-a23f: an unreadable count after every count, both ways
+            "Synced" => rows.OrderBy(b => b.SyncedCount, ReportedCount.Order(batchSortAsc)),
+            "Failed" => rows.OrderBy(b => b.FailedCount, ReportedCount.Order(batchSortAsc)),
             _ => batchSortAsc ? rows.OrderBy(b => ReportedTime.SortGroup(b.CreatedDateTime)).ThenBy(b => b.CreatedDateTime.Time) : rows.OrderBy(b => ReportedTime.SortGroup(b.CreatedDateTime)).ThenByDescending(b => b.CreatedDateTime.Time),
         };
     }
@@ -4172,14 +4172,14 @@
     }
 
     /// <summary>
-    /// Docs/ModuleCsvExport-Plan.md AC3: BatchName,Status,Direction,Created,Started,
-    /// Completed,Total,Synced,Finalized,Failed,TargetEndpoint, in that order. Batch-level
-    /// only (plan section 2 non-goal: no per-user rows). A date not reported maps to an empty
-    /// cell; a reported one goes through FormatBatchDate, as the batch details view renders
-    /// Created/Started/Completed - one this app cannot read is the marker, never blank (aud-a23d).
-    /// Static and argument-fed so tests call it directly without a page instance.
+    /// Docs/ModuleCsvExport-Plan.md AC3: BatchName,Status,Direction,Created,Started,Completed,Total,
+    /// Synced,Finalized,Failed,TargetEndpoint, in that order; batch-level only (no per-user rows). A date
+    /// not reported is an empty cell, a reported one goes through FormatBatchDate; a date or a count this
+    /// app cannot read is its marker, never blank (aud-a23d, aud-a23f). aud-a23f: after the batches, one
+    /// row per row Exchange returned that could not be read - its identity, then "could not be read: " and
+    /// the reason - so the file leaves out nothing the page's warning names. Static, argument-fed, for tests.
     /// </summary>
-    internal static string BuildCsv(IReadOnlyList<MigrationBatchInfo> rows)
+    internal static string BuildCsv(IReadOnlyList<MigrationBatchInfo> rows, IReadOnlyList<UnreadableMigrationBatch> unreadable)
     {
         var header = new List<string>
         {
@@ -4200,7 +4200,7 @@
             r.FailedCount.ToString(),
             r.TargetEndpoint ?? string.Empty,
         });
-        return CsvExport.Write(header, csvRows);
+        return CsvExport.Write(header, csvRows.Concat(unreadable.Select(u => (IReadOnlyList<string>)[u.Identity ?? string.Empty, $"could not be read: {u.Reason}", .. Enumerable.Repeat(string.Empty, header.Count - 2)])));
     }
 
     private static string FormatBatchDate(ReportedTime value) => value.Show(time => time.ToLocalTime().ToString("MMM dd, yyyy HH:mm"));
@@ -4232,7 +4232,7 @@
         try
         {
             var rows = GetSortedBatches().ToList();
-            var csv = BuildCsv(rows);
+            var csv = BuildCsv(rows, unreadableBatches);
             var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
             var base64 = Convert.ToBase64String(bytes);
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
@@ -4241,7 +4241,7 @@
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "Migration",
-                    $"{rows.Count} rows", true);
+                    $"{rows.Count + unreadableBatches.Count} rows", true); // aud-a23f: every row the file carries
             }
             catch (Exception auditEx)
             {

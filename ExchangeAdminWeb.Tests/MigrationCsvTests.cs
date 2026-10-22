@@ -16,7 +16,7 @@ public class MigrationCsvTests
     [Fact]
     public void BuildCsv_HeaderMatchesSpec()
     {
-        var csv = Migration.BuildCsv([]);
+        var csv = Migration.BuildCsv([], []);
         var header = csv.Split('\n')[0].TrimEnd('\r');
 
         Assert.Equal(
@@ -38,15 +38,15 @@ public class MigrationCsvTests
                 CreatedDateTime = ReportedTime.Of(created),
                 StartDateTime = null,
                 CompletedDateTime = null,
-                TotalCount = 10,
-                SyncedCount = 8,
-                FinalizedCount = 2,
-                FailedCount = 0,
+                TotalCount = ReportedCount.Of(10),
+                SyncedCount = ReportedCount.Of(8),
+                FinalizedCount = ReportedCount.Of(2),
+                FailedCount = ReportedCount.Of(0),
                 TargetEndpoint = "hybrid1",
             }
         };
 
-        var csv = Migration.BuildCsv(rows);
+        var csv = Migration.BuildCsv(rows, []);
         var lines = csv.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.TrimEnd('\r')).ToArray();
 

@@ -609,11 +609,12 @@ https://admin.exchange.microsoft.com/#/migration";
             ServicedNote = result.ServicedNote,
         };
 
-    public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
+    public async Task<MigrationBatchList> GetMigrationBatchesAsync()
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var batches = new List<MigrationBatchInfo>();
+            var unreadable = new List<UnreadableMigrationBatch>();
 
             try
             {
@@ -625,17 +626,35 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 foreach (var batchObj in batchResults)
                 {
+                    // aud-a23f. Outside the try, so a row that throws is listed with its identity as far as
+                    // it was read.
+                    string? batchNameVal = null;
                     try
                     {
-                        var batchNameVal = batchObj.Properties["Identity"]?.Value?.ToString() ?? "Unknown";
+                        batchNameVal = batchObj.Properties["Identity"]?.Value?.ToString();
+                        // aud-a23f. Every batch action names its target by this, so a row without one is
+                        // listed as unreadable. It used to become a batch named "Unknown", which an action
+                        // could then be aimed at.
+                        if (string.IsNullOrWhiteSpace(batchNameVal))
+                        {
+                            _logger.LogWarning("Get-MigrationBatch returned a row with no Identity; it is listed as unreadable");
+                            unreadable.Add(new UnreadableMigrationBatch(null, "a row with no Identity"));
+                            continue;
+                        }
+
+                        // aud-a23f. The text fields stay ToString(): every value has a text, so their one
+                        // failure is the row throwing, which the catch below lists.
                         var status = batchObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
-                        var totalCount = Convert.ToInt32(batchObj.Properties["TotalCount"]?.Value ?? 0);
+                        // aud-a23f. Each count through ReportedCount.Read, not Convert.ToInt32, which threw on
+                        // a value it could not convert and lost the whole batch: one this app cannot read is
+                        // the marker in its own field. Absent is still 0.
+                        var totalCount = ReportedCount.Read(batchObj.Properties["TotalCount"]?.Value) ?? ReportedCount.Of(0);
                         // No fallback to SyncedItemCount: that counts ITEMS and TotalCount
                         // counts MAILBOXES, so the fallback would render an item count over a
                         // mailbox total and read as a nonsense fraction. Absent means 0 here.
-                        var syncedCount = Convert.ToInt32(batchObj.Properties["SyncedCount"]?.Value ?? 0);
-                        var finalizedCount = Convert.ToInt32(batchObj.Properties["FinalizedCount"]?.Value ?? batchObj.Properties["FinalizedItemCount"]?.Value ?? 0);
-                        var failedCount = Convert.ToInt32(batchObj.Properties["FailedCount"]?.Value ?? batchObj.Properties["FailedItemCount"]?.Value ?? 0);
+                        var syncedCount = ReportedCount.Read(batchObj.Properties["SyncedCount"]?.Value) ?? ReportedCount.Of(0);
+                        var finalizedCount = ReportedCount.Read(batchObj.Properties["FinalizedCount"]?.Value ?? batchObj.Properties["FinalizedItemCount"]?.Value) ?? ReportedCount.Of(0);
+                        var failedCount = ReportedCount.Read(batchObj.Properties["FailedCount"]?.Value ?? batchObj.Properties["FailedItemCount"]?.Value) ?? ReportedCount.Of(0);
                         // aud-a23d. Every time through the one reader, not `as DateTime?`: any other
                         // type came back as null and the batch showed no start, no completion, no
                         // schedule - as if none were set. Which types the Exchange Online module hands
@@ -645,7 +664,9 @@ https://admin.exchange.microsoft.com/#/migration";
                         var startDateTime = ReportedTime.Read(batchObj.Properties["StartDateTime"]?.Value);
                         var completedDateTime = ReportedTime.Read(batchObj.Properties["CompletionDateTime"]?.Value);
                         var targetEndpoint = batchObj.Properties["TargetEndpoint"]?.Value?.ToString();
-                        var autoStartVal = Convert.ToBoolean(batchObj.Properties["AutoStart"]?.Value ?? false);
+                        // aud-a23f. Convert.ToBoolean threw on a wrapped value or other text and lost the
+                        // batch, for a flag no page reads.
+                        var autoStartVal = ReadFlag(batchObj.Properties["AutoStart"]?.Value);
                         // S8. The VALUE, not a boolean derived from its presence. A batch told to
                         // complete now and a batch scheduled for 22:00 both have a non-null
                         // CompleteAfter, and collapsing them here is what made queue item 12
@@ -666,7 +687,7 @@ https://admin.exchange.microsoft.com/#/migration";
                             StartDateTime = startDateTime,
                             CompletedDateTime = completedDateTime,
                             TotalCount = totalCount,
-                            PendingCount = Convert.ToInt32(batchObj.Properties["PendingCount"]?.Value ?? 0),
+                            PendingCount = ReportedCount.Read(batchObj.Properties["PendingCount"]?.Value) ?? ReportedCount.Of(0),
                             WorkflowStage = batchObj.Properties["WorkflowStage"]?.Value?.ToString(),
                             SyncedCount = syncedCount,
                             FinalizedCount = finalizedCount,
@@ -679,19 +700,36 @@ https://admin.exchange.microsoft.com/#/migration";
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to process migration batch");
+                        // aud-a23f. A row whose reading throws anyway - a property whose getter throws, which
+                        // a deserialized row has none of - is listed, not dropped: logging alone left the page
+                        // showing the other batches as if they were all there were.
+                        _logger.LogWarning(ex, "Could not read the migration batch row {Identity}; it is listed as unreadable",
+                            batchNameVal ?? "(no identity)");
+                        unreadable.Add(batchNameVal is null
+                            ? new UnreadableMigrationBatch(null, $"a row whose Identity could not be read: {ex.Message}")
+                            : new UnreadableMigrationBatch(batchNameVal, ex.Message));
                     }
                 }
 
-                return batches;
+                return new MigrationBatchList(batches, unreadable);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to retrieve migration batches");
-                return new List<MigrationBatchInfo>();
+                return new MigrationBatchList([], []);
             }
         }, allowRetry: true);
     }
+
+    // aud-a23f. A flag as reported: false when nothing was, a bool as itself (wrappers unwrapped), text only
+    // when it is True or False. Anything else is null, not false, which would be a guess.
+    private static bool? ReadFlag(object? reported) => ReportedTime.Unwrap(reported) switch
+    {
+        null => false,
+        bool flag => flag,
+        string text when bool.TryParse(text, out var parsed) => parsed,
+        _ => null,
+    };
 
     public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
     {

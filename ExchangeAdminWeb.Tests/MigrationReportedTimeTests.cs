@@ -233,9 +233,9 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportUser("alice@contoso.test", As(form, LastSyncUtc));
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var rendered = await OpenBatchRendered(service, batch);
-        var csv = Migration.BuildCsv([batch]);
+        var csv = Migration.BuildCsv([batch], []);
 
         Assert.Contains($"Created:</strong> {Local(CreatedUtc, "MMM dd, yyyy HH:mm")}", rendered, StringComparison.Ordinal);
         Assert.Contains($"Started:</strong> {Local(StartedUtc, "MMM dd, yyyy HH:mm")}", rendered, StringComparison.Ordinal);
@@ -262,9 +262,9 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportUser("alice@contoso.test", value);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var rendered = await OpenBatchRendered(service, batch);
-        var csv = Migration.BuildCsv([batch]);
+        var csv = Migration.BuildCsv([batch], []);
 
         Assert.Contains($"Created:</strong> {marker}", rendered, StringComparison.Ordinal);
         Assert.Contains($"Started:</strong> {marker}", rendered, StringComparison.Ordinal);
@@ -287,7 +287,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch(Batch, started: value, pending: 2, stage: "Injection", total: 2);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
         var rendered = await OpenBatchRendered(service, batch);
 
         Assert.DoesNotContain("Batch not started", rendered, StringComparison.Ordinal);
@@ -329,7 +329,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch("late", created: As("DateTimeOffset", CreatedUtc.AddDays(3)));
         var service = CreateService();
 
-        var batches = await service.GetMigrationBatchesAsync();
+        var batches = (await service.GetMigrationBatchesAsync()).Batches;
         var order = Sorted("SortBatches", "Created", ascending, batches, b => b.BatchName);
 
         Assert.Equal(ascending ? ["early", "late", "unreadable"] : ["late", "early", "unreadable"], order);
@@ -348,7 +348,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch(Batch, completeAfter: value);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
 
         Assert.True(batch.AutoComplete);
         Assert.True(batch.CompleteAfterUnreadable);
@@ -362,7 +362,7 @@ public sealed class MigrationReportedTimeTests : IDisposable
         ReportBatch(Batch);
         var service = CreateService();
 
-        var batch = Assert.Single(await service.GetMigrationBatchesAsync());
+        var batch = Assert.Single((await service.GetMigrationBatchesAsync()).Batches);
 
         Assert.False(batch.AutoComplete);
         Assert.False(batch.CompleteAfterUnreadable);
