@@ -7,7 +7,7 @@ protected-principal store is the gate every mutating module consults (Known Fail
 class, lower impact: `ExchangeOnlineConfig.razor` `SaveModuleStatus` has no `IsStoreCorrupt`
 refusal, and `SaveExoConfig` guards a corrupt config only with a disabled button, which a stale
 render or a second tab can defeat.
-**Status**: Merged to master (`6ae1af25`); closed on guard proof; codex review pending
+**Status**: Merged to master (`6ae1af25`); closed on guard proof; codex attr-batch-6 clean
 **Branch**: `worktree-agent-af0cdb58244ff4bed`
 **Commit**: `1c2bb9ff` (plan `6869fd81`; comments `6aaa1133`; merged `6ae1af25`)
 **Reviewer**: implementer (surfaced by the aud-a28g/h/a26f/a28i agent, 2026-10-22, candidates 1 and 2 of its hand-back)
