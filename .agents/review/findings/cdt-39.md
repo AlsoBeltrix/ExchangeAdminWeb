@@ -6,9 +6,9 @@ intermittent "Package failed to download" (seen 2026-10-21 on the Pester install
 ConfigDbToolInApp S2 with a three-attempt retry, and again 2026-10-22 on run 39847030059 for the
 analyzer) fails the job on a docs-only commit. The two installs now behave differently for the same
 transient cause.
-**Status**: Fixed on branch; closed on guard proof; review pending
+**Status**: Merged to master (`86f3d4cb`); closed on guard proof; Pester 477/0/0 in the repo; codex review pending (batched with the next ops group)
 **Branch**: `worktree-agent-a05fc8e899ba981d1` (forked at `34c7ccd4`)
-**Commit**: `66403d56` (fix, tests, guard proof); plan `f1fa86cc`; comments in the commit after the fix
+**Commit**: `66403d56` (fix, tests, guard proof); plan `f1fa86cc`; comments `1a253747`; merged `86f3d4cb`
 **Reviewer**: implementer (CI run 39847030059 on `e9a59ed4`, 2026-10-22; rerun requested)
 
 ## Evidence
