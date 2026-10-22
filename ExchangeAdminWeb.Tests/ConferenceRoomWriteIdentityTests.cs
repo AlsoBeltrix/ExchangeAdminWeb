@@ -598,11 +598,12 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         var replace = new System.Collections.Hashtable { ["l"] = "Dublin" };
         (string Name, object Value)[] routedRead = [("Identity", CheckedObject), ("Server", RoomDomain), ("ErrorAction", "Stop")];
         (string Name, object Value)[] unroutedRead = [("Identity", CheckedObject), ("ErrorAction", "Stop")];
-        (string Name, object Value)[] otherDomainRead = [("Identity", CheckedObject), ("Server", "fabrikam.test"), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] otherDomainRead = [("Identity", OtherDomainObject), ("Server", OtherDomain), ("ErrorAction", "Stop")];
         (string Name, object Value)[] unknownServerRead = [("Identity", CheckedObject), ("Server", "dc9.invalid"), ("ErrorAction", "Stop")];
         (string Name, object Value)[] propertiesRead = [("Identity", CheckedObject), ("Properties", new[] { "l" }), ("ErrorAction", "Stop")];
         (string Name, object Value)[] routedWrite = [("Identity", CheckedObject), ("Replace", replace), ("Server", RoomDomain), ("ErrorAction", "Stop")];
         (string Name, object Value)[] import = [("Name", "ActiveDirectory"), ("ErrorAction", "Stop")];
+        AddOtherDomainObject();
 
         _h.DirectoryServerFailures[RoomDomain] = Unreachable;
         using (var rs = _h.OpenDirectoryRunspace())
@@ -646,6 +647,334 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
                 Text(Value(Run(ps, "Get-ADUser", propertiesRead).Single(), "DistinguishedName")));
         }
         Assert.Equal("The runspace failed.", Assert.Throws<InvalidOperationException>(() => _h.OpenDirectoryRunspace()).Message);
+    }
+
+    // ---- aud-a2r: every step named, an import's error the one it throws, and "Nothing was written" only where it is true ----
+    // The preflight's catch named no step. Each of the four directory paths took a record its Import-Module left for that
+    // import's error, unnamed, though under -ErrorAction Stop the import's own error is thrown. ConfirmDirectoryObject's
+    // refusals said "Nothing was written." inside the partial of a write made after Set-Place. And the stand-in Get-ADUser
+    // and Set-ADUser answered on any server they reached, so a wrong -Server was caught only by pinning its value.
+
+    private const string OtherDomainObject = "5a5a5a5a-0000-4000-8000-000000000003";
+
+    // The forest's other domain by its DNS name: the -Server that reaches an object of it.
+    private const string OtherDomain = "fabrikam.test";
+
+    // An object of the forest's other domain, found through its DNS name or the catalog only.
+    private void AddOtherDomainObject() =>
+        _h.DirectoryObjects[OtherDomainObject] = new System.Collections.Hashtable
+        {
+            ["ObjectGUID"] = Guid.Parse(OtherDomainObject),
+            ["DistinguishedName"] = "CN=Room 3,OU=Rooms," + ExchangeWriteHarness.OtherDirectoryDomainDn,
+        };
+
+    // The Building's list synchronized from on-premises, refusing the cloud add: the row's room-list add is made on-prem.
+    private void SyncedListTakingTheRoomOnPrem()
+    {
+        _h.ListSyncState[List] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+    }
+
+    [Theory]
+    [InlineData("runspace")]
+    [InlineData("import")]
+    [InlineData("object read")]
+    public async Task AFailureAtEachStepOfTheCityStateAndCountryPreflight_NamesThatStep(string failing)
+    {
+        // Each step of the preflight fails in turn, before Set-Place. Each refuses the row while nothing is written, in its
+        // one step, and the message and the log line name the step that failed and carry its error.
+        const string Injected = "The injected failure.";
+        switch (failing)
+        {
+            case "runspace": _h.DirectoryRunspaceFailure = Injected; break;
+            case "import": _h.ImportModuleFailure = Injected; break;
+            default: _h.Failures["Get-ADUser"] = Injected; break;
+        }
+        var logger = new CapturingLogger();
+
+        var result = await Finder(new Service(_h, logger), Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        var step = Assert.Single(result.Steps);
+        Assert.Equal("Set-ADUser preflight (City/State/Country)", step.Stage);
+        Assert.False(step.Success);
+        Assert.Equal(result.Message, step.Error);
+        var named = failing switch
+        {
+            "runspace" => "opening the directory runspace failed",
+            "import" => "importing the ActiveDirectory module failed",
+            _ => "reading the AD object failed",
+        };
+        Assert.Contains($"{named}: ", result.Message, StringComparison.Ordinal);
+        Assert.Contains(Injected, result.Message, StringComparison.Ordinal);
+        Assert.Contains(CheckedObject, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains(named, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("preflight")]
+    [InlineData("add")]
+    public async Task AFailedImportOnTheOnPremRoomListPaths_NamesThatStep(string path)
+    {
+        // The room list's on-prem paths keep no step of their own; their import's error - the one it throws - is told as
+        // the import's, before any write in the preflight and after Set-Place in the add, and logged so.
+        const string Injected = "The injected failure.";
+        SyncedListTakingTheRoomOnPrem();
+        if (path == "preflight")
+            _h.ImportModuleFailure = Injected;
+        else
+            _h.ImportModuleFailureAfterSetPlace = Injected;
+        var logger = new CapturingLogger();
+
+        var result = await Finder(new Service(_h, logger), Room());
+
+        Assert.False(result.Success);
+        Assert.Contains("importing the ActiveDirectory module failed: ", result.Message, StringComparison.Ordinal);
+        Assert.Contains(Injected, result.Message, StringComparison.Ordinal);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("importing the ActiveDirectory module failed", StringComparison.Ordinal));
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
+        if (path == "preflight")
+        {
+            Assert.False(result.Partial);
+            Assert.Empty(_h.Writes);
+            Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.True(result.Partial);
+            Assert.Single(_h.CallsTo("Set-Place"));
+            Assert.DoesNotContain("Nothing was written", result.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task AnErrorTheImportReportsWithoutThrowing_IsNotTakenForAnyStepsError()
+    {
+        // Under -ErrorAction Stop an error a cmdlet writes is thrown, so one the import reports without a throw - the
+        // stand-in's own -ErrorAction Continue - is not the import's. A row that opens all four directory runspaces - the
+        // City/State/Country preflight and write, the synced list's preflight and add - completes, the reported text
+        // nowhere: no check takes it for the import's error, and the record is gone before the read after the import,
+        // whose own error check would take it for that read's.
+        const string Reported = "A non-terminating error the import reported and carried on past.";
+        _h.ImportModuleReportsErrorWithoutThrowing = Reported;
+        SyncedListTakingTheRoomOnPrem();
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin");
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Equal(CheckedObject, result.WrittenDirectoryObject);
+        Assert.Single(_h.CallsTo("Set-ADUser"));
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.DoesNotContain(Reported, result.Message, StringComparison.Ordinal);
+        Assert.All(result.Steps, s => Assert.DoesNotContain(Reported, s.Error ?? "", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("City/State/Country", "preflight")]
+    [InlineData("City/State/Country", "write")]
+    [InlineData("room list", "preflight")]
+    [InlineData("room list", "add")]
+    public async Task TheObjectReadsRefusal_SaysNothingWasWritten_OnlyWhereNothingWas(string path, string phase)
+    {
+        // The read that proves the room's object is answered by another object, on each of the four paths. A preflight's
+        // refusal comes before any write and says nothing was written; a write's comes after Set-Place, inside the
+        // partial, and does not say it.
+        const string Another = "7a7a7a7a-0000-4000-8000-000000000002";
+        if (phase == "preflight")
+            _h.ObjectReadAnswersAs = Another;
+        else
+            _h.ObjectReadAnswersAsAfterSetPlace = Another;
+        if (path == "room list")
+            SyncedListTakingTheRoomOnPrem();
+
+        var result = await Finder(new Service(_h), Room(), city: path == "room list" ? "" : "Dublin");
+
+        Assert.False(result.Success);
+        var refusal = $"Active Directory answered {CheckedObject} with a different object ({Another}).";
+        var step = Assert.Single(result.Steps, s => !s.Success);
+        Assert.NotNull(step.Error);
+        Assert.Contains(refusal, step.Error, StringComparison.Ordinal);
+        Assert.Contains(refusal, result.Message, StringComparison.Ordinal);
+        if (phase == "preflight")
+        {
+            Assert.False(result.Partial);
+            Assert.Empty(_h.Writes);
+            Assert.EndsWith($"{refusal} Nothing was written.", result.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.True(result.Partial);
+            Assert.Single(_h.CallsTo("Set-Place"));
+            Assert.Empty(_h.CallsTo(path == "room list" ? "Set-ADGroup" : "Set-ADUser"));
+            Assert.DoesNotContain("Nothing was written", result.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void TheHarness_ADUserStandIns_FindAnObjectOnlyInADomainTheirServerReaches()
+    {
+        // The routing the tests above rest on, so a wrong -Server fails one by what the stand-in directory does with it,
+        // not only by the value pinned. As the stand-in Get-ADGroup since aud-a2j: an object is read or written only
+        // through its own domain's DNS name, the global catalog (a read; the catalog refuses a write), or - in the default
+        // domain only - no -Server or a bare port. An object whose DN names no domain lives in the default one.
+        AddOtherDomainObject();
+        using var rs = _h.OpenDirectoryRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        foreach (var properties in new[] { false, true })
+        {
+            Assert.Single(ReadObject(ps, CheckedObject, null, properties));
+            Assert.Single(ReadObject(ps, CheckedObject, RoomDomain, properties));
+            Assert.Single(ReadObject(ps, CheckedObject, ExchangeWriteHarness.GlobalCatalogEndpoint, properties));
+            Assert.Single(ReadObject(ps, CheckedObject, ":3268", properties));
+            NotFound(() => ReadObject(ps, CheckedObject, OtherDomain, properties));
+            Assert.Single(ReadObject(ps, OtherDomainObject, OtherDomain, properties));
+            Assert.Single(ReadObject(ps, OtherDomainObject, ExchangeWriteHarness.GlobalCatalogEndpoint, properties));
+            NotFound(() => ReadObject(ps, OtherDomainObject, null, properties));
+            NotFound(() => ReadObject(ps, OtherDomainObject, RoomDomain, properties));
+            NotFound(() => ReadObject(ps, OtherDomainObject, ":3268", properties));
+        }
+
+        var other = (System.Collections.Hashtable)_h.DirectoryObjects[OtherDomainObject]!;
+        WriteCity(ps, CheckedObject, null, "Cork");
+        Assert.Equal("Cork", Text(RoomObject["l"]));
+        WriteCity(ps, CheckedObject, RoomDomain, "Dublin");
+        Assert.Equal("Dublin", Text(RoomObject["l"]));
+        NotFound(() => WriteCity(ps, CheckedObject, OtherDomain, "Galway"));
+        Assert.Contains("unwilling to process", Assert.ThrowsAny<RuntimeException>(() =>
+            WriteCity(ps, CheckedObject, ExchangeWriteHarness.GlobalCatalogEndpoint, "Galway")).Message, StringComparison.Ordinal);
+        Assert.Equal("Dublin", Text(RoomObject["l"]));
+        WriteCity(ps, OtherDomainObject, OtherDomain, "Limerick");
+        Assert.Equal("Limerick", Text(other["l"]));
+        NotFound(() => WriteCity(ps, OtherDomainObject, null, "Galway"));
+        NotFound(() => WriteCity(ps, OtherDomainObject, RoomDomain, "Galway"));
+        Assert.Equal("Limerick", Text(other["l"]));
+
+        foreach (var dn in new[] { null, "CN=Room 1,OU=Rooms" })
+        {
+            if (dn is null)
+                RoomObject.Remove("DistinguishedName");
+            else
+                RoomObject["DistinguishedName"] = dn;
+            Assert.Single(ReadObject(ps, CheckedObject, null, false));
+            Assert.Single(ReadObject(ps, CheckedObject, RoomDomain, false));
+            NotFound(() => ReadObject(ps, CheckedObject, OtherDomain, false));
+        }
+    }
+
+    private static System.Collections.ObjectModel.Collection<PSObject> ReadObject(PowerShell ps, string objectGuid, string? server, bool properties)
+    {
+        var parameters = new List<(string Name, object Value)> { ("Identity", objectGuid), ("ErrorAction", "Stop") };
+        if (properties)
+            parameters.Add(("Properties", new[] { "l", "st", "co" }));
+        if (server is not null)
+            parameters.Add(("Server", server));
+        return Run(ps, "Get-ADUser", parameters.ToArray());
+    }
+
+    private static void WriteCity(PowerShell ps, string objectGuid, string? server, string city)
+    {
+        var parameters = new List<(string Name, object Value)>
+        {
+            ("Identity", objectGuid), ("Replace", new System.Collections.Hashtable { ["l"] = city }), ("ErrorAction", "Stop"),
+        };
+        if (server is not null)
+            parameters.Add(("Server", server));
+        Run(ps, "Set-ADUser", parameters.ToArray());
+    }
+
+    private static void NotFound(Action call) =>
+        Assert.Contains("Cannot find an object with identity", Assert.ThrowsAny<RuntimeException>(call).Message, StringComparison.Ordinal);
+
+    [Fact]
+    public void TheHarness_ImportAndObjectReadKnobs_DoWhatTheTestsAboveRestOn()
+    {
+        // Under -ErrorAction Stop, as the code calls the stand-ins. The import's reported error is not thrown and leaves its
+        // one record; its failure is a non-terminating error that Stop throws, leaving none - and, without Stop, is not
+        // thrown; DirectoryRunspaceFailure fails a runspace at any time; ObjectReadAnswersAs makes another object answer the
+        // read that proves one and not the read-back, and its AfterSetPlace twin only once a Set-Place is recorded.
+        (string Name, object Value)[] import = [("Name", "ActiveDirectory"), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] importWithoutStop = [("Name", "ActiveDirectory")];
+        (string Name, object Value)[] objectRead = [("Identity", CheckedObject), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] readBack = [("Identity", CheckedObject), ("Properties", new[] { "l" }), ("ErrorAction", "Stop")];
+        const string Another = "7a7a7a7a-0000-4000-8000-000000000002";
+
+        _h.ImportModuleReportsErrorWithoutThrowing = "Reported, not thrown.";
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Import-Module", import);
+            Assert.True(ps.HadErrors);
+            Assert.Equal("Reported, not thrown.", Assert.Single(ps.Streams.Error).Exception.Message);
+        }
+
+        _h.ImportModuleReportsErrorWithoutThrowing = null;
+        _h.ImportModuleFailure = "The import failed.";
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Contains("The import failed.", Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Import-Module", import)).Message, StringComparison.Ordinal);
+            Assert.Empty(ps.Streams.Error);
+            Run(ps, "Import-Module", importWithoutStop);
+            Assert.Equal("The import failed.", Assert.Single(ps.Streams.Error).Exception.Message);
+        }
+
+        _h.ImportModuleFailure = null;
+        _h.DirectoryRunspaceFailure = "The runspace failed.";
+        Assert.Equal("The runspace failed.", Assert.Throws<InvalidOperationException>(() => _h.OpenDirectoryRunspace()).Message);
+
+        _h.DirectoryRunspaceFailure = null;
+        _h.ObjectReadAnswersAs = Another;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Equal(Guid.Parse(Another), Value(Run(ps, "Get-ADUser", objectRead).Single(), "ObjectGUID"));
+            Assert.Equal(Guid.Parse(CheckedObject), Value(Run(ps, "Get-ADUser", readBack).Single(), "ObjectGUID"));
+        }
+
+        _h.ObjectReadAnswersAs = null;
+        _h.ObjectReadAnswersAsAfterSetPlace = Another;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Equal(Guid.Parse(CheckedObject), Value(Run(ps, "Get-ADUser", objectRead).Single(), "ObjectGUID"));
+            _h.Calls.Add(new System.Collections.Hashtable { ["__Command"] = "Set-Place" });
+            Assert.Equal(Guid.Parse(Another), Value(Run(ps, "Get-ADUser", objectRead).Single(), "ObjectGUID"));
+            Assert.Equal(Guid.Parse(CheckedObject), Value(Run(ps, "Get-ADUser", readBack).Single(), "ObjectGUID"));
+        }
+    }
+
+    [Fact]
+    public void TheRealImportModule_ThrowsItsOwnErrorUnderStop_AndLeavesNoRecord()
+    {
+        // The measurement the removed HadErrors branches were judged by, on this SDK: the real Import-Module, unable to load
+        // its module, under -ErrorAction Stop, throws from Invoke and leaves no record in the error stream, so a check made
+        // after Invoke never sees the import's own error; without Stop it throws nothing and leaves the record. A local
+        // runspace and a module name nothing provides: no directory is touched.
+        var missing = "EawNoSuchModule-" + Guid.NewGuid().ToString("N");
+        using var rs = RunspaceFactory.CreateRunspace();
+        rs.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", missing).AddParameter("ErrorAction", "Stop");
+        Assert.ThrowsAny<RuntimeException>(() => ps.Invoke());
+        Assert.Empty(ps.Streams.Error);
+
+        ps.Commands.Clear();
+        ps.AddCommand("Import-Module").AddParameter("Name", missing);
+        ps.Invoke();
+        Assert.Single(ps.Streams.Error);
     }
 
     [Fact]

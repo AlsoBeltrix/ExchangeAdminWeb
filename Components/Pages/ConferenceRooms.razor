@@ -1077,7 +1077,7 @@
                     op.Complete(r.Success, r.Message);
 
                     AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
-                    await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
+                    await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed);
                     return r;
                 });
         }
@@ -1662,13 +1662,13 @@
     // Mandatory admin notification on every room write (Constitution §Notifications).
     // Fail-safe: a send failure logs but never changes the operation result. Single-room
     // paths call this per apply; bulk paths call it once with a summary after the loop.
-    private async Task NotifyRoomAdminAsync(string action, string target, bool success, string ticket, string? errorDetail)
+    private async Task NotifyRoomAdminAsync(string action, string target, bool success, string ticket, string? errorDetail, string? attributesConfirmed = null, string? membershipConfirmed = null)
     {
         try
         {
             await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action,
                 success, ticket,
-                new Dictionary<string, string> { ["Room"] = target },
+                ConferenceRoomService.NotificationDetails(target, attributesConfirmed, membershipConfirmed),
                 success ? null : errorDetail);
         }
         catch (Exception ex)

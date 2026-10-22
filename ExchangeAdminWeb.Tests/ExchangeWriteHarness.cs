@@ -339,6 +339,32 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public string? ObjectDnAfterSetPlace { get; set; }
 
+    /// <summary>aud-a2r. Opening a directory runspace throws this, at any time - the first AD step's runspace fails. Null, the default, fails nothing.</summary>
+    public string? DirectoryRunspaceFailure { get; set; }
+
+    /// <summary>
+    /// aud-a2r. The stand-in <c>Import-Module</c> fails with this at any time, as the real cmdlet reports a module it
+    /// cannot load: a non-terminating error, thrown only by the caller's <c>-ErrorAction Stop</c>. Null, the default,
+    /// fails nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? ImportModuleFailure { get; set; }
+
+    /// <summary>
+    /// aud-a2r. The stand-in <c>Import-Module</c> reports this as an error that <c>-ErrorAction Stop</c> does not throw -
+    /// written with its own <c>-ErrorAction Continue</c> - and carries on, the module loaded. Null, the default, reports
+    /// nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? ImportModuleReportsErrorWithoutThrowing { get; set; }
+
+    /// <summary>
+    /// aud-a2r. A <c>Get-ADUser -Identity</c> without <c>-Properties</c> - the read that proves the object - answers with
+    /// this objectGUID, at any time. Null, the default, answers as the object asked for. Read when a directory runspace opens.
+    /// </summary>
+    public string? ObjectReadAnswersAs { get; set; }
+
+    /// <summary>aud-a2r. The same, only once a <c>Set-Place</c> has been called. Read when a directory runspace opens.</summary>
+    public string? ObjectReadAnswersAsAfterSetPlace { get; set; }
+
     /// <summary>
     /// aud-a2l. Another actor's add of the same DN lands just before the stand-in <c>Set-ADGroup</c>'s:
     /// the DN is put on the group first, so the write is refused as a value already there (or fails with
@@ -534,6 +560,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         // aud-a2q. The runspace of an AD step after Set-Place - the City/State/Country write's - cannot be opened.
         if (DirectoryRunspaceFailureAfterSetPlace is { } failure && CallsTo("Set-Place").Count > 0)
             throw new InvalidOperationException(failure);
+        // aud-a2r. Any directory runspace, the preflight's included: the first AD step's fails.
+        if (DirectoryRunspaceFailure is { } anyTime)
+            throw new InvalidOperationException(anyTime);
         var rs = RunspaceFactory.CreateRunspace();
         rs.Open();
         Define(rs, DirectoryStandIns);
@@ -598,6 +627,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("ImportModuleFailureAfterSetPlace", ImportModuleFailureAfterSetPlace);
         rs.SessionStateProxy.SetVariable("ObjectReadFailureAfterSetPlace", ObjectReadFailureAfterSetPlace);
         rs.SessionStateProxy.SetVariable("ObjectDnAfterSetPlace", ObjectDnAfterSetPlace);
+        rs.SessionStateProxy.SetVariable("ImportModuleFailure", ImportModuleFailure);
+        rs.SessionStateProxy.SetVariable("ImportModuleReportsErrorWithoutThrowing", ImportModuleReportsErrorWithoutThrowing);
+        rs.SessionStateProxy.SetVariable("ObjectReadAnswersAs", ObjectReadAnswersAs);
+        rs.SessionStateProxy.SetVariable("ObjectReadAnswersAsAfterSetPlace", ObjectReadAnswersAsAfterSetPlace);
         rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
         init.Runspace = rs;
@@ -825,9 +858,16 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # write's steps and leave its preflight's - all made before Set-Place - alone. ImportModuleFailureAfterSetPlace
         # fails the import of a runspace's module after one.
         function global:Test-StandInAfterSetPlace { @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-Place' }).Count -gt 0 }
+        # aud-a2r. An advanced function, so the caller's -ErrorAction Stop acts on it as on the real cmdlet: it declared
+        # $ErrorAction as a plain parameter, which the preference never reached. ImportModuleFailure is reported as the
+        # real cmdlet reports a module it cannot load - a non-terminating error, thrown only by the caller's Stop;
+        # ImportModuleReportsErrorWithoutThrowing is written past that, with its own -ErrorAction Continue, and the import
+        # carries on, the module loaded.
         function global:Import-Module {
-            param($Name, $ErrorAction)
+            [CmdletBinding()] param($Name)
             if ($global:ImportModuleFailureAfterSetPlace -and (Test-StandInAfterSetPlace)) { throw "$($global:ImportModuleFailureAfterSetPlace)" }
+            if ($global:ImportModuleFailure) { Write-Error "$($global:ImportModuleFailure)"; return }
+            if ($global:ImportModuleReportsErrorWithoutThrowing) { Write-Error "$($global:ImportModuleReportsErrorWithoutThrowing)" -ErrorAction Continue }
         }
         # aud-a2q. Why a call's -Server cannot be used, or $null: one DirectoryServerFailures names fails with its message;
         # one the stand-in forest does not have (Get-StandInReach) cannot be contacted; no -Server - the default domain -
@@ -839,6 +879,20 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($null -eq (Get-StandInReach $Bound)) { return "Unable to contact the server '$server'." }
             return $null
         }
+        # aud-a2r. Where a directory object lives - the forest domain its DN ends with, else the default domain (no DN, or
+        # one naming no domain of the forest: aud-a2q's fallback fixtures) - and whether a call's -Server reaches it, by the
+        # reach a group is found by (Get-StandInReach, Test-StandInReaches, below): the default domain with no -Server or a
+        # bare port, a domain by its DNS name, every domain through the catalog.
+        function global:Get-StandInObjectDomain($Entry) {
+            $dn = "$($Entry['DistinguishedName'])"
+            foreach ($domain in @($global:DirectoryDomains)) {
+                if ($dn.EndsWith(",$domain", [StringComparison]::OrdinalIgnoreCase)) { return "$domain" }
+            }
+            return $global:DirectoryDomainDn
+        }
+        function global:Test-StandInObjectReached($Bound, $Entry) {
+            Test-StandInReaches (Get-StandInReach $Bound) (Get-StandInObjectDomain $Entry)
+        }
         # aud-a2p. Set-ADUser applies its -Replace to the object in DirectoryObjects, so a read-back sees what it changed -
         # unless SetAdUserChangesNothing, a write that reports success and changes nothing - and, told to
         # (SetAdUserReportsErrorWithoutThrowing), then reports an error the caller's -ErrorAction Stop does not throw: its
@@ -847,10 +901,13 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # -Properties after a Set-ADUser is the read-back: AttributeReadBackFailure fails it, AttributeReadBackAnswersAs
         # makes another object answer it. Both take -Server, which the code passes for the preflight's routed read, the
         # write and the read-back: since aud-a2q they refuse one Get-StandInServerFailure finds unusable (Write-Error then
-        # return), and otherwise do not route by it (the room's object answers on any server they reach) - the tests pin
-        # what is passed. aud-a2q, after a Set-Place: ObjectReadFailureAfterSetPlace fails the object read (-Identity
-        # without -Properties) and ObjectDnAfterSetPlace changes the DN a read answers; SetAdUserFailsAfterApplying throws
-        # once the -Replace is applied.
+        # return). aud-a2r: and they find an object only in a domain the call reaches (Test-StandInObjectReached), as the
+        # real cmdlets do - Get-ADUser throws its not-found, Set-ADUser writes it, and refuses the catalog, which takes no
+        # write - so a wrong -Server fails a test by what the directory does with it, not only by the value a test pins.
+        # ObjectReadAnswersAs, or after a Set-Place ObjectReadAnswersAsAfterSetPlace, makes another object answer the
+        # object read (-Identity without -Properties). aud-a2q, after a Set-Place: ObjectReadFailureAfterSetPlace fails
+        # the object read and ObjectDnAfterSetPlace changes the DN a read answers; SetAdUserFailsAfterApplying throws once
+        # the -Replace is applied.
         function global:Get-ADUser {
             [CmdletBinding()] param($Identity, $Filter, $Credential, $Properties, $Server)
             Write-StandInCall 'Get-ADUser' $PSBoundParameters
@@ -858,13 +915,15 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($unusable) { Write-Error $unusable; return }
             if ($PSBoundParameters.ContainsKey('Identity')) {
                 $entry = $global:DirectoryObjects["$Identity"]
-                if ($null -eq $entry) { throw "Cannot find an object with identity: '$Identity'" }
+                if ($null -eq $entry -or -not (Test-StandInObjectReached $PSBoundParameters $entry)) { throw "Cannot find an object with identity: '$Identity'" }
                 $afterSetPlace = Test-StandInAfterSetPlace
                 if (-not $PSBoundParameters.ContainsKey('Properties') -and $global:ObjectReadFailureAfterSetPlace -and $afterSetPlace) { throw "$($global:ObjectReadFailureAfterSetPlace)" }
                 $readBack = $PSBoundParameters.ContainsKey('Properties') -and @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-ADUser' }).Count -gt 0
                 if ($readBack -and $global:AttributeReadBackFailure) { Write-Error "$($global:AttributeReadBackFailure)"; return }
                 $answer = New-Object psobject -Property $entry
                 if ($readBack -and $global:AttributeReadBackAnswersAs) { $answer.ObjectGUID = [guid]"$($global:AttributeReadBackAnswersAs)" }
+                $objectAs = if ($PSBoundParameters.ContainsKey('Properties')) { $null } elseif ($global:ObjectReadAnswersAsAfterSetPlace -and $afterSetPlace) { $global:ObjectReadAnswersAsAfterSetPlace } else { $global:ObjectReadAnswersAs }
+                if ($objectAs) { $answer.ObjectGUID = [guid]"$objectAs" }
                 if ($global:ObjectDnAfterSetPlace -and $afterSetPlace) { $answer | Add-Member -NotePropertyName DistinguishedName -NotePropertyValue "$($global:ObjectDnAfterSetPlace)" -Force }
                 $answer
             }
@@ -874,8 +933,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
             Write-StandInCall 'Set-ADUser' $PSBoundParameters
             $unusable = Get-StandInServerFailure $PSBoundParameters
             if ($unusable) { Write-Error $unusable; return }
+            if ((Get-StandInReach $PSBoundParameters) -eq 'forest') { Write-Error 'The server is unwilling to process the request.'; return }
             $entry = $global:DirectoryObjects["$Identity"]
-            if ($null -eq $entry) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
+            if ($null -eq $entry -or -not (Test-StandInObjectReached $PSBoundParameters $entry)) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
             if (-not $global:SetAdUserChangesNothing -and $null -ne $Replace) { foreach ($key in @($Replace.Keys)) { $entry["$key"] = $Replace[$key] } }
             if ($global:SetAdUserReportsErrorWithoutThrowing) { Write-Error "$($global:SetAdUserReportsErrorWithoutThrowing)" -ErrorAction Continue }
             if ($null -ne $global:SetAdUserFailsAfterApplying) { throw $global:SetAdUserFailsAfterApplying }
