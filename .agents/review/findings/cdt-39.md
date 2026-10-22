@@ -8,7 +8,7 @@ analyzer) fails the job on a docs-only commit. The two installs now behave diffe
 transient cause.
 **Status**: Fixed on branch; closed on guard proof; review pending
 **Branch**: `worktree-agent-a05fc8e899ba981d1` (forked at `34c7ccd4`)
-**Commit**: -
+**Commit**: `66403d56` (fix, tests, guard proof); plan `f1fa86cc`; comments in the commit after the fix
 **Reviewer**: implementer (CI run 39847030059 on `e9a59ed4`, 2026-10-22; rerun requested)
 
 ## Evidence
@@ -91,11 +91,13 @@ then `tools/Test-AsciiOnly.ps1`; `tools/Install-ExchangeAdminWeb.ps1` still neve
 
 ## Fix
 
-As planned. `.github/workflows/ci.yml`, the `PSScriptAnalyzer` step (47-66): the loop at 50-59,
-the install at 52 (`-RequiredVersion 1.25.0 -ErrorAction Stop` added to the original flags), the
-import at 60, `Invoke-ScriptAnalyzer` at 61; 62-66 unchanged. The Pester step (now 74-101) is
+As planned. Line numbers after the comments commit (at `66403d56` its comment lines are absent, so
+the lines below them sit higher in both files). `.github/workflows/ci.yml`, the
+`PSScriptAnalyzer` step (47-71): the why-comment at 50-54, the loop at 55-64, the install at 57
+(`-RequiredVersion 1.25.0 -ErrorAction Stop` added to the original flags), the import at 65,
+`Invoke-ScriptAnalyzer` at 66, the rest of the step unchanged. The Pester step (now 79-106) is
 unchanged. `tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI gates'`: `Get-CiStepScript` in its
-BeforeAll (1998-2026), the retry test (2068-2110), the version test (2112-2134).
+BeforeAll (1998-2031), the retry test (2073-2122), the version test (2124-2150).
 
 Behaviour probe of the step itself (scratch, `cdt39-stepprobe`): its loop and import lifted from
 `ci.yml` and run in a fresh pwsh 7.6.6 behind GitHub's `$ErrorActionPreference = 'stop'` prefix.
@@ -131,7 +133,59 @@ fails both analyzer tests (the retry case on the missing `-ErrorAction Stop`, th
 the missing pin) and nothing else; M1's shape applied to the Pester step
 (`2F9E101E7ED3F950D16F93B16E8572CA`) fails the Pester case and nothing else.
 
+The comments were written after the round, in their own commit, so the md5s above are the fix
+commit's bytes. Post-comment `ci.yml` md5 `A34104CA659CD81F8C579DB146CA003A` (LF); the comments are
+PowerShell `#` lines inside the step's `run: |` block, which the parser ignores, and the whole
+suite was rerun on them (Gates).
+
+One assertion message changed in that commit too, after a probe (scratch,
+`cdt39-stepprobe/probe-erroraction.ps1`): the loop with a version that does not exist, run the way
+GitHub runs a pwsh step (`pwsh -command ". '<file>'"`). With `-ErrorAction Stop` the failure was
+caught on attempts 1 and 2 and rethrown on 3 (exit 1), with or without GitHub's
+`$ErrorActionPreference = 'stop'` prefix; without the parameter but with the prefix, the same;
+with neither, the failure skipped the catch, the loop broke as if the install had succeeded and the
+script ran on (exit 0). So the parameter does not change today's CI behaviour; it keeps the retry
+working without resting on the runner's prefix. The retry test's `-Because` had said the catch
+never sees the failure without it; it now says the catch sees it only when the shell's error
+preference is Stop. Pass and fail are unchanged.
+
 ## Files changed
 
 `.github/workflows/ci.yml`, `tests/ps/DeployInvariants.Tests.ps1`, this record. No version bump:
 CI and tests only.
+
+## Gates - 2026-10-22
+
+One pwsh 7.6.6 session (scratch, `cdt39-gates/gates.ps1`), Pester 6.2.0 imported before the
+analyzer, PSScriptAnalyzer 1.25.0, on the final tree, comments included:
+
+- `Invoke-ScriptAnalyzer -Path tests/ps/DeployInvariants.Tests.ps1 -Severity Error`: 0. Its
+  warnings: 15, the same 15 as at `34c7ccd4`, all at 1645-1679, untouched.
+- The CI step's own run, `-Severity Error,Warning`, over the 31 tracked `.ps1`/`.psm1`/`.psd1`
+  files (CI analyzes before anything is built, so local `bin/` and `obj/` output is left out): 0
+  errors, 298 warnings; the test file is the only PowerShell file changed.
+- `Invoke-Pester tests/ps`: 477 passed, 0 failed, 0 skipped, 0 not run (103 s), against the
+  Release build of the app (`dotnet build ExchangeAdminWeb.csproj -c Release`, exit 0).
+- Windows PowerShell 5.1.20348 `ParseFile` of `tests/ps/DeployInvariants.Tests.ps1`: 0 errors, at
+  the fix commit's bytes and again with the comments.
+- `git diff --check HEAD`: clean. `git add -A`, then `tools/Test-AsciiOnly.ps1`: passed; `ci.yml`
+  and this record hold no non-ASCII byte.
+- `tools/Install-ExchangeAdminWeb.ps1`: unchanged, and still never contains `deploy.ps1`.
+
+Not run: `dotnet build ExchangeAdminWeb.slnx` and `dotnet test` (no .NET source changed), and any
+GitHub run. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- Nothing ran on a GitHub runner; the guards parse `ci.yml`, and the step was probed on the dev
+  host. The next CI run is the first real execution of the new step.
+- A real "Package failed to download" cannot be produced on demand; that it reaches the catch is
+  an assumption resting on the probe's `Install-Package` error taking the same path (Fix).
+- The runner image's own analyzer copies and `PSModulePath` order were not inspected; the versioned
+  import makes the step independent of both, and fails it if 1.25.0 is missing.
+
+## Candidates noticed, not fixed
+
+- LOW, same class as this finding: the CI Pester install is `-MinimumVersion 5.5`, unpinned, so CI
+  runs the Gallery's newest Pester (6.2.0 on 2026-10-22, the dev host's version) and a new
+  release changes CI's test runner with nothing in the repo changing.

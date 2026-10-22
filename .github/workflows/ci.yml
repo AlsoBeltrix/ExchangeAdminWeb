@@ -47,6 +47,11 @@ jobs:
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |
+          # Retried like the Pester install below, for the same cause: a transient Gallery
+          # "Package failed to download" failed this step on a docs-only commit (cdt-39).
+          # Imported by version after the install, because auto-loading takes the first copy on
+          # PSModulePath, not the newest. 1.25.0 is the dev host's analyzer, so a local run applies
+          # CI's rules; to bump it, update the dev host, this step and the CI gates Pester test.
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
               Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -RequiredVersion 1.25.0 -ErrorAction Stop

@@ -1996,6 +1996,11 @@ Describe 'CI gates' {
         $script:psJob = if ($psJobAt -ge 0) { $script:ci.Substring($psJobAt) } else { '' }
 
         function Get-CiStepScript {
+            # One powershell-job step's `run: |` block, de-indented and parsed as the PowerShell
+            # it is, so the guards read commands and loops: a commented-out loop, or a retry in
+            # another step, cannot satisfy them. It throws - failing the test, never passing it -
+            # when the step or its block is not in this file's layout (`- name:` at six spaces,
+            # `run: |` at eight).
             param([string]$Name)
             $lines = $script:psJob -split '\r?\n'
             $at = [array]::IndexOf($lines, "      - name: $Name")
@@ -2069,6 +2074,10 @@ Describe 'CI gates' {
         @{ Step = 'PSScriptAnalyzer'; Module = 'PSScriptAnalyzer' }
         @{ Step = 'Pester'; Module = 'Pester' }
     ) {
+        # cdt-39: the Gallery fails downloads transiently, and the analyzer's single install
+        # failed the job on a docs-only commit. The Pester install got this loop in
+        # ConfigDbToolInApp S2 with no test; the analyzer install copies it. One test for both
+        # holds the two copies to one shape.
         $run = Get-CiStepScript $Step
         $run.Errors | Should -BeNullOrEmpty -Because "the $Step step's script must parse"
 
@@ -2080,7 +2089,10 @@ Describe 'CI gates' {
         $installs.Count | Should -Be 1 -Because "the $Step step must install $Module exactly once, inside the retry"
         $install = $installs[0]
         $install.CommandElements[1].Extent.Text | Should -Be $Module
-        Get-NamedArgumentText $install 'ErrorAction' | Should -Be 'Stop' -Because 'without it a failed download is a non-terminating error the catch never sees'
+        # GitHub's pwsh shell prepends $ErrorActionPreference = 'stop', which alone routes the
+        # failure to the catch; the parameter keeps it there without relying on the runner. Probe
+        # (cdt-39): with neither, a failed install skipped the catch and the loop reported success.
+        Get-NamedArgumentText $install 'ErrorAction' | Should -Be 'Stop' -Because 'without it the catch sees a failed install only when the shell''s error preference is Stop'
 
         $try = $install.Parent.Parent.Parent
         $try | Should -BeOfType ([System.Management.Automation.Language.TryStatementAst]) -Because "the $Module install must run inside the retry's try"
@@ -2110,6 +2122,10 @@ Describe 'CI gates' {
     }
 
     It 'runs PSScriptAnalyzer 1.25.0, the version the dev host runs (cdt-39)' {
+        # So CI and a local run apply the same rules, and a new analyzer release cannot change
+        # CI's verdict with nothing in the repo changing. The number is pinned here too, so a
+        # bump is deliberate. The import is the pin that decides: auto-loading takes the first
+        # copy on PSModulePath, not the newest (probed in cdt-39), so an install alone does not.
         $run = Get-CiStepScript 'PSScriptAnalyzer'
         $run.Errors | Should -BeNullOrEmpty
         $commands = @($run.Ast.FindAll({
