@@ -6,7 +6,7 @@
 `as DateTime?` from the PowerShell object. If the Exchange Online or AD module hands back a
 `DateTimeOffset`, a string or a wrapped PSObject, the cast yields null and the page shows no value,
 as if none were set, with no sign anything was dropped - the aud-a7h shape in two other modules.
-**Status**: Merged to master (`4c54621b`); closed on guard proof; codex review pending
+**Status**: Merged to master (`4c54621b`); closed on guard proof; codex ops-batch-9 clean
 **Branch**: `worktree-agent-a569fa37de1b7388c` (forked at `f1460447`)
 **Commit**: `86cd680f` (merged `4c54621b`)
 **Reviewer**: implementer (surfaced by the aud-a38k/a7h agent, 2026-10-22, candidate 1 of its hand-back)

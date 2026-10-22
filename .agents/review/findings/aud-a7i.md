@@ -5,7 +5,7 @@ app cannot read is shown as "reported in a form this app cannot read: System.Str
 itself is not shown, although showing it word for word involves no guess and would let the operator
 see what Exchange said. (2) A Scheduled auto-reply whose start is not reported (null) but whose end
 is shows no schedule line at all; the end is dropped silently. Pre-existing.
-**Status**: Merged to master (`4c54621b`); closed on guard proof; codex review pending
+**Status**: Merged to master (`4c54621b`); closed on guard proof; codex ops-batch-9 clean
 **Branch**: `worktree-agent-a569fa37de1b7388c` (forked at `f1460447`)
 **Commit**: `1622f027` (merged `4c54621b`)
 **Reviewer**: implementer (surfaced by the aud-a38k/a7h agent, 2026-10-22, candidates 2 and 4 of its hand-back)
