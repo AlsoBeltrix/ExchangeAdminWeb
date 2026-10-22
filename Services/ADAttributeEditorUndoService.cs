@@ -56,10 +56,21 @@ public class ADAttributeEditorUndoService : IUndoableModule
         if (!string.Equals(result, "Success", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        // Must have at least one old_/new_ prefixed attribute pair
-        return auditEvent.Keys.Any(k => k.StartsWith("old_", StringComparison.OrdinalIgnoreCase))
-            && auditEvent.Keys.Any(k => k.StartsWith("new_", StringComparison.OrdinalIgnoreCase));
+        // aud-a26m. Each changed attribute needs one recorded side, not both. The JSONL writer drops a null field,
+        // so the record of a clear has no new_<attr> and the record of setting an attribute that had no value has
+        // no old_<attr>; asking for an old_ key and a new_ key left every such edit without its Undo, though the
+        // preview and the execute paths already read a missing side as "not set". An attribute with neither side
+        // has nothing to restore from and nothing to check the directory against.
+        var changedAttributes = GetStringArray(auditEvent, "changedAttributes");
+        return changedAttributes.Length > 0
+            && changedAttributes.All(attr => HasSide(auditEvent, $"old_{attr}") || HasSide(auditEvent, $"new_{attr}"));
     }
+
+    // A side is a key present with a value. A null, or a JSON null, is absent: the writer would have dropped it.
+    private static bool HasSide(Dictionary<string, object?> auditEvent, string key) =>
+        auditEvent.TryGetValue(key, out var value)
+        && value is not null
+        && value is not JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined };
 
     public async Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent, System.Security.Claims.ClaimsPrincipal? actingUser)
     {
@@ -191,17 +202,14 @@ public class ADAttributeEditorUndoService : IUndoableModule
             return new UndoResult(false, noChanges, null);
         }
 
-        using var scope = _operationTrace.BeginOperation(
-            module: "ADAttributeEditor",
-            action: "ADAttributeEditor_Undo",
-            actor: performedBy,
-            ipAddress: ip,
-            target: target,
-            ticket: ticket,
-            details: new Dictionary<string, object?> { ["originalOperationId"] = originalOperationId });
-
+        // aud-a28o. The operation is begun inside the try, so a throw there reaches the catch below and is the
+        // undo's recorded, announced failure rather than an exception out of the module with no record. The
+        // finally disposes it, as the using did.
+        OperationTraceService.OperationScope? scope = null;
         try
         {
+            scope = BeginUndoOperation(performedBy, ip, target, ticket, originalOperationId);
+
             // Re-read current state
             var lookupResult = await _editorService.LookupAsync(target);
             if (!lookupResult.Success || lookupResult.CurrentValues == null || lookupResult.Principal == null)
@@ -340,10 +348,31 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 performedBy, ip, ticket, target, changedAttributes, originalOperationId,
                 success: false, error: ex.Message);
 
-            scope.Complete(false, ex.Message);
+            scope?.Complete(false, ex.Message);
             return new UndoResult(false, $"Unexpected error during undo: {ex.Message}", null);
         }
+        finally
+        {
+            scope?.Dispose();
+        }
     }
+
+    /// <summary>The undo's trace operation (aud-a28o).</summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, the shape of <c>ADAttributeEditorService.CreateDirectoryRunspace</c>: a
+    /// test makes it throw, which the trace service is not known to do - its writes go through the JSONL writer,
+    /// which logs and swallows its own IO errors. Production begins exactly the operation it always did.
+    /// </remarks>
+    internal virtual OperationTraceService.OperationScope BeginUndoOperation(
+        string performedBy, string ip, string target, string ticket, string? originalOperationId) =>
+        _operationTrace.BeginOperation(
+            module: "ADAttributeEditor",
+            action: "ADAttributeEditor_Undo",
+            actor: performedBy,
+            ipAddress: ip,
+            target: target,
+            ticket: ticket,
+            details: new Dictionary<string, object?> { ["originalOperationId"] = originalOperationId });
 
     /// <summary>
     /// Records an undo the event log refused before calling <see cref="ExecuteUndoAsync"/> (aud-a28l).

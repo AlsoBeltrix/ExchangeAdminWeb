@@ -5,7 +5,8 @@ namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
 /// aud-a28d: an undo refused before its save - a protected target included - wrote no audit
-/// record.
+/// record. aud-a26m: an edit that cleared an attribute, or set one that had no value, offered no
+/// undo at all.
 /// </summary>
 /// <remarks>
 /// ExecuteUndoAsync has eight refusal returns ahead of SaveAsync. Each completed only the
@@ -175,5 +176,140 @@ public sealed class ADAttributeEditorUndoRefusalTests : IDisposable
         Assert.Equal("Failed", Text(undoRecord, "result"));
         Assert.False(undoRecord.TryGetProperty("refusedAt", out _));
         Assert.False(undoRecord.TryGetProperty("mutationAttempted", out _));
+    }
+
+    // ---- aud-a26m: an edit with one side not set is undoable --------------------------------------
+
+    /// <summary>A record as the event log hands it to undo: every property, by a case-insensitive name.</summary>
+    private static Dictionary<string, object?> AsTheEventLogReadsIt(JsonElement record) =>
+        record.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone(), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A forward save through the real service, and its record read back from the JSONL as the event log
+    /// reads it, with the operator's level added as the page adds it.
+    /// </summary>
+    private async Task<Dictionary<string, object?>> SavedEdit(LocalAd.User user, Dictionary<string, string?> values)
+    {
+        var saved = await _h.Service.SaveAsync(
+            AttributeEditorHarness.PrincipalFor(user), values, "EXAMPLE\\operator", "10.0.0.5", "CHG0100",
+            AttributeEditorHarness.Operator());
+        Assert.True(saved.Success, saved.Error);
+
+        var edit = AsTheEventLogReadsIt(Assert.Single(_h.AuditEvents()));
+        edit["_undoMaxLevel"] = 1;
+        return edit;
+    }
+
+    [Fact]
+    public async Task AClearOnlyEdit_IsUndoable_AndItsUndoPutsTheValueBack()
+    {
+        // The cleared side is null, and the writer drops a null field, so the record holds old_department alone.
+        var alex = _h.Ad.AddAlex();
+        var edit = await SavedEdit(alex, new() { ["department"] = "" });
+        Assert.False(edit.ContainsKey("new_department"));
+        Assert.Equal("Finance", ((JsonElement)edit["old_department"]!).GetString());
+
+        var undo = _h.CreateUndoService();
+        Assert.True(undo.CanUndo(edit));
+
+        var result = await Undo(edit, undo);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("Finance", alex.Attributes["department"]);
+        Assert.Equal("Finance", _h.Ad.Sets[^1].Replace["department"]);
+        var undone = Assert.Single(_h.AuditEvents(), e => Text(e, "action") == "ADAttributeEditor_Undo");
+        Assert.Equal("Success", Text(undone, "result"));
+    }
+
+    [Fact]
+    public async Task ASetFromEmptyEdit_IsUndoable_AndItsUndoClearsIt()
+    {
+        // The other way round: the attribute had no value, so the record holds new_department alone.
+        var sam = _h.Ad.Add("sam.rivera@example.test", "CN=Sam Rivera,OU=Staff,DC=example,DC=test", "Sam Rivera", ("title", "Analyst"));
+        var edit = await SavedEdit(sam, new() { ["department"] = "Finance" });
+        Assert.False(edit.ContainsKey("old_department"));
+        Assert.Equal("Finance", ((JsonElement)edit["new_department"]!).GetString());
+
+        var undo = _h.CreateUndoService();
+        Assert.True(undo.CanUndo(edit));
+
+        var result = await Undo(edit, undo);
+
+        Assert.True(result.Success, result.Error);
+        Assert.Null(sam.Attributes["department"]);
+        Assert.Equal(["department"], _h.Ad.Sets[^1].Clear);
+        var undone = Assert.Single(_h.AuditEvents(), e => Text(e, "action") == "ADAttributeEditor_Undo");
+        Assert.Equal("Success", Text(undone, "result"));
+    }
+
+    [Fact]
+    public void AnAttributeWithNeitherSideRecorded_IsNotUndoable()
+    {
+        // Nothing to restore from and nothing to check the directory against.
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var undo = _h.CreateUndoService();
+
+        var both = AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst");
+        Assert.True(undo.CanUndo(both));
+
+        var oneWithout = AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst");
+        oneWithout["changedAttributes"] = new[] { "title", "department" };
+        Assert.False(undo.CanUndo(oneWithout));
+
+        // A key held null is no side: the JSONL writer would have dropped it.
+        var heldNull = AttributeEditorHarness.ForwardEdit(alex, "department", from: null, to: null);
+        Assert.False(undo.CanUndo(heldNull));
+    }
+
+    [Fact]
+    public async Task AFailedEdit_IsNotUndoable_ThoughItRecordsBothSides()
+    {
+        // A write the directory refused is recorded with the change it tried (aud-a28c), and stays not
+        // undoable: only a successful edit is.
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        _h.Ad.SetFailure = "Insufficient access rights to perform the operation";
+        var saved = await _h.Service.SaveAsync(
+            AttributeEditorHarness.PrincipalFor(alex), new() { ["title"] = "Lead Analyst" }, "EXAMPLE\\operator", "10.0.0.5",
+            "CHG0100", AttributeEditorHarness.Operator());
+        Assert.False(saved.Success);
+
+        var failed = AsTheEventLogReadsIt(Assert.Single(_h.AuditEvents()));
+        Assert.Equal("Failed", ((JsonElement)failed["result"]!).GetString());
+        Assert.True(failed.ContainsKey("old_title") && failed.ContainsKey("new_title"));
+        Assert.False(_h.CreateUndoService().CanUndo(failed));
+    }
+
+    // ---- aud-a28o: a trace that cannot begin is the undo's recorded failure -----------------------
+
+    [Fact]
+    public async Task AnUndoWhoseTraceCannotBegin_LeavesOneFailureRecord()
+    {
+        // The operation was begun before the try, outside the catch that records an undo's failure, so a throw
+        // there left the event log an exception and the audit log nothing.
+        const string traceDown = "The operation trace could not be started.";
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+
+        UndoResult? result = null;
+        var thrown = await Record.ExceptionAsync(async () => result = await Undo(
+            AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"),
+            _h.CreateUndoServiceWhoseTraceFails(traceDown)));
+
+        Assert.Null(thrown);
+        Assert.False(result!.Success);
+        Assert.Contains(traceDown, result.Error, StringComparison.Ordinal);
+        Assert.Equal(0, _h.Service.SessionsOpened);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Undo", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(traceDown, Text(record, "error"));
+        Assert.Equal("op-forward-1", Text(record, "originalOperationId"));
+        Assert.Equal(alex.Upn, Text(record, "target"));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+
+        var notice = Assert.Single(_h.Notices);
+        Assert.Equal(AttributeEditReversal.NoticeAction, notice.Action);
+        Assert.False(notice.Success);
     }
 }

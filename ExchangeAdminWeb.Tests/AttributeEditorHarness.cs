@@ -218,20 +218,32 @@ internal sealed class AttributeEditorHarness : IDisposable
             ["_undoMaxLevel"] = 3,
         };
 
-    public ADAttributeEditorUndoService CreateUndoService(bool moduleEnabled = true)
+    public ADAttributeEditorUndoService CreateUndoService(bool moduleEnabled = true) =>
+        new(Service, Protection, Servicers, Enablement(moduleEnabled), Audit, Trace, Email,
+            NullLogger<ADAttributeEditorUndoService>.Instance);
+
+    /// <summary>
+    /// The undo service with its trace operation failing to begin, with <paramref name="failure"/> as the
+    /// exception's message (aud-a28o). Nothing else differs.
+    /// </summary>
+    public ADAttributeEditorUndoService CreateUndoServiceWhoseTraceFails(string failure) =>
+        new TraceFailingUndoService(failure, Service, Protection, Servicers, Enablement(true), Audit, Trace, Email);
+
+    private ModuleEnablementService Enablement(bool moduleEnabled)
     {
         var enablementRepository = TestConfigStore.CreateModuleEnablement(_root);
         enablementRepository.SaveAll(new Dictionary<string, bool> { ["ADAttributeEditor"] = moduleEnabled });
-        var enablement = new ModuleEnablementService(
+        return new ModuleEnablementService(
             new ModuleCatalog(), Env, ModuleConfig, enablementRepository, Config, NullLogger<ModuleEnablementService>.Instance);
-
-        return new ADAttributeEditorUndoService(
-            Service, Protection, Servicers, enablement, Audit, Trace, Email,
-            NullLogger<ADAttributeEditorUndoService>.Instance);
     }
 
     /// <summary>Every audit record written so far, oldest first.</summary>
-    public IReadOnlyList<JsonElement> AuditEvents()
+    public IReadOnlyList<JsonElement> AuditEvents() => Events(trace: false);
+
+    /// <summary>Every operation-trace event written so far, oldest first.</summary>
+    public IReadOnlyList<JsonElement> TraceEvents() => Events(trace: true);
+
+    private List<JsonElement> Events(bool trace)
     {
         var folder = Path.Combine(_root, "ExchangeAdminWeb");
         var events = new List<JsonElement>();
@@ -239,14 +251,15 @@ internal sealed class AttributeEditorHarness : IDisposable
             return events;
 
         var files = Directory.GetFiles(folder, "exchangeadmin_*.jsonl")
-            .Where(f => !Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase))
+            .Where(f => Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase) == trace)
             .OrderBy(f => f, StringComparer.Ordinal);
 
         foreach (var line in files.SelectMany(File.ReadAllLines).Where(l => !string.IsNullOrWhiteSpace(l)))
         {
             using var document = JsonDocument.Parse(line);
             var root = document.RootElement;
-            if (root.TryGetProperty("eventType", out var type) && type.GetString() == "audit")
+            var type = root.TryGetProperty("eventType", out var eventType) ? eventType.GetString() : null;
+            if (trace ? type?.StartsWith("operation.", StringComparison.Ordinal) == true : type == "audit")
                 events.Add(root.Clone());
         }
 
@@ -300,6 +313,24 @@ internal sealed class AttributeEditorHarness : IDisposable
         internal override Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose) =>
             Task.FromResult<(string username, string password, string domain)?>(
                 _harness.CredentialsAvailable ? ("svc-attribute-editor", "not-a-secret", "EXAMPLE") : null);
+    }
+
+    /// <summary>The undo service with only its trace seam replaced: beginning the operation throws.</summary>
+    private sealed class TraceFailingUndoService(
+        string failure,
+        ADAttributeEditorService editor,
+        ProtectedPrincipalService protection,
+        ProtectedPrincipalServicerService servicers,
+        ModuleEnablementService enablement,
+        AuditService audit,
+        OperationTraceService trace,
+        EmailService email)
+        : ADAttributeEditorUndoService(editor, protection, servicers, enablement, audit, trace, email,
+            NullLogger<ADAttributeEditorUndoService>.Instance)
+    {
+        internal override OperationTraceService.OperationScope BeginUndoOperation(
+            string performedBy, string ip, string target, string ticket, string? originalOperationId) =>
+            throw new InvalidOperationException(failure);
     }
 
     /// <summary>A protected-principal service whose decision the test sets.</summary>
@@ -426,11 +457,16 @@ internal sealed class LocalAd
         public string? Mail { get; init; }
         public string DisplayName { get; init; } = "";
         public Dictionary<string, string?> Attributes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The attributes as they were before the last Set-ADUser, for <see cref="ReplicaLag"/>.</summary>
+        public Dictionary<string, string?>? BeforeLastWrite { get; set; }
     }
 
-    public sealed record SetCall(string Identity, IReadOnlyDictionary<string, string?> Replace, IReadOnlyList<string> Clear);
+    /// <summary>One Set-ADUser: the object, what it replaced and cleared, and the -Server it was sent to (null for none).</summary>
+    public sealed record SetCall(string Identity, IReadOnlyDictionary<string, string?> Replace, IReadOnlyList<string> Clear, string? Server = null);
 
-    public sealed record ReadCall(string Identity, IReadOnlyList<string> Properties);
+    /// <summary>One Get-ADUser: the identity it asked for, its -Properties and the -Server it was sent to (null for none).</summary>
+    public sealed record ReadCall(string Identity, IReadOnlyList<string> Properties, string? Server = null);
 
     /// <summary>
     /// Per search base, how Get-ADUser fails there: <c>"terminating"</c> (the cmdlet's
@@ -475,6 +511,19 @@ internal sealed class LocalAd
     /// message as a terminating error: a read-back that cannot be made (aud-a26j).
     /// </summary>
     public string? ReadBackFailure { get; set; }
+
+    /// <summary>
+    /// When set, Get-ADUser returns each stored attribute as this types it - given the attribute's name
+    /// and the stored text - as the module returns a Boolean-syntax attribute as System.Boolean (aud-a26l).
+    /// </summary>
+    public Func<string, string?, object?>? ReadsAs { get; set; }
+
+    /// <summary>
+    /// When true, a Get-ADUser that runs after a Set-ADUser in the same session is answered with the
+    /// object as it was before the write, unless both were sent to the same -Server: a domain whose
+    /// default routing can send the read to a domain controller the write has not reached yet (aud-a26l).
+    /// </summary>
+    public bool ReplicaLag { get; set; }
 
     /// <summary>When set, Import-Module fails with this message, as on a host without the module.</summary>
     public string? ImportFailure { get; set; }
@@ -534,7 +583,7 @@ internal sealed class LocalAd
             _calls.Add(call);
     }
 
-    public void NoteRead(string identity, object? properties)
+    public void NoteRead(string identity, object? properties, string? server)
     {
         var names = new List<string>();
         switch (Unwrap(properties))
@@ -551,7 +600,7 @@ internal sealed class LocalAd
         }
 
         lock (_reads)
-            _reads.Add(new ReadCall(identity, names));
+            _reads.Add(new ReadCall(identity, names, string.IsNullOrEmpty(server) ? null : server));
     }
 
     public string FailureFor(string searchBase) =>
@@ -559,9 +608,10 @@ internal sealed class LocalAd
 
     /// <summary>
     /// The users a Get-ADUser call returns: by <paramref name="identity"/> (DN or GUID) when one
-    /// is given, otherwise by the lookup's LDAP filter within <paramref name="searchBase"/>.
+    /// is given, otherwise by the lookup's LDAP filter within <paramref name="searchBase"/>. A
+    /// <paramref name="stale"/> read is answered as each user was before its last write.
     /// </summary>
-    public PSObject[] Find(string identity, string ldapFilter, string searchBase)
+    public PSObject[] Find(string identity, string ldapFilter, string searchBase, bool stale = false)
     {
         List<User> matches;
         lock (_users)
@@ -572,10 +622,10 @@ internal sealed class LocalAd
                 : _users.Where(u => MatchesFilter(u, ldapFilter) && WithinBase(u, searchBase)).ToList();
         }
 
-        return matches.Select(ToObject).ToArray();
+        return matches.Select(u => ToObject(u, stale)).ToArray();
     }
 
-    public void RecordSet(string identity, object? replace, object? clear)
+    public void RecordSet(string identity, object? replace, object? clear, string? server = null)
     {
         var replaced = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         if (Unwrap(replace) is IDictionary map)
@@ -597,7 +647,7 @@ internal sealed class LocalAd
         }
 
         lock (_sets)
-            _sets.Add(new SetCall(identity, replaced, cleared));
+            _sets.Add(new SetCall(identity, replaced, cleared, string.IsNullOrEmpty(server) ? null : server));
 
         if (SetChangesNothing)
             return;
@@ -608,6 +658,7 @@ internal sealed class LocalAd
             if (user is null)
                 return;
 
+            user.BeforeLastWrite = new Dictionary<string, string?>(user.Attributes, StringComparer.OrdinalIgnoreCase);
             foreach (var (name, value) in replaced)
                 user.Attributes[name] = SetStoresAs is { } storesAs ? storesAs(value) : value;
             foreach (var name in cleared)
@@ -639,10 +690,10 @@ internal sealed class LocalAd
             """));
 
         state.Commands.Add(new SessionStateFunctionEntry("Get-ADUser", """
-            [CmdletBinding()] param($Identity, $LDAPFilter, $SearchBase, $Properties, $Credential)
+            [CmdletBinding()] param($Identity, $LDAPFilter, $SearchBase, $Properties, $Credential, $Server)
             $directory = $global:AttributeDirectory
             $directory.Note("Get-ADUser|$Identity|$SearchBase")
-            $directory.NoteRead([string]$Identity, $Properties)
+            $directory.NoteRead([string]$Identity, $Properties, [string]$Server)
             if ($global:AttributeWriteSent -and $directory.ReadBackFailure) {
                 $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new($directory.ReadBackFailure),
@@ -664,7 +715,8 @@ internal sealed class LocalAd
                 Write-Error -Message "Access to the search base was denied: $SearchBase" -ErrorAction Continue
                 return
             }
-            $found = $directory.Find([string]$Identity, [string]$LDAPFilter, [string]$SearchBase)
+            $stale = $global:AttributeWriteSent -and $directory.ReplicaLag -and -not ($Server -and $Server -eq $global:AttributeWriteServer)
+            $found = $directory.Find([string]$Identity, [string]$LDAPFilter, [string]$SearchBase, [bool]$stale)
             if ($Identity -and $found.Length -eq 0) {
                 $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new("Cannot find an object with identity: '$Identity'"),
@@ -674,10 +726,11 @@ internal sealed class LocalAd
             """));
 
         state.Commands.Add(new SessionStateFunctionEntry("Set-ADUser", """
-            [CmdletBinding()] param($Identity, $Credential, $Replace, $Clear)
+            [CmdletBinding()] param($Identity, $Credential, $Replace, $Clear, $Server)
             $directory = $global:AttributeDirectory
             $directory.Note("Set-ADUser|$Identity")
             $global:AttributeWriteSent = $true
+            $global:AttributeWriteServer = [string]$Server
             if ($directory.SetFailure) {
                 $refusal = [System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new($directory.SetFailure),
@@ -685,7 +738,7 @@ internal sealed class LocalAd
                 if ($directory.SetFailureNonTerminating) { $PSCmdlet.WriteError($refusal); return }
                 $PSCmdlet.ThrowTerminatingError($refusal)
             }
-            $directory.RecordSet([string]$Identity, $Replace, $Clear)
+            $directory.RecordSet([string]$Identity, $Replace, $Clear, [string]$Server)
             if ($directory.SetReportsErrorWithoutThrowing) {
                 Write-Error -Message $directory.SetReportsErrorWithoutThrowing -ErrorAction Continue
             }
@@ -708,7 +761,7 @@ internal sealed class LocalAd
         || user.Dn.EndsWith("," + searchBase, StringComparison.OrdinalIgnoreCase)
         || string.Equals(user.Dn, searchBase, StringComparison.OrdinalIgnoreCase);
 
-    private static PSObject ToObject(User user)
+    private PSObject ToObject(User user, bool stale)
     {
         var result = new PSObject();
         result.Properties.Add(new PSNoteProperty("ObjectGUID", user.Guid));
@@ -718,8 +771,9 @@ internal sealed class LocalAd
         result.Properties.Add(new PSNoteProperty("UserPrincipalName", user.Upn));
         result.Properties.Add(new PSNoteProperty("SamAccountName", user.Sam));
         result.Properties.Add(new PSNoteProperty("mail", user.Mail));
-        foreach (var (name, value) in user.Attributes)
-            result.Properties.Add(new PSNoteProperty(name, value));
+        var attributes = stale && user.BeforeLastWrite is { } before ? before : user.Attributes;
+        foreach (var (name, value) in attributes)
+            result.Properties.Add(new PSNoteProperty(name, ReadsAs is { } typed ? typed(name, value) : value));
         return result;
     }
 

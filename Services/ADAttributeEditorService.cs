@@ -1332,6 +1332,23 @@ public class ADAttributeEditorService
         string ticket,
         string? servicedNote)
     {
+        // aud-a26l (folded in). One server for the whole chain - the re-read before the write, the write and the
+        // read-back - so the read-back is answered where the write went. Unrouted, the module's default could send
+        // each call to a different domain controller of the domain, and one the write had not reached yet reported
+        // a landed save as unconfirmed, with no Undo and a failure notice. The server is the object's own domain,
+        // from the DN the re-read asks for - the object it returns is the one written and read back (aud-a2p/a2q's
+        // routing). A DN naming no domain leaves all three unrouted, as every call was, and says so.
+        // *Assumption, not probed (DC affinity)*: three calls in one session sent to one domain name are answered
+        // by one domain controller; where they are not, a landed write reads back unconfirmed - loud, never a false
+        // success.
+        var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
+        if (server is null)
+        {
+            _logger.LogWarning(
+                "AD attribute save for {Target}: its distinguished name names no domain, so the re-read, the write and the read-back go to the default domain controller",
+                target.UserPrincipalName);
+        }
+
         using var runspace = CreateDirectoryRunspace();
         using var ps = PowerShell.Create();
         PSCredential credential;
@@ -1358,6 +1375,8 @@ public class ADAttributeEditorService
               .AddParameter("Properties", GetPropertiesToLoad(allowlist))
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            if (server is not null)
+                ps.AddParameter("Server", server);
             reReadResult = ps.Invoke();
             ps.Commands.Clear();
         }
@@ -1420,6 +1439,7 @@ public class ADAttributeEditorService
           .AddParameter("Identity", target.DistinguishedName)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        if (server is not null) ps.AddParameter("Server", server);
         if (replace.Count > 0) ps.AddParameter("Replace", replace);
         if (clear.Count > 0) ps.AddParameter("Clear", clear.ToArray());
 
@@ -1455,15 +1475,20 @@ public class ADAttributeEditorService
         }
 
         // aud-a26j. Done is the attributes reading back as written, not the write raising no error: a
-        // directory that takes a modify and applies nothing, or stores a value in another form, raises
-        // none (Known Failure Class 2; aud-a2p, the Conference Rooms twin). A save not confirmed is
-        // recorded failed with no old/new pair - the event log offers no Undo of a change its record
-        // cannot vouch for - and a confirmed one is recorded with the values read: what the directory
-        // holds, not what was proposed.
-        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, credential);
+        // directory that takes a modify and applies nothing, or stores another value, raises none (Known
+        // Failure Class 2; aud-a2p, the Conference Rooms twin). "As written" is in the attribute's own
+        // syntax (aud-a26l): a DN in the directory's case and spacing, or a Boolean read back as True, is
+        // the value written. A save not confirmed is recorded failed with no old/new pair - the event log
+        // offers no Undo of a change its record cannot vouch for - and a confirmed one is recorded with the
+        // values read: what the directory holds, not what was proposed.
+        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, allowlist, server, credential);
         if (confirmError != null)
         {
-            LogAudit(target, [], performedBy, ip, ticket, false, confirmError);
+            // aud-a28o. What it tried is recorded as attempted_<name>, old and proposed, not as old_/new_ pairs:
+            // a pair is what the event log offers to undo, and this change is not known to have been made. Without
+            // the values a reviewer could see neither what the editor tried to set nor what the attribute held
+            // before the write.
+            LogAudit(target, [], performedBy, ip, ticket, false, confirmError, attempted: changes);
             return new(false, confirmError, null);
         }
 
@@ -1474,19 +1499,24 @@ public class ADAttributeEditorService
 
     // aud-a26j. The read-back and its verdict: the failure message, or the changes as read. A throw is
     // the read's error. Both failures name the object and what was sent, because the record they become
-    // has no old/new pair to say it.
+    // has no old/new pair to say it - and, since aud-a26l, the server asked. A value read that is not the
+    // one written may be one the domain controller that answered has not been sent yet, which the
+    // not-confirmed message says, so an operator saving again knows a second try can read differently.
     private (string? Error, List<AttributeChange> AsRead) ConfirmWrite(
         PowerShell ps,
         ResolvedDirectoryPrincipal target,
         string? objectGuid,
         List<AttributeChange> written,
+        List<EditableAttribute> allowlist,
+        string? server,
         PSCredential credential)
     {
+        var asked = server ?? "the default domain controller";
         string? readError;
         PSObject? read = null;
         try
         {
-            (readError, read) = ReadBackWrittenAttributes(ps, objectGuid, written, credential);
+            (readError, read) = ReadBackWrittenAttributes(ps, objectGuid, written, server, credential);
         }
         catch (Exception ex)
         {
@@ -1496,29 +1526,36 @@ public class ADAttributeEditorService
         if (readError != null || read is null)
         {
             var failed = readError ?? "nothing was read";
-            _logger.LogWarning("Set-ADUser on {Target} could not be confirmed by reading it back by objectGUID {ObjectGuid}: {Error}", target.UserPrincipalName, objectGuid, failed);
-            return ($"Set-ADUser on {target.UserPrincipalName} was sent but could not be confirmed: reading {string.Join(", ", written.Select(c => c.Name))} back by objectGUID {objectGuid ?? "(none)"} failed: {failed}", written);
+            _logger.LogWarning("Set-ADUser on {Target} could not be confirmed by reading it back by objectGUID {ObjectGuid} from {Server}: {Error}", target.UserPrincipalName, objectGuid, asked, failed);
+            return ($"Set-ADUser on {target.UserPrincipalName} was sent but could not be confirmed: reading {string.Join(", ", written.Select(c => c.Name))} back by objectGUID {objectGuid ?? "(none)"} from {asked} failed: {failed}", written);
         }
 
-        var (unconfirmed, asRead) = UnconfirmedWrites(written, read);
+        // Each row's Type, by name, the first row for a name as everywhere else the allowlist is searched.
+        var types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attribute in allowlist)
+            types.TryAdd(attribute.Name, attribute.Type);
+
+        var (unconfirmed, asRead) = UnconfirmedWrites(written, read, types);
         if (unconfirmed.Count > 0)
         {
             var detail = string.Join("; ", unconfirmed);
-            _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid}: {Detail}", target.UserPrincipalName, objectGuid, detail);
-            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid}, {detail}.", written);
+            var answered = server is null ? "the default domain controller" : $"the domain controller that answered for {server}";
+            _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid} from {Server}: {Detail}", target.UserPrincipalName, objectGuid, asked, detail);
+            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid} from {asked}, {detail}. "
+                + $"The value may not have replicated yet to {answered}.", written);
         }
 
         return (null, asRead);
     }
 
     // aud-a26j. The written attributes, read back by the objectGUID the re-read returned for the DN the
-    // write named, so the read sees that object and no other. With no -Server, as the write had none: the
-    // read is answered where the module's default sends this session, the write's own route; the editor
-    // routes none of its calls. In the shape of aud-a2p's read: an error record fails it - after a read,
-    // whatever left one, the answer is not known good - and exactly one object, the one written, must
+    // write named, so the read sees that object and no other - and, since aud-a26l, sent to the server the
+    // write was sent to, so it asks where the write went (PerformSave's DC-affinity assumption); with no
+    // server, unrouted as the write was. In the shape of aud-a2p's read: an error record fails it - after a
+    // read, whatever left one, the answer is not known good - and exactly one object, the one written, must
     // answer.
     private static (string? Error, PSObject? Read) ReadBackWrittenAttributes(
-        PowerShell ps, string? objectGuid, List<AttributeChange> written, PSCredential credential)
+        PowerShell ps, string? objectGuid, List<AttributeChange> written, string? server, PSCredential credential)
     {
         if (string.IsNullOrEmpty(objectGuid))
             return ("the object read before the write carried no objectGUID", null);
@@ -1528,6 +1565,8 @@ public class ADAttributeEditorService
           .AddParameter("Properties", written.Select(c => c.Name).ToArray())
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        if (server is not null)
+            ps.AddParameter("Server", server);
         var found = ps.Invoke();
         if (ps.HadErrors)
             return (ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? $"Get-ADUser reported an error reading {objectGuid}.", null);
@@ -1540,21 +1579,29 @@ public class ADAttributeEditorService
         return (null, found[0]);
     }
 
-    // aud-a26j. What the write sent that the object read back does not hold, one description each, and the
-    // changes as read. Each value sent - nothing trimmed, because the write trims nothing - against the
-    // value read, compared ordinal: stricter than the directory's own matching, so a difference only ever
-    // fails a save, never passes one. An empty value and an absent attribute are the same, the directory
-    // keeping no empty value, so a clear is confirmed by an attribute that is gone. Pure, for unit testing.
+    // aud-a26j, aud-a26l. What the write sent that the object read back does not hold, one description each,
+    // and the changes as read. Each value sent is judged against the value read in the attribute's own syntax
+    // (SyntaxOf): the directory hands a value back in its own form - a DN in its canonical case and spacing, a
+    // Boolean as True - and the ordinal comparison this replaced failed every such save although the write had
+    // landed, with no Undo and a failure notice. Never looser than the syntax: a difference of content still
+    // fails. An empty value and an absent attribute are the same, the directory keeping no empty value, so a
+    // clear is confirmed by an attribute that is gone. Whatever the verdict the change takes the value read -
+    // what the directory holds - so the undo's conflict check, which compares the lookup's reading with it,
+    // meets the same form. The allowlist arrives as each row's Type, not as the rows:
+    // AllowlistConcurrentSaveTests takes a non-private method handed rows for a writer, and this reads one
+    // field. Pure, for unit testing.
     internal static (List<string> Unconfirmed, List<AttributeChange> AsRead) UnconfirmedWrites(
-        IReadOnlyList<AttributeChange> written, PSObject read)
+        IReadOnlyList<AttributeChange> written, PSObject read, IReadOnlyDictionary<string, string> allowlistTypes)
     {
         var unconfirmed = new List<string>();
         var asRead = new List<AttributeChange>();
         foreach (var change in written)
         {
+            var value = ReadDirectoryValue(read, change.Name);
             var expected = EmptyAsAbsent(change.NewValue);
-            var actual = EmptyAsAbsent(ReadDirectoryString(read, change.Name));
-            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            var actual = EmptyAsAbsent(value?.ToString());
+            allowlistTypes.TryGetValue(change.Name, out var type);
+            if (!ReadsAsWritten(SyntaxOf(type, change.Name, value), expected, actual, value))
             {
                 unconfirmed.Add($"{change.Name} ({change.Label}) {(actual is null ? "is not set" : $"is '{actual}'")}, "
                     + $"not {(expected is null ? "cleared" : $"'{expected}'")} as written");
@@ -1566,29 +1613,132 @@ public class ADAttributeEditorService
         return (unconfirmed, asRead);
     }
 
+    /// <summary>The syntax a value read back is judged in (aud-a26l); see <see cref="SyntaxOf"/>.</summary>
+    internal enum ReadBackSyntax
+    {
+        Ordinal,
+        PlainString,
+        DistinguishedName,
+        Boolean,
+        Integer,
+    }
+
+    // aud-a26l. The base-schema user attributes of DN syntax an allowlist can hold. A DN is read back as a
+    // string, so only the name can say one is. *Assumption, not probed*: they are DN syntax in every forest's
+    // schema, being base schema. A DN-syntax attribute outside the list compares as a plain string: a loud
+    // false failure on a difference of case, never a false success.
+    private static readonly HashSet<string> DnValuedAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "manager", "assistant", "secretary", "seeAlso",
+    };
+
+    // aud-a26l. The syntax, first match wins. The allowlist's Type is the editor's input kind - String or
+    // Choice, all the configuration page offers - so it never names the directory's syntax; the value read and
+    // the attribute's name do:
+    // - a System.Boolean read is a Boolean. *Assumption, not probed*: the module returns a Boolean-syntax
+    //   attribute as System.Boolean, as the editor already shows one (its ToString, True/False);
+    // - an integer read is an Integer. *Assumption, not probed*: the Integer and Large Integer syntaxes come
+    //   back as Int32 and Int64;
+    // - a DN-valued attribute by name is a distinguished name;
+    // - a String or Choice row is a plain string;
+    // - any other Type, a row the configuration page cannot write, is compared ordinal and untrimmed.
+    // A string is never parsed because it looks like a Boolean or a number: "007" in a string attribute is not
+    // 7, and "True" in one is not true.
+    internal static ReadBackSyntax SyntaxOf(string? type, string name, object? read)
+    {
+        if (read is bool)
+            return ReadBackSyntax.Boolean;
+        if (IntegerOf(read) is not null)
+            return ReadBackSyntax.Integer;
+        if (DnValuedAttributes.Contains(name))
+            return ReadBackSyntax.DistinguishedName;
+        if (type is "String" or "Choice")
+            return ReadBackSyntax.PlainString;
+        return ReadBackSyntax.Ordinal;
+    }
+
+    // aud-a26l. Whether the value read is the value written, in that syntax. Both empty is a match and one empty
+    // is not. A Boolean or an integer is parsed on the side written (invariant) and compared with the typed value
+    // read. A plain string is compared ordinal after trimming leading and trailing whitespace on both sides and
+    // nothing else - case and inner spacing still count. *Assumption, not probed*: the directory may store a
+    // string without its leading and trailing whitespace.
+    internal static bool ReadsAsWritten(ReadBackSyntax syntax, string? expected, string? actual, object? read)
+    {
+        if (expected is null || actual is null)
+            return expected is null && actual is null;
+
+        return syntax switch
+        {
+            ReadBackSyntax.Boolean => bool.TryParse(expected, out var flag) && read is bool held && flag == held,
+            ReadBackSyntax.Integer => long.TryParse(expected, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var number)
+                && IntegerOf(read) == number,
+            ReadBackSyntax.DistinguishedName => SameDistinguishedName(expected, actual),
+            ReadBackSyntax.PlainString => string.Equals(expected.Trim(), actual.Trim(), StringComparison.Ordinal),
+            _ => string.Equals(expected, actual, StringComparison.Ordinal),
+        };
+    }
+
+    // aud-a26l. Two DNs are the same when their RDNs are, in number and in order: split at unescaped commas
+    // (ServerFromDn's split, so an escaped comma stays inside its CN), each RDN trimmed and trimmed around its
+    // first '=', compared OrdinalIgnoreCase - the repo's DN comparison (GroupManagementService.IsSelfNest,
+    // aud-a2i's membership read). No prefix and no "contains": a DN naming a parent or a child of the object is
+    // another DN. Escapes are compared as written (a hex escape is not equated with its character) and spaces
+    // around a multi-valued RDN's '+' still count; either difference fails loud.
+    internal static bool SameDistinguishedName(string written, string read)
+    {
+        var left = RelativeNames(written);
+        var right = RelativeNames(read);
+        return left.Length == right.Length
+            && left.Zip(right).All(pair => string.Equals(pair.First, pair.Second, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string[] RelativeNames(string dn) =>
+        Regex.Split(dn, @"(?<=(?<!\\)(?:\\\\)*),")
+            .Select(rdn =>
+            {
+                var equals = rdn.IndexOf('=');
+                return equals < 0 ? rdn.Trim() : $"{rdn[..equals].Trim()}={rdn[(equals + 1)..].Trim()}";
+            })
+            .ToArray();
+
+    // The integral types a value can be read back as, widened to long; null for anything else, a string included.
+    private static long? IntegerOf(object? value) => value switch
+    {
+        sbyte v => v,
+        byte v => v,
+        short v => v,
+        ushort v => v,
+        int v => v,
+        uint v => v,
+        long v => v,
+        ulong v when v <= long.MaxValue => (long)v,
+        _ => null,
+    };
+
     private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
     // A single-valued attribute as read, null when absent: aud-a2p's, a sibling because Conference Rooms'
-    // is private. *Assumption, not probed*: the module answers one with its value, as this service's own
-    // reads take it (Properties[..].Value). A collection is taken as its one element, so a collection-shaped
-    // answer is not told as a difference; several values are not the one written.
-    private static string? ReadDirectoryString(PSObject read, string name)
+    // is private - since aud-a26l the value itself rather than its text, so its type can say its syntax.
+    // *Assumption, not probed*: the module answers one with its value, as this service's own reads take it
+    // (Properties[..].Value). A collection is taken as its one element, so a collection-shaped answer is not
+    // told as a difference; several values, joined, are not the one written.
+    private static object? ReadDirectoryValue(PSObject read, string name)
     {
         var value = Unwrapped(read.Properties[name]?.Value);
         if (value is null or string)
-            return (string?)value;
+            return value;
         if (value is System.Collections.IEnumerable values)
         {
-            var items = values.Cast<object?>().Select(v => Unwrapped(v)?.ToString()).ToList();
+            var items = values.Cast<object?>().Select(Unwrapped).ToList();
             return items.Count switch
             {
                 0 => null,
                 1 => items[0],
-                _ => string.Join("; ", items),
+                _ => string.Join("; ", items.Select(v => v?.ToString())),
             };
         }
 
-        return value.ToString();
+        return value;
     }
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
@@ -1808,7 +1958,7 @@ public class ADAttributeEditorService
         }
     }
 
-    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null)
+    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null, List<AttributeChange>? attempted = null)
     {
         var changedAttrs = changes.Select(c => c.Name).ToArray();
         var details = new Dictionary<string, object?>
@@ -1817,6 +1967,10 @@ public class ADAttributeEditorService
             ["changedAttributes"] = changedAttrs,
             ["changes"] = changes.Select(c => new { c.Name, c.OldValue, c.NewValue }).ToArray()
         };
+        // aud-a28o. An unconfirmed save hands its changes here as attempted, beside an empty list of changes
+        // made: listed on its trace step, and recorded below as attempted_<name>.
+        if (attempted is not null)
+            details["attemptedChanges"] = attempted.Select(c => new { c.Name, c.OldValue, ProposedValue = c.NewValue }).ToArray();
 
         _operationTrace.Step("AttributeWriteCompleted", success ? "Success" : "Failed", details: details);
 
@@ -1828,6 +1982,10 @@ public class ADAttributeEditorService
         var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? new Dictionary<string, object?>();
         if (!string.IsNullOrWhiteSpace(target.ObjectGuid))
             extra["targetObjectGuid"] = target.ObjectGuid;
+        // A nested object rather than two fields: the JSONL writer drops a null field at the top level and keeps
+        // one inside an object, so a clear's proposed value reads as null instead of vanishing.
+        foreach (var change in attempted ?? [])
+            extra[$"attempted_{change.Name}"] = new Dictionary<string, object?> { ["old"] = change.OldValue, ["proposed"] = change.NewValue };
 
         _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: extra);
     }
