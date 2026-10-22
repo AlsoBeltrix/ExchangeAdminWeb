@@ -4,8 +4,8 @@
 cause. aud-a28r/a26p added a one-time test start-up guard after one failure where two classes' first
 runspaces opened at once. Nothing in the app opens a runspace first: after a start the first two
 operators' sessions may open concurrently, the same shape.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: Fixed on the branch, the folded-in LOW with it; closed on guard proof; awaiting merge and codex review
+**Branch**: `worktree-agent-a9db60993a8970569`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28r/a26p agent, 2026-10-22, candidate 1 of its hand-back)
 
@@ -87,9 +87,79 @@ start, the warm-up closes the window once it completes - a session opened before
 after a start (an estimate from the test host's cold opens, not a production measurement), is not covered; if it is a
 runspace's own parallel bind, a warm-up narrows nothing.
 
+## Fix
+
+`Services/PowerShellWarmUp.cs` (new, static): `StartInBackground(ILogger)` runs the warm-up on the thread pool and returns its
+task at once. The warm-up opens one `CreateDefault` runspace and disposes it - no module, no command, no connection - up to
+three attempts, never throws, and logs one line: Information with the time it took and the attempt, or Warning with the last
+exception and the shape when every attempt failed. `Start(shapes, attempts, open)` is the attempt loop and returns
+`PowerShellStartOutcome(Started, Attempts, FailedShape, LastFailure)`; it is internal and shared with the test fixture.
+
+`Program.cs`: in the startup pass, directly after the log-root check, `_ = PowerShellWarmUp.StartInBackground(...)` with a logger
+from the container's `ILoggerFactory` - after `builder.Build()`, before `app.Run()`, not awaited. No `AddHostedService` (the
+plan's posture section).
+
+`ExchangeAdminWeb.Tests/PowerShellStartup.cs`: the fixture's attempts go through `PowerShellWarmUp.Start` with its own two shapes
+and its own open; `Outcome` keeps what happened in static state and `Started` reads it. `ExchangeAdminWeb.Tests/PowerShellStartupTests.cs`:
+the pin asserts with `NotStartedMessage(PowerShellStartup.Outcome)`.
+
+Tests: new `ExchangeAdminWeb.Tests/PowerShellWarmUpTests.cs` (7 cases).
+
+Caller-visible change, by design: as the app starts, one line in its log says PowerShell was started ahead of the first sessions
+or, as a warning, that it could not be. Start-up does not wait for it. Once it has completed, the first operator sessions after
+a start no longer open PowerShell's first session themselves. In the suite, a start-up that failed is reported with the shape
+and the exception.
+
 ## Guard proof
 
-Pending.
+Session-local driver `a9db-mutate.ps1` in the scratchpad: the steps of aud-a28v's and aud-a26s's driver under a name of its own,
+because the scratchpad turned out to be shared with sibling agents (the first driver's file name was also another agent's).
+The fix staged; MD5; mutate by exact text (one match required); touch; `dotnet build` of the test project; `dotnet test
+--no-build --blame-hang --blame-hang-timeout 5m` filtered to
+`FullyQualifiedName~PowerShellWarmUpTests|FullyQualifiedName~PowerShellStartupTests|FullyQualifiedName~ProgressRegistryTests|FullyQualifiedName~DefenderServiceRegistrationTests|FullyQualifiedName~CircuitRevalidationTests|FullyQualifiedName~BulkJobProcessorWiringTests|FullyQualifiedName~ConfigDbCliTests|FullyQualifiedName~ServicerLifetimeTests|FullyQualifiedName~GlobalProgressWiringTests|FullyQualifiedName~AllowlistConcurrentSaveTests|FullyQualifiedName~WholeStoreWriterTripwireTests|FullyQualifiedName~AuditCategoryFilingTests`
+(242 tests - the warm-up and pin, and the classes that read Program.cs or scan production sources); `git checkout --` of the
+file from the index; touch; MD5 re-confirmed; rebuild; the same filter. Every mutant built with 0 errors, every file came back
+to its MD5, and the restored tree ran 242/242 green after each row.
+
+| # | Mutation (call site) | MD5 before | MD5 mutant | MD5 after | Named test failing |
+|---|---|---|---|---|---|
+| 1 | `Program.cs`: the warm-up call removed (replaced by a comment) | `328559B49BD0FB0193D252D4E5B3DADC` | `F00F9D1320FA36CE7140E7FE9367CF97` | `328559B49BD0FB0193D252D4E5B3DADC` | `PowerShellWarmUpTests.Program_StartsTheWarmUp_AfterTheHostIsBuilt_AndBeforeItRuns` |
+| E1 | extra, `PowerShellWarmUp.StartInBackground`: the warm-up run inline (`Task.FromResult(Run(...))`), so start-up waits for it | `DEB16893EDB2174EE8AB5D15EA23683C` | `43C2B4AB157841C8261A812E59D830A7` | `DEB16893EDB2174EE8AB5D15EA23683C` | `StartInBackground_ReturnsWhileTheWarmUpsOpenIsStillHeld` (the call had not returned after 10 s, its open held) |
+| E2 | extra, `PowerShellWarmUp.Start`: an attempt's failure thrown (`throw;` after it is kept) | `DEB16893EDB2174EE8AB5D15EA23683C` | `7866A72287E5E767B9E15BFC855BD38E` | `DEB16893EDB2174EE8AB5D15EA23683C` | `AWarmUpThatAlwaysFails_IsTriedThreeTimes_NeverThrown_AndLogsOneWarningWithTheFailure`, `AWarmUpThatFailsOnce_IsRetried_AndLogsOneInformationLine`, `Start_KeepsTheLastFailure_AndTheShapeThatFailed` |
+| F1 | folded, `PowerShellWarmUp.Start` (the fixture's attempts): the stored exception dropped (`_ = ex;`) | `DEB16893EDB2174EE8AB5D15EA23683C` | `380F257E5BADFEDF9BA01E401BDB0164` | `DEB16893EDB2174EE8AB5D15EA23683C` | `Start_KeepsTheLastFailure_AndTheShapeThatFailed` and `AWarmUpThatAlwaysFails_...` (`LastFailure` and the warning's exception null) |
+| F2 | folded, `PowerShellStartupTests.NotStartedMessage`: the stored exception dropped from the pin's message | `969F562B5B30714A5ED432CE12BB3CA6` | `782B6314C3E88AC0D12070B49CAB5137` | `969F562B5B30714A5ED432CE12BB3CA6` | `PowerShellWarmUpTests.ThePinsMessage_NamesTheShapeThatFailed_AndTheFailure` |
+
+No row can show the race itself: it was never reproduced (aud-a26p), so nothing here fails on it. The rows show that the app
+starts the warm-up where the plan puts it, that start-up does not wait for it, that a failure is retried and never thrown, and
+that a failed start keeps and reports its shape and exception. The code comments are written after the round, in their own
+commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 61 warnings, all pre-existing, none in a touched
+  file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0,
+  5,788 passed / 3 skipped (the three known AD skips) / 0 failed, 5,791 total, 5m02s. No hang. (After aud-a26s, `63f43eb5`:
+  5,781 / 3 / 0.)
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+PowerShell, locally only: the app's warm-up case opens one `CreateDefault` runspace in the test host and runs nothing in it; the
+throwaway probe the plan cites opened one through `PowerShell.Create()`; the fixture and the pin open theirs as before. No
+module import, no directory, Exchange Online, Graph, DHCP or IIS, no push or deployment. The app was not started. No coder
+self-review verdict is claimed.
+
+## Known gaps
+
+- The race was never reproduced and its cause is not established (aud-a26p). If it is a process's first start, the warm-up
+  closes the window once it completes; a session opened before then - in roughly the first second or two after a start, an
+  estimate from the test host's cold opens and not a production measurement - is not covered. If it is a runspace's own
+  parallel bind, the warm-up narrows nothing.
+- The warm-up opens the shape and nothing else: a module import (`ActiveDirectory`, `ExchangeOnlineManagement`) has a first time
+  of its own, and it is not warmed - an import is a step past the runspace open this finding allows.
+- Program.cs is pinned by source order (after `builder.Build()`, before `app.Run()`); the app itself was not started here, under
+  IIS or otherwise.
+- A warm-up whose open never returns would leave a thread-pool thread blocked and write no line; start-up still goes on.
 
 ## Folded in: the warm-up fixture discards the failure it is meant to diagnose (codex, settings-batch-4, 2026-10-22) - LOW
 

@@ -378,6 +378,8 @@ try
             throw new InvalidOperationException(ExchangeAdminWeb.Services.AuditLogRoot.UnsetMessage);
         }
 
+        _ = PowerShellWarmUp.StartInBackground(app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(PowerShellWarmUp)));
+
         var migrator = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
         var schemaVersion = migrator.Migrate();
         Log.Information("Config store schema ready at version {SchemaVersion}", schemaVersion);

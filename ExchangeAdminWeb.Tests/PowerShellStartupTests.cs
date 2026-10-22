@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using ExchangeAdminWeb.Services;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -19,8 +20,7 @@ public sealed class PowerShellStartupTests
     [Fact]
     public async Task PowerShellIsStartedBeforeAnyTest_AndTwoSessionsOpenedAtOnceThroughTheHarness_BothStart()
     {
-        Assert.True(PowerShellStartup.Started,
-            "PowerShell was not started before the tests ran: the assembly fixture is not registered, or its start failed");
+        Assert.True(PowerShellStartup.Started, NotStartedMessage(PowerShellStartup.Outcome));
 
         var cancel = TestContext.Current.CancellationToken;
         using var harness = new AttributeEditorHarness();
@@ -41,4 +41,14 @@ public sealed class PowerShellStartupTests
         var results = await Task.WhenAll(sessions).WaitAsync(TimeSpan.FromMinutes(2), cancel);
         Assert.All(results, result => Assert.Equal(2, result));
     }
+
+    /// <summary>
+    /// What the pin says when the start did not take (aud-a28w): that the fixture is not registered when there is no outcome,
+    /// otherwise how many attempts it made, the shape that failed last and the exception - which the fixture used to swallow,
+    /// so a failed start could not be told from a fixture that never ran.
+    /// </summary>
+    internal static string NotStartedMessage(PowerShellStartOutcome? outcome) =>
+        outcome is null
+            ? "PowerShell was not started before the tests ran: the assembly fixture is not registered"
+            : $"PowerShell was not started before the tests ran: its start failed after {outcome.Attempts} attempt(s), the last opening {outcome.FailedShape ?? "(no shape)"}: {outcome.LastFailure}";
 }
