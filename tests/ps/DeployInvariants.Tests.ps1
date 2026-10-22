@@ -1510,7 +1510,9 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
             -Because 'the refusal must point the operator at the cutover script that creates the shared database'
         $s.Text | Should -Not -Match 'New-Item[^\r\n]*\$ConfigStorePath' `
             -Because 'the installer must never create the shared database file'
-        $s.Text | Should -Match 'StartsWith\(''\\\\''\)' -Because 'a UNC path must be refused'
+        # Since cdt-37 the rule is SqliteConfigBackup's Get-ConfigStorePathForm, not a StartsWith copy
+        # here; the scdi-2 test below runs the check on a UNC path.
+        $s.Text | Should -Match '(?s)\$form = Get-ConfigStorePathForm -Value \$Path\s*if \(\$form -eq ''NetworkShare''\) \{\s*Write-Fail' -Because 'a UNC path must be refused'
         $s.Text | Should -Match '-ConfigStorePath \$configStorePlan\.Path\)' `
             -Because 'the generated appsettings must carry the key (the decided one since cdt-11: supplied, else kept)'
     }
@@ -1544,6 +1546,9 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
     ) {
         # Runs the real Assert-LocalAbsoluteFilePath (lifted by AST) with the script's own
         # throwing Write-Fail, and checks the main body actually routes -ConfigStorePath through it.
+        # Its rule is SqliteConfigBackup's Get-ConfigStorePathForm (cdt-37), which the installer
+        # imports before the check; import it here the same way.
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
         $fn = Find-FunctionDefinition $s 'Assert-LocalAbsoluteFilePath'
         $fn | Should -Not -BeNullOrEmpty
         $s.Text | Should -Match 'Assert-LocalAbsoluteFilePath -Path \$ConfigStorePath -Name ''ConfigStorePath''' `

@@ -1471,3 +1471,154 @@ Describe 'cdt-34: a relative -PublishPath or -LogRoot resolves where the operato
         }
     }
 }
+
+Describe 'cdt-37: -ConfigStorePath takes the forward-slash form the app takes, and is written with backslashes' {
+    # The installer validated -ConfigStorePath with its own copy of the old writers' rule - a drive
+    # letter, a colon and a BACKSLASH - so D:/... was refused although the app opens it and the
+    # scripts' reader reads that key back (cdt-30). It now asks the module that holds the one copy.
+
+    BeforeAll {
+        Import-Module (Join-Path $PSScriptRoot '..\..\tools\SqliteConfigBackup.psm1') -Force
+        $tokens = $null
+        $errors = $null
+        $script:Cdt37Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Fail', 'Assert-LocalAbsoluteFilePath') {
+            $fn = $script:Cdt37Ast.Find({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name
+                }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+
+        function Invoke-InstallerPlan {
+            # A real -PlanOnly run under Windows PowerShell 5.1, the installer's runtime, on a fresh
+            # publish folder: the first configuration of a shared database.
+            param([string]$Installer, [string]$Root, [string]$ConfigStorePath)
+            $alias = 'cdt37' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+            $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Installer `
+                -PlanOnly -NonInteractive -ConfigStorePath $ConfigStorePath -PublishPath (Join-Path $Root 'publish') -LogRoot (Join-Path $Root 'logs') `
+                -AppAlias $alias -AppPoolName $alias -AdminGroups 'CONTOSO\Exchange Admins' 2>&1
+            $text = @($out | ForEach-Object { "$_" }) -join "`n"
+            return [pscustomobject]@{
+                ExitCode = $LASTEXITCODE
+                Text     = $text
+                # Windows PowerShell may wrap a long line at the console width; compare with
+                # whitespace removed (no path here holds a blank).
+                Flat     = $text -replace '\s+', ''
+            }
+        }
+
+        # Paths and contents, as the cdt-11 plan-mode test snapshots them.
+        $script:Cdt37Snapshot = {
+            param($Root)
+            @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                    if ($_.PSIsContainer) { '{0}|dir' -f $_.FullName.Substring($Root.Length) }
+                    else { '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+                }) -join "`n"
+        }
+    }
+
+    It 'accepts <Value> (<Form>)' -TestCases @(
+        @{ Form = 'forward slashes'; Value = 'D:/inetpub/ExchangeAdminWebShared/config/exchangeadmin.db' }
+        @{ Form = 'backslashes'; Value = 'D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db' }
+        @{ Form = 'mixed'; Value = 'D:\shared/config/exchangeadmin.db' }
+        @{ Form = 'lower-case drive, forward slashes'; Value = 'd:/x/exchangeadmin.db' }
+    ) {
+        { Assert-LocalAbsoluteFilePath -Path $Value -Name 'ConfigStorePath' } | Should -Not -Throw -Because 'the app opens it and the read side reads it back'
+    }
+
+    It 'refuses <Form>, saying why and naming the value' -TestCases @(
+        @{ Form = 'a UNC path'; Value = '\\server\share\exchangeadmin.db'; Says = 'must be a local path, not a network share' }
+        @{ Form = 'a UNC path with forward slashes'; Value = '//server/share/exchangeadmin.db'; Says = 'must be a local path, not a network share' }
+        @{ Form = 'a UNC path with mixed separators'; Value = '\/server/share/exchangeadmin.db'; Says = 'must be a local path, not a network share' }
+        @{ Form = 'a UNC path with mixed separators the other way'; Value = '/\server\share\exchangeadmin.db'; Says = 'must be a local path, not a network share' }
+        @{ Form = 'a relative path'; Value = 'config\exchangeadmin.db'; Says = 'must be an absolute local file path' }
+        @{ Form = 'a relative path with forward slashes'; Value = 'config/exchangeadmin.db'; Says = 'must be an absolute local file path' }
+        @{ Form = 'a drive-relative path'; Value = 'D:exchangeadmin.db'; Says = 'must be an absolute local file path' }
+        @{ Form = 'a rooted path without a drive'; Value = '/config/exchangeadmin.db'; Says = 'must be an absolute local file path' }
+        @{ Form = 'an NT-namespace UNC path'; Value = '\??\UNC\server\share\exchangeadmin.db'; Says = 'must be an absolute local file path' }
+        @{ Form = 'a non-ASCII drive letter (U+212A KELVIN SIGN)'; Value = ([string][char]0x212A + ':\x.db'); Says = 'must be an absolute local file path' }
+    ) {
+        $err = $null
+        try { Assert-LocalAbsoluteFilePath -Path $Value -Name 'ConfigStorePath' } catch { $err = $_ }
+        $err | Should -Not -BeNullOrEmpty -Because "the installer must not write $Form"
+        "$err".Contains("ConfigStorePath $Says") | Should -BeTrue -Because "the refusal names the parameter and says why ($Says): $err"
+        "$err".Contains($Value) | Should -BeTrue -Because 'and names the value'
+    }
+
+    It 'makes the module''s call on every value, holds no rule of its own, asks only after the import, and writes the backslash spelling (AST)' {
+        foreach ($value in @('D:\a\b.db', 'D:/a/b.db', 'z:/a', ' D:/x.db', 'D:', 'D:x', 'x', '\x', '/x', '\\s\h', '//s/h', '\/s/h', '/\s\h',
+                '\\?\D:\x', '\\.\D:\x', '\??\D:\x', '\??\UNC\s\h', '1:\x', 'DD:\x', ':\x', ([string][char]0x212A + ':\x'))) {
+            $accepted = $true
+            try { Assert-LocalAbsoluteFilePath -Path $value -Name 'ConfigStorePath' } catch { $accepted = $false }
+            $accepted | Should -Be ((Get-ConfigStorePathForm -Value $value) -eq 'Local') -Because "the installer writes exactly what the module reads back and the app opens ('$value')"
+        }
+
+        $fn = $script:Cdt37Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-LocalAbsoluteFilePath' }, $true)
+        @($fn.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-ConfigStorePathForm' }, $true)).Count |
+            Should -Be 1 -Because 'the rule is the module''s'
+        $ownTests = @($fn.FindAll({
+                    param($n)
+                    ($n -is [System.Management.Automation.Language.BinaryExpressionAst] -and "$($n.Operator)" -match 'match|like') -or
+                    ($n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Member.Extent.Text -in @('StartsWith', 'IsPathFullyQualified', 'IsPathRooted'))
+                }, $true))
+        $ownTests.Count | Should -Be 0 -Because ('a copy of the rule here is what refused D:/...: ' + (@($ownTests | ForEach-Object { $_.Extent.Text }) -join ', '))
+
+        $commands = @($script:Cdt37Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))
+        $import = @($commands | Where-Object { $_.GetCommandName() -eq 'Import-Module' -and $_.Extent.Text -like '*SqliteConfigBackup.psm1*' })
+        $validate = @($commands | Where-Object { $_.Extent.Text -eq "Assert-LocalAbsoluteFilePath -Path `$ConfigStorePath -Name 'ConfigStorePath'" })
+        $import.Count | Should -Be 1
+        $validate.Count | Should -Be 1
+        $import[0].Extent.EndOffset | Should -BeLessThan $validate[0].Extent.StartOffset -Because 'the module must be loaded before the check asks it'
+        $statements = @($validate[0].Parent.Parent.Statements)
+        $next = $statements[[array]::IndexOf($statements, $validate[0].Parent) + 1]
+        $next.Extent.Text | Should -BeExactly '$ConfigStorePath = [System.IO.Path]::GetFullPath($ConfigStorePath)' -Because 'the accepted value is normalised before anything uses it'
+        $ConfigStorePath = 'D:/inetpub/ExchangeAdminWebShared/config/exchangeadmin.db'
+        . ([scriptblock]::Create($next.Extent.Text))
+        $ConfigStorePath | Should -BeExactly 'D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db' -Because 'D:/... is written as D:\...'
+    }
+
+    It 'a -PlanOnly first configuration given a forward-slash -ConfigStorePath reports and plans the backslash spelling, and creates nothing (Windows PowerShell 5.1)' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt37_' + [guid]::NewGuid().ToString('N'))
+        $shared = Join-Path $root 'shared\exchangeadmin.db'
+        New-Item -ItemType Directory -Path (Join-Path $root 'publish'), (Split-Path -Parent $shared) -Force | Out-Null
+        Set-Content -LiteralPath $shared -Value 'placeholder' -Encoding ascii
+        $forward = $shared.Replace('\', '/')
+        # The spelling the installer derives: GetFullPath, which also expands an 8.3 short name in
+        # the temporary folder's path, as it does in the installer.
+        $expected = [System.IO.Path]::GetFullPath($shared)
+        $appSettings = Join-Path ([System.IO.Path]::GetFullPath((Join-Path $root 'publish'))) 'appsettings.json'
+        try {
+            $before = & $script:Cdt37Snapshot $root
+            $run = Invoke-InstallerPlan -Installer (Resolve-Path $script:InstallerPath).Path -Root $root -ConfigStorePath $forward
+            $run.ExitCode | Should -Be 0 -Because $run.Text
+            $run.Flat | Should -Match ([regex]::Escape(("Config DB   : $expected (shared, from -ConfigStorePath)" -replace '\s+', '')))
+            $run.Flat | Should -Match ([regex]::Escape(("PLAN Write appsettings.json at $appSettings with ConfigStore:Path = $expected" -replace '\s+', '')))
+            $run.Flat.Contains($forward) | Should -BeFalse -Because 'what the plan shows is what the run writes: the backslash spelling, never the one typed'
+            $run.Text | Should -Match 'Plan only\. No changes were made\.'
+            & $script:Cdt37Snapshot $root | Should -BeExactly $before -Because 'a plan creates and changes nothing'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'a -PlanOnly run given <Form> -ConfigStorePath is refused before anything, saying why (Windows PowerShell 5.1)' -TestCases @(
+        @{ Form = 'a UNC'; Value = '\\server\share\exchangeadmin.db'; Says = 'ConfigStorePath must be a local path, not a network share' }
+        @{ Form = 'a relative'; Value = 'config\exchangeadmin.db'; Says = 'ConfigStorePath must be an absolute local file path' }
+    ) {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt37_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $root 'publish') -Force | Out-Null
+        try {
+            $before = & $script:Cdt37Snapshot $root
+            $run = Invoke-InstallerPlan -Installer (Resolve-Path $script:InstallerPath).Path -Root $root -ConfigStorePath $Value
+            $run.ExitCode | Should -Not -Be 0 -Because 'a plan must not complete over a value the run refuses'
+            $run.Flat | Should -Match ([regex]::Escape(($Says -replace '\s+', '')))
+            $run.Text | Should -Not -Match 'Plan only\. No changes were made\.'
+            & $script:Cdt37Snapshot $root | Should -BeExactly $before -Because 'the refusal comes before anything is written'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

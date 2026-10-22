@@ -199,26 +199,50 @@ function Assert-ConfigStorePathValue {
     # and every caller then tested for, backed up and checked whatever it named relative to its own
     # current directory: a verified backup of the wrong file, then an outage.
     #
+    # The rule is Get-ConfigStorePathForm's, below (cdt-37): the one copy the scripts hold, applied
+    # here to what they read and by the installer to what it writes. Anything but Local throws.
+    param([string]$Value, [string]$AppSettingsPath)
+
+    $form = Get-ConfigStorePathForm -Value $Value
+    if ($form -eq 'NetworkShare') {
+        throw "ConfigStore:Path in $AppSettingsPath must be a local path, not a network share: $Value. SQLite's locking is not reliable over a network share; fix the key in that file. Nothing was changed."
+    }
+    if ($form -ne 'Local') {
+        throw "ConfigStore:Path in $AppSettingsPath must be an absolute local file path (a drive letter, a colon, then \ or / - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Value. The app refuses a relative or drive-relative path at startup, and these scripts read only the drive-letter form; fix the key in that file. Nothing was changed."
+    }
+}
+
+<#
+.SYNOPSIS
+    The app's ConfigStore:Path rule for one value: 'Local', 'NetworkShare' or 'NotAbsolute'.
+.DESCRIPTION
+    The one copy of the rule in the ops scripts (cdt-37). Assert-ConfigStorePathValue applies it to
+    every value the scripts READ, after Get-ConfigStorePathSetting's trim; the installer applies it to
+    the -ConfigStorePath it is about to WRITE, so it writes only what the scripts read back and the
+    app opens. Pure: no trim, no file system access, no throw. A caller refuses anything but 'Local'.
+#>
+function Get-ConfigStorePathForm {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$Value)
+
     # TRIPWIRE: this mirrors Services/Storage/ConfigStorePath.cs (Resolve), and the two rules are
     # identical (cdt-35). Change one, change the other: tests/ps/SqliteConfigBackup.Tests.ps1 pins
     # that method's rule in its source and holds this module to it, and
     # ExchangeAdminWeb.Tests/ConfigStorePathTests.cs pins these lines and holds the method to them.
-    # The rule: the trim (Get-ConfigStorePathSetting); any two leading separators refused as a
-    # network share (Windows reads \\, //, \/ and /\ alike as a UNC or device path); then only an
-    # ASCII letter (the app's char.IsAsciiLetter), a colon, then \ or / - matched case-SENSITIVELY,
-    # because a case-insensitive match folds the Kelvin sign (U+212A) onto k - so \??\UNC\..., which
-    # names a share, fails with every other form; and the value returned with / turned into \. The
-    # two writers' own checks (the installer's -ConfigStorePath, the cutover's -SharedDbPath) accept
-    # only X:\, which this reads back. [IO.Path]::IsPathFullyQualified does not exist on .NET
-    # Framework (Windows PowerShell 5.1), hence the explicit tests.
-    param([string]$Value, [string]$AppSettingsPath)
-
-    if ($Value -match '^[\\/][\\/]') {
-        throw "ConfigStore:Path in $AppSettingsPath must be a local path, not a network share: $Value. SQLite's locking is not reliable over a network share; fix the key in that file. Nothing was changed."
-    }
-    if ($Value -cnotmatch '^[A-Za-z]:[\\/]') {
-        throw "ConfigStore:Path in $AppSettingsPath must be an absolute local file path (a drive letter, a colon, then \ or / - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Value. The app refuses a relative or drive-relative path at startup, and these scripts read only the drive-letter form; fix the key in that file. Nothing was changed."
-    }
+    # The rule: the trim (Get-ConfigStorePathSetting's; the installer does not trim a parameter); any
+    # two leading separators refused as a network share (Windows reads \\, //, \/ and /\ alike as a
+    # UNC or device path); then only an ASCII letter (the app's char.IsAsciiLetter), a colon, then \
+    # or / - matched case-SENSITIVELY, because a case-insensitive match folds the Kelvin sign (U+212A)
+    # onto k - so \??\UNC\..., which names a share, fails with every other form; and the accepted
+    # value turned into one spelling, / into \ (Get-ConfigStorePathSetting's Replace, the installer's
+    # GetFullPath). Of the two writers, the installer's -ConfigStorePath check is this function
+    # (cdt-37); the cutover's -SharedDbPath check accepts only X:\, which this reads back.
+    # [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1), hence
+    # the explicit tests.
+    if ($Value -match '^[\\/][\\/]') { return 'NetworkShare' }
+    if ($Value -cnotmatch '^[A-Za-z]:[\\/]') { return 'NotAbsolute' }
+    return 'Local'
 }
 
 <#
@@ -394,4 +418,4 @@ function Test-SqliteConfigDbIntegrity {
     return $true
 }
 
-Export-ModuleMember -Function Resolve-ConfigDbTool, Get-ConfigStorePathSetting, Resolve-ConfigDbPath, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteDbFile, Test-SqliteConfigDbIntegrity
+Export-ModuleMember -Function Resolve-ConfigDbTool, Get-ConfigStorePathSetting, Get-ConfigStorePathForm, Resolve-ConfigDbPath, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteDbFile, Test-SqliteConfigDbIntegrity

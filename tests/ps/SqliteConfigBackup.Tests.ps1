@@ -46,6 +46,7 @@ Describe 'SqliteConfigBackup module' {
         $m.ExportedFunctions.Keys | Should -Contain 'Resolve-ConfigDbTool'
         $m.ExportedFunctions.Keys | Should -Contain 'Resolve-ConfigDbPath'
         $m.ExportedFunctions.Keys | Should -Contain 'Get-ConfigStorePathSetting'
+        $m.ExportedFunctions.Keys | Should -Contain 'Get-ConfigStorePathForm' -Because 'the installer applies the reader''s rule to the -ConfigStorePath it writes (cdt-37)'
         $m.ExportedFunctions.Keys | Should -Contain 'Copy-SqliteDbFile'
         $m.ExportedFunctions.Keys | Should -Not -Contain 'Copy-SqliteConfigDb' `
             -Because 'the wholesale promote copy is gone with the shared database (decision 2026-09-04)'
@@ -229,11 +230,12 @@ Describe 'SqliteConfigBackup module' {
         }
 
         It 'accepts what the app accepts, refuses what it refuses, and reads back whatever the installer and the cutover write (cdt-17, cdt-30, cdt-35)' {
-            # One rule in three places: the app's ConfigStorePath.Resolve decides what an instance
-            # opens, this module holds the same rule for what the scripts READ, and the two scripts that
-            # WRITE the key keep a stricter copy of their own (X:\ only). It used to compare the module
-            # with the writers only, which refused D:/... that the app accepts (cdt-30); and the app
-            # used to accept four values the module refuses, three of them network shares (cdt-35).
+            # One rule in two copies: the app's ConfigStorePath.Resolve decides what an instance opens,
+            # and this module holds the same rule for what the scripts READ. Of the two scripts that
+            # WRITE the key, the installer asks this module (cdt-37) and the cutover keeps a stricter
+            # copy of its own (X:\ only). It used to compare the module with the writers only, which
+            # refused D:/... that the app accepts (cdt-30); and the app used to accept four values the
+            # module refuses, three of them network shares (cdt-35).
             #
             # The app's rule is pinned in its source and emulated line for line, rather than called:
             # the built app targets .NET 10, which a pwsh on an older runtime cannot load, and the
@@ -378,6 +380,18 @@ Describe 'SqliteConfigBackup module' {
                     Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
+        }
+
+        It 'Get-ConfigStorePathForm is the rule as one function, shared with the installer: it classifies, never trims, never throws (cdt-37)' {
+            Get-ConfigStorePathForm -Value 'D:\shared\exchangeadmin.db' | Should -BeExactly 'Local'
+            Get-ConfigStorePathForm -Value 'd:/shared/exchangeadmin.db' | Should -BeExactly 'Local'
+            foreach ($value in '\\s\h\x.db', '//s/h/x.db', '\/s/h/x.db', '/\s\h\x.db', '\\?\D:\x.db', '\\.\D:\x.db') {
+                Get-ConfigStorePathForm -Value $value | Should -BeExactly 'NetworkShare' -Because "'$value' begins with two separators"
+            }
+            foreach ($value in @('D:x.db', 'D:', 'x\y.db', '\x\y.db', '/x/y.db', '\??\UNC\s\h\x.db', ' D:\x.db', '', ([string][char]0x212A + ':\x.db'))) {
+                Get-ConfigStorePathForm -Value $value | Should -BeExactly 'NotAbsolute' -Because "'$value' is not a drive letter, a colon and a separator (and a caller trims first if it means to)"
+            }
+            Get-ConfigStorePathForm -Value $null | Should -BeExactly 'NotAbsolute'
         }
     }
 
