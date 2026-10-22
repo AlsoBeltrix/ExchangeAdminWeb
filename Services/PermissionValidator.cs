@@ -59,16 +59,22 @@ public class PermissionValidator
     // Exclusions come only from the MailboxPermissions/ExcludedUsers module config.
     // The appsettings Security:ExcludedUsers fallback was retired 2026-07-28: it was
     // invisible to the Protected Principals admin UI, so principals could be blocked
-    // with no visible cause.
-    private string[] GetConfiguredExclusions()
+    // with no visible cause. False when the rows cannot be read: never an empty list
+    // standing in for one that was not read (aud-a28s; the central check's read of the
+    // same list is ProtectedPrincipalService.TryGetLegacyExclusions, aud-a28p).
+    private bool TryGetConfiguredExclusions(out string[] exclusions)
     {
-        var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
-        if (!string.IsNullOrEmpty(excluded))
+        if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
         {
-            return excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            exclusions = [];
+            return false;
         }
 
-        return Array.Empty<string>();
+        var excluded = values.GetValueOrDefault("ExcludedUsers");
+        exclusions = string.IsNullOrEmpty(excluded)
+            ? []
+            : excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return true;
     }
 
     private bool GetPreventSelfGrant()
@@ -634,7 +640,13 @@ public class PermissionValidator
 
             token = _changeWatcher.CurrentToken();
 
-            if (_moduleConfig.HasModuleConfigFile("MailboxPermissions") && _moduleConfig.IsModuleCorrupt("MailboxPermissions"))
+            // aud-a28s. One read is both the corruption probe and the list. A presence read and a
+            // probe followed by a second, fail-open read of the list let a failure after the probe
+            // read as "no protected users", and every listed mailbox could be written for the cache
+            // lifetime. No presence read either: a module never configured has no rows and reads as
+            // an empty list, and rows that cannot be read are refused whether or not the module was
+            // ever configured.
+            if (!TryGetConfiguredExclusions(out var exclusions))
             {
                 _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
                 _excludedObjectIds = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
@@ -646,7 +658,7 @@ public class PermissionValidator
                 return;
             }
 
-            var configuredExclusions = GetConfiguredExclusions()
+            var configuredExclusions = exclusions
                 .Select(e => e.Trim())
                 .Where(e => !string.IsNullOrWhiteSpace(e))
                 .ToList();
