@@ -69,6 +69,61 @@ at `374718b3`).
 Files: `Components/Pages/AdminEventLog.razor`, `ExchangeAdminWeb.Tests/EventLogSectionsTargetTests.cs`
 (new), this record.
 
+## Fix
+
+`Components/Pages/AdminEventLog.razor`, GetAuditTarget: `target ?? batchName ?? section`, then - when the
+record has a `sections` array that names any - ` (sections: a, b)` appended (the array formatted by the
+page's own FormatJsonValue), or `sections: a, b` when there is no target at all. Everything that reads
+the target text follows from it: the Target cell's summary and tooltip, the expanded row's Full Target,
+and the CSV's Target column, which is FullTarget. +9 lines; the page is NotYetConverted in
+ClickGateRegistry, so there is no line key to move.
+
+Tests: new `ExchangeAdminWeb.Tests/EventLogSectionsTargetTests.cs` (3 cases). The records are written
+by aud-a28h's writers (`LogSettingsSaveRefused`, `LogSettingsSaveFailed`, with and without `sections`)
+and by `LogSettingsChange`, through the real AuditService; read back from its JSONL; parsed by the
+compiled page's ParseAuditLine; exported by its DownloadCsv over a recording JS runtime.
+
+Caller-visible change, by design: a refused or failed multi-section settings record reads, in the
+event log and its CSV, as for example `ModuleEnablement (sections: Module:MailboxPermissions,
+Module:CalendarPermissions)` where it read `ModuleEnablement`. Every other record reads as before. No
+filter was added.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M5 below is GetAuditTarget exactly as at `374718b3`.
+
+Same driver and conditions as aud-a28l (`a26i-mutations.log`), filter
+`FullyQualifiedName~EventLogSectionsTargetTests|FullyQualifiedName~EventLogCsvWiringTests|FullyQualifiedName~AuditCategoryFilingTests|FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~AuditFirstMergeTests`
+(77 tests). The mutant built with 0 errors; the restore matched its original MD5. After the
+round, a rebuild on the restored bytes and the filter: 77/77 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M5 `sections` dropped from the target text - GetAuditTarget as at `374718b3` | `AdminEventLog.razor`, `A55F8DB9DE66EFF00FDC20707AAF22DF` | `5E39AE7D8BCEBA8FA6992C34141DD0E0` | `AMultiSectionRecord_IsFoundByAFilterOnAnyOfItsSections`, `AMultiSectionRecord_CarriesItsSectionsIntoTheCsvTarget`; the control `ARecordThatListsNoSections_KeepsItsSectionAsItsTarget` passes, as it must |
+
+The mutant's MD5 is the page's at `748d358d`, before this fix: the revert is exact. Unchanged through
+the round: `EventLogSectionsTargetTests.cs` `57B19F8F133BAB8890FE99323018526C`. The code comments are
+written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 61 warnings, all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,285 passed / 3 skipped (the three known AD skips) / 0 failed, 5,288 total,
+  5m6s; nothing hung, no Sequence file. aud-a26g's tree: 5,282 / 3 / 0, 5,285 total; the
+  three new cases are this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` with the files staged: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. No coder self-review
+verdict is claimed.
+
+## Known gaps
+
+- The page still has no section or target filter: a section is found by reading or searching the
+  Target text, on the page or in the CSV. A filter box would be a new control; it is a candidate in the
+  hand-back, not part of this fix.
+- The Target cell's summary is cut at 90 characters, as every target is; a long `sections` list is
+  then complete only in the tooltip, the expanded row and the CSV.
+- The expanded row shows the sections twice: in Full Target, and as the record's own `sections` field.

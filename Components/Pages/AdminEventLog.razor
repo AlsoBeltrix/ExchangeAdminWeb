@@ -1052,8 +1052,17 @@
     private static string? TryGetString(JsonElement root, string prop) =>
         root.TryGetProperty(prop, out var val) && val.ValueKind == JsonValueKind.String ? val.GetString() : null;
 
-    private static string? GetAuditTarget(JsonElement root) =>
-        TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section");
+    private static string? GetAuditTarget(JsonElement root)
+    {
+        var target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section");
+        var sections = root.TryGetProperty("sections", out var listed) && listed.ValueKind == JsonValueKind.Array
+            ? FormatJsonValue(listed)
+            : "";
+        if (string.IsNullOrWhiteSpace(sections))
+            return target;
+
+        return string.IsNullOrWhiteSpace(target) ? $"sections: {sections}" : $"{target} (sections: {sections})";
+    }
 
     private static string FormatTargetSummary(string? target)
     {
