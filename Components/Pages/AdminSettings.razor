@@ -1138,12 +1138,13 @@
 
             // aud-a26p. A changed Secret ID the lookups would not read is refused before anything is written: stored, it
             // sent every lookup to the appsettings fallback or to no credential, and the typo showed only as a lookup
-            // failing later. The rule is the lookups' own (IsSecretId); blank stays allowed - it clears the stored id. The
-            // message names the field and never repeats its text: a field that takes an ID is where a pasted password
-            // lands, and the refusal is recorded.
+            // failing later. The rule (IsSecretId) takes digits only, with no sign or leading zero (aud-a26s): stricter than the
+            // lookups' read, so nothing is stored that they would not use and nothing is stored that differs from what was meant.
+            // Blank stays allowed - it clears the stored id. The message names the field and never repeats its text: a field
+            // that takes an ID is where a pasted password lands, and the refusal is recorded.
             if (secretChanged && secretId.Length > 0 && !ProtectedPrincipalService.IsSecretId(secretId))
             {
-                statusMessage = "Refusing to save: the Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero - or empty to clear it. Nothing was changed.";
+                statusMessage = "Refusing to save: the Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero, in digits only, with no sign or leading zero - or empty to clear it. Nothing was changed.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Validation", statusMessage);
                 return;
@@ -1387,8 +1388,8 @@
             .ToArray();
 
     private static IEnumerable<string> ChangedEntries(string kind, List<string> current, List<string> loaded) =>
-        current.Except(loaded, StringComparer.OrdinalIgnoreCase)
-            .Concat(loaded.Except(current, StringComparer.OrdinalIgnoreCase))
+        current.Except(loaded, StringComparer.Ordinal)
+            .Concat(loaded.Except(current, StringComparer.Ordinal))
             .Select(v => kind + ":" + v);
 
     private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>

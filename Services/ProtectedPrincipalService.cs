@@ -1304,11 +1304,14 @@ public class ProtectedPrincipalService
         new(stored ?? "", PositiveId(stored) is null ? PositiveId(_config["Security:ProtectedPrincipalDirectoryReadSecretId"]) : null);
 
     /// <summary>
-    /// Whether a value would give the lookups a Secret ID: the rule <see cref="GetDirectoryReadSecretId"/> applies
-    /// (aud-a26p). The admin page refuses a changed value this rejects, so nothing is stored that the lookups would pass
-    /// over for the fallback - which is how a typo used to show itself, as a lookup failing later.
+    /// Whether a value is a Secret ID as the admin page takes one: digits only, the first not zero, a number above zero that
+    /// an <c>int</c> holds - no sign, no leading zero, no white space (aud-a26s). The admin page refuses a changed value this
+    /// rejects. Whatever it accepts, the lookups read as the same ID (<see cref="GetDirectoryReadSecretId"/>), so nothing is
+    /// stored that they would pass over for the fallback (aud-a26p); their read also takes "+42" and "0042", which this
+    /// does not, so what is stored is what was meant.
     /// </summary>
-    public static bool IsSecretId(string? value) => PositiveId(value) is not null;
+    public static bool IsSecretId(string? value) =>
+        !string.IsNullOrEmpty(value) && value[0] != '0' && value.All(char.IsAsciiDigit) && PositiveId(value) is not null;
 
     private static int? PositiveId(string? value) =>
         int.TryParse(value, out var id) && id > 0 ? id : null;
