@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - no AD write happens, but an operator's save attempt can end with no durable
 audit event, the aud-a28 / aud-a28c class the Constitution forbids.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master (`20ef8984`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a4f347c5f99ae060f`
-**Commit**: `<pending>`
+**Commit**: `5d2a27ba` (merged `20ef8984`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-1, `prompt-attr-batch-1.md`, 2026-10-22)
 
 ## Evidence
