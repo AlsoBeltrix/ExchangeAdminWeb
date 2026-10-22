@@ -1,3 +1,6 @@
+using System.Collections;
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
 using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
@@ -306,6 +309,132 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
         Assert.Equal("Failed", Text(record, "result"));
         Assert.Equal(result.Error, Text(record, "error"));
+    }
+
+    // ---- the write is judged by its throw alone (aud-a26g) ------------------------------------
+
+    [Fact]
+    public async Task AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForAFailedWrite()
+    {
+        // The case the removed HadErrors check existed for, and the one it got wrong: the write was
+        // applied, and a record no throw carried sat in the stream. Only a thrown error is the write's.
+        const string reported = "A non-terminating error reported beside the write.";
+        var alex = _h.Ad.AddAlex();
+        _h.Ad.SetReportsErrorWithoutThrowing = reported;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Null(result.Error);
+        Assert.Equal("title", Assert.Single(result.AppliedChanges!).Name);
+        Assert.Equal("Lead Analyst", Assert.Single(Assert.Single(_h.Ad.Sets).Replace).Value);
+        Assert.Equal("Lead Analyst", alex.Attributes["title"]);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal("Analyst", Text(record, "old_title"));
+        Assert.Equal("Lead Analyst", Text(record, "new_title"));
+        Assert.DoesNotContain(reported, record.GetRawText(), StringComparison.Ordinal);
+
+        Assert.True(Assert.Single(_h.Notices).Success);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AWriteTheDirectoryRefuses_IsTheAuditedFailure_ThrownEitherWay(bool nonTerminating)
+    {
+        // aud-a28c's failed-write record, for a refusal thrown either way: a terminating one, and a
+        // non-terminating one that -ErrorAction Stop turns into a throw. With no HadErrors check left,
+        // the second is caught only because of Stop - which this pins.
+        const string refusal = "Insufficient access rights to perform the operation";
+        var alex = _h.Ad.AddAlex();
+        _h.Ad.SetFailure = refusal;
+        _h.Ad.SetFailureNonTerminating = nonTerminating;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Contains(refusal, result.Error, StringComparison.Ordinal);
+        Assert.Null(result.AppliedChanges);
+        Assert.Contains($"Set-ADUser|{alex.Dn}", _h.Ad.Calls);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Equal("Analyst", alex.Attributes["title"]);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+        Assert.Equal(["title"], record.GetProperty("changedAttributes").EnumerateArray().Select(a => a.GetString()));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+        Assert.False(record.TryGetProperty("mutationAttempted", out _));
+
+        Assert.False(Assert.Single(_h.Notices).Success);
+    }
+
+    [Fact]
+    public void TheHarness_SetADUser_ReportsAnErrorWithoutThrowing_AndRefusesWithoutTerminating()
+    {
+        // The two knobs, so the tests above cannot pass for want of what they describe: an error that
+        // is reported and not thrown, and a refusal that only -ErrorAction Stop throws.
+        var alex = _h.Ad.AddAlex();
+        var replace = new Hashtable { ["title"] = "Lead Analyst" };
+
+        _h.Ad.SetReportsErrorWithoutThrowing = "Reported, not thrown.";
+        using (var session = Session())
+        {
+            SetTitle(session.Shell, alex, replace, stop: true).Invoke();
+            Assert.True(session.Shell.HadErrors);
+            Assert.Equal("Reported, not thrown.", Assert.Single(session.Shell.Streams.Error).Exception.Message);
+            Assert.Equal("Lead Analyst", Assert.Single(_h.Ad.Sets).Replace["title"]);
+        }
+
+        _h.Ad.SetReportsErrorWithoutThrowing = null;
+        _h.Ad.SetFailure = "Insufficient access rights to perform the operation";
+        _h.Ad.SetFailureNonTerminating = true;
+        using (var session = Session())
+        {
+            Assert.ThrowsAny<RuntimeException>(() => SetTitle(session.Shell, alex, replace, stop: true).Invoke());
+            Assert.Single(_h.Ad.Sets);
+        }
+
+        using (var session = Session())
+        {
+            SetTitle(session.Shell, alex, replace, stop: false).Invoke();
+            Assert.True(session.Shell.HadErrors);
+            Assert.Contains("Insufficient access rights", Assert.Single(session.Shell.Streams.Error).Exception.Message, StringComparison.Ordinal);
+            Assert.Single(_h.Ad.Sets);
+        }
+    }
+
+    private sealed class HarnessSession(Runspace runspace, PowerShell shell) : IDisposable
+    {
+        public PowerShell Shell { get; } = shell;
+
+        public void Dispose()
+        {
+            Shell.Dispose();
+            runspace.Dispose();
+        }
+    }
+
+    private HarnessSession Session()
+    {
+        var runspace = RunspaceFactory.CreateRunspace(_h.Ad.CreateSessionState());
+        runspace.Open();
+        var shell = PowerShell.Create();
+        shell.Runspace = runspace;
+        return new HarnessSession(runspace, shell);
+    }
+
+    private static PowerShell SetTitle(PowerShell shell, LocalAd.User user, Hashtable replace, bool stop)
+    {
+        shell.Commands.Clear();
+        shell.AddCommand("Set-ADUser").AddParameter("Identity", user.Dn).AddParameter("Replace", replace);
+        if (stop)
+            shell.AddParameter("ErrorAction", "Stop");
+        return shell;
     }
 
     // ---- a save that finds nothing to change (aud-a26d) ----------------------------------------

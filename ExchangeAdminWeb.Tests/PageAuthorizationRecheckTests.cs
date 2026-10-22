@@ -38,9 +38,9 @@ public class PageAuthorizationRecheckTests
         // immediately before the write. Since aud-a28f that re-check is the first step of
         // ADAttributeEditorService.SaveAllowlistAndAudit, which reads the store fresh (never the
         // cached GetAllowlist) and refuses before it writes, so this guard now fails if the page
-        // writes the allowlist any other way - straight through SaveAllowlist would skip the
-        // re-check and the audit both. The behavioural proof that the re-check catches corruption
-        // a cached list would miss is
+        // writes the allowlist any other way - a plain SaveAllowlist, removed in aud-a28l, would
+        // skip the re-check and the audit both. The behavioural proof that the re-check catches
+        // corruption a cached list would miss is
         // ADAttributeEditorServiceTests.SaveAllowlistAndAudit_StoreCorruptedBehindAValidCache_IsRefusedAndNotOverwritten.
         var body = ProgressScan.CodeView(GetMethodBody("ModuleConfig.razor", "SaveAllowlistAsync"));
 

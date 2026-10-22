@@ -33,4 +33,18 @@ public interface IUndoableModule
     /// </param>
     Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent, System.Security.Claims.ClaimsPrincipal? actingUser);
     Task<UndoResult> ExecuteUndoAsync(Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, System.Security.Claims.ClaimsPrincipal? actingUser);
+
+    /// <summary>
+    /// Records an undo of <paramref name="auditEvent"/> that the caller refused before calling
+    /// <see cref="ExecuteUndoAsync"/>, as this module's own refused-undo record (aud-a28l). Never throws.
+    /// </summary>
+    /// <remarks>
+    /// The Admin Event Log re-checks the operator's authorization before it hands an undo to its module,
+    /// and that refusal used to leave no record: the module never saw the attempt, and the page holds the
+    /// module only through this interface. It is a member here so the record is written in the module's
+    /// own shape, beside the refusals ExecuteUndoAsync records, and so a module added later cannot leave
+    /// the page's refusals unrecorded by omission. It must not throw: a failed audit write is logged, and
+    /// the operator is still shown the refusal rather than whatever the page's catch would say.
+    /// </remarks>
+    void LogUndoRefused(Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, string refusedAt, string reason);
 }

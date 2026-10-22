@@ -979,6 +979,9 @@
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            // Read before the re-check, so its refusal record says who was refused and from where.
+            var userName = authState.User.Identity?.Name ?? "unknown";
+            var clientIp = ClientInfo.IpAddress;
 
             // Re-check authorization immediately before the write: hasUndoPermission
             // is evaluated at render and only hides UI, which is not security. A
@@ -989,11 +992,12 @@
             if (!pageAuth.Succeeded || !undoAuth.Succeeded)
             {
                 undoError = "Authorization denied.";
+                // aud-a28l: refused before the module is called, so the module never sees this
+                // attempt; it is recorded here, in the module's own refused-undo record. Failed, so
+                // the edit keeps its Undo button (aud-a26c); not announced, as it never was.
+                handler.LogUndoRefused(undoTargetEvent.RawFields, userName, clientIp, undoTicket.Trim(), "Authorization", undoError);
                 return;
             }
-
-            var userName = authState.User.Identity?.Name ?? "unknown";
-            var clientIp = ClientInfo.IpAddress;
 
             var fields = new Dictionary<string, object?>(undoTargetEvent.RawFields, StringComparer.OrdinalIgnoreCase);
             if (handler.ModuleId == "ADAttributeEditor")
@@ -1052,8 +1056,22 @@
     private static string? TryGetString(JsonElement root, string prop) =>
         root.TryGetProperty(prop, out var val) && val.ValueKind == JsonValueKind.String ? val.GetString() : null;
 
-    private static string? GetAuditTarget(JsonElement root) =>
-        TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section");
+    // aud-a26i: a settings save refused or failed across several sections is one record filed under
+    // the save's own scope, with the sections it would have changed in "sections" (aud-a28h). This is
+    // the text the Target cell, its tooltip, the expanded row and the CSV's Target column all show, so
+    // the sections are named in it; without them an admin reviewing one section found its successes
+    // and not the attempts that named it. A record with no "sections" reads as it did.
+    private static string? GetAuditTarget(JsonElement root)
+    {
+        var target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section");
+        var sections = root.TryGetProperty("sections", out var listed) && listed.ValueKind == JsonValueKind.Array
+            ? FormatJsonValue(listed)
+            : "";
+        if (string.IsNullOrWhiteSpace(sections))
+            return target;
+
+        return string.IsNullOrWhiteSpace(target) ? $"sections: {sections}" : $"{target} (sections: {sections})";
+    }
 
     private static string FormatTargetSummary(string? target)
     {

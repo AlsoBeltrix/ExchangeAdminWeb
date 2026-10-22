@@ -104,12 +104,15 @@ public sealed class ADAttributeEditorPatternTests : IDisposable
     public void AnAllowlistSaveWithAnUncompilablePattern_IsRefused_NamingTheAttribute()
     {
         // The admin side: caught when the allowlist is saved, before the store is touched.
-        var stored = _h.Service.GetAllowlist()!;
+        var view = _h.Service.LoadAllowlistForEditing();
+        var stored = view.Attributes!;
         var edited = stored.Select(a => a.Name == "title" ? a with { Pattern = "[" } : a).ToList();
 
-        var refused = Assert.Throws<ArgumentException>(() => _h.Service.SaveAllowlist(edited));
+        var refused = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9");
 
-        Assert.Contains("Job Title", refused.Message, StringComparison.Ordinal);
+        Assert.False(refused.Success);
+        Assert.Contains("Job Title", refused.Error, StringComparison.Ordinal);
+        Assert.Equal("PatternCheck", Text(Assert.Single(_h.AuditEvents()), "refusedAt"));
         Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _));
         Assert.Equal(stored.Select(a => (a.Name, a.Pattern)), rows.Select(r => (r.Name, r.Pattern)));
     }
@@ -118,11 +121,12 @@ public sealed class ADAttributeEditorPatternTests : IDisposable
     public void AnAllowlistSaveWithAValidPattern_IsStored()
     {
         // The control for the admin side: only a pattern that does not compile is refused.
-        var stored = _h.Service.GetAllowlist()!;
-        var edited = stored.Select(a => a.Name == "title" ? a with { Pattern = "^[A-Z]" } : a).ToList();
+        var view = _h.Service.LoadAllowlistForEditing();
+        var edited = view.Attributes!.Select(a => a.Name == "title" ? a with { Pattern = "^[A-Z]" } : a).ToList();
 
-        _h.Service.SaveAllowlist(edited);
+        var saved = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9");
 
+        Assert.True(saved.Success, saved.Error);
         Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _));
         Assert.Equal("^[A-Z]", Assert.Single(rows, r => r.Name == "title").Pattern);
     }

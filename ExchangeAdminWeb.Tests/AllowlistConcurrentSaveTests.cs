@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 
@@ -170,5 +172,62 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         var save = AuditCategoryFilingTests.MethodBody(code, "private async Task SaveAllowlistAsync()");
         Assert.Contains("SaveAllowlistAndAudit(rows, allowlistVersion, ", save, StringComparison.Ordinal);
         Assert.Contains("allowlistVersion = result.Version", save, StringComparison.Ordinal);
+    }
+
+    // ---- aud-a28l: no allowlist writer goes round the version check -------------------------------
+
+    [Fact]
+    public void TheServicesOnlyAllowlistWriter_IsTheSaveThatChecksTheLoadedVersion()
+    {
+        // A method a page can call that is handed allowlist rows is taken for a writer. The save is the
+        // only one there should be, and it must take the version its page loaded (aud-a28i); the public
+        // SaveAllowlist removed in aud-a28l was a writer with neither the version nor a record.
+        var writers = typeof(ADAttributeEditorService)
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(m => !m.IsPrivate && m.GetParameters().Any(p => HoldsAllowlistRows(p.ParameterType)))
+            .Select(m => m.Name)
+            .ToList();
+
+        Assert.Equal([nameof(ADAttributeEditorService.SaveAllowlistAndAudit)], writers);
+        Assert.Contains(
+            typeof(ADAttributeEditorService).GetMethod(nameof(ADAttributeEditorService.SaveAllowlistAndAudit))!.GetParameters(),
+            p => p.Name == "loadedVersion" && p.ParameterType == typeof(string));
+    }
+
+    [Fact]
+    public void NoProductionCode_ReplacesTheStoredAllowlist_OutsideTheSaveThatChecksTheLoadedVersion()
+    {
+        // The repository is a DI singleton, so the version check could also be gone round by calling
+        // its whole-table writers directly. Only the audited save may.
+        var calls = new List<string>();
+        foreach (var file in ProductionSources())
+        {
+            var code = RazorSyntax.CommentsBlanked(File.ReadAllText(file));
+            calls.AddRange(Regex.Matches(code, @"\.(SaveAllowlist|ReplaceAllowlist)\(")
+                .Select(m => $"{Path.GetFileName(file)}: {m.Value}"));
+        }
+
+        Assert.Equal(["ADAttributeEditorService.cs: .ReplaceAllowlist("], calls);
+        var service = RazorSyntax.CommentsBlanked(File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Services", "ADAttributeEditorService.cs")));
+        var save = AuditCategoryFilingTests.MethodBody(service, "public AllowlistSaveResult SaveAllowlistAndAudit(");
+        Assert.Contains("_repository.ReplaceAllowlist(", save, StringComparison.Ordinal);
+    }
+
+    private static bool HoldsAllowlistRows(Type type) =>
+        type.GetInterfaces().Append(type).Any(i =>
+            i.IsGenericType
+            && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)
+            && i.GetGenericArguments()[0] is var row
+            && (row == typeof(EditableAttribute) || row == typeof(AttributeRow)));
+
+    private static IEnumerable<string> ProductionSources()
+    {
+        var root = Path.GetDirectoryName(AuditCategoryFilingTests.FindRepoFile("Program.cs"))!;
+        return Directory.EnumerateFiles(Path.Combine(root, "Services"), "*.cs", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, "Components"), "*.razor", SearchOption.AllDirectories))
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, "Components"), "*.cs", SearchOption.AllDirectories))
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, "Modules"), "*.cs", SearchOption.AllDirectories))
+            .Append(Path.Combine(root, "Program.cs"));
     }
 }

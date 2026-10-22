@@ -404,28 +404,6 @@ public class ADAttributeEditorService
         return all?.Where(a => a.Level <= maxLevel).ToList();
     }
 
-    public void SaveAllowlist(List<EditableAttribute> attributes)
-    {
-        // aud-a28e. A pattern that does not compile is refused where the allowlist is saved, before
-        // the store is touched, rather than found by the first operator to save that attribute. It
-        // throws, so no caller can carry on as if the save happened. The Module Configuration page's
-        // save does not come through here: it refuses such a pattern itself, as an audited refusal,
-        // and writes inside one transaction with its other checks (SaveAllowlistAndAudit, aud-a28f,
-        // aud-a28i). This throw is the backstop for any other caller.
-        // ValidateProposedValues keeps its own catch: a pattern already stored - edited into the
-        // database, or imported before the legacy import checked patterns (aud-a26e) - never passes
-        // through here, and a timeout depends on the value being checked, so it cannot be judged here.
-        foreach (var attribute in attributes)
-        {
-            var problem = DescribeUncompilablePattern(attribute);
-            if (problem is not null)
-                throw new ArgumentException(problem);
-        }
-
-        _repository.SaveAllowlist(attributes.Select(ToAllowlistRow).ToList());
-        InvalidateAllowlistCache();
-    }
-
     /// <summary>
     /// The section every allowlist save record is filed under, whether the save succeeded or not, so
     /// an admin looking for the allowlist's changes finds the refused and failed attempts beside them.
@@ -455,6 +433,11 @@ public class ADAttributeEditorService
     /// It does not throw. Every outcome is recorded here and returned, which is what lets the page's
     /// catch write the one record for an attempt that failed before reaching this method without
     /// risking a second. The records are written after the transaction, which a refusal rolls back.
+    ///
+    /// It is the service's only allowlist writer (aud-a28l). A public SaveAllowlist stood beside it with
+    /// no caller left, writing with neither the version check nor a record, so any later caller would
+    /// have gone round both; it was removed rather than kept as a backstop. AllowlistConcurrentSaveTests
+    /// holds the line, here and at the repository.
     /// </remarks>
     public AllowlistSaveResult SaveAllowlistAndAudit(
         List<EditableAttribute> attributes, string loadedVersion, string performedBy, string ip)
@@ -729,10 +712,9 @@ public class ADAttributeEditorService
     /// it has no pattern or the pattern compiles.
     /// </summary>
     /// <remarks>
-    /// The allowlist-save wording, shared by SaveAllowlist's throw and the page save's audited
-    /// refusal so the two cannot drift. It names the attribute and says an administrator must correct
-    /// the pattern: the page shows the pattern as typed and never guesses at or repairs one
-    /// (aud-a26e), so the fix is the admin's to make.
+    /// The wording of the allowlist save's PatternCheck refusal. It names the attribute and says an
+    /// administrator must correct the pattern: the page shows the pattern as typed and never guesses
+    /// at or repairs one (aud-a26e), so the fix is the admin's to make.
     /// </remarks>
     private static string? DescribeUncompilablePattern(EditableAttribute attribute) =>
         DescribeUncompilablePattern(attribute.Name, attribute.Label, attribute.Pattern) is { } problem
@@ -1442,10 +1424,16 @@ public class ADAttributeEditorService
         if (clear.Count > 0) ps.AddParameter("Clear", clear.ToArray());
 
         // -ErrorAction Stop makes real Set-ADUser failures (access denied,
-        // constraint violation, unreachable DC) THROW from Invoke() - they never
-        // reach the HadErrors branch below. Catch, audit, and return a failed
-        // result; a failed mutation with no audit record violates the
-        // Constitution's audit invariant.
+        // constraint violation, unreachable DC) THROW from Invoke(). Catch, audit,
+        // and return a failed result; a failed mutation with no audit record
+        // violates the Constitution's audit invariant.
+        //
+        // aud-a26g: the throw is the write's whole verdict, with no HadErrors check after it. An error
+        // a command writes under -ErrorAction Stop is thrown and leaves no record in the stream, so such
+        // a check could never see the write's own error - only a record something else left, an earlier
+        // command's or one written past the preference, and then a write the directory had taken was
+        // reported and recorded as failed, with nothing to undo. So -ErrorAction Stop is load-bearing
+        // here: a non-terminating refusal is caught only because it is thrown.
         try
         {
             ps.Invoke();
@@ -1456,13 +1444,13 @@ public class ADAttributeEditorService
             LogAudit(target, changes, performedBy, ip, ticket, false, thrownMsg);
             return new(false, thrownMsg, null);
         }
-        ps.Commands.Clear();
-
-        if (ps.HadErrors)
+        finally
         {
-            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Set-ADUser failed.";
-            LogAudit(target, changes, performedBy, ip, ticket, false, errMsg);
-            return new(false, errMsg, null);
+            // Nothing runs on this pipeline after the write today. A command added after it would
+            // otherwise start with the write's command and any record it left still in place, and
+            // HadErrors stays true while one remains (psl-2).
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
         }
 
         LogAudit(target, changes, performedBy, ip, ticket, true, null, servicedNote);
