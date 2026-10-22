@@ -9,9 +9,9 @@ named; under `-ErrorAction Stop` they are effectively dead (the aud-a2o/a26g pat
 `Set-Place` committed, which is false inside the partial message. (4) Test gap: the harness stand-in
 `Get-ADUser` and `Set-ADUser` answer on any server they can reach, so a wrong `-Server` is caught only
 by pinning the parameter value, not by behaviour.
-**Status**: Fixed on branch, not merged; guard proof below; independent review pending; dev acceptance owed
+**Status**: Merged to master (`027c3309`); closed on guard proof; codex review pending; dev acceptance owed
 **Branch**: `worktree-agent-ae910e9c92bf1c2aa`
-**Commit**: the fix commit after plan `17db13ed` (fix, tests, comments, record)
+**Commit**: `cff342a7` (fix, tests, comments, record); plan `17db13ed`; merged `027c3309`
 **Reviewer**: implementer (surfaced by the aud-a2q agent, 2026-10-22, its four candidates)
 
 ## Evidence
