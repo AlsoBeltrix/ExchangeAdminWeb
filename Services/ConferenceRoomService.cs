@@ -1826,28 +1826,28 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         return await Task.Run(() =>
         {
+            // aud-a2s. The step under way, for the catch at the end, as the City/State/Country paths keep it (aud-a2q,
+            // aud-a2r). A throw from any step here was told as "Failed to validate the on-prem room list ... before
+            // writing: <error>" with no step named but the import, which a catch of its own named (aud-a2r): the
+            // runspace, the credential, the room's object read, the group search, the group's re-read and the membership
+            // read all read alike. The resolver names its own three steps (ResolveAdGroupGuid). Every step here runs
+            // before Set-Place, so the catch says nothing was written.
+            var step = "opening the directory runspace";
             try
             {
                 using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                // aud-a2r. The import's error is the one it throws (ImportActiveDirectoryModule). This method keeps no
-                // step for its catch at the end to name, so the import's is named here, before anything is written.
-                try
-                {
-                    ImportActiveDirectoryModule(ps);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "On-prem room-list preflight for {Room} on {List}: importing the ActiveDirectory module failed; nothing was written", roomEmail, list.Name);
-                    return $"Failed to validate the on-prem room list '{list.Name}' before writing: importing the ActiveDirectory module failed: {Sentence(ex.Message)} Nothing was written.";
-                }
+                step = "importing the ActiveDirectory module";
+                ImportActiveDirectoryModule(ps);
 
+                step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 // The two objects the on-prem add names - the room's proven object and the list's
                 // group - each read here exactly as the add will read them, without writing.
+                step = "reading the room's AD object";
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
                 // Before any write: the refusal says so, as the resolver's and the membership read's below do (aud-a2r).
                 if (roomError != null)
@@ -1855,7 +1855,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 // The resolver's refusals are shared with the add, which meets them after the writes,
                 // so here, as for the membership read below, the preflight says nothing was written.
-                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, credential);
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, credential, ref step);
                 if (groupError != null)
                     return $"{groupError} Nothing was written.";
 
@@ -1864,13 +1864,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // nothing has been written. It used to be read only at the add, by Get-ADGroupMember -
                 // which fails on a group past the ADWS cap or with a member in another domain - after
                 // Set-Place and the timezone had committed, so such a list made every row partial.
+                step = "reading the membership of the list's group";
                 var (memberError, _) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, list.Name, credential);
                 return memberError is null ? null : $"{memberError} Nothing was written.";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "On-prem room-list preflight failed for {Room} on {List}", roomEmail, list.Name);
-                return $"Failed to validate the on-prem room list '{list.Name}' before writing: {ex.Message} Nothing was written.";
+                _logger.LogError(ex, "On-prem room-list preflight for {Room} on {List}: {Step} failed; nothing was written", roomEmail, list.Name, step);
+                return $"Failed to validate the on-prem room list '{list.Name}' before writing: {step} failed: {Sentence(ex.Message)} Nothing was written.";
             }
         });
     }
@@ -1902,35 +1903,35 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         return await Task.Run<(string? error, string? written, string? confirmed)>(() =>
         {
+            // aud-a2s. The step under way, as in the preflight above. The catch at the end logged "On-prem room-list member
+            // add (Set-ADGroup on the group's member attribute) failed" and told the row it had failed to add the room on
+            // the AD object, whichever step had thrown - the runspace, the credential, the room's object read, the group
+            // search, the group's re-read, the membership read - none of them the write. The write and the read-back
+            // settle their own errors below, each in its own words (aud-a2n), so only the steps before the write's Invoke
+            // reach the catch: whatever reaches it, this row did not add the room.
+            var step = "opening the directory runspace";
             try
             {
                 using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                // aud-a2r. As in the preflight, the import's error is named here: the catch at the end would log the
-                // write, Set-ADGroup, as what failed.
-                try
-                {
-                    ImportActiveDirectoryModule(ps);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "On-prem room-list add for {Room} on {List}: importing the ActiveDirectory module failed", roomEmail, roomListName);
-                    return ($"Failed to add the room to the on-prem room list '{roomListName}': importing the ActiveDirectory module failed: {ex.Message}", null, null);
-                }
+                step = "importing the ActiveDirectory module";
+                ImportActiveDirectoryModule(ps);
 
+                step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 // BOTH objects by immutable GUID, fail-closed, before any write - so the wrong
                 // member is never added to the wrong group. The room's is the validated one.
+                step = "reading the room's AD object";
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
                 // After Set-Place and the timezone, inside the row's partial: the refusal is returned as it is, with no
                 // "Nothing was written." (aud-a2r).
                 if (roomError != null)
                     return (roomError, null, null);
 
-                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, listAddress, credential);
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, listAddress, credential, ref step);
                 if (groupError != null)
                     return (groupError, null, null);
 
@@ -1940,6 +1941,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // Get-ADGroupMember. Read again here rather than carried across the writes: a stale
                 // "already a member" would report success, silently, for a room taken off the group in
                 // between; a fresh read adds it, or fails loudly.
+                step = "reading the membership of the list's group";
                 var (memberError, alreadyMember) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, roomListName, credential);
                 if (memberError != null)
                     return (memberError, null, null);
@@ -1957,6 +1959,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // exists to prevent. The group by the objectGUID its own domain answered with; the room
                 // by the DN of its proven object, the DN the membership read above compared, never null
                 // here - that read refuses a room read without one. Not by a name or a UPN.
+                step = "Set-ADGroup on the group's member attribute";
                 var groupServer = GroupManagementService.ServerFromDn(groupDn);
                 ps.AddCommand("Set-ADGroup")
                   .AddParameter("Identity", groupGuid)
@@ -2052,18 +2055,16 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
             catch (Exception ex)
             {
-                // The steps around the write - the runspace, the module, the reads that prove the room and the
-                // group and check the membership; since aud-a2n the write's own errors are settled above and
-                // never reach here. aud-a2n: the line names the write the method makes, Set-ADGroup on the
-                // group's member attribute (aud-a2j), not the Add-ADGroupMember it replaced.
-                _logger.LogError(ex, "On-prem room-list member add (Set-ADGroup on the group's member attribute) failed for {Room} on {List}", roomEmail, roomListName);
-                return ($"Failed to add the room to the on-prem room list on the AD object: {ex.Message}", null, null);
+                // Only the steps before the write's Invoke get here (see step), so the room was not added by this row. This
+                // comes after Set-Place and the timezone, inside the row's partial, so it does not say nothing was written.
+                _logger.LogError(ex, "On-prem room-list add for {Room} on {List}: {Step} failed", roomEmail, roomListName, step);
+                return ($"Failed to add the room to the on-prem room list '{roomListName}': {step} failed: {ex.Message}", null, null);
             }
         });
     }
 
     // aud-a2r. Imports the ActiveDirectory module into a directory runspace, as its first command; the callers name the
-    // step - the City/State/Country paths through their step, the room-list paths in a catch of their own. The import's
+    // step through their step - the room-list paths since aud-a2s, which dropped their own catch for it. The import's
     // error is the one it throws. Under -ErrorAction Stop the cmdlet's own error is thrown from Invoke and leaves no record
     // in the stream (measured on this SDK: TheRealImportModule_ThrowsItsOwnErrorUnderStop_AndLeavesNoRecord), so the
     // HadErrors check each of the four AD paths made after its import never saw that error. It saw only an error written
@@ -2266,7 +2267,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // in its own domain (ReadAdGroupInItsDomain), and that read's objectGUID and DN are what the
     // membership read and the write use, so the preflight and the add resolve the same object the
     // same way.
-    private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, PSCredential credential)
+    //
+    // aud-a2s. Its three steps - the catalog, the search, the re-read - are one call to the preflight
+    // and the add, so it names each in the caller's step, by ref, before running it: a throw from the
+    // search or the re-read reaches the caller's catch, which names the step under way. The catalog's
+    // failure never throws - ResolveForestGlobalCatalog catches it - and is refused here in words
+    // naming it.
+    private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, PSCredential credential, ref string step)
     {
         // A list Exchange reports no address for has nothing to find its group by. Refused before the
         // forest is asked anything: a search for an empty mail is not a search for this list's group,
@@ -2275,10 +2282,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (address.Length == 0)
             return ($"Exchange reported no primary SMTP address for room list '{roomListName}', so its on-prem group cannot be identified: the group is found by that address alone, never by its name. Check the list in Exchange Online. The room was not added to the list.", null, null);
 
+        step = "resolving the forest's global catalog";
         var (catalog, catalogError) = ResolveForestGlobalCatalog(ps, credential);
         if (catalog is null)
             return ($"The forest's global catalog could not be resolved ({catalogError}), so the on-prem group for room list '{roomListName}' cannot be looked up across the forest. Refusing rather than searching one domain.", null, null);
 
+        step = "searching the forest's global catalog for the list's group";
         var escaped = address.Replace("'", "''");
         ps.AddCommand("Get-ADGroup")
           .AddParameter("Filter", $"mail -eq '{escaped}'")
@@ -2299,6 +2308,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (string.IsNullOrWhiteSpace(objectGuid))
             return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null, null);
 
+        step = "reading the list's group in its own domain";
         return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), credential);
     }
 
