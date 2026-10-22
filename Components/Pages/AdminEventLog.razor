@@ -913,6 +913,10 @@
         // reachable by keyboard, and a preview opened mid-run replaced the panel the undo was confirmed on,
         // which then showed the first undo's outcome under another event. A guard, not a ClickGate
         // conversion: the page is NotYetConverted.
+        // aud-a26o: and while a preview loads. Two previews requested back to back both ran: the later
+        // click set the target and whichever answer came last filled the panel - one event's preview
+        // beside another event as the target Confirm would undo, the reversed marker then naming the
+        // preview's operation.
         if (undoExecuting || undoLoading)
             return;
 
@@ -940,12 +944,16 @@
             // protected target this operator may service (pps-2).
             var previewAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
             var preview = await handler.PreviewUndoAsync(evt.RawFields, previewAuthState.User);
+            // aud-a26o: shown only while the entry it was asked for is still the panel's. A close while it
+            // loaded clears the target, and the answer must not reopen the panel beside no event. The entry
+            // itself, not its operation id, which can be blank and is not the entry.
             if (ReferenceEquals(undoTargetEvent, evt))
                 undoPreview = preview;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to load undo preview for operation {OperationId}", evt.OperationId);
+            // A failure the same way (aud-a26o): a closed panel stays closed.
             if (ReferenceEquals(undoTargetEvent, evt))
                 undoPreview = new UndoPreview(false, $"Failed to load undo preview: {ex.Message}", "", "", "", null, null, false, null);
         }

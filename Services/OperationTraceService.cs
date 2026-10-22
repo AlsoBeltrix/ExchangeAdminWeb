@@ -202,6 +202,8 @@ public class OperationTraceService
             || lowered.Contains("client_secret");
     }
 
+    // aud-a28q. A null actor is "unknown", as WriteStandaloneOperation names an actor it does not have. Dereferenced,
+    // it threw out of BeginOperation before the operation existed.
     private static string SamName(string? identity) =>
         identity is null ? "unknown" : identity.Contains('\\') ? identity.Split('\\')[1] : identity;
 

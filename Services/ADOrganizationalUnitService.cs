@@ -27,6 +27,14 @@ public sealed class ADOrganizationalUnitService
         _logger = logger;
     }
 
+    /// <summary>
+    /// The session the OU enumeration opens (psl-7).
+    /// </summary>
+    /// <remarks>
+    /// A TEST SEAM - the class is sealed, so a property rather than a virtual (the shape of
+    /// <c>AdSiteDirectory.WorkerScheduler</c>): a test hands back a session whose Import-Module and
+    /// Get-ADOrganizationalUnit are local functions. Production builds the session it always did.
+    /// </remarks>
     internal Func<Runspace> CreateDirectoryRunspace { get; init; } = DirectoryRunspace;
 
     private static Runspace DirectoryRunspace()
@@ -109,6 +117,8 @@ public sealed class ADOrganizationalUnitService
         var results = ps.Invoke();
         ps.Commands.Clear();
 
+        // psl-7: a record here is this read's own. The import clears the stream behind it, so a record it left past
+        // -ErrorAction Stop can no longer fail the enumeration and hide the OU browser, as it did.
         if (ps.HadErrors)
         {
             var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message

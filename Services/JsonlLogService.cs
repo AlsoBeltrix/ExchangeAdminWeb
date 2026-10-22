@@ -63,6 +63,12 @@ public class JsonlLogService
         yield return activePath;
     }
 
+    // aud-a28q. An audit or trace write never throws into its caller. The serialisation ran before this try, so a
+    // value System.Text.Json cannot write - a getter that throws, a cycle, a type it does not support - threw out of
+    // the audit call and ended a handler with an exception instead of its outcome, the record lost; only the refusal
+    // helpers' own catches hid it. Whatever stops a record is now logged here once, naming its action and category,
+    // and the record is dropped whole, never half a line in the JSONL. The operation's outcome is its caller's
+    // (Constitution, Auditing And Tracing: an audit failure is logged separately and never fails the operation).
     private void WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
         var logPath = "(unresolved)";
@@ -88,6 +94,9 @@ public class JsonlLogService
         }
     }
 
+    // The name a failed record is logged under (aud-a28q): a field taken only when it is a string - the action, and
+    // the category or, for a trace event, the module it is filed under. Never another field and never a value's
+    // ToString: the payload can hold what the application log must not, and a ToString can itself throw.
     private static string? TextField(Dictionary<string, object?>? evt, string key) =>
         evt is not null && evt.TryGetValue(key, out var value) ? value as string : null;
 

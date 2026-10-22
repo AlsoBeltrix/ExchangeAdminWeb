@@ -864,6 +864,9 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory
         return results;
     }
 
+    // psl-7. The session the availability probe opens. A TEST SEAM - the class is sealed, so a property rather than
+    // a virtual (AdSiteDirectory.WorkerScheduler's shape): a test hands back a session whose Import-Module is a local
+    // function. Production builds the session the probe always did.
     internal Func<Runspace> CreateProbeRunspace { get; init; } = ProbeRunspace;
 
     private static Runspace ProbeRunspace()
@@ -885,6 +888,9 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory
 
             ActiveDirectoryModuleImport.Import(ps);
 
+            // psl-7: the import's throw is its failure, reported by the catch below. The HadErrors check that stood
+            // here could not see that error under Stop, and marked the directory unavailable only for a record
+            // written past the preference, with the module loaded.
             lock (_availabilityLock) { _isAvailable = true; }
             _logger.LogInformation("ActiveDirectory module loaded successfully. AD autocomplete is available.");
         }

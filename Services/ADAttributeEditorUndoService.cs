@@ -540,6 +540,8 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
         if (value is JsonElement je)
         {
+            // aud-a26o: a JSON null is not set. Its raw text, "null", was taken for the value - shown by the preview
+            // and written by the undo. The writer drops a null side, so only a hand-made record carries one.
             return je.ValueKind switch
             {
                 JsonValueKind.String => je.GetString(),

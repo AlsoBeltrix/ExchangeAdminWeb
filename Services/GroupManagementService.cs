@@ -1297,6 +1297,14 @@ public class GroupManagementService
         return await _moduleCredentials.GetCredentialsAsync("GroupManagement", purpose);
     }
 
+    /// <summary>
+    /// The session every directory path here opens (psl-7).
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, the shape of <c>ADAttributeEditorService.CreateDirectoryRunspace</c>: a test
+    /// hands back a session whose Import-Module and reads are local functions, so a path runs for real with no
+    /// directory. Production builds exactly the session each path used to build inline.
+    /// </remarks>
     internal virtual Runspace CreateDirectoryRunspace()
     {
         var iss = InitialSessionState.CreateDefault();
@@ -1442,6 +1450,8 @@ public class GroupManagementService
                 try { routed = ps.Invoke().FirstOrDefault(o => o is not null); }
                 catch (Exception) { routed = null; }
                 finally { ps.Commands.Clear(); }
+                // psl-7: after a throw caught above, routed is null and HadErrors also reads true though the stream
+                // holds no record (measured, psl-7's record) - either operand refuses, as it must.
                 if (routed is null || ps.HadErrors)
                 {
                     ps.Streams.Error.Clear();
