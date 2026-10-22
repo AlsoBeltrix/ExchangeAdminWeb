@@ -9,7 +9,7 @@ straight after a `-ErrorAction Stop` import, the dead pattern aud-a2o/a26g/a2r r
 measured: a failing import under Stop throws and leaves zero records. Also measured and worth a
 comment where it matters: `PowerShell.HadErrors` reads true after an `Invoke` that threw, even with
 zero records.
-**Status**: Merged to master (`5e2b80f3`); closed on guard proof; codex review pending
+**Status**: Merged to master (`5e2b80f3`); closed on guard proof; codex attr-batch-11 clean (one MEDIUM folded into aud-a28u)
 **Branch**: `worktree-agent-aa41f72251493711c`
 **Commit**: `339da5c9` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`); merged `5e2b80f3`
 **Reviewer**: implementer (surfaced by the aud-a2r agent, 2026-10-22, candidates 2 to 4 of its hand-back)

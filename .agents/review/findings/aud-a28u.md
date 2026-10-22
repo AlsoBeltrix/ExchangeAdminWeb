@@ -29,3 +29,13 @@ the write; the comment aud-a28q corrected).
 ## Guard proof
 
 Pending.
+
+## Folded in: the recovery logging in the writer's catch can itself throw (codex, attr-batch-11, 2026-10-22) - MEDIUM
+
+`Services/JsonlLogService.cs` `WriteToFile` around line 91: after catching a serialisation or file-write
+failure, the catch calls `_logger.LogError(...)`; a throwing `ILogger` provider or formatter path throws
+out of the audit or trace write after the operation completed, reviving the aud-a28q class on the
+recovery path. Guard the catch-block logging with a nested try/catch (or a non-throwing fallback) so no
+failure while reporting a dropped record escapes `WriteToFile`; the same for the trace writer's recovery
+path. Test: a logger whose `Log` throws does not make the write throw (the aud-a28q tripwire gains a
+throwing-logger variant). Mutation at the call site: log without the nested guard again.

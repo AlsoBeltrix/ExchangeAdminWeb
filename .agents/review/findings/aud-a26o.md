@@ -13,7 +13,7 @@ harness and may ask a different DC than the save (aud-a26l routed the save chain
 pre-write re-read uses `.Value?.ToString()`, so a collection-valued attribute reads as its type name
 while the read-back takes its element; v1 excludes multi-valued attributes but the allowlist does not
 enforce that.
-**Status**: Merged to master (`5e2b80f3`); closed on guard proof; codex review pending
+**Status**: Merged to master (`5e2b80f3`); closed on guard proof; codex attr-batch-11 clean (one MEDIUM folded into aud-a28u)
 **Branch**: `worktree-agent-aa41f72251493711c`
 **Commit**: `e4fa78ad` (fix, tests, record; comments `d4e69a27`; plan `9301c34b`); merged `5e2b80f3`
 **Reviewer**: implementer (surfaced by the aud-a26l/a26m/a28o agent, 2026-10-22, candidates 1, 2, 3, 5 and 6 of its hand-back)
