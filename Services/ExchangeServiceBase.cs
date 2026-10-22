@@ -70,7 +70,8 @@ public abstract class ExchangeServiceBase
             {
                 // Invoke clears ps.Streams.Error before throwing, so recover the captured
                 // detail from the exception (ex.Data) rather than re-reading the stream.
-                // Fall back to the live stream for any throw that didn't route through Invoke.
+                // Fall back to the live stream for any throw that didn't route through Invoke. aud-a23i: an error
+                // stopped by -ErrorAction Stop is given in the cmdlet's own words (ResolveFailure).
                 var (primary, detail) = ResolveFailure(ex);
                 if (ex.Data[PsErrorsDataKey] is null)
                 {
@@ -170,6 +171,11 @@ public abstract class ExchangeServiceBase
     // detail AFTER the error stream itself has been cleared. See ResolvePsErrors.
     internal const string PsErrorsDataKey = "PsErrors";
 
+    // aud-a23i. What Invoke reports when PowerShell flags a call as having errors (HadErrors) and the error stream holds
+    // none. It said "An unknown error occurred.", but the shape is known: an error suppressed by -ErrorAction
+    // SilentlyContinue or Ignore - on a command the call ran, or on the call itself - sets HadErrors and writes no record
+    // (probed on this host's PowerShell 7.6 SDK). Still a failure: a write PowerShell flagged is not confirmed. Worded with
+    // none of the words IsConnectionError looks for, so it is not read as a dead session.
     internal const string ErrorNotSurfaced =
         "The command flagged an error but surfaced none: an error suppressed by -ErrorAction SilentlyContinue or Ignore, "
         + "on a command it ran or on itself, sets that flag without writing an error record.";
@@ -206,6 +212,18 @@ public abstract class ExchangeServiceBase
         return (ex.Message, null);
     }
 
+    /// <summary>
+    /// aud-a23i. What a failed call says went wrong, for its failure message. An error a cmdlet writes under -ErrorAction
+    /// Stop arrives as an ActionPreferenceStopException, whose message puts "The running command stopped because the
+    /// preference variable ... is set to Stop:" in front of the error, and nothing reaches the error stream to read
+    /// instead. Its ErrorRecord holds the error as written: that is the message, and any records the stream did capture
+    /// are the detail. Anything else is <see cref="ResolvePsErrors"/>, as before.
+    /// </summary>
+    /// <remarks>
+    /// One place, so every RunAsync caller reports the cmdlet's own words; aud-a23g did this for the Migration batch list
+    /// alone. It looks through a wrapper only when the wrapper restates the exception it holds, as Invoke's does under
+    /// Stop: a wrapper that says more - the step a caller names, the read it was making - keeps its own words.
+    /// </remarks>
     internal static (string primary, string? detail) ResolveFailure(Exception ex)
     {
         var stop = ex as ActionPreferenceStopException

@@ -73,9 +73,14 @@ public class MigrationService : ExchangeServiceBase
                 Status = MigrationStatus.Eligible
             };
 
+            // aud-a23h. The read in flight when the check fails, so the reason names it; none once both are in.
             string? reading = "Get-MigrationUser";
             try
             {
+                // aud-a23h. Stop, not Ignore. Under Ignore a read that failed - an error the cmdlet wrote, even a throw,
+                // which Ignore runs straight past - came back as no rows: "no migration in progress" here, "no cloud
+                // mailbox" below, and a mailbox Exchange could not be asked about was called eligible. ReadUnlessNotFound
+                // keeps Exchange's own "no such object" an answer and throws every other failure into the catch.
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
@@ -145,6 +150,10 @@ public class MigrationService : ExchangeServiceBase
             }
             catch (Exception ex)
             {
+                // aud-a23h. A read that failed is not an answer. An Eligible verdict becomes Undetermined - "could not be
+                // determined" on the page, and not Eligible, so no size step runs and no batch can be created from it;
+                // Ineligible would be a guess too. An Ineligible verdict already reached stands: its reason is known
+                // whatever the read that failed would have said. The reason in the cmdlet's own words (ResolveFailure).
                 if (r.Status == MigrationStatus.Eligible)
                     r.Status = MigrationStatus.Undetermined;
                 var reason = ResolveFailure(ex).primary;
@@ -258,6 +267,7 @@ public class MigrationService : ExchangeServiceBase
         }
 
         var eligible = results.Count(r => r.Status == MigrationStatus.Eligible);
+        // aud-a23h. An undetermined row is neither eligible nor ineligible: counted apart, and named on the page.
         var ineligible = results.Count(r => r.Status == MigrationStatus.Ineligible);
         var undetermined = results.Count(r => r.Status == MigrationStatus.Undetermined);
 
@@ -755,6 +765,9 @@ https://admin.exchange.microsoft.com/#/migration";
         return false;
     }
 
+    // aud-a23h. A read under -ErrorAction Stop through InvokeOptional (aud-a23g: it fails on an exception, not on
+    // HadErrors alone, which an error a nested command suppresses sets with nothing thrown). Rows when Exchange found the
+    // object; none when it said there is no such object; any other failure thrown to the caller.
     private static Collection<PSObject> ReadUnlessNotFound(PowerShell ps, ConnectionErrorTracker tracker)
     {
         try
@@ -767,6 +780,23 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
+    /// <summary>
+    /// aud-a23h. Whether a failed read was Exchange saying there is no such object - the one failure that is an answer.
+    /// Read from the error record's structure, never its text: the category ObjectNotFound; a reason (the exception's
+    /// type name) ending NotFoundException; or such a name among the identifiers of its FullyQualifiedErrorId, the Exchange
+    /// Online module's form ("[FailureCategory=Cmdlet-ManagementObjectNotFoundException] 2B5E15D7,..."). The record is the
+    /// exception's own or, one level in, the one inside the base class's Invoke wrapper.
+    /// </summary>
+    /// <remarks>
+    /// ASSUMPTION, unverified (no live call): that the module reports "no such object" from Get-MigrationUser, Get-Mailbox
+    /// and Get-MigrationBatch -Identity in one of those shapes. If it uses none, a check of a mailbox with no migration
+    /// reads "could not be determined" and creation is blocked - visible and fail-closed, never "eligible".
+    /// <para>
+    /// Never CommandNotFoundException, which PowerShell also files under ObjectNotFound: a cmdlet this session does not
+    /// have - a role not granted, a module not loaded - says nothing about the mailbox. And never the identifier of an
+    /// error a throw statement raised, which PowerShell makes of the thrown text.
+    /// </para>
+    /// </remarks>
     internal static bool IsNotFound(Exception ex)
     {
         var record = (ex as IContainsErrorRecord ?? ex.InnerException as IContainsErrorRecord)?.ErrorRecord;
@@ -826,10 +856,13 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 foreach (var userObj in userResults)
                 {
+                    // aud-a23i. Outside the try, so a row that throws is listed with its identity as far as it was read.
                     string? email = null;
                     try
                     {
                         email = userObj.Properties["Identity"]?.Value?.ToString();
+                        // aud-a23i. Every mailbox action names its target by this, so a row without one is listed as
+                        // unreadable. It used to become a mailbox named "Unknown", which a tick box and an action could reach.
                         if (string.IsNullOrWhiteSpace(email))
                         {
                             _logger.LogWarning("Get-MigrationUser returned a row with no Identity in batch {BatchName}; it is listed as unreadable", batchName);
@@ -860,6 +893,8 @@ https://admin.exchange.microsoft.com/#/migration";
                     }
                     catch (Exception ex) when (!IsCancellation(ex))
                     {
+                        // aud-a23i. A row whose reading throws is listed, not the end of the list: the throw used to reach the
+                        // outer catch and lose every mailbox. A cancellation is not such a row (aud-a23g's rule), so it escapes.
                         _logger.LogWarning(ex, "Could not read the migration user row {Identity} in batch {BatchName}; it is listed as unreadable",
                             email ?? "(no identity)", batchName);
                         unreadable.Add(email is null
@@ -971,6 +1006,10 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             var pastDate = DateTime.Now.AddDays(-1);
 
+            // aud-a23h. The batch steps below act on a batch named for the mailbox - the name a single-user batch gets by
+            // default. A mailbox in a batch of many has none, which -ErrorAction Ignore hid by swallowing every failure of
+            // those steps; under Stop each would fail. So whether the batch exists is read first, before any write, and a
+            // read that fails, or answers with more than one batch, changes nothing.
             ps.AddCommand("Get-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ErrorAction", "Stop");
@@ -991,6 +1030,9 @@ https://admin.exchange.microsoft.com/#/migration";
                     $"Exchange returned {ownBatch.Count} migration batches for {emailAddress}. Nothing was changed.");
             }
 
+            // aud-a23h. Every write under Stop through ApproveStep: one that fails is the row's failure, naming its step and
+            // the steps already applied, where under Ignore the batch steps could not fail and "initiated completion" was
+            // reported whether or not Complete-MigrationBatch ran.
             var hasOwnBatch = ownBatch.Count == 1;
             var applied = new List<string>();
 
@@ -1043,12 +1085,17 @@ https://admin.exchange.microsoft.com/#/migration";
                 ConfirmBatchSetToComplete(ps, tracker, emailAddress, applied);
             }
 
+            // aud-a23h. Which of the two happened is the Detail: completing a batch and completing only this mailbox are
+            // different outcomes, and the message alone would claim the first for both.
             batchOutcome = hasOwnBatch
                 ? $"Its migration batch {emailAddress} was told to complete, and reads back set to complete."
                 : $"{emailAddress} is not in a migration batch of its own, so no batch was completed; only this mailbox was told to complete.";
         }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", batchOutcome));
     }
 
+    // aud-a23h. One write of the approval. Invoke, as every other Migration write: it fails on HadErrors too, and a write
+    // PowerShell flagged is not one to report as done. The failure names the step, in the cmdlet's own words, and what
+    // the steps before it had already applied, so the operator knows the state the row was left in.
     private static void ApproveStep(PowerShell ps, ConnectionErrorTracker tracker, string step, string emailAddress, List<string> applied)
     {
         try
@@ -1066,6 +1113,10 @@ https://admin.exchange.microsoft.com/#/migration";
         applied.Add(step);
     }
 
+    // aud-a23h. The read-back (the aud-a2l/aud-a2p shape): every write reporting no error is not yet completion confirmed.
+    // Completion itself runs in the background - the batch actions say "queued" for that reason - so what is read is the
+    // batch's own setting: a completion time, which Set-MigrationBatch -CompleteAfter wrote. ASSUMPTION, unverified: that
+    // Exchange keeps CompleteAfter (or CompleteAfterUTC) set on a batch told to complete. No retry; the operator re-runs.
     private static void ConfirmBatchSetToComplete(PowerShell ps, ConnectionErrorTracker tracker, string batchName, IReadOnlyList<string> applied)
     {
         ps.AddCommand("Get-MigrationBatch")

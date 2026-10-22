@@ -88,7 +88,7 @@
                         }
                         else
                         {
-                            <p class="mb-0"><strong>@(singleResult.Status == MigrationStatus.Undetermined ? $"Whether {singleResult.EmailAddress} can migrate {(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")} could not be determined. Nothing can be created for it until a check succeeds." : $"{singleResult.EmailAddress} IS NOT eligible to migrate {(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")}")</strong></p>
+                            <p class="mb-0"><strong>@(singleResult.Status == MigrationStatus.Undetermined ? $"Whether {singleResult.EmailAddress} can migrate {(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")} could not be determined. Nothing can be created for it until a check succeeds." : $"{singleResult.EmailAddress} IS NOT eligible to migrate {(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")}")</strong></p> @* aud-a23h. A read the verdict needed failed: no verdict, so not "IS NOT eligible". *@
                             @if (singleResult.IneligibilityReasons.Any())
                             {
                                 <hr />
@@ -253,7 +253,7 @@
                         <p class="mb-0">
                             <strong>Total Users:</strong> @bulkResult.TotalUsers |
                             <strong>Eligible:</strong> <span class="text-success">@bulkResult.EligibleUsers</span> |
-                            <strong>Ineligible:</strong> <span class="text-danger">@bulkResult.IneligibleUsers</span>@if (bulkResult.UndeterminedUsers > 0) { <text> | <strong>Could not be determined:</strong> <span class="text-danger">@bulkResult.UndeterminedUsers</span></text> }
+                            <strong>Ineligible:</strong> <span class="text-danger">@bulkResult.IneligibleUsers</span>@if (bulkResult.UndeterminedUsers > 0) { <text> | <strong>Could not be determined:</strong> <span class="text-danger">@bulkResult.UndeterminedUsers</span></text> } @* aud-a23h. Counted apart: neither eligible nor ineligible. *@
                         </p>
                     </div>
 
@@ -1023,7 +1023,7 @@
                                         }
                                     </div>
                                 }
-                                @if (batchUsers != null && unreadableMailboxes.Count > 0) { <div class="alert alert-warning" role="alert">@UnreadableMigrationMailbox.Warning(unreadableMailboxes)</div> }
+                                @if (batchUsers != null && unreadableMailboxes.Count > 0) { <div class="alert alert-warning" role="alert">@UnreadableMigrationMailbox.Warning(unreadableMailboxes)</div> } @* aud-a23i. Rows the load could not read as mailboxes, named here - never left out, and never a row an action can reach. *@
                                 <div class="mig-pane-scroll">
                                     @if (loadingBatchUsers == expandedBatch && batchUsers == null)
                                     {
@@ -1045,7 +1045,7 @@
                                         <p class="text-muted text-center my-5">No mailbox details available.</p>
                                     }
                                     else if (!batchUsers.Any())
-                                    { @* aud-a23f: an unreadable count is neither more than 0 nor 0, so such a batch is told neither of the first two. *@
+                                    { @* aud-a23f: an unreadable count is neither more than 0 nor 0, so such a batch is told neither of the first two; aud-a23i: nor is one whose rows were all unreadable, which is not empty. *@
                                         @if (unreadableMailboxes.Count == 0 && openBatch is { PendingCount.Count: > 0, StartDateTime: null }
                                             && string.Equals(openBatch.WorkflowStage, "Injection", StringComparison.OrdinalIgnoreCase))
                                         {
@@ -1636,7 +1636,7 @@
     private string? loadingReport;
     private string? reportUser;
     private string? userReport;
-    private List<UnreadableMigrationMailbox> unreadableMailboxes = [];
+    private List<UnreadableMigrationMailbox> unreadableMailboxes = []; // aud-a23i: the rows the last mailbox load could not read; set only by ReplaceBatchUsers
     // R24a. When the report on screen was taken, so the dialog can say so and the operator can
     // judge whether refreshing is worth twenty minutes. Null for an error, which is not a report.
     private DateTime? reportFetchedAtUtc;
@@ -1875,7 +1875,7 @@
             "Exchange Migration", $"Loading mailboxes in {batchName}", ActivitySize.Unknown);
 
         var generation = batchUsersGeneration;
-        string? loadFailure = null;
+        string? loadFailure = null; // aud-a23i: why this load failed, for its activity; null when it read
         try
         {
             ReplaceBatchUsers(generation, await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
@@ -1935,7 +1935,7 @@
             "Exchange Migration", $"Loading mailboxes in {requested}", ActivitySize.Unknown);
 
         var generation = batchUsersGeneration;
-        string? loadFailure = null;
+        string? loadFailure = null; // aud-a23i: why this load failed, for its activity; null when it read
         try
         {
             if (!batchesLoaded)
@@ -1970,7 +1970,7 @@
             "Exchange Migration", "Checking eligibility", ActivitySize.Unknown);
 
         await Task.Yield();
-        string? checkFailure = null;
+        string? checkFailure = null; // aud-a23i: why the check reached no answer, for its activity; an answer, either way, is a check that succeeded
         try
         {
             singleResult = await MigrationSvc.CheckMigrationEligibilityAsync(singleEmail.Trim(), singleMigrationDirection);
@@ -2000,7 +2000,7 @@
             singleResult = new MigrationEligibilityResult
             {
                 EmailAddress = singleEmail,
-                Status = MigrationStatus.Undetermined
+                Status = MigrationStatus.Undetermined // aud-a23h: a throw before the service returned is no verdict either
             };
             singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
             checkFailure = $"Could not be determined: {ex.Message}";
@@ -2111,7 +2111,7 @@
             "Exchange Migration", "Checking bulk eligibility", ActivitySize.Unknown);
 
         await Task.Yield();
-        string? bulkFailure = null;
+        string? bulkFailure = null; // aud-a23i: why the run failed, or how many rows reached no answer, for its activity
         try
         {
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
@@ -2301,7 +2301,7 @@
         {
             PruneSelection();
             isLoadingStatus = false;
-            activity.Complete(batchListFailure is null, batchListFailure is null ? null : $"The migration batches could not be read: {batchListFailure}");
+            activity.Complete(batchListFailure is null, batchListFailure is null ? null : $"The migration batches could not be read: {batchListFailure}"); // aud-a23i: both paths set it just above, with nothing awaited between
             batchesLoaded = true;
         }
     }
@@ -2992,7 +2992,7 @@
             }
             else
             {
-                var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+                var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture); // aud-a23i: UTC, and the name says so - the server's clock named no zone
                 var safeBatch = new string(batch.Select(c =>
                     char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_').ToArray());
 
@@ -3841,7 +3841,7 @@
         using var activity = Progress.Begin(
             "Exchange Migration", "Searching for the user", ActivitySize.Unknown);
 
-        string? searchFailure = null;
+        string? searchFailure = null; // aud-a23i: a search that could not run; "nothing found" is an answer
         try
         {
             var matchedBatch = migrationBatches.FirstOrDefault(b =>
@@ -3970,7 +3970,7 @@
         // assigned, so every path is covered by construction and a seventh load path added later
         // cannot forget it. The two the openreview cited are reachable from browser Back; the other
         // four are not today, and that is exactly the kind of fact that stops being true one slice later.
-        var (users, unreadable) = loaded;
+        var (users, unreadable) = loaded; // aud-a23i: the rows that read, and beside them every row that did not
         if (generation != batchUsersGeneration)
             return;
 
@@ -4037,7 +4037,7 @@
         using var activity = Progress.Begin(
             "Exchange Migration", $"Fetching the report for {emailAddress}", ActivitySize.Unknown);
 
-        string? fetchFailure = null;
+        string? fetchFailure = null; // aud-a23i: why the fetch failed, for its activity, superseded or not
         try
         {
             var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
@@ -4235,7 +4235,7 @@
             var csv = BuildCsv(rows, unreadableBatches);
             var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
             var base64 = Convert.ToBase64String(bytes);
-            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+            var timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture); // aud-a23i: UTC, and the name says so
             await JS.InvokeVoidAsync("downloadFile", $"Migration_{timestamp}.csv", "text/csv", base64);
 
             try
@@ -4311,7 +4311,7 @@
             // outside a known-safe set is replaced rather than trusted.
             var safeName = new string(user.Select(c =>
                 char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_').ToArray());
-            var timestamp = (fetchedAtUtc ?? DateTime.UtcNow).ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture);
+            var timestamp = (fetchedAtUtc ?? DateTime.UtcNow).ToString("yyyyMMdd_HHmmss'Z'", System.Globalization.CultureInfo.InvariantCulture); // aud-a23i: when the report was taken, in UTC, saying so
 
             await JS.InvokeVoidAsync(
                 "downloadFile", $"MigrationReport_{safeName}_{timestamp}.txt", "text/plain", base64);
