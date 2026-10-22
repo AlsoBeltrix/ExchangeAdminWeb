@@ -167,7 +167,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>
     /// The member DNs on the stand-in group's linked <c>member</c> attribute - what
     /// <c>Get-ADGroup -Properties member</c> returns, and what the stand-in <c>Get-ADGroupMember</c>
-    /// resolves against <see cref="DirectoryObjects"/>: none unless a test adds them (aud-a2i).
+    /// resolves against <see cref="DirectoryObjects"/>: none unless a test adds them (aud-a2i), or the
+    /// stand-in <c>Set-ADGroup</c> does (aud-a2l). One list for every stand-in group.
     /// </summary>
     public IList DirectoryGroupMembers { get; } = ArrayList.Synchronized(new ArrayList());
 
@@ -185,6 +186,28 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// check: the group answers as itself to the re-read and as another object to the read after it.
     /// </summary>
     public Hashtable DirectoryGroupMemberReadBack { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2l. Active Directory's refusal of a member-attribute add for a DN the group already holds, as
+    /// the stand-in <c>Set-ADGroup</c> raises it: the Win32 1378 text, one of the forms
+    /// <c>ConferenceRoomService.IsDuplicateMemberValue</c> recognizes (which form the real cmdlet reports
+    /// is not established - no directory is probed).
+    /// </summary>
+    public const string DuplicateMemberValueError = "The specified account name is already a member of the group.";
+
+    /// <summary>
+    /// aud-a2l. The stand-in <c>Set-ADGroup</c> reports success and changes nothing - the write a domain
+    /// controller dropped without saying, which only a read-back can catch. Read when a directory runspace
+    /// opens.
+    /// </summary>
+    public bool SetAdGroupChangesNothing { get; set; }
+
+    /// <summary>
+    /// aud-a2l. Another actor's add of the same DN lands just before the stand-in <c>Set-ADGroup</c>'s:
+    /// the DN is put on the group first, so the write is refused as a value already there (or fails with
+    /// whatever <see cref="Failures"/> names). The race codex raised. Read when a directory runspace opens.
+    /// </summary>
+    public bool AnotherAddLandsFirst { get; set; }
 
     /// <summary>
     /// The default ADWS <c>MaxGroupOrMemberEntries</c>: past this many members the real
@@ -415,6 +438,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("DirectoryGroupDomains", DirectoryGroupDomains);
         rs.SessionStateProxy.SetVariable("GlobalCatalogs", GlobalCatalogs);
         rs.SessionStateProxy.SetVariable("AdwsMaxGroupOrMemberEntries", AdwsMaxGroupOrMemberEntries);
+        rs.SessionStateProxy.SetVariable("DuplicateMemberValueError", DuplicateMemberValueError);
+        rs.SessionStateProxy.SetVariable("SetAdGroupChangesNothing", SetAdGroupChangesNothing);
+        rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
         init.Runspace = rs;
         init.AddScript(definitions);
@@ -737,14 +763,24 @@ internal sealed class ExchangeWriteHarness : IDisposable
         }
         # aud-a2j. The on-prem room-list add's write. Its group must be one the call reaches - routed to the
         # group's own domain - and a write sent to the catalog is refused, as the read-only catalog refuses it.
+        # aud-a2l. And it writes: the DN goes on the member attribute (DirectoryGroupMembers, the one member list
+        # the stand-in keeps for its groups), so a read-back sees it - unless SetAdGroupChangesNothing, a write
+        # that reports success and changes nothing. A DN already there is refused, as Active Directory refuses
+        # a value already present (DuplicateMemberValueError, Write-Error then return); AnotherAddLandsFirst puts
+        # the DN there just before the call, another actor's add, and before Failures['Set-ADGroup'] can throw.
         function global:Set-ADGroup {
             [CmdletBinding()] param($Identity, $Add, $Server, $Credential)
+            $member = if ($null -ne $Add) { "$($Add['member'])" } else { '' }
+            if ($global:AnotherAddLandsFirst -and $member) { [void]$global:DirectoryGroupMembers.Add($member) }
             Write-StandInCall 'Set-ADGroup' $PSBoundParameters
             $reach = Get-StandInReach $PSBoundParameters
             if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
             if ($reach -eq 'forest') { Write-Error 'The server is unwilling to process the request.'; return }
             $group = @(Find-StandInGroups $reach | Where-Object { "$Identity" -eq "$_" -or "$Identity" -eq (Get-StandInGroupDn "$_") })
             if ($group.Count -ne 1) { Write-Error "Cannot find an object with identity: '$Identity'"; return }
+            if (-not $member) { return }
+            if (@($global:DirectoryGroupMembers | Where-Object { "$_" -ieq $member }).Count -gt 0) { Write-Error $global:DuplicateMemberValueError; return }
+            if (-not $global:SetAdGroupChangesNothing) { [void]$global:DirectoryGroupMembers.Add($member) }
         }
         # aud-a2i. The real cmdlet resolves every member server-side: Active Directory Web Services refuses a
         # group of more than MaxGroupOrMemberEntries members (5,000 by default), and the read faults on a

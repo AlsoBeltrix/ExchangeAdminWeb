@@ -1640,8 +1640,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // ("out of the current user's write scope ... being synchronized from your on-premises
     // organization"), so membership must be written on-prem and then syncs up (~30 min) - the
     // same shape as the Set-ADUser City/State/Country handling. Returns (null, the room's
-    // objectGUID) once the membership write has succeeded, (null, null) for the already-a-member
-    // no-op - nothing was written - and (a failure message, null) otherwise (aud-a2g). See
+    // objectGUID) once the membership write is confirmed - the room's DN read back on the group's
+    // member attribute after it (aud-a2l) - (null, null) for the already-a-member no-op - nothing
+    // was written - and (a failure message, null) otherwise (aud-a2g). See
     // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md, and aud-a2j for the form of the write.
     //
     // aud-a2d. The member added is the AD object the protection gate proved owns the room's
@@ -1706,15 +1707,70 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // exists to prevent. The group by the objectGUID its own domain answered with; the room
                 // by the DN of its proven object, the DN the membership read above compared, never null
                 // here - that read refuses a room read without one. Not by a name or a UPN.
+                var groupServer = GroupManagementService.ServerFromDn(groupDn);
                 ps.AddCommand("Set-ADGroup")
                   .AddParameter("Identity", groupGuid)
                   .AddParameter("Add", GroupManagementService.BuildMemberAttributeWrite(roomDn!))
-                  .AddParameter("Server", GroupManagementService.ServerFromDn(groupDn))
+                  .AddParameter("Server", groupServer)
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                if (ps.HadErrors)
-                    return (FirstError(ps) ?? $"Adding {roomEmail} to on-prem room list '{roomListName}' failed.", null);
+                // aud-a2l. One refusal is held for the read-back rather than reported: the value already
+                // there. The membership read just above said "not a member", so that refusal means the room
+                // got there in between - another actor's add (codex's race, folded into aud-a2l), or one the
+                // read's domain controller had not yet seen - and the row used to come back partial for a
+                // membership that was in place. -ErrorAction Stop makes every write error a thrown one, so
+                // the filter sees each; any other error passes it untouched to the catch below - the
+                // failure, message and log it always was, with no read-back, because nothing but this
+                // refusal says the value may be there.
+                string? refusedAsPresent = null;
+                try
+                {
+                    ps.Invoke();
+                    if (ps.HadErrors)
+                        return (FirstError(ps) ?? $"Adding {roomEmail} to on-prem room list '{roomListName}' failed.", null);
+                }
+                catch (Exception ex) when (IsDuplicateMemberValue(ex))
+                {
+                    refusedAsPresent = ex.Message;
+                }
+                finally
+                {
+                    // The read-back below runs on this pipeline: the write must not stay queued before it,
+                    // nor its error be the one the read reports.
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                }
+
+                // aud-a2l. The write is not taken as done because it raised no error - a domain controller
+                // that dropped the value, or a constraint it did not report, raises none and changes nothing
+                // (Known Failure Class 2). Done is the room's DN on the group's member attribute, read back
+                // with the read the preflight and the check above made (aud-a2i: by the group's DN, on the
+                // domain that holds it, the answer's objectGUID checked, compared by DN), on the domain the
+                // write went to. Not there - or not readable - is a failure naming the group and the server
+                // asked, and the audit names nothing written (aud-a2g). No retry: the operator re-runs, and
+                // a re-run finds the room already a member, or writes again.
+                string? readError;
+                bool present;
+                try
+                {
+                    (readError, present) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, roomListName, credential);
+                }
+                catch (Exception ex)
+                {
+                    // A read that threw - the domain controller unreachable, say - says nothing either way.
+                    (readError, present) = (ex.Message, false);
+                }
+                if (readError != null)
+                {
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} could not be confirmed from {Server}: {Error}", roomEmail, roomListName, groupServer, readError);
+                    return ($"Adding {roomEmail} to on-prem room list '{roomListName}' could not be confirmed: reading its group {groupDn} back from {groupServer} failed: {readError}", null);
+                }
+                if (!present)
+                {
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} not confirmed: {Group} read back from {Server} does not hold the room", roomEmail, roomListName, groupDn, groupServer);
+                    return ($"Adding {roomEmail} to on-prem room list '{roomListName}' was not confirmed: its group {groupDn}, read back from {groupServer}, does not hold the room as a member"
+                        + (refusedAsPresent is null ? "." : $", though Active Directory refused the add as a value already there ({refusedAsPresent})."), null);
+                }
 
                 return (null, roomGuid);
             }
@@ -1902,7 +1958,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // The group is read by its DN, on the domain that DN names (routed as GetMembersAsync routes
     // it), and must answer as the objectGUID ResolveAdGroupGuid resolved. The room is the object
     // proven by objectGUID, compared by that object's DN - never by a name - so without its DN there
-    // is no answer. Shared by the room-list preflight and the add, so both read it the same way.
+    // is no answer. Shared by the room-list preflight and the add - its check before the write and,
+    // since aud-a2l, its read-back after it - so all three read it the same way.
     // Returns (the error, false) when the question cannot be answered, never "not a member".
     // Assumes the ActiveDirectory module is already imported.
     private static (string? error, bool isMember) ReadOnPremListMembership(
@@ -1930,6 +1987,33 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         return (null, GroupManagementService.MemberDnsOf(found[0]).Contains(roomDn, StringComparer.OrdinalIgnoreCase));
     }
+
+    // aud-a2l. Whether a write was refused because the value it adds is already there - the one write
+    // error the on-prem add reads back instead of reporting. Its message is looked for in the exception
+    // and every exception inside it, since PowerShell may wrap the cmdlet's own ("The running command
+    // stopped because ...: <message>") or carry it as the inner exception. The forms, case-insensitive:
+    // "already a member" (Win32 1378, "The specified account name is already a member of the group.",
+    // the server's answer for a member value already present), "already exists" (Win32 8205/8323, "The
+    // specified directory service attribute or value already exists." / "... value already exists.",
+    // and ADSI's "The object already exists.") and ENTRY_EXISTS (the LDAP diagnostic, "problem 6005
+    // (ENTRY_EXISTS)"). *Assumption, documented error text, not probed - no live directory call is made
+    // here:* which of these the ActiveDirectory module reports for Set-ADGroup -Add. Matching too little
+    // costs nothing new: the refusal is reported as the failure it always was. Matching too much is
+    // bounded by the read-back, which decides.
+    internal static bool IsDuplicateMemberValue(Exception error)
+    {
+        for (Exception? e = error; e is not null; e = e.InnerException)
+        {
+            if (IsDuplicateMemberValue(e.Message))
+                return true;
+        }
+        return false;
+    }
+
+    internal static bool IsDuplicateMemberValue(string? message) =>
+        message is not null && DuplicateMemberValueMarkers.Any(marker => message.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
+    private static readonly string[] DuplicateMemberValueMarkers = ["already a member", "already exists", "ENTRY_EXISTS"];
 
     private static string? FirstError(PowerShell ps) =>
         ps.Streams.Error.Select(e => e.Exception?.Message ?? e.ToString())

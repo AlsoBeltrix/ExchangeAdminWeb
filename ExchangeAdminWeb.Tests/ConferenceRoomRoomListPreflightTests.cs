@@ -662,7 +662,8 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var memberReads = MembershipReads();
         Assert.Equal(2, searches.Count);
         Assert.Equal(2, reReads.Count);
-        Assert.Equal(2, memberReads.Count);
+        // The preflight's and the add's, and since aud-a2l the add's read-back after its write.
+        Assert.Equal(3, memberReads.Count);
         for (var phase = 0; phase < 2; phase++)
         {
             Assert.True(searches[phase] < reReads[phase] && reReads[phase] < memberReads[phase],
@@ -876,5 +877,157 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.Equal(theGroup, SearchGroups(ps, catalog, $"mail -eq 'facilities@contoso.test' -or displayName -eq '{List}'"));
         Assert.Equal([NamesakeGroupGuid], SearchGroups(ps, catalog, "mail -eq ''"));
         Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, catalog, "mail -like '*'"));
+    }
+
+    // aud-a2l. The on-prem add took "Set-ADGroup raised no error" as success, so a write that changed nothing
+    // was audited and announced as done; and it took every error as failure, so a write refused because
+    // another actor had just added the same room came back partial with the room in place. These pin the
+    // read-back that now decides both, and the one write error it is asked about.
+    private const string TimedOut = "The operation was aborted because the client side timeout limit was exceeded.";
+
+    [Fact]
+    public async Task TheOnPremAdd_IsConfirmedByReadingTheGroupsMemberAttributeBack()
+    {
+        // The normal case: the write, then a third membership read - after the preflight's and the add's own
+        // check - made after the write, the a2i read of the group's member attribute by its DN on its domain.
+        // It finds the room, so the row succeeds and the room's object is reported written.
+        SyncedListTheRoomIsNotOnInExchange();
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Equal(CheckedObject, result.WrittenDirectoryObject);
+        var calls = _h.Calls.Cast<Hashtable>().ToList();
+        var write = calls.FindIndex(c => (string)c["__Command"]! == "Set-ADGroup");
+        var reads = MembershipReads();
+        Assert.Equal(3, reads.Count);
+        Assert.True(reads[1] < write && write < reads[2], $"membership reads at {string.Join(", ", reads)}, the write at {write}");
+        AssertReadsTheGroupsMemberAttributeInItsDomain(calls[reads[2]]);
+    }
+
+    [Fact]
+    public async Task AnOnPremAddTheGroupDoesNotShowAfterwards_IsAFailedRow_NotAWrite()
+    {
+        // The finding: Set-ADGroup raises nothing and changes nothing. The read-back does not find the room,
+        // so the row fails - partial, the Exchange writes having committed - nothing is reported written, and
+        // the message names the group and the server it was read from (the group is in the other domain
+        // here, so neither can be confused with the room's own address).
+        SyncedListTheRoomIsNotOnInExchange();
+        PlaceAGroupInTheOtherDomain();
+        _h.SetAdGroupChangesNothing = true;
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Contains(OtherDomainGroupDn, result.Message, StringComparison.Ordinal);
+        Assert.Contains(OtherDomainName, result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnOnPremAddRefusedAsAValueAlreadyThere_IsSettledByTheReadBack(bool theRoomIsThere)
+    {
+        // The folded-in race: the write is refused as a value already there. With the room on the group -
+        // another actor's add landed between the add's membership read and its write - the read-back finds it
+        // and the row succeeds, the room reported written; it used to be partial. With the room absent, the
+        // same refusal is a failure, nothing reported written. Either way the read-back was made.
+        SyncedListTheRoomIsNotOnInExchange();
+        if (theRoomIsThere)
+            _h.AnotherAddLandsFirst = true;
+        else
+            _h.Failures["Set-ADGroup"] = ExchangeWriteHarness.DuplicateMemberValueError;
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal(3, MembershipReads().Count);
+        Assert.Equal(theRoomIsThere, result.Success);
+        Assert.Equal(!theRoomIsThere, result.Partial);
+        Assert.Equal(theRoomIsThere ? CheckedObject : null, result.WrittenDirectoryObject);
+    }
+
+    [Fact]
+    public async Task AnyOtherWriteError_StaysAFailure_EvenWithTheRoomThere()
+    {
+        // Only the value-already-there refusal is read back. Another error - a timeout here, with another
+        // actor's add of the room landing first - stays the failure it was, with no read-back after the write
+        // (two membership reads, the preflight's and the add's check): the room being there does not make this
+        // row's write a success.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.AnotherAddLandsFirst = true;
+        _h.Failures["Set-ADGroup"] = TimedOut;
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Contains(RoomDn, _h.DirectoryGroupMembers.Cast<string>());
+        Assert.Equal(2, MembershipReads().Count);
+    }
+
+    [Theory]
+    [InlineData(ExchangeWriteHarness.DuplicateMemberValueError, true)]
+    [InlineData("The specified directory service attribute or value already exists.", true)]
+    [InlineData("The object already exists.", true)]
+    [InlineData("00000562: UpdErr: DSID-031A11C4, problem 6005 (ENTRY_EXISTS), data 0", true)]
+    [InlineData("The running command stopped because the preference variable \"ErrorActionPreference\" or common parameter is set to Stop: The specified account name is already a member of the group.", true)]
+    [InlineData("Insufficient access rights to perform the operation", false)]
+    [InlineData(TimedOut, false)]
+    [InlineData("Cannot find an object with identity: 'CN=Room 1,OU=Rooms,DC=contoso,DC=test'", false)]
+    [InlineData("", false)]
+    public void ADuplicateValueRefusal_IsRecognisedInEachFormItIsReported(string message, bool duplicate)
+    {
+        // The forms Active Directory and ADSI report a value already present in, alone and as PowerShell wraps
+        // them under -ErrorAction Stop, and as an inner exception; other write errors are not one.
+        Assert.Equal(duplicate, ConferenceRoomService.IsDuplicateMemberValue(message));
+        Assert.Equal(duplicate, ConferenceRoomService.IsDuplicateMemberValue(new RuntimeException("The pipeline failed.", new InvalidOperationException(message))));
+    }
+
+    [Fact]
+    public void TheHarness_SetADGroup_AddsTheMember_RefusesOneAlreadyThere_AndCanDropOrBeRaced()
+    {
+        // The stand-in write behaves as the tests above need it to, or they would pass for the wrong reason:
+        // it puts the DN on the group, and the same add again is refused with an error the service recognizes
+        // as a value already there - the exception PowerShell actually throws, not a string; told to change
+        // nothing, it changes nothing; told another add lands first, the DN is there and this write is refused.
+        (string Name, object Value)[] addTheRoom =
+            [("Identity", ExchangeWriteHarness.DefaultDirectoryGroupGuid), ("Add", GroupManagementService.BuildMemberAttributeWrite(RoomDn)), ("Server", "contoso.test")];
+        List<string> Members() => _h.DirectoryGroupMembers.Cast<object>().Select(m => m.ToString()!).ToList();
+
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Set-ADGroup", addTheRoom);
+            Assert.Equal([RoomDn], Members());
+            Assert.True(ConferenceRoomService.IsDuplicateMemberValue(Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADGroup", addTheRoom))));
+            Assert.Equal([RoomDn], Members());
+        }
+
+        _h.DirectoryGroupMembers.Clear();
+        _h.SetAdGroupChangesNothing = true;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Set-ADGroup", addTheRoom);
+            Assert.Empty(Members());
+        }
+
+        _h.SetAdGroupChangesNothing = false;
+        _h.AnotherAddLandsFirst = true;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.True(ConferenceRoomService.IsDuplicateMemberValue(Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADGroup", addTheRoom))));
+            Assert.Equal([RoomDn], Members());
+        }
     }
 }
