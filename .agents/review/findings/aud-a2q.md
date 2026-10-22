@@ -1,6 +1,6 @@
 # aud-a2q: Conference Rooms - the cloud no-op builds an "Added" message, the attribute write's outer catch blames Set-ADUser for any step, and a commit-then-throw leaves a partial row
 
-**Severity**: LOW - no wrong write. (1) The cloud already-a-member path in `AddToRoomListAsync`
+**Severity**: MEDIUM for the folded-in preflight part (an avoidable partial after Set-Place); the three original parts are LOW - no wrong write. (1) The cloud already-a-member path in `AddToRoomListAsync`
 (step "Already in '<list>'") still builds "Added to room list '<list>'.", an unused message claiming
 an add that never happened (the on-prem twin was fixed in aud-a2p). (2) `SetSyncedAttributesViaAdAsync`'s
 outer catch logs "Set-ADUser synced-attribute write failed" and reports "Failed to write
@@ -39,3 +39,18 @@ message; `SetSyncedAttributesViaAdAsync` outer catch and its message; the write'
 ## Guard proof
 
 Pending.
+
+## Folded in: the preflight does not prove the `-Server` the write uses (codex, a2o-a2p review, 2026-10-22) - MEDIUM
+
+`Services/ConferenceRoomService.cs` around 1550 / 1608 / 1617 at `28ffde25`:
+`PreflightSyncedAttributesViaAdAsync` reads the object with `ConfirmDirectoryObject` and no `-Server`;
+the write (aud-a2p) then derives `ServerFromDn(roomDn)` and routes `Set-ADUser` there. If the
+unrouted read succeeds but the DN-derived domain endpoint is unreachable from this host or unusable
+under the module credential, the preflight passes, `Set-Place` commits, and the routed write fails:
+an avoidable partial after the preflight that exists to prevent exactly that (aud-a2f). Fix: in the
+preflight, after reading the object and its DN, derive the same server and perform an exact-object
+read (by objectGUID) through it before returning success; if the DN has no domain components, make
+the fallback explicit and preflight the same unrouted route, or refuse before `Set-Place`. Test: a
+harness domain reachable without `-Server` but not by its DNS name makes the preflight refuse before
+any Exchange write. Mutation at the call site: drop the routed preflight read. This part is MEDIUM;
+the record's other three parts stay LOW.
