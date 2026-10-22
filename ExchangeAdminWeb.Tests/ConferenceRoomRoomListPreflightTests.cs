@@ -18,7 +18,8 @@ namespace ExchangeAdminWeb.Tests;
 /// <remarks>
 /// The real service over <see cref="ExchangeWriteHarness"/>: the stand-in Get-DistributionGroup
 /// reports IsDirSynced per list name (False unless a test says otherwise), the stand-in directory
-/// answers by objectGUID, and the stand-in Get-ADGroup returns the harness's group set.
+/// answers by objectGUID, and the stand-in Get-ADGroup returns the harness's groups that its filter
+/// matches (aud-a2k).
 /// </remarks>
 public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
 {
@@ -498,7 +499,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     private const string OtherDomainName = "fabrikam.test";
 
     // The list's group in the other domain - the only one unless the default domain's is kept too, which
-    // makes the list's name match a group in each.
+    // makes the list's address match a group in each (both carry the harness's default address).
     private void PlaceAGroupInTheOtherDomain(bool keepTheDefaultGroup = false)
     {
         if (!keepTheDefaultGroup)
@@ -507,8 +508,8 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         _h.DirectoryGroupDomains[OtherDomainGroupGuid] = ExchangeWriteHarness.OtherDirectoryDomainDn;
     }
 
-    // The list's group searched for by name (no -Identity), and re-read by its DN without the member
-    // attribute - the membership read is the other read by -Identity.
+    // The list's group searched for by the list's address (no -Identity, aud-a2k), and re-read by its DN
+    // without the member attribute - the membership read is the other read by -Identity.
     private static bool IsGroupSearch(Hashtable call) =>
         (string)call["__Command"]! == "Get-ADGroup" && !call.ContainsKey("Identity");
 
@@ -568,12 +569,13 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, server: "elsewhere.test"));
     }
 
-    // The objectGUIDs a stand-in Get-ADGroup search answers with, sent to that server (or none).
-    private static List<string> SearchGroups(PowerShell ps, string? server)
+    // The objectGUIDs a stand-in Get-ADGroup search answers with, sent to that server (or none): by the
+    // address every stand-in group carries unless a test gives it others (aud-a2k), or by the filter given.
+    private static List<string> SearchGroups(PowerShell ps, string? server, string? filter = null)
     {
         ps.Commands.Clear();
         ps.Streams.Error.Clear();
-        var search = ps.AddCommand("Get-ADGroup").AddParameter("Filter", $"name -eq '{List}'");
+        var search = ps.AddCommand("Get-ADGroup").AddParameter("Filter", filter ?? $"mail -eq '{ExchangeWriteHarness.DefaultListAddress}'");
         if (server is not null)
             search.AddParameter("Server", server);
         search.AddParameter("ErrorAction", "Stop");
@@ -581,11 +583,11 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     }
 
     [Fact]
-    public async Task ARoomListNameMatchingAGroupInEachDomain_IsRefusedBeforeAnyWrite()
+    public async Task ARoomListAddressMatchingAGroupInEachDomain_IsRefusedBeforeAnyWrite()
     {
-        // The catalog widens what can match, and the exactly-one rule holds across it: the list's name
-        // matching a group in each domain refuses before any write. The default-domain search saw one of
-        // them and wrote it.
+        // The catalog widens what can match, and the exactly-one rule holds across it: the list's address
+        // carried by a group in each domain refuses before any write. The default-domain search saw one of
+        // them and wrote it. (Named for the list's name until aud-a2k, which binds the group by address.)
         SyncedListTheRoomIsNotOnInExchange();
         PlaceAGroupInTheOtherDomain(keepTheDefaultGroup: true);
 
@@ -738,5 +740,141 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
             invocation.AddParameter(name, value);
         invocation.AddParameter("ErrorAction", "Stop");
         return ps.Invoke();
+    }
+
+    // aud-a2k. The room list's on-prem group was matched by the list's name (displayName or name), so one
+    // unrelated group carrying that name could be written in place of the synced list. These pin the match
+    // by the primary SMTP address Exchange holds for the list, alone, and the refusals that come with it.
+    // The list's address here is not the harness's default, so no default-attribute group can match it by
+    // accident; the synced group carries it, and a namesake - a group with the list's name and another
+    // address, or none - stands for the group a name match would have found.
+    private const string ListAddress = "building1-rooms@contoso.test";
+    private const string SyncedGroupGuid = "44444444-4444-4444-4444-444444444444";
+    private const string NamesakeGroupGuid = "33333333-3333-3333-3333-333333333333";
+
+    // The stand-in directory holds these groups and no others.
+    private void OnlyTheseGroups(params string[] objectGuids)
+    {
+        _h.DirectoryGroupGuids.Clear();
+        foreach (var objectGuid in objectGuids)
+            _h.DirectoryGroupGuids.Add(objectGuid);
+    }
+
+    [Fact]
+    public async Task TheListsGroup_IsTheOneCarryingItsAddress_NotAGroupThatSharesItsName()
+    {
+        // The finding's shape with the synced group present too: the list's name is carried by the synced
+        // group and by an unrelated one elsewhere in the forest. The address picks the synced group and the
+        // row completes on it; matched by name, the two made the row refuse as ambiguous - and with the
+        // synced group out of the result, the namesake was the one match, and written. Every search, the
+        // preflight's and the add's, asks for the address and nothing else.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.ListAddresses[List] = ListAddress;
+        OnlyTheseGroups(NamesakeGroupGuid, SyncedGroupGuid);
+        _h.DirectoryGroupDomains[NamesakeGroupGuid] = ExchangeWriteHarness.OtherDirectoryDomainDn;
+        _h.SetDirectoryGroupAttributes(NamesakeGroupGuid, mail: "facilities@contoso.test", displayName: List, name: List);
+        _h.SetDirectoryGroupAttributes(SyncedGroupGuid, mail: ListAddress, displayName: List, name: List);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Equal(SyncedGroupGuid, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Set-ADGroup")), "Identity"));
+        var searches = _h.CallsTo("Get-ADGroup").Where(IsGroupSearch).ToList();
+        Assert.Equal(2, searches.Count);
+        Assert.All(searches, c => Assert.Equal($"mail -eq '{ListAddress}'", ExchangeWriteHarness.Bound(c, "Filter")));
+    }
+
+    [Fact]
+    public async Task AGroupThatOnlySharesTheListsName_IsNeverWritten()
+    {
+        // The finding itself: the only group in the forest with the list's name carries another address. It
+        // is not the list's group, so the row is refused before any write - not partial - and the group is
+        // never even re-read; matched by name it was the one match, and the room was written to it.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.ListAddresses[List] = ListAddress;
+        OnlyTheseGroups(NamesakeGroupGuid);
+        _h.SetDirectoryGroupAttributes(NamesakeGroupGuid, mail: "facilities@contoso.test", displayName: List, name: List);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.DoesNotContain(_h.CallsTo("Get-ADGroup"), c => c.ContainsKey("Identity"));
+    }
+
+    [Fact]
+    public async Task ASyncedListWhoseGroupCarriesAnotherAddress_IsRefused_NamingTheListAndTheAddressSearched()
+    {
+        // The list's own group, by every name it has, but its mail is not the address Exchange holds for the
+        // list - one side changed and the other not yet. Which is right is the operator's to settle, not the
+        // app's to guess: refused before any write, the message naming the list and the address searched, so
+        // the operator knows what to look for in Active Directory.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.ListAddresses[List] = ListAddress;
+        _h.SetDirectoryGroupAttributes(ExchangeWriteHarness.DefaultDirectoryGroupGuid, mail: "building1.rooms@contoso.test", displayName: List, name: List);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.Contains(ListAddress, result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ARoomListWithNoPrimaryAddress_IsRefusedBeforeAnyGroupIsLookedUp(string? address)
+    {
+        // Exchange reports no address for the list - the property absent, empty or blank - so there is
+        // nothing to find its group by: refused before any write and before any group is searched for or
+        // read. The directory holds a group with the list's name and no mail, the group a search for an
+        // empty mail would find (the stand-in reads a missing attribute as empty), and nothing reaches it.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.ListAddresses[List] = address;
+        OnlyTheseGroups(NamesakeGroupGuid);
+        _h.SetDirectoryGroupAttributes(NamesakeGroupGuid, mail: null, displayName: List, name: List);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Empty(_h.CallsTo("Get-ADGroup"));
+    }
+
+    [Fact]
+    public void TheHarness_AGroupSearchMatchesOnlyTheAttributesItsFilterNames()
+    {
+        // The stand-in search evaluates its filter, so the tests above pass or fail on what the service asks
+        // for, as Active Directory would answer it: an address finds only the group carrying it (quotes
+        // doubled, any case); a name finds a group only through a name attribute; any clause of an -or
+        // matches; a missing attribute reads as empty; and a filter it cannot read is an error, never every
+        // group.
+        _h.SetDirectoryGroupAttributes(ExchangeWriteHarness.DefaultDirectoryGroupGuid, mail: "o'brien-rooms@contoso.test", displayName: List, name: "Rooms-B1");
+        _h.DirectoryGroupGuids.Add(NamesakeGroupGuid);
+        _h.SetDirectoryGroupAttributes(NamesakeGroupGuid, mail: null, displayName: "Facilities", name: "Facilities");
+        using var rs = _h.OpenDirectoryRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+        string[] theGroup = [ExchangeWriteHarness.DefaultDirectoryGroupGuid];
+        var catalog = ExchangeWriteHarness.GlobalCatalogEndpoint;
+
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "mail -eq 'o''brien-rooms@contoso.test'"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "mail -eq 'O''BRIEN-ROOMS@CONTOSO.TEST'"));
+        Assert.Empty(SearchGroups(ps, catalog, $"mail -eq '{List}'"));
+        Assert.Empty(SearchGroups(ps, catalog, $"mail -eq '{ExchangeWriteHarness.DefaultListAddress}'"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, $"displayName -eq '{List}'"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "name -eq 'Rooms-B1'"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, $"mail -eq 'facilities@contoso.test' -or displayName -eq '{List}'"));
+        Assert.Equal([NamesakeGroupGuid], SearchGroups(ps, catalog, "mail -eq ''"));
+        Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, catalog, "mail -like '*'"));
     }
 }

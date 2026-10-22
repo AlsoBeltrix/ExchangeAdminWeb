@@ -75,13 +75,49 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable ListSyncState { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// aud-a2k. The <c>PrimarySmtpAddress</c> of a list <see cref="ListAddresses"/> does not name, and
+    /// the <c>mail</c> of a group <see cref="DirectoryGroupAttributes"/> does not name: so, unless a test
+    /// says otherwise, every list's on-prem group is every stand-in group - the shape the tests written
+    /// before aud-a2k assume.
+    /// </summary>
+    public const string DefaultListAddress = "list@contoso.test";
+
+    /// <summary>
+    /// aud-a2k. What the stand-in <c>Get-DistributionGroup</c> reports as <c>PrimarySmtpAddress</c>, by
+    /// list name: an address (an empty or blank one included), or null to leave the property out.
+    /// </summary>
+    public Hashtable ListAddresses { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2k. The attributes a stand-in group search is matched against, by objectGUID - set through
+    /// <see cref="SetDirectoryGroupAttributes"/>. A group named here has exactly those attributes; one
+    /// not named has <c>mail</c> <see cref="DefaultListAddress"/> and its CN, <c>Group &lt;objectGUID&gt;</c>,
+    /// as both <c>displayName</c> and <c>name</c>.
+    /// </summary>
+    public Hashtable DirectoryGroupAttributes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a2k. Gives the group <paramref name="objectGuid"/> exactly these attributes; a null one is absent, as an unset attribute is in Active Directory.</summary>
+    public void SetDirectoryGroupAttributes(string objectGuid, string? mail, string? displayName, string? name)
+    {
+        var attributes = new Hashtable(StringComparer.OrdinalIgnoreCase);
+        if (mail is not null)
+            attributes["mail"] = mail;
+        if (displayName is not null)
+            attributes["displayName"] = displayName;
+        if (name is not null)
+            attributes["name"] = name;
+        DirectoryGroupAttributes[objectGuid] = attributes;
+    }
+
     /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
     public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
 
     /// <summary>
     /// The objectGUIDs of the stand-in directory's groups: one unless a test changes it. A
-    /// <c>Get-ADGroup</c> search returns every one of them in a domain the call reaches, whatever the
-    /// filter (aud-a2j: <see cref="DirectoryGroupDomains"/> places each).
+    /// <c>Get-ADGroup</c> search returns every one of them in a domain the call reaches (aud-a2j:
+    /// <see cref="DirectoryGroupDomains"/> places each) whose attributes its filter matches (aud-a2k:
+    /// <see cref="DirectoryGroupAttributes"/>).
     /// </summary>
     public IList DirectoryGroupGuids { get; } = ArrayList.Synchronized(new ArrayList { DefaultDirectoryGroupGuid });
 
@@ -366,6 +402,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Failures", Failures);
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
+        rs.SessionStateProxy.SetVariable("DefaultListAddress", DefaultListAddress);
+        rs.SessionStateProxy.SetVariable("ListAddresses", ListAddresses);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupAttributes", DirectoryGroupAttributes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
         rs.SessionStateProxy.SetVariable("DirectoryGroupMembers", DirectoryGroupMembers);
         rs.SessionStateProxy.SetVariable("DirectoryGroupReadBack", DirectoryGroupReadBack);
@@ -501,10 +540,16 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [CmdletBinding()] param($Identity, $CustomAttribute9, $MailTip)
             Write-StandInCall 'Set-Mailbox' $PSBoundParameters
         }
+        # A list's IsDirSynced (ListSyncState, aud-a2f) and PrimarySmtpAddress (ListAddresses, aud-a2k): False
+        # and DefaultListAddress unless a test says otherwise; a null in either leaves the property out.
         function global:Get-DistributionGroup {
             [CmdletBinding()] param($Identity)
             Write-StandInCall 'Get-DistributionGroup' $PSBoundParameters
-            $list = @{ Name = "$Identity"; PrimarySmtpAddress = "list@contoso.test"; IsDirSynced = $false }
+            $list = @{ Name = "$Identity"; PrimarySmtpAddress = $global:DefaultListAddress; IsDirSynced = $false }
+            if ($global:ListAddresses.ContainsKey("$Identity")) {
+                $address = $global:ListAddresses["$Identity"]
+                if ($null -eq $address) { $list.Remove('PrimarySmtpAddress') } else { $list['PrimarySmtpAddress'] = $address }
+            }
             if ($global:ListSyncState.ContainsKey("$Identity")) {
                 $state = $global:ListSyncState["$Identity"]
                 if ($null -eq $state) { $list.Remove('IsDirSynced') } else { $list['IsDirSynced'] = $state }
@@ -626,7 +671,38 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Find-StandInGroups($Reach) {
             foreach ($g in @($global:DirectoryGroupGuids)) { if (Test-StandInReaches $Reach (Get-StandInGroupDomain "$g")) { "$g" } }
         }
-        # aud-a2i, aud-a2j. A search answers with every group the call reaches, by objectGUID and DN. A read
+        # aud-a2k. A search answers with the groups its -Filter matches, not every group it reaches: the filter
+        # is read as the clauses the service builds - "<attribute> -eq '<value>'", single quotes doubled
+        # inside, joined by -or - and a group matches when any clause equals its attribute (DirectoryGroupAttributes,
+        # or the default mail and the CN as both names), case-insensitively as Active Directory compares these
+        # attributes; an attribute the group lacks reads as empty, so "mail -eq ''" finds every group without
+        # one - the worst a search by a blank address could do. A filter in any other shape is an error, so a
+        # test cannot pass through a filter the stand-in did not evaluate.
+        function global:Get-StandInGroupAttribute([string] $Guid, [string] $Name) {
+            $attributes = $global:DirectoryGroupAttributes[$Guid]
+            if ($null -eq $attributes) {
+                $cn = "Group $Guid"
+                $attributes = @{ mail = $global:DefaultListAddress; displayName = $cn; name = $cn }
+            }
+            foreach ($key in @($attributes.Keys)) { if ("$key" -ieq $Name) { return "$($attributes[$key])" } }
+            return ''
+        }
+        function global:Read-StandInFilter([string] $Filter) {
+            $clauses = New-Object System.Collections.ArrayList
+            foreach ($clause in ($Filter -split '\s+-or\s+')) {
+                if ($clause -notmatch "^\s*(\w+)\s+-eq\s+'((?:[^']|'')*)'\s*$") { return $null }
+                [void]$clauses.Add(@($Matches[1], ($Matches[2] -replace "''", "'")))
+            }
+            , $clauses
+        }
+        function global:Test-StandInGroupMatches($Clauses, [string] $Guid) {
+            foreach ($clause in $Clauses) {
+                if ((Get-StandInGroupAttribute $Guid $clause[0]) -ieq $clause[1]) { return $true }
+            }
+            return $false
+        }
+        # aud-a2i, aud-a2j, aud-a2k. A search answers with every group the call reaches that its filter matches,
+        # by objectGUID and DN. A read
         # by -Identity (a DN or an objectGUID) answers with that group when the call reaches it - as another
         # object when DirectoryGroupReadBack names the identity, or, for a read of the member attribute,
         # DirectoryGroupMemberReadBack - and with its member attribute when -Properties asks for it;
@@ -639,8 +715,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
             $reached = @(Find-StandInGroups $reach)
             if (-not $PSBoundParameters.ContainsKey('Identity')) {
+                $clauses = Read-StandInFilter "$Filter"
+                if ($null -eq $clauses) { Write-Error "stand-in: cannot read the filter '$Filter'."; return }
                 foreach ($group in $reached) {
-                    [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = (Get-StandInGroupDn "$group") }
+                    if (Test-StandInGroupMatches $clauses "$group") {
+                        [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = (Get-StandInGroupDn "$group") }
+                    }
                 }
                 return
             }
