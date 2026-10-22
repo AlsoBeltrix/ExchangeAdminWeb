@@ -91,4 +91,60 @@ returns as the old code did (Eligible); J2b the configured text compared to `mem
 
 ## Guard proof
 
-Pending.
+Built as the Plan. Line numbers are at the fix commit's bytes, which carry no new code comments (they come in their own
+commit after the last finding's round). `Services/ExchangeServiceBase.cs` is not changed: `CheckAdGroupMembership`
+(703-748) has no caller now.
+
+- `Services/MigrationService.cs`:
+  - 174: `CheckExcludedGroups`, where `CheckAdGroupMembership` was called; the catch (176-181) logs, turns an Eligible
+    verdict into `Undetermined` (an Ineligible one stands), and adds "Could not be determined: the excluded-group check
+    could not be completed: <reason>" (181), the reason through `ResolveFailure`.
+  - `CreateDirectoryRunspace` (250): `internal virtual`, the session the base helper built (`CreateDefault`, Bypass).
+  - `CheckExcludedGroups` (257): `Import-Module ActiveDirectory`, `Get-ADUser -Filter "UserPrincipalName -eq '...'"
+    -Properties memberOf`, then `Get-ADGroup -Identity` per configured value, each under Stop through `DirectoryStep`
+    (305: the base's `Invoke`; a failure names its step); exactly one user (274); `memberOf` through
+    `MemberOfDistinguishedNames` (317: absent - "reported no memberOf", not a list - "could not be read as a list of
+    distinguished names"; a single string or any enumerable, wrappers unwrapped); exactly one group with a
+    `DistinguishedName`; the match (296) the resolved DN in a `HashSet` under `StringComparer.OrdinalIgnoreCase` -
+    never a substring.
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: `Service()` returns `StubMigrationService` (the real service, its
+  `CreateDirectoryRunspace` the stand-in's); `DirectoryStandIn` - stub `Import-Module`, `Get-ADUser` (the UPN parsed from
+  the filter) and `Get-ADGroup` (a group's DN, or the AD module's not-found under ObjectNotFound) over `DirectoryUsers`
+  and `DirectoryGroups`, through the same failure table and call log; `DirectoryUser`, `Users`, `DirectoryNotFound`,
+  `ExcludeGroups` (saves the module's comma-separated setting).
+
+New `ExchangeAdminWeb.Tests/MigrationExcludedGroupTests.cs`, 7 tests (15 cases), each a ToCloud check of a mailbox not
+yet in Exchange Online (Eligible before the AD step; one that passes the AD step reaches the size step, whose reason
+alone shows it):
+
+| Test | Pins |
+| --- | --- |
+| `AnExcludedGroupCheckThatCannotBeCompleted_IsUndetermined_NeverEligible` (the module, `Get-ADUser` thrown and written, a group that does not resolve, no user, two users, no `memberOf`) | **the finding**: Undetermined, exactly "Could not be determined: the excluded-group check could not be completed: <the step's reason>", and no size step |
+| `AnIneligibleAnswer_WhoseGroupCheckCannotBeCompleted_StaysIneligible_WithBothReasons` | "Already a cloud mailbox" stands, the incomplete check listed after it |
+| `AMemberOfTheResolvedGroup_IsIneligible` | "Member of excluded group: Sales", no size step |
+| `AMemberOfValueThatDiffersOnlyInCase_IsTheGroup` | DNs compared ignoring case |
+| `AGroupThatOnlyContainsTheNameOrTheDn_IsNotTheGroup` ("CN=Sales Team,...", "CN=Other,OU=Sales,...", "CN=Archive,CN=Sales,OU=Groups,...") | **the finding**: a substring of the name or of the whole DN is not the group - the check passes |
+| `AUserInNoExcludedGroup_PassesTheCheck` | the control |
+| `ADnTypedIntoTheCommaSeparatedSetting_CannotBeResolved_RatherThanMatchingEveryGroupNearIt` | the setting splits a DN at its commas; "the excluded group 'CN=Sales' could not be resolved: ...", Undetermined |
+
+**Against the unfixed code: not runnable as a whole** - the seam and the stand-in are new, so each behaviour was put
+back at its own call site instead, and each revert fails the tests that pin it.
+
+Mutations at the call site, by the same driver and protocol as aud-a23n's (`round-a23j.ps1`, session scratchpad), over
+the 1089 tests of the same filter. Service bytes (LF) before every mutation and after every restore:
+`cb38d7ecf272c2b9313a623f547e27e8`.
+
+| Mutation | md5 mutated | Failed (of 1089) | Restored, rerun |
+| --- | --- | --- | --- |
+| J1 (the record's): the warning-only catch again ("Warning: Could not verify AD group membership (...)", the verdict untouched) | `1189952f8748ad82ab4423645a855dae` | 9: every `AnExcludedGroupCheckThatCannotBeCompleted...` case (7), `AnIneligibleAnswer_WhoseGroupCheck...`, `ADnTypedIntoTheCommaSeparatedSetting...` - Eligible again | equal; 1089/0 |
+| J2 (the record's): the substring again - the configured text inside each `memberOf` DN, as the base helper matched | `3c40c13dc7fecd3f6e72ee1d54453c6b` | 3: `AGroupThatOnlyContainsTheNameOrTheDn...` (all three) | equal; 1089/0 |
+| J1b: no directory user returns, as the base helper's `memberOf == null` did | `524f27601f67325bb8394100aa9a96c6` | 1: `...CannotBeCompleted...` ("no directory user") | equal; 1089/0 |
+| J2b: the configured text compared to `memberOf` exactly, without resolving it | `7805375131cbf671445b01d601fea991` | 2: `AMemberOfTheResolvedGroup...`, `AMemberOfValueThatDiffersOnlyInCase...` - a name never matches a DN | equal; 1089/0 |
+| J2c: a substring of the resolved DN | `ceaf8b786b5c065821256b6322a4bc87` | 1: `AGroupThatOnlyContainsTheNameOrTheDn...` ("CN=Archive,CN=Sales,...") | equal; 1089/0 |
+
+md5s (LF) of the other files at the fix commit: `MigrationExcludedGroupTests.cs` `85dba9c910c34a42a79a2659dc747147`,
+`MigrationStubExchange.cs` `5d2b3e581749b505a69318b31a9038ea`.
+
+On the fix commit's tree: Release build 0 errors, 61 warnings; the 1089 focused tests 1089/0; `dotnet format
+--verify-no-changes` exit 0; `git diff --check HEAD` exit 0. No directory was asked anything: the AD session in every
+test is the stand-in.

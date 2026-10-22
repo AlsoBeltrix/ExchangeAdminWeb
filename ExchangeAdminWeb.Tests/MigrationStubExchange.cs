@@ -107,6 +107,19 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>Cmdlets the session does not have: a call to one is PowerShell's CommandNotFoundException.</summary>
     public HashSet<string> Missing { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// aud-a23j. The Active Directory stand-in's users: Get-ADUser -Filter "UserPrincipalName -eq '...'" answers the rows
+    /// held under that UPN (see <see cref="Users"/> and <see cref="DirectoryUser"/>); none when it holds none.
+    /// </summary>
+    public Hashtable DirectoryUsers { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a23j. Get-ADGroup -Identity answers these: an identity to the group's DN; any other is not found.</summary>
+    public Hashtable DirectoryGroups { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a23j. Saves the Migration module's excluded groups, as the comma-separated setting holds them.</summary>
+    public void ExcludeGroups(params string[] groups) =>
+        _moduleConfig.SaveModuleConfig("Migration", new Dictionary<string, string> { ["ExcludedADGroups"] = string.Join(",", groups) });
+
     // ---- the shapes of an error ------------------------------------------------------------------
 
     /// <summary>A refusal: no category, an identifier that names nothing.</summary>
@@ -131,6 +144,12 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>Named like Exchange's: a record whose reason is this type is Exchange saying there is no such object.</summary>
     public sealed class ManagementObjectNotFoundException(string message) : Exception(message);
 
+    /// <summary>aud-a23j. The Active Directory module's "no such object", as Get-ADGroup -Identity writes it.</summary>
+    public static ErrorRecord DirectoryNotFound(string identity) =>
+        new(new InvalidOperationException($"Cannot find an object with identity: '{identity}' under: 'DC=contoso,DC=test'."),
+            "ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException,Microsoft.ActiveDirectory.Management.Commands.GetADGroup",
+            ErrorCategory.ObjectNotFound, identity);
+
     // ---- rows ------------------------------------------------------------------------------------
 
     public static PSObject Row(params (string Name, object? Value)[] fields)
@@ -142,6 +161,13 @@ internal sealed class MigrationStubExchange : IDisposable
     }
 
     public static PSObject CloudMailbox(string address) => Row(("PrimarySmtpAddress", address), ("RecipientTypeDetails", "UserMailbox"));
+
+    /// <summary>aud-a23j. A directory user and the DNs its memberOf reports.</summary>
+    public static PSObject DirectoryUser(string userPrincipalName, params string[] memberOf) =>
+        Row(("UserPrincipalName", userPrincipalName), ("memberOf", memberOf));
+
+    /// <summary>aud-a23j. The rows Get-ADUser answers for one UPN, for <see cref="DirectoryUsers"/>.</summary>
+    public static List<object> Users(params PSObject[] rows) => [.. rows];
 
     /// <param name="status">aud-a23n. The batch's Status; null leaves the property out, as a row that reports none.</param>
     public static PSObject Batch(string name, object? completeAfter = null, string? status = "Synced")
@@ -173,8 +199,46 @@ internal sealed class MigrationStubExchange : IDisposable
     }
 
     /// <param name="connects">False: opening the connection throws, before any cmdlet runs.</param>
-    public MigrationService Service(bool connects = true) =>
-        new(_config, Pool(connects), null!, NullLogger<MigrationService>.Instance, _moduleConfig, null!, _trace, null!, null!);
+    public MigrationService Service(bool connects = true) => new StubMigrationService(this, connects);
+
+    /// <summary>
+    /// aud-a23j. The real service, its Active Directory session the stand-in's: <see cref="DirectoryStandIn"/>, a runspace of
+    /// stub Import-Module, Get-ADUser and Get-ADGroup over <see cref="DirectoryUsers"/> and <see cref="DirectoryGroups"/>,
+    /// failing as <see cref="Failures"/> says, like the Exchange stubs. No directory.
+    /// </summary>
+    internal sealed class StubMigrationService(MigrationStubExchange exchange, bool connects)
+        : MigrationService(exchange._config, exchange.Pool(connects), null!, NullLogger<MigrationService>.Instance,
+            exchange._moduleConfig, null!, exchange._trace, null!, null!)
+    {
+        internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
+    }
+
+    private static readonly (string Name, string Parameters, string Answer)[] DirectoryStubs =
+    [
+        ("Import-Module", "[string] $Name", ""),
+        ("Get-ADUser", "[string] $Filter, [object] $Properties", """
+            $upn = $null
+            if ($Filter -match '^UserPrincipalName -eq ''(.*)''$') { $upn = $Matches[1] -replace "''", "'" }
+            if ($null -ne $upn -and $DirectoryUsers.ContainsKey($upn)) { foreach ($row in $DirectoryUsers[$upn]) { $row } }
+            """),
+        ("Get-ADGroup", "[string] $Identity", """
+            if ($DirectoryGroups.ContainsKey($Identity)) { return [pscustomobject]@{ DistinguishedName = $DirectoryGroups[$Identity] } }
+            $PSCmdlet.WriteError($DirectoryNotFound.Invoke([string]$Identity))
+            """),
+    ];
+
+    private Runspace DirectoryStandIn()
+    {
+        var state = InitialSessionState.CreateDefault2();
+        state.Variables.Add(new SessionStateVariableEntry("Failures", Failures, null));
+        state.Variables.Add(new SessionStateVariableEntry("Calls", Calls, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryUsers", DirectoryUsers, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryGroups", DirectoryGroups, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryNotFound", (Func<string, ErrorRecord>)DirectoryNotFound, null));
+        foreach (var (name, parameters, answer) in DirectoryStubs)
+            state.Commands.Add(new SessionStateFunctionEntry(name, Stub(name, parameters, answer)));
+        return RunspaceFactory.CreateRunspace(state);
+    }
 
     private PooledRunspace StandIn(long generation)
     {
@@ -258,7 +322,7 @@ internal sealed class MigrationStubExchange : IDisposable
     private static string Stub(string name, string parameters, string answer) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason' } | ForEach-Object { " -$_" }) -join ''
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Archive', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]

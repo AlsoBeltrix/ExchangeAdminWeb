@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Management.Automation;
+using System.Management.Automation.Runspaces;
 using System.Security.Claims;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -170,12 +171,14 @@ public class MigrationService : ExchangeServiceBase
         {
             try
             {
-                CheckAdGroupMembership(result, _excludedADGroups);
+                CheckExcludedGroups(result, _excludedADGroups);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking AD group membership for {Email}", emailAddress);
-                result.IneligibilityReasons.Add($"Warning: Could not verify AD group membership ({ex.Message})");
+                _logger.LogError(ex, "The excluded-group check for {Email} could not be completed", emailAddress);
+                if (result.Status == MigrationStatus.Eligible)
+                    result.Status = MigrationStatus.Undetermined;
+                result.IneligibilityReasons.Add($"Could not be determined: the excluded-group check could not be completed: {ResolveFailure(ex).primary}");
             }
         }
 
@@ -242,6 +245,102 @@ public class MigrationService : ExchangeServiceBase
         await ApplyProtectionFlagAsync(result);
 
         return result;
+    }
+
+    internal virtual Runspace CreateDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
+    private void CheckExcludedGroups(MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups)
+    {
+        using var runspace = CreateDirectoryRunspace();
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module")
+          .AddParameter("Name", "ActiveDirectory")
+          .AddParameter("ErrorAction", "Stop");
+        DirectoryStep(ps, "the ActiveDirectory module could not be loaded");
+
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress.Replace("'", "''")}'")
+          .AddParameter("Properties", "memberOf")
+          .AddParameter("ErrorAction", "Stop");
+        var users = DirectoryStep(ps, "Get-ADUser failed");
+        if (users.Count != 1)
+        {
+            throw new InvalidOperationException(users.Count == 0
+                ? $"no directory user has the user principal name {result.EmailAddress}"
+                : $"{users.Count} directory users have the user principal name {result.EmailAddress}");
+        }
+
+        var memberOf = MemberOfDistinguishedNames(users[0], result.EmailAddress);
+
+        foreach (var configured in excludedGroups)
+        {
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("Identity", configured)
+              .AddParameter("ErrorAction", "Stop");
+            var groups = DirectoryStep(ps, $"the excluded group '{configured}' could not be resolved");
+            if (groups.Count != 1)
+                throw new InvalidOperationException($"the excluded group '{configured}' resolved to {groups.Count} groups");
+
+            var groupDn = groups[0].Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
+            if (string.IsNullOrEmpty(groupDn))
+                throw new InvalidOperationException($"the excluded group '{configured}' was returned with no distinguished name");
+
+            if (memberOf.Contains(groupDn))
+            {
+                result.Status = MigrationStatus.Ineligible;
+                result.IneligibilityReasons.Add($"Member of excluded group: {configured}");
+                _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", result.EmailAddress, configured);
+            }
+        }
+    }
+
+    private static Collection<PSObject> DirectoryStep(PowerShell ps, string failure)
+    {
+        try
+        {
+            return Invoke(ps);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"{failure}: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
+        }
+    }
+
+    private static HashSet<string> MemberOfDistinguishedNames(PSObject user, string emailAddress)
+    {
+        var reported = user.Properties["memberOf"]?.Value;
+        if (reported is PSObject wrapped)
+            reported = wrapped.BaseObject;
+        if (reported is null)
+            throw new InvalidOperationException($"the directory reported no memberOf for {emailAddress}");
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (reported is string single)
+        {
+            if (!string.IsNullOrWhiteSpace(single))
+                names.Add(single.Trim());
+            return names;
+        }
+
+        if (reported is not System.Collections.IEnumerable values)
+            throw new InvalidOperationException($"the directory's memberOf for {emailAddress} could not be read as a list of distinguished names");
+
+        foreach (var value in values)
+        {
+            var name = (value is PSObject item ? item.BaseObject : value)?.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+                names.Add(name.Trim());
+        }
+
+        return names;
     }
 
     public async Task<MigrationBatchResult> CheckBulkMigrationEligibilityAsync(Stream csvStream, MigrationDirection direction)
