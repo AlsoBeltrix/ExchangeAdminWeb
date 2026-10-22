@@ -9,9 +9,9 @@ mailbox load (shown, not silent, but one bad row loses the list - the aud-a23f s
 Migration mailbox report's "Taken <time>" is the server's clock with no zone named (aud-a23e fixed
 the other Migration times). (4) `ScheduledCompletionUtc` treats a zone-less `CompleteAfter` as
 server-local time; no page shows it yet, but the model states an instant it does not know.
-**Status**: Fixed on branch; closed on guard proof; review pending
+**Status**: Merged to master (`cafef918`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac856fb3e1e8d9617` (forked at `d7d41457`)
-**Commit**: -
+**Commit**: `539f2ccf` (fix, tests, comments, record); plan `0c64d49c`; merged `cafef918`
 **Reviewer**: implementer (surfaced by the aud-a23f/a23e agent, 2026-10-22, its four candidates)
 
 ## Evidence
