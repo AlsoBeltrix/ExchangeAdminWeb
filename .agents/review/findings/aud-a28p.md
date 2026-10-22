@@ -5,7 +5,7 @@ authorization store must deny when a read fails). `ProtectedPrincipalService.Get
 reads the Mailbox Permissions module configuration's `ExcludedUsers` list after the corruption probe
 has passed; a read failure between the probe and this read returns an empty list, so the principals
 that list protects are un-protected for that check and a write against them goes through.
-**Status**: Merged to master (`7b65d27e`); closed on guard proof; codex review pending
+**Status**: Merged to master (`7b65d27e`); closed on guard proof; codex attr-batch-10 clean (raised aud-a28s)
 **Branch**: `worktree-agent-a3c115693e85a6623`
 **Commit**: `0b92c35f` (plan `ff78ff27`; comments `389a34a2`; merged `7b65d27e`)
 **Reviewer**: implementer (surfaced by the aud-a28n/a26k agent, 2026-10-22, candidate 1 of its hand-back)
