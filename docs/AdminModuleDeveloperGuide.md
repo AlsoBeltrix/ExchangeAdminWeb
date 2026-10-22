@@ -935,8 +935,11 @@ sanitization stay in a single place.
 - Affected-user notification on a permission/access change:
   `EmailService.SendUserNotificationAsync(...)`.
 
-If `EmailService` lacks a shape a new module needs, add an overload to that service
-(with a test) rather than notifying from the module. Notification failure must not
+If `EmailService` lacks a shape a new module needs, the module cannot ship that feature
+as written: an isolated module may use only what the host exposes today, and adding an
+overload is a host change only the repo owner makes, as a separate change with its own
+test, before a module may depend on it (`.agents/decisions.md` 2026-10-22). Never notify
+from the module to work around a missing shape. Notification failure must not
 change or mask the backend result — `EmailService` already catches and logs; keep
 the call off the operation's success path.
 

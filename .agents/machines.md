@@ -86,6 +86,13 @@ _First recorded 2026-07-21._
   exist 2026-10-05 as of `25bb108`; the two appsettings files were not re-read by that
   sweep. Startup-log and cross-instance refresh acceptance checks have never been run.
 
+### Directory environment (owner statements, for triage only)
+
+- 2026-10-22, owner: "all users are synced" - every mailbox user has an on-prem AD object synced to
+  Entra/Exchange Online; there are no cloud-only users. Use it to triage live errors (an on-prem
+  Add-ADPermission trustee always has an AD object). Never bake it into code or a safety argument
+  (Architectural Invariant 7); the code still fails closed when an object is not found.
+
 ### Owner's issue queue
 
 - queue-file: `C:\Users\mcoelho\Desktop\queue.txt`

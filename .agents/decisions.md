@@ -5,6 +5,24 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-22 - Isolated module authors cannot require host changes
+
+Owner ruling, verbatim: external module developers "do not and will not have access to this
+codebase. The module guide is for developing modules in isolation so they can be added later. If
+changes to the core are required, then this module cannot be supported."
+
+Rule: `docs/AdminModuleDeveloperGuide.md` describes what the host exposes today. An isolated module
+may use only that surface. A feature that needs a new host capability (a new `EmailService` overload,
+a new credential shape, a new host service) is out of the module's scope; it is not a request for the
+author to extend the host. Only the owner decides to change the host, as a separate repo change,
+before such a module can depend on it. Answers to module-author questions say "supported as-is" or
+"not supportable without a host change". Context: the Duo lockout/token/activation module questions
+of 2026-10-22 (credentials: supported via a module-specific Delinea secret and
+`DelineaService.GetSecretFieldsAsync`; an HTML activation email with an inline image: not
+supportable, `EmailService` has no such shape; a Duo API client: module-local HMAC signing, no
+vendored source). The guide's Notifications section said "add an overload to that service"; it is
+corrected to route that to the owner.
+
 ### 2026-10-22 - The app is its own backup tool; no sqlite3 on the deploy host
 
 Owner ruling 2026-10-21 ("figure out the best way to fix the sqlite3 issue", then "okay,
