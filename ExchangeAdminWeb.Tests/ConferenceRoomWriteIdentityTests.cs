@@ -140,6 +140,166 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.All(_h.CallsTo("Get-ADUser"), c => Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(c, "Identity")));
     }
 
+    // aud-a2m. The room list itself, bound the same way: every Exchange call on it after the read names it by
+    // the Guid of the object Get-DistributionGroup returned, never by the name the Building derives.
+    private const string ListGuid = "42424242-4242-4242-8242-424242424242";
+    private const string NamesakeGuid = "43434343-4343-4343-8343-434343434343";
+    private static readonly string List = ConferenceRoomService.BuildRoomListName("Building 1");
+
+    private const string OnPremMastered =
+        "The operation on the group failed because it's out of the current user's write scope. The action can't be "
+        + "performed on the object because the object is being synchronized from your on-premises organization.";
+
+    private IReadOnlyList<System.Collections.Hashtable> ListCalls() =>
+        _h.CallsTo("Get-DistributionGroupMember").Concat(_h.CallsTo("Add-DistributionGroupMember")).ToList();
+
+    private bool AnyCallNames(string value) =>
+        _h.Calls.Cast<System.Collections.Hashtable>().Any(c => c.Values.Cast<object?>()
+            .Any(v => string.Equals((v is PSObject wrapped ? wrapped.BaseObject : v)?.ToString(), value, StringComparison.OrdinalIgnoreCase)));
+
+    [Fact]
+    public async Task TheCloudAddAndItsMembershipRead_NameTheListByTheGuidItWasReadWith()
+    {
+        // By the time of the add a second recipient also answers to the list's name. Named by that name,
+        // Exchange refuses the identity as ambiguous and the row is partial after Set-Place; named by the
+        // Guid the read returned, the row completes, and the namesake is never addressed.
+        _h.ListGuids[List] = ListGuid;
+        _h.ListNamesakes[List] = NamesakeGuid;
+
+        var result = await Finder(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-DistributionGroup")), "Identity"));
+        var calls = ListCalls();
+        Assert.Equal(["Get-DistributionGroupMember", "Add-DistributionGroupMember"], calls.Select(c => (string)c["__Command"]!));
+        Assert.All(calls, c => Assert.Equal(ListGuid, ExchangeWriteHarness.Bound(c, "Identity")));
+        Assert.False(AnyCallNames(NamesakeGuid));
+    }
+
+    [Fact]
+    public async Task ASyncedList_IsReadAndRefusedTheCloudAddByItsGuid_ThenAddedOnPrem()
+    {
+        // A synced list makes three Exchange calls on it: the preflight's membership read, the add's, and the
+        // cloud add Exchange refuses as on-prem-mastered. Each names the Guid. (The refusal is thrown before
+        // the stand-in looks at the identity, so here only the pins show a call made by name.)
+        _h.ListGuids[List] = ListGuid;
+        _h.ListNamesakes[List] = NamesakeGuid;
+        _h.ListSyncState[List] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+
+        var result = await Finder(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        var calls = ListCalls();
+        Assert.Equal(["Get-DistributionGroupMember", "Get-DistributionGroupMember", "Add-DistributionGroupMember"],
+            calls.Select(c => (string)c["__Command"]!));
+        Assert.All(calls, c => Assert.Equal(ListGuid, ExchangeWriteHarness.Bound(c, "Identity")));
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.False(AnyCallNames(NamesakeGuid));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    [InlineData("not-a-guid")]
+    public async Task ARoomListExchangeReportsWithNoGuid_IsRefusedBeforeAnyWrite(string? guid)
+    {
+        // The property absent, all zeros, or not a GUID: nothing immutable to name the list by, so the row is
+        // refused before Set-Place - a cloud list, which otherwise needs no preflight at all - and the list is
+        // never read or added to by its name.
+        _h.ListGuids[List] = guid;
+
+        var result = await Finder(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Contains(List, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Empty(ListCalls());
+    }
+
+    // A Building with no room list under either name: the row creates one cloud-side.
+    private void NoListYet()
+    {
+        _h.MissingLists.Add(List);
+        _h.MissingLists.Add(ConferenceRoomService.BuildLegacyRoomListName("Building 1"));
+    }
+
+    [Fact]
+    public async Task AListTheRowCreates_IsNamedByTheGuidTheCreationReturned()
+    {
+        // No list was read, so the Guid is the one New-DistributionGroup returned for the object it made - with
+        // a namesake present, the name would make the add ambiguous.
+        NoListYet();
+        _h.ListNamesakes[List] = NamesakeGuid;
+
+        var result = await Finder(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("New-DistributionGroup")), "Name"));
+        var calls = ListCalls();
+        Assert.Equal(["Get-DistributionGroupMember", "Add-DistributionGroupMember"], calls.Select(c => (string)c["__Command"]!));
+        Assert.All(calls, c => Assert.Equal(ExchangeWriteHarness.DefaultCreatedListGuid, ExchangeWriteHarness.Bound(c, "Identity")));
+    }
+
+    [Fact]
+    public async Task AListCreatedWithoutAGuid_IsNotAddedToByItsName()
+    {
+        // The creation returned no Guid: the row fails, partial, and nothing is read or added by the name.
+        NoListYet();
+        _h.CreatedListGuid = null;
+
+        var result = await Finder(new Service(_h), Room());
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Single(_h.CallsTo("New-DistributionGroup"));
+        Assert.Empty(ListCalls());
+    }
+
+    [Fact]
+    public void TheHarness_RefusesAListNameASecondRecipientAnswersTo_AndAnswersTheListsGuid()
+    {
+        // The stand-ins the tests above rest on: Get-DistributionGroup reports a Guid (the test's, else the
+        // default) and finds no missing list; the member cmdlets refuse a name with a namesake and answer the
+        // list's Guid; New-DistributionGroup returns the group it made.
+        var legacy = ConferenceRoomService.BuildLegacyRoomListName("Building 1");
+        _h.ListGuids[List] = ListGuid;
+        _h.MissingLists.Add(legacy);
+        _h.ListNamesakes[List] = NamesakeGuid;
+        _h.ListMembers.Add("room1@contoso.test");
+        using var rs = _h.OpenExchangeRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        Assert.Equal(Guid.Parse(ListGuid), Value(Run(ps, "Get-DistributionGroup", ("Identity", List)).Single(), "Guid"));
+        Assert.Equal(Guid.Parse(ExchangeWriteHarness.DefaultListGuid), Value(Run(ps, "Get-DistributionGroup", ("Identity", "Building 2 Conference Rooms")).Single(), "Guid"));
+        Assert.Empty(Run(ps, "Get-DistributionGroup", ("Identity", legacy), ("ErrorAction", "SilentlyContinue")));
+        Assert.Contains("matches multiple entries", Assert.ThrowsAny<RuntimeException>(() =>
+            Run(ps, "Get-DistributionGroupMember", ("Identity", List), ("ResultSize", "Unlimited"), ("ErrorAction", "Stop"))).Message, StringComparison.Ordinal);
+        Assert.Contains("matches multiple entries", Assert.ThrowsAny<RuntimeException>(() =>
+            Run(ps, "Add-DistributionGroupMember", ("Identity", List), ("Member", Identity(Checked)), ("ErrorAction", "Stop"))).Message, StringComparison.Ordinal);
+        Assert.Equal("room1@contoso.test",
+            Value(Run(ps, "Get-DistributionGroupMember", ("Identity", ListGuid), ("ResultSize", "Unlimited"), ("ErrorAction", "Stop")).Single(), "PrimarySmtpAddress"));
+        Run(ps, "Add-DistributionGroupMember", ("Identity", ListGuid), ("Member", Identity(Checked)), ("ErrorAction", "Stop"));
+        Assert.Equal(Guid.Parse(ExchangeWriteHarness.DefaultCreatedListGuid), Value(Run(ps, "New-DistributionGroup", ("Name", List), ("ErrorAction", "Stop")).Single(), "Guid"));
+    }
+
+    private static object? Value(PSObject item, string property) =>
+        item.Properties[property]?.Value is PSObject wrapped ? wrapped.BaseObject : item.Properties[property]?.Value;
+
+    private static System.Collections.ObjectModel.Collection<PSObject> Run(PowerShell ps, string command, params (string Name, object Value)[] parameters)
+    {
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        var invocation = ps.AddCommand(command);
+        foreach (var (name, value) in parameters)
+            invocation.AddParameter(name, value);
+        return ps.Invoke();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

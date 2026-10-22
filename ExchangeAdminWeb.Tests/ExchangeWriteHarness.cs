@@ -89,6 +89,35 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable ListAddresses { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>aud-a2m. The <c>Guid</c> the stand-in <c>Get-DistributionGroup</c> reports for a list <see cref="ListGuids"/> does not name.</summary>
+    public const string DefaultListGuid = "21212121-2121-4121-8121-212121212121";
+
+    /// <summary>
+    /// aud-a2m. What the stand-in <c>Get-DistributionGroup</c> reports as <c>Guid</c>, by list name: a GUID,
+    /// any other string (reported as given, as a malformed value would be), or null to leave the property out.
+    /// </summary>
+    public Hashtable ListGuids { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a2m. The list names the stand-in <c>Get-DistributionGroup</c> does not find: a Building with no room list yet.</summary>
+    public IList MissingLists { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>aud-a2m. The <c>Guid</c> of the group the stand-in <c>New-DistributionGroup</c> returns unless a test changes <see cref="CreatedListGuid"/>.</summary>
+    public const string DefaultCreatedListGuid = "31313131-3131-4131-8131-313131313131";
+
+    /// <summary>
+    /// aud-a2m. The <c>Guid</c> of the group the stand-in <c>New-DistributionGroup</c> returns, as
+    /// <see cref="ListGuids"/> reports one; null returns the group without it. Read when an Exchange runspace opens.
+    /// </summary>
+    public string? CreatedListGuid { get; set; } = DefaultCreatedListGuid;
+
+    /// <summary>
+    /// aud-a2m. A list name that a second recipient also answers to, and that recipient's <c>Guid</c>: the
+    /// stand-in <c>Get-DistributionGroupMember</c> and <c>Add-DistributionGroupMember</c> refuse that name as
+    /// ambiguous, as Exchange refuses an identity matching more than one object. Every other identity -
+    /// the list's <c>Guid</c> included - is answered as the list.
+    /// </summary>
+    public Hashtable ListNamesakes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
     /// <summary>
     /// aud-a2k. The attributes a stand-in group search is matched against, by objectGUID - set through
     /// <see cref="SetDirectoryGroupAttributes"/>. A group named here has exactly those attributes; one
@@ -427,6 +456,11 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
         rs.SessionStateProxy.SetVariable("DefaultListAddress", DefaultListAddress);
         rs.SessionStateProxy.SetVariable("ListAddresses", ListAddresses);
+        rs.SessionStateProxy.SetVariable("DefaultListGuid", DefaultListGuid);
+        rs.SessionStateProxy.SetVariable("ListGuids", ListGuids);
+        rs.SessionStateProxy.SetVariable("MissingLists", MissingLists);
+        rs.SessionStateProxy.SetVariable("CreatedListGuid", CreatedListGuid);
+        rs.SessionStateProxy.SetVariable("ListNamesakes", ListNamesakes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupAttributes", DirectoryGroupAttributes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
         rs.SessionStateProxy.SetVariable("DirectoryGroupMembers", DirectoryGroupMembers);
@@ -568,10 +602,24 @@ internal sealed class ExchangeWriteHarness : IDisposable
         }
         # A list's IsDirSynced (ListSyncState, aud-a2f) and PrimarySmtpAddress (ListAddresses, aud-a2k): False
         # and DefaultListAddress unless a test says otherwise; a null in either leaves the property out.
+        # aud-a2m. And its Guid (ListGuids): DefaultListGuid unless a test says otherwise, a value that is not a
+        # GUID as given, a null none. A list in MissingLists is not found.
+        function global:ConvertTo-StandInGuid($Value) {
+            $parsed = [guid]::Empty
+            if ([guid]::TryParse("$Value", [ref]$parsed)) { $parsed } else { "$Value" }
+        }
         function global:Get-DistributionGroup {
             [CmdletBinding()] param($Identity)
             Write-StandInCall 'Get-DistributionGroup' $PSBoundParameters
-            $list = @{ Name = "$Identity"; PrimarySmtpAddress = $global:DefaultListAddress; IsDirSynced = $false }
+            if (@($global:MissingLists | Where-Object { "$_" -ieq "$Identity" }).Count -gt 0) {
+                Write-Error "The operation couldn't be performed because object '$Identity' couldn't be found on 'stand-in'."
+                return
+            }
+            $list = @{ Name = "$Identity"; PrimarySmtpAddress = $global:DefaultListAddress; IsDirSynced = $false; Guid = [guid]$global:DefaultListGuid }
+            if ($global:ListGuids.ContainsKey("$Identity")) {
+                $guid = $global:ListGuids["$Identity"]
+                if ($null -eq $guid) { $list.Remove('Guid') } else { $list['Guid'] = ConvertTo-StandInGuid $guid }
+            }
             if ($global:ListAddresses.ContainsKey("$Identity")) {
                 $address = $global:ListAddresses["$Identity"]
                 if ($null -eq $address) { $list.Remove('PrimarySmtpAddress') } else { $list['PrimarySmtpAddress'] = $address }
@@ -582,10 +630,17 @@ internal sealed class ExchangeWriteHarness : IDisposable
             }
             New-Object psobject -Property $list
         }
+        # aud-a2m. Returns the group it made, as the real cmdlet does: CreatedListGuid its Guid, a null none.
         function global:New-DistributionGroup {
             [CmdletBinding()] param($Name, [switch] $RoomList)
             Write-StandInCall 'New-DistributionGroup' $PSBoundParameters
+            $group = @{ Name = "$Name" }
+            if ($null -ne $global:CreatedListGuid) { $group['Guid'] = ConvertTo-StandInGuid $global:CreatedListGuid }
+            New-Object psobject -Property $group
         }
+        # aud-a2m. A list name a second recipient also answers to (ListNamesakes) matches two objects, and Exchange
+        # refuses such an identity. Write-Error then return, so the refusal stands under any -ErrorAction.
+        function global:Test-StandInAmbiguousList($Identity) { $global:ListNamesakes.ContainsKey("$Identity") }
         # aud-a2h. Exchange Online returns at most -ResultSize members, 1000 when it is not passed. A read
         # without it is refused - an error and no members - rather than answered short, so no test can
         # see a member through a read the real cmdlet would have cut off. Write-Error then return, not
@@ -594,6 +649,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Get-DistributionGroupMember {
             [CmdletBinding()] param($Identity, $ResultSize)
             Write-StandInCall 'Get-DistributionGroupMember' $PSBoundParameters
+            if (Test-StandInAmbiguousList $Identity) { Write-Error "The operation couldn't be performed because '$Identity' matches multiple entries."; return }
             if (-not $PSBoundParameters.ContainsKey('ResultSize')) {
                 Write-Error "stand-in: Get-DistributionGroupMember without -ResultSize - Exchange Online would answer with its default page only, not the whole list."
                 return
@@ -605,6 +661,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Add-DistributionGroupMember {
             [CmdletBinding()] param($Identity, $Member)
             Write-StandInCall 'Add-DistributionGroupMember' $PSBoundParameters
+            if (Test-StandInAmbiguousList $Identity) { Write-Error "The operation couldn't be performed because '$Identity' matches multiple entries."; return }
         }
         function global:Disconnect-ExchangeOnline { param($ConnectionId, $Confirm) }
 

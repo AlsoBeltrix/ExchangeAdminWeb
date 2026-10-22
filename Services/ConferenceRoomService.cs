@@ -345,9 +345,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// that is the legacy name, and - for an existing list - whether it is synchronized from
     /// on-premises (<c>IsDirSynced</c>), or null when Exchange did not say; and the primary SMTP
     /// address Exchange holds for it, by which its on-prem group is found (aud-a2k), as Exchange
-    /// returned it - null when the list does not exist or Exchange reported none.
+    /// returned it - null when the list does not exist or Exchange reported none. And its
+    /// <c>Guid</c>, "D" form (aud-a2m): every later Exchange call on the list names it by this, never
+    /// by the name - null when the list does not exist or Exchange reported no usable one.
     /// </summary>
-    private sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress)
+    private sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress, string? Guid)
     {
         /// <summary>
         /// An existing list synchronized from on-premises. Exchange Online refuses the cloud add to
@@ -366,7 +368,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "SilentlyContinue");
         var canonical = InvokeOptional(ps, tracker);
         if (canonical.Count > 0)
-            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]), ReadPrimarySmtpAddress(canonical[0]));
+            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]), ReadPrimarySmtpAddress(canonical[0]), ReadListGuid(canonical[0]));
 
         var legacyName = BuildLegacyRoomListName(building);
         ps.AddCommand("Get-DistributionGroup")
@@ -374,9 +376,30 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "SilentlyContinue");
         var legacy = InvokeOptional(ps, tracker);
         if (legacy.Count > 0)
-            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]), ReadPrimarySmtpAddress(legacy[0]));
+            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]), ReadPrimarySmtpAddress(legacy[0]), ReadListGuid(legacy[0]));
 
-        return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null);
+        return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null, Guid: null);
+    }
+
+    // aud-a2m. The Guid of a list object Exchange returned - this read's, or New-DistributionGroup's for a
+    // list the row creates. The name the Building derives is a search: between this read and the add, a
+    // second recipient can come to answer to it (Exchange then refuses the add as ambiguous) or the name can
+    // move to another object (the add lands there). The Guid can do neither, so it is what the later calls
+    // pass, as aud-a2d passes the mailbox GUID. A typed Guid or a string that parses as one, as the property
+    // may come back either way; anything else - absent, malformed, all zeros - is no Guid, and the callers
+    // refuse rather than fall back to the name.
+    private static string? ReadListGuid(PSObject list)
+    {
+        var value = list.Properties["Guid"]?.Value;
+        if (value is PSObject wrapped)
+            value = wrapped.BaseObject;
+        var guid = value switch
+        {
+            Guid typed => typed,
+            string text when System.Guid.TryParse(text, out var parsed) => parsed,
+            _ => System.Guid.Empty,
+        };
+        return guid == System.Guid.Empty ? null : guid.ToString("D");
     }
 
     // True, false, or null when the property is absent or not a boolean - which the preflight refuses
@@ -623,6 +646,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         var opResult = await RunAsync((ps, tracker) =>
         {
+            // aud-a2m. The list by the Guid it was read with, or - for a list created here - the Guid of the
+            // object the creation returned: never found again by its name.
+            var listGuid = list.Guid;
             if (!exists)
             {
                 // Room lists are created cloud-side (New-DistributionGroup runs against the
@@ -636,20 +662,27 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                   .AddParameter("Name", roomListName)
                   .AddParameter("RoomList")
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps, tracker);
+                var created = Invoke(ps, tracker);
                 result.Steps.Add(new RoomOperationStep { Stage = $"Create room list '{roomListName}'", Success = true });
+                listGuid = created.Count == 1 ? ReadListGuid(created[0]) : null;
             }
             else if (isLegacy)
             {
                 result.Steps.Add(new RoomOperationStep { Stage = $"Using legacy room list '{roomListName}'", Success = true });
             }
 
+            // Only a creation that returned no Guid reaches this: the preflight refused an existing list without
+            // one, before any write. The create has committed by now, so the row is partial; a re-run reads the
+            // list it made, by name, and takes its Guid from that read.
+            if (listGuid is null)
+                throw new InvalidOperationException($"Exchange returned no GUID for room list '{roomListName}', so the room was not added to it: a list is named only by the GUID Exchange reported for it, never by its name.");
+
             // Check if already a member - of the whole list (aud-a2h). Without -ResultSize Exchange
             // Online returns only its first 1000 members, so a room past them read as not a member: the
             // add went out for a member the list already held and the row came back partial, Set-Place
             // and the timezone written. The protected-principal expansion reads it the same way.
             ps.AddCommand("Get-DistributionGroupMember")
-              .AddParameter("Identity", roomListName)
+              .AddParameter("Identity", listGuid)
               .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "SilentlyContinue");
             var members = InvokeOptional(ps, tracker);
@@ -659,7 +692,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             {
                 _operationTrace?.Step("AddToRoomList", backend: "EXO", command: "Add-DistributionGroupMember", target: room.Identity);
                 ps.AddCommand("Add-DistributionGroupMember")
-                  .AddParameter("Identity", roomListName)
+                  .AddParameter("Identity", listGuid)
                   .AddParameter("Member", room.Identity)
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
@@ -751,11 +784,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // aud-a2f. Whether the room is already on the list, read before any write. Read-only: safe to retry.
     // The whole list, as the add reads it (aud-a2h): Exchange Online's default page is 1000 members,
     // and a synced room past it was refused for want of an on-prem proof the add would not have needed.
-    private Task<bool> IsOnRoomListAsync(string roomListName, string roomPrimary) =>
+    // By the list's Guid, as the add reads it (aud-a2m).
+    private Task<bool> IsOnRoomListAsync(string listGuid, string roomPrimary) =>
         RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-DistributionGroupMember")
-              .AddParameter("Identity", roomListName)
+              .AddParameter("Identity", listGuid)
               .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "SilentlyContinue");
             return IsListMember(InvokeOptional(ps, tracker), roomPrimary);
@@ -1571,6 +1605,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (!list.Exists)
             return null;
 
+        // aud-a2m. Every call on an existing list after this read names it by its Guid, cloud list or synced,
+        // so a list Exchange reported without one cannot be added to. Refused here, while nothing has been
+        // written, rather than at the add; and never by the name instead - "we do not guess".
+        if (list.Guid is null)
+            return $"Exchange reported no GUID for room list '{list.Name}', so the list cannot be named by an immutable identity, and the room is not added to it by its name. Check the list in Exchange Online. Nothing was written.";
+
         if (list.IsDirSynced is null)
             return $"Exchange did not report whether room list '{list.Name}' is synchronized from on-premises, so it cannot be established before writing that the room can be added to it. Nothing was written.";
 
@@ -1581,7 +1621,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // same test - so nothing on-prem is needed or asked for. Without this, a synced room re-run on
         // its synced list was refused whenever Active Directory could not be proven: a row that, before
         // this preflight existed, completed without touching the list at all.
-        if (await IsOnRoomListAsync(list.Name, roomPrimary))
+        if (await IsOnRoomListAsync(list.Guid, roomPrimary))
             return null;
 
         if (room.DirectoryObjectGuid is not { } roomGuid)
