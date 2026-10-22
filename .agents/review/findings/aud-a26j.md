@@ -5,9 +5,9 @@ absence of a throw; `PerformSave` does not read the attributes back after `Set-A
 the directory accepted without applying (or a value a server normalised differently) is recorded as
 a success with the proposed values as "new", and the Undo button offers to reverse a change that
 did not happen as recorded. Known Failure Class 2; the Conference Rooms twin was fixed in aud-a2p.
-**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
+**Status**: Merged to master (`6008a986`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a762d0851374626dc`
-**Commit**: `73eeb7da` (comments `567b2014`; plan `e0ac383f`)
+**Commit**: `73eeb7da` (comments `567b2014`; plan `e0ac383f`; merged `6008a986`)
 **Reviewer**: implementer (surfaced by the aud-a28l/a26g/a26i agent, 2026-10-22, candidate 6 of its hand-back)
 
 ## Evidence
