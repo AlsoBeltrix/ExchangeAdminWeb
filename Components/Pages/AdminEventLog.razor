@@ -672,13 +672,10 @@
         for (int i = 0; i < allEvents.Count; i++)
             allEvents[i].Index = i;
 
-        // Build the set of operation IDs that have been reversed (referenced by a later undo event)
-        reversedOperationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var evt in allEvents)
-        {
-            if (!string.IsNullOrEmpty(evt.OriginalOperationId))
-                reversedOperationIds.Add(evt.OriginalOperationId);
-        }
+        // The operations a later SUCCESSFUL undo event reversed - not every one an undo record
+        // names, which included failed reversals (aud-a26c). The rule lives in ReversedOperations
+        // so it can be tested; the entry record here is private to this page.
+        reversedOperationIds = ReversedOperations.From(allEvents, e => e.OriginalOperationId, e => e.Result);
 
         ApplyFilters();
 
