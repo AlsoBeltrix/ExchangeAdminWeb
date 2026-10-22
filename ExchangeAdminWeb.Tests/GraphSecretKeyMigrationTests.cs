@@ -2,6 +2,7 @@ using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -183,11 +184,110 @@ public class GraphSecretKeyMigrationTests
                      && m.ConfigFields.Any(f => f.Key == "GraphDelineaSecretId"))
             .Id;
 
-    private static ModuleConfigService CreateService(string contentRoot, SqliteConfigStore store)
+    private static ModuleConfigService CreateService(string contentRoot, IConfigStore store)
     {
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(contentRoot);
         return new ModuleConfigService(new ModuleCatalog(), env,
             new ModuleConfigRepository(store), Substitute.For<ILogger<ModuleConfigService>>());
+    }
+
+    // ---- Another writer between the decision and the write (aud-a33c) -------------------------
+    //
+    // Dev and prod share this database, and the remap decided what to copy from a read made
+    // before its write transaction opened. The decorator below opens exactly that window: it
+    // runs "the other instance" - a second store over its own connection factory on the same
+    // file - immediately before handing the remap's write to the real store.
+
+    private sealed class WriteWindowStore : IConfigStore
+    {
+        private readonly IConfigStore _inner;
+
+        public WriteWindowStore(IConfigStore inner) => _inner = inner;
+
+        /// <summary>Runs once, just before the next write reaches the real store.</summary>
+        public Action? BeforeNextWrite { get; set; }
+
+        public bool Opened { get; private set; }
+
+        public long GetChangeToken() => _inner.GetChangeToken();
+
+        public T Read<T>(Func<SqliteConnection, T> read) => _inner.Read(read);
+
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write)
+        {
+            OpenWindow();
+            return _inner.Write(write);
+        }
+
+        public void Write(Action<SqliteConnection, SqliteTransaction> write)
+        {
+            OpenWindow();
+            _inner.Write(write);
+        }
+
+        private void OpenWindow()
+        {
+            var during = BeforeNextWrite;
+            BeforeNextWrite = null;
+            if (during is null)
+                return;
+            during();
+            Opened = true;
+        }
+    }
+
+    private static ModuleConfigRepository OtherInstance(TempDir temp) =>
+        new(new SqliteConfigStore(new SqliteConnectionFactory(temp.DbPath)));
+
+    [Fact]
+    public void Migrate_DoesNotRevertAGraphSecretSavedMeanwhile_WhenTheStaleRowIsStillThere()
+    {
+        // The finding. Prod's config page loaded MfaReset while the old key was still stranded,
+        // so its save carries that row along and sets the new key. This remap had already
+        // decided, from its own earlier read, to copy the old value into the empty new key - and
+        // wrote it over the administrator's save.
+        using var temp = new TempDir();
+        var store = TestConfigStore.Create(temp.Path);
+        new ModuleConfigRepository(store).SaveModule("MfaReset",
+            new Dictionary<string, string> { ["DelineaSecretId"] = "123" });
+
+        var window = new WriteWindowStore(store)
+        {
+            BeforeNextWrite = () => OtherInstance(temp).SaveModule("MfaReset",
+                new Dictionary<string, string> { ["DelineaSecretId"] = "123", ["GraphDelineaSecretId"] = "saved-on-prod" })
+        };
+        var migrated = CreateService(temp.Path, window).MigrateGraphSecretKeys();
+
+        Assert.True(window.Opened, "The other instance never wrote inside the window - this test proves nothing.");
+        var after = new ModuleConfigRepository(store).GetModule("MfaReset");
+        Assert.Equal("saved-on-prod", after["GraphDelineaSecretId"]);
+        Assert.False(after.ContainsKey("DelineaSecretId"));
+        Assert.Contains("MfaReset", migrated); // the stale row was still there, and removing it is a change
+    }
+
+    [Fact]
+    public void Migrate_DoesNotResurrectAMovedSecret_WhenTheOldRowIsGone()
+    {
+        // The other shape. By the time this remap's write runs the old row has gone - the other
+        // instance's own remap moved it, and the Graph secret has since been rotated. Acting on
+        // the earlier read copies the stale old value over the rotation.
+        using var temp = new TempDir();
+        var store = TestConfigStore.Create(temp.Path);
+        new ModuleConfigRepository(store).SaveModule("MfaReset",
+            new Dictionary<string, string> { ["DelineaSecretId"] = "123" });
+
+        var window = new WriteWindowStore(store)
+        {
+            BeforeNextWrite = () => OtherInstance(temp).SaveModule("MfaReset",
+                new Dictionary<string, string> { ["GraphDelineaSecretId"] = "rotated-456" })
+        };
+        var migrated = CreateService(temp.Path, window).MigrateGraphSecretKeys();
+
+        Assert.True(window.Opened, "The other instance never wrote inside the window - this test proves nothing.");
+        var after = new ModuleConfigRepository(store).GetModule("MfaReset");
+        Assert.Equal("rotated-456", after["GraphDelineaSecretId"]);
+        Assert.False(after.ContainsKey("DelineaSecretId"));
+        Assert.DoesNotContain("MfaReset", migrated);
     }
 }
