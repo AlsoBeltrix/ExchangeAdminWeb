@@ -494,6 +494,63 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal(2, reloaded!.Count);
     }
 
+    // --- aud-a26e: the legacy-file import compiles every pattern before it stores anything ---
+
+    [Fact]
+    public void Construction_LegacyFileWithAnUncompilablePattern_ImportsNothing_AndFailsClosed()
+    {
+        // The import used to store the file's rows straight through the repository, so a pattern
+        // the allowlist save would refuse (aud-a28e) arrived anyway and was found only by the first
+        // operator to save that attribute. It is refused here as a whole, as the import's other
+        // validation failures are: the good row beside it is not imported either.
+        WriteAllowlistConfig(new
+        {
+            Attributes = new object[]
+            {
+                new { Name = "department", Label = "Department", Type = "String", Required = false, AllowClear = true },
+                new { Name = "title", Label = "Job Title", Type = "String", Required = false, AllowClear = true, Pattern = "[" }
+            }
+        });
+
+        var service = CreateService();
+
+        Assert.Null(service.GetAllowlist());
+        Assert.True(service.IsAllowlistCorrupt());
+        Assert.True(new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!)
+            .TryReadAllowlist(out var rows, out var configured));
+        Assert.Empty(rows);
+        Assert.False(configured);
+        // Left in place for an administrator to correct, and the log says which attribute.
+        Assert.True(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")));
+        Assert.Contains(LoggedErrors(), e => e.Contains("Job Title", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Construction_LegacyFileWithAValidPattern_ImportsIt()
+    {
+        // The control: only a pattern that does not compile stops the import.
+        WriteAllowlistConfig(new
+        {
+            Attributes = new[]
+            {
+                new { Name = "title", Label = "Job Title", Type = "String", Required = false, AllowClear = true, Pattern = "^[A-Z]" }
+            }
+        });
+
+        var service = CreateService();
+
+        Assert.Equal("^[A-Z]", Assert.Single(service.GetAllowlist()!).Pattern);
+        Assert.False(service.IsAllowlistCorrupt());
+        Assert.False(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")), "an imported file is archived");
+    }
+
+    /// <summary>Every error the service logged, as formatted text.</summary>
+    private List<string> LoggedErrors() =>
+        _logger.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(ILogger.Log) && c.GetArguments()[0] is LogLevel.Error)
+            .Select(c => c.GetArguments()[2]?.ToString() ?? "")
+            .ToList();
+
     [Fact]
     public void Construction_ValidLegacyFileButImportFails_FailsClosed()
     {
@@ -597,6 +654,45 @@ public class ADAttributeEditorServiceTests : IDisposable
         // the reload fails closed (null) instead of serving the stale list.
         now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
         Assert.Null(service.GetAllowlist());
+    }
+
+    [Fact]
+    public void SaveAllowlistAndAudit_StoreCorruptedBehindAValidCache_IsRefusedAndNotOverwritten()
+    {
+        // aud-a28f moved the Module Configuration page's pre-save corruption re-check into
+        // SaveAllowlistAndAudit, and this is the property the page's old tripwire stood for: the
+        // re-check must read the store fresh. GetAllowlist would hand back the stale-but-valid list
+        // cached below, the gate would pass, and the save would replace the corrupt store - discarding
+        // whatever it holds.
+        var service = CreateService();
+        SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
+            "extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1));
+
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+        var cached = service.GetAllowlist();
+        Assert.NotNull(cached);
+        Assert.Same(cached, service.GetAllowlist());
+
+        // A row whose choices cannot be parsed - the store's corrupt state - written behind the cache.
+        _attrStore!.Write((connection, tx) =>
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText =
+                "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) " +
+                "VALUES ('department', 'Department', 'Choice', '{not valid json', 0, 0, 1);";
+            insert.ExecuteNonQuery();
+        });
+        Assert.Same(cached, service.GetAllowlist());
+
+        var result = service.SaveAllowlistAndAudit(
+            [new EditableAttribute("title", "Title", "String", null, false, true, null, null)],
+            "EXAMPLE\\admin", "10.0.0.9");
+
+        Assert.False(result.Success);
+        Assert.True(result.StoreCorrupt);
+        Assert.True(service.IsAllowlistCorrupt(), "the save replaced the corrupt store");
     }
 
     [Fact]

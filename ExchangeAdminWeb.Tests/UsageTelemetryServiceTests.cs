@@ -430,8 +430,9 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         audit.LogADAttributeEdit(
             "u", "1.1.1.1", "t", [new AttributeChange("title", "Title", "a", "b")], true, "T1");
         audit.LogSettingsChange("u", "1.1.1.1", "Admins", [], ["g"]);
+        audit.LogSettingsChangeFailed("u", "1.1.1.1", "Admins", "refused");
 
-        Assert.Equal(11, usage.Events.Count);
+        Assert.Equal(12, usage.Events.Count);
         Assert.All(usage.Events, e => Assert.Equal("action", e.Kind));
         Assert.All(usage.Events, e => Assert.False(string.IsNullOrWhiteSpace(e.Category)));
         Assert.All(usage.Events, e => Assert.NotNull(e.Success));

@@ -546,6 +546,7 @@
                                     <th style="width: 80px;">Required</th>
                                     <th style="width: 90px;">Allow Clear</th>
                                     <th style="width: 80px;">Max Len</th>
+                                    <th>Pattern</th>
                                     <th style="width: 60px;">Level</th>
                                     <th style="width: 50px;"></th>
                                 </tr>
@@ -567,6 +568,7 @@
                                         <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.Required" @onchange="e => UpdateAttrRequired(idx, e)" /></td>
                                         <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.AllowClear" @onchange="e => UpdateAttrAllowClear(idx, e)" /></td>
                                         <td><input type="number" class="form-control form-control-sm" value="@attr.MaxLength" @onchange="e => UpdateAttrMaxLength(idx, e)" placeholder="—" /></td>
+                                        <td><input type="text" class="form-control form-control-sm" value="@attr.Pattern" @onchange="e => UpdateAttrPattern(idx, e)" placeholder="none" title="Optional regular expression a saved value must match; add ^ and $ to match the whole value." /></td>
                                         <td>
                                             <select class="form-select form-select-sm" value="@attr.Level" @onchange="e => UpdateAttrLevel(idx, e)">
                                                 <option value="1">1</option>
@@ -579,7 +581,7 @@
                                     @if (attr.Type == "Choice")
                                     {
                                         <tr>
-                                            <td colspan="7" class="ps-4 pt-0">
+                                            <td colspan="8" class="ps-4 pt-0">
                                                 <small class="text-muted">Choices (comma-separated):</small>
                                                 <input type="text" class="form-control form-control-sm" value="@string.Join(", ", attr.Choices ?? [])" @onchange="e => UpdateAttrChoices(idx, e)" placeholder="Option1, Option2, Option3" />
                                             </td>
@@ -1652,6 +1654,11 @@
         dirty.Increment(SecAttrs);
         allowlistAttributes[idx].MaxLength = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
     }
+    // aud-a26e. The pattern used to have no input at all, so an admin could neither see nor correct
+    // it. Kept exactly as typed - not trimmed, because a space in a regular expression matches a
+    // space - and an empty box is no pattern. Nothing here judges it: a pattern that does not compile
+    // is refused when the allowlist is saved, naming the attribute, and the admin corrects it.
+    private void UpdateAttrPattern(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Pattern = e.Value?.ToString() is { Length: > 0 } typed ? typed : null; dirty.Increment(SecAttrs); }
     private void UpdateAttrChoices(int idx, ChangeEventArgs e)
     {
         dirty.Increment(SecAttrs);
@@ -1667,6 +1674,12 @@
         allowlistSaved = false;
         await Task.Yield();
 
+        // aud-a28f. Every attempt leaves exactly one audit record. This page keeps only the
+        // authorisation re-check - it needs the principal and the policies - and records that refusal
+        // itself. Everything after it is SaveAllowlistAndAudit, which re-checks the store, records
+        // each outcome and returns it without throwing, so the catch below is reached only from the
+        // re-check and writes the one record for that attempt. The page writes no other record.
+        var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1675,20 +1688,7 @@
             if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module!.Id, user))
             {
                 allowlistError = "You are not authorized to save the attribute allowlist.";
-                return;
-            }
-
-            // Re-check corruption immediately before the write (UI hiding is not security:
-            // the disabled buttons can be bypassed, and the file may have become corrupt
-            // since the page loaded). Saving over a corrupt store would discard whatever
-            // it currently holds — fail closed instead, matching the Section Access card.
-            // Must use IsAllowlistCorrupt (reads disk fresh), NOT GetAllowlist: the latter
-            // can return a stale-but-valid cached list for up to 30s after the file became
-            // corrupt, which would let this gate pass and overwrite the corrupt store.
-            if (AttrEditorService.IsAllowlistCorrupt())
-            {
-                allowlistCorrupt = true;
-                allowlistError = "Allowlist store is corrupt; refusing to save over it. Fix or restore config/ad-editable-attributes.json, then reload this page.";
+                AttrEditorService.LogAllowlistSaveRefused(currentUser, ip, "Authorization", allowlistError);
                 return;
             }
 
@@ -1697,30 +1697,23 @@
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
 
-            var denied = valid.Where(a => ADAttributeEditorService.IsDenylisted(a.Name)).ToList();
-            if (denied.Count > 0)
+            var result = AttrEditorService.SaveAllowlistAndAudit(valid, currentUser, ip);
+            if (!result.Success)
             {
-                allowlistError = $"Cannot save: {string.Join(", ", denied.Select(d => d.Name))} are on the hard denylist.";
+                if (result.StoreCorrupt)
+                    allowlistCorrupt = true;
+                allowlistError = result.Error;
                 return;
             }
 
-            AttrEditorService.SaveAllowlist(valid);
             dirty.ClearSection(SecAttrs);
             allowlistSaved = true;
-
-            try
-            {
-                var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, "ADAttributeEditor:Allowlist",
-                    Array.Empty<string>(),
-                    valid.Select(a => a.Name).ToArray());
-            }
-            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for allowlist save"); }
         }
         catch (Exception ex)
         {
             allowlistError = $"Failed to save: {ex.Message}";
             Logger.LogError(ex, "Allowlist save failed");
+            AttrEditorService.LogAllowlistSaveFailed(currentUser, ip, allowlistError);
         }
         finally { saving = false; }
     }
