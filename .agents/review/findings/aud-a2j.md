@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - fails closed, so no wrong write, but on a multi-domain forest the on-prem
 room-list add refuses every valid synced list whose group lives in another domain, and the logic
 rests on the forest's shape (Architectural Invariant 7).
-**Status**: Fixed on branch, not merged; approved under the owner's 2026-10-21 "EVERYTHING" go; dev acceptance owed
-**Branch**: `worktree-agent-a0b52fcc43c6766da`
-**Commit**: `7d863547` (fix and tests); plan `618f33c9`; comments in the commit after the fix
+**Status**: Merged to master (`04779a54`); closed on guard proof; codex review pending (write form `Set-ADGroup` is the focus); dev acceptance owed
+**Branch**: `worktree-agent-a0b52fcc43c6766da` (merged, deleted)
+**Commit**: `7d863547` (fix and tests); plan `618f33c9`; comments `62b4a39f`; merged `04779a54`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (batch-6, `prompt-batch-6.md`, 2026-10-22)
 
 ## Evidence
