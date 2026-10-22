@@ -20,7 +20,8 @@ namespace ExchangeAdminWeb.Tests;
 #pragma warning disable BL0006
 /// <summary>
 /// aud-a28l: the Admin Event Log refused an undo whose operator had lost the authorization for it,
-/// and wrote no audit record.
+/// and wrote no audit record. aud-a28m: its two other early exits wrote none either, and a close while
+/// the undo ran made its catch throw out of the handler.
 /// </summary>
 /// <remarks>
 /// ExecuteUndo is driven itself - the compiled page's handler, its injected services set by
@@ -218,6 +219,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     [Fact]
     public async Task AnUndoNoModuleClaims_LeavesOneRefusalRecord()
     {
+        // No module claims the event, so no module can record the attempt: the event log records it.
         var alex = _h.Ad.AddAlex(title: "Lead Analyst");
         var page = PageConfirming(
             AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"), new UndoRegistry([]));
@@ -243,6 +245,8 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     [InlineData("ADAttributeEditorLevel3")]
     public async Task AnUndoThatThrowsBeforeItsModuleIsCalled_LeavesOneFailureRecord(string faulted)
     {
+        // The authorization store failing under the page's re-check, or under the level check after it:
+        // either way the module is never called, so the page's catch is the only place left to record it.
         var alex = _h.Ad.AddAlex(title: "Lead Analyst");
         var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
         Hold(faulted).SetException(new InvalidOperationException(StoreUnreadable));
@@ -266,6 +270,9 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     [Fact]
     public async Task ACancelWhileTheUndoRuns_IsRefused_AndTheUndosOutcomeIsShownAndRecorded()
     {
+        // The finding's race: Cancel pressed while the re-check is awaited. The close is refused, the
+        // outcome is recorded and shown, and once the undo has ended Cancel works again - the guard is
+        // lowered in the handler's finally, not left stuck.
         var alex = _h.Ad.AddAlex(title: "Lead Analyst");
         var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
         var check = Hold("EventLog");
@@ -299,6 +306,9 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     [Fact]
     public async Task ThePanelClearedWhileTheUndoRuns_CannotTurnItsOutcomeIntoAnException()
     {
+        // Whatever clears the panel while the undo is suspended - below, what the Cancel button did before
+        // aud-a28m - the handler records the event and ticket it was confirmed for, and nothing escapes it.
+        // The close's refusal is pinned above; this pins the locals without it.
         var alex = _h.Ad.AddAlex(title: "Lead Analyst");
         var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
         var check = Hold("EventLog");
@@ -325,6 +335,8 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     [Fact]
     public void TheUndoPanelsCloseButtons_AreDisabledWhileAnUndoRuns()
     {
+        // Tripwire: no bUnit host renders the page. The backdrop cannot be disabled; CloseUndoPanel's own
+        // refusal, driven above, covers it.
         var markup = RazorSyntax.CommentsBlanked(File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor")));
 

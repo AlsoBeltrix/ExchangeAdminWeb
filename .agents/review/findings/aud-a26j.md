@@ -194,3 +194,14 @@ is claimed.
   took the write in another form, the pre-write value is in neither this record nor its trace step.
 - A write that threw stays the failure it was (aud-a28c) and is not read back.
 - Cost: one more Get-ADUser for each save that writes.
+
+## Comments after the round
+
+Written after both rounds, in their own commit with aud-a28m's; the same check (only comment and blank lines
+changed in `git diff 73eeb7da -U0`). This record's files: `Services/ADAttributeEditorService.cs`
+`3842B3F4A1784D880ADB215BBBFF3C27` -> `4A514533B0E7CC877475CF8EBDA1D458` (why the save is read back, why by the
+objectGUID and with no -Server, why the comparison is ordinal and untrimmed, the read-shape assumption; and the
+write's finally, whose comment said nothing runs on the pipeline after the write, now says why the read-back
+needs it cleared); `ADAttributeEditorSaveTests.cs` `56833579FD65B29DD5B695A266CA5AD3` ->
+`778D0113A2426E9BE7E32D023AF9CBFA`, the happy path's call-list comment included. `AttributeEditorHarness.cs` is
+unchanged (`B81DDFCE7A6B045D93F2A52771E5FFA5`): its knobs were documented with the fix.

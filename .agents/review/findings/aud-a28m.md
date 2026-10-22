@@ -205,3 +205,18 @@ a browser and no live circuit was run. No coder self-review verdict is claimed.
   holds the module's record shape only through the module.
 - ExecuteUndo and CloseUndoPanel are driven through the compiled page by reflection on a do-nothing renderer,
   not through a rendered circuit; the disabled attributes are pinned by a source scan only.
+
+## Comments after the round
+
+Written after both rounds, in their own commit with aud-a26j's. Checked by `check_comment_diff.py` (session
+scratchpad, from the a28l round) over `git diff 73eeb7da -U0` before that commit: every added or removed line
+is a comment or blank line, so each file's code lines are unchanged and in order. This record's files:
+`Components/Pages/AdminEventLog.razor` `A1BB2EE1D48262DA116491FB056B7E30` -> `AB449695A06A9557A63F7D665F0D28A8`
+(why CloseUndoPanel refuses, why the handler reads its inputs once, why the no-handler exit and the catch
+record and the module call ends that, LogUndoNotRun's remarks; and the comment above the activity, which said
+undoError "is not written by any other control while it is suspended" - false while the close wrote it - now
+says why the finally's read is this run's outcome); `Services/Storage/AttributeEditorRepository.cs`
+`40B5B0E09D7758F1AE889DFA8FA3D83E` -> `A3EABBCDAE5244551F0A6843023208D1` (why SaveAllowlist is internal);
+`EventLogUndoRefusalTests.cs` `6A3B3BB5FB6C726710C450A1D1BDDA4A` -> `8524E535822C164D582F890C3F91A0ED`;
+`AllowlistConcurrentSaveTests.cs` `AB0B19E72B6963426A0A1FF043E0DBC2` -> `D193763CC6AC43469E528A70D8A56DDE`.
+`ReversedOperationsTests.cs` is unchanged (`73D0036C8B91E1A61C6E944E0DF9AC08`).

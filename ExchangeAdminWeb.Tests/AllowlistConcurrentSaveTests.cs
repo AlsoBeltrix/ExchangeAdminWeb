@@ -217,6 +217,8 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
     [Fact]
     public void TheRepositorysWholeTableSave_IsNotPublic()
     {
+        // aud-a28m: the repository's whole-table replace takes no version and writes no record, so it must
+        // not be reachable from outside the assembly; the tests seed the store with it.
         var save = typeof(AttributeEditorRepository).GetMethod(
             nameof(AttributeEditorRepository.SaveAllowlist), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 

@@ -1446,13 +1446,20 @@ public class ADAttributeEditorService
         }
         finally
         {
-            // Nothing runs on this pipeline after the write today. A command added after it would
-            // otherwise start with the write's command and any record it left still in place, and
-            // HadErrors stays true while one remains (psl-2).
+            // The read-back below runs on this pipeline (aud-a26j): the write must not stay queued in
+            // front of it, where it would run again, nor leave a record the read's error check would
+            // take for its own - HadErrors stays true while one remains (psl-2). Without the clear, an
+            // error written past -ErrorAction Stop turns an applied write into an unconfirmed one.
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
         }
 
+        // aud-a26j. Done is the attributes reading back as written, not the write raising no error: a
+        // directory that takes a modify and applies nothing, or stores a value in another form, raises
+        // none (Known Failure Class 2; aud-a2p, the Conference Rooms twin). A save not confirmed is
+        // recorded failed with no old/new pair - the event log offers no Undo of a change its record
+        // cannot vouch for - and a confirmed one is recorded with the values read: what the directory
+        // holds, not what was proposed.
         var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, credential);
         if (confirmError != null)
         {
@@ -1465,6 +1472,9 @@ public class ADAttributeEditorService
         return new(true, null, asRead);
     }
 
+    // aud-a26j. The read-back and its verdict: the failure message, or the changes as read. A throw is
+    // the read's error. Both failures name the object and what was sent, because the record they become
+    // has no old/new pair to say it.
     private (string? Error, List<AttributeChange> AsRead) ConfirmWrite(
         PowerShell ps,
         ResolvedDirectoryPrincipal target,
@@ -1501,6 +1511,12 @@ public class ADAttributeEditorService
         return (null, asRead);
     }
 
+    // aud-a26j. The written attributes, read back by the objectGUID the re-read returned for the DN the
+    // write named, so the read sees that object and no other. With no -Server, as the write had none: the
+    // read is answered where the module's default sends this session, the write's own route; the editor
+    // routes none of its calls. In the shape of aud-a2p's read: an error record fails it - after a read,
+    // whatever left one, the answer is not known good - and exactly one object, the one written, must
+    // answer.
     private static (string? Error, PSObject? Read) ReadBackWrittenAttributes(
         PowerShell ps, string? objectGuid, List<AttributeChange> written, PSCredential credential)
     {
@@ -1524,6 +1540,11 @@ public class ADAttributeEditorService
         return (null, found[0]);
     }
 
+    // aud-a26j. What the write sent that the object read back does not hold, one description each, and the
+    // changes as read. Each value sent - nothing trimmed, because the write trims nothing - against the
+    // value read, compared ordinal: stricter than the directory's own matching, so a difference only ever
+    // fails a save, never passes one. An empty value and an absent attribute are the same, the directory
+    // keeping no empty value, so a clear is confirmed by an attribute that is gone. Pure, for unit testing.
     internal static (List<string> Unconfirmed, List<AttributeChange> AsRead) UnconfirmedWrites(
         IReadOnlyList<AttributeChange> written, PSObject read)
     {
@@ -1547,6 +1568,10 @@ public class ADAttributeEditorService
 
     private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
+    // A single-valued attribute as read, null when absent: aud-a2p's, a sibling because Conference Rooms'
+    // is private. *Assumption, not probed*: the module answers one with its value, as this service's own
+    // reads take it (Properties[..].Value). A collection is taken as its one element, so a collection-shaped
+    // answer is not told as a difference; several values are not the one written.
     private static string? ReadDirectoryString(PSObject read, string name)
     {
         var value = Unwrapped(read.Properties[name]?.Value);

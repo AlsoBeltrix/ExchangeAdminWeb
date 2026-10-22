@@ -54,6 +54,13 @@ public sealed class AttributeEditorRepository
     }
 
     /// <summary>Replaces the entire allowlist (clear + insert) and marks present, in one txn.</summary>
+    /// <remarks>
+    /// Internal (aud-a28m): it replaces the table with no version check and no audit record. In the
+    /// application the table is replaced only through <see cref="ReplaceAllowlist"/>, under
+    /// ADAttributeEditorService.SaveAllowlistAndAudit (the aud-a28l tripwires hold it there), and
+    /// <see cref="ImportAllowlistIfMissing"/> writes only a store never configured. The tests seed the
+    /// store with this.
+    /// </remarks>
     internal void SaveAllowlist(IReadOnlyList<AttributeRow> rows)
     {
         _store.Write((connection, transaction) =>

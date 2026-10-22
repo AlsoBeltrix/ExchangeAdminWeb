@@ -92,8 +92,9 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
                 Assert.Null(change.NewValue);
             });
 
-        // The stand-in took the import, so nothing real was loaded; then one re-read BY DN and one
-        // write, carrying the replace and the clear together.
+        // The stand-in took the import, so nothing real was loaded; then one re-read BY DN, one write
+        // carrying the replace and the clear together, and the read of what it wrote by the object's
+        // GUID (aud-a26j).
         Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{alex.Dn}|", $"Set-ADUser|{alex.Dn}", $"Get-ADUser|{alex.Guid}|"], _h.Ad.Calls);
         var write = Assert.Single(_h.Ad.Sets);
         Assert.Equal(alex.Dn, write.Identity);
@@ -463,6 +464,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public async Task AWriteThatApplies_IsConfirmedByReadingItBack_AndRecordedAsRead()
     {
+        // The normal case through the read-back: after the write, by the objectGUID, for exactly what was
+        // written; recorded and returned as the directory now holds it.
         var alex = _h.Ad.AddAlex();
 
         var result = await Save(alex, new() { ["title"] = "Lead Analyst", ["department"] = "" });
@@ -489,6 +492,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public async Task AWriteThatRaisesNothingAndAppliesNothing_IsAFailedSave_ThatOffersNoUndo()
     {
+        // The finding: no error, and nothing applied. It was recorded and announced as a success, with the
+        // proposed values as new and an Undo offered for a change that never happened.
         var alex = _h.Ad.AddAlex(title: "Analyst");
         _h.Ad.SetChangesNothing = true;
 
@@ -511,6 +516,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public async Task AReadBackThatFails_IsAFailedSave_ThoughTheWriteWasSent()
     {
+        // The write may well have landed - here it did - but a save the directory cannot be asked about is
+        // not recorded as done: failed, with nothing for the event log to undo.
         const string unreachable = "The server is not operational.";
         var alex = _h.Ad.AddAlex(title: "Analyst");
         _h.Ad.ReadBackFailure = unreachable;
@@ -530,6 +537,7 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public async Task AServerThatStoresTheValueInAnotherForm_IsNotConfirmed_AndTheRecordCarriesTheValueRead()
     {
+        // The directory holds a value, just not the one sent: not confirmed, and the record says what it holds.
         var alex = _h.Ad.AddAlex(title: "Analyst");
         _h.Ad.SetStoresAs = value => value?.ToUpperInvariant();
 
@@ -548,6 +556,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public void TheReadBack_IsOrdinal_AnEmptyValueIsAnAbsentOne_AndAOneElementCollectionIsItsElement()
     {
+        // A case difference is a difference; a clear read back as "" is confirmed; a collection-shaped
+        // answer is its one element; an attribute the object does not hold is not set.
         var read = new PSObject();
         read.Properties.Add(new PSNoteProperty("title", new[] { "Lead Analyst" }));
         read.Properties.Add(new PSNoteProperty("department", ""));
@@ -575,6 +585,7 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     [Fact]
     public void TheHarness_SetADUser_CanApplyNothingOrNormalise_AndAReadAfterItCanFail()
     {
+        // The three knobs, so the tests above cannot pass for want of what they describe.
         var alex = _h.Ad.AddAlex(title: "Analyst");
         var replace = new Hashtable { ["title"] = "Lead Analyst" };
 
