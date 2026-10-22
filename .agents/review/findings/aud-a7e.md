@@ -3,9 +3,9 @@
 **Severity**: LOW - the write is correct; the user-facing notice is ambiguous. A mailbox owner in
 another zone, or the operator later, cannot tell whether the window is mailbox time, server time,
 operator time or Exchange's reading of the submitted value.
-**Status**: Fixed on branch `worktree-agent-ab28c8810a2e397d6`, guard proof below; not merged, not pushed
+**Status**: Merged to master (`5e9b2c79`); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ab28c8810a2e397d6` (forked at `1049f839`)
-**Commit**: -
+**Commit**: `9b3080ee` (merged `5e9b2c79`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (ops-batch-5, `prompt-ops-batch-5.md`, 2026-10-22)
 
 ## Evidence
