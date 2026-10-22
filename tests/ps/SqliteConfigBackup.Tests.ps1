@@ -228,31 +228,40 @@ Describe 'SqliteConfigBackup module' {
             }
         }
 
-        It 'accepts what the app accepts, refuses what it refuses, and reads back whatever the installer and the cutover write (cdt-17, cdt-30)' {
+        It 'accepts what the app accepts, refuses what it refuses, and reads back whatever the installer and the cutover write (cdt-17, cdt-30, cdt-35)' {
             # One rule in three places: the app's ConfigStorePath.Resolve decides what an instance
-            # opens, this module mirrors it for what the scripts READ, and the two scripts that WRITE
-            # the key keep a stricter copy of their own (X:\ only). It used to compare the module with
-            # the writers only, which refused D:/... that the app accepts (cdt-30).
+            # opens, this module holds the same rule for what the scripts READ, and the two scripts that
+            # WRITE the key keep a stricter copy of their own (X:\ only). It used to compare the module
+            # with the writers only, which refused D:/... that the app accepts (cdt-30); and the app
+            # used to accept four values the module refuses, three of them network shares (cdt-35).
             #
             # The app's rule is pinned in its source and emulated line for line, rather than called:
             # the built app targets .NET 10, which a pwsh on an older runtime cannot load, and the
             # suites run under whatever pwsh CI has. A change to the rule fails the pin below, so the
-            # module and this emulation are revisited with it.
+            # module and this emulation are revisited with it. ExchangeAdminWeb.Tests' ConfigStorePathTests
+            # pins the module's lines the same way from the other side.
             $repo = Join-Path $PSScriptRoot '..\..'
             $source = Get-Content -LiteralPath (Join-Path $repo 'Services\Storage\ConfigStorePath.cs') -Raw
             foreach ($line in @(
                     'var value = configured.Trim();',
-                    'if (value.StartsWith(@"\\", StringComparison.Ordinal) || value.StartsWith("//", StringComparison.Ordinal))',
-                    'if (!System.IO.Path.IsPathFullyQualified(value))',
-                    'return new Resolution(value, MustExist: true);')) {
+                    'if (value.Length >= 2 && IsSeparator(value[0]) && IsSeparator(value[1]))',
+                    'if (!IsDriveLetterPath(value))',
+                    'return new Resolution(value.Replace(''/'', ''\\''), MustExist: true);',
+                    'private static bool IsSeparator(char c) => c == ''\\'' || c == ''/'';',
+                    'value.Length >= 3 && char.IsAsciiLetter(value[0]) && value[1] == '':'' && IsSeparator(value[2]);')) {
                 $source.Contains($line) | Should -BeTrue -Because "ConfigStorePath.Resolve's rule is what the module mirrors and this test emulates ($line); if it changed, change both with it"
             }
-            ([regex]::Matches($source, 'throw new InvalidOperationException\(')).Count | Should -Be 2 -Because 'the rule refuses two things: a UNC path, and a path that is not fully qualified'
-            $appAccepts = {
+            ([regex]::Matches($source, 'throw new InvalidOperationException\(')).Count | Should -Be 2 -Because 'the rule refuses two things: a network path, and anything but a drive-letter path'
+            # The app's call on one value: $null when it refuses, else the path it opens.
+            $appResolves = {
                 param([string]$Value)
                 $t = $Value.Trim()
-                if ($t.StartsWith('\\', [System.StringComparison]::Ordinal) -or $t.StartsWith('//', [System.StringComparison]::Ordinal)) { return $false }
-                return [System.IO.Path]::IsPathFullyQualified($t)
+                if ($t.Length -ge 2 -and ($t[0] -eq [char]'\' -or $t[0] -eq [char]'/') -and ($t[1] -eq [char]'\' -or $t[1] -eq [char]'/')) { return $null }
+                if ($t.Length -lt 3) { return $null }
+                $letter = [int]$t[0]
+                $isAsciiLetter = ($letter -ge 65 -and $letter -le 90) -or ($letter -ge 97 -and $letter -le 122)
+                if (-not ($isAsciiLetter -and $t[1] -eq [char]':' -and ($t[2] -eq [char]'\' -or $t[2] -eq [char]'/'))) { return $null }
+                return $t.Replace('/', '\')
             }
             $validators = @{}
             foreach ($entry in @(@('installer', 'tools\Install-ExchangeAdminWeb.ps1', 'Assert-LocalAbsoluteFilePath'), @('cutover', 'tools\Move-ConfigDbToShared.ps1', 'Assert-LocalAbsolutePath'))) {
@@ -267,23 +276,22 @@ Describe 'SqliteConfigBackup module' {
             $inputs = @('D:\shared\config\exchangeadmin.db', 'c:\x\y.db', 'D:/shared/x.db', 'D:\shared/x.db', ' D:/x.db ', 'z:/a',
                 'config\exchangeadmin.db', 'D:exchangeadmin.db', 'D:', '\config\exchangeadmin.db', '/config/exchangeadmin.db',
                 '\\server\share\x.db', '//server/share/x.db', '\\?\D:\x\y.db', '\\.\D:\x.db', '1:\x.db', 'DD:\x.db', ':\x.db', 'x')
-            # The app accepts these today and lets a network database through in two of them: Windows
-            # reads any two leading separators as a UNC path, and \??\UNC\ is the NT namespace's form
-            # of one, while the app refuses only \\ and //. The module refuses all four on purpose.
-            $stricter = @('\/server/share/x.db', '/\server\share\x.db', '\??\D:\x.db', '\??\UNC\server\share\x.db')
+            # The app accepted these four until cdt-35, and three are network shares to Windows: it
+            # reads any two leading separators as a UNC path, and \??\UNC\ is the NT namespace's name
+            # for one. Both sides refuse all four now.
+            $formerGap = @('\/server/share/x.db', '/\server\share\x.db', '\??\D:\x.db', '\??\UNC\server\share\x.db')
             $kelvin = [string][char]0x212A + ':\x.db'
             $publish = New-TempDir
             try {
-                foreach ($value in @($inputs) + @($stricter) + @($kelvin)) {
+                foreach ($value in @($inputs) + @($formerGap) + @($kelvin)) {
                     Write-TestKey -Publish $publish -Value $value
                     $moduleAccepts = $true
-                    try { Get-ConfigStorePathSetting -PublishPath $publish | Out-Null } catch { $moduleAccepts = $false }
-                    $app = & $appAccepts $value
-                    if ($stricter -contains $value) {
-                        $app | Should -BeTrue -Because "the app accepts '$value' today; if it stops, this list and the module's comment are stale"
-                        $moduleAccepts | Should -BeFalse -Because "'$value' can name a network share or a device the scripts do not read"
-                    } else {
-                        $moduleAccepts | Should -Be $app -Because "the module and the app must make the same call on '$value'"
+                    $moduleValue = $null
+                    try { $moduleValue = Get-ConfigStorePathSetting -PublishPath $publish } catch { $moduleAccepts = $false }
+                    $app = & $appResolves $value
+                    $moduleAccepts | Should -Be ($null -ne $app) -Because "the module and the app must make the same call on '$value'"
+                    if ($moduleAccepts) {
+                        $moduleValue | Should -BeExactly $app -Because "the module must name the file the app opens for '$value', spelled the same way"
                     }
                     # The writers' own drive test is case-insensitive too, but neither can write the
                     # Kelvin-sign value: no such drive exists, so it is never a key on disk.
@@ -324,14 +332,14 @@ Describe 'SqliteConfigBackup module' {
             It 'refuses <Form> from both readers, saying why and naming the value and the file' -TestCases @(
                 @{ Form = 'a UNC path'; Value = '\\server\share'; Says = 'not a network share' }
                 @{ Form = 'a UNC path with forward slashes'; Value = '//server/share/x.db'; Says = 'not a network share' }
-                @{ Form = 'a UNC path with mixed separators (the app misses it)'; Value = '\/server/share/x.db'; Says = 'not a network share' }
-                @{ Form = 'a UNC path with mixed separators the other way (the app misses it)'; Value = '/\server\share\x.db'; Says = 'not a network share' }
+                @{ Form = 'a UNC path with mixed separators (the app missed it until cdt-35)'; Value = '\/server/share/x.db'; Says = 'not a network share' }
+                @{ Form = 'a UNC path with mixed separators the other way (the app missed it until cdt-35)'; Value = '/\server\share\x.db'; Says = 'not a network share' }
                 @{ Form = 'a drive-relative path'; Value = 'D:foo'; Says = 'must be an absolute local file path' }
                 @{ Form = 'a drive alone'; Value = 'D:'; Says = 'must be an absolute local file path' }
                 @{ Form = 'a relative path'; Value = 'foo\bar'; Says = 'must be an absolute local file path' }
                 @{ Form = 'a rooted path without a drive'; Value = '/foo/bar'; Says = 'must be an absolute local file path' }
-                @{ Form = 'an NT-namespace path (the app accepts it)'; Value = '\??\D:\x.db'; Says = 'must be an absolute local file path' }
-                @{ Form = 'an NT-namespace UNC path (the app accepts it)'; Value = '\??\UNC\server\share\x.db'; Says = 'must be an absolute local file path' }
+                @{ Form = 'an NT-namespace path (the app accepted it until cdt-35)'; Value = '\??\D:\x.db'; Says = 'must be an absolute local file path' }
+                @{ Form = 'an NT-namespace UNC path (the app accepted it until cdt-35)'; Value = '\??\UNC\server\share\x.db'; Says = 'must be an absolute local file path' }
                 @{ Form = 'a non-ASCII drive letter (U+212A KELVIN SIGN, which a case-insensitive match folds onto k)'; Value = ([string][char]0x212A + ':\x.db'); Says = 'must be an absolute local file path' }
             ) {
                 $publish = New-TempDir

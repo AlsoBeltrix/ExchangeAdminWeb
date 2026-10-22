@@ -193,23 +193,24 @@ function Get-ConfigStorePathSetting {
 }
 
 function Assert-ConfigStorePathValue {
-    # Private (cdt-17, cdt-30). The app's ConfigStorePath.Resolve refuses a UNC path and any path that
-    # is not fully qualified - relative, drive-relative (D:file.db) or rooted without a drive - so it
-    # will not start on one. This module used to return such a value, and every caller then tested
-    # for, backed up and checked whatever it named relative to its own current directory: a
-    # verified backup of the wrong file, then an outage.
+    # Private (cdt-17, cdt-30, cdt-35). The app's ConfigStorePath.Resolve refuses anything but a local
+    # drive-letter path - a network path in any spelling, and a relative, drive-relative (D:file.db) or
+    # driveless rooted path - so it will not start on one. This module used to return such a value,
+    # and every caller then tested for, backed up and checked whatever it named relative to its own
+    # current directory: a verified backup of the wrong file, then an outage.
     #
-    # TRIPWIRE: this mirrors Services/Storage/ConfigStorePath.cs (Resolve). Change one, change the
-    # other - tests/ps/SqliteConfigBackup.Tests.ps1 pins that method's rule in its source and holds
-    # this module to it. Mirrored: the trim, and the drive form - an ASCII letter (the app's IsValidDriveChar),
-    # a colon, then \ or / - matched case-SENSITIVELY, because a case-insensitive match folds the
-    # Kelvin sign (U+212A) onto k, a letter the app refuses. Stricter than the app, on purpose: any
-    # two leading separators are refused as a network share (Windows reads \/ and /\ as UNC too; the
-    # app refuses only \\ and //), and the app's other fully qualified forms, \? and /? (\??\UNC\
-    # names a share as well), fail the drive test; no tool writes either. The two writers' own checks
-    # (the installer's -ConfigStorePath, the cutover's -SharedDbPath) accept only X:\, which this reads
-    # back. [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1),
-    # hence the explicit tests.
+    # TRIPWIRE: this mirrors Services/Storage/ConfigStorePath.cs (Resolve), and the two rules are
+    # identical (cdt-35). Change one, change the other: tests/ps/SqliteConfigBackup.Tests.ps1 pins
+    # that method's rule in its source and holds this module to it, and
+    # ExchangeAdminWeb.Tests/ConfigStorePathTests.cs pins these lines and holds the method to them.
+    # The rule: the trim (Get-ConfigStorePathSetting); any two leading separators refused as a
+    # network share (Windows reads \\, //, \/ and /\ alike as a UNC or device path); then only an
+    # ASCII letter (the app's char.IsAsciiLetter), a colon, then \ or / - matched case-SENSITIVELY,
+    # because a case-insensitive match folds the Kelvin sign (U+212A) onto k - so \??\UNC\..., which
+    # names a share, fails with every other form; and the value returned with / turned into \. The
+    # two writers' own checks (the installer's -ConfigStorePath, the cutover's -SharedDbPath) accept
+    # only X:\, which this reads back. [IO.Path]::IsPathFullyQualified does not exist on .NET
+    # Framework (Windows PowerShell 5.1), hence the explicit tests.
     param([string]$Value, [string]$AppSettingsPath)
 
     if ($Value -match '^[\\/][\\/]') {
