@@ -11,7 +11,7 @@ operator is told a user is eligible when the directory could not be asked. (2)
 whether or not `Complete-MigrationBatch` ran.
 **Status**: Fixed on branch, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-a3e674616251be4de` (forked at `34c7ccd4`)
-**Commit**: -
+**Commit**: `5b5936eb` (fix, tests, record); plan `4cf6b629`; comments `033a1a54` (shared with aud-a23i)
 **Reviewer**: implementer (surfaced by the aud-a23g agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
@@ -236,7 +236,7 @@ method or `Complete(` added; `CheckSingleEligibility` still pins `MigrationSvc.C
   5 m 25 s, no hang. Baseline at `34c7ccd4`: 5592 / 3 / 0, 5595.
 - `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
   `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
-- The branch-tip gates, after aud-a23i and the comments, are aud-a23i's.
+- The branch-tip gates, after aud-a23i and the comments, are below.
 
 ## Known gaps
 
@@ -255,3 +255,29 @@ method or `Complete(` added; `CheckSingleEligibility` still pins `MigrationSvc.C
   Eligible there, and the Admin Event Log's result filter (another page) offers only Success and Ineligible. Its
   `status` field says Undetermined and `reasons` carries the cause.
 - No circuit or browser ran: the page's compiled render tree and handlers were driven directly.
+
+## Comments (`033a1a54`)
+
+Written after both mutation rounds, at the call sites they proved load-bearing; comments only - every changed `.cs`
+line a comment or blank, and each of the page's 17 changed lines the line it was plus a trailing comment, so its 4377
+lines and every registered line key hold. Final md5s (LF) at the branch tip: `Services/MigrationService.cs`
+`1899365d604775f7672321f08c7f32ee`, `Services/ExchangeServiceBase.cs` `e06caa1c89eacfdbbd0bc548329f6671`,
+`Components/Pages/Migration.razor` `5bcc6493e840f35baec9c4ee39eb5e24`, `Models/Enums.cs`
+`f1b3966c785807b77bf1d5cfb777c6a2`, `Models/MigrationModels.cs` `a78d64044b4415fa1b779d7ded4b68fb`; the tests are as
+their fix commits left them. Focused rerun after the comments: 1056 / 0.
+
+## Branch-tip gates (`033a1a54`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the count at `34c7ccd4`.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): 5658 passed, 3 skipped (the known `ADDirectorySearchServiceTests ...WhenAdUnavailable` cases), 0 failed - 5661 in all, 66 of them new across both findings; 5 m 22 s, no hang. Baseline at `34c7ccd4`: 5592 / 3 / 0, 5595.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No live Exchange, Active Directory, Graph, DHCP or IIS call was made: every Exchange cmdlet was a stub in an in-process
+runspace, and no excluded-group setting was configured, so the eligibility check's Active Directory step never ran. No
+PowerShell source changed (PSScriptAnalyzer and Pester not run). No coder self-review verdict is claimed. Version bumps
+are the supervisor's: Migration for both findings, and the base app for aud-a23i's `ExchangeServiceBase` change.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a3e674616251be4de`; not merged, not pushed.
