@@ -551,23 +551,63 @@ https://admin.exchange.microsoft.com/#/migration";
 
         // Carry the protected-principal exclusions back to the caller so the page and the admin
         // notification can surface them. RunAsync builds the result; re-wrap to attach the list
-        // (and prepend a clear note to the success message) without losing Success/Detail.
+        // (and prepend a clear note to the success message) without losing anything else.
         if (excludedTargets.Count > 0 || servicedSummary != null)
         {
-            return new PermissionResult
-            {
-                Success = result.Success,
-                Message = result.Success && excludedTargets.Count > 0
-                    ? $"{result.Message} NOTE: {excludedTargets.Count} protected principal(s) were excluded and NOT migrated."
-                    : result.Message,
-                Detail = result.Detail,
-                ServicedNote = servicedSummary,
-                ExcludedTargets = excludedTargets
-            };
+            return WithProtectionOutcome(result, excludedTargets, servicedSummary);
         }
 
         return result;
     }
+
+    /// <summary>
+    /// The exclusion re-wrap: the result <c>RunAsync</c> built, with the batch's protected-principal
+    /// exclusions attached, a NOTE on a success's message, and the batch's serviced overrides as its
+    /// <see cref="PermissionResult.ServicedNote"/>. Every other field is carried as it was.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding aud-a23c. This was an initializer at the call site that named the fields it
+    /// knew about, so it dropped <see cref="PermissionResult.AppliedRights"/> (aud-a23) and reset
+    /// <see cref="PermissionResult.Changed"/> to its default TRUE (aud-a25) - an init property left
+    /// out of an initializer keeps its default. Like <see cref="PermissionResult.WithServicedNote"/>,
+    /// this names every property; MigrationResultRewrapTests sets each one and checks it survives,
+    /// so a field the model gains later is held to the same rule. With <see cref="WithDetail"/>, the
+    /// module's only copies of a result.
+    /// </remarks>
+    internal static PermissionResult WithProtectionOutcome(PermissionResult result, IReadOnlyList<string> excludedTargets, string? servicedSummary)
+        => new()
+        {
+            Success = result.Success,
+            Message = result.Success && excludedTargets.Count > 0
+                ? $"{result.Message} NOTE: {excludedTargets.Count} protected principal(s) were excluded and NOT migrated."
+                : result.Message,
+            Detail = result.Detail,
+            ExcludedTargets = excludedTargets,
+            AppliedRights = result.AppliedRights,
+            Changed = result.Changed,
+            ServicedNote = servicedSummary,
+        };
+
+    /// <summary>
+    /// The same result with <see cref="PermissionResult.Detail"/> replaced and every other field
+    /// carried. The Migration page notes a failed audit write this way on the result it shows.
+    /// </summary>
+    /// <remarks>
+    /// Audit finding aud-a23c: the page's four failed-audit catches rebuilt the result field by
+    /// field and dropped AppliedRights and Changed, and two of them ServicedNote and ExcludedTargets
+    /// as well. See <see cref="WithProtectionOutcome"/>.
+    /// </remarks>
+    internal static PermissionResult WithDetail(PermissionResult result, string? detail)
+        => new()
+        {
+            Success = result.Success,
+            Message = result.Message,
+            Detail = detail,
+            ExcludedTargets = result.ExcludedTargets,
+            AppliedRights = result.AppliedRights,
+            Changed = result.Changed,
+            ServicedNote = result.ServicedNote,
+        };
 
     public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
     {

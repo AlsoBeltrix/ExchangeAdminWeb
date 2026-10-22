@@ -2067,14 +2067,7 @@
             }
             catch (Exception ex)
             {
-                singleCreateResult = new PermissionResult
-                {
-                    Success = singleCreateResult.Success,
-                    Message = singleCreateResult.Message,
-                    Detail = $"Audit logging failed: {ex.Message}",
-                    ServicedNote = singleCreateResult.ServicedNote,
-                    ExcludedTargets = singleCreateResult.ExcludedTargets
-                };
+                singleCreateResult = MigrationService.WithDetail(singleCreateResult, $"Audit logging failed: {ex.Message}");
             }
 
             var singleExclusionNote = singleExcluded.Count > 0
@@ -2220,14 +2213,7 @@
             }
             catch (Exception ex)
             {
-                createResult = new PermissionResult
-                {
-                    Success = createResult.Success,
-                    Message = createResult.Message,
-                    Detail = $"Audit logging failed: {ex.Message}",
-                    ServicedNote = createResult.ServicedNote,
-                    ExcludedTargets = createResult.ExcludedTargets
-                };
+                createResult = MigrationService.WithDetail(createResult, $"Audit logging failed: {ex.Message}");
             }
 
             var bulkExclusionNote = bulkExcluded.Count > 0
@@ -3324,12 +3310,7 @@
             }
             catch (Exception ex)
             {
-                batchActionResult = new PermissionResult
-                {
-                    Success = result.Success,
-                    Message = result.Message,
-                    Detail = $"Audit logging failed: {ex.Message}"
-                };
+                batchActionResult = MigrationService.WithDetail(result, $"Audit logging failed: {ex.Message}");
             }
 
             try
@@ -3393,12 +3374,7 @@
             }
             catch (Exception ex)
             {
-                batchActionResult = new PermissionResult
-                {
-                    Success = result.Success,
-                    Message = result.Message,
-                    Detail = $"Audit logging failed: {ex.Message}"
-                };
+                batchActionResult = MigrationService.WithDetail(result, $"Audit logging failed: {ex.Message}");
             }
 
             try
