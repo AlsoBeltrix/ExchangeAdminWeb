@@ -346,7 +346,7 @@ public class ProtectedPrincipalService
         // module config. If that file exists but is corrupt, silently reading it as
         // empty would un-protect those principals - fail closed instead, the same
         // way PermissionValidator blocks on the same corruption.
-        if (_moduleConfig.IsModuleCorrupt("MailboxPermissions"))
+        if (!TryGetLegacyExclusions(out var legacyExclusions))
             return (null, [], "MailboxPermissions module configuration is corrupt - protected-principal exclusions unavailable. Contact your administrator.");
 
         // FAIL-CLOSED: an unparseable legacy file still on disk keeps the store corrupt during
@@ -361,7 +361,7 @@ public class ProtectedPrincipalService
             if (_cachedConfig != null && !_configCorrupt
                 && !_changeWatcher.HasChangedSince(_loadedToken)
                 && DateTime.UtcNow - _configLoadedAt < ConfigCacheTtl)
-                return (_cachedConfig, GetLegacyExclusions(), null);
+                return (_cachedConfig, legacyExclusions, null);
         }
 
         // Token BEFORE the load (scd-2): a write racing the read moves the stored token past
@@ -396,7 +396,7 @@ public class ProtectedPrincipalService
             _loadedToken = token;
         }
 
-        return (config, GetLegacyExclusions(), null);
+        return (config, legacyExclusions, null);
     }
 
     public enum ResolutionStatus { Resolved, NotFound, Ambiguous, Unavailable }
@@ -1303,13 +1303,19 @@ public class ProtectedPrincipalService
     // it was invisible to the Protected Principals admin UI, so principals could be
     // blocked with no visible cause. Protection now lives in the DB store (UI-managed)
     // and this module-config value only.
-    private string[] GetLegacyExclusions()
+    private bool TryGetLegacyExclusions(out string[] exclusions)
     {
-        var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
-        if (!string.IsNullOrEmpty(excluded))
-            return excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
+        {
+            exclusions = [];
+            return false;
+        }
 
-        return [];
+        var excluded = values.GetValueOrDefault("ExcludedUsers");
+        exclusions = string.IsNullOrEmpty(excluded)
+            ? []
+            : excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return true;
     }
 
     private static void CheckDirectUserMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)

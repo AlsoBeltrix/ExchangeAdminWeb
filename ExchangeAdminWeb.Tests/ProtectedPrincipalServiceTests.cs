@@ -531,7 +531,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         // Guards the retirement of the Security:ExcludedUsers appsettings fallback
         // (2026-07-28): a value present ONLY under appsettings, with the module config
         // empty, must NOT contribute a LegacyExclusion match. Restoring the fallback
-        // read (GetLegacyExclusions) fails this test.
+        // read (TryGetLegacyExclusions) fails this test.
         var overrides = new Dictionary<string, string?>
         {
             ["Security:ExcludedUsers:0"] = "appsettings-only@contoso.com"
