@@ -4,6 +4,7 @@ using System.Management.Automation.Runspaces;
 using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -504,6 +505,9 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Contains("title", result.Error, StringComparison.Ordinal);
         Assert.Contains("'Analyst'", result.Error, StringComparison.Ordinal);
         Assert.Contains("'Lead Analyst'", result.Error, StringComparison.Ordinal);
+        // aud-a26l: it names the server the read-back was sent to, and that the value may not have reached it.
+        Assert.Contains("example.test", result.Error, StringComparison.Ordinal);
+        Assert.Contains("replicated", result.Error, StringComparison.Ordinal);
         Assert.Single(_h.Ad.Sets);
         Assert.Equal("Analyst", alex.Attributes["title"]);
 
@@ -569,7 +573,7 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
             new AttributeChange("department", "Department", "Finance", null),
             new AttributeChange("company", "Company", null, "Contoso"),
             new AttributeChange("extensionAttribute5", "Cost Centre", null, "CC-1"),
-        ], read);
+        ], read, TypesOf(("title", "String"), ("department", "String"), ("company", "String"), ("extensionAttribute5", "String")));
 
         Assert.Equal(2, unconfirmed.Count);
         Assert.Contains(unconfirmed, u => u.StartsWith("company", StringComparison.Ordinal)
@@ -619,14 +623,288 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Equal(["title"], _h.Ad.Reads[^1].Properties);
     }
 
-    private static PowerShell ReadTitle(PowerShell shell, LocalAd.User user)
+    private static PowerShell ReadTitle(PowerShell shell, LocalAd.User user, string? server = null)
     {
         shell.Commands.Clear();
         shell.AddCommand("Get-ADUser")
             .AddParameter("Identity", user.Guid.ToString())
             .AddParameter("Properties", new[] { "title" })
             .AddParameter("ErrorAction", "Stop");
+        if (server is not null)
+            shell.AddParameter("Server", server);
         return shell;
+    }
+
+    // ---- a value the directory holds in its own form (aud-a26l) --------------------------------
+
+    private const string Flag = "msExchHideFromAddressLists";
+    private const string OldBoss = "CN=Pat Lee,OU=Staff,DC=example,DC=test";
+    private const string NewBoss = "CN=Sam Rivera,OU=Staff,DC=example,DC=test";
+    private const string NewBossAsTyped = "cn=sam rivera, ou=staff, dc=example, dc=test";
+
+    /// <summary>The allowlist's Type for each attribute, as the read-back is handed it.</summary>
+    private static Dictionary<string, string> TypesOf(params (string Name, string Type)[] rows) =>
+        rows.ToDictionary(r => r.Name, r => r.Type, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The harness's allowlist with a DN-valued attribute and a Boolean one beside it.</summary>
+    private void AllowAManagerAndAFlag()
+    {
+        _h.Allowlist.SaveAllowlist(
+        [
+            new AttributeRow("title", "Job Title", "String", null, false, true, null, null, 1),
+            new AttributeRow("department", "Department", "String", null, false, true, null, null, 1),
+            new AttributeRow("manager", "Manager", "String", null, false, true, null, null, 1),
+            new AttributeRow(Flag, "Hidden From Address Lists", "String", null, false, true, null, null, 1),
+        ]);
+        _h.Service.InvalidateAllowlistCache();
+    }
+
+    private LocalAd.User AddJordan() =>
+        _h.Ad.Add("jordan.blake@example.test", "CN=Jordan Blake,OU=Staff,DC=example,DC=test", "Jordan Blake",
+            ("title", "Analyst"), ("manager", OldBoss), (Flag, "False"));
+
+    /// <summary>
+    /// The directory's side of a DN-valued write: it resolves the DN written to its object and stores that
+    /// object's own DN, whatever case and spacing it was sent in.
+    /// </summary>
+    private static Func<string?, string?> StoresTheObjectsOwnDn(params string[] objects) =>
+        written => written is null
+            ? null
+            : objects.FirstOrDefault(dn => string.Equals(Squeezed(dn), Squeezed(written), StringComparison.OrdinalIgnoreCase)) ?? written;
+
+    private static string Squeezed(string dn) => System.Text.RegularExpressions.Regex.Replace(dn, @"\s*([,=])\s*", "$1");
+
+    /// <summary>Get-ADUser types the flag as the module types a Boolean-syntax attribute.</summary>
+    private static object? TypesTheFlag(string name, string? stored) =>
+        string.Equals(name, Flag, StringComparison.OrdinalIgnoreCase) && stored is not null ? bool.Parse(stored) : stored;
+
+    /// <summary>A record as the event log hands it to undo: every property, by a case-insensitive name.</summary>
+    private static Dictionary<string, object?> AsTheEventLogReadsIt(JsonElement record) =>
+        record.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone(), StringComparer.OrdinalIgnoreCase);
+
+    [Fact]
+    public async Task AManagerTheDirectoryHoldsInItsOwnForm_IsConfirmed_AndRecordedAsTheDnRead()
+    {
+        // The finding's DN case: written in lower case with spaces after its commas, held as the object's own DN.
+        AllowAManagerAndAFlag();
+        var jordan = AddJordan();
+        _h.Ad.SetStoresAs = StoresTheObjectsOwnDn(OldBoss, NewBoss);
+
+        var result = await Save(jordan, new() { ["manager"] = NewBossAsTyped });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(NewBoss, jordan.Attributes["manager"]);
+        var applied = Assert.Single(result.AppliedChanges!);
+        Assert.Equal(OldBoss, applied.OldValue);
+        Assert.Equal(NewBoss, applied.NewValue);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal(OldBoss, Text(record, "old_manager"));
+        Assert.Equal(NewBoss, Text(record, "new_manager"));
+        Assert.True(Assert.Single(_h.Notices).Success);
+    }
+
+    [Fact]
+    public async Task ABooleanWrittenTrue_ThatTheDirectoryHoldsAsTrue_IsConfirmed_AndRecordedAsTrue()
+    {
+        AllowAManagerAndAFlag();
+        var jordan = AddJordan();
+        _h.Ad.SetStoresAs = value => value is null ? null : bool.Parse(value).ToString();
+        _h.Ad.ReadsAs = TypesTheFlag;
+
+        var result = await Save(jordan, new() { [Flag] = "true" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("True", jordan.Attributes[Flag]);
+        var applied = Assert.Single(result.AppliedChanges!);
+        Assert.Equal("False", applied.OldValue);
+        Assert.Equal("True", applied.NewValue);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal("False", Text(record, $"old_{Flag}"));
+        Assert.Equal("True", Text(record, $"new_{Flag}"));
+        Assert.True(Assert.Single(_h.Notices).Success);
+    }
+
+    [Theory]
+    [InlineData("manager", NewBossAsTyped, "CN=Someone Else,OU=Staff,DC=example,DC=test")]
+    [InlineData(Flag, "true", "False")]
+    public async Task AValueTheDirectoryHoldsWithOtherContent_StillFails_WhateverItsSyntax(string attribute, string written, string held)
+    {
+        // The control: a form is forgiven, a different value is not.
+        AllowAManagerAndAFlag();
+        var jordan = AddJordan();
+        _h.Ad.SetStoresAs = _ => held;
+        _h.Ad.ReadsAs = TypesTheFlag;
+
+        var result = await Save(jordan, new() { [attribute] = written });
+
+        Assert.False(result.Success);
+        Assert.Null(result.AppliedChanges);
+        Assert.Contains($"'{held}'", result.Error, StringComparison.Ordinal);
+        Assert.Contains($"'{written}'", result.Error, StringComparison.Ordinal);
+        AssertUnconfirmedRecord(Assert.Single(_h.AuditEvents()), result.Error!, jordan);
+        Assert.False(Assert.Single(_h.Notices).Success);
+    }
+
+    [Fact]
+    public async Task TheUndoOfAManagerHeldInTheDirectorysForm_RoundTrips()
+    {
+        // The record carries the DN as the directory holds it, so the undo's conflict check - the lookup's
+        // value against the recorded new one - finds it unchanged, and the old DN goes back.
+        AllowAManagerAndAFlag();
+        var jordan = AddJordan();
+        _h.Ad.SetStoresAs = StoresTheObjectsOwnDn(OldBoss, NewBoss);
+        var forward = await Save(jordan, new() { ["manager"] = NewBossAsTyped });
+        Assert.True(forward.Success, forward.Error);
+
+        var edit = AsTheEventLogReadsIt(Assert.Single(_h.AuditEvents()));
+        edit["_undoMaxLevel"] = 1;
+        var undo = _h.CreateUndoService();
+        Assert.True(undo.CanUndo(edit));
+
+        var reversed = await undo.ExecuteUndoAsync(edit, Actor, Ip, Ticket, AttributeEditorHarness.Operator());
+
+        Assert.True(reversed.Success, reversed.Error);
+        Assert.Equal(OldBoss, jordan.Attributes["manager"]);
+        Assert.Equal([NewBossAsTyped, OldBoss], _h.Ad.Sets.Select(s => s.Replace["manager"]));
+        var undone = Assert.Single(_h.AuditEvents(), e => Text(e, "action") == "ADAttributeEditor_Undo");
+        Assert.Equal("Success", Text(undone, "result"));
+    }
+
+    [Fact]
+    public async Task AReadBackSentWhereTheWriteWent_IsConfirmed_ThoughAnotherReplicaLags()
+    {
+        // The folded-in finding: a read sent anywhere but where the write went is answered by a replica that
+        // has not seen it. One -Server for the re-read, the write and the read-back - the object's own domain.
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        _h.Ad.ReplicaLag = true;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("Lead Analyst", alex.Attributes["title"]);
+        Assert.Equal(["example.test", "example.test"], _h.Ad.Reads.Select(r => r.Server));
+        Assert.Equal("example.test", Assert.Single(_h.Ad.Sets).Server);
+        Assert.Equal("Lead Analyst", Text(Assert.Single(_h.AuditEvents()), "new_title"));
+    }
+
+    [Fact]
+    public async Task ADnThatNamesNoDomain_GoesToTheDefaultDomainController_AndSaysSo()
+    {
+        // The explicit fallback: no DC components, so no server to route to - all three calls unrouted, a
+        // warning, and an unconfirmed read names the default domain controller as the server asked.
+        var robin = _h.Ad.Add("robin.hart@example.test", "CN=Robin Hart,OU=Staff,O=Example", "Robin Hart", ("title", "Analyst"));
+        _h.Ad.ReplicaLag = true;
+
+        var result = await Save(robin, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Equal(2, _h.Ad.Reads.Count);
+        Assert.All(_h.Ad.Reads, read => Assert.Null(read.Server));
+        Assert.Null(Assert.Single(_h.Ad.Sets).Server);
+        Assert.Contains("the default domain controller", result.Error, StringComparison.Ordinal);
+        Assert.Contains(_h.Logger.Warnings, w => w.Contains(robin.Upn, StringComparison.Ordinal)
+            && w.Contains("default domain controller", StringComparison.Ordinal));
+        AssertUnconfirmedRecord(Assert.Single(_h.AuditEvents()), result.Error!, robin);
+    }
+
+    [Theory]
+    [InlineData(NewBossAsTyped, NewBoss, true)]
+    [InlineData("CN = Sam Rivera , OU=Staff,DC=example,DC=test", NewBoss, true)]
+    [InlineData(@"CN=Rivera\, Sam,OU=Staff,DC=example,DC=test", @"cn=rivera\, sam,ou=staff,dc=example,dc=test", true)]
+    [InlineData("CN=Sam Rivera", NewBoss, false)]
+    [InlineData(NewBoss + ",DC=extra", NewBoss, false)]
+    [InlineData("CN=Sam  Rivera,OU=Staff,DC=example,DC=test", NewBoss, false)]
+    [InlineData(@"CN=Rivera\, Sam,OU=Staff,DC=example,DC=test", "CN=Rivera,CN=Sam,OU=Staff,DC=example,DC=test", false)]
+    [InlineData("CN=Someone Else,OU=Staff,DC=example,DC=test", NewBoss, false)]
+    public void TwoDns_AreTheSame_OnlyRdnForRdn_IgnoringCaseAndTheSpacesAroundTheSeparators(string written, string read, bool same) =>
+        Assert.Equal(same, ADAttributeEditorService.SameDistinguishedName(written, read));
+
+    [Fact]
+    public void TheReadBack_ComparesInTheAttributesOwnSyntax_AndNeverLooser()
+    {
+        var read = new PSObject();
+        read.Properties.Add(new PSNoteProperty("manager", NewBoss));
+        read.Properties.Add(new PSNoteProperty("assistant", NewBoss));
+        read.Properties.Add(new PSNoteProperty("hidden", true));
+        read.Properties.Add(new PSNoteProperty("enabled", new object[] { false }));
+        read.Properties.Add(new PSNoteProperty("shown", false));
+        read.Properties.Add(new PSNoteProperty("count", 7));
+        read.Properties.Add(new PSNoteProperty("total", 7L));
+        read.Properties.Add(new PSNoteProperty("employeeNumber", "007"));
+        read.Properties.Add(new PSNoteProperty("note", "True"));
+        read.Properties.Add(new PSNoteProperty("title", "Lead Analyst"));
+        read.Properties.Add(new PSNoteProperty("company", "Contoso"));
+        read.Properties.Add(new PSNoteProperty("legacy", "CC-1"));
+
+        var (unconfirmed, asRead) = ADAttributeEditorService.UnconfirmedWrites(
+        [
+            new AttributeChange("manager", "Manager", null, NewBossAsTyped),       // a DN in another form
+            new AttributeChange("assistant", "Assistant", null, "CN=Sam Rivera"), // a prefix of the DN held
+            new AttributeChange("hidden", "Hidden", null, "TRUE"),                // a Boolean, any case
+            new AttributeChange("enabled", "Enabled", null, "false"),             // ... read as a one-element collection
+            new AttributeChange("shown", "Shown", null, "yes"),                   // not a Boolean at all
+            new AttributeChange("count", "Count", null, "007"),                   // an integer, its own digits
+            new AttributeChange("total", "Total", null, "8"),                     // a different integer
+            new AttributeChange("employeeNumber", "Employee Number", null, "7"),  // a string that looks like one
+            new AttributeChange("note", "Note", null, "true"),                    // a string that looks like a Boolean
+            new AttributeChange("title", "Job Title", null, " Lead Analyst "),    // a plain string, trimmed
+            new AttributeChange("company", "Company", null, "CONTOSO"),           // ... whose case still counts
+            new AttributeChange("legacy", "Legacy", null, "CC-1 "),               // a Type that names neither: untrimmed
+        ], read, TypesOf(
+            ("manager", "String"), ("assistant", "String"), ("hidden", "String"), ("enabled", "String"),
+            ("shown", "String"), ("count", "String"), ("total", "String"), ("employeeNumber", "String"),
+            ("note", "String"), ("title", "String"), ("company", "Choice"), ("legacy", "Legacy")));
+
+        string[] differ = ["assistant", "shown", "total", "employeeNumber", "note", "company", "legacy"];
+        Assert.Equal(differ, unconfirmed.Select(u => u.Split(' ')[0]));
+
+        // Whatever the verdict, each value is recorded as the directory holds it.
+        Assert.Equal(NewBoss, asRead.Single(c => c.Name == "manager").NewValue);
+        Assert.Equal("True", asRead.Single(c => c.Name == "hidden").NewValue);
+        Assert.Equal("False", asRead.Single(c => c.Name == "enabled").NewValue);
+        Assert.Equal("7", asRead.Single(c => c.Name == "count").NewValue);
+        Assert.Equal("Lead Analyst", asRead.Single(c => c.Name == "title").NewValue);
+    }
+
+    [Fact]
+    public void TheHarness_TypesAReadValue_RecordsEachServer_AndLetsAReplicaLagBehindTheWrite()
+    {
+        // The new knobs, so the tests above cannot pass for want of what they describe.
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+        var replace = new Hashtable { ["title"] = "Lead Analyst" };
+
+        _h.Ad.ReadsAs = (name, stored) => name == "title" && stored is not null ? stored.Length : stored;
+        using (var session = Session())
+        {
+            var typed = Assert.Single(ReadTitle(session.Shell, alex, server: "example.test").Invoke());
+            Assert.Equal("Analyst".Length, typed.Properties["title"].Value);
+            Assert.Equal("example.test", _h.Ad.Reads[^1].Server);
+        }
+
+        _h.Ad.ReadsAs = null;
+        _h.Ad.ReplicaLag = true;
+        using (var session = Session())
+        {
+            SetTitle(session.Shell, alex, replace, stop: true).AddParameter("Server", "example.test").Invoke();
+            Assert.Equal("example.test", Assert.Single(_h.Ad.Sets).Server);
+            Assert.Equal("Lead Analyst", alex.Attributes["title"]);
+
+            Assert.Equal("Analyst", Assert.Single(ReadTitle(session.Shell, alex).Invoke()).Properties["title"].Value);
+            Assert.Equal("Analyst", Assert.Single(ReadTitle(session.Shell, alex, server: "elsewhere.test").Invoke()).Properties["title"].Value);
+            Assert.Equal("Lead Analyst", Assert.Single(ReadTitle(session.Shell, alex, server: "example.test").Invoke()).Properties["title"].Value);
+            Assert.Null(_h.Ad.Reads[^3].Server);
+        }
+
+        using (var session = Session())
+        {
+            // A new session has sent no write, so nothing it reads lags.
+            Assert.Equal("Lead Analyst", Assert.Single(ReadTitle(session.Shell, alex).Invoke()).Properties["title"].Value);
+        }
     }
 
     // ---- a save that finds nothing to change (aud-a26d) ----------------------------------------

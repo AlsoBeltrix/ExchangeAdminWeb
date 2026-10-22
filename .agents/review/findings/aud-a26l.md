@@ -117,9 +117,102 @@ Files: `Services/ADAttributeEditorService.cs`, `ExchangeAdminWeb.Tests/Attribute
 `ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, this record. Dev acceptance owed: edit a manager and a
 Boolean attribute on a test user; each save is recorded as a success with the directory's form.
 
+## Fix
+
+`Services/ADAttributeEditorService.cs`:
+
+- PerformSave: `server = GroupManagementService.ServerFromDn(target.DistinguishedName)` before the session, a
+  warning when it is null; `-Server <server>`, when there is one, on the pre-write re-read and on `Set-ADUser`;
+  `ConfirmWrite(ps, target, reReadGuid, changes, allowlist, server, credential)`.
+- ConfirmWrite: the read-back sent to the same server; the allowlist's Type for each name (the first row per
+  name, case-insensitive) handed to UnconfirmedWrites; both messages name the server asked ("the default domain
+  controller" for none), and the not-confirmed one adds "The value may not have replicated yet to the domain
+  controller that answered for <server>." ("... to the default domain controller.").
+- ReadBackWrittenAttributes: `-Server <server>` when there is one.
+- UnconfirmedWrites (internal static, pure) judges each value by `ReadsAsWritten(SyntaxOf(type, name, value),
+  expected, actual, value)` and takes `IReadOnlyDictionary<string, string> allowlistTypes`, not the rows: the
+  aud-a28l tripwire `AllowlistConcurrentSaveTests.TheServicesOnlyAllowlistWriter_IsTheSaveThatChecksTheLoadedVersion`
+  takes any non-private method handed allowlist rows for a writer, and this one reads only each row's Type.
+- New beside it: `ReadBackSyntax` (internal enum), `SyntaxOf`, `ReadsAsWritten` and `SameDistinguishedName`
+  (internal static, pure), `DnValuedAttributes`, `RelativeNames` and `IntegerOf` (private). `ReadDirectoryString`
+  became `ReadDirectoryValue`: it returns the value read (a one-element collection's element), so its type can be
+  seen; the record and the result still carry its ToString.
+
+Harness (`ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`, `LocalAd`): the Get-ADUser and Set-ADUser stand-ins
+take `-Server`, kept on each `ReadCall`/`SetCall` (null for none; the `Calls` strings are unchanged); `ReadsAs`
+and `ReplicaLag`, default off, as planned - the write's server is the session's `$global:AttributeWriteServer`,
+and a lagging read is answered from `User.BeforeLastWrite`, the attributes as they were before the last write.
+
+Tests (`ExchangeAdminWeb.Tests/ADAttributeEditorSaveTests.cs`, 17 cases):
+`AManagerTheDirectoryHoldsInItsOwnForm_IsConfirmed_AndRecordedAsTheDnRead`,
+`ABooleanWrittenTrue_ThatTheDirectoryHoldsAsTrue_IsConfirmed_AndRecordedAsTrue`,
+`AValueTheDirectoryHoldsWithOtherContent_StillFails_WhateverItsSyntax` (a manager held as another DN; a Boolean
+written true held False), `TheUndoOfAManagerHeldInTheDirectorysForm_RoundTrips`,
+`AReadBackSentWhereTheWriteWent_IsConfirmed_ThoughAnotherReplicaLags`,
+`ADnThatNamesNoDomain_GoesToTheDefaultDomainController_AndSaysSo`, the pure
+`TwoDns_AreTheSame_OnlyRdnForRdn_IgnoringCaseAndTheSpacesAroundTheSeparators` (8 cases) and
+`TheReadBack_ComparesInTheAttributesOwnSyntax_AndNeverLooser`, and the knob self-test
+`TheHarness_TypesAReadValue_RecordsEachServer_AndLetsAReplicaLagBehindTheWrite`. Two existing tests follow the
+change: aud-a26j's pure test hands UnconfirmedWrites the String types of its four attributes (its verdicts are
+unchanged - a plain string's case still counts), and its applies-nothing test also asserts that the message names
+`example.test` and says the value may not have replicated.
+
+Caller-visible change, by design: a save whose read-back holds the value in the directory's own form - a DN in
+its canonical case and spacing, a Boolean's True/False, an integer without leading zeros, a string without
+leading or trailing whitespace - is a success recorded with the value read, and offers its Undo; one that holds
+other content still fails as before. The pre-write re-read, the write and the read-back go to the object's own
+domain (`-Server <its DNS name>`); a DN naming no domain logs a warning and goes to the default domain controller,
+as every call did. Both failure messages name the server asked.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M1 is the comparison as at `afa9dbf6` (ordinal) at its call site, and M2 the
+read-back as at `afa9dbf6` (no `-Server`); each fails the test that names it.
+
+Session-local driver (`mutate.ps1`, session scratchpad `a26l-a26m-a28o-work`): the file's exact bytes saved, one
+literal replacement that must match exactly once, a Release build with 0 errors required, filter
+`FullyQualifiedName~ADAttributeEditor|FullyQualifiedName~AttributeEditorPageSaveAuditTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~UndoNotificationTests|FullyQualifiedName~UndoIdentityTests|FullyQualifiedName~EventLogUndoRefusalTests|FullyQualifiedName~Allowlist`
+(234 tests), the exact bytes restored in a `finally`, the MD5 re-checked and the mtime advanced so MSBuild
+rebuilds (log `a26l-mutations.log`). Both mutants built with 0 errors; each restore matched the original MD5. After
+the round, a rebuild on the restored bytes and the filter: 234/234 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M1 the read-back compared ordinal again (`string.Equals(expected, actual, Ordinal)` in place of `ReadsAsWritten`) | `ADAttributeEditorService.cs`, `A501418D27F3C0C5B7F8023E7DCFDAE5` | `2BF693119F7A5BAD0BD212D4477F6631` | `AManagerTheDirectoryHoldsInItsOwnForm_IsConfirmed_AndRecordedAsTheDnRead`, `ABooleanWrittenTrue_ThatTheDirectoryHoldsAsTrue_IsConfirmed_AndRecordedAsTrue`, `TheUndoOfAManagerHeldInTheDirectorysForm_RoundTrips`, `TheReadBack_ComparesInTheAttributesOwnSyntax_AndNeverLooser` |
+| M2 `-Server` dropped from the read-back | `ADAttributeEditorService.cs`, `A501418D27F3C0C5B7F8023E7DCFDAE5` | `A35BFD8A070CE4A256CA65C619E6C1FE` | `AReadBackSentWhereTheWriteWent_IsConfirmed_ThoughAnotherReplicaLags` only - the write still carries the server, the read-back lands on the lagging replica |
+
+Unchanged through the round: `AttributeEditorHarness.cs` `881714459FD1A645DBB7F84A5CE368F0`,
+`ADAttributeEditorSaveTests.cs` `D27B629C0CC5F6364259FBE5BAC23149`. The code comments are written after the round,
+in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental --no-restore`: 0 errors, 41 warnings, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --no-build --blame-hang --blame-hang-timeout 10m` (Debug, after a Debug
+  build of this tree): exit 0, 5,444 passed / 3 skipped (the three known AD skips,
+  `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 5,447 total, 5m27s; nothing hung,
+  no Sequence file. Baseline at `4684d84d` (the code as at `afa9dbf6`): 5,427 / 3 / 0, 5,430 total; the
+  seventeen new cases are this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1`: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. No coder self-review verdict is
+claimed.
+
+## Known gaps
+
+- *Assumptions, not probed* (no directory call is made here), each failing loud, never into a false success: the
+  module returns a Boolean-syntax attribute as System.Boolean and an Integer or Large Integer one as Int32/Int64 -
+  one returned as text compares as a plain string, so "true" against "TRUE" stays a failure; `manager`,
+  `assistant`, `secretary` and `seeAlso` are DN syntax in every forest's schema, and a DN-syntax attribute outside
+  that list compares as a plain string; a directory may drop a string's leading and trailing whitespace; three
+  calls in one session sent to one domain name are answered by one domain controller (DC affinity).
+- The allowlist's Type cannot name a syntax (String or Choice only), so the syntax comes from the value read and
+  the attribute's name. A row stored with another Type is compared ordinal, untrimmed.
+- The lookup and the preview stay unrouted; only the save's re-read, write and read-back carry `-Server`.
+- Dev acceptance owed: edit a manager and a Boolean attribute on a test user; each save is recorded as a success
+  with the directory's form.
 
 ## Folded in: the read-back can be answered by a different, stale DC (codex, attr-batch-7, 2026-10-22) - LOW
 

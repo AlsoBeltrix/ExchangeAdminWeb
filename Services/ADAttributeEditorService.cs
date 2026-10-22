@@ -1332,6 +1332,14 @@ public class ADAttributeEditorService
         string ticket,
         string? servicedNote)
     {
+        var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
+        if (server is null)
+        {
+            _logger.LogWarning(
+                "AD attribute save for {Target}: its distinguished name names no domain, so the re-read, the write and the read-back go to the default domain controller",
+                target.UserPrincipalName);
+        }
+
         using var runspace = CreateDirectoryRunspace();
         using var ps = PowerShell.Create();
         PSCredential credential;
@@ -1358,6 +1366,8 @@ public class ADAttributeEditorService
               .AddParameter("Properties", GetPropertiesToLoad(allowlist))
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            if (server is not null)
+                ps.AddParameter("Server", server);
             reReadResult = ps.Invoke();
             ps.Commands.Clear();
         }
@@ -1420,6 +1430,7 @@ public class ADAttributeEditorService
           .AddParameter("Identity", target.DistinguishedName)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        if (server is not null) ps.AddParameter("Server", server);
         if (replace.Count > 0) ps.AddParameter("Replace", replace);
         if (clear.Count > 0) ps.AddParameter("Clear", clear.ToArray());
 
@@ -1460,7 +1471,7 @@ public class ADAttributeEditorService
         // recorded failed with no old/new pair - the event log offers no Undo of a change its record
         // cannot vouch for - and a confirmed one is recorded with the values read: what the directory
         // holds, not what was proposed.
-        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, credential);
+        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, allowlist, server, credential);
         if (confirmError != null)
         {
             LogAudit(target, [], performedBy, ip, ticket, false, confirmError);
@@ -1480,13 +1491,16 @@ public class ADAttributeEditorService
         ResolvedDirectoryPrincipal target,
         string? objectGuid,
         List<AttributeChange> written,
+        List<EditableAttribute> allowlist,
+        string? server,
         PSCredential credential)
     {
+        var asked = server ?? "the default domain controller";
         string? readError;
         PSObject? read = null;
         try
         {
-            (readError, read) = ReadBackWrittenAttributes(ps, objectGuid, written, credential);
+            (readError, read) = ReadBackWrittenAttributes(ps, objectGuid, written, server, credential);
         }
         catch (Exception ex)
         {
@@ -1496,16 +1510,22 @@ public class ADAttributeEditorService
         if (readError != null || read is null)
         {
             var failed = readError ?? "nothing was read";
-            _logger.LogWarning("Set-ADUser on {Target} could not be confirmed by reading it back by objectGUID {ObjectGuid}: {Error}", target.UserPrincipalName, objectGuid, failed);
-            return ($"Set-ADUser on {target.UserPrincipalName} was sent but could not be confirmed: reading {string.Join(", ", written.Select(c => c.Name))} back by objectGUID {objectGuid ?? "(none)"} failed: {failed}", written);
+            _logger.LogWarning("Set-ADUser on {Target} could not be confirmed by reading it back by objectGUID {ObjectGuid} from {Server}: {Error}", target.UserPrincipalName, objectGuid, asked, failed);
+            return ($"Set-ADUser on {target.UserPrincipalName} was sent but could not be confirmed: reading {string.Join(", ", written.Select(c => c.Name))} back by objectGUID {objectGuid ?? "(none)"} from {asked} failed: {failed}", written);
         }
 
-        var (unconfirmed, asRead) = UnconfirmedWrites(written, read);
+        var types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attribute in allowlist)
+            types.TryAdd(attribute.Name, attribute.Type);
+
+        var (unconfirmed, asRead) = UnconfirmedWrites(written, read, types);
         if (unconfirmed.Count > 0)
         {
             var detail = string.Join("; ", unconfirmed);
-            _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid}: {Detail}", target.UserPrincipalName, objectGuid, detail);
-            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid}, {detail}.", written);
+            var answered = server is null ? "the default domain controller" : $"the domain controller that answered for {server}";
+            _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid} from {Server}: {Detail}", target.UserPrincipalName, objectGuid, asked, detail);
+            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid} from {asked}, {detail}. "
+                + $"The value may not have replicated yet to {answered}.", written);
         }
 
         return (null, asRead);
@@ -1518,7 +1538,7 @@ public class ADAttributeEditorService
     // whatever left one, the answer is not known good - and exactly one object, the one written, must
     // answer.
     private static (string? Error, PSObject? Read) ReadBackWrittenAttributes(
-        PowerShell ps, string? objectGuid, List<AttributeChange> written, PSCredential credential)
+        PowerShell ps, string? objectGuid, List<AttributeChange> written, string? server, PSCredential credential)
     {
         if (string.IsNullOrEmpty(objectGuid))
             return ("the object read before the write carried no objectGUID", null);
@@ -1528,6 +1548,8 @@ public class ADAttributeEditorService
           .AddParameter("Properties", written.Select(c => c.Name).ToArray())
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        if (server is not null)
+            ps.AddParameter("Server", server);
         var found = ps.Invoke();
         if (ps.HadErrors)
             return (ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? $"Get-ADUser reported an error reading {objectGuid}.", null);
@@ -1546,15 +1568,17 @@ public class ADAttributeEditorService
     // fails a save, never passes one. An empty value and an absent attribute are the same, the directory
     // keeping no empty value, so a clear is confirmed by an attribute that is gone. Pure, for unit testing.
     internal static (List<string> Unconfirmed, List<AttributeChange> AsRead) UnconfirmedWrites(
-        IReadOnlyList<AttributeChange> written, PSObject read)
+        IReadOnlyList<AttributeChange> written, PSObject read, IReadOnlyDictionary<string, string> allowlistTypes)
     {
         var unconfirmed = new List<string>();
         var asRead = new List<AttributeChange>();
         foreach (var change in written)
         {
+            var value = ReadDirectoryValue(read, change.Name);
             var expected = EmptyAsAbsent(change.NewValue);
-            var actual = EmptyAsAbsent(ReadDirectoryString(read, change.Name));
-            if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            var actual = EmptyAsAbsent(value?.ToString());
+            allowlistTypes.TryGetValue(change.Name, out var type);
+            if (!ReadsAsWritten(SyntaxOf(type, change.Name, value), expected, actual, value))
             {
                 unconfirmed.Add($"{change.Name} ({change.Label}) {(actual is null ? "is not set" : $"is '{actual}'")}, "
                     + $"not {(expected is null ? "cleared" : $"'{expected}'")} as written");
@@ -1566,29 +1590,102 @@ public class ADAttributeEditorService
         return (unconfirmed, asRead);
     }
 
+    internal enum ReadBackSyntax
+    {
+        Ordinal,
+        PlainString,
+        DistinguishedName,
+        Boolean,
+        Integer,
+    }
+
+    private static readonly HashSet<string> DnValuedAttributes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "manager", "assistant", "secretary", "seeAlso",
+    };
+
+    internal static ReadBackSyntax SyntaxOf(string? type, string name, object? read)
+    {
+        if (read is bool)
+            return ReadBackSyntax.Boolean;
+        if (IntegerOf(read) is not null)
+            return ReadBackSyntax.Integer;
+        if (DnValuedAttributes.Contains(name))
+            return ReadBackSyntax.DistinguishedName;
+        if (type is "String" or "Choice")
+            return ReadBackSyntax.PlainString;
+        return ReadBackSyntax.Ordinal;
+    }
+
+    internal static bool ReadsAsWritten(ReadBackSyntax syntax, string? expected, string? actual, object? read)
+    {
+        if (expected is null || actual is null)
+            return expected is null && actual is null;
+
+        return syntax switch
+        {
+            ReadBackSyntax.Boolean => bool.TryParse(expected, out var flag) && read is bool held && flag == held,
+            ReadBackSyntax.Integer => long.TryParse(expected, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var number)
+                && IntegerOf(read) == number,
+            ReadBackSyntax.DistinguishedName => SameDistinguishedName(expected, actual),
+            ReadBackSyntax.PlainString => string.Equals(expected.Trim(), actual.Trim(), StringComparison.Ordinal),
+            _ => string.Equals(expected, actual, StringComparison.Ordinal),
+        };
+    }
+
+    internal static bool SameDistinguishedName(string written, string read)
+    {
+        var left = RelativeNames(written);
+        var right = RelativeNames(read);
+        return left.Length == right.Length
+            && left.Zip(right).All(pair => string.Equals(pair.First, pair.Second, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string[] RelativeNames(string dn) =>
+        Regex.Split(dn, @"(?<=(?<!\\)(?:\\\\)*),")
+            .Select(rdn =>
+            {
+                var equals = rdn.IndexOf('=');
+                return equals < 0 ? rdn.Trim() : $"{rdn[..equals].Trim()}={rdn[(equals + 1)..].Trim()}";
+            })
+            .ToArray();
+
+    private static long? IntegerOf(object? value) => value switch
+    {
+        sbyte v => v,
+        byte v => v,
+        short v => v,
+        ushort v => v,
+        int v => v,
+        uint v => v,
+        long v => v,
+        ulong v when v <= long.MaxValue => (long)v,
+        _ => null,
+    };
+
     private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
     // A single-valued attribute as read, null when absent: aud-a2p's, a sibling because Conference Rooms'
     // is private. *Assumption, not probed*: the module answers one with its value, as this service's own
     // reads take it (Properties[..].Value). A collection is taken as its one element, so a collection-shaped
     // answer is not told as a difference; several values are not the one written.
-    private static string? ReadDirectoryString(PSObject read, string name)
+    private static object? ReadDirectoryValue(PSObject read, string name)
     {
         var value = Unwrapped(read.Properties[name]?.Value);
         if (value is null or string)
-            return (string?)value;
+            return value;
         if (value is System.Collections.IEnumerable values)
         {
-            var items = values.Cast<object?>().Select(v => Unwrapped(v)?.ToString()).ToList();
+            var items = values.Cast<object?>().Select(Unwrapped).ToList();
             return items.Count switch
             {
                 0 => null,
                 1 => items[0],
-                _ => string.Join("; ", items),
+                _ => string.Join("; ", items.Select(v => v?.ToString())),
             };
         }
 
-        return value.ToString();
+        return value;
     }
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
