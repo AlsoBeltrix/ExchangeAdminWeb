@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.ObjectModel;
+using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
@@ -30,6 +32,9 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     private const string OnPremMastered =
         "The operation on the group failed because it's out of the current user's write scope. The action can't be "
         + "performed on the object because the object is being synchronized from your on-premises organization.";
+
+    // Exchange Online's refusal of an add for a member the list already holds (aud-a2h).
+    private static readonly string AlreadyAMember = $"The recipient \"{Typed}\" is already a member of the group \"{List}\".";
 
     private readonly ExchangeWriteHarness _h = new();
 
@@ -211,5 +216,94 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var reads = Enumerable.Range(0, commands.Count).Where(i => commands[i] == "Get-DistributionGroup").ToList();
         Assert.Single(reads);
         Assert.True(reads[0] < firstWrite, $"Get-DistributionGroup at {reads[0]}, Set-Place at {firstWrite}");
+    }
+
+    // aud-a2h. A list one member longer than Exchange Online's default page, the room last: only a
+    // read that asks for the whole list can see it.
+    private void FillListPastTheDefaultPage(string room)
+    {
+        for (var i = 0; i < ExchangeWriteHarness.ExchangeDefaultResultSize; i++)
+            _h.ListMembers.Add($"member{i}@contoso.test");
+        _h.ListMembers.Add(room);
+    }
+
+    private void AssertEveryMembershipReadAskedForTheWholeList(int reads)
+    {
+        var calls = _h.CallsTo("Get-DistributionGroupMember");
+        Assert.Equal(reads, calls.Count);
+        Assert.All(calls, c => Assert.Equal("Unlimited", ExchangeWriteHarness.Bound(c, "ResultSize")));
+    }
+
+    [Fact]
+    public async Task ASyncedRoom_PastTheDefaultPageOfItsSyncedRoomList_IsSeenByThePreflightAndTheAdd()
+    {
+        // aud-a2h, the synced half. The repair above, on a list longer than one page: the preflight
+        // must find the room to spare it the on-prem proof (no credential here, so a miss refuses the
+        // row), and the add must find it to write nothing (a miss sends the cloud add, which a synced
+        // list refuses).
+        _h.ListSyncState[List] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        FillListPastTheDefaultPage(Typed);
+        var service = new Service(_h) { NoCredential = true };
+
+        var result = await service.SetRoomMetadataAndListAsync(
+            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(["Set-Place", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration"], _h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        AssertEveryMembershipReadAskedForTheWholeList(reads: 2);
+    }
+
+    [Fact]
+    public async Task ARoom_PastTheDefaultPageOfItsCloudRoomList_IsNotAddedAgain()
+    {
+        // aud-a2h, the cloud half. A cloud list needs no preflight, so the add's read is the only one.
+        // Missing the room, it sent Add-DistributionGroupMember for a member Exchange already holds,
+        // was refused, and reported partial with Set-Place and the timezone already committed.
+        FillListPastTheDefaultPage(Typed);
+        _h.Failures["Add-DistributionGroupMember"] = AlreadyAMember;
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.CallsTo("Add-DistributionGroupMember"));
+        Assert.Contains(result.Steps, s => s.Success && s.Stage == $"Already in '{List}'");
+        AssertEveryMembershipReadAskedForTheWholeList(reads: 1);
+    }
+
+    [Fact]
+    public void TheHarness_RefusesAMembershipReadThatDoesNotAskForTheWholeList()
+    {
+        // aud-a2h. The stand-in answers a read without -ResultSize with an error and no members, under
+        // every -ErrorAction, so no test can find a member through a read Exchange would have cut
+        // short. A number is a page of that size; Unlimited is the whole list.
+        FillListPastTheDefaultPage(Typed);
+        using var rs = _h.OpenExchangeRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+
+        Assert.Empty(ReadMembers(ps, resultSize: null, errorAction: "SilentlyContinue"));
+        Assert.Empty(ReadMembers(ps, resultSize: null, errorAction: "Continue"));
+        Assert.Contains("-ResultSize", Assert.Single(ps.Streams.Error).ToString(), StringComparison.Ordinal);
+        Assert.ThrowsAny<RuntimeException>(() => ReadMembers(ps, resultSize: null, errorAction: "Stop"));
+
+        var page = ExchangeWriteHarness.ExchangeDefaultResultSize;
+        Assert.Equal(page, ReadMembers(ps, resultSize: page, errorAction: "Stop").Count);
+        var all = ReadMembers(ps, resultSize: "Unlimited", errorAction: "Stop");
+        Assert.Equal(page + 1, all.Count);
+        Assert.Equal(Typed, all[^1].Properties["PrimarySmtpAddress"]?.Value);
+    }
+
+    private static Collection<PSObject> ReadMembers(PowerShell ps, object? resultSize, string errorAction)
+    {
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        var read = ps.AddCommand("Get-DistributionGroupMember").AddParameter("Identity", List);
+        if (resultSize is not null)
+            read.AddParameter("ResultSize", resultSize);
+        read.AddParameter("ErrorAction", errorAction);
+        return ps.Invoke();
     }
 }

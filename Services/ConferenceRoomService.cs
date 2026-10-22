@@ -636,9 +636,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 result.Steps.Add(new RoomOperationStep { Stage = $"Using legacy room list '{roomListName}'", Success = true });
             }
 
-            // Check if already a member
+            // Check if already a member - of the whole list (aud-a2h). Without -ResultSize Exchange
+            // Online returns only its first 1000 members, so a room past them read as not a member: the
+            // add went out for a member the list already held and the row came back partial, Set-Place
+            // and the timezone written. The protected-principal expansion reads it the same way.
             ps.AddCommand("Get-DistributionGroupMember")
               .AddParameter("Identity", roomListName)
+              .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "SilentlyContinue");
             var members = InvokeOptional(ps, tracker);
             var alreadyMember = IsListMember(members, roomPrimary);
@@ -737,11 +741,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             string.Equals(m.Properties["PrimarySmtpAddress"]?.Value?.ToString(), roomPrimary, StringComparison.OrdinalIgnoreCase));
 
     // aud-a2f. Whether the room is already on the list, read before any write. Read-only: safe to retry.
+    // The whole list, as the add reads it (aud-a2h): Exchange Online's default page is 1000 members,
+    // and a synced room past it was refused for want of an on-prem proof the add would not have needed.
     private Task<bool> IsOnRoomListAsync(string roomListName, string roomPrimary) =>
         RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-DistributionGroupMember")
               .AddParameter("Identity", roomListName)
+              .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "SilentlyContinue");
             return IsListMember(InvokeOptional(ps, tracker), roomPrimary);
         }, allowRetry: true);

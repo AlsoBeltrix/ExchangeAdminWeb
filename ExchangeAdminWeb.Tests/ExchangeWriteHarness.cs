@@ -50,10 +50,24 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public Hashtable DirectoryObjects { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>Command name to error message: that stand-in records its call, then throws the message.</summary>
+    /// <remarks>
+    /// Only for a command the code calls with <c>-ErrorAction Stop</c> (or none). Called with
+    /// <c>SilentlyContinue</c>, PowerShell suppresses the throw and the stand-in carries on and answers.
+    /// </remarks>
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>The primary addresses the stand-in <c>Get-DistributionGroupMember</c> reports on any list.</summary>
+    /// <summary>
+    /// The primary addresses the stand-in <c>Get-DistributionGroupMember</c> reports on any list: all of
+    /// them to <c>-ResultSize Unlimited</c>, the first N to a number, and none - an error - to a read
+    /// without the parameter (aud-a2h).
+    /// </summary>
     public IList ListMembers { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>
+    /// Exchange Online's default page for <c>Get-DistributionGroupMember</c>: the most members a read
+    /// without <c>-ResultSize</c> returns. A test list one longer has a member only the whole list shows.
+    /// </summary>
+    public const int ExchangeDefaultResultSize = 1000;
 
     /// <summary>
     /// What the stand-in <c>Get-DistributionGroup</c> reports as <c>IsDirSynced</c>, by list name: a
@@ -242,11 +256,18 @@ internal sealed class ExchangeWriteHarness : IDisposable
         return rs;
     }
 
-    private PooledRunspace StandIn(long generation)
+    /// <summary>The Exchange stand-ins, opened - what the pool's connect seam hands out; also for testing a stand-in itself.</summary>
+    public Runspace OpenExchangeRunspace()
     {
         var rs = RunspaceFactory.CreateRunspace();
         rs.Open();
         Define(rs, StandIns);
+        return rs;
+    }
+
+    private PooledRunspace StandIn(long generation)
+    {
+        var rs = OpenExchangeRunspace();
         var ps = PowerShell.Create();
         ps.Runspace = rs;
         return new PooledRunspace(rs, ps, generation, "stand-in");
@@ -401,10 +422,21 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [CmdletBinding()] param($Name, [switch] $RoomList)
             Write-StandInCall 'New-DistributionGroup' $PSBoundParameters
         }
+        # aud-a2h. Exchange Online returns at most -ResultSize members, 1000 when it is not passed. A read
+        # without it is refused - an error and no members - rather than answered short, so no test can
+        # see a member through a read the real cmdlet would have cut off. Write-Error then return, not
+        # throw: called with -ErrorAction SilentlyContinue, as the service calls it, a throw is
+        # suppressed and the function carries on.
         function global:Get-DistributionGroupMember {
-            [CmdletBinding()] param($Identity)
+            [CmdletBinding()] param($Identity, $ResultSize)
             Write-StandInCall 'Get-DistributionGroupMember' $PSBoundParameters
-            foreach ($member in $global:ListMembers) { [pscustomobject]@{ PrimarySmtpAddress = $member } }
+            if (-not $PSBoundParameters.ContainsKey('ResultSize')) {
+                Write-Error "stand-in: Get-DistributionGroupMember without -ResultSize - Exchange Online would answer with its default page only, not the whole list."
+                return
+            }
+            $members = @($global:ListMembers)
+            if ("$ResultSize" -ne 'Unlimited') { $members = @($members | Select-Object -First ([int]"$ResultSize")) }
+            foreach ($member in $members) { [pscustomobject]@{ PrimarySmtpAddress = $member } }
         }
         function global:Add-DistributionGroupMember {
             [CmdletBinding()] param($Identity, $Member)
