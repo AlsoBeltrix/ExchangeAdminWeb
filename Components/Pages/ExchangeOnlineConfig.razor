@@ -207,6 +207,11 @@
     {
         try
         {
+            // aud-a26n. One read is what the fields show and what the save compares under its lock: a value shown
+            // from one read and compared from another would let a change landing between the two be overwritten
+            // unseen. Rows that cannot be read are not a load. With the module marked present the corrupt banner
+            // says so, as before; without, the page used to show the appsettings fallbacks as if they were the
+            // stored values, and now withholds Save as for any load that failed.
             var readable = ModuleConfigSvc.TryGetModuleConfig(ExoConnectionPool.ConfigModuleKey, out var stored);
 
             if (ModuleConfigSvc.HasModuleConfigFile(ExoConnectionPool.ConfigModuleKey) && !readable)
@@ -455,7 +460,10 @@
 
             // aud-a26n. Only the keys whose field the admin changed, each decided inside one write against what the
             // store held for it when the page loaded; the write returns the values as they were under its lock - the
-            // record's before-state (aud-a28k).
+            // record's before-state (aud-a28k). Writing all three wrote back any key changed elsewhere since the load.
+            // A key not edited is never written, so one shown from the appsettings fallback stays the fallback the
+            // runtime reads; one changed elsewhere to exactly this save's value is already applied, not a conflict
+            // (the aud-a26k rule); one changed to anything else refuses the save, naming it - nothing is merged.
             var wanted = ConnectionFields(trimmedAppId, trimmedOrg, trimmedCert);
             var changed = wanted.Keys
                 .Where(k => !string.Equals(wanted[k], (exoShown.GetValueOrDefault(k) ?? "").Trim(), StringComparison.Ordinal))
@@ -517,6 +525,10 @@
             // aud-a26h. The configuration is saved and live once the write returns, so its record and message
             // come first and the drain is its own step. A drain that failed used to land in the save's catch,
             // telling the admin, and the audit, that a saved configuration had not saved.
+            //
+            // aud-a26n. Every save that passes the refusals drains, one that wrote nothing too, as before: the drain
+            // writes nothing, and it is what makes the stored settings live on this instance, whose pool may still
+            // hold connections opened before a change saved on the other instance.
             try
             {
                 ExoPool.DrainPool();

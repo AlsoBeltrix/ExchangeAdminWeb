@@ -813,6 +813,11 @@
     /// <remarks>
     /// Its own step, and first: the id lives in the ProtectedPrincipals module config, not with the rules, so it
     /// is shown - or shown as unreadable - whether or not the rules load.
+    ///
+    /// The field holds what the database holds - empty when cleared - never the appsettings fallback in its place
+    /// (aud-a26n): showing the fallback's id made a clear look as though it had not taken, and the save compares
+    /// this value with the row under its lock, so it has to be the stored one. The caption says when the fallback
+    /// applies.
     /// </remarks>
     private void LoadDirectoryReadSecret()
     {
@@ -1198,7 +1203,10 @@
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
-            // aud-a26n. Already applied: the lists become the rows under the lock, the ones the version below is of.
+            // aud-a26n. Already applied means the stored rules match these lists ignoring case, not that they are these
+            // lists: another save may have changed only an entry's casing. The lists become the rows under the lock -
+            // the rows the version below is of - so the page shows them, and a later save, which passes the version
+            // check, writes them rather than this page's stale casing.
             if (alreadyApplied && outcome.After is { } held)
             {
                 ppUsers = held.Users.ToList();
@@ -1253,7 +1261,10 @@
     {
         try
         {
-            // aud-a26n. Decided under the write lock against the value this page loaded (its baseline).
+            // aud-a26n. Decided under the write lock against the value this page loaded (its baseline): written only
+            // while the row still holds what the field showed, so a change made elsewhere since is refused rather than
+            // overwritten, and one made the same way is already applied. The rules were written first (aud-a28j), so a
+            // refusal here is the secret's alone: recorded under its own section, the message saying the rules saved.
             var outcome = ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
             if (outcome.Status is ModuleConfigSaveStatus.StoreCorrupt or ModuleConfigSaveStatus.ConcurrentChange)
             {

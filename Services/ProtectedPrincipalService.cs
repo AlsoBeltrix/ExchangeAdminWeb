@@ -352,6 +352,11 @@ public class ProtectedPrincipalService
         // module config. If that file exists but is corrupt, silently reading it as
         // empty would un-protect those principals - fail closed instead, the same
         // way PermissionValidator blocks on the same corruption.
+        //
+        // aud-a28p. One read is both the corruption probe and the list. A probe followed by a second,
+        // fail-open read of the list let a failure between the two read as "no exclusions", and every
+        // principal on the list was unprotected for that check. Read ahead of the rules' cache, which
+        // does not hold the list.
         if (!TryGetLegacyExclusions(out var legacyExclusions))
             return (null, [], "MailboxPermissions module configuration is corrupt - protected-principal exclusions unavailable. Contact your administrator.");
 
@@ -1327,7 +1332,8 @@ public class ProtectedPrincipalService
     // config. The appsettings Security:ExcludedUsers fallback was retired 2026-07-28:
     // it was invisible to the Protected Principals admin UI, so principals could be
     // blocked with no visible cause. Protection now lives in the DB store (UI-managed)
-    // and this module-config value only.
+    // and this module-config value only. False when the rows cannot be read: never an
+    // empty list standing in for one that was not read (aud-a28p).
     private bool TryGetLegacyExclusions(out string[] exclusions)
     {
         if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))

@@ -1224,7 +1224,9 @@
                     var extra = new Dictionary<string, object?>();
                     if (outcome.AlreadyApplied.Count > 0)
                         extra["alreadyApplied"] = outcome.AlreadyApplied.ToArray();
-                    // aud-a26n. Names only: which secret keys changed, values never.
+                    // aud-a26n. A secret changed from one value to another masks to Key=*** on both sides, and the two
+                    // cancel in added and removed, so the record showed no change at all: it names the key instead.
+                    // Names only - never a value.
                     var changedSecretKeys = written
                         .Where(k => IsSecretField(k)
                             && !string.Equals(outcome.Before.GetValueOrDefault(k) ?? "", outcome.After.GetValueOrDefault(k) ?? "", StringComparison.Ordinal))
@@ -1439,6 +1441,11 @@
 
             // Persisted separately from the grants, and after them: a display name is cosmetic, so
             // failing to store one must never fail the access save that already succeeded.
+            //
+            // aud-a26n. Only when the save wrote, and only the names picked from the directory on this page for the
+            // groups it added to an alias it wrote. Every other name the page holds is the one it loaded, and writing
+            // those back reverted a name changed since - on every save not refused, a no-op included. The rows written
+            // carry their stored names across (SectionAccessRepository.ReplaceAliases).
             if (outcome.Status == SectionAccessSaveStatus.Saved)
             {
                 var writtenAliases = edited
