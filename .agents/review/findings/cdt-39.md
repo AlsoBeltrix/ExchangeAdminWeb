@@ -7,7 +7,7 @@ ConfigDbToolInApp S2 with a three-attempt retry, and again 2026-10-22 on run 398
 analyzer) fails the job on a docs-only commit. The two installs now behave differently for the same
 transient cause.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Branch**: `worktree-agent-a05fc8e899ba981d1` (forked at `34c7ccd4`)
 **Commit**: -
 **Reviewer**: implementer (CI run 39847030059 on `e9a59ed4`, 2026-10-22; rerun requested)
 
@@ -25,6 +25,69 @@ failed to download.` after 52 seconds.
   retry to pin this one too.
 - Mutation at the call site: remove the retry (the Pester guard fails). Pure ASCII; `Import-Module
   Pester -RequiredVersion 6.2.0` before the analyzer locally; `Invoke-Pester tests/ps` 0 failed.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("EVERYTHING"); admitted at `34c7ccd4`. Evidence re-read there: `ci.yml`
+47-56, one `Install-Module PSScriptAnalyzer -Force -Scope CurrentUser` (50), no retry; the Pester
+step's loop at 73-82. CI and tests only - no app or module behaviour, so no version bump.
+
+1. `ci.yml`, the `PSScriptAnalyzer` step: line 50 becomes the Pester step's loop (73-82), identical
+   but for the module, its version and the warning text: `for ($attempt = 1; $attempt -le 3;
+   $attempt++)`, `try { Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force -Scope
+   CurrentUser -ErrorAction Stop; break }`, `catch { if ($attempt -eq 3) { throw }; Write-Warning
+   ...; Start-Sleep -Seconds (10 * $attempt) }`. The original flags stay; `-ErrorAction Stop` is
+   added so a failed download reaches the catch, as in the Pester install. Lines 51-56 unchanged.
+2. Then `Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -ErrorAction Stop`, before
+   `Invoke-ScriptAnalyzer` (51). An install does not decide which analyzer runs: auto-loading takes
+   the first copy along `PSModulePath`, not the newest. Probe on this host, 2026-10-22 (pwsh
+   7.6.6): one module in two paths, 1.0.0 in the first, 2.0.0 in a later one - calling its command
+   loaded 1.0.0, an unversioned `Import-Module` loaded 1.0.0, `-RequiredVersion 2.0.0` loaded
+   2.0.0. The import pins the rules CI applies, and fails the step if 1.25.0 is not there.
+3. Version 1.25.0: `Get-Module PSScriptAnalyzer -ListAvailable` on the dev host lists 1.25.0
+   (CurrentUser, the copy pwsh loads) and 1.24.0 (the Windows PowerShell AllUsers path).
+   `Find-Module PSScriptAnalyzer -AllVersions`, 2026-10-22: 1.25.0 is the Gallery's newest
+   (published 2026-03-20), so the pin changes nothing CI runs today; it stops a later release from
+   changing CI's rules with nothing in the repo changing.
+4. One identical loop, not a shared snippet: each `run:` step is its own pwsh process, so sharing
+   needs a new tracked script (its own Pester, analyzer and ASCII obligations, and the loop leaves
+   the workflow its reader is in) or one step installing both modules (Pester installed before the
+   analyzer runs, and the step name no longer says which install failed). Ten duplicated lines cost
+   less than either; the guard holds both copies to one shape, so they cannot drift unnoticed.
+5. Guards, `tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI gates'` (1988-2037). Plan
+   correction: no test pins the Pester retry today - this record's approach and the brief assumed
+   one; `grep` of `tests/ps` finds none. So the retry guard is written once and run for both
+   installs, which also pins the Pester retry the analyzer one copies.
+   - BeforeAll (1993-1997) gains `Get-CiStepScript`: the named powershell-job step's `run: |`
+     block, de-indented and parsed with the PowerShell parser, so the guards read commands and
+     loops, not text a comment could satisfy. It throws when the step or its block is missing.
+   - `It 'retries the <Module> install three times, rethrowing the last failure (cdt-39)'
+     -TestCases` PSScriptAnalyzer, Pester: the block parses; exactly one `Install-Module <Module>`,
+     with `-ErrorAction Stop`; it is the first statement of a try body whose second is `break`;
+     the try is a direct statement of `for ($attempt = 1; $attempt -le 3; $attempt++)`; one
+     catch-all, whose first statement is `if ($attempt -eq 3) { throw }` (a bare rethrow) and
+     which calls `Start-Sleep`.
+   - `It 'runs PSScriptAnalyzer 1.25.0, the version the dev host runs (cdt-39)'`: the install
+     carries `-RequiredVersion 1.25.0`; exactly one `Import-Module PSScriptAnalyzer`, a top-level
+     statement, with `-RequiredVersion 1.25.0` and `-ErrorAction Stop`, after the loop and before
+     `Invoke-ScriptAnalyzer`.
+6. Mutations at the call site (`ci.yml`): md5 of the LF content before and after, the whole
+   `DeployInvariants.Tests.ps1` run, original bytes restored, md5 re-confirmed, touched, rerun
+   green. M1 the analyzer loop replaced by its bare install line: the PSScriptAnalyzer case of the
+   retry test fails. M2 `-RequiredVersion 1.25.0` dropped from the install: the version test fails.
+   Extra probes, outside the table: the pre-fix `ci.yml` (`34c7ccd4`) fails both analyzer tests;
+   M1's shape applied to the Pester step fails the Pester case. Comments are written after the
+   round; the md5s are of the pre-comment bytes, and the post-comment md5 is recorded.
+
+Files: `.github/workflows/ci.yml`, `tests/ps/DeployInvariants.Tests.ps1`, this record. Pure ASCII;
+the test file parses under Windows PowerShell 5.1 with zero errors.
+
+Gates, one pwsh session: `Import-Module Pester -RequiredVersion 6.2.0`, then `Invoke-ScriptAnalyzer
+-Path tests/ps/DeployInvariants.Tests.ps1 -Severity Error` zero; `Invoke-Pester tests/ps` 0 failed,
+0 skipped; 5.1 `ParseFile` of the test file zero errors; `git diff --check HEAD`; `git add -A`,
+then `tools/Test-AsciiOnly.ps1`; `tools/Install-ExchangeAdminWeb.ps1` still never names
+`deploy.ps1`. Also the CI step's own analyzer run under 1.25.0 (`Invoke-ScriptAnalyzer -Path .
+-Recurse -Severity Error,Warning`), zero errors, since that pinned run is what CI will now do.
 
 ## Guard proof
 
