@@ -29,3 +29,13 @@ marker names the type only); `Components/Pages/OutOfOffice.razor`, the Check Sta
 ## Guard proof
 
 Pending.
+
+## Folded in: nested PSObject wrappers name the outer type (codex, ops-batch-8, 2026-10-22)
+
+`Models/LookupModels.cs` `ReportedTime.Read` (around line 190 at `0187257e`): when the value is a
+`PSObject` wrapping another `PSObject` whose inner base object is the unreadable value, the loop
+captures `typeName` once with `??=` before unwrapping further, so the marker can name the outer
+wrapper's generic type instead of the inner deserialized type. Unwrap through nested wrappers
+keeping the most specific (innermost, or `Deserialized.*`) type name. Test: a `PSObject` wrapping a
+deserialized `PSObject` whose base object is unreadable names the inner type (and, with this
+record's part 1, shows its text). Mutation at the call site: capture the outer name again.

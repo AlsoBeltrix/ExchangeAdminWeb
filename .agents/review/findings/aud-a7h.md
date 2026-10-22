@@ -6,7 +6,7 @@ another type (a `DateTimeOffset`, a string, a wrapped PSObject), the cast yields
 Check Status tab shows a Scheduled auto-reply with no window, as if none were set, with no sign
 that a value was dropped. Separately, the aud-a7g refusal says the clocks "repeat that hour" for a
 zone whose clocks go back by another amount; the check itself is correct for any amount.
-**Status**: Merged to master (`0187257e`); closed on guard proof; codex review pending
+**Status**: Merged to master (`0187257e`); closed on guard proof; codex ops-batch-8 clean (one LOW folded into aud-a7i)
 **Branch**: `worktree-agent-a6125ee40db9873ac` (forked at `4a8021a8`)
 **Commit**: `ed505ee1` (merged `0187257e`)
 **Reviewer**: implementer (surfaced by the aud-a38j/a7f/a7g agent, 2026-10-22, candidates 2 and 3 of its hand-back)
