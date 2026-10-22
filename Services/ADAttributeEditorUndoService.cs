@@ -56,10 +56,15 @@ public class ADAttributeEditorUndoService : IUndoableModule
         if (!string.Equals(result, "Success", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        // Must have at least one old_/new_ prefixed attribute pair
-        return auditEvent.Keys.Any(k => k.StartsWith("old_", StringComparison.OrdinalIgnoreCase))
-            && auditEvent.Keys.Any(k => k.StartsWith("new_", StringComparison.OrdinalIgnoreCase));
+        var changedAttributes = GetStringArray(auditEvent, "changedAttributes");
+        return changedAttributes.Length > 0
+            && changedAttributes.All(attr => HasSide(auditEvent, $"old_{attr}") || HasSide(auditEvent, $"new_{attr}"));
     }
+
+    private static bool HasSide(Dictionary<string, object?> auditEvent, string key) =>
+        auditEvent.TryGetValue(key, out var value)
+        && value is not null
+        && value is not JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined };
 
     public async Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent, System.Security.Claims.ClaimsPrincipal? actingUser)
     {

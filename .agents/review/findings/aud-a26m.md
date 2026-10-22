@@ -61,6 +61,60 @@ again - (a) and (b) fail.
 Files: `Services/ADAttributeEditorUndoService.cs`, `ExchangeAdminWeb.Tests/ADAttributeEditorUndoRefusalTests.cs`,
 this record.
 
+## Fix
+
+`Services/ADAttributeEditorUndoService.cs`, CanUndo: after the unchanged category, action and Success checks, the
+record's `changedAttributes` must be non-empty and each of them must have a side - `HasSide(old_<attr>)` or
+`HasSide(new_<attr>)`. New `HasSide` (private static): the key is present with a value that is neither null nor a
+JSON null. PreviewUndoAsync and ExecuteUndoAsync are unchanged: they already read a missing side as null, so the
+undo of a clear proposes the old value and expects the attribute unset, and the undo of a set-from-empty proposes a
+clear.
+
+Tests (`ExchangeAdminWeb.Tests/ADAttributeEditorUndoRefusalTests.cs`, 4 cases, the records saved through the real
+service and read back from the JSONL as the event log reads them):
+`AClearOnlyEdit_IsUndoable_AndItsUndoPutsTheValueBack`, `ASetFromEmptyEdit_IsUndoable_AndItsUndoClearsIt`,
+`AnAttributeWithNeitherSideRecorded_IsNotUndoable` (the both-sides control, an attribute with no side beside one
+with both, the only side held null) and `AFailedEdit_IsNotUndoable_ThoughItRecordsBothSides` (a refused write's
+record, which carries both sides). The class summary names aud-a26m.
+
+Caller-visible change, by design: a successful edit that cleared an attribute, or set one that had no value, now
+shows its Undo button in the Admin Event Log, and the undo puts the attribute back as it was - the value restored,
+or the attribute cleared. A record naming an attribute with no recorded side, a Failed record and an undo record
+still offer none.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M3 is CanUndo's rule as at `afa9dbf6`, restored at its call site, and it fails
+the tests that name the defect.
+
+Same driver and conditions as aud-a26l (`a26m-mutations.log`), the same filter, 238 tests on this tree. The mutant
+built with 0 errors; the restore matched the original MD5. After the round, a rebuild on the restored bytes and the
+filter: 238/238 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| M3 an `old_` key and a `new_` key required anywhere in the record again, as at `afa9dbf6` | `ADAttributeEditorUndoService.cs`, `617C3F3F5A6B0DDA35EBC75824CCD56E` | `ACE232308FA0607DD32BD78B42EF808A` | `AClearOnlyEdit_IsUndoable_AndItsUndoPutsTheValueBack`, `ASetFromEmptyEdit_IsUndoable_AndItsUndoClearsIt` (no Undo for a one-sided edit), and `AnAttributeWithNeitherSideRecorded_IsNotUndoable` (the old rule asked for any such key, so an attribute with none beside one with both, and keys held null, read as undoable); `AFailedEdit_IsNotUndoable_ThoughItRecordsBothSides` passes either way, as the control must |
+
+Unchanged through the round: `ADAttributeEditorUndoRefusalTests.cs` `DAE958D01D647953734425F9B58AFCB8`. The code
+comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental --no-restore`: 0 errors, 41 warnings, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --no-build --blame-hang --blame-hang-timeout 10m` (Debug, after a Debug
+  build of this tree): exit 0, 5,448 passed / 3 skipped (the three known AD skips) / 0 failed, 5,451 total, 5m39s;
+  nothing hung, no Sequence file. aud-a26l's tree (`7b7acc41`): 5,444 / 3 / 0, 5,447 total; the four new cases are
+  this record's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1`: exit 0.
+
+No PowerShell source, AD module, directory, Delinea, SMTP, push or deployment. No coder self-review verdict is
+claimed.
+
+## Known gaps
+
+- The preview of a one-sided edit shows the missing side as "(empty)", as it always read it; nothing in the panel
+  says the side was absent from the record rather than recorded empty - the writer never records an empty value.
+- A record written by hand with a side held as an empty string counts as a side, as the JSONL writer would have
+  kept it.
