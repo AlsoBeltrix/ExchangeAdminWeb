@@ -4,7 +4,7 @@
 step, installs `-MinimumVersion 5.5`; CI therefore runs the Gallery's newest Pester (6.2.0 today, the
 dev host's version). A later release would change the runner's behaviour on every push with no
 commit in the repo explaining it, and could fail or silently change what the suites assert.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch; closed on guard proof; review pending
 **Branch**: `worktree-agent-ab74c2738ad037db4` (forked at `dc0555e2`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the cdt-39 agent, 2026-10-22, its one candidate)
@@ -76,6 +76,57 @@ Gates, one pwsh session: `Import-Module Pester -RequiredVersion 6.2.0`, then `In
 then `tools/Test-AsciiOnly.ps1`; `tools/Install-ExchangeAdminWeb.ps1` still never names
 `deploy.ps1`.
 
+## Fix
+
+As planned. `.github/workflows/ci.yml`, the Pester step (79-107): the install at 90 carries
+`-RequiredVersion 6.2.0` where it had `-MinimumVersion 5.5`, its other flags and the loop (88-97)
+unchanged; `Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop` at 98, a top-level
+statement between the loop and `$result = Invoke-Pester tests/ps -CI -PassThru` (99); 100-107
+unchanged. The analyzer step is unchanged. `tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI
+gates'` (1988-2154): the version test (2124-2153) runs two cases; the retry test (2073-2122) is
+unchanged.
+
+Behaviour probe of the step itself (scratch, `cdt40-stepprobe/probe.ps1`): its loop and import
+lifted from the `ci.yml` run block (parsed, not copied by hand) and run in a fresh pwsh 7.6.6 the
+way GitHub runs a pwsh step, `pwsh -command ". '<file>'"` behind the `$ErrorActionPreference =
+'stop'` prefix; `Invoke-Pester` itself was never run. With `-WhatIf` on the install, PowerShellGet
+resolved "Version '6.2.0' of module 'Pester'" on the Gallery, the import loaded 6.2.0 and
+`Invoke-Pester` resolved to it (exit 0). With the Windows PowerShell module path, which holds the
+inbox Pester 3.4.0, moved first on `PSModulePath`: without the import, `Invoke-Pester` resolved to
+3.4.0 and an unversioned `Import-Module Pester` loaded 3.4.0; with the step's import, 6.2.0. The
+import naming a version that is not installed (9.9.9) failed the script ("no valid module file was
+found in any module directory") before the line after it ran (exit 1). The loop's failure path is
+not re-probed: cdt-39 probed the identical loop in the analyzer step, and only the install's version
+parameter changed here.
+
 ## Guard proof
 
-Pending.
+| Test (`tests/ps/DeployInvariants.Tests.ps1`, `Describe 'CI gates'`) | Pins |
+| --- | --- |
+| `runs <Module> <Version>, the version the dev host runs (<Finding>)`, cases PSScriptAnalyzer 1.25.0 (cdt-39) and Pester 6.2.0 (cdt-40) | The step's `run: \|` block, parsed: its one `Install-Module` carries `-RequiredVersion <Version>`; one top-level `Import-Module <Module> -RequiredVersion <Version> -ErrorAction Stop`, after the install and before the step's one `<Runner>` call (`Invoke-ScriptAnalyzer`, `Invoke-Pester`) |
+
+The analyzer case expands to the name the cdt-39 record's guard proof uses, `runs PSScriptAnalyzer
+1.25.0, the version the dev host runs (cdt-39)`; the Pester case is `runs Pester 6.2.0, the version
+the dev host runs (cdt-40)`.
+
+Session-local driver (scratch, `cdt40-mutations/mutate.ps1`); each run is the whole
+`DeployInvariants.Tests.ps1` in a fresh pwsh under Pester 6.2.0. Fixed `ci.yml` md5
+`A12C3F10DB2D6D4498AA50AD59D1A0D4` (LF content, as git stores it - this commit's bytes; the CRLF
+working copy is `02B7217F19D137AECFBD1C37F8F3868C`); baseline 115 passed, 0 failed, 0 skipped. Each
+mutant was applied to those bytes (both md5s checked before it); after its run the fixed bytes were
+copied back, both md5s re-matched, the file was touched and the file rerun: 115 passed, 0 failed, 0
+skipped, every time.
+
+| Mutation (call site, `ci.yml`) | md5 after (LF) | Failed |
+| --- | --- | --- |
+| M1 `-RequiredVersion 6.2.0` dropped from the Pester install | `7AD889980D427E8A7B33B6FAD10683C2` | `runs Pester 6.2.0, the version the dev host runs (cdt-40)` only ("Expected '6.2.0', because CI installs the Pester version the dev host runs, but got $null.") |
+| M2 the Pester import dropped | `43F11C73C837BF02D08504CFB3CF3004` | `runs Pester 6.2.0, the version the dev host runs (cdt-40)` only ("Expected 1, because installing a version does not make it the copy that loads; the import does, but got 0.") |
+
+Extra probe, same driver: the pre-fix `ci.yml` (`dc0555e2`, md5 `A34104CA659CD81F8C579DB146CA003A`,
+the driver's reconstruction checked against git's blob) fails the Pester case on the install's
+version and nothing else. The analyzer case passed on all three.
+
+## Files changed
+
+`.github/workflows/ci.yml`, `tests/ps/DeployInvariants.Tests.ps1`, this record. No version bump:
+CI and tests only.

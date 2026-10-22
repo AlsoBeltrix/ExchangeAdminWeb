@@ -87,7 +87,7 @@ jobs:
           # found") failed this step once with nothing wrong in the repo.
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
-              Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.5 -SkipPublisherCheck -ErrorAction Stop
+              Install-Module Pester -Force -Scope CurrentUser -RequiredVersion 6.2.0 -SkipPublisherCheck -ErrorAction Stop
               break
             } catch {
               if ($attempt -eq 3) { throw }
@@ -95,6 +95,7 @@ jobs:
               Start-Sleep -Seconds (10 * $attempt)
             }
           }
+          Import-Module Pester -RequiredVersion 6.2.0 -ErrorAction Stop
           $result = Invoke-Pester tests/ps -CI -PassThru
 
           # No suite skips by design any more. A skip that creeps back would hide exactly the

@@ -2121,12 +2121,15 @@ Describe 'CI gates' {
                 }, $true)).Count | Should -Be 1 -Because 'each retry waits before the next attempt'
     }
 
-    It 'runs PSScriptAnalyzer 1.25.0, the version the dev host runs (cdt-39)' {
+    It 'runs <Module> <Version>, the version the dev host runs (<Finding>)' -TestCases @(
+        @{ Step = 'PSScriptAnalyzer'; Module = 'PSScriptAnalyzer'; Version = '1.25.0'; Runner = 'Invoke-ScriptAnalyzer'; Finding = 'cdt-39' }
+        @{ Step = 'Pester'; Module = 'Pester'; Version = '6.2.0'; Runner = 'Invoke-Pester'; Finding = 'cdt-40' }
+    ) {
         # So CI and a local run apply the same rules, and a new analyzer release cannot change
         # CI's verdict with nothing in the repo changing. The number is pinned here too, so a
         # bump is deliberate. The import is the pin that decides: auto-loading takes the first
         # copy on PSModulePath, not the newest (probed in cdt-39), so an install alone does not.
-        $run = Get-CiStepScript 'PSScriptAnalyzer'
+        $run = Get-CiStepScript $Step
         $run.Errors | Should -BeNullOrEmpty
         $commands = @($run.Ast.FindAll({
                     param($node)
@@ -2135,18 +2138,18 @@ Describe 'CI gates' {
 
         $install = @($commands | Where-Object { $_.GetCommandName() -eq 'Install-Module' })
         $install.Count | Should -Be 1
-        Get-NamedArgumentText $install[0] 'RequiredVersion' | Should -Be '1.25.0' -Because 'CI installs the analyzer the dev host runs'
+        Get-NamedArgumentText $install[0] 'RequiredVersion' | Should -Be $Version -Because "CI installs the $Module version the dev host runs"
 
-        $import = @($commands | Where-Object { $_.GetCommandName() -eq 'Import-Module' -and $_.CommandElements[1].Extent.Text -eq 'PSScriptAnalyzer' })
+        $import = @($commands | Where-Object { $_.GetCommandName() -eq 'Import-Module' -and $_.CommandElements[1].Extent.Text -eq $Module })
         $import.Count | Should -Be 1 -Because 'installing a version does not make it the copy that loads; the import does'
-        Get-NamedArgumentText $import[0] 'RequiredVersion' | Should -Be '1.25.0'
-        Get-NamedArgumentText $import[0] 'ErrorAction' | Should -Be 'Stop' -Because 'a missing 1.25.0 must fail the step, not fall back to another copy'
+        Get-NamedArgumentText $import[0] 'RequiredVersion' | Should -Be $Version
+        Get-NamedArgumentText $import[0] 'ErrorAction' | Should -Be 'Stop' -Because "a missing $Version must fail the step, not fall back to another copy"
         $import[0].Parent.Parent | Should -BeOfType ([System.Management.Automation.Language.NamedBlockAst]) -Because 'the import runs on every path, not inside the loop or a branch'
 
-        $analyze = @($commands | Where-Object { $_.GetCommandName() -eq 'Invoke-ScriptAnalyzer' })
-        $analyze.Count | Should -Be 1
+        $runs = @($commands | Where-Object { $_.GetCommandName() -eq $Runner })
+        $runs.Count | Should -Be 1
         $import[0].Extent.StartOffset | Should -BeGreaterThan $install[0].Extent.EndOffset -Because 'the import follows the install'
-        $import[0].Extent.EndOffset | Should -BeLessThan $analyze[0].Extent.StartOffset -Because 'the pinned analyzer is loaded before it runs'
+        $import[0].Extent.EndOffset | Should -BeLessThan $runs[0].Extent.StartOffset -Because "the pinned $Module is loaded before it runs"
     }
 }
 
