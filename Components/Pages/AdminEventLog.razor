@@ -909,6 +909,10 @@
 
     private async Task ShowUndoPreview(MergedLogEntry evt)
     {
+        // aud-a28o: refused while an undo runs. The table's Undo buttons sit behind the backdrop but stay
+        // reachable by keyboard, and a preview opened mid-run replaced the panel the undo was confirmed on,
+        // which then showed the first undo's outcome under another event. A guard, not a ClickGate
+        // conversion: the page is NotYetConverted.
         if (undoExecuting)
             return;
 
@@ -969,6 +973,9 @@
 
     private async Task ExecuteUndo()
     {
+        // aud-a28o: a second call while an undo runs returns at once and records nothing - it is a click the
+        // browser sent before the re-render disabled Confirm, not a second attempt. Unguarded it passed every
+        // check the first had and ran a second undo beside it.
         if (undoExecuting)
             return;
 
