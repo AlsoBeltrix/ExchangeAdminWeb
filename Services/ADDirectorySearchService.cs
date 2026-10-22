@@ -864,30 +864,26 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory
         return results;
     }
 
+    internal Func<Runspace> CreateProbeRunspace { get; init; } = ProbeRunspace;
+
+    private static Runspace ProbeRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
     private void ProbeAvailability()
     {
         try
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateProbeRunspace();
             runspace.Open();
 
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ActiveDirectory")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-
-            if (ps.HadErrors)
-            {
-                _logger.LogWarning("ActiveDirectory module could not be loaded. AD autocomplete will be unavailable.");
-                lock (_availabilityLock) { _isAvailable = false; }
-                return;
-            }
+            ActiveDirectoryModuleImport.Import(ps);
 
             lock (_availabilityLock) { _isAvailable = true; }
             _logger.LogInformation("ActiveDirectory module loaded successfully. AD autocomplete is available.");

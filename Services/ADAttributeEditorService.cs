@@ -1179,9 +1179,7 @@ public class ADAttributeEditorService
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
         var searchBases = GetConfiguredSearchBases();
@@ -1364,9 +1362,7 @@ public class ADAttributeEditorService
             runspace.Open();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -1757,9 +1753,7 @@ public class ADAttributeEditorService
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.username, creds.password, creds.domain);
 

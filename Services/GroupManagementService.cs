@@ -109,16 +109,12 @@ public class GroupManagementService
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var results = new List<GroupInfo>();
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             var escaped = searchTerm.Replace("'", "''");
@@ -285,16 +281,12 @@ public class GroupManagementService
         {
             try
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                using var runspace = CreateDirectoryRunspace();
                 runspace.Open();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                ps.Commands.Clear();
+                ActiveDirectoryModuleImport.Import(ps);
 
                 var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
@@ -393,16 +385,12 @@ public class GroupManagementService
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var result = new GroupMemberList { GroupName = groupIdentity };
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             // fsr-1: a DN identity (the search row) is used as-is - the name resolver is
@@ -674,16 +662,12 @@ public class GroupManagementService
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             // pgwt T2: the DN comes from the SAME snapshot the target gate cleared.
@@ -849,16 +833,12 @@ public class GroupManagementService
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             // pgwt T2: the DN comes from the SAME snapshot the target gate cleared.
@@ -956,16 +936,12 @@ public class GroupManagementService
     internal virtual IReadOnlyList<BulkIdentityList.Candidate> QueryBatchCandidates(
         (string username, string password, string domain) creds, IReadOnlyList<BulkIdentityList.Line> kept)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = CreateDirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
         var catalog = ResolveSearchGlobalCatalog(ps, credential);
@@ -1176,16 +1152,12 @@ public class GroupManagementService
         (string username, string password, string domain) creds,
         string memberIdentity, string? memberDn, string? memberObjectGuid)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = CreateDirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
         var props = new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" };
@@ -1325,6 +1297,13 @@ public class GroupManagementService
         return await _moduleCredentials.GetCredentialsAsync("GroupManagement", purpose);
     }
 
+    internal virtual Runspace CreateDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
     private async Task<T> ThrottledAdAsync<T>(Func<Task<T>> operation)
     {
         if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
@@ -1348,16 +1327,12 @@ public class GroupManagementService
         (string username, string password, string domain) creds,
         string? samAccountName, string groupIdentity)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = CreateDirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
 

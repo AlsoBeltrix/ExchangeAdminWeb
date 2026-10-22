@@ -528,6 +528,12 @@ internal sealed class LocalAd
     /// <summary>When set, Import-Module fails with this message, as on a host without the module.</summary>
     public string? ImportFailure { get; set; }
 
+    /// <summary>
+    /// When set, Import-Module loads and then writes this message as an error with its own -ErrorAction Continue,
+    /// which the caller's -ErrorAction Stop does not throw: a record the import left that no throw carried (psl-7).
+    /// </summary>
+    public string? ImportReportsErrorWithoutThrowing { get; set; }
+
     public IReadOnlyList<string> Calls
     {
         get { lock (_calls) return _calls.ToList(); }
@@ -686,6 +692,9 @@ internal sealed class LocalAd
                 $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
                     [System.IO.FileNotFoundException]::new($global:AttributeDirectory.ImportFailure),
                     'Modules_ModuleNotFound', [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $Name))
+            }
+            if ($global:AttributeDirectory.ImportReportsErrorWithoutThrowing) {
+                Write-Error -Message $global:AttributeDirectory.ImportReportsErrorWithoutThrowing -ErrorAction Continue
             }
             """));
 

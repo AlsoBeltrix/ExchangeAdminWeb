@@ -9,7 +9,7 @@ straight after a `-ErrorAction Stop` import, the dead pattern aud-a2o/a26g/a2r r
 measured: a failing import under Stop throws and leaves zero records. Also measured and worth a
 comment where it matters: `PowerShell.HadErrors` reads true after an `Invoke` that threw, even with
 zero records.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on branch; not merged, not pushed; awaiting review
 **Branch**: `worktree-agent-aa41f72251493711c`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a2r agent, 2026-10-22, candidates 2 to 4 of its hand-back)
@@ -121,6 +121,95 @@ Files: `Services/ActiveDirectoryModuleImport.cs` (new), `Services/GroupManagemen
 `Services/AccountLockoutRemediationService.cs`, `Services/ADDirectorySearchService.cs`,
 `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs`, the new test file, this record.
 
+## Fix
+
+- New `Services/ActiveDirectoryModuleImport.cs`: `internal static class ActiveDirectoryModuleImport`, `Import(PowerShell
+  ps)` - `Import-Module -Name ActiveDirectory -ErrorAction Stop` in `try { ps.Invoke(); } finally {
+  ps.Commands.Clear(); ps.Streams.Error.Clear(); }`.
+- `Services/GroupManagementService.cs`: its eight imports are `ActiveDirectoryModuleImport.Import(ps)`, and its eight
+  runspaces `CreateDirectoryRunspace()` - new, `internal virtual`, the session each built inline (`CreateDefault`,
+  `Bypass`), beside the `GetCredentialsAsync` seam.
+- `Services/ADAttributeEditorService.cs`: PerformLookup's, PerformSave's and ReReadCurrentValues' imports are the
+  helper.
+- `Services/ADOrganizationalUnitService.cs`: EnumerateOUs' import is the helper, on a runspace from the new
+  `internal Func<Runspace> CreateDirectoryRunspace { get; init; }` (default: the session it built inline).
+- `Services/AccountLockoutRemediationService.cs`: `CreateAdPowerShell(Runspace? runspace = null)`, now internal, is
+  the helper in a try whose catch disposes the PowerShell and rethrows; its dead `HadErrors` branch and the clears
+  after it are gone (the helper's finally clears). `Invoke(PowerShell)` is internal. The three callers are unchanged.
+- `Services/ADDirectorySearchService.cs`: ProbeAvailability's import is the helper, on a runspace from the new
+  `internal Func<Runspace> CreateProbeRunspace { get; init; }`; its dead `HadErrors` branch (and its warning "could
+  not be loaded") is gone, so the directory is available when the import returns and the catch reports any throw,
+  as before.
+- `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs` LocalAd: `ImportReportsErrorWithoutThrowing`, off by default -
+  the stand-in Import-Module writes it with its own `-ErrorAction Continue` after loading.
+- The routed re-read's `HadErrors` after a caught throw (plan item 3) is a comment, in the comments commit.
+
+Tests: new `ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs`, 15 cases - the stand-ins' own behaviour
+(`TheStandIns_ReportOrFailAsTheTestsBelowRelyOn`) and the harness knob's
+(`TheHarness_ImportReportsAnErrorWithoutThrowing_UnderStop`); the helper
+(`TheImport_ThatReportsAnErrorWithoutThrowing_LeavesNoRecordAndNothingQueued`,
+`TheImport_ThatFails_ThrowsItsOwnError_AndLeavesNothingQueued`); and per service a reporting import that is not
+taken for a later read's error and a failing import that is the import's failure:
+`GroupManagement_AnImportThatReportsAnError_IsNotTakenForTheGroupReadsError`,
+`GroupManagement_AFailingImport_IsTheImportsFailure_AndNoReadIsSent`,
+`AttributeEditor_AnImportThatReportsAnError_IsNotTakenForTheLookupsError`,
+`AttributeEditor_AnImportThatReportsAnError_IsNotTakenForTheFirstSearchBasesError`,
+`AttributeEditor_AFailingImport_IsTheLookupsFailure_AndNoReadIsSent`,
+`OrganizationalUnits_AnImportThatReportsAnError_IsNotTakenForTheEnumerationsError`,
+`OrganizationalUnits_AFailingImport_IsTheImportsFailure`,
+`AccountLockout_AnImportThatReportsAnError_IsNeitherTheImportsFailureNorTheReadsError`,
+`AccountLockout_AFailingImport_IsTheImportsFailure`, `DirectorySearch_AnImportThatReportsAnError_LeavesTheDirectoryAvailable`,
+`DirectorySearch_AFailingImport_IsTheImportsFailure`.
+
+Caller-visible change, by design: an error the ActiveDirectory module's import reports without throwing no longer
+fails anything - not a Group Management add, remove or write-target resolution by DN, not an attribute lookup (or
+one of its search bases), not the OU browser, not Account Lockout Remediation's directory steps, not the
+autocomplete's availability. An import that throws fails as before, with its own error. No outcome the real cmdlet
+is known to produce changes (*assumption, not probed*, aud-a2r's: the real ActiveDirectory module's import writes no
+error past `-ErrorAction Stop`). A failing import no longer leaks Account Lockout Remediation's PowerShell.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M3 puts back the defect of the three services that kept the import's record (their
+imports, as at `89096ac9`, cleared the commands only), and M4 and E2 put back the two dead branches as at `89096ac9`,
+each at its call site; each fails the tests named.
+
+Same driver and conditions as aud-a28q (`round-psl7.ps1`, log `psl7-mutations.log`), the filter
+`FullyQualifiedName~DirectoryModuleImportTests|FullyQualifiedName~ADAttributeEditorSaveTests|FullyQualifiedName~ADAttributeEditorLookupTests|FullyQualifiedName~GroupMemberListingTests|FullyQualifiedName~GroupSearchForestScopeTests`
+(108 tests): stand-in sessions and source scans only, so no mutant could reach a real session. Every mutant built
+with 0 errors; each restore matched its original MD5. After the round, a rebuild on the restored bytes and the
+filter: 108/108 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M3 the helper's finally without its error-stream clear (the commands still cleared) | `ActiveDirectoryModuleImport.cs`, `5CD2122FBB24112D59A05985DA15DBB3` | `8F27B08464DA073677C149673DFE0686` | 6 of 108: `TheImport_ThatReportsAnErrorWithoutThrowing_...` (the record left), and the reporting import taken for a later read's error in four services - `GroupManagement_AnImportThatReportsAnError_...` (refused "not found by its distinguished name"), both `AttributeEditor_AnImportThatReportsAnError_...` (the lookup failed; the first base reported failed), `OrganizationalUnits_AnImportThatReportsAnError_...` (unavailable), `AccountLockout_AnImportThatReportsAnError_...` (the read threw). The directory search passes: nothing reads after its probe's import |
+| M4 CreateAdPowerShell's dead branch restored (its import as at `89096ac9`, inside the new signature) | `AccountLockoutRemediationService.cs`, `D0A6EABB4AD86BD9A6FA88AA41F01AA3` | `880E704CA7DD48C5778442B5967BB5D7` | 1 of 108: `AccountLockout_AnImportThatReportsAnError_IsNeitherTheImportsFailureNorTheReadsError` - the record thrown as the import's failure though the module loaded |
+| extra E2 ProbeAvailability's dead branch restored (as at `89096ac9`) | `ADDirectorySearchService.cs`, `F6839DF8D0F0484C23389B37A7E7124B` | `AA38C9E2EB787BA02580B9D60E5CA9F5` | 1 of 108: `DirectorySearch_AnImportThatReportsAnError_LeavesTheDirectoryAvailable` - unavailable |
+| extra E3 `-ErrorAction Stop` dropped from the helper | `ActiveDirectoryModuleImport.cs`, `5CD2122FBB24112D59A05985DA15DBB3` | `CE47432645A4EE8E344937610496B55E` | 5 of 108: the failing import, a record cleared unread instead of a throw, in `TheImport_ThatFails_...` and the GroupManagement, OrganizationalUnits, AccountLockout and DirectorySearch failing-import tests. `AttributeEditor_AFailingImport_...` passes: the harness's `ImportFailure` is a ThrowTerminatingError, which throws whatever the preference (as aud-a2q's knob did for aud-a2r) |
+
+Not run, by design: no mutation reverted a test seam - a reverted seam opens a real session and imports the real
+module, a directory probe the owner forbids.
+
+Unchanged through the round: `DirectoryModuleImportTests.cs` `3F1D33FB30A4C6867FBA74D6D93A09C6`,
+`AttributeEditorHarness.cs` `332B435BB3CF83161BCD08E45A6836E8`, `GroupManagementService.cs`
+`22302309CB1AFD6F044F9741F61ED30C`, `ADAttributeEditorService.cs` `139EBCF5DDB8671337BADEAFD8B7A4C3`,
+`ADOrganizationalUnitService.cs` `92A27FE3DB289CACB0FFBD04C7F50C8D`. The code comments are written after the round, in
+their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count. One is
+  in a touched file and predates this change: CS8604 at `AccountLockoutRemediationService.cs`'s `AuditLogoff` call
+  (line 525 at `89096ac9`, 526 after the added `using`), not a changed line.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 5,593 passed / 3 skipped
+  (the three known AD skips) / 0 failed, 5,596 total, 5m08s; nothing hung, no Sequence file. aud-a28q's tree: 5,578 /
+  3 / 0, 5,581 total; the fifteen new cases are this record's. Before the round, the related suites
+  (`Group`, `ADAttributeEditor`, `AccountLockout`, `OrganizationalUnit`, `ModuleConfig`, `Allowlist`, `Undo`,
+  `EventLog`, `PageAuthorizationRecheck`, the directory search excluded) in Release: 1,085/1,085.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell source changed (no analyzer or Pester run). No real module, directory, Delinea, SMTP, push or
+deployment: every new session is a stand-in. The existing `ADDirectorySearchServiceTests` in the full suite load the
+real module through the production probe, as they did before (the three known skips); no new test does. No coder
+self-review verdict is claimed.

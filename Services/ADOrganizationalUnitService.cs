@@ -27,6 +27,15 @@ public sealed class ADOrganizationalUnitService
         _logger = logger;
     }
 
+    internal Func<Runspace> CreateDirectoryRunspace { get; init; } = DirectoryRunspace;
+
+    private static Runspace DirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
     /// <summary>
     /// Returns all OUs sorted by DN depth then name, or an empty list when AD
     /// enumeration is not possible (RSAT missing, insufficient permissions, etc.).
@@ -83,21 +92,13 @@ public sealed class ADOrganizationalUnitService
 
     private List<OUEntry> EnumerateOUs()
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = CreateDirectoryRunspace();
         runspace.Open();
 
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        // Import the ActiveDirectory module
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ActiveDirectory")
-          .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         // Enumerate all OUs - runs under the app pool identity (no credential parameter)
         ps.AddCommand("Get-ADOrganizationalUnit")
