@@ -144,7 +144,11 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                     {
                         Target = target,
                         Status = r.Partial ? BulkJobRowStatus.Partial : (r.Success ? BulkJobRowStatus.Success : BulkJobRowStatus.Failed),
-                        Message = r.Message
+                        // aud-a2o. A job shows each row's message and not its steps, so a room-list membership the
+                        // on-prem read-back confirmed - not one this row is known to have written (aud-a2n) - is told
+                        // in the message too, in the words the page's step and the audit use; without it the row
+                        // read as any applied add.
+                        Message = r.DirectoryMembershipConfirmed is { } confirmed ? $"{r.Message} {confirmed}" : r.Message
                     };
                 }
                 catch (Exception ex)

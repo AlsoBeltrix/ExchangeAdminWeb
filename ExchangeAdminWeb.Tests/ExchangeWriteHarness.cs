@@ -253,6 +253,14 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public string? MemberReadBackFailure { get; set; }
 
     /// <summary>
+    /// aud-a2o. After the add, the stand-in <c>Set-ADGroup</c> reports this as an error that <c>-ErrorAction Stop</c>
+    /// does not throw - written with its own <c>-ErrorAction Continue</c> - and carries on: an error reported without
+    /// a throw, which a cmdlet's own error under <c>-ErrorAction Stop</c> is not, so that the service can be shown to
+    /// leave it unread. Null, the default, reports nothing. Read when a directory runspace opens.
+    /// </summary>
+    public string? SetAdGroupReportsErrorWithoutThrowing { get; set; }
+
+    /// <summary>
     /// aud-a2l. The stand-in <c>Set-ADGroup</c> reports success and changes nothing - the write a domain
     /// controller dropped without saying, which only a read-back can catch. Read when a directory runspace
     /// opens.
@@ -504,6 +512,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("DuplicateMemberValueRefusal", DuplicateMemberValueRefusal);
         rs.SessionStateProxy.SetVariable("SetAdGroupFailsAfterApplying", SetAdGroupFailsAfterApplying);
         rs.SessionStateProxy.SetVariable("MemberReadBackFailure", MemberReadBackFailure);
+        rs.SessionStateProxy.SetVariable("SetAdGroupReportsErrorWithoutThrowing", SetAdGroupReportsErrorWithoutThrowing);
         rs.SessionStateProxy.SetVariable("SetAdGroupChangesNothing", SetAdGroupChangesNothing);
         rs.SessionStateProxy.SetVariable("AnotherAddLandsFirst", AnotherAddLandsFirst);
         using var init = PowerShell.Create();
@@ -859,7 +868,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # a value already present (DuplicateMemberValueRefusal, aud-a2n: Write-Error -Exception then return, so
         # the exception sits in the error record); AnotherAddLandsFirst puts the DN there just before the call,
         # another actor's add, and before Failures['Set-ADGroup'] can throw. aud-a2n: SetAdGroupFailsAfterApplying
-        # throws after the add was applied - the write that committed and then failed.
+        # throws after the add was applied - the write that committed and then failed. aud-a2o:
+        # SetAdGroupReportsErrorWithoutThrowing, after the add, writes an error that the caller's -ErrorAction Stop
+        # does not throw - its own -ErrorAction Continue - so the error stream holds a record no throw carried.
         function global:Set-ADGroup {
             [CmdletBinding()] param($Identity, $Add, $Server, $Credential)
             $member = if ($null -ne $Add) { "$($Add['member'])" } else { '' }
@@ -873,6 +884,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if (-not $member) { return }
             if (@($global:DirectoryGroupMembers | Where-Object { "$_" -ieq $member }).Count -gt 0) { Write-Error -Exception $global:DuplicateMemberValueRefusal; return }
             if (-not $global:SetAdGroupChangesNothing) { [void]$global:DirectoryGroupMembers.Add($member) }
+            if ($global:SetAdGroupReportsErrorWithoutThrowing) { Write-Error "$($global:SetAdGroupReportsErrorWithoutThrowing)" -ErrorAction Continue }
             if ($null -ne $global:SetAdGroupFailsAfterApplying) { throw $global:SetAdGroupFailsAfterApplying }
         }
         # aud-a2i. The real cmdlet resolves every member server-side: Active Directory Web Services refuses a

@@ -336,6 +336,35 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         Assert.Equal(BulkJobRowStatus.Partial, outcome.Status);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ARowsMessage_CarriesAMembershipTheReadBackConfirmed_WhenTheResultHasOne(bool confirmed)
+    {
+        // aud-a2o. A job shows each row's message and not its steps, so a row whose room-list membership the
+        // on-prem read-back confirmed - not one this row is known to have written (aud-a2n) - read as any applied
+        // add. The detail the page shows on that step, and the audit records, now follows the row's message.
+        const string Done = "Room metadata and room list configured.";
+        const string Detail = "Membership confirmed present after a stand-in write error: nothing recorded as written.";
+        var f = CreateFixture();
+        f.Rooms.Result = email => new RoomOperationResult
+        {
+            Email = email,
+            Success = true,
+            Message = Done,
+            DirectoryMembershipConfirmed = confirmed ? Detail : null,
+        };
+
+        var outcome = await f.Processor.ProcessRowAsync(FinderJob("AllUsers", "room1@x"), 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.StartsWith(Done, outcome.Message, StringComparison.Ordinal);
+        if (confirmed)
+            Assert.Contains(Detail, outcome.Message, StringComparison.Ordinal);
+        else
+            Assert.Equal(Done, outcome.Message);
+    }
+
     [Fact]
     public async Task CountRows_ReturnsPayloadRowCount()
     {

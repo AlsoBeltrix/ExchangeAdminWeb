@@ -1094,6 +1094,63 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.Equal(3, MembershipReads().Count);
     }
 
+    [Fact]
+    public async Task TheOnPremNoOp_HasAStepOfItsOwn_NotTheAddsStep()
+    {
+        // aud-a2o. A re-run inside the sync window: the first run adds the room to the list's on-prem group; the
+        // second finds it already a member there - not yet on Exchange's copy - and writes nothing. The second's
+        // room-list step read as the first's, as if it had written too. The two now differ, both successful, the
+        // no-op's naming the list and carrying no detail; only the first wrote.
+        SyncedListTheRoomIsNotOnInExchange();
+        var service = new Service(_h);
+
+        var added = await Apply(service, Room());
+        var alreadyThere = await Apply(service, Room());
+
+        Assert.True(added.Success, added.Message);
+        Assert.True(alreadyThere.Success, alreadyThere.Message);
+        Assert.False(alreadyThere.Partial);
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal(CheckedObject, added.WrittenDirectoryObject);
+        Assert.Null(alreadyThere.WrittenDirectoryObject);
+        Assert.Null(alreadyThere.DirectoryMembershipConfirmed);
+        // The room-list step is each run's last.
+        var addStep = added.Steps[^1];
+        var noOpStep = alreadyThere.Steps[^1];
+        Assert.True(addStep.Success, addStep.Stage);
+        Assert.True(noOpStep.Success, noOpStep.Stage);
+        Assert.NotEqual(addStep.Stage, noOpStep.Stage);
+        Assert.Contains(List, noOpStep.Stage, StringComparison.Ordinal);
+        Assert.Null(noOpStep.Error);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnErrorTheWriteReportsWithoutThrowing_IsNotTakenForItsError_TheReadBackDecides(bool applied)
+    {
+        // aud-a2o. The write's error is the one it throws, as in GroupManagementService's Set-ADGroup writes: under
+        // -ErrorAction Stop an error a cmdlet writes is thrown, so one reported without a throw - the stand-in's own
+        // -ErrorAction Continue - is not Set-ADGroup's, and the HadErrors check that took it is gone. The read-back
+        // decides, the record the write left cleared before it so the read is not failed by it: applied, a clean
+        // write - the room's object written, no confirmed detail; not applied, the not-confirmed failure, without
+        // the reported text.
+        const string Reported = "A non-terminating error the write reported and carried on past.";
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.SetAdGroupReportsErrorWithoutThrowing = Reported;
+        _h.SetAdGroupChangesNothing = !applied;
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal(3, MembershipReads().Count);
+        Assert.Equal(applied, result.Success);
+        Assert.Equal(!applied, result.Partial);
+        Assert.Equal(applied ? CheckedObject : null, result.WrittenDirectoryObject);
+        Assert.Null(result.DirectoryMembershipConfirmed);
+        Assert.DoesNotContain(Reported, result.Message, StringComparison.Ordinal);
+    }
+
     // A directory exception type other than the base one, as the real module derives several (aud-a2n): the
     // code is read through the base type's name.
     private sealed class DerivedDirectoryException(string message, int errorCode) : AdException(message, errorCode);
@@ -1163,8 +1220,10 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         // it puts the DN on the group, and the same add again is refused with an error the service recognizes
         // as a value already there - the exception PowerShell actually throws, not a string, its code in the
         // error record (aud-a2n); told to change nothing, it changes nothing; told another add lands first, the
-        // DN is there and this write is refused; told to fail after applying, it applies the add and throws; and
-        // told the read-back fails, a member read made after a write fails, one made before does not.
+        // DN is there and this write is refused; told to fail after applying, it applies the add and throws; told
+        // the read-back fails, a member read made after a write fails, one made before does not; and told to report
+        // an error without throwing (aud-a2o), it applies the add and reports one that -ErrorAction Stop does not
+        // throw - so a test of an error the write did not throw has one to ignore.
         (string Name, object Value)[] addTheRoom =
             [("Identity", ExchangeWriteHarness.DefaultDirectoryGroupGuid), ("Add", GroupManagementService.BuildMemberAttributeWrite(RoomDn)), ("Server", "contoso.test")];
         (string Name, object Value)[] readTheMembers =
@@ -1219,6 +1278,20 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
             Assert.Contains(TimedOut, Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADGroup", addTheRoom)).Message, StringComparison.Ordinal);
             Assert.Equal([RoomDn], Members());
             Assert.Contains("not operational", Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Get-ADGroup", readTheMembers)).Message, StringComparison.Ordinal);
+        }
+
+        _h.DirectoryGroupMembers.Clear();
+        _h.SetAdGroupFailsAfterApplying = null;
+        _h.MemberReadBackFailure = null;
+        _h.SetAdGroupReportsErrorWithoutThrowing = "Reported, not thrown.";
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Set-ADGroup", addTheRoom);
+            Assert.True(ps.HadErrors);
+            Assert.Equal("Reported, not thrown.", Assert.Single(ps.Streams.Error).Exception.Message);
+            Assert.Equal([RoomDn], Members());
         }
     }
 }
