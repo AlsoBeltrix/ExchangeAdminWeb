@@ -175,6 +175,9 @@ public class MigrationService : ExchangeServiceBase
             }
             catch (Exception ex)
             {
+                // aud-a23j. A check that could not be completed is no answer. It used to add a warning and leave the
+                // mailbox Eligible, so a batch could be created for a member of an excluded group. An Eligible verdict
+                // becomes Undetermined - no size step, no batch (aud-a23h); an Ineligible one stands, its reason known.
                 _logger.LogError(ex, "The excluded-group check for {Email} could not be completed", emailAddress);
                 if (result.Status == MigrationStatus.Eligible)
                     result.Status = MigrationStatus.Undetermined;
@@ -219,6 +222,8 @@ public class MigrationService : ExchangeServiceBase
                 }
                 else
                 {
+                    // aud-a23k. A size that could not be read is a marker with its reason, never 0. No move back
+                    // on-premises is decided by size (no quota applies there), so none is refused: the page says it.
                     var cloudSize = await GetCloudMailboxSizeAsync(emailAddress);
                     result.MailboxSizeGB = cloudSize.MailboxGB;
                     result.ArchiveSizeGB = cloudSize.ArchiveGB;
@@ -236,6 +241,8 @@ public class MigrationService : ExchangeServiceBase
                 }
                 else
                 {
+                    // aud-a23k. A size read that failed as a whole - the pool, the connection, a cancellation neither
+                    // read's own catch takes - marks both sizes; this catch used to drop it and the page showed none.
                     result.MailboxSizeUnreadable = result.ArchiveSizeUnreadable =
                         $"the size read failed: {ResolveFailure(sizeEx).primary.TrimEnd('.')}";
                 }
@@ -251,6 +258,9 @@ public class MigrationService : ExchangeServiceBase
         return result;
     }
 
+    // aud-a23j. The Active Directory session the excluded-group check opens, as ExchangeServiceBase.CheckAdGroupMembership
+    // built it (not the Exchange pool). Internal virtual as a test seam, the shape of GroupManagementService's: a test hands
+    // back a session whose Import-Module and AD reads are stand-ins, so the check runs for real with no directory.
     internal virtual Runspace CreateDirectoryRunspace()
     {
         var iss = InitialSessionState.CreateDefault();
@@ -258,6 +268,16 @@ public class MigrationService : ExchangeServiceBase
         return RunspaceFactory.CreateRunspace(iss);
     }
 
+    // aud-a23j. The excluded-group check of a move to Exchange Online, moved here from
+    // ExchangeServiceBase.CheckAdGroupMembership. That matched each configured value as a SUBSTRING of the user's memberOf
+    // DNs - a group of a similar name, the name in an OU path, a fragment of a DN cut at the setting's commas all matched
+    // groups that are not the excluded one - and returned without checking when no directory user had the address as its
+    // UPN. Here each configured value is RESOLVED to its group (Get-ADGroup -Identity: a DN, GUID, SID or sAMAccountName)
+    // and that group's DN compared exactly, ignoring case as AD does, with the user's memberOf - the Constitution's "OU and
+    // group checks must be based on resolved directory objects, not substring matches". Whatever keeps the check from
+    // completing - the module, the lookup, no user or several, no memberOf, a group that does not resolve to one - throws
+    // to the caller, which makes the verdict Undetermined. Membership is direct (memberOf), as before. The user is found by
+    // UPN in the host's own domain, as before: one it does not find there cannot be checked, which is never Eligible.
     private void CheckExcludedGroups(MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups)
     {
         using var runspace = CreateDirectoryRunspace();
@@ -306,6 +326,8 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
+    // aud-a23j. One step of the check under Stop, through the base's Invoke, which fails on an error and on HadErrors alike;
+    // a failure names the step, in the cmdlet's own words (ResolveFailure).
     private static Collection<PSObject> DirectoryStep(PowerShell ps, string failure)
     {
         try
@@ -318,6 +340,9 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
+    // aud-a23j. The user's memberOf as a set of DNs, compared ignoring case. ASSUMPTION, unverified (no live call): the AD
+    // module reports a requested memberOf as a list, empty for a user in no group. Absent, or not a list, it cannot be read:
+    // the check cannot be completed - visible and blocking - never "in no excluded group".
     private static HashSet<string> MemberOfDistinguishedNames(PSObject user, string emailAddress)
     {
         var reported = user.Properties["memberOf"]?.Value;
@@ -400,6 +425,10 @@ public class MigrationService : ExchangeServiceBase
     /// Outcome of the gate for ONE target: a <paramref name="Denial"/> excluding it, or null to
     /// migrate it. <paramref name="ServicedNote"/> is set only when the target was protected and an
     /// authorised servicer overrode the exclusion; it must reach the page's audit call.
+    /// aud-a23l: <paramref name="IsProtected"/> is true only when the denial IS the check's answer
+    /// that the target is protected. A check that could not answer - unavailable, ambiguous, failed,
+    /// thrown - says nothing either way, so its denial leaves it false; and false is the default, so
+    /// a denial added later that forgets it reads "could not be verified", never a claim of protection.
     /// </summary>
     internal readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote, bool IsProtected = false);
 
@@ -492,6 +521,8 @@ public class MigrationService : ExchangeServiceBase
             }
             else
             {
+                // aud-a23l. Each exclusion is also listed by kind, so the caller can say which it is: a target whose
+                // check did not answer is not a protected principal, only one not verified as unprotected.
                 var entry = $"{target} - {gate.Denial.Message}";
                 excluded.Add(entry);
                 if (!gate.IsProtected)
@@ -686,6 +717,10 @@ https://admin.exchange.microsoft.com/#/migration";
         return result;
     }
 
+    // aud-a23l. Why nothing was created when every target was excluded, saying which kind each exclusion is. It said "is a
+    // protected principal" (or "are protected principals") for all of them, including a target whose protection check
+    // could not answer; that is said only of a target the check found protected now, and one it could not verify is "could
+    // not be verified as unprotected", with its reason. The Detail lists every target and its reason, as before.
     private static string AllExcludedMessage(IReadOnlyList<string> excluded, IReadOnlyList<string> unverified)
     {
         if (unverified.Count == 0)
@@ -1161,6 +1196,9 @@ https://admin.exchange.microsoft.com/#/migration";
             // the steps already applied, where under Ignore the batch steps could not fail and "initiated completion" was
             // reported whether or not Complete-MigrationBatch ran.
             var hasOwnBatch = ownBatch.Count == 1;
+            // aud-a23n. And the batch's own state, before any write: a batch the approval cannot complete from is refused
+            // here, naming its state. It used to pass this read and fail at Complete-MigrationBatch after Set-MigrationUser
+            // and Set-MigrationBatch -CompleteAfter had already written.
             if (hasOwnBatch)
                 RefuseUnlessApprovable(emailAddress, ownBatch[0].Properties["Status"]?.Value?.ToString());
 
@@ -1241,9 +1279,18 @@ https://admin.exchange.microsoft.com/#/migration";
         applied.Add(step);
     }
 
+    // aud-a23n. The batch states an approval refuses before writing, because it does not complete a batch from them: Failed,
+    // Removing and Stopped, the finding's own; Completing and Stopping, their in-flight forms (the batch planner groups
+    // "finishing now" and "being torn down" the same way); and CompletedWithErrors, which the owner ruled on 2026-09-25 has
+    // nothing to finalise until remediated (MigrationBatchActionPlanner). Completed is refused too, in its own words below.
+    // ASSUMPTION, unverified (no live call): these are the names Get-MigrationBatch reports. An unlisted status proceeds,
+    // and a step Exchange then refuses is reported naming the step and what was applied (aud-a23h).
     private static readonly string[] ApprovalRefusedBatchStatuses =
         ["CompletedWithErrors", "Completing", "Failed", "Removing", "Stopped", "Stopping"];
 
+    // aud-a23n. Throws, before the first write, for a batch that reports no status - which state it is in is not known - or
+    // one in a state above; RunAsync makes that the row's failure, and "Nothing was changed." is true. Completed is its own
+    // outcome: the migration has finished, which is not a fault, so it is said as such rather than as a refused state.
     private static void RefuseUnlessApprovable(string emailAddress, string? reportedStatus)
     {
         var status = reportedStatus?.Trim();
@@ -1266,6 +1313,12 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
+    // aud-a23n. The read-back after an accepted Complete-MigrationBatch, as the Detail of a SUCCESSFUL approval. An accepted
+    // completion is the completion: reporting the approval failed because a read-back could not confirm it invites a second
+    // run of writes already made (Known Failure Class 1). It used to require CompleteAfter (or CompleteAfterUTC) to still be
+    // set, so a cmdlet that clears or stops returning it once a completion is accepted turned the irreversible write into a
+    // reported failure. Nothing here interprets a status: the Detail says what the read-back showed - the status as
+    // reported, and whether a completion time is set - or that the state since was not confirmed, and why. Never throws.
     private static string DescribeCompletionReadBack(PowerShell ps, ConnectionErrorTracker tracker, string batchName)
     {
         var accepted = $"Exchange accepted Complete-MigrationBatch for its migration batch {batchName}";
@@ -1369,8 +1422,16 @@ https://admin.exchange.microsoft.com/#/migration";
         }, () => ($"Migration batch '{batchName}' queued to start.", (string?)null), allowRetry: true);
     }
 
+    // aud-a23k. The sizes a move back on-premises shows, each with why it could not be read when it could not; a size with a
+    // reason is never shown as a number or summed.
     private sealed record CloudMailboxSize(double MailboxGB, string? MailboxUnreadable, double ArchiveGB, string? ArchiveUnreadable);
 
+    // aud-a23k. A size that could not be read used to be 0 - the read failing, no row, a size that did not parse, and any
+    // failure of the archive read at all - which the page showed as an empty mailbox or no size. Each is a marker now (the
+    // ReportedCount idea, for a size). Exchange's not-found for the archive is no archive, read from the error's structure
+    // (aud-a23h's IsNotFound). ASSUMPTION, unverified (no live call): Get-MailboxStatistics -Archive reports a mailbox with
+    // no archive in one of those shapes; if not, such a mailbox shows "Archive: could not be read (...)" - visible, and no
+    // decision reads it. Neither read's catch takes a cancellation (aud-a23g's rule); one escapes to the caller.
     private async Task<CloudMailboxSize> GetCloudMailboxSizeAsync(string emailAddress)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
@@ -1410,6 +1471,7 @@ https://admin.exchange.microsoft.com/#/migration";
         }, allowRetry: true);
     }
 
+    // aud-a23k. A size as reported, or why it is not one: no row, no TotalItemSize, or one ParseSizeToGB cannot read.
     private static (double gb, string? unreadable) ReadSize(Collection<PSObject> stats, string noRow)
     {
         var row = stats.FirstOrDefault();
@@ -1425,6 +1487,9 @@ https://admin.exchange.microsoft.com/#/migration";
             : (0, $"the reported TotalItemSize '{reported}' is not a size this app can read");
     }
 
+    // aud-a23k. The report, or why there is none - never failure text where the report goes. A failed fetch came back as
+    // "Error retrieving report: ...", which the page stored and showed as the report, its activity succeeded, and the bulk
+    // export stored as the mailbox's report on a Succeeded row; no statistics row was a null report the page then stored.
     public async Task<MigrationUserReport> GetMigrationUserReportAsync(string emailAddress)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
@@ -1473,6 +1538,8 @@ https://admin.exchange.microsoft.com/#/migration";
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get migration report for {Email}", emailAddress);
+                // aud-a23l. In the cmdlet's own words (ResolveFailure): an error written under Stop read "The running
+                // command stopped because the preference variable ..." in front of them.
                 return MigrationUserReport.Failed(ResolveFailure(ex).primary);
             }
         }, allowRetry: true);
@@ -1504,6 +1571,8 @@ https://admin.exchange.microsoft.com/#/migration";
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to search migration users for {Term}", searchTerm);
+                // aud-a23l. In the cmdlet's own words (ResolveFailure): it read "Search failed: The running command stopped
+                // because the preference variable ..." for an error written under Stop.
                 return MigrationUserSearchResult.Failed(ResolveFailure(ex).primary);
             }
         }, allowRetry: true);

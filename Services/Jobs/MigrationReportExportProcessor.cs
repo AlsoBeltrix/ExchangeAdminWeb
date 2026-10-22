@@ -82,6 +82,8 @@ public sealed class MigrationReportExportProcessor : IBulkJobProcessor
         try
         {
             var report = await _migration.GetMigrationUserReportAsync(email);
+            // aud-a23k. A failed fetch is a Failed row naming why, and nothing is stored for the zip to carry. The fetch
+            // used to hand back its failure as text, which was stored as this mailbox's report on a Succeeded row.
             if (report.Text is not { } text)
             {
                 _logger.LogWarning("Report fetch failed for {Email}: {Reason}", email, report.Failure);

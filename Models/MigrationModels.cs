@@ -8,8 +8,16 @@ public class MigrationEligibilityResult
     public List<string> Warnings { get; set; } = new();
     public double MailboxSizeGB { get; set; }
     public double ArchiveSizeGB { get; set; }
+
+    /// <summary>
+    /// aud-a23k. Why the mailbox size could not be read; null when it was, or when no size was asked for. A size with a
+    /// reason is never shown as a number or summed into a total - it used to be 0, an empty mailbox to the reader.
+    /// </summary>
     public string? MailboxSizeUnreadable { get; set; }
+
+    /// <summary>aud-a23k. The same for the archive. Exchange saying there is no archive is no archive, not this.</summary>
     public string? ArchiveSizeUnreadable { get; set; }
+
     public double TotalSizeGB => MailboxSizeGB + ArchiveSizeGB;
 
     /// <summary>
@@ -261,10 +269,17 @@ public sealed record UnreadableMigrationMailbox(string? Identity, string Reason)
 /// </summary>
 public sealed record MigrationMailboxList(List<MigrationUserInfo> Mailboxes, List<UnreadableMigrationMailbox> Unreadable);
 
+/// <summary>
+/// aud-a23k. What a report fetch returned: the report's <see cref="Text"/>, or - with no text - why there is none
+/// (<see cref="Failure"/>). A failed fetch was returned as text in the report's place, which was stored, shown and exported
+/// as the report.
+/// </summary>
 public sealed record MigrationUserReport(string? Text, string? Failure)
 {
+    /// <summary>A report.</summary>
     public static MigrationUserReport Of(string text) => new(text, null);
 
+    /// <summary>A failure with no text, its reason given one when blank, so a failure can never read as none (aud-a23g).</summary>
     public static MigrationUserReport Failed(string? reason) =>
         new(null, string.IsNullOrWhiteSpace(reason) ? "no reason was given" : reason);
 }
