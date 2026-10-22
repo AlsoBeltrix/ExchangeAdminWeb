@@ -85,6 +85,11 @@ public class ExtendedLogService : IDisposable
     /// Stores the extended-log level and applies it. Throws when it cannot be stored, leaving the level
     /// in effect unchanged (aud-a28k).
     /// </summary>
+    /// <remarks>
+    /// It used to apply the level first and swallow a store failure, so Admin Settings recorded and
+    /// reported a level the store had not kept - in effect on this instance only until the next config
+    /// write reloaded the stored one, and never on the other. Stored first, applied after, or neither.
+    /// </remarks>
     public void SetLevel(string level)
     {
         try

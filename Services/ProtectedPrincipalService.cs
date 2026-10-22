@@ -1019,6 +1019,15 @@ public class ProtectedPrincipalService
     /// Whether the page saving this loaded at least one rule. A save holding no rules over a store
     /// that holds some is refused unless it did.
     /// </param>
+    /// <remarks>
+    /// Three refusals, each writing nothing. A legacy file the import refused still holds rules the
+    /// database has never seen: writing now would mark the store configured, and the import would never
+    /// run again. Rows that cannot be read under the lock cannot be replaced knowingly. And a save holding
+    /// no rules, over a store that holds some, from a page that loaded none, is the aud-a28j wipe itself -
+    /// the page's lists are empty because it could not read the rules, or because the other instance added
+    /// them since, and either way the admin never saw what the save would delete. A page that loaded rules
+    /// and had the admin remove them one by one is that admin's intent, and saves.
+    /// </remarks>
     public ProtectedPrincipalSaveOutcome ReplaceConfig(ProtectedPrincipalConfig config, bool pageLoadedRules)
     {
         ArgumentNullException.ThrowIfNull(config);

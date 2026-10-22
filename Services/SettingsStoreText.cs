@@ -4,6 +4,12 @@ namespace ExchangeAdminWeb.Services;
 /// What the admin pages tell an administrator about a config store they cannot read: where it is and
 /// how it is fixed (aud-a26h).
 /// </summary>
+/// <remarks>
+/// These stores have lived in the SQLite config database since the legacy import, but the banners and
+/// refusals still told an administrator to fix a <c>config\*.json</c> file nothing reads. The file is
+/// named only where its import failed - the one case where it is the thing to fix. One place, so a banner
+/// and its save's refusal cannot drift apart again.
+/// </remarks>
 public static class SettingsStoreText
 {
     /// <summary>The fix for a table in the config database.</summary>

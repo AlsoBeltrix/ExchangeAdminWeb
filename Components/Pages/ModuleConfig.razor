@@ -874,6 +874,10 @@
     }
 
     /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
+    /// <remarks>
+    /// aud-a28j. A tab whose store did not load holds the fallback, not the stored state, and has nothing
+    /// to save over it. Withholding the button is the courtesy; each save refuses the same case itself.
+    /// </remarks>
     private bool CanSaveCurrentTab() => tab switch
     {
         SecStatus => !enablementStoreCorrupt,
@@ -923,6 +927,9 @@
     private bool moduleConfigCorrupt;
     private bool sectionAccessCorrupt;
     private bool sectionAccessUnconfigured;
+
+    // aud-a28j. GetModuleAdmins reads an unreadable store as no admins, with no banner, and a save from
+    // that empty list replaced the module's admin groups with it.
     private bool moduleAdminsUnreadable;
 
     protected override async Task OnParametersSetAsync()
@@ -977,6 +984,8 @@
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
         sectionAccessCorrupt = SectionAccess.IsFragmentCorrupt();
+        // aud-a28j. Not asked of a store already known corrupt: that read throws, and the whole page failed
+        // to load instead of showing the access tab's banner.
         sectionAccessUnconfigured = !sectionAccessCorrupt && !SectionAccess.IsSectionAccessConfigured();
 
         currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
@@ -1156,6 +1165,8 @@
                 return;
             }
 
+            // aud-a28j. The check above says the store reads now; this one says the fields came from it. A
+            // load that could not read it left blank fields, and the check above passes once it reads again.
             if (moduleConfigCorrupt)
             {
                 statusMessage = "Refusing to save: this page does not hold the module's stored configuration (it could not be read), so saving would overwrite it with the blank fields shown. Nothing was changed. Reload the page.";
@@ -1228,6 +1239,7 @@
                 return;
             }
 
+            // aud-a28j. The same for the toggle: it is the all-disabled fallback when the load could not read it.
             if (enablementStoreCorrupt)
             {
                 statusMessage = "Refusing to save: this page's toggle is not the stored module enablement state (the store could not be read), so saving it could switch the module off. Nothing was changed. Reload the page.";
@@ -1236,6 +1248,9 @@
                 return;
             }
 
+            // aud-a28k. This module only, and only when toggled, decided against its row under the write lock:
+            // the whole-map write it replaces switched back any module changed elsewhere between its read and
+            // its write.
             var outcome = Enablement.SetModulesEnabled(moduleEnabled == moduleEnabledBaseline
                 ? new Dictionary<string, bool>()
                 : new Dictionary<string, bool> { [module.Id] = moduleEnabled });
@@ -1318,6 +1333,8 @@
                 return;
             }
 
+            // aud-a28j. The lists are this page's load: empty when it could not read the store. Asked before
+            // the directory confirmation below, which must not run for a save that cannot happen.
             if (sectionAccessCorrupt)
             {
                 statusMessage = "Refusing to save: this page does not hold the stored section access (it could not be read), so saving would replace the stored groups with the empty lists it has. Nothing was changed. Reload the page.";
@@ -1343,6 +1360,10 @@
                 return;
             }
 
+            // aud-a28k. Only the aliases the admin edited - from the confirmed snapshot, never the live lists -
+            // each compared under the write lock with what this page loaded; one changed elsewhere since
+            // refuses the whole save. Overwriting every alias of the module with the page's snapshot lost
+            // grants made or revoked elsewhere, edited or not.
             var edited = policyAliases
                 .Where(a => GroupDelta(snapshot[a].ToList(), accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
                 .ToDictionary(a => a, a => snapshot[a], StringComparer.OrdinalIgnoreCase);
@@ -1438,6 +1459,7 @@
                 return;
             }
 
+            // aud-a28j. The list is this page's load: empty, not the stored groups, when it could not be read.
             if (moduleAdminsUnreadable)
             {
                 statusMessage = "Refusing to save: the module admin groups could not be read when this page loaded, so the list shown is not the stored groups and saving would replace them with it. Nothing was changed. Reload the page.";
@@ -1459,6 +1481,8 @@
                 return;
             }
 
+            // aud-a28j. Re-read after the directory confirmation, immediately before the write; the same read
+            // is the record's before-state.
             if (!ModuleAdmin.TryGetAllGrants(out var stored))
             {
                 moduleAdminsUnreadable = true;

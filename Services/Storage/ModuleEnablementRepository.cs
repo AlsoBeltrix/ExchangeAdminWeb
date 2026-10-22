@@ -137,6 +137,8 @@ public sealed class ModuleEnablementRepository
         return command.ExecuteScalar() is { } value and not DBNull ? Convert.ToInt64(value) != 0 : null;
     }
 
+    // Thrown when every module is already in its target state, so the write rolls back instead of
+    // committing a change-token bump that would make every cache on both instances reload for nothing.
     private sealed class NothingWritten : Exception;
 
     /// <summary>

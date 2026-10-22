@@ -183,6 +183,13 @@ public class ModuleEnablementService
     /// each replaced. System modules and unknown ids are ignored. Writes nothing while the legacy file
     /// is not imported. Throws when the write fails.
     /// </summary>
+    /// <remarks>
+    /// The pages used to write the whole enablement map - Admin Settings the map it loaded, the two
+    /// one-module pages a map read just before - so a toggle changed elsewhere since that read, on the
+    /// other instance included, was switched back. Only the modules the admin changed are written, each
+    /// against its row under the write lock. A boolean cannot conflict: a row that already holds the target
+    /// was switched the same way elsewhere, is skipped, and is recorded by the save that switched it.
+    /// </remarks>
     public EnablementSaveOutcome SetModulesEnabled(IReadOnlyDictionary<string, bool> changes)
     {
         ArgumentNullException.ThrowIfNull(changes);

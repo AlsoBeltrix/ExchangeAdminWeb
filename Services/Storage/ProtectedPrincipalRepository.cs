@@ -93,6 +93,14 @@ public sealed class ProtectedPrincipalRepository
     /// rules to store, or null to store nothing - in which case the transaction is rolled back and
     /// nothing, not even the change token, is written.
     /// </summary>
+    /// <remarks>
+    /// The admin page's save used to replace the table with whatever lists the page held, reading
+    /// nothing first, so a page whose load had failed wrote its empty lists over every rule. The decision
+    /// is made here, from the rows as they are under the lock <c>SqliteConfigStore.Write</c> takes at
+    /// BEGIN IMMEDIATE: dev and prod share this database, and a read made before the write could be
+    /// overtaken by the other instance before the replace lands (the aud-a28i and aud-a33b shape). The
+    /// rows are read back before the commit so the caller's record names exactly what it left.
+    /// </remarks>
     public ProtectedPrincipalReplaceOutcome Replace(Func<ProtectedPrincipalSnapshot, ProtectedPrincipalData?> decide)
     {
         ArgumentNullException.ThrowIfNull(decide);
@@ -126,6 +134,9 @@ public sealed class ProtectedPrincipalRepository
         }
     }
 
+    // A read that throws - a damaged or missing table - is a snapshot that says it could not be read: the
+    // service refuses on it, and inside the write it must not escape as an exception the page would record
+    // as a failed write rather than a refusal.
     private static ProtectedPrincipalSnapshot ReadSnapshot(SqliteConnection connection, SqliteTransaction transaction)
     {
         try
@@ -139,6 +150,9 @@ public sealed class ProtectedPrincipalRepository
         }
     }
 
+    // Thrown out of the write when decide stores nothing, because IConfigStore.Write commits - and bumps the
+    // change token every cache on both instances watches - whenever its callback returns. An exception is its
+    // documented rollback. Caught in Replace; it never leaves this class.
     private sealed class NothingWritten(ProtectedPrincipalSnapshot before) : Exception
     {
         public ProtectedPrincipalSnapshot Before { get; } = before;

@@ -241,6 +241,15 @@ public class SectionAccessService
     /// (<paramref name="loaded"/>) against the table as it is under the write lock. Any alias that
     /// differs refuses the whole save. Throws when the write fails.
     /// </summary>
+    /// <remarks>
+    /// The page used to overwrite every alias of its module with the lists it loaded and replace the whole
+    /// table, so a grant made or revoked elsewhere since the page loaded - by another admin, the other
+    /// instance, or the SID migration - was lost, on an alias the admin edited or not (aud-a33b's recorded
+    /// gap). Aliases the admin did not edit are now left as they are. An edited alias that changed since is
+    /// refused rather than merged: the admin reloads and re-applies, and nothing is guessed. Section access
+    /// never configured is compared, and written, as the fallback the gates read today, so the first save
+    /// starts enforcement without moving anyone's effective access, as the whole-table save did.
+    /// </remarks>
     public SectionAccessSaveOutcome SaveEditedAliases(
         IReadOnlyDictionary<string, string[]> loaded, IReadOnlyDictionary<string, string[]> edited)
     {

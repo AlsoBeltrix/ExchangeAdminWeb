@@ -153,12 +153,22 @@
     private bool saving;
     private string? statusMessage;
     private bool statusIsError;
+
+    // aud-a26h. A saved connection whose pool drain failed is neither a success nor a failed save.
     private bool statusIsWarning;
 
     private bool moduleEnabled;
+
+    // aud-a28k. What the page loaded, so Save Status writes only a toggle the admin changed.
     private bool moduleEnabledBaseline;
     private bool configCorrupt;
+
+    // aud-a28j. True only when LoadExoConfig read the connection. A load that threw left blank fields with
+    // configCorrupt false and Save offered, and saving blanks clears the connection.
     private bool exoConfigLoaded;
+
+    // aud-a28j. The status shown is the all-disabled fallback when this is set, and saving it wrote that
+    // fallback back for every module.
     private bool enablementStoreCorrupt;
     private string exoAppId = "";
     private string exoOrganization = "";
@@ -239,6 +249,8 @@
                 return;
             }
 
+            // aud-a28j. This save had no corrupt-store refusal: over a store that read as corrupt it wrote the
+            // all-disabled fallback back for every module. The second check says the toggle came from the store.
             if (Enablement.IsStoreCorrupt())
             {
                 enablementStoreCorrupt = true;
@@ -256,6 +268,8 @@
                 return;
             }
 
+            // aud-a28k. Nothing toggled, nothing written: writing the loaded toggle back reverted a change made
+            // elsewhere since the page loaded. A toggle is written alone, decided against its row under the lock.
             if (moduleEnabled == moduleEnabledBaseline)
             {
                 statusMessage = "The Exchange Online module status is unchanged; nothing was saved.";
@@ -357,6 +371,8 @@
                 return;
             }
 
+            // aud-a28j. The fields are this page's load: blank when it could not read the connection, and three
+            // blank fields pass validation as "clear the configuration". The disabled button was the only guard.
             if (!exoConfigLoaded)
             {
                 statusMessage = "Refusing to save: the Exchange Online connection settings could not be read when this page loaded, so the fields shown are not the stored values. Nothing was changed. Reload the page.";
@@ -411,6 +427,7 @@
                 }
             }
 
+            // aud-a28j. Re-checked immediately before the write, as the Module Configuration saves do.
             if (ModuleConfigSvc.IsModuleCorrupt(ExoConnectionPool.ConfigModuleKey))
             {
                 configCorrupt = true;
@@ -422,6 +439,8 @@
                 return;
             }
 
+            // aud-a28k. The three keys upserted inside one write, which returns them as they were under its
+            // lock: the record's before-state, where an empty one made every save read as all added.
             var update = ModuleConfigSvc.UpdateModuleValues(ExoConnectionPool.ConfigModuleKey, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 [ExoConnectionPool.ConfigAppIdKey] = trimmedAppId,
@@ -442,6 +461,9 @@
             statusIsError = false;
             completed = (true, statusMessage);
 
+            // aud-a26h. The configuration is saved and live once the write returns, so its record and message
+            // come first and the drain is its own step. A drain that failed used to land in the save's catch,
+            // telling the admin, and the audit, that a saved configuration had not saved.
             try
             {
                 ExoPool.DrainPool();

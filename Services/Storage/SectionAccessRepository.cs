@@ -208,6 +208,9 @@ public sealed class SectionAccessRepository
         }
     }
 
+    // Thrown out of the write when decide stores nothing - a refusal, or nothing to save - because
+    // IConfigStore.Write commits, and bumps the change token both instances watch, whenever its callback
+    // returns. An exception is its documented rollback. Caught in ReplaceAliases; it never leaves this class.
     private sealed class NothingWritten(SectionAccessSnapshot before) : Exception
     {
         public SectionAccessSnapshot Before { get; } = before;

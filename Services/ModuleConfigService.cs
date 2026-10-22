@@ -95,6 +95,13 @@ public class ModuleConfigService
     /// returns the module's values as read under the write lock and as the write left them
     /// (aud-a28j). Throws when the write fails, like <see cref="SaveModuleConfig"/>.
     /// </summary>
+    /// <remarks>
+    /// The directory-read secret and the Exchange Online connection used to read the module's whole
+    /// config, set their keys and replace the lot in a later transaction: a key the other instance changed
+    /// in between was overwritten, and a read that failed - the read is fail-open - wiped the module's other
+    /// keys. Upserting only the named keys inside one write leaves the rest alone, and the values read
+    /// under the lock are the honest before-state for the save's record (aud-a28k).
+    /// </remarks>
     public ModuleConfigUpdate UpdateModuleValues(string moduleId, IReadOnlyDictionary<string, string> values)
     {
         ModuleConfigUpdate update;
