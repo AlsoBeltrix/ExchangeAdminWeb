@@ -1004,4 +1004,181 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.False(row.TryGetProperty("mutationAttempted", out _));
         Assert.False(row.TryGetProperty("detail", out _));
     }
+
+    // ---- a change is a difference the read-back would see, read as the read-back reads it (aud-a26o) -------
+
+    private const string Phones = "otherTelephone";
+
+    /// <summary>The harness's allowlist with a multi-valued attribute beside the usual two.</summary>
+    private void AllowAPhoneList()
+    {
+        _h.Allowlist.SaveAllowlist(
+        [
+            new AttributeRow("title", "Job Title", "String", null, false, true, null, null, 1),
+            new AttributeRow("department", "Department", "String", null, false, true, null, null, 1),
+            new AttributeRow(Phones, "Other Phones", "String", null, false, true, null, null, 1),
+        ]);
+        _h.Service.InvalidateAllowlistCache();
+    }
+
+    /// <summary>Get-ADUser answers the phone list as the module answers a multi-valued attribute: a collection.</summary>
+    private static object? ReadsThePhonesAsACollection(string name, string? stored) =>
+        string.Equals(name, Phones, StringComparison.OrdinalIgnoreCase) && stored is not null ? stored.Split('|') : stored;
+
+    [Theory]
+    [InlineData(Flag, "FALSE")]
+    [InlineData("manager", "cn=pat lee, ou=staff, dc=example, dc=test")]
+    [InlineData("title", "  Analyst ")]
+    public async Task AnEditThatDiffersOnlyInForm_IsNoChange_AndNothingIsWritten(string attribute, string proposed)
+    {
+        // A Boolean in another case, the DN held in another case and spacing, the string held with spaces round it:
+        // each reads back as the value held (aud-a26l), so writing it changes nothing. Compared ordinal it was
+        // written, and recorded as a change whose old and new values read the same.
+        AllowAManagerAndAFlag();
+        var jordan = AddJordan();
+        _h.Ad.ReadsAs = TypesTheFlag;
+
+        var result = await Save(jordan, new() { [attribute] = proposed });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Empty(result.AppliedChanges!);
+        Assert.Empty(_h.Ad.Sets);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal(0, record.GetProperty("changedAttributes").GetArrayLength());
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+
+        // The preview, asked the same, finds the same.
+        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(jordan), new() { [attribute] = proposed });
+        Assert.True(preview.Success, preview.Error);
+        Assert.Empty(preview.Changes!);
+    }
+
+    [Fact]
+    public async Task ThePreview_ReReadsThroughTheSessionSeam_FromTheObjectsOwnDomain()
+    {
+        // The preview's re-read opened its own session, outside the seam the save uses, and sent no -Server, so it
+        // could ask another domain controller than the save would (aud-a26l routed the save's chain).
+        var alex = _h.Ad.AddAlex(title: "Analyst");
+
+        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(preview.Success, preview.Error);
+        var change = Assert.Single(preview.Changes!);
+        Assert.Equal("title", change.Name);
+        Assert.Equal("Analyst", change.OldValue);
+        Assert.Equal("Lead Analyst", change.NewValue);
+        Assert.Equal(1, _h.Service.SessionsOpened);
+        Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{alex.Dn}|"], _h.Ad.Calls);
+        Assert.Equal("example.test", Assert.Single(_h.Ad.Reads).Server);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Empty(_h.AuditEvents());
+    }
+
+    [Fact]
+    public async Task ThePreviewOfADnThatNamesNoDomain_GoesToTheDefaultDomainController_AndSaysSo()
+    {
+        var robin = _h.Ad.Add("robin.hart@example.test", "CN=Robin Hart,OU=Staff,O=Example", "Robin Hart", ("title", "Analyst"));
+
+        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(robin), new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(preview.Success, preview.Error);
+        Assert.Null(Assert.Single(_h.Ad.Reads).Server);
+        Assert.Contains(_h.Logger.Warnings, w => w.Contains(robin.Upn, StringComparison.Ordinal)
+            && w.Contains("default domain controller", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnAttributeHoldingSeveralValues_IsRefusedByName_AndNothingIsWritten()
+    {
+        // Read by ToString the list was its type name, so the save wrote the one value proposed over all of them.
+        AllowAPhoneList();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Phones] = "555-0100|555-0101";
+        _h.Ad.ReadsAs = ReadsThePhonesAsACollection;
+
+        var result = await Save(alex, new() { [Phones] = "555-0199" });
+
+        Assert.False(result.Success);
+        Assert.Null(result.AppliedChanges);
+        Assert.Contains($"'Other Phones' ({Phones}) holds 2 values", result.Error, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written.", result.Error, StringComparison.Ordinal);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Equal("555-0100|555-0101", alex.Attributes[Phones]);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+        Assert.False(Assert.Single(_h.Notices).Success);
+
+        // The preview refuses it in the same words.
+        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { [Phones] = "555-0199" });
+        Assert.False(preview.Success);
+        Assert.Equal(result.Error, preview.Error);
+    }
+
+    [Fact]
+    public async Task AnAttributeReadAsAOneElementCollection_IsItsElement_BeforeTheWriteAsAfterIt()
+    {
+        // The read-back already took a one-element collection as its element; the re-read before the write took its
+        // type name, so the value held could never equal the value proposed, and the record's old value was that name.
+        AllowAPhoneList();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Phones] = "555-0100";
+        _h.Ad.ReadsAs = ReadsThePhonesAsACollection;
+
+        var unchanged = await Save(alex, new() { [Phones] = "555-0100" });
+
+        Assert.True(unchanged.Success, unchanged.Error);
+        Assert.Empty(unchanged.AppliedChanges!);
+        Assert.Empty(_h.Ad.Sets);
+
+        var result = await Save(alex, new() { [Phones] = "555-0199" });
+
+        Assert.True(result.Success, result.Error);
+        var applied = Assert.Single(result.AppliedChanges!);
+        Assert.Equal("555-0100", applied.OldValue);
+        Assert.Equal("555-0199", applied.NewValue);
+        Assert.Equal("555-0199", alex.Attributes[Phones]);
+        var record = Assert.Single(_h.AuditEvents(), e => e.GetProperty("changedAttributes").GetArrayLength() > 0);
+        Assert.Equal("555-0100", Text(record, $"old_{Phones}"));
+        Assert.Equal("555-0199", Text(record, $"new_{Phones}"));
+    }
+
+    [Fact]
+    public async Task ARecordedSideThatIsAJsonNull_ReadsAsNotSet_SoTheUndoClearsTheAttribute()
+    {
+        // A record whose old side is a JSON null - hand-made, or written by a writer that kept its nulls. GetString
+        // read it as the four characters "null", which the preview showed and the undo would have written.
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["category"] = "ADAttributeEditor",
+            ["action"] = "ADAttributeEditor_Update",
+            ["result"] = "Success",
+            ["target"] = alex.Upn,
+            ["operationId"] = "op-forward-json-null",
+            ["targetObjectGuid"] = alex.Guid.ToString(),
+            ["changedAttributes"] = new[] { "title" },
+            ["old_title"] = null,
+            ["new_title"] = "Lead Analyst",
+        }));
+        var edit = AsTheEventLogReadsIt(document.RootElement);
+        edit["_undoMaxLevel"] = 1;
+        var undo = _h.CreateUndoService();
+        Assert.True(undo.CanUndo(edit));
+
+        var preview = await undo.PreviewUndoAsync(edit, AttributeEditorHarness.Operator());
+
+        Assert.True(preview.CanUndo, preview.Error);
+        Assert.Null(Assert.Single(preview.Changes!).RevertToValue);
+
+        var reversed = await undo.ExecuteUndoAsync(edit, Actor, Ip, Ticket, AttributeEditorHarness.Operator());
+
+        Assert.True(reversed.Success, reversed.Error);
+        var write = Assert.Single(_h.Ad.Sets);
+        Assert.Empty(write.Replace);
+        Assert.Equal(["title"], write.Clear);
+        Assert.Null(alex.Attributes["title"]);
+    }
 }

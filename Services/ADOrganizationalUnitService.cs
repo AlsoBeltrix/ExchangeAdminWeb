@@ -28,6 +28,23 @@ public sealed class ADOrganizationalUnitService
     }
 
     /// <summary>
+    /// The session the OU enumeration opens (psl-7).
+    /// </summary>
+    /// <remarks>
+    /// A TEST SEAM - the class is sealed, so a property rather than a virtual (the shape of
+    /// <c>AdSiteDirectory.WorkerScheduler</c>): a test hands back a session whose Import-Module and
+    /// Get-ADOrganizationalUnit are local functions. Production builds the session it always did.
+    /// </remarks>
+    internal Func<Runspace> CreateDirectoryRunspace { get; init; } = DirectoryRunspace;
+
+    private static Runspace DirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
+    /// <summary>
     /// Returns all OUs sorted by DN depth then name, or an empty list when AD
     /// enumeration is not possible (RSAT missing, insufficient permissions, etc.).
     /// </summary>
@@ -83,21 +100,13 @@ public sealed class ADOrganizationalUnitService
 
     private List<OUEntry> EnumerateOUs()
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = CreateDirectoryRunspace();
         runspace.Open();
 
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        // Import the ActiveDirectory module
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ActiveDirectory")
-          .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         // Enumerate all OUs - runs under the app pool identity (no credential parameter)
         ps.AddCommand("Get-ADOrganizationalUnit")
@@ -108,6 +117,8 @@ public sealed class ADOrganizationalUnitService
         var results = ps.Invoke();
         ps.Commands.Clear();
 
+        // psl-7: a record here is this read's own. The import clears the stream behind it, so a record it left past
+        // -ErrorAction Stop can no longer fail the enumeration and hide the OU browser, as it did.
         if (ps.HadErrors)
         {
             var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message

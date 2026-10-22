@@ -944,7 +944,8 @@ public class ADAttributeEditorService
     }
 
     /// <summary>
-    /// The runspace the lookup and save paths open (PerformLookup, PerformSave).
+    /// The runspace the lookup, save and preview paths open (PerformLookup, PerformSave, and since aud-a26o
+    /// ReReadCurrentValues).
     /// </summary>
     /// <remarks>
     /// Internal virtual as a TEST SEAM, the shape of <c>Comms10kService.CreateReplaceRunspace</c>:
@@ -960,7 +961,7 @@ public class ADAttributeEditorService
     }
 
     /// <summary>
-    /// This module's AD credential, for the lookup and save paths.
+    /// This module's AD credential, for the lookup, save and (since aud-a26o) preview paths.
     /// </summary>
     /// <remarks>
     /// Internal virtual as a TEST SEAM, like <c>GroupManagementService.GetCredentialsAsync</c>:
@@ -1006,7 +1007,9 @@ public class ADAttributeEditorService
         if (validationError != null)
             return new(false, validationError, null);
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", "attribute preview");
+        // aud-a26o: through the credential seam the lookup and the save use. Fetched from the module's credential
+        // service directly, the preview was out of every test's reach, its re-read untested.
+        var creds = await GetCredentialsAsync("attribute preview");
         if (creds == null)
             return new(false, "AD credentials unavailable.", null);
 
@@ -1179,9 +1182,7 @@ public class ADAttributeEditorService
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        ActiveDirectoryModuleImport.Import(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
         var searchBases = GetConfiguredSearchBases();
@@ -1203,6 +1204,8 @@ public class ADAttributeEditorService
             allUsers.AddRange(ps.Invoke());
             ps.Commands.Clear();
 
+            // psl-7: a record here is this read's own. The import clears the stream behind it, so a record it left
+            // past -ErrorAction Stop can no longer fail the lookup in the read's name, as it did.
             if (ps.HadErrors)
             {
                 var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "AD query failed.";
@@ -1314,7 +1317,9 @@ public class ADAttributeEditorService
         (string username, string password, string domain) creds,
         List<EditableAttribute> allowlist)
     {
-        var currentValues = ReReadCurrentValues(target, creds, allowlist);
+        var (currentValues, refusal) = ReReadCurrentValues(target, proposedValues, creds, allowlist);
+        if (refusal != null)
+            return new(false, refusal, null);
         if (currentValues == null)
             return new(false, "Failed to re-read target object for preview.", null);
 
@@ -1364,9 +1369,7 @@ public class ADAttributeEditorService
             runspace.Open();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -1411,11 +1414,20 @@ public class ADAttributeEditorService
             return new(false, boundaryMsg, null);
         }
 
-        var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var attr in allowlist)
-            currentValues[attr.Name] = reReadUser.Properties[attr.Name]?.Value?.ToString();
+        // aud-a26o. Each attribute is read as the read-back reads it (ReadDirectoryValue): a one-element collection is its
+        // element. Read by ToString a collection was its type name, so its value could never equal the one proposed,
+        // and the record's old value was that name. An attribute the save would write that holds several values is
+        // refused before the write: written as one, the others would be lost, and v1 edits single-valued attributes
+        // only. Refused here rather than by the allowlist's save, which cannot tell a multi-valued attribute without
+        // reading the schema - and one holding a single value is safely written as one.
+        var severalValued = SeveralValuedRefusal(reReadUser, proposedValues, allowlist);
+        if (severalValued != null)
+        {
+            LogAudit(target, [], performedBy, ip, ticket, false, severalValued);
+            return new(false, severalValued, null);
+        }
 
-        var changes = ComputeChanges(proposedValues, currentValues, allowlist);
+        var changes = ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist);
         if (changes.Count == 0)
         {
             // aud-a26d: SaveAsync announces this result too, so it needs a record to answer to.
@@ -1721,45 +1733,96 @@ public class ADAttributeEditorService
     // is private - since aud-a26l the value itself rather than its text, so its type can say its syntax.
     // *Assumption, not probed*: the module answers one with its value, as this service's own reads take it
     // (Properties[..].Value). A collection is taken as its one element, so a collection-shaped answer is not
-    // told as a difference; several values, joined, are not the one written.
+    // told as a difference; several values, joined, are not the one written. Since aud-a26o the re-reads before
+    // a save and for a preview read through it too, so a value is compared before the write as after it.
     private static object? ReadDirectoryValue(PSObject read, string name)
     {
-        var value = Unwrapped(read.Properties[name]?.Value);
-        if (value is null or string)
-            return value;
-        if (value is System.Collections.IEnumerable values)
+        var items = DirectoryValues(read, name);
+        return items.Count switch
         {
-            var items = values.Cast<object?>().Select(Unwrapped).ToList();
-            return items.Count switch
-            {
-                0 => null,
-                1 => items[0],
-                _ => string.Join("; ", items.Select(v => v?.ToString())),
-            };
+            0 => null,
+            1 => items[0],
+            _ => string.Join("; ", items.Select(v => v?.ToString())),
+        };
+    }
+
+    // An attribute's values as read (aud-a26o): none, one, or a collection's elements, a string being one value.
+    // ReadDirectoryValue takes one value from them; SeveralValuedRefusal counts them.
+    private static List<object?> DirectoryValues(PSObject read, string name)
+    {
+        var value = Unwrapped(read.Properties[name]?.Value);
+        if (value is null)
+            return [];
+        if (value is string)
+            return [value];
+        if (value is System.Collections.IEnumerable values)
+            return values.Cast<object?>().Select(Unwrapped).ToList();
+
+        return [value];
+    }
+
+    // The object's values as read (aud-a26o), by attribute: what ComputeChanges compares, each in its own syntax.
+    private static Dictionary<string, object?> CurrentValues(PSObject read, List<EditableAttribute> allowlist)
+    {
+        var current = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var attr in allowlist)
+            current[attr.Name] = ReadDirectoryValue(read, attr.Name);
+        return current;
+    }
+
+    // aud-a26o. The refusal of a save or preview that would write an attribute holding several values, naming each,
+    // or null. Only the attributes proposed count: one the save does not write may hold what it holds.
+    // *Assumption, not probed*: the module answers an attribute holding several values with a collection, and one
+    // holding a single value with that value or a one-element collection. A byte array, being a collection, reads as
+    // several values and is refused - the editor does not edit binary attributes.
+    private static string? SeveralValuedRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
+    {
+        var several = new List<string>();
+        foreach (var name in proposedValues.Keys)
+        {
+            var attr = allowlist.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (attr == null)
+                continue;
+
+            var count = DirectoryValues(read, attr.Name).Count;
+            if (count > 1)
+                several.Add($"'{attr.Label}' ({attr.Name}) holds {count} values in the directory");
         }
 
-        return value;
+        return several.Count == 0
+            ? null
+            : $"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only. Nothing was written.";
     }
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 
-    private Dictionary<string, string?>? ReReadCurrentValues(
+    // aud-a26o. The preview's re-read asks what the save's asks, where the save asks it: through the session seam
+    // (CreateDirectoryRunspace), so it can be tested, and with the save's -Server - the object's own domain, from its
+    // DN (aud-a26l) - so another domain controller than the save's cannot answer it. It opened its own session and
+    // sent no -Server. A DN naming no domain goes unrouted, as the save's chain does, and says so. The values come back
+    // as read, or the save's refusal of an attribute holding several values.
+    private (Dictionary<string, object?>? Current, string? Refusal) ReReadCurrentValues(
         ResolvedDirectoryPrincipal target,
+        Dictionary<string, string?> proposedValues,
         (string username, string password, string domain) creds,
         List<EditableAttribute> allowlist)
     {
+        var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
+        if (server is null)
+        {
+            _logger.LogWarning(
+                "AD attribute preview for {Target}: its distinguished name names no domain, so the re-read goes to the default domain controller",
+                target.UserPrincipalName);
+        }
+
         try
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.username, creds.password, creds.domain);
 
@@ -1768,30 +1831,35 @@ public class ADAttributeEditorService
               .AddParameter("Properties", GetPropertiesToLoad(allowlist))
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            if (server is not null)
+                ps.AddParameter("Server", server);
             var result = ps.Invoke();
             ps.Commands.Clear();
 
-            if (result.Count == 0) return null;
+            if (result.Count == 0) return (null, null);
 
             var reReadDn = result[0].Properties["DistinguishedName"]?.Value?.ToString();
             if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
-                return null;
+                return (null, null);
 
-            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var attr in allowlist)
-                values[attr.Name] = result[0].Properties[attr.Name]?.Value?.ToString();
-            return values;
+            var refusal = SeveralValuedRefusal(result[0], proposedValues, allowlist);
+            return refusal is null ? (CurrentValues(result[0], allowlist), null) : (null, refusal);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to re-read current values for {Target}", target.UserPrincipalName);
-            return null;
+            return (null, null);
         }
     }
 
+    // aud-a26o. A proposed value is a change only when the read-back would not confirm it as written: compared in the
+    // attribute's own syntax (aud-a26l's SyntaxOf and ReadsAsWritten), on the value as read. Compared ordinal, an edit
+    // that differed from the directory only in form - "TRUE" against a Boolean True, a DN in another case and
+    // spacing, a string with spaces round it - was written, and recorded as a change whose old and new values read
+    // the same. Private: the aud-a28l tripwire takes any non-private method handed allowlist rows for a writer.
     private static List<AttributeChange> ComputeChanges(
         Dictionary<string, string?> proposed,
-        Dictionary<string, string?> current,
+        IReadOnlyDictionary<string, object?> current,
         List<EditableAttribute> allowlist)
     {
         var changes = new List<AttributeChange>();
@@ -1800,12 +1868,12 @@ public class ADAttributeEditorService
             var attr = allowlist.FirstOrDefault(a => string.Equals(a.Name, kv.Key, StringComparison.OrdinalIgnoreCase));
             if (attr == null) continue;
 
-            current.TryGetValue(kv.Key, out var oldValue);
-            var newValue = string.IsNullOrEmpty(kv.Value) ? null : kv.Value;
-            var oldNorm = string.IsNullOrEmpty(oldValue) ? null : oldValue;
+            current.TryGetValue(kv.Key, out var read);
+            var newValue = EmptyAsAbsent(kv.Value);
+            var oldValue = EmptyAsAbsent(read?.ToString());
 
-            if (!string.Equals(oldNorm, newValue, StringComparison.Ordinal))
-                changes.Add(new AttributeChange(attr.Name, attr.Label, oldNorm, newValue));
+            if (!ReadsAsWritten(SyntaxOf(attr.Type, attr.Name, read), newValue, oldValue, read))
+                changes.Add(new AttributeChange(attr.Name, attr.Label, oldValue, newValue));
         }
         return changes;
     }

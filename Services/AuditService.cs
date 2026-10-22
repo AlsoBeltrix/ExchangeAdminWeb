@@ -500,9 +500,10 @@ public class AuditService
         }
 
         // Anonymous usage telemetry (docs/UsageTelemetry-Plan.md, AC5). Deliberately the LAST
-        // statement and OUTSIDE the try/finally: the audit row is already written and the
-        // operation scope already closed, so a telemetry call can neither mask an audit
-        // failure nor run on a path where the audit write threw. RecordAction never throws.
+        // statement and OUTSIDE the try/finally: the audit row has been handed to the writer and
+        // the operation scope already closed, so a telemetry call cannot mask an audit failure.
+        // The writer logs its own failure and never throws (aud-a28q), so the action is counted
+        // whether or not its row could be written - it happened. RecordAction never throws.
         // Hooked here rather than in LogModuleAction because this is the ONE method every
         // public audit method ends in (review finding ute-2).
         _usage?.RecordAction(
@@ -520,6 +521,8 @@ public class AuditService
     private static bool IsSuccessfulAuditResult(string? result)
         => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);
 
-    private static string SamName(string identity) =>
-        identity.Contains('\\') ? identity.Split('\\')[1] : identity;
+    // aud-a28q. A null actor is "unknown", the name the trace gives an actor it does not have. Dereferenced, it threw
+    // out of every public method here before the record was built.
+    private static string SamName(string? identity) =>
+        identity is null ? "unknown" : identity.Contains('\\') ? identity.Split('\\')[1] : identity;
 }

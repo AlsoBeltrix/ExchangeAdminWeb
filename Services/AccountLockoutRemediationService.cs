@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Management.Automation;
+using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Models.AccountLockoutRemediation;
 using Microsoft.AspNetCore.Authorization;
 
@@ -1036,27 +1037,31 @@ if (-not $found) {
 }
 ";
 
-    private static PowerShell CreateAdPowerShell()
+    // psl-7. The import through the shared helper, whose throw is its error. The HadErrors check that followed it was
+    // dead for the import's own error under Stop (thrown, no record) and live only for a record written past the
+    // preference, which it threw as the import's failure though the module had loaded. The dispose it held was the
+    // only one on a failure path, so a failing import - the throw - leaked the PowerShell; the catch disposes it.
+    // The runspace is a TEST SEAM: production passes none, and Invoke opens the PowerShell's own, as before.
+    internal static PowerShell CreateAdPowerShell(Runspace? runspace = null)
     {
         var ps = PowerShell.Create();
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ActiveDirectory")
-          .AddParameter("ErrorAction", "Stop");
+        if (runspace is not null)
+            ps.Runspace = runspace;
 
-        ps.Invoke();
-        if (ps.HadErrors)
+        try
         {
-            var message = ps.Streams.Error.FirstOrDefault()?.Exception.Message ?? "ActiveDirectory module import failed.";
+            ActiveDirectoryModuleImport.Import(ps);
+        }
+        catch
+        {
             ps.Dispose();
-            throw new InvalidOperationException(message);
+            throw;
         }
 
-        ps.Commands.Clear();
-        ps.Streams.Error.Clear();
         return ps;
     }
 
-    private static Collection<PSObject> Invoke(PowerShell ps)
+    internal static Collection<PSObject> Invoke(PowerShell ps)
     {
         var result = ps.Invoke();
         if (ps.HadErrors)

@@ -864,31 +864,33 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory
         return results;
     }
 
+    // psl-7. The session the availability probe opens. A TEST SEAM - the class is sealed, so a property rather than
+    // a virtual (AdSiteDirectory.WorkerScheduler's shape): a test hands back a session whose Import-Module is a local
+    // function. Production builds the session the probe always did.
+    internal Func<Runspace> CreateProbeRunspace { get; init; } = ProbeRunspace;
+
+    private static Runspace ProbeRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
     private void ProbeAvailability()
     {
         try
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateProbeRunspace();
             runspace.Open();
 
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ActiveDirectory")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
+            ActiveDirectoryModuleImport.Import(ps);
 
-            if (ps.HadErrors)
-            {
-                _logger.LogWarning("ActiveDirectory module could not be loaded. AD autocomplete will be unavailable.");
-                lock (_availabilityLock) { _isAvailable = false; }
-                return;
-            }
-
+            // psl-7: the import's throw is its failure, reported by the catch below. The HadErrors check that stood
+            // here could not see that error under Stop, and marked the directory unavailable only for a record
+            // written past the preference, with the module loaded.
             lock (_availabilityLock) { _isAvailable = true; }
             _logger.LogInformation("ActiveDirectory module loaded successfully. AD autocomplete is available.");
         }
