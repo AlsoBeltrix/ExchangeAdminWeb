@@ -434,9 +434,18 @@ Resolved for the same reason; the processor's happy-path audit assertion accepts
 | R25 | page: Finder write handed null | same | `30880e759fab2be11053d1165f557f6f` | same | FAIL |
 | R26 | page: Finder audit drops `writtenIdentity` | same | `c051de1a41b005eb9e23430007aeee4f` | `ValidatedWriteCallSiteTests.EveryPageWriteAudit_RecordsTheIdentityWritten` | FAIL |
 
-In all four rounds: 73 mutations, 73 named-test failures, every restored md5 equal to "before",
-every final rebuild and named-test run green. The md5s are of the files as committed (comments were
-written before the rounds, not after).
+**Round 5 - the shared read-back, re-proved on the final file.** `ExchangeServiceBase.cs` changed
+after round 1 (`ValidateMailbox` removed in the Calendar commit; the read factored into
+`ReadValidatedMailbox` in the Conference Rooms commit), so MB1 was re-run against it:
+
+| # | Mutation | File, md5 before (= restored) | md5 mutated | Named tests | Result |
+| --- | --- | --- | --- | --- | --- |
+| MB1-final | `ReadValidatedMailbox` stops comparing the ExchangeGuid | `ExchangeServiceBase.cs` `e29a5f47c4941483a53f9cbe07b60834` | `3fab2d5a92b755c6b57a46d4c02d5b70` | `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` in Mailbox, Calendar and Conference Rooms (Finder, Type) | FAIL (all 4) |
+
+In all five rounds: 74 mutations, 74 named-test failures, every restored md5 equal to "before",
+every final rebuild and named-test run green. Each md5 is of the file as it was committed in that
+round's commit - comments were written before the rounds, not after; only `ExchangeServiceBase.cs`
+changed again later, which round 5 covers.
 
 ## Known gaps
 
