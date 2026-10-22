@@ -43,3 +43,16 @@ boolean, DN-valued if present); the comparison does not consult it.
 ## Guard proof
 
 Pending.
+
+## Folded in: the read-back can be answered by a different, stale DC (codex, attr-batch-7, 2026-10-22) - LOW
+
+`Services/ADAttributeEditorService.cs` `ConfirmWrite` around line 1526: `Set-ADUser` is sent with no
+`-Server`, and the immediate `Get-ADUser -Identity <objectGUID>` has none either, so in a multi-DC
+domain a DC that has not replicated the write can answer and the correct save is reported Failed
+with no Undo and a failure notice. Choose a writable DC once for the target object's domain
+(`ServerFromDn` of the re-read DN, the aud-a2p/a2q routing; or the DC the pre-write re-read answered
+from, read off `Get-ADUser`'s `-Server`-less result if the module exposes it) and pass that exact
+`-Server` to the pre-write re-read, `Set-ADUser` and the read-back; label the DC-affinity assumption.
+The not-confirmed message also says the value may not have replicated yet and names the server
+asked. Test: a harness whose read-back server differs from the write server fails before the fix
+and confirms after. Mutation at the call site: drop `-Server` from the read-back.

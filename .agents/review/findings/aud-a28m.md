@@ -8,7 +8,7 @@ and the catch's `LogError(..., undoTargetEvent.OperationId)` then throws out of 
 operator sees a circuit error instead of the undo's outcome. (3) `AttributeEditorRepository.SaveAllowlist`
 is still public with only test callers; the aud-a28l tripwire refuses a production caller, but the
 surface stays.
-**Status**: Merged to master (`6008a986`); closed on guard proof; codex review pending
+**Status**: Merged to master (`6008a986`); closed on guard proof; codex attr-batch-7 clean (raised aud-a26m; one LOW folded into aud-a26l)
 **Branch**: `worktree-agent-a762d0851374626dc`
 **Commit**: `6bc5e7e9` (comments `567b2014`; plan `e0ac383f`; merged `6008a986`)
 **Reviewer**: implementer (surfaced by the aud-a28l/a26g/a26i agent, 2026-10-22, candidates 1 to 4 of its hand-back)
