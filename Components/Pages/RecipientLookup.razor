@@ -70,8 +70,10 @@
                                         </span>
                                     </td>
                                 </tr>
-                                <tr><td class="fw-bold">Created</td><td>@(result.WhenCreated?.ToString("yyyy-MM-dd") ?? "N/A")</td></tr>
-                                <tr><td class="fw-bold">Last Logon</td><td>@(result.LastLogonTime?.ToString("yyyy-MM-dd HH:mm") ?? "N/A")</td></tr>
+                                @* aud-a23d. "N/A" only when Exchange reported nothing; a time it reported in a form
+                                   this app cannot read is shown as the marker naming it, not as "N/A". *@
+                                <tr><td class="fw-bold">Created</td><td>@(result.WhenCreated?.Show(created => created.ToString("yyyy-MM-dd")) ?? "N/A")</td></tr>
+                                <tr><td class="fw-bold">Last Logon</td><td>@(result.LastLogonTime?.Show(logon => logon.ToString("yyyy-MM-dd HH:mm")) ?? "N/A")</td></tr>
                             </tbody>
                         </table>
                     </div>

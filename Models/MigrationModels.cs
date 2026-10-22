@@ -56,9 +56,27 @@ public class MigrationBatchInfo
 {
     public required string BatchName { get; set; }
     public required string Status { get; set; }
-    public DateTime CreatedDateTime { get; set; }
-    public DateTime? StartDateTime { get; set; }
-    public DateTime? CompletedDateTime { get; set; }
+
+    /// <summary>
+    /// aud-a23d. When Exchange says the batch was created, as reported - one it cannot read is kept as
+    /// such and shown as the marker, and sorts after every readable time.
+    /// </summary>
+    /// <remarks>
+    /// Not nullable, and <see cref="DateTime.MinValue"/> when none was reported, because that is what an
+    /// absent value always read as here; this finding changes what an unreadable one does, not that.
+    /// </remarks>
+    public ReportedTime CreatedDateTime { get; set; } = ReportedTime.Of(DateTime.MinValue);
+
+    /// <summary>
+    /// aud-a23d. When the batch started, as reported; null only when nothing was reported. A start this
+    /// app cannot read is not null, so the page does not call such a batch "not started" - it shows the
+    /// marker where the start goes.
+    /// </summary>
+    public ReportedTime? StartDateTime { get; set; }
+
+    /// <summary>aud-a23d. When the batch completed, as reported; null only when nothing was reported.</summary>
+    public ReportedTime? CompletedDateTime { get; set; }
+
     public int TotalCount { get; set; }
     public int PendingCount { get; set; }
     public string? WorkflowStage { get; set; }
@@ -78,6 +96,10 @@ public class MigrationBatchInfo
     /// time cannot disagree. Before S8 this was the ONLY thing read from CompleteAfter, which is
     /// what made scheduling impossible to represent: a batch told to complete now and a batch
     /// scheduled for 22:00 were both just "true".
+    /// <para>
+    /// aud-a23d: a CompleteAfter this app cannot read still counts. Exchange did report one, so the
+    /// batch is set to finalise; the old read turned such a value into null and this into false.
+    /// </para>
     /// </remarks>
     public bool AutoComplete => CompleteAfter != null;
 
@@ -93,17 +115,29 @@ public class MigrationBatchInfo
     /// built before it. <see cref="ScheduledCompletionUtc"/> is the safe way to ask.
     /// </para>
     /// </remarks>
-    public DateTime? CompleteAfter { get; set; }
+    public ReportedTime? CompleteAfter { get; set; }
 
     /// <summary>
     /// The future time this batch is scheduled to complete, or null when it is not scheduled -
     /// including when CompleteAfter holds a past value, which means "complete now" and is not a
-    /// schedule at all.
+    /// schedule at all. Also null when the CompleteAfter cannot be read: see
+    /// <see cref="CompleteAfterUnreadable"/>, which then says this null is not an answer.
     /// </summary>
     public DateTime? ScheduledCompletionUtc =>
-        CompleteAfter is { } when && when.ToUniversalTime() > DateTime.UtcNow
+        CompleteAfter?.Time is { } when && when.ToUniversalTime() > DateTime.UtcNow
             ? when.ToUniversalTime()
             : null;
+
+    /// <summary>
+    /// aud-a23d. True when Exchange reported a CompleteAfter this app cannot read: the batch is set to
+    /// finalise (<see cref="AutoComplete"/>), but whether now or at a time is unknown.
+    /// </summary>
+    /// <remarks>
+    /// A schedule cannot be said either way without reading the time, and guessing "not scheduled"
+    /// is the silent-absence this finding removed. No page shows a batch's schedule today, so this is
+    /// the result's own statement of it, for whatever asks next.
+    /// </remarks>
+    public bool CompleteAfterUnreadable => CompleteAfter is { Time: null };
 
     public MigrationDirection Direction { get; set; }
     public List<MigrationUserInfo> Users { get; set; } = new();
@@ -114,7 +148,12 @@ public class MigrationUserInfo
     public required string EmailAddress { get; set; }
     public required string Status { get; set; }
     public string? ErrorSummary { get; set; }
-    public DateTime? LastSyncDateTime { get; set; }
+
+    /// <summary>
+    /// aud-a23d. When the mailbox last synced, as reported; null only when nothing was reported. One this
+    /// app cannot read is shown as the marker, not as "-", and sorts after every time and before none.
+    /// </summary>
+    public ReportedTime? LastSyncDateTime { get; set; }
     public long ItemsSynced { get; set; }
     public long ItemsSkipped { get; set; }
 }
