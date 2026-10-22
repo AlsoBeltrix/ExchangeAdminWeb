@@ -3,9 +3,9 @@
 **Severity**: LOW - no wrong object is written, but on a room list whose on-prem group the cmdlet
 cannot read, every row that takes the on-prem add comes back partial after Set-Place and the timezone
 committed, on every re-run.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master; closed on coder-side guard proof (LOW); dev acceptance owed with a2f
 **Branch**: `worktree-agent-a69c682cecca186cc`
-**Commit**: `<pending>`
+**Commit**: `294e9d4` (merged)
 **Reviewer**: implementer (surfaced by the aud-a2h agent)
 
 ## Evidence
