@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - production-served files inside the publish tree can be purged or replaced
 by `robocopy /MIR` while the promotion or deploy reports success. The same pool avoids the
 live-file corruption class (aud-a38f), not the content loss.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress
+**Status**: Fixed on branch `worktree-agent-ab28c8810a2e397d6`, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-ab28c8810a2e397d6` (forked at `1049f839`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (ops-batch-5, `prompt-ops-batch-5.md`, 2026-10-22); first recorded as the known gap in `aud-a38f.md` by its implementer
@@ -78,4 +78,95 @@ Written before the code.
 
 ## Guard proof
 
-Pending.
+Built as the Plan. `tools/AppPoolControl.psm1`, `Assert-AppPoolServesPath`: the other-pool check
+reads `$serving` (the entries at the folder) instead of `$inside`; a new check refuses
+`$nested` - `$inside` less the entries equal to the target - with no pool filter. Order: unreadable
+IIS, nothing at the folder, the folder's own nodes under another pool, anything nested. A pass
+returns `$serving`. Every `aud-a38f` rule is untouched (boundary match, virtual-directory read,
+missed-read guard).
+
+**Callers - they inherit, none filters.** Checked by AST over the four scripts
+(`Parser::ParseFile`, every `CommandAst` named `Assert-AppPoolServesPath`):
+
+| Call site | Statement | Catch whose try body holds it |
+| --- | --- | --- |
+| `tools/promote-dev-to-prod.ps1:240` (`Stop-AppPoolChecked`) | `$null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath` | none |
+| `deploy.ps1:616` (upgrade) | `$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath` | none |
+| `deploy.ps1:929` (`-Force`) | same | none |
+| `tools/Install-ExchangeAdminWeb.ps1:1090` (its confirm step) | same | none |
+| `tools/Move-ConfigDbToShared.ps1:231` (`Assert-PoolServesInstance`) | `$null = Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath` | one: `Write-Fail "... $($_.Exception.Message) ... Nothing has been stopped or copied."` - rethrows (Write-Fail throws) |
+
+Each discards the result (`$null =`, one-element pipeline) and none filters it, so each inherits the
+refusal unchanged; the existing AST guards (`DeployInvariants` cdt-28, `InstallerConfigBackup`
+cdt-32, `aud-a38c`, `aud-a38g`) still pin the call shapes and pass.
+
+| Test (`tests/ps/AppPoolControl.Tests.ps1`, `Assert-AppPoolServesPath`) | Pins |
+| --- | --- |
+| `aud-a38i ...` / `refuses an application nested inside the folder under the same pool, and says the mirror would replace or purge it` | **the finding**: same pool, nested folder spelled `d:/SITES/app/admin/`, a site root above the folder ignored - refused, naming location, pool and folder |
+| `refuses a virtual directory nested inside the folder under the same pool` | a virtual directory entry is held to the same rule |
+| `names every node inside the folder in one refusal, whatever pool each runs under` | a same-pool and an other-pool nested node in one message |
+| `aud-a38f: the default probe ...` / `aud-a38i: refuses an application's own virtual directory inside the folder, though it runs under the named pool` | the rule through the default probe's virtual-directory read |
+| (changed) `reads an application's own virtual directories under that application's pool` | the virtual directory now points AT the folder, so the test still passes only when it is attributed to the application's pool (`aud-a38f` N5) and still needs the read (N4) |
+| (removed) `passes when everything inside the folder runs under the named pool, and returns all of it` | pinned the behaviour this finding reverses; replaced by the finding test (same fixture) |
+| (unchanged) `passes, and returns what serves the folder, when the named pool alone serves it` | the same-pool-at-root pass |
+| (unchanged) the `aud-a38f` other-pool refusals, sibling-prefix and nothing-at-the-folder tests | still refuse / still pass |
+
+Against the unfixed module (`git checkout HEAD`, md5 `073bbcc514b681862c568c567b759b4a`): 71 tests,
+4 failed - the four new ones; the three same-pool ones with "no exception was thrown", the combined
+one because the old message names only the other-pool node. Restored from a saved copy, touched,
+md5 re-confirmed.
+
+Mutations at the call site, each by exact-text replacement asserted to match once, md5 recorded,
+`AppPoolControl.Tests.ps1` run in a fresh pwsh (Pester 6.2.0), the module restored from a saved
+copy, touched, md5 re-confirmed equal, and the file re-run green (71/71). First run on the
+pre-comment module (md5 `0c14e4efd0641bff173c61ec95543963`), re-run on the final module
+(`16a3880cf505713bd59ad2998ccfe826`) and final test file (`14e9f318a14c7e9c79a689c8e0d13632`) with
+the same results; the md5s below are the re-run's.
+
+| Mutation | md5 after mutation | Failed |
+| --- | --- | --- |
+| I1: the nested check regains the same-pool exemption (`-and` the pool is not the named one) - the `aud-a38f` rule | `4165398d30e8b2e0af4f0b45acbda2ad` | 4: both same-pool tests and the default-probe one with "no exception was thrown"; the combined one names only `Web/media`. Every other-pool test passes |
+| I2: the other-pool check widened back to the whole tree (`$inside`) | `6c285188b308b85bacd9227cdc80a2e9` | 1: `names every node inside the folder in one refusal ...` - the operator would be told to "name the pool that serves them", which cannot help |
+
+md5s are of the CRLF working-tree bytes (`.psm1` is `text=auto`, `autocrlf` on; `.ps1` is
+`eol=crlf`). Comments and help text were written after the round.
+
+## Gates
+
+One pwsh 7.6.6 session, `Import-Module Pester -RequiredVersion 6.2.0` before `PSScriptAnalyzer`
+1.25.0:
+
+- `Invoke-ScriptAnalyzer -Severity Error`, one `-Path` per file: `tools/AppPoolControl.psm1` 0,
+  `tests/ps/AppPoolControl.Tests.ps1` 0.
+- `Invoke-Pester tests/ps`: 452 passed, 0 failed, 0 skipped, 0 not run.
+- Windows PowerShell 5.1.20348.5756 `Parser::ParseFile`: `tools/AppPoolControl.psm1`,
+  `tools/promote-dev-to-prod.ps1`, `deploy.ps1`, `tools/Install-ExchangeAdminWeb.ps1`,
+  `tools/Move-ConfigDbToShared.ps1`, `tests/ps/AppPoolControl.Tests.ps1` - 0 errors each. Under 5.1
+  the module imports, exports its four functions (helpers private), refuses the nested same-pool
+  case and passes a mixed-spelling at-the-folder case.
+- The installer contains no `deploy.ps1` string (0 occurrences).
+- `git diff --check HEAD` clean; `tools/Test-AsciiOnly.ps1` passed after `git add -A`.
+
+## Files changed
+
+- `tools/AppPoolControl.psm1` - the narrowed other-pool check, the nested check, help text, comments.
+- `tests/ps/AppPoolControl.Tests.ps1` - the `aud-a38i` context (3 tests), one default-probe test,
+  one `aud-a38f` test removed and one re-pointed, comments.
+- This record.
+
+## Known gaps
+
+- **The default probe has never run against real IIS** (`aud-a38c`/`aud-a38f`, unchanged). Not run.
+- **Over-refusal, by design.** A node inside a folder the mirrors exclude (`/XD logs config` in
+  `deploy.ps1`, the promotion and the installer) is refused though `/MIR` would leave it alone; and
+  the cutover, which mirrors nothing, inherits the refusal too - where the deploy and the promotion
+  of the same folder already refuse. No allow-list or override; one would be an owner decision.
+- The callers' plan lines and comments ("refuse unless IIS serves that folder from this pool and no
+  other") stay true but do not mention the nested rule. Unchanged: the plan text is pinned by the
+  `aud-a38c` and `aud-a38g` tests, and the callers' code is unchanged.
+- A folder IIS reaches through a junction or another volume spelling is still not matched
+  (`aud-a38c`/`aud-a38f`).
+
+## Closeout
+
+Fixed on branch; not merged, not pushed. No version bump (ops scripts).
