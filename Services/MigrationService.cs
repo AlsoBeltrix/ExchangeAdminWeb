@@ -1034,6 +1034,9 @@ https://admin.exchange.microsoft.com/#/migration";
             // the steps already applied, where under Ignore the batch steps could not fail and "initiated completion" was
             // reported whether or not Complete-MigrationBatch ran.
             var hasOwnBatch = ownBatch.Count == 1;
+            if (hasOwnBatch)
+                RefuseUnlessApprovable(emailAddress, ownBatch[0].Properties["Status"]?.Value?.ToString());
+
             var applied = new List<string>();
 
             ps.AddCommand("Set-MigrationUser")
@@ -1081,14 +1084,12 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("Confirm", false)
                   .AddParameter("ErrorAction", "Stop");
                 ApproveStep(ps, tracker, "Complete-MigrationBatch", emailAddress, applied);
-
-                ConfirmBatchSetToComplete(ps, tracker, emailAddress, applied);
             }
 
             // aud-a23h. Which of the two happened is the Detail: completing a batch and completing only this mailbox are
             // different outcomes, and the message alone would claim the first for both.
             batchOutcome = hasOwnBatch
-                ? $"Its migration batch {emailAddress} was told to complete, and reads back set to complete."
+                ? DescribeCompletionReadBack(ps, tracker, emailAddress)
                 : $"{emailAddress} is not in a migration batch of its own, so no batch was completed; only this mailbox was told to complete.";
         }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", batchOutcome));
     }
@@ -1113,12 +1114,34 @@ https://admin.exchange.microsoft.com/#/migration";
         applied.Add(step);
     }
 
-    // aud-a23h. The read-back (the aud-a2l/aud-a2p shape): every write reporting no error is not yet completion confirmed.
-    // Completion itself runs in the background - the batch actions say "queued" for that reason - so what is read is the
-    // batch's own setting: a completion time, which Set-MigrationBatch -CompleteAfter wrote. ASSUMPTION, unverified: that
-    // Exchange keeps CompleteAfter (or CompleteAfterUTC) set on a batch told to complete. No retry; the operator re-runs.
-    private static void ConfirmBatchSetToComplete(PowerShell ps, ConnectionErrorTracker tracker, string batchName, IReadOnlyList<string> applied)
+    private static readonly string[] ApprovalRefusedBatchStatuses =
+        ["CompletedWithErrors", "Completing", "Failed", "Removing", "Stopped", "Stopping"];
+
+    private static void RefuseUnlessApprovable(string emailAddress, string? reportedStatus)
     {
+        var status = reportedStatus?.Trim();
+        if (string.IsNullOrEmpty(status))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration batch {emailAddress} reports no status, so whether it can be completed is not known. Nothing was changed.");
+        }
+
+        if (string.Equals(status, "Completed", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration batch {emailAddress} is already {status}, so its migration has finished and there is nothing left to approve. Nothing was changed.");
+        }
+
+        if (ApprovalRefusedBatchStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration batch {emailAddress} is {status}, a state an approval does not complete a batch from. Nothing was changed.");
+        }
+    }
+
+    private static string DescribeCompletionReadBack(PowerShell ps, ConnectionErrorTracker tracker, string batchName)
+    {
+        var accepted = $"Exchange accepted Complete-MigrationBatch for its migration batch {batchName}";
         ps.AddCommand("Get-MigrationBatch")
           .AddParameter("Identity", batchName)
           .AddParameter("ErrorAction", "Stop");
@@ -1129,20 +1152,18 @@ https://admin.exchange.microsoft.com/#/migration";
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException(
-                $"Completion of the migration batch {batchName} could not be confirmed: reading it back failed: {ResolveFailure(ex).primary.TrimEnd('.')}. "
-                + $"Every step reported success: {string.Join(", ", applied)}.", ex);
+            return $"{accepted}; reading the batch back failed ({ResolveFailure(ex).primary.TrimEnd('.')}), so its state since was not confirmed.";
         }
 
-        var batch = read.Count == 1 ? read[0] : null;
-        if ((batch?.Properties["CompleteAfter"]?.Value ?? batch?.Properties["CompleteAfterUTC"]?.Value) is null)
-        {
-            var why = batch is null
-                ? $"reading it back returned {read.Count} batches"
-                : "Exchange reports no completion time set on it";
-            throw new InvalidOperationException(
-                $"Completion of the migration batch {batchName} was not confirmed: {why}. Every step reported success: {string.Join(", ", applied)}.");
-        }
+        if (read.Count != 1)
+            return $"{accepted}; reading the batch back returned {read.Count} batches, so its state since was not confirmed.";
+
+        var status = read[0].Properties["Status"]?.Value?.ToString()?.Trim();
+        var reports = string.IsNullOrEmpty(status) ? "no status" : $"status {status}";
+        var scheduled = (read[0].Properties["CompleteAfter"]?.Value ?? read[0].Properties["CompleteAfterUTC"]?.Value) is not null;
+        return scheduled
+            ? $"{accepted}; read back, the batch reports {reports} with a completion time set."
+            : $"{accepted}; read back, the batch reports {reports} and no completion time, so the read-back did not confirm the schedule.";
     }
 
     public Task<PermissionResult> StopMigrationUserAsync(string emailAddress)

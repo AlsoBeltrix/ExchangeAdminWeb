@@ -92,7 +92,9 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>
     /// Switches: SetBatchChangesNothing - Set-MigrationBatch reports success and writes nothing; ReadBackRefused (a factory) -
     /// Get-MigrationBatch refuses a batch once it holds a completion time, so only a read-back fails;
-    /// NestedSuppressedError - Remove-BlockedSenderAddress suppresses an error of its own.
+    /// NestedSuppressedError - Remove-BlockedSenderAddress suppresses an error of its own. aud-a23n: CompleteClearsSchedule -
+    /// Complete-MigrationBatch removes the batch's CompleteAfter, so a read-back has none; CompletionStatus (text) - it sets
+    /// the batch's Status.
     /// </summary>
     public Hashtable Behaviour { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
@@ -141,8 +143,14 @@ internal sealed class MigrationStubExchange : IDisposable
 
     public static PSObject CloudMailbox(string address) => Row(("PrimarySmtpAddress", address), ("RecipientTypeDetails", "UserMailbox"));
 
-    public static PSObject Batch(string name, object? completeAfter = null) =>
-        Row(("Identity", name), ("Status", "Synced"), ("TotalCount", 1), ("CompleteAfter", completeAfter));
+    /// <param name="status">aud-a23n. The batch's Status; null leaves the property out, as a row that reports none.</param>
+    public static PSObject Batch(string name, object? completeAfter = null, string? status = "Synced")
+    {
+        var row = Row(("Identity", name), ("TotalCount", 1), ("CompleteAfter", completeAfter));
+        if (status is not null)
+            row.Properties.Add(new PSNoteProperty("Status", status));
+        return row;
+    }
 
     public string[] CallList() => Calls.Cast<string>().ToArray();
 
@@ -228,6 +236,8 @@ internal sealed class MigrationStubExchange : IDisposable
         ("Resume-MoveRequest", "[string] $Identity", ""),
         ("Complete-MigrationBatch", "[string] $Identity, [switch] $Confirm", $$"""
             if (-not $Batches.ContainsKey($Identity)) { {{Lookup}}; return }
+            if ($Behaviour['CompleteClearsSchedule']) { $Batches[$Identity].PSObject.Properties.Remove('CompleteAfter') }
+            if ($Behaviour['CompletionStatus']) { $Batches[$Identity].Status = [string]$Behaviour['CompletionStatus'] }
             """),
         ("Stop-MigrationUser", "[string] $Identity, [switch] $Confirm", ""),
         ("New-MigrationBatch", "[string] $Name, [object] $CSVData, [object] $TargetDeliveryDomain, [object] $AutoStart, [object] $AutoComplete", ""),

@@ -97,4 +97,64 @@ failed read-back a failure again; N2b Completed refused in the generic words; N2
 
 ## Guard proof
 
-Pending.
+Built as the Plan. Line numbers are at the fix commit's bytes, which carry no new code comments (they come in their own
+commit after the last finding's round). No page change.
+
+- `Services/MigrationService.cs`:
+  - `ApproveMigrationUserAsync` (999-): after the existence read and its count check, a batch of its own goes through
+    `RefuseUnlessApprovable` (1038) before the first write; the Detail of a batch of its own is
+    `DescribeCompletionReadBack` (1091-1092), the not-in-its-own-batch Detail unchanged.
+  - `ApprovalRefusedBatchStatuses` (1117): CompletedWithErrors, Completing, Failed, Removing, Stopped, Stopping.
+  - `RefuseUnlessApprovable` (1120): no status - "reports no status, so whether it can be completed is not known";
+    Completed - "is already Completed, so its migration has finished and there is nothing left to approve"; a refused
+    state (1135) - "is <Status>, a state an approval does not complete a batch from"; each "Nothing was changed.";
+    ignoring case and surrounding space.
+  - `DescribeCompletionReadBack` (1142), replacing `ConfirmBatchSetToComplete`: never throws; "Exchange accepted
+    Complete-MigrationBatch for its migration batch <name>;" then what the read-back showed - "read back, the batch
+    reports status <S> with a completion time set." / "... and no completion time, so the read-back did not confirm the
+    schedule." / "reading the batch back failed (<reason>) / returned N batches, so its state since was not confirmed."
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: `Batch(name, completeAfter, status)` (status null leaves the
+  property out); `Complete-MigrationBatch` honours `CompleteClearsSchedule` (removes `CompleteAfter`) and
+  `CompletionStatus` (sets Status).
+
+New `ExchangeAdminWeb.Tests/MigrationApproveConfirmationTests.cs`, 7 tests (17 cases); 3 aud-a23h tests changed:
+
+| Test | Pins |
+| --- | --- |
+| `ACompletionWhoseReadBackOmitsTheSchedule_IsASuccess_SayingTheScheduleWasNotConfirmed` | **part 1, the finding**: Complete-MigrationBatch accepted, the read-back has no `CompleteAfter` - success, the message unchanged, the Detail "...status Synced and no completion time, so the read-back did not confirm the schedule.", all nine calls |
+| `AReadBackThatShowsANewStatus_NamesItInTheDetail` | the status the read-back reports is named as read ("Completing"), with the completion time |
+| `AReadBackWithNoStatusAndNoSchedule_IsStillASuccess_SayingSo` | "reports no status and no completion time" - still a success |
+| `ABatchInAStateAnApprovalCannotCompleteFrom_IsRefusedBeforeAnyWrite` (Failed, Removing, Stopped, Stopping, Completing, CompletedWithErrors, " stopped ") | **part 2, the finding**: failed, the state named, "Nothing was changed.", the existence read the only call |
+| `AnAlreadyCompletedBatch_IsItsOwnOutcome_AndNothingIsWritten` | Completed in its own words; only the read |
+| `ABatchThatReportsNoStatus_IsRefused_AndNothingIsWritten` (absent, empty, blank) | refused, only the read |
+| `ABatchInAnyOtherState_RunsEveryStep` (Synced, Syncing, SyncedWithErrors) | the control: every step, success |
+| `ARefusalThroughThePage_IsOneFailedAuditRow_NamingTheState` | through `ExecuteUserAction`: failed, one `ApproveMigrationUser` audit row, Failed, the refusal as its error; only the read |
+| `MigrationEligibilityAndApproveTests.ACleanApproval_...` (changed) | the Detail: "...reports status Synced with a completion time set." |
+| `...AReadBackThatFails_IsStillASuccess_SayingItsStateWasNotConfirmed` (was `..._CouldNotBeConfirmed_...`) | a read-back that fails after an accepted completion: success, "reading the batch back failed (the batch is being updated), so its state since was not confirmed." |
+| `...AWriteThatChangesNothing_IsStillASuccess_SayingTheScheduleWasNotConfirmed` (was `..._IsNotConfirmed`) | every write reports success, no completion time read back: success, the Detail says the schedule was not confirmed |
+
+**Against the unfixed code: not runnable as a whole** - the stub's `Batch` and the tests' expectations changed with the
+fix, so each behaviour was put back at its own call site instead, and each revert fails the tests that pin it.
+
+Mutations at the call site, each by exact-text replacement asserted to match once (session scratchpad `mutate.ps1`,
+`round-a23n.ps1`): md5 recorded, `dotnet build ExchangeAdminWeb.slnx -c Release`, the 1074 tests of
+`Migration*|ClickGate*|ProgressRegistry*|ExchangeServiceBase*|AuditService*|GlobalProgressWiring*|BlockedSender*` run
+with a TRX logger (failures read from it), the file's bytes restored in a `finally` and its mtime advanced so MSBuild
+rebuilds, md5 re-checked equal, rebuilt, and the 1074 re-run green - after every mutation. Service bytes (LF) before
+every mutation and after every restore: `8d3b984f4a57c7d6ed20ab104327fa97`.
+
+| Mutation | md5 mutated | Failed (of 1074) | Restored, rerun |
+| --- | --- | --- | --- |
+| N1 (the record's (1)): a read-back with no completion time throws "was not confirmed" again | `4004f7d82889612cdc9448a55eaaa595` | 3: `ACompletionWhoseReadBackOmitsTheSchedule...`, `AReadBackWithNoStatusAndNoSchedule...`, `AWriteThatChangesNothing_IsStillASuccess...` - a false failure after the accepted write | equal; 1074/0 |
+| N2 (the record's (2)): the Count-only pre-read again (the status check never runs) | `59531dfd70f6718196091e1768be8898` | 12: every `ABatchInAStateAnApprovalCannotCompleteFrom...` case (7), `AnAlreadyCompletedBatch...`, `ABatchThatReportsNoStatus...` (3), `ARefusalThroughThePage...` - the writes ran | equal; 1074/0 |
+| N1b: a failed read-back a failure again | `0bd17122b43be88c8395ae4e3afb63d3` | 1: `AReadBackThatFails_IsStillASuccess...` | equal; 1074/0 |
+| N2b: Completed refused in the generic words | `c93c8b2c611bda0f7defe0eb039173b1` | 1: `AnAlreadyCompletedBatch_IsItsOwnOutcome...` | equal; 1074/0 |
+| N2c: a batch with no status allowed | `e1e3b5c8359c456059a299f5dfe3ac15` | 3: `ABatchThatReportsNoStatus...` (absent, empty, blank) | equal; 1074/0 |
+
+md5s (LF) of the other files at the fix commit: `MigrationApproveConfirmationTests.cs`
+`3edf139fbf5cd0586a6c0489160353ef`, `MigrationEligibilityAndApproveTests.cs` `539d499de1c9e308b9acbcd0311b525c`,
+`MigrationStubExchange.cs` `8529829b2a84d3a48d3be367c0651cf6`.
+
+On the fix commit's tree: `dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors, 61 warnings (the baseline count);
+the 1074 focused tests 1074/0; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0;
+`git diff --check HEAD` exit 0. The full suite and the ASCII lint run at the branch tip (below, once written).
