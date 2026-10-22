@@ -2,11 +2,11 @@
 
 **Severity**: MEDIUM - the stopped pool still admitted post-stop work: shutdown could open a fresh
 Exchange Online session from a pool that had already drained and stopped reaping.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Fixed on master `fc95609e` (patch applied by the supervisor); closed on guard proof (MEDIUM); codex group review pending
 **Branch**: `worktree-agent-aec54e09518f47fc1` - forked at `ca6575a2`, before the `aud-a6c` code it
 fixes, so built and gated on a `git archive` export of master `1c6038d5` and delivered as a patch
 for the supervisor to apply
-**Commit**: `<pending>`
+**Commit**: `fc95609e`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, services-batch-2, 2026-10-21
 
 ## Evidence
