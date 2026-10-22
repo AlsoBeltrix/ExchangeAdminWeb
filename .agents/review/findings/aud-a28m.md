@@ -8,9 +8,9 @@ and the catch's `LogError(..., undoTargetEvent.OperationId)` then throws out of 
 operator sees a circuit error instead of the undo's outcome. (3) `AttributeEditorRepository.SaveAllowlist`
 is still public with only test callers; the aud-a28l tripwire refuses a production caller, but the
 surface stays.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-a762d0851374626dc`
-**Commit**: -
+**Commit**: `6bc5e7e9` (comments `567b2014`; plan `e0ac383f`)
 **Reviewer**: implementer (surfaced by the aud-a28l/a26g/a26i agent, 2026-10-22, candidates 1 to 4 of its hand-back)
 
 ## Evidence
@@ -220,3 +220,19 @@ says why the finally's read is this run's outcome); `Services/Storage/AttributeE
 `EventLogUndoRefusalTests.cs` `6A3B3BB5FB6C726710C450A1D1BDDA4A` -> `8524E535822C164D582F890C3F91A0ED`;
 `AllowlistConcurrentSaveTests.cs` `AB0B19E72B6963426A0A1FF043E0DBC2` -> `D193763CC6AC43469E528A70D8A56DDE`.
 `ReversedOperationsTests.cs` is unchanged (`73D0036C8B91E1A61C6E944E0DF9AC08`).
+
+## Branch-tip gates - 2026-10-22 (`567b2014`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,324 passed / 3 skipped (the three known AD skips) / 0 failed, 5,327 total, 5m14s;
+  nothing hung, no Sequence file. Baseline at `762c774c`: 5,311 / 3 / 0, 5,314 total; the thirteen new cases
+  are this branch's (aud-a28m seven, aud-a26j six). `ClickGate*` 316/316 and ProgressRegistryTests 35/35,
+  also run alone.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a762d0851374626dc`, not merged, not pushed. A module-scoped behaviour change to the Admin Event Log (the undo's two exits recorded, the panel's close refused while an undo runs, the category filter's new option): its module version is due. The repository's SaveAllowlist going internal changes no behaviour, so no base app bump. The version bumps are
+the supervisor's, at merge: `Modules/ModuleCatalog.cs` and `ExchangeAdminWeb.csproj` were outside this brief.

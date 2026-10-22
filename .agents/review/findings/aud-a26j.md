@@ -5,9 +5,9 @@ absence of a throw; `PerformSave` does not read the attributes back after `Set-A
 the directory accepted without applying (or a value a server normalised differently) is recorded as
 a success with the proposed values as "new", and the Undo button offers to reverse a change that
 did not happen as recorded. Known Failure Class 2; the Conference Rooms twin was fixed in aud-a2p.
-**Status**: Plan written; in progress
+**Status**: Fixed on branch; closed on guard proof; awaiting merge and review
 **Branch**: `worktree-agent-a762d0851374626dc`
-**Commit**: -
+**Commit**: `73eeb7da` (comments `567b2014`; plan `e0ac383f`)
 **Reviewer**: implementer (surfaced by the aud-a28l/a26g/a26i agent, 2026-10-22, candidate 6 of its hand-back)
 
 ## Evidence
@@ -205,3 +205,19 @@ write's finally, whose comment said nothing runs on the pipeline after the write
 needs it cleared); `ADAttributeEditorSaveTests.cs` `56833579FD65B29DD5B695A266CA5AD3` ->
 `778D0113A2426E9BE7E32D023AF9CBFA`, the happy path's call-list comment included. `AttributeEditorHarness.cs` is
 unchanged (`B81DDFCE7A6B045D93F2A52771E5FFA5`): its knobs were documented with the fix.
+
+## Branch-tip gates - 2026-10-22 (`567b2014`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is
+  written): exit 0, 5,324 passed / 3 skipped (the three known AD skips) / 0 failed, 5,327 total, 5m14s;
+  nothing hung, no Sequence file. Baseline at `762c774c`: 5,311 / 3 / 0, 5,314 total; the thirteen new cases
+  are this branch's (aud-a28m seven, aud-a26j six). `ClickGate*` 316/316 and ProgressRegistryTests 35/35,
+  also run alone.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check
+  HEAD`: exit 0. `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a762d0851374626dc`, not merged, not pushed. A module-scoped behaviour change to the AD Attribute Editor (a save confirmed by its read-back, its new failure messages, one more Get-ADUser per write): its module version is due. No shared code changed, so no base app bump. The version bumps are
+the supervisor's, at merge: `Modules/ModuleCatalog.cs` and `ExchangeAdminWeb.csproj` were outside this brief.
