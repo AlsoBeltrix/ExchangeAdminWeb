@@ -27,11 +27,21 @@ public sealed class AllowlistSaveAuditTests : IDisposable
 
     public void Dispose() => _h.Dispose();
 
-    /// <summary>The allowlist as the page loads it and would send it back untouched.</summary>
-    private List<EditableAttribute> Loaded() => _h.Service.GetAllowlist()!.ToList();
+    /// <summary>The version the last <see cref="Loaded"/> read, as the page keeps it (aud-a28i).</summary>
+    private string? _loadedVersion;
 
+    /// <summary>The allowlist as the page loads it and would send it back untouched.</summary>
+    private List<EditableAttribute> Loaded()
+    {
+        var view = _h.Service.LoadAllowlistForEditing();
+        _loadedVersion = view.Version;
+        return view.Attributes!.ToList();
+    }
+
+    /// <summary>A save from a page that loaded the store as it is now, unless <see cref="Loaded"/> said otherwise.</summary>
     private AllowlistSaveResult Save(List<EditableAttribute> attributes) =>
-        _h.Service.SaveAllowlistAndAudit(attributes, Admin, Ip);
+        _h.Service.SaveAllowlistAndAudit(
+            attributes, _loadedVersion ?? _h.Service.LoadAllowlistForEditing().Version, Admin, Ip);
 
     /// <summary>The stored rows, name-ordered, to show a refused save left them alone.</summary>
     private List<ExchangeAdminWeb.Services.Storage.AttributeRow> StoredRows()

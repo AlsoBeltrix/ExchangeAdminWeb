@@ -50,7 +50,15 @@ public sealed record AttributeSaveResult(
 /// The refusal was a corrupt store. The page needs to know, not just to say so: it shows the corrupt
 /// banner and disables the table, because any save from it would replace what the store holds.
 /// </param>
-public sealed record AllowlistSaveResult(bool Success, string? Error, bool StoreCorrupt = false);
+/// <param name="Version">After a save that went through, the version the allowlist now has (aud-a28i).</param>
+public sealed record AllowlistSaveResult(bool Success, string? Error, bool StoreCorrupt = false, string? Version = null);
+
+/// <summary>
+/// The allowlist as the Module Configuration page loads it for editing (aud-a28i).
+/// </summary>
+/// <param name="Attributes">The validated list; null when the store is corrupt.</param>
+/// <param name="Version">What a save from this load is checked against: the stored rows' own content.</param>
+public sealed record AllowlistForEditing(List<EditableAttribute>? Attributes, string Version);
 
 /// <summary>
 /// One field of a kept allowlist row that a save changed, as the settings-change record lists it
@@ -238,40 +246,40 @@ public class ADAttributeEditorService
     /// when nothing is configured (a valid "nothing allowlisted" state) and null when the store
     /// is unreadable or its rows fail validation (the fail-closed/corrupt state).
     /// </summary>
-    private List<EditableAttribute>? LoadAllowlistFromDisk() => LoadAllowlistFromDisk(out _);
-
-    /// <param name="storedRows">
-    /// The rows exactly as the store holds them - including any the returned list drops, such as a
-    /// denylisted name - so a save can say what it replaced (aud-a28f). Empty when the read failed.
-    /// </param>
-    private List<EditableAttribute>? LoadAllowlistFromDisk(out List<AttributeRow> storedRows)
+    private List<EditableAttribute>? LoadAllowlistFromDisk()
     {
-        storedRows = [];
-
         // Fail closed (null) if a corrupt legacy file is still on disk during the upgrade window.
         if (_legacyAllowlistCorrupt)
             return null;
 
-        if (!_repository.TryReadAllowlist(out var rows, out var configured))
+        return Evaluate(_repository.ReadAllowlistSnapshot());
+    }
+
+    /// <summary>
+    /// The allowlist a read of the store describes: empty when nothing is configured, null when the
+    /// store is unreadable or its rows fail to project or validate - the fail-closed signal.
+    /// </summary>
+    private List<EditableAttribute>? Evaluate(AllowlistSnapshot snapshot)
+    {
+        if (_legacyAllowlistCorrupt)
+            return null;
+
+        if (!snapshot.Readable)
         {
             _logger.LogError("ad-editable-attributes store unreadable - failing closed");
             return null;
         }
 
-        storedRows = rows;
-        if (!configured)
+        if (!snapshot.Configured)
             return []; // nothing configured - valid empty allowlist
 
-        // Projecting rows can throw if a stored choices_json is malformed (operator/promote edit
-        // or partial corruption). That is a corrupt-store condition -> return null (the documented
-        // fail-closed signal), never let it throw through callers as a 500.
         // Projecting rows can throw if a stored choices_json is malformed (operator/promote edit
         // or partial corruption). That is a corrupt-store condition -> return null (the documented
         // fail-closed signal), never let it throw through callers as a 500.
         List<AttributeAllowlistEntry> entries;
         try
         {
-            entries = rows.Select(ToAllowlistEntry).ToList();
+            entries = snapshot.Rows.Select(ToAllowlistEntry).ToList();
         }
         catch (Exception ex)
         {
@@ -280,6 +288,33 @@ public class ADAttributeEditorService
         }
 
         return ValidateRows(entries);
+    }
+
+    /// <summary>
+    /// The allowlist as the Module Configuration page edits it, read fresh, with the version a save
+    /// from that page is checked against (aud-a28i).
+    /// </summary>
+    public AllowlistForEditing LoadAllowlistForEditing()
+    {
+        var snapshot = _repository.ReadAllowlistSnapshot();
+        return new(Evaluate(snapshot), AllowlistVersion(snapshot));
+    }
+
+    /// <summary>The allowlist's own content as a version: every stored row in name order, and the presence marker.</summary>
+    internal static string AllowlistVersion(AllowlistSnapshot snapshot)
+    {
+        if (!snapshot.Readable)
+            return "unreadable";
+
+        var canonical = JsonSerializer.Serialize(new
+        {
+            snapshot.Configured,
+            Rows = snapshot.Rows
+                .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(r => r.Name, StringComparer.Ordinal)
+                .ToList(),
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
     }
 
     // Validation (denylist removal, contradictory flags, empty Choice list) - unchanged from the
@@ -390,65 +425,27 @@ public class ADAttributeEditorService
     /// catch write the one record for an attempt that failed before reaching this method without
     /// risking a second.
     /// </remarks>
-    public AllowlistSaveResult SaveAllowlistAndAudit(List<EditableAttribute> attributes, string performedBy, string ip)
+    public AllowlistSaveResult SaveAllowlistAndAudit(
+        List<EditableAttribute> attributes, string loadedVersion, string performedBy, string ip)
     {
-        List<AttributeRow> stored;
-        List<AttributeRow> written;
-        List<AllowlistFieldChange> changed;
+        AllowlistRefusal? refusal = null;
+        List<AttributeRow> written = [];
+        List<AllowlistFieldChange> changed = [];
+        AllowlistReplaceOutcome outcome;
         try
         {
-            // One fresh read is both the corruption re-check and the "before" the record needs. The
-            // re-check is the authoritative gate - the page's disabled buttons are UI only, and the
-            // store may have become corrupt since the page loaded - and saving over a corrupt store
-            // would discard whatever it holds, so it fails closed. It must be this read, not
-            // GetAllowlist: the cache can serve a stale-but-valid list for up to its TTL after the
-            // store became corrupt, which would let the gate pass and the save replace the store.
-            // The raw rows are the "before" because they are what the write replaces, rows the load
-            // drops included.
-            if (LoadAllowlistFromDisk(out stored) == null)
+            outcome = _repository.ReplaceAllowlist(stored =>
             {
-                var corrupt = DescribeCorruptStore();
-                LogAllowlistSaveRefused(performedBy, ip, "AllowlistConfig", corrupt);
-                return new(false, corrupt, StoreCorrupt: true);
-            }
+                refusal = Refuse(stored, attributes, loadedVersion);
+                if (refusal is not null)
+                    return null;
 
-            var blank = DescribeBlankRows(attributes);
-            if (blank is not null)
-            {
-                LogAllowlistSaveRefused(performedBy, ip, "BlankRow", blank);
-                return new(false, blank);
-            }
-
-            var repeated = DescribeRepeatedNames(attributes);
-            if (repeated is not null)
-            {
-                LogAllowlistSaveRefused(performedBy, ip, "DuplicateName", repeated);
-                return new(false, repeated);
-            }
-
-            var denied = attributes.Where(a => IsDenylisted(a.Name)).ToList();
-            if (denied.Count > 0)
-            {
-                var refused = $"Cannot save: {string.Join(", ", denied.Select(d => d.Name))} are on the hard denylist.";
-                LogAllowlistSaveRefused(performedBy, ip, "Denylist", refused);
-                return new(false, refused);
-            }
-
-            // Checked here, before SaveAllowlist, so an uncompilable pattern is recorded as what it
-            // is - a refusal, nothing tried - rather than reaching SaveAllowlist's throw and the
-            // catch below, which records a failed write.
-            var uncompilable = attributes.Select(DescribeUncompilablePattern).FirstOrDefault(p => p is not null);
-            if (uncompilable is not null)
-            {
-                LogAllowlistSaveRefused(performedBy, ip, "PatternCheck", uncompilable);
-                return new(false, uncompilable);
-            }
-
-            // Everything the success record says is worked out before the write, so a throw here is
-            // a failure with nothing written, never a completed write reported as failed.
-            written = RowsAsWritten(attributes);
-            changed = DescribeChangedRows(stored, written);
-            SaveAllowlist(attributes);
+                // Everything the success record says is worked out before the write, so a throw here is
+                // a failure with nothing written, never a completed write reported as failed.
+                written = RowsAsWritten(attributes);
+                changed = DescribeChangedRows(stored.Rows.ToList(), written);
+                return attributes.Select(ToAllowlistRow).ToList();
+            });
         }
         catch (Exception ex)
         {
@@ -460,6 +457,14 @@ public class ADAttributeEditorService
             return new(false, failed);
         }
 
+        if (refusal is not null)
+        {
+            LogAllowlistSaveRefused(performedBy, ip, refusal.Step, refusal.Reason);
+            return new(false, refusal.Reason, refusal.StoreCorrupt);
+        }
+
+        InvalidateAllowlistCache();
+
         // Outside the try that covers the write, and in its own: the allowlist has been saved, and an
         // audit failure must not make a completed save look failed (Constitution, Auditing). Written
         // even when nothing differs, so every attempt leaves a record.
@@ -469,7 +474,7 @@ public class ADAttributeEditorService
                 performedBy,
                 ip,
                 AllowlistAuditSection,
-                stored.Select(r => r.Name).ToArray(),
+                outcome.Before.Rows.Select(r => r.Name).ToArray(),
                 written.Select(r => r.Name).ToArray(),
                 changed.Count > 0 ? new Dictionary<string, object?> { ["changed"] = changed } : null);
         }
@@ -478,7 +483,43 @@ public class ADAttributeEditorService
             _logger.LogError(auditEx, "Audit failed for allowlist save");
         }
 
-        return new(true, null);
+        return new(true, null, Version: AllowlistVersion(outcome.After!));
+    }
+
+    private sealed record AllowlistRefusal(string Step, string Reason, bool StoreCorrupt = false);
+
+    internal const string ConcurrentChangeRefusal =
+        "The attribute allowlist was changed after this page loaded it, so nothing was saved. Reload the page and re-apply your changes.";
+
+    /// <summary>
+    /// Why a save of <paramref name="attributes"/> over <paramref name="stored"/> must not be written,
+    /// or null when it may be. Called inside the save's write, so the store it judges is the one the
+    /// write replaces.
+    /// </summary>
+    private AllowlistRefusal? Refuse(AllowlistSnapshot stored, List<EditableAttribute> attributes, string loadedVersion)
+    {
+        if (Evaluate(stored) is null)
+            return new("AllowlistConfig", DescribeCorruptStore(), StoreCorrupt: true);
+
+        if (!string.Equals(loadedVersion, AllowlistVersion(stored), StringComparison.Ordinal))
+            return new("ConcurrentChange", ConcurrentChangeRefusal);
+
+        if (DescribeBlankRows(attributes) is { } blank)
+            return new("BlankRow", blank);
+
+        if (DescribeRepeatedNames(attributes) is { } repeated)
+            return new("DuplicateName", repeated);
+
+        var denied = attributes.Where(a => IsDenylisted(a.Name)).ToList();
+        if (denied.Count > 0)
+            return new("Denylist", $"Cannot save: {string.Join(", ", denied.Select(d => d.Name))} are on the hard denylist.");
+
+        // Checked here, before the write, so an uncompilable pattern is recorded as what it is - a
+        // refusal, nothing tried - rather than as a failed write.
+        if (attributes.Select(DescribeUncompilablePattern).FirstOrDefault(p => p is not null) is { } uncompilable)
+            return new("PatternCheck", uncompilable);
+
+        return null;
     }
 
     /// <summary>

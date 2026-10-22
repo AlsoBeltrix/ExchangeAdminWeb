@@ -566,7 +566,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Contains("Job Title", service.LegacyAllowlistImportRefusal, StringComparison.Ordinal);
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("department", "Department", "String", null, false, true, null, null)],
-            "EXAMPLE\\admin", "10.0.0.9");
+            service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
         Assert.Contains("config/ad-editable-attributes.json", result.Error, StringComparison.Ordinal);
@@ -719,6 +719,8 @@ public class ADAttributeEditorServiceTests : IDisposable
         var cached = service.GetAllowlist();
         Assert.NotNull(cached);
         Assert.Same(cached, service.GetAllowlist());
+        // The page loaded the valid store; the save below is made from that view.
+        var loaded = service.LoadAllowlistForEditing();
 
         // A row whose choices cannot be parsed - the store's corrupt state - written behind the cache.
         _attrStore!.Write((connection, tx) =>
@@ -734,7 +736,7 @@ public class ADAttributeEditorServiceTests : IDisposable
 
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("title", "Title", "String", null, false, true, null, null)],
-            "EXAMPLE\\admin", "10.0.0.9");
+            loaded.Version, "EXAMPLE\\admin", "10.0.0.9");
 
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);

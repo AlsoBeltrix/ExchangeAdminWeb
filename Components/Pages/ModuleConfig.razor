@@ -1634,10 +1634,13 @@
     private bool allowlistSaved;
     private bool allowlistCorrupt;
     private string? allowlistImportRefusal;
+    private string allowlistVersion = "";
 
     private void LoadAllowlist()
     {
-        var list = AttrEditorService.GetAllowlist();
+        var loaded = AttrEditorService.LoadAllowlistForEditing();
+        allowlistVersion = loaded.Version;
+        var list = loaded.Attributes;
         if (list == null)
         {
             allowlistCorrupt = true;
@@ -1738,7 +1741,7 @@
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
 
-            var result = AttrEditorService.SaveAllowlistAndAudit(rows, currentUser, ip);
+            var result = AttrEditorService.SaveAllowlistAndAudit(rows, allowlistVersion, currentUser, ip);
             if (!result.Success)
             {
                 if (result.StoreCorrupt)
@@ -1750,6 +1753,7 @@
                 return;
             }
 
+            allowlistVersion = result.Version ?? "";
             dirty.ClearSection(SecAttrs);
             allowlistSaved = true;
         }
