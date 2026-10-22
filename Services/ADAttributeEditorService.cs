@@ -40,6 +40,40 @@ public sealed record AttributeSaveResult(
     string? Error,
     List<AttributeChange>? AppliedChanges);
 
+/// <summary>
+/// Marks a save as the reversal of an earlier attribute edit (aud-a26, aud-a26b).
+/// </summary>
+/// <remarks>
+/// Passed to <see cref="ADAttributeEditorService.SaveAsync"/>, it makes the save announce itself
+/// as <see cref="NoticeAction"/> - naming what was reverted and the operation it reverses -
+/// instead of as another <c>ADAttributeEditor_Update</c>, so a change and its retraction can be
+/// paired by eye in the mailbox. <see cref="NoticeDetails"/> is the one place that notice's rows
+/// are built: SaveAsync uses it for every result it returns, and the undo service for an
+/// exception SaveAsync never returns.
+/// </remarks>
+/// <param name="Target">The target as the original audit record names it.</param>
+/// <param name="RevertedAttributes">The attributes being put back.</param>
+/// <param name="OriginalOperationId">The operation being reversed, when the record carries it.</param>
+public sealed record AttributeEditReversal(string Target, string[] RevertedAttributes, string? OriginalOperationId)
+{
+    public const string NoticeAction = "ADAttributeEditor_Undo";
+
+    public Dictionary<string, string> NoticeDetails(bool success, string? error)
+    {
+        var details = new Dictionary<string, string>
+        {
+            ["Target"] = Target,
+            ["Reverted"] = string.Join(", ", RevertedAttributes),
+            ["Original operation"] = OriginalOperationId ?? "(unknown)",
+        };
+
+        if (!success)
+            details["Error"] = error ?? "Unknown";
+
+        return details;
+    }
+}
+
 public class ADAttributeEditorService
 {
     private readonly ModuleCredentialService _moduleCredentials;
@@ -458,9 +492,36 @@ public class ADAttributeEditorService
         return value;
     }
 
+    /// <summary>
+    /// The runspace the lookup and save paths open (PerformLookup, PerformSave).
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, the shape of <c>Comms10kService.CreateReplaceRunspace</c>:
+    /// a test hands back a session whose Import-Module, Get-ADUser and Set-ADUser are local
+    /// functions, so those paths run for real with no directory. Production builds exactly the
+    /// session it always did.
+    /// </remarks>
+    internal virtual Runspace CreateDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
+    /// <summary>
+    /// This module's AD credential, for the lookup and save paths.
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, like <c>GroupManagementService.GetCredentialsAsync</c>:
+    /// the save path fetches credentials before it opens a session, so without this no test can
+    /// drive a save past the credential step.
+    /// </remarks>
+    internal virtual Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose) =>
+        _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", purpose);
+
     public async Task<AttributeLookupResult> LookupAsync(string identity)
     {
-        var creds = await _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", "attribute lookup");
+        var creds = await GetCredentialsAsync("attribute lookup");
         if (creds == null)
             return new(false, "AD credentials unavailable. Configure the module's Delinea Secret ID.", null, null, false, null, null);
 
@@ -511,6 +572,16 @@ public class ADAttributeEditorService
         }
     }
 
+    /// <summary>
+    /// Writes the proposed values, audits the outcome and tells administrators about it.
+    /// </summary>
+    /// <remarks>
+    /// aud-a26b. Every result returned here - an applied write, a no-op, a refusal, a failed
+    /// write - has been audited by <see cref="SaveAndAuditAsync"/> and is announced here, once.
+    /// Dispatch used to live in the page, so each caller had to remember it and the undo path
+    /// did not (aud-a26); a caller now gets the notice by calling this and cannot forget it. An
+    /// exception that escapes is not announced here; both callers' catches announce it.
+    /// </remarks>
     public async Task<AttributeSaveResult> SaveAsync(
         ResolvedDirectoryPrincipal target,
         Dictionary<string, string?> proposedValues,
@@ -521,7 +592,23 @@ public class ADAttributeEditorService
         // would silently make every caller that forgot it unable to service - or invite an ambient
         // lookup, which attributes a bypass to whoever is on the thread. Null refuses.
         System.Security.Claims.ClaimsPrincipal? actingUser,
-        int? maxLevel = null)
+        int? maxLevel = null,
+        // Set by the undo path only, so the notice reads as a reversal rather than another update.
+        AttributeEditReversal? reversal = null)
+    {
+        var result = await SaveAndAuditAsync(target, proposedValues, performedBy, ip, ticket, actingUser, maxLevel);
+        await NotifyAdministratorsAsync(target, performedBy, ip, ticket, result, reversal);
+        return result;
+    }
+
+    private async Task<AttributeSaveResult> SaveAndAuditAsync(
+        ResolvedDirectoryPrincipal target,
+        Dictionary<string, string?> proposedValues,
+        string performedBy,
+        string ip,
+        string ticket,
+        System.Security.Claims.ClaimsPrincipal? actingUser,
+        int? maxLevel)
     {
         var allowlist = GetAllowlist();
         if (allowlist == null)
@@ -576,7 +663,7 @@ public class ADAttributeEditorService
             }
         }
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", "attribute save");
+        var creds = await GetCredentialsAsync("attribute save");
         if (creds == null)
         {
             const string msg = "AD credentials unavailable.";
@@ -617,9 +704,7 @@ public class ADAttributeEditorService
 
     private AttributeLookupResult PerformLookup(string identity, (string username, string password, string domain) creds, List<EditableAttribute> allowlist)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = CreateDirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
@@ -636,6 +721,7 @@ public class ADAttributeEditorService
         var properties = GetPropertiesToLoad(allowlist);
 
         var allUsers = new List<PSObject>();
+        var failedBases = new List<(string SearchBase, string Reason)>();
 
         if (searchBases.Length == 0)
         {
@@ -646,9 +732,21 @@ public class ADAttributeEditorService
               .AddParameter("ErrorAction", "Stop");
             allUsers.AddRange(ps.Invoke());
             ps.Commands.Clear();
+
+            if (ps.HadErrors)
+            {
+                var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "AD query failed.";
+                ps.Streams.Error.Clear();
+                return new(false, errMsg, null, null, false, null, null);
+            }
         }
         else
         {
+            // psl-6: each base is judged on its own invocation, here, before the next one runs.
+            // HadErrors describes only the most recent invocation and survives
+            // Streams.Error.Clear(), so the one check that used to follow this loop saw the LAST
+            // base alone: a failure there failed a lookup that had already found the user, and a
+            // failure on any earlier base was lost.
             foreach (var sb in searchBases)
             {
                 ps.AddCommand("Get-ADUser")
@@ -660,18 +758,24 @@ public class ADAttributeEditorService
                 try
                 {
                     allUsers.AddRange(ps.Invoke());
-                }
-                catch { }
-                ps.Streams.Error.Clear();
-                ps.Commands.Clear();
-            }
-        }
 
-        if (ps.HadErrors)
-        {
-            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "AD query failed.";
-            ps.Streams.Error.Clear();
-            return new(false, errMsg, null, null, false, null, null);
+                    // Under SilentlyContinue a cmdlet's error writes no record but still sets the
+                    // flag, so the flag is the evidence and a record, when there is one, the detail.
+                    if (ps.HadErrors)
+                        failedBases.Add((sb, ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "the query reported an error without detail"));
+                }
+                catch (Exception ex)
+                {
+                    // A terminating error throws whatever the ErrorAction: an unreachable server,
+                    // a search base that does not exist.
+                    failedBases.Add((sb, ex.InnerException?.Message ?? ex.Message));
+                }
+                finally
+                {
+                    ps.Streams.Error.Clear();
+                    ps.Commands.Clear();
+                }
+            }
         }
 
         var users = allUsers
@@ -680,7 +784,24 @@ public class ADAttributeEditorService
             .ToList();
 
         if (users.Count == 0)
+        {
+            // Nobody found while a base did not answer: the user may be in that base, so this is a
+            // lookup that could not be completed, and it says where - not "not found".
+            if (failedBases.Count > 0)
+                return new(false, $"AD lookup for '{identity}' could not be completed: {DescribeFailedBases(failedBases)}.", null, null, false, null, null);
+
             return new(false, $"User '{identity}' not found.", null, null, false, null, null);
+        }
+
+        // Found, while another base did not answer: the lookup stands and the failure is logged
+        // against its base (owner's rule for psl-6). The ambiguity check below sees only the bases
+        // that answered.
+        if (failedBases.Count > 0)
+        {
+            _logger.LogWarning(
+                "AD attribute lookup for {Identity} found a match, but {Count} search base(s) could not be searched: {FailedBases}",
+                identity, failedBases.Count, DescribeFailedBases(failedBases));
+        }
 
         if (users.Count > 1)
             return new(false, $"Ambiguous: '{identity}' matches {users.Count} AD users. Use a more specific identifier.", null, null, false, null, null);
@@ -713,6 +834,10 @@ public class ADAttributeEditorService
         return new(true, null, principal, "OnPremAD", false, null, currentValues);
     }
 
+    /// <summary>Each failed search base with its reason, for the operator's message and the log (psl-6).</summary>
+    private static string DescribeFailedBases(IEnumerable<(string SearchBase, string Reason)> failedBases) =>
+        string.Join("; ", failedBases.Select(f => $"search base '{f.SearchBase}' failed ({f.Reason})"));
+
     private AttributeSavePreview ComputePreview(
         ResolvedDirectoryPrincipal target,
         Dictionary<string, string?> proposedValues,
@@ -737,26 +862,41 @@ public class ADAttributeEditorService
         string ticket,
         string? servicedNote)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
+        using var runspace = CreateDirectoryRunspace();
         using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
+        PSCredential credential;
+        System.Collections.ObjectModel.Collection<PSObject> reReadResult;
 
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        // aud-a28c: under -ErrorAction Stop everything before the write fails by THROWING - the
+        // module missing, a domain controller unreachable, access denied, and an object moved or
+        // deleted since the lookup, which Get-ADUser -Identity reports by throwing rather than by
+        // returning nothing. Uncaught, the attempt left no audit record. Caught here, it gets the
+        // failed record the checks below write, and a failed result SaveAsync announces.
+        try
+        {
+            runspace.Open();
+            ps.Runspace = runspace;
 
-        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
 
-        ps.AddCommand("Get-ADUser")
-          .AddParameter("Identity", target.DistinguishedName)
-          .AddParameter("Properties", GetPropertiesToLoad(allowlist))
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var reReadResult = ps.Invoke();
-        ps.Commands.Clear();
+            credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("Identity", target.DistinguishedName)
+              .AddParameter("Properties", GetPropertiesToLoad(allowlist))
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            reReadResult = ps.Invoke();
+            ps.Commands.Clear();
+        }
+        catch (Exception ex)
+        {
+            var reReadMsg = $"Target object could not be re-read before the write: {ex.InnerException?.Message ?? ex.Message}";
+            LogAudit(target, [], performedBy, ip, ticket, false, reReadMsg);
+            return new(false, reReadMsg, null);
+        }
 
         if (reReadResult.Count == 0)
         {
@@ -1000,6 +1140,63 @@ public class ADAttributeEditorService
             extra["targetObjectGuid"] = target.ObjectGuid;
 
         _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: extra);
+    }
+
+    /// <summary>The forward notice's <c>Changed</c> row when the save found nothing to change.</summary>
+    internal const string NothingNeededChanging = "(none - the directory already held the requested values)";
+
+    /// <summary>
+    /// Tells administrators how one save ended (aud-a26b). SaveAsync calls this once for every
+    /// result it returns.
+    /// </summary>
+    /// <remarks>
+    /// The forward notice keeps the action and rows the page used to send. <c>Changed</c> names
+    /// what was actually applied, which only this service knows; the page could only name what it
+    /// asked for. A reversal is announced with the undo's content instead
+    /// (<see cref="AttributeEditReversal"/>).
+    ///
+    /// A failed send is logged and swallowed. The directory has been written, or deliberately not,
+    /// and the audit record exists either way; a mail server being down must not change the result
+    /// the caller is given.
+    /// </remarks>
+    private async Task NotifyAdministratorsAsync(
+        ResolvedDirectoryPrincipal target,
+        string performedBy,
+        string ip,
+        string ticket,
+        AttributeSaveResult result,
+        AttributeEditReversal? reversal)
+    {
+        var error = result.Success ? null : result.Error;
+        try
+        {
+            if (reversal is not null)
+            {
+                await _email.SendAdminNotificationAsync(
+                    performedBy, ip, AttributeEditReversal.NoticeAction, result.Success, ticket,
+                    reversal.NoticeDetails(result.Success, error), error);
+                return;
+            }
+
+            var details = new Dictionary<string, string> { ["Target"] = target.UserPrincipalName };
+            if (result.Success)
+            {
+                details["Changed"] = result.AppliedChanges is { Count: > 0 } applied
+                    ? string.Join(", ", applied.Select(c => c.Name))
+                    : NothingNeededChanging;
+            }
+            else
+            {
+                details["Error"] = error ?? "Unknown";
+            }
+
+            await _email.SendAdminNotificationAsync(
+                performedBy, ip, "ADAttributeEditor_Update", result.Success, ticket, details, error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Email notification failed for AD attribute edit of {Target}", target.UserPrincipalName);
+        }
     }
 
     private string[] GetConfiguredSearchBases()

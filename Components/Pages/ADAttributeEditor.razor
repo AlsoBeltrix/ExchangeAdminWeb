@@ -486,7 +486,7 @@
         // Review of A14: the CHANGES too. A concurrent search clears pendingChanges, and
         // proposedValues was built from the live collection after the yield - so a search
         // landing in that window turned a real save into "successfully updated 0 attributes",
-        // and emptied the list the notification names as well.
+        // and emptied the list the notification then named (SaveAsync names its own: aud-a26b).
         var changes = pendingChanges.ToList();
         if (target is null)
         {
@@ -498,9 +498,9 @@
         await Task.Yield();
 
         // Opened HERE, above the try, so the authorization and allowlist refusals inside it are
-        // covered too, and completed in the finally AFTER the notification email - not at the
-        // write - so the bar does not read Idle while an email is still in flight.
-        // NamedLocations.SaveLocation is the shape this copies.
+        // covered too, and completed in the finally, after SaveAsync - which sends the
+        // notification email itself (aud-a26b) - so the bar does not read Idle while an email is
+        // still in flight. NamedLocations.SaveLocation is the shape this copies.
         //
         // Completed from a LOCAL, never from operationResult. That field has a dismiss control
         // in this page's own banner markup (a bare @onclick that nulls it), and it stays
@@ -510,14 +510,14 @@
         // it. OutOfOffice.SetOof completes from its field instead, and says in place that this
         // is why: that page renders no dismiss.
         //
-        // Three steps, because the sequence is fixed once the operation proceeds: permission,
-        // the AD write, the notification. A refusal completes early at the step it reached,
-        // which is what happened, not a lie about size.
+        // Two steps, because the sequence is fixed once the operation proceeds: permission, then
+        // the AD write with the notification SaveAsync sends for it. A refusal completes early at
+        // the step it reached, which is what happened, not a lie about size.
         (bool success, string message)? completed = null;
         using var activity = Progress.Begin(
             "AD Attribute Editor",
             $"Saving {changeCount} attribute change(s) for {saveTarget}",
-            ActivitySize.Steps(3));
+            ActivitySize.Steps(2));
 
         try
         {
@@ -549,28 +549,15 @@
             foreach (var change in changes)
                 proposedValues[change.Name] = change.NewValue;
 
-            activity.Step("writing the attributes to Active Directory");
+            // aud-a26b: SaveAsync announces its own result - a write, a refusal or a failed write -
+            // so neither branch below sends a notice. Only the catch does, for an exception
+            // SaveAsync never returns.
+            activity.Step("writing the attributes to Active Directory and notifying administrators");
             var result = await EditorService.SaveAsync(target, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim(), actingUser: authState.User, maxLevel: saveMaxLevel);
-
-            // One step for both outcomes: the success and failure branches below each send the
-            // admin notification, so the remaining wait is the same either way.
-            activity.Step("sending the notification");
 
             if (result.Success)
             {
                 operationResult = completed = (true, $"Successfully updated {result.AppliedChanges?.Count ?? 0} attribute(s) for {target.DisplayName}.");
-
-                try
-                {
-                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update",
-                        true, ticketNumber.Trim(),
-                        new Dictionary<string, string>
-                        {
-                            ["Target"] = target.UserPrincipalName,
-                            ["Changed"] = string.Join(", ", changes.Select(c => c.Name))
-                        });
-                }
-                catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for AD attribute edit"); }
 
                 showDiffPreview = false;
                 pendingChanges = new();
@@ -603,24 +590,13 @@
             else
             {
                 operationResult = completed = (false, result.Error ?? "Save failed.");
-
-                try
-                {
-                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update",
-                        false, ticketNumber.Trim(),
-                        new Dictionary<string, string>
-                        {
-                            ["Target"] = target.UserPrincipalName,
-                            ["Error"] = result.Error ?? "Unknown"
-                        }, result.Error);
-                }
-                catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for AD attribute edit failure"); }
             }
         }
         catch (Exception ex)
         {
             operationResult = completed = (false, ex.Message);
             Logger.LogError(ex, "AD attribute save failed");
+            // The page's one remaining notice: an exception, which SaveAsync never returns.
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = target.UserPrincipalName }, ex.Message); } catch { }
         }
         finally

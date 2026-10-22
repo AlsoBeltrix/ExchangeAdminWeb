@@ -42,11 +42,13 @@ public class RefusalAuditTests
         Assert.Equal(refusals.Count, audited.Count);
     }
 
+    // aud-a26b moved SaveAsync's body, refusals included, into SaveAndAuditAsync; public SaveAsync
+    // now only awaits it and announces the result. These guards follow the refusals there.
     [Fact]
     public void EveryAttributeSaveRefusal_WritesAnAuditRecord()
     {
         var source = Source("ADAttributeEditorService.cs");
-        var body = Body(source, "public async Task<AttributeSaveResult> SaveAsync", "\n    private ");
+        var body = Body(source, "private async Task<AttributeSaveResult> SaveAndAuditAsync", "\n    private ");
 
         var refusals = System.Text.RegularExpressions.Regex.Matches(body, @"return new\(false, ");
         Assert.True(refusals.Count >= 7, $"Expected the refusal returns; found {refusals.Count}.");
@@ -57,7 +59,7 @@ public class RefusalAuditTests
 
     [Theory]
     [InlineData("EmergencyDisableService.cs", "public async Task<EmergencyDisableResult> DisableAsync", "return new EmergencyDisableResult(false,")]
-    [InlineData("ADAttributeEditorService.cs", "public async Task<AttributeSaveResult> SaveAsync", "return new(false, ")]
+    [InlineData("ADAttributeEditorService.cs", "private async Task<AttributeSaveResult> SaveAndAuditAsync", "return new(false, ")]
     public void EveryRefusalReturnHasItsLogImmediatelyAbove(string file, string signature, string refusal)
     {
         // Review of the A28 batch: counting calls and returns proves neither ORDER nor

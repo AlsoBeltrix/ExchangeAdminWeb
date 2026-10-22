@@ -1,0 +1,297 @@
+using System.Security.Claims;
+using System.Text.Json;
+using ExchangeAdminWeb.Services;
+
+namespace ExchangeAdminWeb.Tests;
+
+/// <summary>
+/// aud-a28b: SaveAsync driven for real, so a version that refuses every call cannot pass.
+/// </summary>
+/// <remarks>
+/// Before this, SaveAsync's coverage was source scans (RefusalAuditTests, the servicer guards),
+/// which read the file as text and cannot see reachability: an edit that made SaveAsync return the
+/// corrupt-allowlist refusal on EVERY call passed the whole suite. These run the real method
+/// through <see cref="AttributeEditorHarness"/> - real allowlist store, validation, servicer grant
+/// and audit writer, a fake protection decision, and local stand-ins for the AD cmdlets - and
+/// assert on the result, on what reached the stand-in directory, on whether a directory session
+/// was opened at all, and on the audit records read back from the JSONL the writer produced.
+/// </remarks>
+public sealed class ADAttributeEditorSaveTests : IDisposable
+{
+    private const string Actor = "EXAMPLE\\operator";
+    private const string Ip = "10.0.0.5";
+    private const string Ticket = "CHG0100";
+
+    private readonly AttributeEditorHarness _h = new();
+
+    public void Dispose() => _h.Dispose();
+
+    private Task<AttributeSaveResult> Save(
+        LocalAd.User user,
+        Dictionary<string, string?> values,
+        ClaimsPrincipal? actingUser = null,
+        int? maxLevel = null,
+        ResolvedDirectoryPrincipal? principal = null) =>
+        _h.Service.SaveAsync(
+            principal ?? AttributeEditorHarness.PrincipalFor(user), values, Actor, Ip, Ticket,
+            actingUser ?? AttributeEditorHarness.Operator(), maxLevel);
+
+    private static string Text(JsonElement record, string property) =>
+        record.GetProperty(property).GetString() ?? "";
+
+    /// <summary>
+    /// A refusal made before the directory: no session opened, nothing written, and exactly one
+    /// audit record, which says it was refused, where, and that no mutation was attempted.
+    /// </summary>
+    private void AssertRefusedBeforeTheDirectory(AttributeSaveResult result, string error, string refusedAt)
+    {
+        Assert.False(result.Success);
+        Assert.Equal(error, result.Error);
+        Assert.Null(result.AppliedChanges);
+        Assert.Equal(0, _h.Service.SessionsOpened);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEdit_Refused", Text(record, "action"));
+        Assert.Equal("ADAttributeEditor", Text(record, "category"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(refusedAt, Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal(error, Text(record, "error"));
+        Assert.Equal("alex.morgan@example.test", Text(record, "target"));
+        Assert.Equal("operator", Text(record, "user"));
+        Assert.Equal(Ip, Text(record, "ip"));
+        Assert.Equal(Ticket, Text(record, "ticket"));
+    }
+
+    // ---- the happy path ------------------------------------------------------------------------
+
+    [Fact]
+    public async Task AnOrdinaryEdit_IsWrittenOnceToTheBoundObject_AndAudited()
+    {
+        var alex = _h.Ad.AddAlex();
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst", ["department"] = "" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Null(result.Error);
+        Assert.Collection(result.AppliedChanges!,
+            change =>
+            {
+                Assert.Equal("title", change.Name);
+                Assert.Equal("Analyst", change.OldValue);
+                Assert.Equal("Lead Analyst", change.NewValue);
+            },
+            change =>
+            {
+                Assert.Equal("department", change.Name);
+                Assert.Equal("Finance", change.OldValue);
+                Assert.Null(change.NewValue);
+            });
+
+        // The stand-in took the import, so nothing real was loaded; then one re-read BY DN and one
+        // write, carrying the replace and the clear together.
+        Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{alex.Dn}|", $"Set-ADUser|{alex.Dn}"], _h.Ad.Calls);
+        var write = Assert.Single(_h.Ad.Sets);
+        Assert.Equal(alex.Dn, write.Identity);
+        Assert.Equal("Lead Analyst", Assert.Single(write.Replace, kv => kv.Key == "title").Value);
+        Assert.Single(write.Replace);
+        Assert.Equal(["department"], write.Clear);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal("Analyst", Text(record, "old_title"));
+        Assert.Equal("Lead Analyst", Text(record, "new_title"));
+        Assert.Equal("Finance", Text(record, "old_department"));
+        Assert.Equal(alex.Guid.ToString(), Text(record, "targetObjectGuid"));
+        Assert.Equal(alex.Upn, Text(record, "target"));
+        Assert.Equal("operator", Text(record, "user"));
+        Assert.Equal(Ip, Text(record, "ip"));
+        Assert.Equal(Ticket, Text(record, "ticket"));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+    }
+
+    // ---- refusals before the directory, every one audited --------------------------------------
+
+    [Fact]
+    public async Task AProtectedTarget_IsRefusedBeforeTheDirectory_AndTheRefusalIsAudited()
+    {
+        var alex = _h.Ad.AddAlex();
+        _h.Protection.Decide = _ => ProtectedPrincipalResult.Protected("protected for test", "User: alex.morgan@example.test");
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        AssertRefusedBeforeTheDirectory(result, "Target is a protected principal and cannot be modified.", "ProtectedPrincipalCheck");
+    }
+
+    [Fact]
+    public async Task AFailedProtectionRead_Refuses_FailClosed()
+    {
+        // The check could not be made. That is not "not protected": it refuses with the reason.
+        var alex = _h.Ad.AddAlex();
+        _h.Protection.Decide = _ => ProtectedPrincipalResult.Failed("Protected principal configuration could not be read.");
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        AssertRefusedBeforeTheDirectory(result, "Protected principal configuration could not be read.", "ProtectedPrincipalCheck");
+    }
+
+    [Fact]
+    public async Task AnAuthorisedServicer_IsWritten_AndTheAuditNamesTheGrant()
+    {
+        // The control for the test below: with the grant readable, the servicer path is open and
+        // the success record says who permitted it (pps-3).
+        var alex = _h.Ad.AddAlex();
+        _h.Protection.Decide = _ => ProtectedPrincipalResult.Protected("protected for test", "User: alex.morgan@example.test");
+        _h.GrantServicer();
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" },
+            actingUser: AttributeEditorHarness.Operator(AttributeEditorHarness.ServicerSid));
+
+        Assert.True(result.Success, result.Error);
+        Assert.Single(_h.Ad.Sets);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Success", Text(record, "result"));
+        var note = Text(record, ProtectedPrincipalServicing.AuditKey);
+        Assert.Contains(AttributeEditorHarness.ServicerSid, note, StringComparison.Ordinal);
+        Assert.Contains("User: alex.morgan@example.test", note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnUnreadableServicerGrant_Refuses_FailClosed()
+    {
+        // The same operator and grant as above, with the section-access store unreadable: an
+        // unreadable grant says nothing about membership, so the protected target is refused.
+        var alex = _h.Ad.AddAlex();
+        _h.Protection.Decide = _ => ProtectedPrincipalResult.Protected("protected for test", "User: alex.morgan@example.test");
+        _h.GrantServicer();
+        _h.SectionStore.ReadsFail = true;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" },
+            actingUser: AttributeEditorHarness.Operator(AttributeEditorHarness.ServicerSid));
+
+        AssertRefusedBeforeTheDirectory(result, "Target is a protected principal and cannot be modified.", "ProtectedPrincipalCheck");
+    }
+
+    [Fact]
+    public async Task MissingCredentials_Refuse_AndTheRefusalIsAudited()
+    {
+        var alex = _h.Ad.AddAlex();
+        _h.CredentialsAvailable = false;
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        AssertRefusedBeforeTheDirectory(result, "AD credentials unavailable.", "GetADCredentials");
+    }
+
+    [Fact]
+    public async Task AnAttributeAboveTheCallersLevel_IsRefused()
+    {
+        // extensionAttribute5 is level 2; the caller holds level 1. The page filters too, but the
+        // service is the one that must not trust it.
+        var alex = _h.Ad.AddAlex();
+
+        var result = await Save(alex, new() { ["extensionAttribute5"] = "CC-42" }, maxLevel: 1);
+
+        AssertRefusedBeforeTheDirectory(result, "Attribute 'extensionAttribute5' is not in the allowlist.", "Validation");
+    }
+
+    [Fact]
+    public async Task ADenylistedAttribute_IsRefused()
+    {
+        var alex = _h.Ad.AddAlex();
+
+        var result = await Save(alex, new() { ["userAccountControl"] = "512" });
+
+        AssertRefusedBeforeTheDirectory(result,
+            "Attribute 'userAccountControl' is on the hard denylist and cannot be modified.", "Validation");
+    }
+
+    [Fact]
+    public async Task ACorruptAllowlist_Refuses()
+    {
+        var alex = _h.Ad.AddAlex();
+        _h.CorruptAllowlist();
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        AssertRefusedBeforeTheDirectory(result, "Attribute allowlist configuration is corrupt.", "AllowlistConfig");
+    }
+
+    // ---- the bound-object check, after the directory -------------------------------------------
+
+    [Fact]
+    public async Task AReReadThatIsNotTheLookedUpObject_IsRefused_WithNoWrite()
+    {
+        // The DN now names a different object than the one the operator looked at. The write must
+        // not happen, and the failure is audited.
+        var alex = _h.Ad.AddAlex();
+        var stale = AttributeEditorHarness.PrincipalFor(alex) with { ObjectGuid = Guid.NewGuid().ToString() };
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" }, principal: stale);
+
+        Assert.False(result.Success);
+        Assert.Equal("Bound-object mismatch: the resolved object no longer matches the lookup snapshot.", result.Error);
+        Assert.Empty(_h.Ad.Sets);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+    }
+
+    // ---- failures that throw before the write (aud-a28c) ---------------------------------------
+
+    [Fact]
+    public async Task ATargetMovedSinceTheLookup_FailsAudited_InsteadOfThrowing()
+    {
+        // The DN the lookup captured no longer resolves - the account was moved or deleted - and
+        // under -ErrorAction Stop Get-ADUser -Identity THROWS for that rather than returning
+        // nothing. It escaped SaveAsync with no audit record; the Count == 0 branch written for
+        // exactly this case could not be reached.
+        var alex = _h.Ad.AddAlex();
+        var moved = AttributeEditorHarness.PrincipalFor(alex) with
+        {
+            DistinguishedName = "CN=Alex Morgan,OU=Leavers,DC=example,DC=test",
+        };
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" }, principal: moved);
+
+        Assert.False(result.Success);
+        Assert.StartsWith("Target object could not be re-read before the write:", result.Error, StringComparison.Ordinal);
+        Assert.Contains("Cannot find an object with identity", result.Error, StringComparison.Ordinal);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+        Assert.Equal(alex.Upn, Text(record, "target"));
+        Assert.Equal(Ticket, Text(record, "ticket"));
+
+        // And announced, because SaveAsync announces every result it returns (aud-a26b).
+        var notice = Assert.Single(_h.Notices);
+        Assert.False(notice.Success);
+        Assert.Equal(result.Error, notice.Details["Error"]);
+    }
+
+    [Fact]
+    public async Task AHostWithoutTheDirectoryModule_FailsAudited_InsteadOfThrowing()
+    {
+        var alex = _h.Ad.AddAlex();
+        _h.Ad.ImportFailure =
+            "The specified module 'ActiveDirectory' was not loaded because no valid module file was found in any module directory.";
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" });
+
+        Assert.False(result.Success);
+        Assert.Contains("no valid module file was found", result.Error, StringComparison.Ordinal);
+        Assert.Empty(_h.Ad.Sets);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Update", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Error, Text(record, "error"));
+    }
+}

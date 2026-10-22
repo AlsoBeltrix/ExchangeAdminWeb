@@ -16,7 +16,8 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
     // Audit finding A26. Undo wrote the audit record and sent nothing. Notification dispatch
     // for attribute edits lived in the forward-edit PAGE, and undo does not go through it, so
-    // a reversal was the one attribute change administrators never heard about.
+    // a reversal was the one attribute change administrators never heard about. Since aud-a26b
+    // SaveAsync announces its own results; this is kept for the exception path only.
     private readonly EmailService _email;
     private readonly ILogger<ADAttributeEditorUndoService> _logger;
 
@@ -163,15 +164,30 @@ public class ADAttributeEditorUndoService : IUndoableModule
         var target = GetString(auditEvent, "target");
         var originalOperationId = GetString(auditEvent, "operationId");
 
+        // aud-a28d: every refusal below writes the undo record before it returns, marked with where
+        // it was refused and that nothing was sent to the directory. They used to complete only
+        // the diagnostic trace, and the event-log page that calls this audits nothing.
         if (string.IsNullOrWhiteSpace(target))
-            return new UndoResult(false, "No target identity in audit event.", null);
+        {
+            const string noTarget = "No target identity in audit event.";
+            LogUndoAudit(performedBy, ip, "(none)", [], auditEvent, originalOperationId, ticket, false, noTarget, servicedNote: null, refusedAt: "AuditRecord");
+            return new UndoResult(false, noTarget, null);
+        }
 
         if (!_moduleEnablement.IsModuleEnabled("ADAttributeEditor"))
-            return new UndoResult(false, "ADAttributeEditor module is not enabled.", null);
+        {
+            const string disabled = "ADAttributeEditor module is not enabled.";
+            LogUndoAudit(performedBy, ip, target, [], auditEvent, originalOperationId, ticket, false, disabled, servicedNote: null, refusedAt: "ModuleEnablement");
+            return new UndoResult(false, disabled, null);
+        }
 
         var changedAttributes = GetStringArray(auditEvent, "changedAttributes");
         if (changedAttributes.Length == 0)
-            return new UndoResult(false, "No changed attributes recorded in audit event.", null);
+        {
+            const string noChanges = "No changed attributes recorded in audit event.";
+            LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, noChanges, servicedNote: null, refusedAt: "AuditRecord");
+            return new UndoResult(false, noChanges, null);
+        }
 
         using var scope = _operationTrace.BeginOperation(
             module: "ADAttributeEditor",
@@ -189,6 +205,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
             if (!lookupResult.Success || lookupResult.CurrentValues == null || lookupResult.Principal == null)
             {
                 var error = $"Cannot read current state of '{target}': {lookupResult.Error ?? "lookup failed"}";
+                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, error, servicedNote: null, refusedAt: "Lookup");
                 scope.Complete(false, error);
                 return new UndoResult(false, error, null);
             }
@@ -196,6 +213,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
             var identityProblem = IdentityMismatch(auditEvent, lookupResult.Principal, target);
             if (identityProblem != null)
             {
+                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, identityProblem, servicedNote: null, refusedAt: "IdentityCheck");
                 scope.Complete(false, identityProblem);
                 return new UndoResult(false, identityProblem, null);
             }
@@ -204,8 +222,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
             var protCheck = await _protectedPrincipalService.CheckAsync(lookupResult.Principal);
             if (protCheck.CheckFailed)
             {
+                var checkFailed = $"Protected principal check failed: {protCheck.Reason}";
+                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, checkFailed, servicedNote: null, refusedAt: "ProtectedPrincipalCheck");
                 scope.Complete(false, protCheck.Reason);
-                return new UndoResult(false, $"Protected principal check failed: {protCheck.Reason}", null);
+                return new UndoResult(false, checkFailed, null);
             }
             // The note is BOUND, not tested and dropped. This is a write path: allowing the undo
             // while discarding the note would leave a successful modification of a protected
@@ -220,8 +240,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
                 if (servicedNote is null)
                 {
+                    const string protectedTarget = "Target is a protected principal and cannot be modified.";
+                    LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, protectedTarget, servicedNote: null, refusedAt: "ProtectedPrincipalCheck");
                     scope.Complete(false, "Target is a protected principal");
-                    return new UndoResult(false, "Target is a protected principal and cannot be modified.", null);
+                    return new UndoResult(false, protectedTarget, null);
                 }
             }
 
@@ -245,6 +267,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
                             ["expected"] = newNorm,
                             ["actual"] = currentNorm
                         });
+                    LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, error, servicedNote: null, refusedAt: "ConflictCheck");
                     scope.Complete(false, error);
                     return new UndoResult(false, error, null);
                 }
@@ -266,6 +289,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 else int.TryParse(lvlObj?.ToString(), out maxLevel);
             }
 
+            // aud-a26b: SaveAsync announces this reversal itself, for whatever result it returns,
+            // and the reversal record is what makes it read as ADAttributeEditor_Undo rather than
+            // another update. So neither branch below dispatches; only the catch does, for an
+            // exception SaveAsync never returns.
             var saveResult = await _editorService.SaveAsync(
                 lookupResult.Principal,
                 proposedValues,
@@ -273,25 +300,19 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 ip,
                 ticket,
                 actingUser,
-                maxLevel);
+                maxLevel,
+                reversal: new AttributeEditReversal(target, changedAttributes, originalOperationId));
 
             if (!saveResult.Success)
             {
                 // The SaveAsync already audits failure internally, but we also need the undo-specific audit
                 LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, saveResult.Error, servicedNote);
-                await NotifyAdministratorsAsync(
-                    performedBy, ip, ticket, target, changedAttributes, originalOperationId,
-                    success: false, error: saveResult.Error);
                 scope.Complete(false, saveResult.Error);
                 return new UndoResult(false, saveResult.Error, null);
             }
 
             // Log the undo-specific audit event (the SaveAsync already logged a standard ADAttributeEditor_Update)
             LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, true, null, servicedNote);
-
-            await NotifyAdministratorsAsync(
-                performedBy, ip, ticket, target, changedAttributes, originalOperationId,
-                success: true, error: null);
 
             var reversalOperationId = _operationTrace.CurrentOperationId;
             scope.Complete(true);
@@ -323,20 +344,22 @@ public class ADAttributeEditorUndoService : IUndoableModule
     }
 
     /// <summary>
-    /// Tells administrators that an attribute change was REVERSED.
+    /// Tells administrators that an attempt to REVERSE an attribute change threw.
     /// </summary>
     /// <remarks>
-    /// Audit finding A26. A forward edit sends this from the page; an undo never goes through
-    /// that page, so a reversal was silent. Administrators saw the change and not its
-    /// retraction, which is the worse way round to know only half of.
+    /// Audit finding A26: a reversal was silent, because dispatch lived in the forward-edit page
+    /// and undo never goes through it. Since aud-a26b SaveAsync announces every result it returns,
+    /// told by the <see cref="AttributeEditReversal"/> it is given that this is an undo. What is
+    /// left here is the one case SaveAsync cannot announce: an exception, out of SaveAsync or
+    /// anywhere else in ExecuteUndoAsync.
     ///
-    /// The action is <c>ADAttributeEditor_Undo</c>, not the forward action name: a reader of
-    /// the mailbox needs to be able to tell a reversal from another edit, and reusing
-    /// <c>ADAttributeEditor_Update</c> would make the pair indistinguishable.
+    /// The action and rows come from <see cref="AttributeEditReversal"/>, the same builder
+    /// SaveAsync uses, so the two notices cannot drift. The action is <c>ADAttributeEditor_Undo</c>,
+    /// not the forward action name: a reader of the mailbox needs to tell a reversal from another
+    /// edit.
     ///
     /// Failures are logged and swallowed, matching the forward path. The notification is not
-    /// permitted to turn a completed reversal into a reported failure - the directory has
-    /// already been written and the audit record already exists.
+    /// permitted to change the reported outcome - the audit record already exists.
     /// </remarks>
     internal async Task NotifyAdministratorsAsync(
         string performedBy,
@@ -350,18 +373,11 @@ public class ADAttributeEditorUndoService : IUndoableModule
     {
         try
         {
-            var details = new Dictionary<string, string>
-            {
-                ["Target"] = target,
-                ["Reverted"] = string.Join(", ", changedAttributes),
-                ["Original operation"] = originalOperationId ?? "(unknown)",
-            };
-
-            if (!success)
-                details["Error"] = error ?? "Unknown";
+            var reversal = new AttributeEditReversal(target, changedAttributes, originalOperationId);
 
             await _email.SendAdminNotificationAsync(
-                performedBy, ip, "ADAttributeEditor_Undo", success, ticket, details, error);
+                performedBy, ip, AttributeEditReversal.NoticeAction, success, ticket,
+                reversal.NoticeDetails(success, error), error);
         }
         catch (Exception ex)
         {
@@ -379,7 +395,9 @@ public class ADAttributeEditorUndoService : IUndoableModule
         string ticket,
         bool success,
         string? errorDetail,
-        string? servicedNote)
+        string? servicedNote,
+        // Set only for a refusal before the save (aud-a28d): nothing reached the directory.
+        string? refusedAt = null)
     {
         var extra = new Dictionary<string, object?>
         {
@@ -391,6 +409,14 @@ public class ADAttributeEditorUndoService : IUndoableModule
         // null on success and the record of who permitted it would be silently discarded.
         if (!string.IsNullOrWhiteSpace(servicedNote))
             extra[ProtectedPrincipalServicing.AuditKey] = servicedNote;
+
+        // aud-a28's two fields. Without them a refused reversal could not be told from one that
+        // reached the directory and failed - materially different events.
+        if (refusedAt is not null)
+        {
+            extra["refusedAt"] = refusedAt;
+            extra["mutationAttempted"] = false;
+        }
 
         foreach (var attr in changedAttributes)
         {

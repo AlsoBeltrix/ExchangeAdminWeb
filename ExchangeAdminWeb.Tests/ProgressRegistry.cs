@@ -259,7 +259,8 @@ public static class ProgressRegistry
                 + "authorization re-check, the allowlist read, a live on-prem AD attribute write "
                 + "and a notification email, with no activity open at any point. One activity "
                 + "now opens above the try - so the refusals inside it are covered too - and "
-                + "completes in the finally after the email, over three honest steps. "
+                + "completes in the finally after the email, over honest steps: three when the page "
+                + "sent the email, two since aud-a26b moved the notice into SaveAsync. "
                 + "TWO calls are named, not four as on OutOfOffice.SetOof, and the difference is "
                 + "a measurement rather than a lighter touch: everything above the write here is "
                 + "genuinely local. GroupAuthorizationHandler decides from the Windows token's "
@@ -271,12 +272,14 @@ public static class ProgressRegistry
                 + "prove nothing about a wait. EditorService.SaveAsync is the OPENING pin and is "
                 + "the first call with real latency: inside it sit the protected-principal "
                 + "check, a Delinea credential fetch and an AD throttle that waits up to two "
-                + "minutes before the write even starts. SendAdminNotificationAsync is the "
+                + "minutes before the write even starts, and - since aud-a26b - the notification "
+                + "email for every result it returns. SendAdminNotificationAsync is the "
                 + "CLOSING pin, chosen over the write the way OutOfOffice chose its OOF mail: it "
-                + "is the last remote call in the handler, at all three of its occurrences - the "
-                + "success branch, the failure branch and the catch - so it is what forbids a "
-                + "Complete hoisted up to the write and leaves the reference shape's actual "
-                + "promise asserted rather than merely commented"),
+                + "was the last remote call in the handler at all three of its occurrences, and "
+                + "after aud-a26b it remains only in the catch, for an exception SaveAsync never "
+                + "returns - so it still forbids a Complete hoisted above that last email and "
+                + "leaves the reference shape's actual promise asserted rather than merely "
+                + "commented"),
             new("PerformSearch",
                 [
                     "EditorService.LookupAsync(",
