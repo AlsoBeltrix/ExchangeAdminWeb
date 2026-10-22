@@ -2,6 +2,7 @@ using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Tests;
@@ -50,8 +51,8 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         private readonly ExchangeWriteHarness _h;
         public int CredentialRequests;
 
-        public Service(ExchangeWriteHarness h)
-            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, NullLogger<ConferenceRoomService>.Instance) => _h = h;
+        public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
+            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
         {
@@ -342,6 +343,309 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
             Assert.Equal(Guid.Parse(Another), Value(Run(ps, "Get-ADUser", readBack).Single(), "ObjectGUID"));
             Assert.Equal(Guid.Parse(CheckedObject), Value(Run(ps, "Get-ADUser", confirm).Single(), "ObjectGUID"));
         }
+    }
+
+    // ---- aud-a2q: the write goes only where its preflight proved it can, and every outcome is read back ----
+    // The preflight read the room's object with no -Server; the write (aud-a2p) went to the domain its DN names. A
+    // domain this host reaches through the default domain controller but not by its DNS name passed the preflight,
+    // Set-Place committed, and the routed write failed: partial. And a Set-ADUser that committed and then threw was
+    // the failure it threw, its values in place; the outer catch blamed Set-ADUser for every step around it.
+
+    private const string TimedOut = "The operation was aborted because the client side timeout limit was exceeded.";
+
+    // The real module's text for a server it cannot use, as near as it matters here.
+    private const string Unreachable = "Unable to contact the server. This may be because this server does not exist, it is currently down, or it does not have the Active Directory Web Services running.";
+
+    private sealed class CapturingLogger : ILogger<ConferenceRoomService>
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Enqueue((logLevel, formatter(state, exception)));
+    }
+
+    // The calls recorded before the Set-Place - the preflight's - and after it - the write's.
+    private (List<System.Collections.Hashtable> Before, List<System.Collections.Hashtable> After) AroundSetPlace()
+    {
+        var calls = _h.Calls.Cast<System.Collections.Hashtable>().ToList();
+        var place = calls.FindIndex(c => (string)c["__Command"]! == "Set-Place");
+        Assert.True(place >= 0, "no Set-Place");
+        return (calls.Take(place).ToList(), calls.Skip(place + 1).ToList());
+    }
+
+    private static List<System.Collections.Hashtable> Named(IEnumerable<System.Collections.Hashtable> calls, string command) =>
+        calls.Where(c => (string)c["__Command"]! == command).ToList();
+
+    [Fact]
+    public async Task TheCityStateAndCountryPreflight_RefusesBeforeAnyWrite_WhenTheObjectCannotBeReadThroughTheServerTheWriteUses()
+    {
+        // The folded-in scenario: the default domain answers a read with no -Server; its DNS name, the server the room's
+        // DN names and the write goes to, cannot be used from here. Refused while nothing is written - no Set-Place - in
+        // one step, naming the server, the room, its object and the error; the read with no -Server answered, the read
+        // through the server failed.
+        _h.DirectoryServerFailures[RoomDomain] = Unreachable;
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin", state: "Leinster", country: "IE");
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.Null(result.WrittenDirectoryObject);
+        var step = Assert.Single(result.Steps);
+        Assert.Equal("Set-ADUser preflight (City/State/Country)", step.Stage);
+        Assert.False(step.Success);
+        Assert.Equal(result.Message, step.Error);
+        Assert.Contains(RoomDomain, result.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{Typed}'", result.Message, StringComparison.Ordinal);
+        Assert.Contains(CheckedObject, result.Message, StringComparison.Ordinal);
+        Assert.Contains(Unreachable, result.Message, StringComparison.Ordinal);
+        Assert.EndsWith("Nothing was written.", result.Message, StringComparison.Ordinal);
+        Assert.False(RoomObject.ContainsKey("l"));
+        Assert.Equal(new object?[] { null, RoomDomain }, _h.CallsTo("Get-ADUser").Select(c => ExchangeWriteHarness.Bound(c, "Server")));
+    }
+
+    [Fact]
+    public async Task TheCityStateAndCountryPreflight_ReadsTheObjectThroughTheServerTheWriteUses_AndTheWriteGoesThere()
+    {
+        // The normal case: before Set-Place the object is read with no -Server - which finds it and its DN - and then by
+        // its objectGUID through the domain that DN names; after Set-Place the write and its read-back go there.
+        var result = await Finder(new Service(_h), Room(), city: "Dublin", state: "Leinster", country: "IE");
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(CheckedObject, result.WrittenDirectoryObject);
+        var (before, after) = AroundSetPlace();
+        var preflight = Named(before, "Get-ADUser");
+        Assert.Equal(2, preflight.Count);
+        Assert.All(preflight, c =>
+        {
+            Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(c, "Identity"));
+            Assert.Null(ExchangeWriteHarness.Bound(c, "Properties"));
+        });
+        Assert.Null(ExchangeWriteHarness.Bound(preflight[0], "Server"));
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(preflight[1], "Server"));
+        Assert.Empty(Named(before, "Set-ADUser"));
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(Assert.Single(Named(after, "Set-ADUser")), "Server"));
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(TheWriteAndItsReadBack().ReadBack, "Server"));
+    }
+
+    [Fact]
+    public async Task TheWrite_GoesToTheServerThePreflightProved_NotOneItDerivesAgain()
+    {
+        // After Set-Place the object answers with a DN in the forest's other domain. A write that derived its server
+        // from its own read would go to fabrikam.test, which nothing proved; it goes to the server the preflight read
+        // the object through, and so does its read-back.
+        _h.ObjectDnAfterSetPlace = "CN=Room 1,OU=Rooms," + ExchangeWriteHarness.OtherDirectoryDomainDn;
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin");
+
+        Assert.True(result.Success, result.Message);
+        var (write, readBack) = TheWriteAndItsReadBack();
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(write, "Server"));
+        Assert.Equal(RoomDomain, ExchangeWriteHarness.Bound(readBack, "Server"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("CN=Room 1,OU=Rooms")]
+    public async Task ARoomObjectWhoseDnNamesNoDomain_IsWrittenOnTheRouteThePreflightRead(string? dn)
+    {
+        // The explicit fallback: no DN, or one without domain components, names no server, so the write and the
+        // read-back go to the default domain controller - the route the preflight's one read took - and a warning says so.
+        if (dn is null)
+            RoomObject.Remove("DistinguishedName");
+        else
+            RoomObject["DistinguishedName"] = dn;
+        var logger = new CapturingLogger();
+
+        var result = await Finder(new Service(_h, logger), Room(), city: "Dublin");
+
+        Assert.True(result.Success, result.Message);
+        var (before, _) = AroundSetPlace();
+        Assert.Null(ExchangeWriteHarness.Bound(Assert.Single(Named(before, "Get-ADUser")), "Server"));
+        var (write, readBack) = TheWriteAndItsReadBack();
+        Assert.Null(ExchangeWriteHarness.Bound(write, "Server"));
+        Assert.Null(ExchangeWriteHarness.Bound(readBack, "Server"));
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("default domain controller", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("runspace")]
+    [InlineData("import")]
+    [InlineData("object read")]
+    [InlineData("write")]
+    [InlineData("read-back")]
+    public async Task AFailureAtEachStepOfTheCityStateAndCountryWrite_NamesThatStep(string failing)
+    {
+        // Each step of the write fails in turn - after Set-Place, so the preflight's own steps pass. Every one is a failed,
+        // partial row with nothing written, and its message and its log line name the step that failed. The three before
+        // the write say the attributes were not written and are not told in the write's words; the write keeps its own.
+        const string Injected = "The injected failure.";
+        switch (failing)
+        {
+            case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; break;
+            case "import": _h.ImportModuleFailureAfterSetPlace = Injected; break;
+            case "object read": _h.ObjectReadFailureAfterSetPlace = Injected; break;
+            case "write": _h.Failures["Set-ADUser"] = Injected; break;
+            default: _h.AttributeReadBackFailure = Injected; break;
+        }
+        var logger = new CapturingLogger();
+
+        var result = await Finder(new Service(_h, logger), Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Null(result.DirectoryAttributesConfirmed);
+        var step = Assert.Single(result.Steps, s => s.Stage == "Set-ADUser (City/State/Country)");
+        Assert.False(step.Success);
+        Assert.NotNull(step.Error);
+        Assert.Contains(step.Error, result.Message, StringComparison.Ordinal);
+        Assert.Contains(Injected, step.Error, StringComparison.Ordinal);
+        var (message, logged) = failing switch
+        {
+            "runspace" => ("opening the directory runspace failed: ", "opening the directory runspace failed"),
+            "import" => ("importing the ActiveDirectory module failed: ", "importing the ActiveDirectory module failed"),
+            "object read" => ("reading the AD object failed: ", "reading the AD object failed"),
+            "write" => ("Failed to write City/State/Country on the AD object: ", "Set-ADUser City/State/Country write failed"),
+            _ => ($"reading l, st, co back from {RoomDomain} failed: ", $"could not be confirmed from {RoomDomain}"),
+        };
+        Assert.Contains(message, step.Error, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, e => e.Level >= LogLevel.Warning && e.Message.Contains(logged, StringComparison.Ordinal));
+        if (failing is "runspace" or "import" or "object read")
+        {
+            Assert.StartsWith($"City/State/Country were not written on the AD object {CheckedObject}: ", step.Error, StringComparison.Ordinal);
+            Assert.DoesNotContain("Failed to write", step.Error, StringComparison.Ordinal);
+            Assert.DoesNotContain(logger.Entries, e => e.Message.Contains("Set-ADUser", StringComparison.Ordinal));
+            Assert.Empty(_h.CallsTo("Set-ADUser"));
+        }
+        else
+        {
+            Assert.Single(_h.CallsTo("Set-ADUser"));
+        }
+        Assert.Empty(_h.CallsTo("Set-MailboxRegionalConfiguration"));
+    }
+
+    [Fact]
+    public async Task ASetADUserThatAppliedThenFailed_IsASuccess_WithTheErrorInTheDetail_NothingRecordedAsWritten()
+    {
+        // The write committed and then threw - a timeout after the server took it. The read-back finds the values, so the
+        // row succeeds; no object is recorded as written, the write having failed, and the detail says why with the error.
+        _h.SetAdUserFailsAfterApplying = TimedOut;
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin", state: "Leinster", country: "IE");
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        var detail = result.DirectoryAttributesConfirmed;
+        Assert.NotNull(detail);
+        Assert.StartsWith(ConferenceRoomService.AttributesConfirmedAfterWriteError, detail, StringComparison.Ordinal);
+        Assert.Contains(TimedOut, detail, StringComparison.Ordinal);
+        Assert.Contains(CheckedObject, detail, StringComparison.Ordinal);
+        Assert.Contains($"read back from {RoomDomain}", detail, StringComparison.Ordinal);
+        var step = Assert.Single(result.Steps, s => s.Stage == "Set-ADUser (City/State/Country)");
+        Assert.True(step.Success);
+        Assert.Equal(detail, step.Error);
+        TheWriteAndItsReadBack();
+        Assert.Equal(["Dublin", "Leinster", "Ireland"], new[] { "l", "st", "co" }.Select(a => Text(RoomObject[a])));
+        Assert.DoesNotContain("were written", result.Message, StringComparison.Ordinal);
+        Assert.Single(_h.CallsTo("Set-MailboxRegionalConfiguration"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASetADUserThatFailedWithoutApplying_StaysAFailedRow_CarryingTheWriteError(bool readBackFails)
+    {
+        // The same error, nothing applied, an older City in place: the read-back is made and does not show the write, so
+        // the row is the partial it was, carrying the write's error in its own words and what the read-back found - or,
+        // when the read-back cannot be made either, both errors.
+        RoomObject["l"] = "Cork";
+        _h.Failures["Set-ADUser"] = TimedOut;
+        if (readBackFails)
+            _h.AttributeReadBackFailure = "The server is not operational.";
+
+        var result = await Finder(new Service(_h), Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.True(result.Partial);
+        Assert.Null(result.WrittenDirectoryObject);
+        Assert.Null(result.DirectoryAttributesConfirmed);
+        Assert.Contains($"Failed to write City/State/Country on the AD object: {TimedOut}", result.Message, StringComparison.Ordinal);
+        TheWriteAndItsReadBack();
+        if (readBackFails)
+        {
+            Assert.Contains($"Reading l, st, co back from {RoomDomain} afterwards failed too: ", result.Message, StringComparison.Ordinal);
+            Assert.Contains("The server is not operational.", result.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains($"Read back from {RoomDomain} afterwards, l (City) is 'Cork', not 'Dublin' as written.", result.Message, StringComparison.Ordinal);
+        }
+        Assert.Equal("Cork", Text(RoomObject["l"]));
+        Assert.Empty(_h.CallsTo("Set-MailboxRegionalConfiguration"));
+    }
+
+    [Fact]
+    public void TheHarness_ADUserStandIns_RefuseAServerTheyCannotUse_AndFailAfterSetPlace_OrAfterApplying()
+    {
+        // The stand-ins the tests above rest on. A -Server DirectoryServerFailures names fails Get-ADUser and Set-ADUser
+        // with its message, one the stand-in forest lacks cannot be contacted, and a call with no -Server, or to the
+        // forest's other domain, is unaffected. SetAdUserFailsAfterApplying applies the -Replace and then throws. The
+        // after-Set-Place knobs fail nothing before a Set-Place and each thing they name after one; the DN knob changes
+        // the DN read only after one too.
+        var replace = new System.Collections.Hashtable { ["l"] = "Dublin" };
+        (string Name, object Value)[] routedRead = [("Identity", CheckedObject), ("Server", RoomDomain), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] unroutedRead = [("Identity", CheckedObject), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] otherDomainRead = [("Identity", CheckedObject), ("Server", "fabrikam.test"), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] unknownServerRead = [("Identity", CheckedObject), ("Server", "dc9.invalid"), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] propertiesRead = [("Identity", CheckedObject), ("Properties", new[] { "l" }), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] routedWrite = [("Identity", CheckedObject), ("Replace", replace), ("Server", RoomDomain), ("ErrorAction", "Stop")];
+        (string Name, object Value)[] import = [("Name", "ActiveDirectory"), ("ErrorAction", "Stop")];
+
+        _h.DirectoryServerFailures[RoomDomain] = Unreachable;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Contains(Unreachable, Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Get-ADUser", routedRead)).Message, StringComparison.Ordinal);
+            Assert.Contains(Unreachable, Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADUser", routedWrite)).Message, StringComparison.Ordinal);
+            Assert.False(RoomObject.ContainsKey("l"));
+            Assert.Single(Run(ps, "Get-ADUser", unroutedRead));
+            Assert.Single(Run(ps, "Get-ADUser", otherDomainRead));
+            Assert.Contains("Unable to contact the server 'dc9.invalid'", Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Get-ADUser", unknownServerRead)).Message, StringComparison.Ordinal);
+        }
+
+        _h.DirectoryServerFailures.Clear();
+        _h.SetAdUserFailsAfterApplying = TimedOut;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Assert.Contains(TimedOut, Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Set-ADUser", routedWrite)).Message, StringComparison.Ordinal);
+            Assert.Equal("Dublin", Text(RoomObject["l"]));
+        }
+
+        _h.SetAdUserFailsAfterApplying = null;
+        _h.DirectoryRunspaceFailureAfterSetPlace = "The runspace failed.";
+        _h.ImportModuleFailureAfterSetPlace = "The import failed.";
+        _h.ObjectReadFailureAfterSetPlace = "The object read failed.";
+        _h.ObjectDnAfterSetPlace = "CN=Room 1,OU=Rooms," + ExchangeWriteHarness.OtherDirectoryDomainDn;
+        using (var rs = _h.OpenDirectoryRunspace())
+        using (var ps = PowerShell.Create())
+        {
+            ps.Runspace = rs;
+            Run(ps, "Import-Module", import);
+            Assert.Equal("CN=Room 1,OU=Rooms,DC=contoso,DC=test", Text(Value(Run(ps, "Get-ADUser", unroutedRead).Single(), "DistinguishedName")));
+
+            _h.Calls.Add(new System.Collections.Hashtable { ["__Command"] = "Set-Place" });
+            Assert.Contains("The import failed.", Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Import-Module", import)).Message, StringComparison.Ordinal);
+            Assert.Contains("The object read failed.", Assert.ThrowsAny<RuntimeException>(() => Run(ps, "Get-ADUser", unroutedRead)).Message, StringComparison.Ordinal);
+            Assert.Equal("CN=Room 1,OU=Rooms," + ExchangeWriteHarness.OtherDirectoryDomainDn,
+                Text(Value(Run(ps, "Get-ADUser", propertiesRead).Single(), "DistinguishedName")));
+        }
+        Assert.Equal("The runspace failed.", Assert.Throws<InvalidOperationException>(() => _h.OpenDirectoryRunspace()).Message);
     }
 
     [Fact]

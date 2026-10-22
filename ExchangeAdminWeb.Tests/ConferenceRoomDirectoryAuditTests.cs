@@ -109,6 +109,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         Assert.Equal("Success", row.GetProperty("result").GetString());
         Assert.Equal(CheckedObject, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Set-ADUser")), "Identity"));
         Assert.Equal(CheckedObject, row.GetProperty(ValidatedMailbox.DirectoryAuditKey).GetString());
+        Assert.False(row.TryGetProperty(ConferenceRoomService.AttributesConfirmedAuditKey, out _), row.ToString());
     }
 
     [Theory]
@@ -123,6 +124,34 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         Assert.Equal("Failed", row.GetProperty("result").GetString());
         Assert.Single(_h.CallsTo("Set-ADUser"));
         Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+        Assert.False(row.TryGetProperty(ConferenceRoomService.AttributesConfirmedAuditKey, out _), row.ToString());
+    }
+
+    [Theory]
+    [InlineData("page")]
+    [InlineData("bulk")]
+    public async Task ASetADUserThatAppliedThenFailed_IsASuccess_RecordedAsConfirmed_NotAsWritten(string surface)
+    {
+        // aud-a2q, aud-a2n's rule on this write: Set-ADUser applied City/State/Country, then reported a timeout. The
+        // read-back finds them, so the row succeeds; the audit names no written object and records the attributes
+        // confirmed, with the write's error text - and a bulk row says so in its message, as its audit does.
+        _h.SetAdUserFailsAfterApplying = TimedOut;
+
+        var row = await ApplyAndReadAudit(surface, city: "Dublin");
+
+        Assert.Equal("Success", row.GetProperty("result").GetString());
+        Assert.Single(_h.CallsTo("Set-ADUser"));
+        Assert.False(row.TryGetProperty(ValidatedMailbox.DirectoryAuditKey, out _), row.ToString());
+        var confirmed = row.GetProperty(ConferenceRoomService.AttributesConfirmedAuditKey).GetString();
+        Assert.NotNull(confirmed);
+        Assert.StartsWith(ConferenceRoomService.AttributesConfirmedAfterWriteError, confirmed, StringComparison.Ordinal);
+        Assert.Contains(TimedOut, confirmed, StringComparison.Ordinal);
+        if (surface == "bulk")
+        {
+            var outcome = Assert.IsType<BulkJobRowOutcome>(_bulkRow);
+            Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+            Assert.Contains(confirmed, outcome.Message, StringComparison.Ordinal);
+        }
     }
 
     [Theory]

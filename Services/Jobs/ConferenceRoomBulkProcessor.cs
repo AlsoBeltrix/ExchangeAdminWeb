@@ -138,7 +138,8 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                     // Active Directory object (aud-a2g); `target` stays the row as typed.
                     Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
                         newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]),
-                        room: room, writtenDirectoryObject: r.WrittenDirectoryObject, membershipConfirmed: r.DirectoryMembershipConfirmed);
+                        room: room, writtenDirectoryObject: r.WrittenDirectoryObject, membershipConfirmed: r.DirectoryMembershipConfirmed,
+                        attributesConfirmed: r.DirectoryAttributesConfirmed);
 
                     return new BulkJobRowOutcome
                     {
@@ -147,8 +148,9 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                         // aud-a2o. A job shows each row's message and not its steps, so a room-list membership the
                         // on-prem read-back confirmed - not one this row is known to have written (aud-a2n) - is told
                         // in the message too, in the words the page's step and the audit use; without it the row
-                        // read as any applied add.
-                        Message = r.DirectoryMembershipConfirmed is { } confirmed ? $"{r.Message} {confirmed}" : r.Message
+                        // read as any applied add. aud-a2q: City/State/Country the read-back found in place after
+                        // Set-ADUser reported an error are told the same way, first - the order the steps ran in.
+                        Message = string.Join(" ", new[] { r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed }.OfType<string>())
                     };
                 }
                 catch (Exception ex)
@@ -214,7 +216,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
         string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,
-        string? writtenDirectoryObject = null, string? membershipConfirmed = null)
+        string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null)
     {
         try
         {
@@ -222,10 +224,13 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             // object the service reports it wrote, when it wrote one (aud-a2g). That used to be
             // recorded on every Finder row, whether or not Active Directory was written. And a
             // room-list membership confirmed without this row's write, in that object's place
-            // (aud-a2n) - added as the page adds it, through the same helper.
+            // (aud-a2n) - added as the page adds it, through the same helper - and City/State/Country
+            // confirmed in place after a write error, likewise (aud-a2q).
             _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, action, target, success, ticket,
                 errorDetail: error, newValues: newValues,
-                extra: ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject), membershipConfirmed));
+                extra: ConferenceRoomService.WithAttributesConfirmed(
+                    ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject), membershipConfirmed),
+                    attributesConfirmed));
         }
         catch (Exception ex)
         {
