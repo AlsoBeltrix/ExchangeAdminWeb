@@ -12,7 +12,7 @@ also passes a drive "letter" the app refuses (the Kelvin sign, U+212A, folds ont
 opposite direction, cdt-17's own class. Separately, the module returns the value as spelled, so a
 key with forward or mixed slashes reaches each caller's comparisons in a spelling the others do not
 use. From the codex review of the cdt-11..cdt-27 merge (ops-batch-3, its finding 3).
-**Status**: Merged to master; codex group review pending
+**Status**: Merged to master; codex ops-batch-4 extends it as cdt-37 (the installer WRITER validator still refuses forward slashes) - fix in progress
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
 **Commit**: `e3eab89`; test correction `957fe8b` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21

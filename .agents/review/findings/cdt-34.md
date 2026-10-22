@@ -8,7 +8,7 @@ prompt) gets an instance installed, ACLed and bound in IIS under whatever direct
 process started in - typically their profile folder, or `C:\Windows\System32` in an elevated
 console. The banner prints the resolved path before anything changes, so it is visible, but nothing
 stops it. Found while reviewing the installer for this batch; not in the codex verdict.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-4, 2026-10-21) raised no defect in this change (its nested-IIS candidate is aud-a38f, already in progress)
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
 **Commit**: `1f77f13` (merged)
 **Reviewer**: implementer (found while fixing codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21)

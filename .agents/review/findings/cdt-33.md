@@ -9,7 +9,7 @@ provider failure, a name the module's non-literal `Test-Path` reads as a wildcar
 run replaces the files of an application nobody has shown to be stopped. cdt-19 fixed this in
 `deploy.ps1` and recorded "The installer, which has its own stop, is not changed here." Found while
 fixing cdt-32; not in the codex verdict.
-**Status**: Merged to master; codex group review pending
+**Status**: Closed - codex group review (ops-batch-4, 2026-10-21) raised no defect in this change (its nested-IIS candidate is aud-a38f, already in progress)
 **Branch**: `worktree-agent-a80bd818fc511a34f` (worktree `agent-a80bd818fc511a34f`)
 **Commit**: `0772c2a` (merged)
 **Reviewer**: implementer (found while fixing cdt-28/cdt-32 from codex / gpt-5.5-dzs / xhigh, ops-batch-3, 2026-10-21)
