@@ -15,6 +15,11 @@ namespace ExchangeAdminWeb.Tests;
 
 public class ExtendedLogServiceTests
 {
+    // kd-16, kd-22. How long a test here waits for the consumer - another thread - to do something it will do: take an
+    // entry, count one, write them. Far above any stall a loaded host has shown (about 10 s), so only a consumer that never
+    // does it fails the wait; a healthy run returns the moment it has.
+    private static readonly TimeSpan ConsumerWait = TimeSpan.FromMinutes(2);
+
     [Fact]
     public void Write_DoesNotBuildDetail_WhenLevelDisabled()
     {
@@ -332,7 +337,7 @@ public class ExtendedLogServiceTests
         using (HoldTodaysLogFile(temp.Path))
         {
             service.Write(LogEventLevel.Error, "an entry lost while its file is held", "Test");
-            Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, TimeSpan.FromSeconds(10)),
+            Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, ConsumerWait),
                 "the consumer never counted the entry it could not write");
         }
 
@@ -430,7 +435,7 @@ public class ExtendedLogServiceTests
         using (HoldTodaysLock(temp.Path))
         {
             service.Write(LogEventLevel.Error, "an entry while another writer holds the file", "Test");
-            Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, TimeSpan.FromSeconds(10)),
+            Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, ConsumerWait),
                 "the consumer never dropped the entry it could not take the lock for");
         }
 
@@ -529,7 +534,7 @@ public class ExtendedLogServiceTests
                 service.Write(LogEventLevel.Error, message, "Test");
 
             Assert.True(
-                SpinWait.SpinUntil(() => ReadAsTheEventLogDoes(service).Messages.Count == fillers.Count + held.Count, TimeSpan.FromSeconds(10)),
+                SpinWait.SpinUntil(() => ReadAsTheEventLogDoes(service).Messages.Count == fillers.Count + held.Count, ConsumerWait),
                 "the consumer did not write every held entry");
             failure = service.RotationFailure;
         }
@@ -573,11 +578,11 @@ public class ExtendedLogServiceTests
         var service = CreateService(temp.Path, logger: logger);
         service.SetLevel("Error");
         service.Write(LogEventLevel.Error, "before the folder went", "Test");
-        Assert.True(SpinWait.SpinUntil(() => ReadAsTheEventLogDoes(service).Messages.Count == 1, TimeSpan.FromSeconds(10)),
+        Assert.True(SpinWait.SpinUntil(() => ReadAsTheEventLogDoes(service).Messages.Count == 1, ConsumerWait),
             "the consumer never wrote the first entry");
 
         var folder = Path.Combine(temp.Path, "ExchangeAdminWeb");
-        Assert.True(SpinWait.SpinUntil(() => TryDelete(folder), TimeSpan.FromSeconds(10)), "the folder could not be removed");
+        Assert.True(SpinWait.SpinUntil(() => TryDelete(folder), ConsumerWait), "the folder could not be removed");
 
         service.Write(LogEventLevel.Error, "after the folder went", "Test");
         service.Dispose();
@@ -644,7 +649,7 @@ public class ExtendedLogServiceTests
         };
 
         service.Write(LogEventLevel.Error, "held", "Test");
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+        Assert.True(entered.Wait(ConsumerWait, TestContext.Current.CancellationToken), "the consumer never took the first entry");
         for (var i = 0; i < 1024 + 5; i++)
             service.Write(LogEventLevel.Error, $"queued {i}", "Test");
 
@@ -705,7 +710,7 @@ public class ExtendedLogServiceTests
         service.Write(LogEventLevel.Error, "held", "Test");
 
         // A signal, not a timing: the wait only bounds a consumer that never starts, so it is far above a stall too (kd-16).
-        Assert.True(entered.Wait(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+        Assert.True(entered.Wait(ConsumerWait, TestContext.Current.CancellationToken), "the consumer never took the first entry");
         for (var i = 0; i < 100; i++)
             service.Write(LogEventLevel.Error, $"queued {i}", "Test");
 
@@ -744,7 +749,7 @@ public class ExtendedLogServiceTests
         try
         {
             service.Write(LogEventLevel.Error, "held", "Test");
-            Assert.True(entered.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+            Assert.True(entered.Wait(ConsumerWait, TestContext.Current.CancellationToken), "the consumer never took the first entry");
             for (var i = 0; i < 50; i++)
                 service.Write(LogEventLevel.Error, $"queued {i}", "Test");
 
@@ -759,7 +764,7 @@ public class ExtendedLogServiceTests
             release.Set();
         }
 
-        Assert.True(SpinWait.SpinUntil(() => service.GetEntries(DateTime.Today).Entries.Count == 1, TimeSpan.FromSeconds(10)),
+        Assert.True(SpinWait.SpinUntil(() => service.GetEntries(DateTime.Today).Entries.Count == 1, ConsumerWait),
             "the entry the consumer held was never written");
         var (messages, _) = ReadAsTheEventLogDoes(service);
         Assert.Equal(["held"], messages);
