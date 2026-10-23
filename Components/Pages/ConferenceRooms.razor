@@ -1398,7 +1398,7 @@
             if (!RoomTypeNames.TryParse(typeName, ignoreCase: false, out var roomType))
             {
                 result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}. Nothing was written." };
-                return;
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: completed.Message, extra: new Dictionary<string, object?> { ["refusedAt"] = "Validation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); } return; // kd-29: the refusal row
             }
 
             // Protected-principal gate: the write runs only inside onAllowed, so a protected or

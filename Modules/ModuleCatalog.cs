@@ -924,7 +924,8 @@ public sealed class ModuleCatalog
             // its name only - "4", "9" or "Video,Restricted" in a CSV or a request is refused, where
             // Enum.TryParse applied CEO, an undefined type or Exception (kd-28). Cancelling or removing
             // a bulk job re-checks the operator's access at the click, as the writes do; a refusal
-            // leaves the job alone and is audited (kd-27).
+            // leaves the job alone and is audited (kd-27). The single room's refusal of a type that is
+            // no name is audited as a refusal (kd-29).
             Version = "2.10.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(

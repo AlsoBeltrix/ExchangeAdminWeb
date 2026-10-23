@@ -80,6 +80,35 @@ public sealed class ConferenceRoomPageTests : IDisposable
         Assert.Empty(_h.Calls);
     }
 
+    // ---- kd-29: the page's refusal of a type that is no name files a refusal row ----
+
+    [Theory]
+    [InlineData("Boardroom")]
+    [InlineData("4")]
+    public async Task ARoomTypeThatIsNoName_IsAudited_AsARefusal(string typeName)
+    {
+        // The banner said nothing was written and nothing recorded the refusal. One ConferenceRooms_SetType row now does, as
+        // the page's other refusals do: Failed, the refusal as its error, and the aud-a28 fields - nothing was sent.
+        var page = BuildPage();
+        SetField(page, "typeRoomEmail", "room1@contoso.test");
+        SetField(page, "selectedRoomType", typeName);
+        SetField(page, "typeTicketNumber", "INC100");
+        SetField(page, "typeTimezone", "GMT Standard Time");
+
+        await (Task)Method("SetSingleRoomType").Invoke(page, null)!;
+
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetType");
+        Assert.Equal("operator", row.GetProperty("user").GetString());
+        Assert.Equal(OperatorIp, row.GetProperty("ip").GetString());
+        Assert.Equal("room1@contoso.test", row.GetProperty("target").GetString());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("INC100", row.GetProperty("ticket").GetString());
+        Assert.Equal($"Invalid room type: {typeName}. Nothing was written.", row.GetProperty("error").GetString());
+        Assert.Equal("Validation", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Empty(_h.Calls);
+    }
+
     // ---- kd-5: cancelling a bulk job writes the audit row removing one does ----
     // The jobs panel's Cancel stopped a queued or running job and recorded nothing, while Remove beside it audits. It now
     // writes RemoveJob's row - operator, IP, the job, its ticket, the job as rendered - with whether the cancel took effect:
