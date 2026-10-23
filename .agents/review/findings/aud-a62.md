@@ -9,7 +9,7 @@ non-numbers, so the audit writer or the extended log cannot be built. Each is a 
 injects, so a typo in one setting fails every resolution.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
-**Commit**: -
+**Commit**: `0e6b8abc` (fix, tests, README, record); plan `46dacfdd`
 **Reviewer**: implementer (surfaced by the aud-a56/a57/a58 agent, 2026-10-23, candidates 7, 8 and 9 of its hand-back)
 
 ## Evidence
@@ -278,7 +278,48 @@ None were needed. The fix's comments were written before the round and are in th
   from `TimeSpan.FromDays`, and `BulkJobs:StaleHeartbeatMinutes` likewise. That is a range, not a parse; listed in the
   hand-back as a candidate.
 - The meaning of a number that parses is unchanged: the clamps and floors at the call sites stay, and a negative
-  `BulkJobs:` value keeps the meaning it had.
+  `BulkJobs:` value keeps the meaning it had. Two of those meanings are listed in the hand-back as candidates:
+  - a negative `BulkJobs:RetentionDays` puts the start-up prune's cutoff in the future (`BulkJobService.InitializeAsync`,
+    `BulkJobRepository.PruneFinishedBefore`), so every finished job record is deleted at start-up;
+  - a negative `BulkJobs:RecentJobLimit` reaches SQLite as a negative `LIMIT`, which is no limit
+    (`BulkJobRepository.GetRecentFinished`).
 - The once-per-value set lasts for the process and is never trimmed, as aud-a58's is.
 - The source check sees the shapes it names: a typed `GetValue<T>` but `string`, and a numeric `Parse(` or `Convert.ToX(`
   of a configuration indexer. A parse of a value first copied into a local is not seen.
+
+## Branch-tip gates - 2026-10-23 (`bdf013cf`: the plans and the three fixes)
+
+These gates are this branch's, shared by aud-a63's and aud-a65's records.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors, 19 warnings.
+  - The same 19 as a Release build at `4a7a202e` before any change: CS8604, CS8602, CS0649 and CS0414 in
+    `GroupManagement.razor`, `SelfServiceGroups.razor`, `HeaderAnalysisService.cs`, `AccountLockoutRemediationService.cs`,
+    `MigrationReportExportProcessor.cs`, `RiskyUsers.razor`, `MessageTrace.razor` and `Comms10kApprovedSetTests.cs`.
+  - None is in a file this branch touches, and NuGet audit raised nothing (no NU1902, NU1903 or NU1904).
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0.
+  - 6,444 passed / 0 skipped / 0 failed, 6,444 total, 3m54s. Nothing hung, and no Sequence file was written.
+  - The sixty-four new cases are this branch's: aud-a62 fifty-three, aud-a63 five, aud-a65 six. The base was not run on
+    its own; 6,380 is expected at `4a7a202e`.
+  - The full suite ran at the tip only. Each fix's own bytes ran its round's filter green before it was committed: 272,
+    181 and 185 tests.
+- `ClickGate*` and `ProgressRegistryTests` (Release), run alone after each fix: 351/351 each time.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+  - All three also ran on each fix's staged bytes before it was committed.
+  - The plan commits, records only, had `git diff --check`.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell changed.
+
+No AD, EXO, Graph, DHCP, IIS, SMTP or ServiceNow call, no real module, no Delinea, push or deployment. The stand-ins were:
+- real JSONL writers and a real extended log over temp folders, with files held open the way a tailer holds them;
+- real config stores over temp databases;
+- the Admin Event Log's own `ExecuteUndo`, `LoadEvents` and render tree, driven by reflection;
+- a service container built in the test, registering the trace service as `Program.cs` does;
+- clocks the tests move by hand.
+
+No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a4c254a086c7d1d55`, not merged, not pushed. The services it changes - the audit and trace
+writer, the trace service, the extended log, the mail service and the bulk job runner - are shared and belong to no
+module, so the base app version is due. The bump is the supervisor's, at merge: `ExchangeAdminWeb.csproj` was outside
+this brief.

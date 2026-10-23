@@ -9,7 +9,7 @@ inside the lock and before `ConfigSaved?.Invoke` (three sites); a throwing provi
 look failed and skips this instance's `ConfigSaved` subscribers.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
-**Commit**: -
+**Commit**: `44827a38` (fix, tests, record); plan `46dacfdd`
 **Reviewer**: implementer (surfaced by the aud-a56/a57/a58 agent, 2026-10-23, candidates 1 and 5 of its hand-back)
 
 ## Evidence
@@ -202,3 +202,14 @@ None were needed. The fix's comments were written before the round and are in th
 - A `ConfigSaved` subscriber that throws would still take its exception into the saver. That is a subscriber's failure,
   not a report's, and not this record's. The one subscriber today, `PermissionValidator`'s (70-77), only invalidates two
   caches.
+
+## Branch-tip gates
+
+See aud-a62's record for the branch's gates.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a4c254a086c7d1d55`, not merged, not pushed. Two bumps are due, both the supervisor's at
+merge, since `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were outside this brief:
+- the base app version, for `ModuleConfigService`, which is shared;
+- the Admin Event Log's module version, for its undo.

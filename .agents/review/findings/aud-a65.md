@@ -8,7 +8,7 @@ file grows until the log volume fills, after which writes fail as ordinary file-
 visibility degrades anyway.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a62/a63 agent's scope; fixed on branch, closed on guard proof; not merged
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
-**Commit**: -
+**Commit**: `bdf013cf` (fix, tests, README, record); record and plan `3c306bcc`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-16, 2026-10-23)
 
 ## Evidence
@@ -273,3 +273,18 @@ None were needed. The fix's comments were written before the round and are in th
 - "Since" is this instance's first failed write in the streak, not the moment the file reached its limit.
 - When the file's size cannot be read at a failure, the last size stands, and it is 0 at a streak's first failure.
 - The page shows this instance's streaks only, and only as of its last load.
+
+## Branch-tip gates
+
+See aud-a62's record for the branch's gates.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a4c254a086c7d1d55`, not merged, not pushed. Two bumps are due, both the supervisor's at
+merge, since `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were outside this brief:
+- the base app version, for the JSONL writer and the extended log, which are shared;
+- the Admin Event Log's module version, for its diagnostics line.
+
+This record was added to master at `97b89ae4` and to this branch from that commit, so the merge meets an add/add on this
+one file. This branch's copy is master's with its Status, Branch and Commit lines filled in and the Plan and everything
+after it added; take it.
