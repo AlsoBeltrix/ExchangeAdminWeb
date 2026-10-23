@@ -7,7 +7,7 @@ audit row, the `finally`'s `activity.Complete(undoError == null, ...)` reports s
 reaches the circuit. (2) `ModuleConfigService` calls `LogInformation` after the committed write, unguarded,
 inside the lock and before `ConfigSaved?.Invoke` (three sites); a throwing provider makes a saved change
 look failed and skips this instance's `ConfigSaved` subscribers.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
+**Status**: Merged `a4fc0e29`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
 **Commit**: `44827a38` (fix, tests, record); plan `46dacfdd`
 **Reviewer**: implementer (surfaced by the aud-a56/a57/a58 agent, 2026-10-23, candidates 1 and 5 of its hand-back)

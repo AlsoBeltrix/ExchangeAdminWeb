@@ -33,3 +33,14 @@ At `3da510cb`: `Components/Pages/AdminEventLog.razor` 1263, 1050, 1644; `Service
 ## Guard proof
 
 Pending.
+
+## Also held (aud-a62/a63/a65 agent, 2026-10-23) - LOW
+
+(7) `Services/Jobs/BulkJobService.cs` 66 and 68: a finite but out-of-range `BulkJobs:RetentionDays` or
+`BulkJobs:StaleHeartbeatMinutes` still throws `OverflowException` out of `TimeSpan.FromDays`/`FromMinutes`
+in the constructor, so the app fails to start. (8) A negative `BulkJobs:RetentionDays` puts the start-up
+prune cutoff in the future (`InitializeAsync` 85; `BulkJobRepository.PruneFinishedBefore` 281-300), deleting
+every finished job record at start-up (the audit rows survive). (9) A negative `BulkJobs:RecentJobLimit`
+reaches SQLite as a negative `LIMIT`, which means no limit (`BulkJobRepository.GetRecentFinished` 439-450).
+Fix shape: range-check the three settings in `ConfigValue` (a minimum and maximum per setting) with the
+default and the once-per-value warning.

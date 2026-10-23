@@ -7,7 +7,7 @@ which throws on a non-number. (3) `JsonlLogService` (three sites) and `ExtendedL
 read `GetValue<int?>` / `GetValue<long?>` for their file limits in their constructors, which throw on
 non-numbers, so the audit writer or the extended log cannot be built. Each is a singleton every page
 injects, so a typo in one setting fails every resolution.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
+**Status**: Merged `a4fc0e29`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
 **Commit**: `0e6b8abc` (fix, tests, README, record); plan `46dacfdd`
 **Reviewer**: implementer (surfaced by the aud-a56/a57/a58 agent, 2026-10-23, candidates 7, 8 and 9 of its hand-back)
