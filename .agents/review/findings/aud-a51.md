@@ -8,7 +8,7 @@ dropped, and the logged exception is `JsonlLockTimeoutException` "Another writer
 writer is contending and the real cause is permissions. `AuditService.WriteAuditEvent` calls the writer
 synchronously on the circuit path, so each affected row also stalls the operator for 2 s before it is lost.
 The test lock holders do not use `DeleteOnClose`, so the edge is uncovered.
-**Status**: Merged `eb141b30`; closed on guard proof; codex review pending
+**Status**: Complete; merged `eb141b30`; codex attr-batch-15 clean
 **Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
 **Commit**: `3277a185` (fix, tests, README, record); comments `c2d6215d`; plan `5ed8a5a8`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-14, 2026-10-22)

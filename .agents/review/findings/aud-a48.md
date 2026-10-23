@@ -6,7 +6,7 @@
 `Enabled()` and `Record` into the last statement of `AuditService.WriteAuditEvent` (`_usage?.RecordAction`)
 after the operation completed, and into the Home page's render (`@if (Usage.Enabled())`); in the enqueue task
 it faults a fire-and-forget task unobserved.
-**Status**: Merged `eb141b30`; closed on guard proof; codex review pending
+**Status**: Complete; merged `eb141b30`; codex attr-batch-15 clean
 **Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
 **Commit**: `df58ee19` (fix, tests, record); comments `c2d6215d`; plan `5ed8a5a8`
 **Reviewer**: implementer (surfaced by the aud-a47/a45/a46 agent, 2026-10-22, candidate 1 of its hand-back)

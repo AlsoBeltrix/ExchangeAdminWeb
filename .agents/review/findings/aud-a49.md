@@ -7,7 +7,7 @@ silently with no count; the cut line a dead writer leaves (which the aud-a28z ta
 without a trace in the UI. (3) `ExtendedLogService.Dispose` waits 5 s for the consumer; at about 10 ms per
 append a full 1,024-entry queue needs about 11 s, so shutdown can leave hundreds of entries unwritten and not
 counted in `DroppedEntryCount`.
-**Status**: Merged `eb141b30`; closed on guard proof; codex review pending
+**Status**: Complete; merged `eb141b30`; codex attr-batch-15 clean
 **Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
 **Commit**: `6372c392` (fix, tests, README, record); comments `c2d6215d`; plan `5ed8a5a8`
 **Reviewer**: implementer (surfaced by the aud-a47/a45/a46 agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
