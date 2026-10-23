@@ -1,7 +1,7 @@
 # aud-a29k: two PageRequestRevalidation tests hold a directory read open under a 10 s real-time harness timeout and can fail under load
 
 **Severity**: LOW - flaky test. `ExchangeAdminWeb.Tests/PageRequestRevalidationTests.cs` about 404 (`AnAnswerFromAReadThatStartedEarlier_DoesNotReplaceALaterOne`) and 437 (its sibling) hold a read open while other steps run; the harness lookup timeout (about 697) is 10 s of wall time, so a stall under load turns the early check into `LookupFailed`. Seen once in about 76 runs on a saturated host; no race found in the code.
-**Status**: Verified on branch; awaiting merge - admitted 2026-10-23 evening from the aud-a29g agent's second hand-back; inside the released scope
+**Status**: Merged to master `8f4f4025`; codex defect review auth-batch-3 in flight
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), after `0526dc83` (aud-a29j)
 **Commit**: the `fix(aud-a29k)` commit on `fix/a29g` that carries this record
 **Reviewer**: implementer (aud-a29g agent, candidate; not yet confirmed by the supervisor)
