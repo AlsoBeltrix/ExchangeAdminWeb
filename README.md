@@ -1043,6 +1043,20 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 - Sent when permissions are granted or removed
 - Friendly email with mailbox details and security notice
 
+**Boolean settings:** `Email:SmtpUseSsl`, `Email:NotifyUsersOnPermissionGrant` and `ServiceNow:Enabled`
+take `true` or `false`, in any case. Left out or blank, each is `false`. A value that is neither -
+`yes`, `1` - is logged once as a warning naming the setting and the value, and until it is
+corrected it is read as:
+- `Email:SmtpUseSsl`: `true`, TLS when connecting, so a mistyped value never sends mail in clear
+  text. A relay that does not offer TLS on connect then refuses the mail, and each failure is logged.
+- `ServiceNow:Enabled`: `true`, so a mistyped value never passes every ticket unchecked. Without a
+  reachable ServiceNow instance, each ticket's check then fails.
+- `Email:NotifyUsersOnPermissionGrant`: `false`, as when it is left out, and the Home page then does
+  not say that users are notified. Until a follow-up lands, the Mailbox Permissions and Calendar
+  Permissions pages still fail to render on such a value.
+
+Before, such a value stopped the Home page, and every page that sends mail or checks a ticket.
+
 ## Bulk Operations
 
 ### CSV Format - Mailbox Permissions

@@ -11,6 +11,7 @@
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
 @inject UsageTelemetryService Usage
+@inject ILogger<Home> Logger
 
 <PageTitle>@(Config["Application:Name"] ?? "Admin Portal")</PageTitle>
 
@@ -36,7 +37,9 @@
         <h5><strong>⚠️ Important Notice</strong></h5>
         <ul class="mb-0">
             <li><strong>All actions are logged:</strong> Every permission change is recorded with your username, IP address, timestamp, and ticket number for compliance and audit purposes.</li>
-            @if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false"))
+            @* aud-a58. bool.Parse threw here during render on a value such as "yes", for every user. Read as EmailService
+               reads it, so the notice never claims notifications that are not sent. *@
+            @if (ConfigBoolean.Read(Config, "Email:NotifyUsersOnPermissionGrant", whenBlank: false, whenNotBoolean: false, Logger))
             {
                 <li><strong>End users are notified:</strong> When you grant or remove permissions, the affected user will receive an email notification about the change.</li>
             }

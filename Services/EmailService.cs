@@ -47,11 +47,14 @@ public class EmailService
         _smtpPort = int.Parse(config["Email:SmtpPort"] ?? "25");
         _smtpUser = config["Email:SmtpUsername"] ?? "";
         _smtpPass = config["Email:SmtpPassword"] ?? "";
-        _smtpUseSsl = bool.Parse(config["Email:SmtpUseSsl"] ?? "false");
+        // aud-a58. bool.Parse threw on a value that is neither true nor false, and this singleton, and every page that sends
+        // mail, failed with it. A mistyped TLS switch is read as on, so mail never goes out in clear text by a typo; the
+        // user-notification switch keeps its default, as the Home page reads it.
+        _smtpUseSsl = ConfigBoolean.Read(config, "Email:SmtpUseSsl", whenBlank: false, whenNotBoolean: true, logger);
         _fromAddress = config["Email:FromAddress"] ?? "noreply@example.com";
         _fromName = config["Email:FromName"] ?? "Exchange Admin";
         _adminEmail = config["Email:AdminNotificationEmail"] ?? "";
-        _notifyUsers = bool.Parse(config["Email:NotifyUsersOnPermissionGrant"] ?? "false");
+        _notifyUsers = ConfigBoolean.Read(config, "Email:NotifyUsersOnPermissionGrant", whenBlank: false, whenNotBoolean: false, logger);
         _appName = config["Application:Name"] ?? "Exchange Admin";
     }
 

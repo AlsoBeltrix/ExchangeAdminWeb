@@ -4,7 +4,7 @@
 ?? "false")` during render; a value such as "yes" or "1" throws `FormatException` and the Home page fails
 to render for every user until the setting is corrected (the aud-a28y/a43 `bool.Parse` class, on the
 landing page).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan written)
+**Status**: Fixed on branch, not merged; guard proof below
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidate 6 of its hand-back)
@@ -142,6 +142,97 @@ The change needed, the same on both pages:
 
 Until then, a value that is neither true nor false still breaks both pages' render, as it broke Home's.
 
+## Fix
+
+- New `Services/ConfigBoolean.cs`, `internal static class ConfigBoolean`:
+  - `Read(IConfiguration config, string key, bool whenBlank, bool whenNotBoolean, ILogger logger)`. Blank or absent is
+    `whenBlank`; `bool.TryParse` decides the rest; anything else is `whenNotBoolean`.
+  - A value that is not a Boolean is warned about through `Named.TryAdd((key, value), 0)`, a static
+    `ConcurrentDictionary`, so once per process for each key and value. The warning is "The configuration value {Key} is
+    '{Value}', which is neither true nor false; it is read as {Reading} until it is corrected", with `{Reading}` "true" or
+    "false". It sits in `try { ... } catch (Exception) { }`.
+- `Components/Pages/Home.razor`:
+  - `@inject ILogger<Home> Logger`.
+  - The notice's `@if` reads `ConfigBoolean.Read(Config, "Email:NotifyUsersOnPermissionGrant", whenBlank: false,
+    whenNotBoolean: false, Logger)`, under a two-line Razor comment.
+  - 103 lines -> 106. "no clickable controls" in `ClickGateRegistry`; `ProgressRegistry`'s one exemption,
+    `OnInitializedAsync`, is untouched.
+- `Services/EmailService.cs`:
+  - `_smtpUseSsl` is `ConfigBoolean.Read(config, "Email:SmtpUseSsl", whenBlank: false, whenNotBoolean: true, logger)`.
+  - `_notifyUsers` is `ConfigBoolean.Read(config, "Email:NotifyUsersOnPermissionGrant", whenBlank: false, whenNotBoolean:
+    false, logger)`.
+  - A three-line comment sits above them.
+- `Services/ServiceNowService.cs`: `_enabled` is `ConfigBoolean.Read(config, "ServiceNow:Enabled", whenBlank: false,
+  whenNotBoolean: true, logger)`, under a two-line comment.
+- `README.md`, "Email Notifications": a "Boolean settings" paragraph covering the three settings, their readings, and the
+  two pages still left.
+
+Tests, new `ExchangeAdminWeb.Tests/ConfigBooleanTests.cs`, 20 cases:
+- `Read_TakesTrueAndFalseInAnyCase_AndBlankAsItsDefault` (10).
+- `Read_TakesAValueThatIsNotABoolean_AsItsReading_AndNamesIt` (4: "yes", "1", "no", "on").
+- `AValueThatIsNotABoolean_IsNamedOncePerProcess`.
+- `ALoggerThatThrows_DoesNotStopTheAnswer`.
+- `TheHomePage_GivenANotificationSwitchThatIsNotABoolean_Renders_WithoutClaimingNotifications`.
+- `TheMailService_GivenSwitchesThatAreNotBooleans_IsBuilt_WithTlsOn_AndUserNotificationsOff`: also the defaults when left
+  out, and "True" / "true" read as written.
+- `TheServiceNowClient_GivenAnEnabledSwitchThatIsNotABoolean_IsBuilt_AndValidatesTickets`: also dormant when left out.
+- `NoPageOrService_ParsesAConfigurationBooleanWithBoolParse`.
+- Helpers: `HomePageWith` (a real module catalog, module config, enablement and a telemetry service that is off, set by
+  reflection), `Rendered`, `RepoRoot`, `CapturingLogger<T>` and `ThrowingLogger`.
+
+Caller-visible changes, by design:
+- A Boolean setting that is neither true nor false no longer throws. That applies to Home's render, `EmailService`'s
+  construction and `ServiceNowService`'s construction. It is warned about once per process for each setting and value.
+- Read as before: "true" and "false" in any case, with surrounding white space; absent is false.
+- Blank is now false. It threw before.
+- A value that is not a Boolean is now read as:
+  - `Email:SmtpUseSsl` `true`, TLS on connect.
+  - `ServiceNow:Enabled` `true`, tickets checked.
+  - `Email:NotifyUsersOnPermissionGrant` `false`, and the Home notice not shown.
+
 ## Guard proof
 
-Pending.
+Reproduction:
+- M1, E1 and E2 each put one call site back as it was at `a7300dee`, `bool.Parse` with its `?? "false"`.
+- Each threw `FormatException` on a value that is not a Boolean: the Home page out of its render, the mail service and the
+  ServiceNow client out of their constructors. That is the defect as the record states it.
+- The source check named the line each time.
+
+Same driver as aud-a56's (session scratchpad `mutate/mutate.ps1`, spec `mutate/round-a58.ps1`, log
+`mutate/a58-mutations.log`). The filter (206 tests) covers the new tests, every suite that builds the mail service or the
+ServiceNow client, ticket validation, the cloud password reset's mail gate and the Intune notifier's:
+`FullyQualifiedName~ConfigBooleanTests|FullyQualifiedName~EmailService|FullyQualifiedName~ServiceNow|FullyQualifiedName~TicketValidation|FullyQualifiedName~CloudPasswordResetEmailTests|FullyQualifiedName~IntuneDeviceServiceTests`
+
+Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the restored
+bytes and the filter: 206/206 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 Home's `bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false")` again | `Home.razor`, `B6274EEF6A124C8775908479E9D88052` | `A4ED2C604803A8ADA21EA0309766FEC0` | 2 of 206: `TheHomePage_GivenANotificationSwitchThatIsNotABoolean_...` - the render threw (`FormatException`, inside the reflection call's `TargetInvocationException`); `NoPageOrService_ParsesAConfigurationBooleanWithBoolParse` - "Components/Pages/Home.razor:42" |
+| extra E1 `EmailService`'s `bool.Parse(config["Email:SmtpUseSsl"] ?? "false")` again | `EmailService.cs`, `9EEDE15E04C51C3F2F07CA26726D6363` | `64013B8FF7325A55A89482CF6E512266` | 2 of 206: `TheMailService_GivenSwitchesThatAreNotBooleans_...` - `FormatException` out of the constructor; the source check - "Services/EmailService.cs:53" |
+| extra E2 `ServiceNowService`'s `bool.Parse(config["ServiceNow:Enabled"] ?? "false")` again | `ServiceNowService.cs`, `ED7947483948A0C4E6D14383E6220E0C` | `95675807051CD4E7B3D48168B02465D0` | 2 of 206: `TheServiceNowClient_GivenAnEnabledSwitchThatIsNotABoolean_...` - `FormatException` out of the constructor; the source check - "Services/ServiceNowService.cs:32" |
+| extra E3 the once-per-value guard removed (`Named.TryAdd((key, value), 0) \|\| true`) | `ConfigBoolean.cs`, `BBFA5690D797294A12D18C38F046BCA9` | `679B6B7D333DC70E255813F3AA97450E` | 2 of 206: `AValueThatIsNotABoolean_IsNamedOncePerProcess` - two warnings where one; `TheHomePage_...` - two renders, two warnings where one |
+| extra E4 `Email:SmtpUseSsl`'s reading of a value that is not a Boolean made the default (`whenNotBoolean: false`) | `EmailService.cs`, `9EEDE15E04C51C3F2F07CA26726D6363` | `7964C5641AEE029921901FAE46D7E3BC` | 1 of 206: `TheMailService_...` - "a mistyped Email:SmtpUseSsl was read as clear text" |
+
+Unchanged through the round: `ConfigBooleanTests.cs` `6AECACFDAD1ABFDD6C999BC47E11C036`.
+
+`ClickGate*` and `ProgressRegistryTests` passed on this tree, in the same run as the filter before the round (557 of 557).
+They are run alone again at the branch tip.
+
+Not run, by design:
+- The Home page in a browser - its own render tree is driven twice with the setting the record names.
+- A real SMTP relay or ServiceNow instance - the readings are asserted on the built services, and nothing is sent.
+
+## Known gaps
+
+- The two pages under "Left for a follow-up" still throw during render on a value of
+  `Email:NotifyUsersOnPermissionGrant` that is not a Boolean. The source check allows exactly those two sites, one each,
+  until the follow-up.
+- The source check's allowance does not demand that the two sites still be there. A follow-up that fixes them passes
+  the check before it removes the allowance; the record names that removal as part of the follow-up.
+- `whenNotBoolean: true` for `Email:SmtpUseSsl` and `ServiceNow:Enabled` is this agent's reading of "fail closed", argued
+  in the Plan's amendment and in point 5. If the supervisor rules for the documented default instead, the change is one
+  word at each call site, plus E4's test assertion.
+- The once-per-value set lasts for the process and is never trimmed. It holds one entry per distinct mistyped value seen.
+- Other configuration reads with a parser that throws are not this record's: `Services/OperationTraceService.cs` 15
+  (`GetValue<bool?>`) and `Services/EmailService.cs` 47 (`int.Parse`). Both are listed in the hand-back as candidates.
