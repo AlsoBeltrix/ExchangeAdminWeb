@@ -160,6 +160,110 @@ be confirmed: the write failed: ...". A write that failed after its command was 
 unchanged. Versions, the supervisor's: the base app version (the shared `PermissionChangeFailure` and the new shared
 `PermissionWriteSubmission`) and the Mailbox Permissions and Calendar Permissions module versions.
 
+## Fix
+
+- New `Services/PermissionWriteSubmission.cs`: `PermissionWriteNotSubmittedException`, a public sealed
+  `InvalidOperationException(cause.Message, cause)`; and `PermissionWriteSubmission`, internal sealed, one per write call -
+  `Submitting()` sets the mark and `Submitted` reads it (both `Volatile`), and `TrackAsync(step)` returns the step's result as
+  it is, turns a throw while the mark is unset into the typed exception (`catch (Exception ex) when (!Submitted)`) and lets a
+  throw after it out as it is. A step that throws before it returns a task is caught the same way.
+- `Services/MailboxPermissionService.cs`: `AddMailboxPermissionsAsync` and `RemoveMailboxPermissionsAsync` -
+  `var submission = new PermissionWriteSubmission();` and `return submission.TrackAsync(() => RunPooledQueryAsync(...))`, with
+  `submission.Submitting()` after the bind and recipient check, before the first `TryRight`. The two on-premises writes - the
+  credential fetch and the throttled body each through `submission.TrackAsync`, `Submitting()` after `ConnectOnPrem` and the
+  session read, before the first `TryRightOnPrem`. No body re-indented; `TryRight`, `TryRightOnPrem`, the outcome composers and
+  the bulk loop are unchanged.
+- `Services/CalendarPermissionService.cs`: the same for `SetCalendarPermissionAsync` and `RemoveCalendarPermissionAsync`
+  through `RunAsync` (`Submitting()` immediately before the `Set-MailboxFolderPermission` invoke and before the
+  `Remove-MailboxFolderPermission` invoke), and for the two on-premises writes (`Submitting()` immediately before the
+  Invoke-Command's `Invoke(ps)`).
+- `Services/PermissionChangeFailure.cs`: `TheConnection = "the connection to Exchange"`; `StageOf(step, ex)` - `TheConnection`
+  when the step is `TheWrite` and the throw is a `PermissionWriteNotSubmittedException`, else the step; `Banner` reads the cause
+  of that exception from its `InnerException` and words `TheConnection` "Nothing was written: the connection to Exchange failed:
+  <cause>."; `AuditResultOf`'s code is unchanged (its summary names `TheConnection` among the Failed stages).
+- `Components/Pages/MailboxPermissions.razor` 528 (`SubmitSingle`) and 744 (`ExecuteOnPrem`),
+  `Components/Pages/CalendarPermissions.razor` 505 and 687, in place (808 and 762 lines, no registry entry moved):
+  `step = PermissionChangeFailure.StageOf(step, ex);` first on the catch's first line, and a line-end comment naming aud-a76 (on
+  528 and 505 it extends aud-a71's). The banner, the log line's step and the record's `filedAs` follow it; the action,
+  `success: false`, the error being the banner, `extra` and the record's guard are as aud-a71 and aud-a75 left them.
+
+Tests: 37 new cases, 4 retired (aud-a73's filter, with the new class added: 925 tests, 892 before).
+- `PermissionPagesSelfGrantTests` (+23, -4). `PoolWhoseWriteBorrowThrows` is now `PoolWhoseWriteBorrowFails(atTheLocationRead,
+  connectFailure, moduleConfig)` with the location read retiring its connection. `ACloudWriteWhoseBorrowIsRefused_IsRecordedAsFailed_NothingWasWritten`
+  (each page x Exchange Online disabled, settings unreadable, connect busy, pool stopped, connection lost: 10) replaces
+  aud-a71/a73's `ACloudWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText` (2): the pool's own words in the "Nothing
+  was written" banner, never the raw text; one Failed row with the target, the grantee and the written identity; the activity
+  completed with the banner; the warning's exception typed, with its cause's message; the location read made; nothing written.
+  `ACloudWriteThatThrows_WhoseRowTheWriterDrops_...` and `..._WhoseRecordThrows_...` take that banner and the cause as the
+  warning's inner exception. `ACloudRemovalWhoseRetryCannotConnect_AfterItsCommandWasSent_IsRecordedAsUndetermined` (Calendar
+  Permissions): the write-step banner, one `RemoveCalendar` row Undetermined, the untyped cause the warning, one removal sent.
+  aud-a75's `AnOnPremWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText` (2) becomes
+  `AnOnPremWriteWhoseConnectFails_IsRecordedAsFailed_NothingWasWritten` (each page),
+  `AnOnPremWriteThatThrowsOnceSent_IsRecordedAsUndetermined_WithTheBannersText` (Calendar Permissions) and
+  `AnOnPremRightExchangeRefuses_IsItsOwnFailedRow_AsBefore` (Mailbox Permissions). `TheStepBanner_...` gains the
+  `TheConnection` row (its cause inside the typed exception), `TheStepsAuditResult_...` the `TheConnection` row, and
+  `TheStageOfAThrow_IsTheConnection_OnlyForAWriteThatWasNeverSent` is new (6).
+- New `ExchangeAdminWeb.Tests/PermissionWriteSubmissionTests.cs` (14): the tracker (2); the four cloud writes over a pool that
+  cannot connect (4) and the four on-premises writes whose connect throws (4), each the typed exception with the cause inside
+  and nothing sent; the two on-premises Calendar writes whose remote command fails once sent, the untyped failure after one
+  Invoke-Command (2); the two bulk loops, whose `_Error` row and entry carry the cause's own message as before (2).
+
 ## Guard proof
 
-Pending.
+Session-local driver `a76-mutate.ps1` (session scratchpad, log `a76-mutations.log`), aud-a73's protocol: the fix staged; per
+mutant the MD5 of the file, the exact-text edit (each must match exactly once), the MD5 and the line count again, a Debug
+build of the test project with 0 errors required, `dotnet test --no-build` over aud-a73's filter with
+`|FullyQualifiedName~PermissionWriteSubmission` added (925 tests), the failing names taken from the run; then the file
+restored from the git index, its write time advanced so MSBuild rebuilds it, its MD5 checked equal to the one before, the
+test project rebuilt with 0 errors and the filter run again. Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor`
+`C9F8A415176E4876323F0850D98A27AA`, `Components/Pages/CalendarPermissions.razor` `91AFE67CED14D26729EF7039F385C5DD`,
+`Services/PermissionWriteSubmission.cs` `406C004789265045A38089A9458E0F90`, `Services/PermissionChangeFailure.cs`
+`56EFFC24B8303C98589B73CEA553F0EB`, `Services/MailboxPermissionService.cs` `8347F6A49A98A758E0E0F6805BA2AE8F`,
+`Services/CalendarPermissionService.cs` `F929EF0DEF42A3204A96CE812601034D` (unmutated:
+`ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs` `65B5AFE2CECEA61AABDDDC5A535DBDF7`,
+`ExchangeAdminWeb.Tests/PermissionWriteSubmissionTests.cs` `7872B49B70C358A90534236EF6D31973`). Every mutant built with 0
+errors and kept its file's line count (the pages 808 and 762, so ClickGate and ProgressRegistry ran under every page mutant
+and passed); every restore matched, and the restored tree rebuilt with 0 errors and ran the filter green, 925/925, each time.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | the Mailbox Permissions `SubmitSingle` catch without `step = PermissionChangeFailure.StageOf(step, ex);` - the pre-write failure filed through `AuditResultOf(TheWrite)` again | `MailboxPermissions.razor` `8BEDC9AF1EB2CCBAC9F57DBCE5835E88` | 7 of 925: `ACloudWriteWhoseBorrowIsRefused_IsRecordedAsFailed_NothingWasWritten(page: "Mailbox Permissions", ...)` for all five refusals, `ACloudWriteThatThrows_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten` and `ACloudWriteThatThrows_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler` (Mailbox Permissions) - the "could not be confirmed" banner and an Undetermined row again |
+| M1c | the same on Calendar Permissions | `CalendarPermissions.razor` `7A93B6AA18E989F9940D8E0CFE500A7A` | 7 of 925: the same seven on Calendar Permissions |
+| M2 | the Mailbox Permissions `ExecuteOnPrem` catch without it | `MailboxPermissions.razor` `B68FE18751CD67057EC1AE9378899BFC` | 1 of 925: `AnOnPremWriteWhoseConnectFails_IsRecordedAsFailed_NothingWasWritten(page: "Mailbox Permissions")` |
+| M2c | the same on Calendar Permissions | `CalendarPermissions.razor` `00CB529032D5CC4D3B27717BE65C3943` | 1 of 925: the same test's `(page: "Calendar Permissions")` row |
+| E1 | extra: `TrackAsync` types no throw (the cause rethrown) | `PermissionWriteSubmission.cs` `4CC039DEE0D08C56F9DAED4CF356489C` | 25 of 925: the 14 cloud page cases of M1 and M1c, `AnOnPremWriteWhoseConnectFails_IsRecordedAsFailed_NothingWasWritten` (each page), `ACloudWriteWhoseConnectionCannotBeHad_SaysNothingWasSent` (all four writes), `AnOnPremWriteWhoseConnectFails_SaysNothingWasSent` (all four), `AThrowBeforeTheMark_IsNotSubmitted_WithItsCauseInside_InItsCausesMessage` |
+| E2 | extra: `TrackAsync` types every throw, the mark ignored | `PermissionWriteSubmission.cs` `463B01D96C1952712D2AE63BDF84E686` | 5 of 925: `AnOnPremWriteThatThrowsOnceSent_IsRecordedAsUndetermined_WithTheBannersText`, `ACloudRemovalWhoseRetryCannotConnect_AfterItsCommandWasSent_IsRecordedAsUndetermined`, `AThrowOnceMarked_GoesOutAsItIs_AndAResultGoesThrough`, `AnOnPremCalendarWriteThatFailsOnceSent_GoesOutAsItIs` (set and remove) |
+| E3 | extra: the on-premises Calendar set marks before `ConnectOnPrem` | `CalendarPermissionService.cs` `D85871C99878F03748B197BE1C968261` | 2 of 925: `AnOnPremWriteWhoseConnectFails_IsRecordedAsFailed_NothingWasWritten(page: "Calendar Permissions")`, `AnOnPremWriteWhoseConnectFails_SaysNothingWasSent(write: "SetCalendarPermissionOnPrem")` |
+| E4 | extra: `Banner` reads a `TheConnection` cause from the typed exception, not its inner | `PermissionChangeFailure.cs` `BEF37EA6B101B2BC018E879523028459` | 9 of 925, every case whose cause carries captured PowerShell words - the raw text in the banner: `ACloudWriteWhoseBorrowIsRefused_...` "connection lost", `ACloudWriteThatThrows_WhoseRowTheWriterDrops_...`, `..._WhoseRecordThrows_...` and `AnOnPremWriteWhoseConnectFails_IsRecordedAsFailed_...` (each page), `TheStepBanner_SaysWhatCouldHaveBeenWritten_InTheCausesOwnWords(step: "the connection to Exchange")` |
+| E5 | extra: `RemoveMailboxPermissionsAsync`'s borrow not tracked | `MailboxPermissionService.cs` `00BB92C4EA3C1C2FD496370D8546393F` | 1 of 925: `ACloudWriteWhoseConnectionCannotBeHad_SaysNothingWasSent(write: "RemoveMailboxPermissions")` |
+
+No separate pre-fix reproduction: M1, M1c, M2 and M2c are each catch's first line as it stood at `a1eb8a3a`, byte for byte but
+for the line-end comment, so each failure is also the finding's reproduction on that page and path; E1 is the services as
+they stood (the borrow's or the connect's own exception let out).
+
+## Known gaps
+
+- On Mailbox Permissions no realistic throw reaches either catch after the command was sent: each right's failure is a result
+  (`TryRight`, `TryRightOnPrem`), and after a cloud run only `Return` or `Discard` runs, which end in `DestroyRunspace` and
+  never throw. So no page test files an Undetermined row on that page; `StageOf`, `AuditResultOf` and `Banner` are unit-tested
+  at every stage, and Calendar Permissions' two Undetermined tests run the same catch shape (the retried cloud removal; the
+  on-premises command that throws once sent).
+- A right whose command was sent and whose session then failed mid-command is still a failed right - Failed through the
+  write's own row (`TryRight`, `TryRightOnPrem`, Calendar's cloud `RunAsync` result) - though its outcome is unknown. Left as
+  the Approach says ("nothing changes"); a candidate in the hand-back.
+- A Calendar removal the pool retried after its first attempt's pre-flight error, whose retry then cannot borrow, is
+  Undetermined: the mark outlives the retry by design (Plan, item 2), though the pool retries only on an error it reads as
+  proof that the command never ran.
+- The pool's "stopped" refusal (`ObjectDisposedException`) has a line break in its message, so its banner and its row do too.
+- aud-a75's first gap stands: `CalendarPermissionService`'s on-premises set and remove let a write Exchange refused out as an
+  exception after the mark, so it is Undetermined under "could not be confirmed" - conservative, but Exchange did answer.
+- Rows already written stay as written: a pre-write failure logged by an aud-a73 or aud-a75 build reads Undetermined with
+  "Whether the change was made could not be confirmed".
+- "Pool busy" is the connect seam throwing `CreateConnected`'s busy-gate text; the slot wait's own refusal (`BorrowAsync`
+  294-298) waits two minutes and is not driven - it throws before the delegate, as every refusal driven here does. Nothing ran
+  against Exchange: the harness's pools and stand-in cmdlets, its on-premises session through the services' own seam, its
+  validator and directory stand-in, and a store that fails when told.
+
+## Comments after the round
+
+None: the comments were written with the fix, and every mutant ran with them in place, so there is no comments-only commit.

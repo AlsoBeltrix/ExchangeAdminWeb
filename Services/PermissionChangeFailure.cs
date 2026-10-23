@@ -10,7 +10,9 @@ namespace ExchangeAdminWeb.Services;
 /// throw, and since aud-a53 the record and each notification sit in their own guard, so a throw that reaches the catch is
 /// one of the change's own steps. The handler names the step it is at in a local (<see cref="BeforeTheWrite"/>, then
 /// <see cref="TheWrite"/>, then <see cref="AfterTheWrite"/>); the cause is <see cref="ExchangeServiceBase.ResolveFailure"/>'s
-/// (aud-a23i) - a cmdlet's error as it wrote it, never the "running command stopped" wrapper.
+/// (aud-a23i) - a cmdlet's error as it wrote it, never the "running command stopped" wrapper. aud-a76: a throw at the write
+/// that the service marks as never sent - a <see cref="PermissionWriteNotSubmittedException"/> - is
+/// <see cref="TheConnection"/> instead (<see cref="StageOf"/>): nothing was written.
 /// </remarks>
 internal static class PermissionChangeFailure
 {
@@ -20,25 +22,43 @@ internal static class PermissionChangeFailure
     /// <summary>The write itself: it may or may not have taken.</summary>
     internal const string TheWrite = "the write";
 
+    /// <summary>
+    /// aud-a76. The connection the write needed, refused or failed before the write's command was sent: nothing can have been
+    /// written. The services say so with a <see cref="PermissionWriteNotSubmittedException"/>.
+    /// </summary>
+    internal const string TheConnection = "the connection to Exchange";
+
     /// <summary>After the write returned: it was made as it reported.</summary>
     internal const string AfterTheWrite = "a step after the write";
 
     /// <summary>The banner, and the record's detail, for a throw at <paramref name="step"/>.</summary>
     internal static string Banner(string step, Exception ex)
     {
-        var cause = ExchangeServiceBase.ResolveFailure(ex).primary.Trim().TrimEnd('.');
+        // aud-a76: a write never sent is told in its cause's words - the exception the service wrapped, not the wrapper.
+        var cause = ExchangeServiceBase.ResolveFailure(ex is PermissionWriteNotSubmittedException { InnerException: { } wrapped } ? wrapped : ex).primary.Trim().TrimEnd('.');
         return step switch
         {
             BeforeTheWrite => $"The change was not made: {step} failed: {cause}. Nothing was written.",
+            TheConnection => $"Nothing was written: {step} failed: {cause}.",
             TheWrite => $"Whether the change was made could not be confirmed: {step} failed: {cause}. Check the permissions before trying again.",
             _ => $"The change was written, but {step} failed: {cause}. Check the permissions to confirm the result.",
         };
     }
 
     /// <summary>
+    /// aud-a76. The stage a throw at <paramref name="step"/> came from, as the exception tells it: at <see cref="TheWrite"/>, a
+    /// <see cref="PermissionWriteNotSubmittedException"/> - the service's word that the write's command was never sent - is
+    /// <see cref="TheConnection"/>, where nothing can have been written; any other throw, and a throw at any other step, is
+    /// the step's.
+    /// </summary>
+    internal static string StageOf(string step, Exception ex) =>
+        step == TheWrite && ex is PermissionWriteNotSubmittedException ? TheConnection : step;
+
+    /// <summary>
     /// aud-a73. The result the record of a throw at <paramref name="step"/> is filed under: Undetermined at
-    /// <see cref="TheWrite"/>, which may or may not have taken, as its banner says; Failed before the write, when nothing
-    /// was written, and after it, when the written change has its own row and this one says a later step failed.
+    /// <see cref="TheWrite"/>, which may or may not have taken, as its banner says; Failed before the write and at
+    /// <see cref="TheConnection"/> (aud-a76), when nothing was written, and after it, when the written change has its own row
+    /// and this one says a later step failed.
     /// </summary>
     internal static AuditResult AuditResultOf(string step) => step == TheWrite ? AuditResult.Undetermined : AuditResult.Failed;
 }

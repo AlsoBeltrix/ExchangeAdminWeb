@@ -1,0 +1,226 @@
+using System.Management.Automation;
+using System.Text;
+using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
+
+namespace ExchangeAdminWeb.Tests;
+
+/// <summary>
+/// aud-a76: the Mailbox Permissions and Calendar Permissions writes say when a failure came before their command was sent to
+/// Exchange - a <see cref="PermissionWriteNotSubmittedException"/> - so their pages file it Failed, nothing written, and keep
+/// Undetermined for a failure after the command was sent.
+/// </summary>
+/// <remarks>
+/// The tracker itself; then the eight writes over <see cref="ExchangeWriteHarness"/> - a pool whose connect throws, a
+/// <c>ConnectOnPrem</c> that throws, a remote command that fails once sent; then the bulk loops, which read a throw's message
+/// alone. Nothing here reaches Exchange or a directory.
+/// </remarks>
+public sealed class PermissionWriteSubmissionTests : IDisposable
+{
+    private const string Typed = "shared";
+    private const string Trustee = "jdoe@contoso.test";
+    private static readonly Guid Checked = Guid.Parse("0d0d0d0d-1111-4222-8333-444444444444");
+
+    private readonly ExchangeWriteHarness _h = new();
+
+    public PermissionWriteSubmissionTests() => _h.AddMailbox("shared@contoso.test", Checked);
+
+    public void Dispose() => _h.Dispose();
+
+    // ---- the tracker ---------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task AThrowBeforeTheMark_IsNotSubmitted_WithItsCauseInside_InItsCausesMessage()
+    {
+        // A faulted step - a refused borrow as the pool hands it back - and a step that throws before it returns a task at
+        // all: neither reached the mark, so neither can have written.
+        var cause = new InvalidOperationException("the borrow was refused");
+
+        var faulted = await Assert.ThrowsAsync<PermissionWriteNotSubmittedException>(
+            () => new PermissionWriteSubmission().TrackAsync(() => Task.FromException<PermissionResult>(cause)));
+        var thrown = await Assert.ThrowsAsync<PermissionWriteNotSubmittedException>(
+            () => new PermissionWriteSubmission().TrackAsync<PermissionResult>(() => throw cause));
+
+        Assert.All(new[] { faulted, thrown }, notSent =>
+        {
+            Assert.Same(cause, notSent.InnerException);
+            Assert.Equal(cause.Message, notSent.Message);
+        });
+    }
+
+    [Fact]
+    public async Task AThrowOnceMarked_GoesOutAsItIs_AndAResultGoesThrough()
+    {
+        var cause = new InvalidOperationException("the session was lost during the write");
+        var submission = new PermissionWriteSubmission();
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => submission.TrackAsync<PermissionResult>(() =>
+        {
+            submission.Submitting();
+            throw cause;
+        }));
+        var result = await new PermissionWriteSubmission().TrackAsync(() => Task.FromResult(PermissionResult.Ok()));
+
+        Assert.Same(cause, thrown);
+        Assert.True(submission.Submitted);
+        Assert.True(result.Success);
+    }
+
+    // ---- the eight writes ----------------------------------------------------------------------------------------------
+
+    public static TheoryData<string> CloudWrites =>
+        ["AddMailboxPermissions", "RemoveMailboxPermissions", "SetCalendarPermission", "RemoveCalendarPermission"];
+
+    public static TheoryData<string> OnPremWrites =>
+        ["AddMailboxPermissionsOnPrem", "RemoveMailboxPermissionsOnPrem", "SetCalendarPermissionOnPrem", "RemoveCalendarPermissionOnPrem"];
+
+    /// <summary>A pool whose every connect throws <paramref name="failure"/>: no session can be had.</summary>
+    private ExoConnectionPool PoolThatCannotConnect(Exception failure) =>
+        new(_h.Config, _h.ModuleConfig, _h.Enablement, NullLogger<ExoConnectionPool>.Instance, _h.Trace, (_, _, _) => throw failure);
+
+    private MailboxPermissionService MailboxService(ExoConnectionPool pool) =>
+        new(pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace);
+
+    private CalendarPermissionService CalendarService(ExoConnectionPool pool) =>
+        new(pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace);
+
+    private Task<PermissionResult> Cloud(string write, ExoConnectionPool pool)
+    {
+        var validated = ExchangeWriteHarness.Validated(Checked);
+        return write switch
+        {
+            "AddMailboxPermissions" => MailboxService(pool).AddMailboxPermissionsAsync(Typed, validated, Trustee, fullAccess: true, sendAs: true, autoMapping: false),
+            "RemoveMailboxPermissions" => MailboxService(pool).RemoveMailboxPermissionsAsync(Typed, validated, Trustee, fullAccess: true, sendAs: true),
+            "SetCalendarPermission" => CalendarService(pool).SetCalendarPermissionAsync(Typed, validated, Trustee, CalendarAccessRight.Reviewer),
+            _ => CalendarService(pool).RemoveCalendarPermissionAsync(Typed, validated, Trustee),
+        };
+    }
+
+    /// <summary>The on-premises Mailbox Permissions writes: the harness's credential, and its session unless the connect throws.</summary>
+    private sealed class OnPremMailbox(ExchangeWriteHarness h, Exception? connectFailure)
+        : MailboxPermissionService(h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, h.Config, null!, h.Trace)
+    {
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
+
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        {
+            if (connectFailure is not null)
+                throw connectFailure;
+            h.DefineOnPremSession(ps);
+        }
+    }
+
+    /// <summary>The on-premises Calendar Permissions writes, as <see cref="OnPremMailbox"/>.</summary>
+    private sealed class OnPremCalendar(ExchangeWriteHarness h, Exception? connectFailure)
+        : CalendarPermissionService(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, null!, h.Trace)
+    {
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
+
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        {
+            if (connectFailure is not null)
+                throw connectFailure;
+            h.DefineOnPremSession(ps);
+        }
+    }
+
+    private Task<PermissionResult> OnPrem(string write, Exception? connectFailure = null)
+    {
+        var validated = ExchangeWriteHarness.Validated(Checked);
+        return write switch
+        {
+            "AddMailboxPermissionsOnPrem" => new OnPremMailbox(_h, connectFailure).AddMailboxPermissionsOnPremAsync(Typed, validated, Trustee, fullAccess: true, sendAs: true),
+            "RemoveMailboxPermissionsOnPrem" => new OnPremMailbox(_h, connectFailure).RemoveMailboxPermissionsOnPremAsync(Typed, validated, Trustee, fullAccess: true, sendAs: true),
+            "SetCalendarPermissionOnPrem" => new OnPremCalendar(_h, connectFailure).SetCalendarPermissionOnPremAsync(Typed, validated, Trustee, "Reviewer"),
+            _ => new OnPremCalendar(_h, connectFailure).RemoveCalendarPermissionOnPremAsync(Typed, validated, Trustee),
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(CloudWrites))]
+    public async Task ACloudWriteWhoseConnectionCannotBeHad_SaysNothingWasSent(string write)
+    {
+        // The borrow - here its connect - is the one throw a cloud write lets out, and it comes before any command.
+        var failure = new InvalidOperationException("the connect was refused");
+        using var pool = PoolThatCannotConnect(failure);
+
+        var notSent = await Assert.ThrowsAsync<PermissionWriteNotSubmittedException>(() => Cloud(write, pool));
+
+        Assert.Same(failure, notSent.InnerException);
+        Assert.Equal(failure.Message, notSent.Message);
+        Assert.Empty(_h.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(OnPremWrites))]
+    public async Task AnOnPremWriteWhoseConnectFails_SaysNothingWasSent(string write)
+    {
+        var failure = new InvalidOperationException("the on-premises session could not be opened");
+
+        var notSent = await Assert.ThrowsAsync<PermissionWriteNotSubmittedException>(() => OnPrem(write, failure));
+
+        Assert.Same(failure, notSent.InnerException);
+        Assert.Equal(failure.Message, notSent.Message);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+    }
+
+    [Theory]
+    [InlineData("SetCalendarPermissionOnPrem", "Add-MailboxFolderPermission")]
+    [InlineData("RemoveCalendarPermissionOnPrem", "Remove-MailboxFolderPermission")]
+    public async Task AnOnPremCalendarWriteThatFailsOnceSent_GoesOutAsItIs(string write, string command)
+    {
+        // The on-premises Calendar write's one Invoke-Command lets out what its remote command threw: sent, so never marked as
+        // not sent, and its page files it Undetermined. The set falls back to an add, which fails here as well.
+        _h.Failures["Set-MailboxFolderPermission"] = "the folder permission could not be set";
+        _h.Failures[command] = "the remote command failed";
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => OnPrem(write));
+
+        Assert.IsNotType<PermissionWriteNotSubmittedException>(thrown);
+        Assert.Contains("the remote command failed", thrown.Message, StringComparison.Ordinal);
+        Assert.Single(_h.CallsTo("Invoke-Command"));
+        Assert.Single(_h.CallsTo(command));
+    }
+
+    // ---- the bulk loops ------------------------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ABulkRowWhoseWriteCannotConnect_IsRecordedAsBefore_InTheCausesOwnWords(bool mailbox)
+    {
+        // The bulk loops record a row's throw by its message alone, and the message of a write never sent is its cause's: the
+        // row's error row and its entry read as they did before aud-a76.
+        var failure = new InvalidOperationException("the connect was refused");
+        using var pool = PoolThatCannotConnect(failure);
+        var resolver = ExchangeWriteHarness.ExchangeKnows(Typed, "shared@contoso.test", Checked);
+        var email = Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>());
+        // aud-a69: the trustee is someone - the directory holds their account.
+        _h.Forest.AddUser("jdoe", upn: Trustee, mail: Trustee, proxies: [$"SMTP:{Trustee}"]);
+        var validator = _h.NothingProtectedValidator(resolver);
+
+        var bulk = mailbox
+            ? await MailboxService(pool).ProcessMailboxPermissionsCsvAsync(
+                Csv("Target,User,FullAccess,SendAs,AutoMapping\n" + $"{Typed},{Trustee},True,False,False\n"), isAdd: true, validator,
+                ExchangeWriteHarness.OperatorLogonName, _h.Audit, email, "10.0.0.5", "INC100", actingUser: _h.Operator)
+            : await CalendarService(pool).ProcessCalendarPermissionsCsvAsync(
+                Csv("Target,User,AccessRight\n" + $"{Typed},{Trustee},Reviewer\n"), isSet: true, validator,
+                ExchangeWriteHarness.OperatorLogonName, _h.Audit, email, "10.0.0.5", "INC100", actingUser: _h.Operator);
+
+        Assert.Equal(0, bulk.SuccessCount);
+        var entry = Assert.Single(bulk.Entries);
+        Assert.Equal("ERROR", entry.Status);
+        Assert.Equal(failure.Message, entry.Message);
+        Assert.Equal($"{Typed}/{Trustee}: {failure.Message}", Assert.Single(bulk.Errors));
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == (mailbox ? "BulkAdd_Error" : "BulkSetCalendar_Error"));
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal(failure.Message, row.GetProperty("error").GetString());
+    }
+
+    private static MemoryStream Csv(string text) => new(Encoding.UTF8.GetBytes(text));
+}
