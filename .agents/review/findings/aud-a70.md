@@ -120,6 +120,15 @@ second `Email.SendAdminNotificationAsync(` in `SubmitSingle`: ProgressRegistry h
 first `Complete`, which a call in the catch is not. After (12) and (14) no failure the services let out reaches
 `ExecuteOnPrem`'s catch at the write step - the call there is kept for the shape, and is not proven by a test (Known gaps).
 
+(7) `Services/PermissionValidator.cs` 745-752 (`EstablishOperator`, a sign-in carrying a UPN claim and no SID):
+`SelfGrantDirectory.FindByUserPrincipalName` (`Services/SelfGrantDirectory.cs` 117-118) searched under the session's
+identity, and none found is "no on-premises account" - `CompareInDirectoryAsync` then asks about no group (854). An account
+that identity cannot see read as none. The lookup now runs under the directory-read credential, had once per run in
+`ValidateSelfGrantAsync` (679) for such a sign-in only; without it the check refuses, naming the credential's problem ("the
+signed-in operator '<x>' could not be looked up in the on-premises directory by their user principal name: <problem>"). The
+SID lookup stays the session's: none or several there already refuse. No sign-in the app takes today carries a UPN claim
+without a SID (Negotiate), so nothing a deployment does now changes.
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -246,6 +255,19 @@ Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate
 
 M15 is the catch as it stood at `eb017102`; M15b and E15b the notifications' actions as they stood. `ExecuteOnPrem`'s catch
 call has no mutant: no failure reaches it there (Known gaps).
+
+### (7) - commit `fix(aud-a70): (7) ...`
+
+Filter `FullyQualifiedName~PermissionValidator|FullyQualifiedName~SelfGrant|FullyQualifiedName~ProtectedGroupMembership` (410
+tests). Fixed-file MD5s: `Services/SelfGrantDirectory.cs` `DC8279156F7F6906F828B383588B2AD8`, `Services/PermissionValidator.cs`
+`CB64D44A14286D7510153844ED15ED7A`. Every restore matched; reruns 410/410.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M7 | the UPN lookup under the session's identity again (`FindByUserPrincipalName` passing no credential) | `SelfGrantDirectory.cs` `D55EC14B56FFC7103A3E63F9DBE5B26B` | 2 of 410: both `AnOperatorKnownByTheirUpnClaim_HiddenFromTheSessionIdentity_IsFoundUnderTheDirectoryReadCredential` rows - the operator inside allowed; either way the lookup as the session |
+| E7 | extra: no refusal without the credential (the lookup made with none) | `PermissionValidator.cs` `B7E0D2B4B04293BD13F27DED8A5193C2` | 5 of 410: every `AnOperatorKnownOnlyByTheirUpnClaim_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete` row |
+
+M7 is the lookup as it stood at `eb017102`.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 

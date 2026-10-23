@@ -34,8 +34,9 @@ internal sealed record SelfGrantDirectoryObject(
 /// One session per check: a fresh runspace, the ActiveDirectory module (<see cref="ActiveDirectoryModuleImport"/>) and the
 /// host forest's global catalog, discovered from <c>Get-ADForest</c> at runtime - the
 /// <c>PowerShellProtectedGroupDirectory.GlobalCatalog</c> idiom. Nothing is named, defaulted or configured (Architectural
-/// Invariant 7). The lookups of the operator run under the app pool's identity, as the other read-only lookups of the signed-in
-/// operator do (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>); a missing or doubled operator refuses. The
+/// Invariant 7). The lookup of the operator by SID runs under the app pool's identity, as the other read-only lookups of the
+/// signed-in operator do (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>); a missing or doubled operator
+/// refuses. By a UPN claim alone it runs under the directory-read credential (aud-a70 (7)): there none found is an answer. The
 /// lookup of the objects a grantee names runs under the protected-principal directory-read credential (aud-a69,
 /// <see cref="FindNamedBy"/>): its empty answer is what lets a grantee through, so it may not rest on what the app pool can see.
 ///
@@ -113,9 +114,14 @@ internal sealed class SelfGrantDirectory : IDisposable
     internal IReadOnlyList<SelfGrantDirectoryObject> FindBySid(string sid) =>
         Search(ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, sid), _globalCatalog, credential: null);
 
-    /// <summary>Every object in the forest whose userPrincipalName is <paramref name="userPrincipalName"/>, under the session's identity.</summary>
-    internal IReadOnlyList<SelfGrantDirectoryObject> FindByUserPrincipalName(string userPrincipalName) =>
-        Search($"(userPrincipalName={Escape(userPrincipalName.Trim())})", _globalCatalog, credential: null);
+    /// <summary>
+    /// Every object in the forest whose userPrincipalName is <paramref name="userPrincipalName"/>, read under
+    /// <paramref name="credential"/> - the protected-principal directory-read credential (aud-a70 (7)): an account the
+    /// session's identity cannot see reads as none, and none is "no on-premises account", which no group is asked about.
+    /// </summary>
+    internal IReadOnlyList<SelfGrantDirectoryObject> FindByUserPrincipalName(string userPrincipalName, PSCredential credential) =>
+        Search($"(userPrincipalName={Escape(userPrincipalName.Trim())})", _globalCatalog,
+            credential ?? throw new ArgumentNullException(nameof(credential)));
 
     /// <summary>
     /// Every object in the forest a grantee identity can name (<see cref="GranteeFilter"/>), read under
