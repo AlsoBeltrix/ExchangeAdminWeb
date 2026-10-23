@@ -276,6 +276,22 @@ function ConvertTo-ComparablePhysicalPath {
 
 Export-ModuleMember -Function ConvertTo-ComparablePhysicalPath
 
+function Test-SamePhysicalFolder {
+    # cdt-44. True when two spellings name the same folder: both through
+    # ConvertTo-ComparablePhysicalPath, then equal, ordinal and case-insensitive - never by prefix. A
+    # spelling that reads as empty is never the same folder as anything. deploy.ps1 asks this twice,
+    # in its check that a run does not move an existing application and in its choice of which
+    # folder's configuration is live, so the two answers cannot disagree.
+    param([string]$Path, [string]$Other)
+
+    $first = ConvertTo-ComparablePhysicalPath $Path
+    $second = ConvertTo-ComparablePhysicalPath $Other
+    if ([string]::IsNullOrWhiteSpace($first) -or [string]::IsNullOrWhiteSpace($second)) { return $false }
+    return [string]::Equals($first, $second, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+Export-ModuleMember -Function Test-SamePhysicalFolder
+
 function Test-PhysicalPathInside {
     # aud-a38f. True when Path is Root or lies inside it: equal, or Root followed by a directory
     # separator. Both are comparable forms (ConvertTo-ComparablePhysicalPath). A bare prefix test
