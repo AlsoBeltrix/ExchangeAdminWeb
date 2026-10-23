@@ -1,7 +1,7 @@
 # cdt-36: deploy.ps1 -Force re-points an existing application to whatever -PublishPath / -AppPoolName it is given
 
 **Severity**: MEDIUM, design - `deploy.ps1` run with `-Force` over an existing deployment lands in the fresh-install branch and re-creates or re-points the IIS application to this run's `-PublishPath` and `-AppPoolName` with no cdt-15-style check that they still name the pool and folder serving the alias. A mistyped or defaulted value moves the live application (the cdt-15 / aud-a34 outage shape) while the run ends successfully.
-**Status**: Verified on branch; awaiting merge and codex review - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
+**Status**: Merged to master `72430407` (fix `493c270d`); codex defect review ops-batch-12 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`, forked from `master` at `eb017102`)
 **Commit**: the `fix(cdt-36)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (recorded by the supervisor at the 2026-10-23 hand-over, from the cdt-15 agent's hand-back)
