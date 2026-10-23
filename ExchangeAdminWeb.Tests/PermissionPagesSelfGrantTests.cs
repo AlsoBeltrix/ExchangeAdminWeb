@@ -265,9 +265,9 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     /// <summary>The grant <c>SubmitSingle</c> stages before the operator's confirmation: the target, the grantee and the ticket.</summary>
-    private static void Stage(object page, string grantee)
+    private static void Stage(object page, string grantee, string target = Target)
     {
-        SetField(page, "onPremTarget", Target);
+        SetField(page, "onPremTarget", target);
         SetField(page, "onPremUser", grantee);
         SetField(page, "onPremTicket", "INC100");
     }
@@ -275,10 +275,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// <summary>
     /// What the operator's Continue reaches: <paramref name="page"/>'s <c>ExecuteOnPrem</c>, over a staged Full Access
     /// (Mailbox Permissions) or Reviewer (Calendar Permissions) grant to <paramref name="grantee"/>; the result and the
-    /// warnings the page logged; the mail service a test gives (aud-a53).
+    /// warnings the page logged; the mail service a test gives (aud-a53); the staged target a test gives, and an exception the
+    /// on-premises permission check throws (aud-a59).
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
-        string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null)
+        string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
+        string target = Target, Exception? onPremAuthorization = null)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -301,7 +303,14 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
             warnings = () => logger.Warnings;
         }
-        Stage(component, grantee);
+        Stage(component, grantee, target);
+        if (onPremAuthorization is not null)
+        {
+            var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
+            authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
+                    page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
+                .Returns(Task.FromException<AuthorizationResult>(onPremAuthorization));
+        }
 
         await Call(component, "ExecuteOnPrem");
 
@@ -602,6 +611,79 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal(banner, PermissionChangeFailure.Banner(step, failure));
         Assert.Equal(banner.Replace("the cmdlet's own words", "plain text", StringComparison.Ordinal),
             PermissionChangeFailure.Banner(step, new InvalidOperationException("plain text.")));
+    }
+
+    // ---- aud-a59: the protected-target denial says when its row was not written; ExecuteOnPrem's catch names its step --
+
+    private const string Unknown = "nobody@contoso.test";
+
+    public static TheoryData<string, bool> PagesAndPaths => new()
+    {
+        { MailboxPage, false }, { MailboxPage, true }, { CalendarPage, false }, { CalendarPage, true },
+    };
+
+    /// <summary>
+    /// <paramref name="page"/>'s single submit, or its on-premises write when <paramref name="onPrem"/>, of a grant to a target
+    /// Exchange holds no mailbox for - which the protected-target check denies - with <paramref name="audit"/>.
+    /// </summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Deny(
+        string page, bool onPrem, AuditService audit) => onPrem
+        ? await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), audit, target: Unknown)
+        : await Submit(page, ExchangeNamesTheAliasAsTheOperator(), audit, grantee: Other, target: Unknown);
+
+    [Theory]
+    [MemberData(nameof(PagesAndPaths))]
+    public async Task AProtectedTargetDenial_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten(string page, bool onPrem)
+    {
+        // The writer does not throw (aud-a28q); it hands back that it dropped the row, and the denial's record ignored that.
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await Deny(page, onPrem, _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Equal(PermissionValidator.NoMailboxMessage(Unknown) + " The audit row could not be written.", result.Message);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndPaths))]
+    public async Task AProtectedTargetDenial_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler(string page, bool onPrem)
+    {
+        // ExecuteOnPrem's record sat in no try of its own: the throw went to the handler's catch, whose own record threw again
+        // out of the handler.
+        var (result, warnings) = await Deny(page, onPrem, AuditWithoutAWriter());
+
+        Assert.False(result.Success);
+        Assert.Equal(PermissionValidator.NoMailboxMessage(Unknown) + " The audit row could not be written.", result.Message);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.IsType<NullReferenceException>(exception);
+        Assert.Contains("protected-target denial", message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremStepThatThrowsBeforeTheWrite_IsNamed_InTheCausesOwnWords_AndItsRecordCarriesTheSameText(string page)
+    {
+        // ExecuteOnPrem's catch recorded and showed the raw exception text, whatever had thrown.
+        var failure = new InvalidOperationException("raw-text-a59");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the policy store cannot be read" };
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit,
+            onPremAuthorization: failure);
+
+        var banner = "The change was not made: a step before the write failed: the policy store cannot be read. Nothing was written.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
+        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

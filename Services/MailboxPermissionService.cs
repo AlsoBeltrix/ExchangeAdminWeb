@@ -24,6 +24,9 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// </summary>
     internal const string BulkRowNamesNoUser = "No user specified (the User column is empty)";
 
+    /// <summary>aud-a59. The error a bulk row that names no target is refused with, in both permission loops.</summary>
+    internal const string BulkRowNamesNoTarget = "No target specified (the Target column is empty)";
+
     public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MailboxPermissions", operationTrace) { }
 
@@ -229,6 +232,26 @@ public class MailboxPermissionService : ExchangeServiceBase
         {
             try
             {
+                // aud-a59. A row that names no target is an invalid row too, refused first: it went on to the protected-target
+                // check with '' and was recorded under that check's action.
+                if (string.IsNullOrWhiteSpace(row.Target))
+                {
+                    audit.LogMailboxPermission(
+                        currentUser, ipAddress, $"Bulk{(isAdd ? "Add" : "Remove")}_NoTarget",
+                        row.Target, row.User, "Mailbox", false, ticketNumber,
+                        errorDetail: BulkRowNamesNoTarget);
+                    errors.Add($"{row.Target}/{row.User}: {BulkRowNamesNoTarget}");
+                    entries.Add(new BulkOperationEntry
+                    {
+                        Target = row.Target,
+                        User = row.User,
+                        Permission = "Mailbox",
+                        Status = "FAILED",
+                        Message = "No target specified"
+                    });
+                    continue;
+                }
+
                 // aud-a50. A row that names no user is an invalid row, refused before any check: the self-grant check put ''
                 // to Exchange and the directory and recorded the row as a self-grant attempt, and a revocation went on to the
                 // write. It is recorded as what it is, and the next row is processed.

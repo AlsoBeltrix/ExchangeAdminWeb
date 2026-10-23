@@ -414,13 +414,13 @@
                     var perms = new List<string>();
                     if (fullAccess) perms.Add("FullAccess");
                     if (sendAs) perms.Add("SendAs");
-                    Audit.LogMailboxPermission(
+                    if (Audit.LogMailboxPermission(
                         currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}_Denied", target, user,
-                        string.Join("+", perms), false, ticket, errorDetail: validationError);
+                        string.Join("+", perms), false, ticket, errorDetail: validationError) != JsonlWriteOutcome.Written) result = PermissionResult.Fail(validationError + " " + SelfGrantRefusalRecord.AuditRowNotWritten);
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "Failed to write audit for protected-target denial on {Target}", target);
+                    Logger.LogWarning(ex, "Failed to write audit for protected-target denial on {Target}", target); result = PermissionResult.Fail(validationError + " " + SelfGrantRefusalRecord.AuditRowNotWritten);
                 }
                 return;
             }
@@ -674,7 +674,7 @@
         // the progress panel reports THIS operation's outcome by construction rather than because
         // no await happens to sit between the last write and the read.
         PermissionResult? outcome = null;
-
+        var step = PermissionChangeFailure.BeforeTheWrite; // aud-a59: the stage a throw in the try below came from
         try
         {
             var authCheck = await AuthorizationService.AuthorizeAsync(
@@ -695,19 +695,19 @@
                 target, onPremAuthState.User, ServicerModuleId);
             if (onPremValidation.Error is not null)
             {
-                result = outcome = PermissionResult.Fail(onPremValidation.Error);
-                Audit.LogMailboxPermission(
+                var denial = onPremValidation.Error;
+                result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(denial, () => Audit.LogMailboxPermission(
                     currentUser, clientIpAddress, action, target, user, permType,
-                    false, ticket, errorDetail: onPremValidation.Error);
+                    false, ticket, errorDetail: denial), Logger, target, SelfGrantRefusalRecord.DenialRecord));
                 return;
             }
             if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttemptAtWrite", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             var onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
-
+            step = PermissionChangeFailure.TheWrite;
             var opResult = isAdd
                 ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs)
                 : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs);
-
+            step = PermissionChangeFailure.AfterTheWrite;
             var actionVerb = isAdd ? "Add" : "Remove";
             // aud-a23b: rights come from AppliedRights, never from Detail (on a cloud grant, Detail is the OWA link).
             var applied = opResult.AppliedRights ?? [];
@@ -741,10 +741,10 @@
         }
         catch (Exception ex)
         {
-            Audit.LogMailboxPermission(
+            var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The on-premises permission change on {Target} failed at {Step}", target, step);
+            result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType,
-                false, ticket, errorDetail: ex.Message);
-            result = outcome = PermissionResult.Fail(ex.Message);
+                false, ticket, errorDetail: failure), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord));
         }
         finally
         {

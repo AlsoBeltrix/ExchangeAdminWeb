@@ -1053,6 +1053,93 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.NotEmpty(_h.Writes);
     }
 
+    // aud-a59: a row that names no target is an invalid row too, refused before any check - it was recorded under the
+    // protected-target check's action.
+
+    private const string NoTarget = "No target specified (the Target column is empty)";
+
+    public static TheoryData<bool, bool, string> BlankTargetRows => new()
+    {
+        { false, true, "" }, { false, true, "   " }, { false, false, "" }, { false, false, "   " },
+        { true, true, "" }, { true, true, "   " }, { true, false, "" }, { true, false, "   " },
+    };
+
+    private static string RowFor(bool calendar, string target, string user) =>
+        calendar ? $"{target},{user},Reviewer\n" : $"{target},{user},True,False,False\n";
+
+    private static string NoTargetAction(bool calendar, bool grant) => calendar
+        ? $"Bulk{(grant ? "Set" : "Remove")}Calendar_NoTarget"
+        : $"Bulk{(grant ? "Add" : "Remove")}_NoTarget";
+
+    [Theory]
+    [MemberData(nameof(BlankTargetRows))]
+    public async Task ABulkRowThatNamesNoTarget_IsAnInvalidRow_RefusedBeforeAnyCheck(bool calendar, bool grant, string target)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+
+        var bulk = await RunBulk(calendar, grant, RowFor(calendar, target, Other), resolver);
+
+        Assert.Equal(0, bulk.SuccessCount);
+        Assert.Equal(1, bulk.FailedCount);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(NoTargetAction(calendar, grant), Text(record, "action"));
+        Assert.Equal(NoTarget, Text(record, "error"));
+        Assert.Equal("Failed", Text(record, "result"));
+        var entry = Assert.Single(bulk.Entries);
+        Assert.Equal("FAILED", entry.Status);
+        Assert.Equal("No target specified", entry.Message);
+        Assert.Equal($"{target}/{Other}: {NoTarget}", Assert.Single(bulk.Errors));
+        await resolver.DidNotReceive().ResolveRecipientAsync(Arg.Any<string>());
+        Assert.Empty(_h.Forest.Calls);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, _h.Connects);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task ARowAfterOneThatNamesNoTarget_IsStillProcessed(bool calendar, bool grant)
+    {
+        // The control: the invalid row ends that row only.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+
+        var bulk = await RunBulk(calendar, grant, RowFor(calendar, "", Other) + Row(calendar, Other), resolver);
+
+        Assert.Equal(1, bulk.SuccessCount);
+        Assert.Equal(1, bulk.FailedCount);
+        Assert.Equal(["FAILED", "SUCCESS"], bulk.Entries.Select(entry => entry.Status));
+        Assert.Single(_h.AuditRows(), row => Text(row, "action") == NoTargetAction(calendar, grant));
+        Assert.NotEmpty(_h.Writes);
+    }
+
+    // aud-a59: the harness resolver answers no membership a test did not give it.
+
+    [Fact]
+    public async Task TheHarnessResolver_ReadsNoMembershipItWasNotGiven()
+    {
+        // NSubstitute answered an unset ReadGroupMembersAsync with an empty list, so a cloud-only group test that forgot its
+        // members read "nobody is a member" and passed as allowed.
+        var resolver = ExchangeKnowsTheTarget();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ReadGroupMembersAsync(CloudGroup));
+    }
+
+    [Fact]
+    public async Task ACloudOnlyGroupWhoseMembersNoTestSet_IsRefused_AsIncomplete()
+    {
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(CloudGroup).Returns(
+            new ResolvedRecipient(CloudGroup, "ext-" + CloudGroup, "MailUniversalSecurityGroup", ExistsOnPrem: false));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read"), result);
+    }
+
     /// <summary>
     /// "unreachable": Exchange cannot answer for the operator, so the check cannot be completed. "alias": Exchange names
     /// the grantee as the operator's own mailbox, a self-grant the string match misses. "no operator": the loop was handed

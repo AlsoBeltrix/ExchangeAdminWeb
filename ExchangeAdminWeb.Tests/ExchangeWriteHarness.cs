@@ -543,10 +543,17 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// An Exchange resolver that knows <paramref name="typed"/> as <paramref name="mailbox"/> and
     /// nobody else: every other identity, the self-grant check's included, is "no such recipient".
     /// </summary>
+    /// <remarks>
+    /// aud-a59. It reads no group's members unless a test sets them: <c>ReadGroupMembersAsync</c> throws for every group, so a
+    /// test of a cloud-only group that forgets its members fails as a membership that could not be read, never passes as one
+    /// nobody belongs to - NSubstitute's own answer, an empty list. A test that sets members for its group overrides this.
+    /// </remarks>
     public static IIdentityResolver ExchangeKnows(string typed, string primary, Guid mailbox)
     {
         var resolver = Substitute.For<IIdentityResolver>();
         resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
+        resolver.ReadGroupMembersAsync(Arg.Any<string>()).Returns(call => Task.FromException<IReadOnlyList<ExchangeGroupMember>>(
+            new InvalidOperationException($"stand-in: no members were set for '{call.Arg<string>()}'")));
         resolver.ResolveRecipientAsync(typed).Returns(
             new ResolvedRecipient(primary, "ext-" + primary, "UserMailbox", ExistsOnPrem: false, ExchangeGuid: mailbox));
         return resolver;

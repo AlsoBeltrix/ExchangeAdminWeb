@@ -137,6 +137,26 @@ public class CalendarPermissionService : ExchangeServiceBase
         {
             try
             {
+                // aud-a59. A row that names no target is an invalid row too, refused first - the Mailbox Permissions loop's
+                // rule and detail.
+                if (string.IsNullOrWhiteSpace(row.Target))
+                {
+                    audit.LogCalendarPermission(
+                        currentUser, ipAddress, $"Bulk{(isSet ? "Set" : "Remove")}Calendar_NoTarget",
+                        row.Target, row.User, null, false, ticketNumber,
+                        errorDetail: MailboxPermissionService.BulkRowNamesNoTarget);
+                    errors.Add($"{row.Target}/{row.User}: {MailboxPermissionService.BulkRowNamesNoTarget}");
+                    entries.Add(new BulkOperationEntry
+                    {
+                        Target = row.Target,
+                        User = row.User,
+                        Permission = "Calendar",
+                        Status = "FAILED",
+                        Message = "No target specified"
+                    });
+                    continue;
+                }
+
                 // aud-a50. A row that names no user is an invalid row, refused before any check and recorded as one - the
                 // Mailbox Permissions loop's rule and detail.
                 if (string.IsNullOrWhiteSpace(row.User))
