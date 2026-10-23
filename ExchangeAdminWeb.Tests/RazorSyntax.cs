@@ -290,16 +290,72 @@ internal static class RazorSyntax
     /// </remarks>
     internal static string CommentsBlanked(string raw)
     {
-        var parsed = Parse(raw);
         var buffer = raw.ToCharArray();
+        BlankAllComments(buffer, raw, Parse(raw));
+        return new string(buffer);
+    }
 
+    /// <summary>
+    /// <see cref="CommentsBlanked(string)"/> for text that is a component whatever it holds - the
+    /// pages and markup fixtures <c>ClickGateSource.BlankComments</c> reads (kd-12) - plus the C#
+    /// comments of the component's markup code blocks.
+    /// </summary>
+    /// <remarks>
+    /// A fragment with no @code block is all markup, so only its Razor comments are comments, where
+    /// <see cref="Parse"/> would read it as C# whole. And an "@{ ... }" block between the tags is C#
+    /// that is not an @code region: its comments are blanked too, lexed with Roslyn tokens from its
+    /// opening brace to the matching one, because the regex this view replaced blanked them and a
+    /// scan must not start reading them as code. A C# comment in an "@if" body in the markup is
+    /// still read as text; no page has one (checked when this was written).
+    /// </remarks>
+    internal static string ComponentCommentsBlanked(string raw)
+    {
+        var parsed = Parse(raw);
+        if (!parsed.IsRazor)
+            parsed = new ParsedSource(raw, [], IsRazor: true);
+
+        var buffer = raw.ToCharArray();
+        BlankAllComments(buffer, raw, parsed);
+        BlankMarkupCodeBlockComments(buffer, raw, parsed.Regions);
+        return new string(buffer);
+    }
+
+    private static void BlankAllComments(char[] buffer, string raw, ParsedSource parsed)
+    {
         foreach (var region in parsed.Regions)
             BlankComments(buffer, region);
 
         if (parsed.IsRazor)
             BlankRazorComments(buffer, raw, parsed.Regions);
+    }
 
-        return new string(buffer);
+    /// <summary>
+    /// The comment trivia of every "@{ ... }" code block in the markup: outside every @code region,
+    /// not escaped as "@@{", not already blanked as part of a Razor comment.
+    /// </summary>
+    private static void BlankMarkupCodeBlockComments(char[] buffer, string raw, IReadOnlyList<CodeRegion> regions)
+    {
+        for (var at = raw.IndexOf("@{", StringComparison.Ordinal); at >= 0;
+             at = raw.IndexOf("@{", at + 2, StringComparison.Ordinal))
+        {
+            if ((at > 0 && raw[at - 1] == '@') || buffer[at] != '@' || regions.Any(r => r.Raw.Contains(at)))
+                continue;
+
+            var depth = 0;
+            foreach (var token in SyntaxFactory.ParseTokens(raw, offset: at + 1, initialTokenPosition: at + 1, options: Options))
+            {
+                foreach (var trivia in token.LeadingTrivia.Concat(token.TrailingTrivia))
+                {
+                    if (IsComment(trivia.Kind()))
+                        BlankRange(buffer, trivia.Span.Start, trivia.Span.End);
+                }
+
+                if (token.IsKind(SyntaxKind.OpenBraceToken))
+                    depth++;
+                else if ((token.IsKind(SyntaxKind.CloseBraceToken) && --depth == 0) || token.IsKind(SyntaxKind.EndOfFileToken))
+                    break;
+            }
+        }
     }
 
     private static void BlankRazorComments(char[] buffer, string raw, IReadOnlyList<CodeRegion> regions)

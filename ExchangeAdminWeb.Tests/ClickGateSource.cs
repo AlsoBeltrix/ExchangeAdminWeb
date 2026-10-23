@@ -52,24 +52,25 @@ public sealed class ClickGateSource
     /// <paramref name="source"/> with the body of every comment replaced by spaces.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Blanked rather than deleted, and newlines are preserved, so every offset and line number
     /// still refers to the real file. Deleting instead shifts every subsequent position, which
     /// matters here because <see cref="EnclosingMethodName"/> and the assertion messages both work
     /// from offsets - a stripped-but-shifted source reports defects at the wrong line, which is
     /// worse than reporting none.
+    /// </para>
+    /// <para>
+    /// kd-12. Lexed, not matched: <see cref="RazorSyntax.ComponentCommentsBlanked"/>, the comment
+    /// view the progress guards read. A C# comment is Roslyn trivia inside an @code block, so a
+    /// "/*" or "//" inside a string literal is text, and a comment after a string on the same line
+    /// is still a comment; a Razor comment is blanked in the markup. The regexes this replaced
+    /// blanked from a "/*" inside a string to the next "*/" wherever it was, and kept any line
+    /// comment that followed a quote on its line. In markup, "//" and "/* */" are text, as the code
+    /// view already treats them (review finding prog-4b). Every input is read as a component, so a
+    /// markup fixture with no @code block is all markup.
+    /// </para>
     /// </remarks>
-    public static string BlankComments(string source)
-    {
-        // Razor comments, then C# block comments, then line comments. Line comments are only
-        // blanked when no quote opens earlier on the same line, so a "https://" inside an attribute
-        // value, or a "//" inside a string literal, survives intact.
-        var text = Regex.Replace(source, @"@\*.*?\*@", Blank, RegexOptions.Singleline);
-        text = Regex.Replace(text, @"/\*.*?\*/", Blank, RegexOptions.Singleline);
-        text = Regex.Replace(text, @"(?m)(?<=^[^""'\r\n]*)//[^\r\n]*", Blank);
-        return text;
-
-        static string Blank(Match match) => Regex.Replace(match.Value, @"[^\r\n]", " ");
-    }
+    public static string BlankComments(string source) => RazorSyntax.ComponentCommentsBlanked(source);
 
     /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
     public static string WholeWord(string identifier) =>

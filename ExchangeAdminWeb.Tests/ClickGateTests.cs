@@ -1280,6 +1280,47 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void BlankCommentsBlanksCommentsAndLeavesWhatIsInsideStringLiterals()
+    {
+        // kd-12. BlankComments matched "/\*.*?\*/" and "//" with regexes, so a "/*" inside a string
+        // blanked everything up to the next "*/" - real code included - and a line comment that
+        // followed a quote on its line was kept, readable as code. Lexed now: a C# comment is Roslyn
+        // trivia inside @code or inside a markup "@{ }" block, and a Razor comment is blanked in the
+        // markup. Every scan in this file reads the result, so code it loses is code no guard sees.
+        var page = string.Join("\n",
+            "<button @onclick=\"Go\" disabled=\"@IsBusy\">Go</button>",
+            "@* a Razor comment: isBusy = true; *@",
+            "@{ var hint = \"x\"; // a markup code block's comment: isBusy = true;",
+            "}",
+            "@code {",
+            "    private bool isBusy;",
+            "    private string glob = \"/*\";",                                       // opens nothing
+            "    private async Task Go()",
+            "    {",
+            "        isBusy = true;",
+            "        try { await Work(); }",
+            "        finally { isBusy = false; } // a trailing comment: isBusy = true;",
+            "    }",
+            "    private string close = \"*/\";",                                      // closes nothing
+            "    private string note = \"a quote\"; // after a quote: isBusy = true;",
+            "    /* a real block comment: isBusy = true; */",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.Equal(page.Split('\n').Length, text.Split('\n').Length);
+        // The code between the two literals survives, and it is the ONLY isBusy = true left.
+        Assert.Contains("finally { isBusy = false; }", text, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(text, @"isBusy = true;"));
+        Assert.Contains("\"/*\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"*/\"", text, StringComparison.Ordinal);
+        Assert.Contains("disabled=\"@IsBusy\"", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("comment", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("after a quote", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because
