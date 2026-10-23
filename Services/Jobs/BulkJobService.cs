@@ -141,7 +141,12 @@ public sealed class BulkJobService
     /// finished immediately as Cancelled and never runs; a Running job's token is signalled so it
     /// stops before its next row (an in-flight Exchange cmdlet cannot be aborted mid-call - see plan).
     /// </summary>
-    public void CancelJob(string id)
+    /// <returns>
+    /// kd-5. Whether the cancel took effect: true when a queued job was finished as Cancelled or a running job's
+    /// cancellation was requested; false when it was neither - already finished, or no longer there. Discarded until a
+    /// caller needed it to audit the cancel truthfully.
+    /// </returns>
+    public bool CancelJob(string id)
         => TryCancelJob(id);
 
     private bool TryCancelJob(string id)

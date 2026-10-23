@@ -16,8 +16,9 @@ namespace ExchangeAdminWeb.Tests;
 /// directory. The probe used to be the production one, which imported the real module - and on a host with RSAT the
 /// module's import connects to a domain controller for its AD: drive. That is also why the class is no longer in
 /// LiveDirectoryCollection, whose rule is that a class talking to no live directory must not join it. The classes that
-/// do exercise the real directory, where one is reachable, are ADDirectoryLiveTests, AdDirectoryForestSearchLiveTests
-/// and ADDirectoryValidateExistsTests.
+/// do exercise the real directory, where one is reachable, are ADDirectoryLiveTests and AdDirectoryForestSearchLiveTests;
+/// ADDirectoryValidateExistsTests' one search takes this class's <see cref="CreateService"/> since psl-10, which is
+/// internal for it.
 /// </remarks>
 public class ADDirectorySearchServiceTests
 {
@@ -218,7 +219,7 @@ public class ADDirectorySearchServiceTests
     /// returns before opening any session while the directory is unavailable), and none could be reaching the real
     /// module through some other session instead.
     /// </summary>
-    private static ADDirectorySearchService CreateService(ILogger<ADDirectorySearchService>? logger = null)
+    internal static ADDirectorySearchService CreateService(ILogger<ADDirectorySearchService>? logger = null)
     {
         var calls = new List<string>();
         var svc = new ADDirectorySearchService(logger ?? NullLogger<ADDirectorySearchService>.Instance)

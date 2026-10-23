@@ -524,6 +524,61 @@ public sealed class DirectoryModuleImportTests : IDisposable
         return Failed(Assert.Single(move.Steps), "LockdownMove");
     }
 
+    // ---- Emergency Disable's bound-object re-read (psl-10) ------------------------------------------------
+    // VerifyBoundObject re-reads the target by its DN before each write, and cleared only its commands, so a record the re-read
+    // wrote past Stop was the next check's: the disable and the password reset reported FAILED after their write had been
+    // made, and the lockdown move refused as if its OU could not be read.
+
+    private const string ReReadNoise = "A record the bound-object re-read wrote past the callers ErrorAction.";
+
+    // DisableDirectory with one difference: Get-ADUser, when it is the bound-object re-read - the one read that asks for
+    // ObjectGUID - leaves a record without throwing, and answers the bound object as before.
+    private static readonly (string Name, string Body)[] DisableDirectoryWithReReadNoise =
+    [
+        .. DisableDirectory.Where(r => r.Name != "Get-ADUser"),
+        ("Get-ADUser", $$"""
+            [CmdletBinding()] param($Identity, $Properties, $Credential)
+            $global:DirectoryCalls.Add("Get-ADUser|$Identity")
+            if ($Properties -contains 'ObjectGUID') { Write-Error -Message '{{ReReadNoise}}' -ErrorAction Continue }
+            [pscustomobject]@{ DistinguishedName = '{{TargetDn}}'; ObjectGUID = [guid]'{{TargetGuid}}'; Enabled = $true; info = $null }
+            """),
+    ];
+
+    [Theory]
+    [InlineData("the disable")]
+    [InlineData("the lockdown move")]
+    [InlineData("the password reset")]
+    public async Task EmergencyDisable_ARecordTheBoundObjectReReadLeaves_IsNotTakenForTheStepsError(string step)
+    {
+        // The re-read answers the bound object and leaves a record: the object is verified, so the step goes on, and its own
+        // check reads only its own call - the write made and OK, the move made and stamped.
+        var calls = new List<string>();
+        var service = EmergencyDisable(() => StandIn(Import.Loads, calls, DisableDirectoryWithReReadNoise));
+
+        switch (step)
+        {
+            case "the disable":
+                Assert.Equal(new DisableStepResult("DisableAD", "OK", null), await service.ExecuteDisableAD(Target, Creds, adSlotHeld: true));
+                Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{TargetDn}", $"Set-ADUser|{TargetDn}"], calls);
+                break;
+            case "the lockdown move":
+                var (steps, outcome, stamp) = await service.ExecuteMoveToLockdownOu(Target, Creds, LockdownOu, adSlotHeld: true);
+                Assert.Equal(LockdownOutcome.Moved, outcome);
+                Assert.Equal(LockdownStampOutcome.Stamped, stamp);
+                Assert.Equal(["LockdownMove", "LockdownStamp"], steps.Select(s => s.Step));
+                Assert.All(steps, s => Assert.Equal("OK", s.Status));
+                Assert.Equal([
+                    "Import-Module|ActiveDirectory", $"Get-ADUser|{TargetDn}", $"Get-ADOrganizationalUnit|{LockdownOu}",
+                    $"Move-ADObject|{TargetDn}|{LockdownOu}", $"Get-ADUser|{TargetGuid}", $"Set-ADUser|{TargetGuid}",
+                ], calls);
+                break;
+            default:
+                Assert.Equal(new DisableStepResult("ResetPassword", "OK", null), await service.ExecuteResetPassword(Target, Creds, adSlotHeld: true));
+                Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{TargetDn}", $"Set-ADAccountPassword|{TargetDn}"], calls);
+                break;
+        }
+    }
+
     // ---- Self-Service Groups (psl-8) --------------------------------------------------------------------
     // PrepareAdRunspace imported the module clearing only the commands. The member listing and the membership change
     // re-read the group by objectGUID straight after it, and the re-read's HadErrors check took the import's record:
@@ -581,6 +636,125 @@ public sealed class DirectoryModuleImportTests : IDisposable
         Assert.Contains(ImportFailure, prepared.Message, StringComparison.Ordinal);
         Assert.Contains(ImportFailure, probed.Message, StringComparison.Ordinal);
         Assert.Equal(["Import-Module|ActiveDirectory", "Import-Module|ActiveDirectory"], calls);
+    }
+
+    // ---- Self-Service Groups' caller and group reads (psl-10) -----------------------------------------
+    // The owned-groups list and the single-group search resolve the caller by SID, read the groups, then check each group's
+    // DACL on the same PowerShell. The caller read and the group read cleared only their commands, so a record either wrote
+    // past Stop was the first DACL check's - HadErrors is true while any record remains - and that group was left out of the
+    // list, or the searched group answered "not found, or you do not have permission". Both paths run for real here on a
+    // stand-in session (the seams: the session, and the module's credential lookup).
+
+    private const string CallerSid = "S-1-5-21-1000000000-1000000000-1000000000-1105";
+    private const string SecondGroupDn = "CN=Travel Approvers,OU=Groups,DC=example,DC=test";
+    private const string ReadNoise = "A record the read wrote past the callers ErrorAction.";
+
+    // The caller (by SID), the groups (by -LDAPFilter: the caller's two for the ownership filter, the first by name for the
+    // search's) and each group's DACL - one Allow WriteProperty on member for the caller, psl-5's stand-in. The read named
+    // leaves a record without throwing and answers as before. Every group names the caller as its manager, so no other
+    // owner is looked up.
+    private static (string Name, string Body)[] SelfServiceDirectory(string noisyRead)
+    {
+        var callerNoise = noisyRead == "the caller read" ? $"Write-Error -Message '{ReadNoise}' -ErrorAction Continue" : "";
+        var groupNoise = noisyRead == "the group read" ? $"Write-Error -Message '{ReadNoise}' -ErrorAction Continue" : "";
+        return
+        [
+            ("Get-ADUser", $$"""
+                [CmdletBinding()] param($Identity, $Credential)
+                $global:DirectoryCalls.Add("Get-ADUser|$Identity")
+                {{callerNoise}}
+                [pscustomobject]@{ DistinguishedName = '{{TargetDn}}' }
+                """),
+            ("Get-ADGroup", $$"""
+                [CmdletBinding()] param($Identity, $LDAPFilter, $Properties, $Credential)
+                if ($LDAPFilter) {
+                    $owned = $LDAPFilter -like '*managedBy=*'
+                    $global:DirectoryCalls.Add("Get-ADGroup|" + $(if ($owned) { 'owned' } else { 'by name' }))
+                    {{groupNoise}}
+                    $dns = if ($owned) { '{{GroupDn}}', '{{SecondGroupDn}}' } else { '{{GroupDn}}' }
+                    foreach ($dn in $dns) {
+                        $name = ($dn -split ',')[0].Substring(3)
+                        [pscustomobject]@{
+                            DistinguishedName = $dn; ObjectGUID = [guid]::NewGuid(); Name = $name; SamAccountName = $name.Replace(' ', '')
+                            GroupCategory = 'Security'; GroupScope = 'Global'; managedBy = '{{TargetDn}}'; msExchCoManagedByLink = $null
+                        }
+                    }
+                    return
+                }
+                $global:DirectoryCalls.Add("Get-ADGroup|DACL|$Identity")
+                $sd = [pscustomobject]@{}
+                $sd | Add-Member -MemberType ScriptMethod -Name GetAccessRules -Value {
+                    param($includeExplicit, $includeInherited, $targetType)
+                    [pscustomobject]@{
+                        AccessControlType = 'Allow'; ActiveDirectoryRights = 32; ObjectType = [guid]'bf9679c0-0de6-11d0-a285-00aa003049e2'
+                        IdentityReference = [pscustomobject]@{ Value = '{{CallerSid}}' }; IsInherited = $false; PropagationFlags = 0
+                    }
+                }
+                [pscustomobject]@{ DistinguishedName = $Identity; nTSecurityDescriptor = $sd }
+                """),
+        ];
+    }
+
+    /// <summary>The service with only its directory session and its credential replaced.</summary>
+    private sealed class StandInSelfService(Func<Runspace> open)
+        : SelfServiceGroupService(null!, null!, null!, NullLogger<SelfServiceGroupService>.Instance)
+    {
+        internal override Runspace CreateDirectoryRunspace() => open();
+
+        internal override Task<ModuleCredentialLookup> LookupCredentialsAsync(string purpose) =>
+            Task.FromResult(new ModuleCredentialLookup(Creds, ModuleCredentialFailure.None));
+    }
+
+    [Fact]
+    public void SelfService_TheCallerRead_LeavesNoRecordForTheNextRead()
+    {
+        // The two paths read the groups straight after the caller, and that read clears too - so the caller read's own
+        // clear is pinned here, on its own: its record gone, and the next read that checks HadErrors (the group's re-read by
+        // objectGUID) answering.
+        var calls = new List<string>();
+        using var runspace = StandIn(Import.Loads, calls, SelfServiceDirectory("the caller read")[0], ("Get-ADGroup", GetAdGroup));
+        using var ps = Shell(runspace);
+
+        Assert.Equal(TargetDn, SelfServiceGroupService.ResolveCallerDn(ps, ProbeCredential(), CallerSid));
+        Assert.Empty(ps.Streams.Error);
+        Assert.Empty(ps.Commands.Commands);
+        Assert.NotNull(SelfServiceGroupService.ResolveGroupByGuid(ps, ProbeCredential(), SelfServiceGroupGuid));
+        Assert.Equal([$"Get-ADUser|{CallerSid}", $"Get-ADGroup|{SelfServiceGroupGuid}|"], calls);
+    }
+
+    [Theory]
+    [InlineData("the caller read")]
+    [InlineData("the group read")]
+    public async Task SelfService_ARecordTheCallerOrGroupReadLeaves_DoesNotHideTheFirstOwnedGroup(string noisyRead)
+    {
+        var calls = new List<string>();
+        var service = new StandInSelfService(() => StandIn(Import.Loads, calls, SelfServiceDirectory(noisyRead)));
+
+        var owned = await service.GetOwnedGroupsAsync(CallerSid, [], []);
+
+        Assert.Equal([GroupDn, SecondGroupDn], owned.Select(g => g.DistinguishedName));
+        Assert.All(owned, g => Assert.True(g.CanManageMembers));
+        Assert.Equal([
+            "Import-Module|ActiveDirectory", $"Get-ADUser|{CallerSid}", "Get-ADGroup|owned",
+            $"Get-ADGroup|DACL|{GroupDn}", $"Get-ADGroup|DACL|{SecondGroupDn}",
+        ], calls);
+    }
+
+    [Theory]
+    [InlineData("the caller read")]
+    [InlineData("the group read")]
+    public async Task SelfService_ARecordTheCallerOrGroupReadLeaves_DoesNotHideTheSearchedGroup(string noisyRead)
+    {
+        var calls = new List<string>();
+        var service = new StandInSelfService(() => StandIn(Import.Loads, calls, SelfServiceDirectory(noisyRead)));
+
+        var found = await service.SearchManageableGroupAsync(CallerSid, [], [], "Finance Approvers");
+
+        Assert.Null(found.Message);
+        var group = Assert.IsType<ManageableGroup>(found.Group);
+        Assert.Equal(GroupDn, group.DistinguishedName);
+        Assert.True(group.CanManageMembers);
+        Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{CallerSid}", "Get-ADGroup|by name", $"Get-ADGroup|DACL|{GroupDn}"], calls);
     }
 
     private sealed record Logged(LogLevel Level, string Message, Exception? Exception);

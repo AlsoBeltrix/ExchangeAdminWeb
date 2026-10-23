@@ -102,9 +102,12 @@ public class GroupManagementService
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
     {
-        var creds = await GetCredentialsAsync("on-prem AD group search");
+        // aud-a2y. The refusal names why there is no credential, from the lookup's own answer: it told the operator to
+        // check the secret ID when the ID was set and Delinea returned nothing, or the module's config could not be read.
+        var lookup = await LookupCredentialsAsync("on-prem AD group search");
+        var creds = lookup.Credentials;
         if (creds is null)
-            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for GroupManagement.");
+            throw new InvalidOperationException(CredentialUnavailableRefusal("GroupManagement", lookup.Failure));
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
@@ -1296,6 +1299,36 @@ public class GroupManagementService
     {
         return await _moduleCredentials.GetCredentialsAsync("GroupManagement", purpose);
     }
+
+    /// <summary>
+    /// The module's credential lookup, saying why it returned none (aud-a2y): what the group search refuses in.
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM beside <see cref="GetCredentialsAsync"/>, which the other paths and the fixtures
+    /// that drive them keep: the same lookup, the same lines (ModuleCredentialService.GetCredentialsAsync is this lookup's
+    /// credential).
+    /// </remarks>
+    internal virtual Task<ModuleCredentialLookup> LookupCredentialsAsync(string purpose) =>
+        _moduleCredentials.LookupCredentialsAsync("GroupManagement", purpose);
+
+    /// <summary>
+    /// The refusal a Group Management or Self-Service Groups path gives when the module's AD credential lookup returned
+    /// none, in the words for why (aud-a2y; the aud-a2x categories). Pure.
+    /// </summary>
+    /// <remarks>
+    /// Every such refusal said "Check the DelineaSecretId configuration" - also when the ID was set and Delinea returned no
+    /// credential for it, or the module's configuration could not be read, so the operator was sent to fix an ID that was
+    /// right. That text stays for no secret ID, to the byte. Each starts "AD credentials unavailable.", as before. Delinea's
+    /// finer reason is in its own log line, which the text points to.
+    /// </remarks>
+    internal static string CredentialUnavailableRefusal(string moduleId, ModuleCredentialFailure failure) => failure switch
+    {
+        ModuleCredentialFailure.NotReturned =>
+            $"AD credentials unavailable. The DelineaSecretId for {moduleId} is set, but Delinea returned no credential for it (the application log has its reason).",
+        ModuleCredentialFailure.ConfigUnreadable =>
+            $"AD credentials unavailable. The {moduleId} module configuration could not be read, so neither could its DelineaSecretId (the application log records it).",
+        _ => $"AD credentials unavailable. Check the DelineaSecretId configuration for {moduleId}.",
+    };
 
     /// <summary>
     /// The session every directory path here opens (psl-7).

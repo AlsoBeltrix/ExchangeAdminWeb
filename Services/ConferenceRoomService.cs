@@ -1096,7 +1096,21 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
         }
 
-        var (_, recipientError) = await ValidateRoomRecipientAsync(room, roomEmail);
+        // aud-a2y. The room read throws when Exchange returns another mailbox or none (ReadValidatedMailbox) or a cmdlet
+        // fails, and nothing logged that on this path either: the pool rethrows it, and the page's catch, like the bulk
+        // row's, audits and notifies but writes no log line. So it is logged here as the Finder row's read is (aud-a2w) -
+        // once, at Warning, nothing having been written - and rethrown as it was, so the outcome and the callers' audit and
+        // notification are unchanged.
+        string? recipientError;
+        try
+        {
+            (_, recipientError) = await ValidateRoomRecipientAsync(room, roomEmail);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Room Type apply for {Room}: reading the room failed; nothing was written: {Error}", roomEmail, ex.Message);
+            throw;
+        }
         if (recipientError != null)
         {
             result.Success = false;

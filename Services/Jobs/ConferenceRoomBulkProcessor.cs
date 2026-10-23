@@ -204,8 +204,10 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     private async Task<RoomOperationResult> ApplyTypeRowAsync(TypeCsvRow row, ValidatedMailbox room)
     {
+        // aud-a2y. Refused before the service is called, so it says nothing was written, as every refusal the service
+        // decides before a write does (aud-a2w).
         if (!Enum.TryParse<RoomType>(row.Type, ignoreCase: true, out var roomType))
-            return new RoomOperationResult { Email = row.Email, Success = false, Message = $"Invalid type: {row.Type}" };
+            return new RoomOperationResult { Email = row.Email, Success = false, Message = $"Invalid type: {row.Type}. Nothing was written." };
 
         return await _rooms.SetRoomTypeAsync(
             row.Email, room, roomType, row.TimeZone,

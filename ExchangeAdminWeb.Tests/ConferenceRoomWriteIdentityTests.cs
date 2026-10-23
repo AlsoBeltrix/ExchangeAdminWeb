@@ -1747,6 +1747,36 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Same(thrown, logged.Exception);
     }
 
+    // ---- aud-a2y (1): the Type path's room read that throws is logged, as the Finder row's is ----
+    // aud-a2w logged the Finder row's throwing room read; SetRoomTypeAsync's own read of the validated room throws the same
+    // way and still left no log line - the page's catch and the bulk row's audit and notify, and write none.
+
+    [Theory]
+    [InlineData("another mailbox")]
+    [InlineData("no mailbox")]
+    public async Task TheTypePathsRoomRead_ThatThrows_IsLoggedOnce_AndStillThrows(string answer)
+    {
+        // The Type path's read of the validated room throws when Exchange answers with another mailbox or none. It still
+        // throws, with its message as before, and one warning names the room as typed and the message, with the exception.
+        // Nothing is written, nothing asked for, no step recorded.
+        if (answer == "another mailbox")
+            _h.Mailboxes[Identity(Checked)] = _h.Mailboxes["execroom@contoso.test"];
+        else
+            _h.Mailboxes.Remove(Identity(Checked));
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => service.SetRoomTypeAsync(Typed, Room(), RoomType.Standard, "GMT Standard Time"));
+
+        Assert.Contains(answer == "another mailbox" ? "to a different mailbox" : "couldn't be found", thrown.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(thrown.Message, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"Room Type apply for {Typed}: reading the room failed; nothing was written: {thrown.Message}", logged.Message);
+        Assert.Same(thrown, logged.Exception);
+    }
+
     // ---- aud-a2x: a credential that could not be read does not send the operator to set the ID that is set ----
     // Each of the four directory paths refused a lookup that returned no credential with "On-prem AD credential is not
     // configured for Conference Rooms (set the AD Delinea Secret ID in Module Config)" - also when the ID was set, and the

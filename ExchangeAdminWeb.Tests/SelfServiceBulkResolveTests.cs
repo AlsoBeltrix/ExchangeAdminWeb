@@ -189,8 +189,11 @@ public class SelfServiceBulkResolveTests : IDisposable
         public int QueryCalls { get; private set; }
         public int ProbeCalls { get; private set; }
 
-        internal override Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
-            => Task.FromResult(Creds);
+        // aud-a2y. The service's credential seam is its lookup now; no credential reads as no secret ID set, the reason
+        // a lookup with nothing configured gives.
+        internal override Task<ModuleCredentialLookup> LookupCredentialsAsync(string purpose)
+            => Task.FromResult(new ModuleCredentialLookup(Creds,
+                Creds is null ? ModuleCredentialFailure.SecretIdNotSet : ModuleCredentialFailure.None));
 
         internal override IReadOnlyList<BulkIdentityList.Candidate> QueryBatchCandidates(
             (string username, string password, string domain) creds, IReadOnlyList<BulkIdentityList.Line> kept)

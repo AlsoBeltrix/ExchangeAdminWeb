@@ -620,7 +620,10 @@ public sealed class ModuleCatalog
             // the circuit down if the operator closed the panel or picked another group mid-load.
             // 2.12.0: a membership change now emails the group's managedBy manager a
             // summary - one message per operation, never one per member (aud-a25).
-            Version = "2.12.1",
+            // 2.13.0: a group search refused for want of the module's AD credential says why -
+            // the secret ID unset, Delinea returning none for the ID that is set, or the module's
+            // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
+            Version = "2.13.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -783,7 +786,13 @@ public sealed class ModuleCatalog
             // keystrokes.
             // 1.12.0: an operation that finishes after the operator has opened another group no
             // longer puts its banner or outcome table into that group's view (kd-8).
-            Version = "1.12.0",
+            // 1.13.0: every refusal for want of the module's AD credential says why - the secret
+            // ID unset, Delinea returning none for the ID that is set, or the module's
+            // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
+            // An error record the caller's or the groups' read leaves without throwing no longer
+            // hides the first owned group, or the searched one, as if the caller could not manage it
+            // (psl-10).
+            Version = "1.13.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -910,7 +919,12 @@ public sealed class ModuleCatalog
             // on the page (aud-a2e).
             // 2.8.0: a blank ticket is refused by all four write handlers, before their
             // authorization re-check; the dormant ServiceNow client passed one (kd-7).
-            Version = "2.8.0",
+            // 2.9.0: a Room Type apply whose room read throws leaves one warning in the application
+            // log, as a Room Finder row's has since aud-a2w; and the page's and the bulk processor's
+            // refusals of a type they cannot parse say that nothing was written (aud-a2y). Cancelling
+            // a bulk job writes an audit row - operator, job, ticket, and whether it was cancelled,
+            // refused or failed - as removing one does (kd-5).
+            Version = "2.9.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -980,7 +994,9 @@ public sealed class ModuleCatalog
             // docs/EmergencyDisableLockdownOU-Plan.md.
             // 1.3.2: the lookup reports the directory resolve and the protection check instead
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.5.1",
+            // 1.6.0: an error record the bound-object re-read leaves without throwing is no longer
+            // taken for the disable's, the lockdown move's or the password reset's own error (psl-10).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1090,7 +1106,9 @@ public sealed class ModuleCatalog
             // 1.4.0: every control on the page is gated on one in-flight predicate, and both write
             // handlers snapshot their inputs and their result so a mid-flight dismiss can no longer
             // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
-            Version = "1.4.3",
+            // 1.5.0: an error record the remote DhcpServer import leaves without throwing no longer
+            // reports the authorization or deauthorization after it as failed (psl-10).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
