@@ -141,6 +141,7 @@
                                                 <td><small>@GetDisplayValue(attr, currentValues.GetValueOrDefault(attr.Name))</small></td>
                                                 <td>
                                                     @{ var effectiveChoices = attr.Type == "Choice" ? EditorService.GetEffectiveChoices(attr) : null; }
+                                                    @* aud-a26u: an attribute the editor cannot write shows why, in place of an input; SaveAsync refuses it too. *@
                                                     @if (readOnlyAttributes.TryGetValue(attr.Name, out var readOnlyReason))
                                                     {
                                                         <small class="text-muted">@readOnlyReason</small>
@@ -259,6 +260,8 @@
     private List<EditableAttribute> editableAttributes = new();
     private Dictionary<string, string?> currentValues = new();
     private Dictionary<string, string?> editValues = new();
+    // aud-a26u. The lookup's read-only marks - an attribute holding several values or a binary value, by name, with the
+    // reason shown in place of its input. Its edit value stays the lookup's, so it is never a change to save.
     private IReadOnlyDictionary<string, string> readOnlyAttributes = new Dictionary<string, string>();
 
     private bool showDiffPreview;

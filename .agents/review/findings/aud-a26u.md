@@ -188,6 +188,26 @@ written after the round, in their own commit, so the MD5s above are this commit'
 No AD, EXO, Graph, DHCP or IIS call, no real module, directory, Delinea, SMTP, push or deployment: the harness's local
 stand-ins for the AD cmdlets and a held stand-in undo handler. No coder self-review verdict is claimed.
 
+## Comments after the round
+
+Written after every round, in their own commit with aud-a28z's, checked comment-only as aud-a28z's record says. This
+record's files:
+
+- `Services/ADAttributeEditorService.cs` `93E1F928F6AB25589730C9FC2288CA45` -> `9F960B2E1F32CBD7139D4CC5F17D2AF9`: 1,466
+  code lines, their MD5 `D2E8606A8684D08E7FDB614761592171` on both sides; 14 lines added, 1 changed - the lookup result's
+  read-only map, why the lookup marks an attribute and by which reading, the two rules, `NotText`, and why several byte
+  arrays are binary. The refusal's comment said "Several binary values still read as several", which this fix made
+  untrue; it is corrected.
+- `Components/Pages/ADAttributeEditor.razor` `3E2CCEA7D79DC24B19CE5EE775B0B6DE` -> `2A55CD2BA734A50BDCFD6F428DBC875B`: 477
+  code lines, MD5 `A7F5F93D8B9A666265F7489FAA27090E`; 3 added - a one-line Razor comment on the cell, the field's
+  purpose (616 lines -> 619; NotYetConverted, no key moves).
+- `Components/Pages/AdminEventLog.razor` `BFFA1A8F58E108547BCAD80871218075` (aud-a28z part 5's commit) ->
+  `75EAE03C38841B30FAC72552A4CA884D`: 1,239 code lines, MD5 `0CE3DC49A8B1A004ADBF14E2E9A4F914`; 9 added, 1 changed - the
+  activity field, who clears it and why only the panel's request does, and why the close ends it and cancels nothing
+  (1,605 lines -> 1,613; NotYetConverted).
+
+The tests carry their comments from their own commit.
+
 ## Known gaps
 
 - *Assumption, not probed* (aud-a26r's): the module answers a binary attribute with a `byte[]` and several binary

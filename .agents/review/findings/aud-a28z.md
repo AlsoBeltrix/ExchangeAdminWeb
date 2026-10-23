@@ -281,6 +281,30 @@ Gates, 2026-10-22, this part's commit's tree (cdt-41 below it): `dotnet build Ex
 `ProgressRegistryTests` 35/35 alone (Release); `dotnet format ... --verify-no-changes --no-restore`, `git diff --check
 HEAD` and `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
 
+## Comments after the round
+
+Written after every round - parts 1 to 4, part 5, and aud-a26u's - in their own commit, with aud-a26u's comments.
+Checked by `check-comment-only.ps1` (session scratchpad): a file's code lines - every line neither blank nor a comment
+(`//`, `///`, a one-line Razor `@* *@`) - identical in order between the commit before and the comments, line by line and
+by the MD5 of the code lines; its negative control, part 5's own commit (`efbea61b` -> `d54da14e`), fails on both its
+files. Across the six code files the comments add 84 lines and change 5 (`git diff --numstat`). This record's files:
+
+- `Services/ExtendedLogService.cs` `C41261D66DBFE976A6ECCEBDC54F13F1` -> `20D8F3624774523348AF9A1FE3DB86FD`: 280 code
+  lines, their MD5 `CB16B1DBC1350779D2AC0A53FB9847C8` on both sides; 23 lines added - the drop count and its summary,
+  why each report is guarded and where it ran (the caller's thread, the consumer, the constructor, `SetLevel`'s rethrow),
+  why the level check is guarded, the closed queue, and the dispose path the consumer's catch now leaves unreached.
+- `Services/AuditService.cs` `C887255FCD235FE71BB3C2F039F6E6C5` (part 5's commit) -> `DA8CB3BE11FBAC38975231237E02D020`:
+  456 code lines, MD5 `7EB321D8D1049DA098B537BDD5B2CB8D`; 7 added - why a field is read as guarded text, and
+  `LogMigrationCheck`'s three results.
+- `Services/JsonlLogService.cs` `DDA5A7DBC0246CB4277D6FB2E2F974CB` -> `AA75748C6EAB95C12A0450B9C1A787D8`: 193 code lines,
+  MD5 `C493803BD8E8712CF2EB4CCC87CFDDB1`; 28 added, 3 changed - the string-only routing, the half-line defect and its
+  take-back, the report's identity fields, the seam, `AppendLine`'s one-line rule with its one-writer assumption, the
+  repair and the truncation, `ReportSafely`. Two comments the fix made untrue are corrected: aud-a28q's "never half a
+  line in the JSONL", true until now only for a record that could not be serialised, is said to hold since this record;
+  and `TextField`'s "never another field" - the report now names six more, string-only.
+
+The tests carry their comments from their own commits.
+
 ## Known gaps
 
 - `DroppedEntryCount` is shown on no page yet: it is the counter a health surface or a later line reads, and the page
