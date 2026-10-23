@@ -9,9 +9,9 @@ tests cannot see it; the record labelled this an unverified assumption. (2) The 
 only that a batch named after the mailbox exists, not its state: a batch already completed, failed or
 syncing passes the guard, and the approval then fails at a later step after `Set-MigrationUser` /
 `Set-MigrationBatch -CompleteAfter` already wrote.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a23j/k/l/m agent's scope
+**Status**: Fixed on branch, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
-**Commit**: -
+**Commit**: `2249d828` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23j, aud-a23m, aud-a23k, aud-a23l)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (mig-batch-6, 2026-10-22, candidates 1 and 2)
 
 ## Evidence
@@ -157,4 +157,60 @@ md5s (LF) of the other files at the fix commit: `MigrationApproveConfirmationTes
 
 On the fix commit's tree: `dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors, 61 warnings (the baseline count);
 the 1074 focused tests 1074/0; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0;
-`git diff --check HEAD` exit 0. The full suite and the ASCII lint run at the branch tip (below, once written).
+`git diff --check HEAD` exit 0; `tools/Test-AsciiOnly.ps1` after `git add -A` exit 0. The full suite ran at the
+branch tip (below).
+
+## Known gaps
+
+- **Assumption, labelled (no live call):** the refused-state names are this app's reading of `Get-MigrationBatch`'s
+  Status. A state Exchange reports under another name proceeds, and a step it then refuses is reported naming the step
+  and what was applied (aud-a23h) - the partial-write shape this finding narrows, not closes, for an unanticipated
+  state.
+- The read-back no longer gates anything: an approval whose read-back shows a batch neither completing nor scheduled is
+  a success whose Detail says so. That is the point (Known Failure Class 1), and it means the operator reads the Detail.
+- Unchanged from aud-a23h: a mailbox in a batch of many is approved without any batch step; a single-user batch given
+  another name is treated the same way.
+
+## Comments and branch-tip gates (shared by aud-a23n, aud-a23j, aud-a23m, aud-a23k, aud-a23l)
+
+The canonical copy for all five records; the other four point here.
+
+**Comments (`97ca9448`).** Written after every finding's mutation round, at the call sites the rounds proved
+load-bearing; comments only. Checked by `check-comment-only.ps1` (session scratchpad `a23jklmn-work`): HEAD and the
+tree are each reduced to their code - comment-only lines dropped, the trailing comments this commit adds (`// aud-a23...`
+/ `@* aud-a23... *@`) cut off, blank lines dropped - and the reductions are identical for all four files. In the three
+`.cs` files every changed line is a comment or blank (additions only: service +69, models +15, processor +2); on the
+page each of the 31 changed lines is the line it was plus a trailing comment, except the eight-line progress-outcome
+block (1555-1562), rewritten in its eight lines because it said the writes still complete true. The page stays 4377
+lines and every registered line key holds. Code md5s (comment-stripped, unchanged by the commit): service
+`5b51fca1a952bf9cca26f3953a31a49f`, models `939792f0bdd20efea523b26208f123e1`, processor
+`55920a2736fa8ccbc0e403c89f5752a2`, page `3437265e43cdac1f615e7e17305c9fce`. Final file md5s (LF) at the tip:
+`Services/MigrationService.cs` `f8446943a48cdd0cc689e4cc7d847b04`, `Models/MigrationModels.cs`
+`370f6142b86f4607d8c533df6e182864`, `Services/Jobs/MigrationReportExportProcessor.cs`
+`33519719d96bcbf064cbf8efdf6d357f`, `Components/Pages/Migration.razor` `2e1597a23246daf9ddd770055450d9c8`; the tests are
+as their fix commits left them (`MigrationStubExchange.cs` `0d4ae546a9f59e95f2c2421090d0a25e`, last changed by
+aud-a23k).
+
+**Branch-tip gates (`97ca9448`, all five fixes and the comments; the records-only commit after it changes no code):**
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 59 warnings - two fewer than the 61 at
+  `b16898dc`: the typed report outcome removed the two CS8604s for a nullable report text handed to the store's `Write`
+  (the page's old 4051, the processor's old 86). The one warning in a touched file is the pre-existing CS8604 at
+  `Services/Jobs/MigrationReportExportProcessor.cs` 104 (`ticketNumber: job.Ticket`), a line this branch did not change
+  (it was 92).
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): Passed 5872,
+  Skipped 3 (the known `ADDirectorySearchServiceTests ...WhenAdUnavailable_ReturnsEmpty` cases), Failed 0, Total 5875;
+  5 m 35 s; "All tests finished running, Sequence file will not be generated." - no hang. This branch adds 83 cases (five
+  new test classes) and renames four tests; the suite at `b16898dc` was not run, so 5792 there is derived, not measured.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. `Components/Pages/Migration.razor`: 4377 lines.
+
+No live Exchange, Active Directory, Graph, DHCP or IIS call was made: every Exchange cmdlet was a stub in an in-process
+runspace, every AD cmdlet a stub in the directory stand-in, the protection check a stand-in, the mail a recording stand-in.
+No PowerShell source changed, so PSScriptAnalyzer and Pester were not run. No coder self-review verdict is claimed.
+Version bumps are the supervisor's: Migration, for all five (no base-app change - `ExchangeServiceBase.cs` was read, not
+changed).
+
+## Closeout
+
+Fixed on branch `worktree-agent-a03d6bd111b571e5a`; not merged, not pushed.

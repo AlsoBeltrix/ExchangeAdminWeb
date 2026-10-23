@@ -4,9 +4,9 @@
 fetch into report text ("Error retrieving report: ..."); the page stores that text as the report, shows it
 as such, and its activity completes as succeeded. (2) For moves back on-prem, a failed
 `GetCloudMailboxSizeAsync` is shown as 0 GB, so a size-based decision reads an empty mailbox.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
-**Commit**: -
+**Commit**: `e455a37f` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23j, aud-a23m, aud-a23l)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidates 2 and 7 of its hand-back)
 
 ## Evidence
@@ -174,3 +174,24 @@ On the fix commit's tree: Release build 0 errors; the 1129 focused tests 1129/0;
 exit 0; `git diff --check HEAD` exit 0; `wc -l` 4377. Known gap, unchanged here: the ToCloud size gate reads the
 on-premises size through `ExchangeServiceBase.GetOnPremMailboxSizeAsync`, which reads an unparseable size as 0 and any
 archive failure as no archive - named in the hand-back; the base class is outside this brief.
+
+## Known gaps
+
+- **Assumption, labelled (no live call):** `Get-MailboxStatistics -Archive` reports a mailbox with no archive in a shape
+  `IsNotFound` reads (aud-a23h). If not, such a mailbox shows "Archive: could not be read (...)" - visible, and no
+  decision reads it.
+- The ToCloud size gate is unchanged and reads the on-premises size through `ExchangeServiceBase.GetOnPremMailboxSizeAsync`,
+  which turns a TotalItemSize it cannot parse into 0 (521, `ParseExchangeSize`) and any archive read failure into no
+  archive (538-541) - so the quota check can pass a mailbox whose size could not be read. Outside this brief (base
+  class); named in the hand-back.
+- A failed fetch's dialog offers no "Fetch again" (it needs a fetch time, as for the page catch's failures before);
+  closing it and opening the row's report again fetches.
+## Comments and branch-tip gates
+
+Shared by the five records of this branch; the canonical copy is in `aud-a23n.md` ("Comments and branch-tip gates"):
+comments `97ca9448`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings,
+full suite 5872 passed / 3 skipped / 0 failed (5875), format, `git diff --check`, ASCII lint all exit 0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a03d6bd111b571e5a`; not merged, not pushed.

@@ -5,9 +5,9 @@ to have failed. (1) The catch in `CheckSingleEligibility` wraps the audit write 
 well as the check, so a failed audit or notification turns a determined verdict into an error. (2) The
 Migration page's write actions (create, approve, stop, remove and the rest) still complete their progress
 activity `true` on failure; aud-a23i fixed only the loads.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
-**Commit**: -
+**Commit**: `7e2ad045` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23j, aud-a23k, aud-a23l)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidates 5 and 6 of its hand-back)
 
 ## Evidence
@@ -143,3 +143,23 @@ re-indented its `case` blocks - leading whitespace only, no test changed), `Migr
 
 On the fix commit's tree: Release build 0 errors; the 1110 focused tests 1110/0 (`ClickGate*` and `ProgressRegistry*`
 among them); `dotnet format --verify-no-changes` exit 0; `git diff --check HEAD` exit 0; `wc -l` 4377.
+
+## Known gaps
+
+- The outcome is still shown nowhere: `ActivityProgressService.Finish` discards it (aud-a23i); the handle is the page's
+  own statement of how each write ended, read here through a recording channel.
+- A throwing audit is stood in for by no audit service (its methods are not virtual and its writer swallows its own
+  failures since aud-a28q); a throw from inside the real writer is not separately driven.
+- A write's catch still replaces the shown result with the exception's message if a step after the write throws (the
+  reload after a success); those steps catch their own failures today, so it is not reachable here.
+- Unchanged: `ExecuteBatchAction` and `ExecuteUserAction` show and audit nothing on an authorization denial (the bulk
+  executors audit a "_Denied" row); the creates show nothing on a denial or a guard return. Named in the hand-back.
+## Comments and branch-tip gates
+
+Shared by the five records of this branch; the canonical copy is in `aud-a23n.md` ("Comments and branch-tip gates"):
+comments `97ca9448`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings,
+full suite 5872 passed / 3 skipped / 0 failed (5875), format, `git diff --check`, ASCII lint all exit 0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a03d6bd111b571e5a`; not merged, not pushed.

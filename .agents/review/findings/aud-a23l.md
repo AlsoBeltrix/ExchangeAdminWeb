@@ -7,9 +7,9 @@ from `RunAsync`. (2) When every target is excluded because the protection check 
 says the target "is a protected principal". (3) `AuditService.LogMigrationCheck` files an Undetermined
 verdict under result "Ineligible" (the `status` field does say Undetermined), so the Admin Event Log's
 result filter cannot find it.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Parts 1 and 2 fixed on branch, guard proof below; part 3 left for a follow-up (files owned by another agent); not merged, not pushed
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
-**Commit**: -
+**Commit**: `26237a55` (parts 1 and 2: fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23j, aud-a23m, aud-a23k)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidates 3, 4 and 8 of its hand-back)
 
 ## Evidence
@@ -154,3 +154,21 @@ On the fix commit's tree: Release build 0 errors; the 1140 focused tests 1140/0;
 exit 0; `git diff --check HEAD` exit 0; `wc -l` 4377. Out of scope, named in the hand-back: the same "protected
 principal" claim over an unverified exclusion on a partial success (`WithProtectionOutcome`'s NOTE, the success
 formatter's Detail header) and on the page (the two exclusion banners, their audit rows and notification notes).
+
+## Known gaps
+
+- Part 3 is not implemented (above, "Left for a follow-up").
+- The same "protected principal" claim over a target whose check did not answer remains where a batch is created with
+  some targets excluded: `WithProtectionOutcome`'s NOTE ("N protected principal(s) were excluded and NOT migrated") and
+  the success formatter's Detail header ("EXCLUDED - protected principals, NOT migrated"), and on the page the two
+  exclusion banners, the exclusion audit rows ("Excluded - protected principal, not migrated") and the notification
+  notes. Named in the hand-back with their lines.
+## Comments and branch-tip gates
+
+Shared by the five records of this branch; the canonical copy is in `aud-a23n.md` ("Comments and branch-tip gates"):
+comments `97ca9448`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings,
+full suite 5872 passed / 3 skipped / 0 failed (5875), format, `git diff --check`, ASCII lint all exit 0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a03d6bd111b571e5a`; not merged, not pushed.

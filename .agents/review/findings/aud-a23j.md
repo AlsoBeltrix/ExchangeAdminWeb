@@ -4,9 +4,9 @@
 check throws (AD unreachable, the group unresolvable), the eligibility check only adds a warning and the
 user stays Eligible, so a batch can be created for a member of an excluded group. The match itself is a
 substring test on the group DN, so a group whose DN contains the configured DN as a substring matches too.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch, guard proof below; not merged, not pushed
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
-**Commit**: -
+**Commit**: `5cf71c1e` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23m, aud-a23k, aud-a23l)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -148,3 +148,27 @@ md5s (LF) of the other files at the fix commit: `MigrationExcludedGroupTests.cs`
 On the fix commit's tree: Release build 0 errors, 61 warnings; the 1089 focused tests 1089/0; `dotnet format
 --verify-no-changes` exit 0; `git diff --check HEAD` exit 0. No directory was asked anything: the AD session in every
 test is the stand-in.
+
+## Known gaps
+
+- **Assumption, labelled (no live call):** the AD module reports a requested `memberOf` as a list, empty for a user in
+  no group. If it reports none instead, such a user reads "the directory reported no memberOf" and Undetermined -
+  visible and blocking; one dev check settles it before a deploy.
+- **Labelled consequence:** a configured value must be something `Get-ADGroup -Identity` resolves (a DN, GUID, SID or
+  sAMAccountName). A display name, a CN that differs from the sAMAccountName, or a DN typed into the comma-separated
+  setting (cut at its commas) reads "could not be resolved", and every ToCloud check is Undetermined until the setting
+  is corrected. The setting's description (`Modules/ModuleCatalog.cs` 435, "Comma-separated AD groups excluded from
+  cloud migration") does not say this; the catalog was outside this brief.
+- The user is still found by UPN in the host's own domain (no `-Server`) and under the app-pool identity, as before: a
+  user it does not find there is Undetermined. Membership is still direct (`memberOf`); a member of a group nested in an
+  excluded group is not excluded, as before.
+- `ExchangeServiceBase.CheckAdGroupMembership` is left in place with no caller (a base-app change to remove).
+## Comments and branch-tip gates
+
+Shared by the five records of this branch; the canonical copy is in `aud-a23n.md` ("Comments and branch-tip gates"):
+comments `97ca9448`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings,
+full suite 5872 passed / 3 skipped / 0 failed (5875), format, `git diff --check`, ASCII lint all exit 0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a03d6bd111b571e5a`; not merged, not pushed.
