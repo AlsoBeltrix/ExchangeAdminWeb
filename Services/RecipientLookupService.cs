@@ -49,9 +49,17 @@ public class RecipientLookupService : ExchangeServiceBase
 
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "Ignore");
-                var mbxResults = InvokeOptional(ps, tracker);
-                var mbx = mbxResults.FirstOrDefault();
+                  .AddParameter("ErrorAction", "Stop");
+                PSObject? mbx = null;
+                try
+                {
+                    mbx = ReadUnlessNotFound(ps, tracker).FirstOrDefault();
+                }
+                catch (Exception ex) when (!IsCancellation(ex))
+                {
+                    r.MailboxUnreadable = r.ArchiveUnreadable = $"Get-Mailbox failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+                    r.Warnings.Add($"The Exchange Online mailbox could not be read: {r.MailboxUnreadable}.");
+                }
 
                 if (mbx != null)
                 {
@@ -87,7 +95,11 @@ public class RecipientLookupService : ExchangeServiceBase
                           .AddParameter("ErrorAction", "Stop");
                         var archiveStats = Invoke(ps, tracker);
                         var archiveStat = archiveStats.FirstOrDefault();
-                        if (archiveStat != null)
+                        if (archiveStat == null)
+                        {
+                            r.ArchiveUnreadable = "Exchange returned no archive statistics";
+                        }
+                        else
                         {
                             r.ArchiveEnabled = true;
                             r.ArchiveItemCount = ParseLong(archiveStat.Properties["ItemCount"]?.Value);
@@ -96,9 +108,17 @@ public class RecipientLookupService : ExchangeServiceBase
                             r.ArchiveDeletedItemSizeGB = ParseSizeToGB(archiveStat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
                     }
-                    catch
+                    catch (Exception ex) when (IsNotFound(ex))
                     {
+                        _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
                     }
+                    catch (Exception ex) when (!IsCancellation(ex))
+                    {
+                        r.ArchiveUnreadable = $"Get-MailboxStatistics -Archive failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+                    }
+
+                    if (r.ArchiveUnreadable is { } archiveUnreadable)
+                        r.Warnings.Add($"The Exchange Online archive could not be read: {archiveUnreadable}.");
                 }
             }
             catch (Exception ex)

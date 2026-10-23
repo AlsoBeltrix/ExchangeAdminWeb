@@ -116,6 +116,8 @@ public class RecipientInfoResult
     public string? MailboxLocation { get; set; }
     public string? ForwardingAddress { get; set; }
     public bool ArchiveEnabled { get; set; }
+    public string? MailboxUnreadable { get; set; }
+    public string? ArchiveUnreadable { get; set; }
     public double? MailboxSizeGB { get; set; }
     public double? DeletedItemSizeGB { get; set; }
     public double? ArchiveSizeGB { get; set; }
