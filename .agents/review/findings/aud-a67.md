@@ -44,3 +44,14 @@ ceiling can false-fail on a slow runner; keep the structural assertions (`busy_t
 loosen the elapsed check to "not the 30 s retry loop". (8) `SettingsSaveAuditTests.cs` 644: the helper tripwire
 enumerates catches by `InlineData`, so a new or nested settings-save catch escapes it; discover the catches from
 the page source and require the helper for every non-allowlisted one.
+
+## Also held (aud-a66 agent, 2026-10-23) - LOW
+
+(9) `ModuleConfig.razor` `OnParametersSetAsync` reads the `ModuleId` parameter after its awaits; a second route
+change during a load's await makes the first call load the newer module too (a double load, consistent, no
+write). (10) After a move, the OU browser's load completion sets browser state on the next page (renders only
+on AD Attribute Editor; writes nothing). (11) On a moved page the access save's concurrent-change and
+directory-refusal messages fall back to alias or SID labels. (12) A save that outlasts the 10 s bound keeps
+its worker thread and store connection until the store answers (the stores take no cancellation). (13) Item
+(4) above is corrected: a second save in flight combined with a route change caused the aud-a66 HIGH; the
+write is now closed there, the re-entrancy guard itself stays held.
