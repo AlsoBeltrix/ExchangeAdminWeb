@@ -1267,7 +1267,7 @@ public class CircuitRevalidationTests
     [Fact]
     public void ProgramCs_RegistersTheRevalidatingProviderAndTheGate()
     {
-        var program = Squash(File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs")));
+        var program = Squash(ProgramCode());
 
         const string provider =
             "AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider, MembershipRevalidatingAuthenticationStateProvider>()";
@@ -1297,7 +1297,7 @@ public class CircuitRevalidationTests
     [Fact]
     public void ProgramCs_ResolvesTheOffSwitchAndReportsItAtStartup()
     {
-        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs"));
+        var program = ProgramCode();
 
         Assert.Matches(
             new Regex(@"revalidationEnabled\s*=\s*CircuitRevalidationSettings\.ResolveEnabled\(\s*builder\.Configuration\[CircuitRevalidationSettings\.EnabledKey\]\s*\)"),
@@ -1320,7 +1320,7 @@ public class CircuitRevalidationTests
     [Fact]
     public void ProgramCs_RefusesStaticGroupsThatCannotBeRevalidatedBeforeTheAppIsBuilt()
     {
-        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs"));
+        var program = ProgramCode();
 
         var call = Regex.Match(
             program,
@@ -1448,6 +1448,12 @@ public class CircuitRevalidationTests
     }
 
     private static string Squash(string text) => Regex.Replace(text, @"\s+", " ");
+
+    /// <summary>
+    /// Program.cs as code: comments and literals blanked to same-length spaces, newlines kept (aud-a42). Scanned as raw text, a
+    /// comment naming a call satisfied these guards while the call itself was gone, and one naming app.Run() early tripped them.
+    /// </summary>
+    private static string ProgramCode() => RazorSyntax.CodeView(File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs")));
 
     private static string[] RemovedSids(JsonElement audit) =>
         audit.GetProperty("removedGroupSids").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
