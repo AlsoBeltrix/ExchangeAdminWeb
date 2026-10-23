@@ -719,6 +719,30 @@ prints the commands that return to two databases, both after success and on any 
 A new instance that should join an existing shared database is installed with
 `.\tools\Install-ExchangeAdminWeb.ps1 -ConfigStorePath <path>`; the file must already exist.
 
+#### Shared log root (dev and prod on one server)
+
+Two instances on one server may write under the same `Audit:LogRoot`; the ADI deploy scripts
+default both to one root. They then append to the same daily audit and trace files. That is
+safe only because the writer serialises across processes:
+
+- Before it touches a log file, each writer takes that file's lock: `<file>.lock` beside it,
+  opened exclusively and deleted when released.
+- It holds the lock through rotation, the write, and the take-back of a write that fails
+  part-way.
+- A write that cannot take the lock within 2 seconds is dropped and logged as a failed audit
+  write: its trace step says the row was not written. It is never written over the other
+  instance's row.
+- The lock is the file system's, so it holds whichever account each app pool runs as.
+- Readers never take it, and a `.lock` file is not a log.
+
+What you need to do:
+
+- Both instances must run a build that takes the lock. An older build writes without it, and
+  while one does, the two can still overwrite each other's rows.
+- To avoid the question altogether, give each instance its own `Audit:LogRoot`. That is a
+  deploy-config change: `-LogRoot` on `deploy.ps1` and `tools/deploy-pipeline.ps1`, or the
+  installer's prompt.
+
 ### 5. Configure IIS Windows Authentication (if needed)
 
 The deploy script configures Windows Authentication automatically. If authentication issues occur:
@@ -898,7 +922,8 @@ All operations are logged as JSON Lines (.jsonl). Business audit records and dia
 
 **Trace location:** `<Audit:LogRoot>\ExchangeAdminWeb\exchangeadmin_YYYYMMDD_trace.jsonl`
 
-(`Audit:LogRoot` is a required setting; see the configuration section above.)
+(`Audit:LogRoot` is a required setting; see the configuration section above. Two instances may
+share one root: see [Shared log root](#shared-log-root-dev-and-prod-on-one-server).)
 
 **Common audit fields:** `eventType`, `operationId`, `ts`, `user`, `ip`, `action`, `category`, `result`, `ticket`
 

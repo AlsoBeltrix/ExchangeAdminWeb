@@ -9,7 +9,7 @@ truncates back to the pre-write length. With two writers: A records its start of
 completed row; B's trace still says AuditWritten Success and the Admin Event Log later misses or drops the
 row. The `db` command-line mode exits before logging, so the second writer is another web instance. The
 aud-a28z record states "one writer per JSONL file" as an unprobed assumption; nothing enforces it.
-**Status**: In progress - plan below, approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a45/a46 agent's scope
+**Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a45/a46 agent's scope)
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-13, 2026-10-22)
@@ -189,6 +189,96 @@ Files:
 - `appsettings.json.sample`
 - this record
 
+## Fix
+
+- New `Services/JsonlFileAppender.cs`:
+  - `internal static class JsonlFileAppender` with `DefaultLockWait` (2 s), `LockPathFor(path)` (`path + ".lock"`) and
+    `Append(path, json, lockWait, rotateIfFull, writeLineBytes, repaired, truncationFailed)`.
+  - `Append` takes `Lock(path, lockWait)` first, then runs `rotateIfFull()`. Then comes aud-a28z's append, moved
+    verbatim from `JsonlLogService.AppendLine`: the open, `start` at the end, the tail-repair check, one write through
+    the seam, the take-back on failure (`TruncateTo`, its failure handed to `truncationFailed`) and rethrow, and
+    `repaired()` after a repaired write.
+  - `Lock` is `File.OpenHandle(lockPath, OpenOrCreate, ReadWrite, FileShare.None, FileOptions.DeleteOnClose)`.
+    - A sharing or lock violation (HRESULT low word 32 or 33) and `UnauthorizedAccessException` are retried with a pause
+      of 1 ms doubling to 16 ms until the wait has passed. Anything else propagates.
+    - It then throws new `internal sealed class JsonlLockTimeoutException : IOException`. That exception carries
+      `LockPath`, with the last refusal as its inner exception and a message naming the lock file and the wait.
+- `Services/JsonlLogService.cs`:
+  - `GetWritableLogPath` is split into `ActivePath(stream)` and `RotateIfFull(activePath)`, each unchanged in logic.
+  - `WriteToFile` sets `logPath = ActivePath(stream)` inside its lock.
+  - `AppendLine` is now one call to `JsonlFileAppender.Append`. `RotateIfFull`, the `WriteLineBytes` seam and the two
+    warnings - their text and arguments unchanged, through `ReportSafely` - are handed in.
+  - `EndsWithNewline` and `TruncateTo` moved to the appender, and `using System.Text` went with them.
+  - New `internal TimeSpan LockWait`.
+- `README.md`:
+  - New "#### Shared log root (dev and prod on one server)" under "4. Deploy to IIS": the lock, the 2-second bound and
+    what a timed-out write becomes, that readers never take it, that both instances must run this build, and distinct
+    roots as the deploy-config alternative.
+  - The Audit Logging section points to it.
+- `appsettings.json.sample`: `_AuditNote` beside `Audit`, saying the same in a sentence.
+
+Tests: new `ExchangeAdminWeb.Tests/JsonlWriterLockTests.cs`, 7 cases:
+- `TwoWriters_OneFailingHalfWrittenWhileTheOtherWaits_LeaveExactlyTheRowsReportedWritten` (audit, trace)
+- `ARowThatLandsWhileAWriterWaitsForTheLock_IsNeitherOverwrittenNorTakenBack` (a waiting writer that then writes; one
+  that then fails half-written)
+- `AWriterThatCannotTakeTheLockInItsBound_DropsTheRow_SaysTheLockWasTheCause_AndTheNextRowIsWritten`
+- `TheLockIsNeitherNeededToReadNorReadAsALog`
+- `TwoWritersOnSeveralThreads_WithInterleavedFailures_LeaveExactlyTheRowsReportedWritten`
+
+Caller-visible changes, by design:
+- Every JSONL audit and trace write takes the file's lock first, so a second instance writing the same file waits its
+  turn.
+- A write that cannot take the lock within 2 seconds returns `FileWriteFailed`. Its "AuditWritten" step is Failed, as
+  for any dropped row, and the aud-a28z report carries the `JsonlLockTimeoutException`.
+- A failed rotation is reported under the active file's path instead of "(unresolved)".
+- While a write holds its lock, `<file>.lock` exists beside the file, and it is deleted when the write releases it.
+- A record that writes produces the same bytes as before.
+
 ## Guard proof
 
-Pending.
+Reproduction: each failure below is the defect as the record states it.
+- M1 is the writer with no cross-process lock, which is what `2df48c36` had - its monitor serialised one instance only.
+  A second writer then reported `Written` and lost its row to the first writer's take-back (`["Before"]` where
+  `["Before", "Other"]` was reported).
+- M2 is a writer whose offset was read before it held the file. It wrote over the other instance's row, leaving a
+  fragment the event log cannot parse, or took that row back with its own half line (`[]` where `["OtherInstance"]`
+  was written).
+
+Session-local driver (session scratchpad `mutate/mutate.psm1` and `mutate/round-a47.ps1`, log `mutate/a47-mutations.log`):
+- For each mutant: the file's exact bytes saved, one literal replacement that must match exactly once, a Release build
+  of the solution with 0 errors required, then the filter run with a TRX logger. The exact bytes are restored in a
+  `finally`, the MD5 re-checked and the mtime advanced so MSBuild rebuilds.
+- The filter (180 tests) is aud-a28z's plus this record's:
+  `FullyQualifiedName~JsonlWriterLockTests|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~AuditExtraChannelTests|FullyQualifiedName~AuditCategoryFilingTests|FullyQualifiedName~EventLog`
+- Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the
+  restored bytes and the filter: 180/180 green. The aud-a28z rows' tests passed under every mutant.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the lock removed (`using var held = Lock(path, lockWait);` taken out of `Append`) | `JsonlFileAppender.cs`, `A9CCC3F56780EDA3AE8571D1FF11B28E` | `40B699E93E52CF0CD6328F692AB8E91B` | 6 of 180: `TwoWriters_OneFailingHalfWrittenWhileTheOtherWaits_...` both streams - `["Before"]`, the other writer's Written row cut by the take-back; `ARowThatLandsWhileAWriterWaitsForTheLock_...` both shapes - "the writer did not wait for the file's lock"; `TwoWritersOnSeveralThreads_...` - rows reported Written missing from the file; `AWriterThatCannotTakeTheLockInItsBound_...` - `Written` while another held the lock |
+| M2 the offset read before the lock (the open and the end seek moved above the lock) | `JsonlFileAppender.cs`, `A9CCC3F56780EDA3AE8571D1FF11B28E` | `2855DD792BDD091A74E94CFFCB456074` | 3 of 180: `ARowThatLandsWhileAWriterWaitsForTheLock_...` a waiting writer that then writes - one unparseable line, its row written over the other instance's; and one that then fails half-written - `[]`, the other instance's row taken back with the half line; `TwoWritersOnSeveralThreads_...` - rows reported Written missing |
+| extra E1 a wait that runs out writes anyway (the timeout returns a no-op handle instead of throwing) | `JsonlFileAppender.cs`, `A9CCC3F56780EDA3AE8571D1FF11B28E` | `6770E8BF5851A486DFCCD3FEE38C3C82` | 1 of 180: `AWriterThatCannotTakeTheLockInItsBound_...` - `Written` without the lock |
+
+Unchanged through the round: `JsonlLogService.cs` `A278D0DCDBFED6040E535B01DBBEA42B` and `JsonlWriterLockTests.cs`
+`5D6C1C58E5D8AF5842621A7725025464`. The code comments are written after the round, in their own commit, so the MD5s
+above are this commit's bytes.
+
+Not run, by design: two app pools on a real IIS host, and a share reached over SMB. The test's two writers in one
+process meet the same file-system refusal two processes do: a handle opened `FileShare.None` refuses the next one,
+whichever process asks.
+
+## Known gaps
+
+- *Assumption, not probed*: a log root on an SMB share enforces the exclusive open across hosts as a local volume does.
+  SMB share modes are enforced by the server, but no remote share was used here, and the README claims no more than
+  accounts on one server.
+- An instance on a build without the lock still writes unserialised. Between a dev deploy of this build and its
+  promotion, prod's writes can still collide with dev's. Both instances must run this build, and the README says so.
+- A principal that may create but not delete files in the log folder cannot open the lock (`DeleteOnClose` needs
+  delete). Each of its writes would then wait out its bound and be dropped, reported. Every deploy path grants the
+  pool Modify (`deploy.ps1` 400, the installer 907), which rotation already needs.
+- `UnauthorizedAccessException` is retried because a contender meets it while the holder's close deletes the file. A
+  folder that refuses the lock for good therefore costs each write its full 2-second bound before the drop, not an
+  immediate one.
+- The bound is a fixed 2 seconds, and the writer runs on the operator's thread inside its in-process lock. A
+  contending instance costs at most that per write, and a hung one costs exactly that per write until it lets go.
