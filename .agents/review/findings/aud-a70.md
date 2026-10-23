@@ -8,7 +8,7 @@ the write failed..." with `Success=false` and records a Failed row beside the su
 credential (aud-a60). (3) `Components/Pages/AdminSettings.razor` 282 and 289 (the credential's placeholder
 and hint: "Required when groups or OUs are configured" / "Read-only AD credential for group membership and
 OU checks") should say it is also needed for Mailbox and Calendar Permissions grants to groups.
-**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex defect review perm-batch-11 in flight. (6) and (13) are owner calls, held; (10) is a coder dispute awaiting owner adjudication; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
+**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex perm-batch-11 raised kd-43 (against (12)/(14)) and kd-44 (against (15)), both MEDIUM; closes when they land. (6) and (13) are owner calls, held; (10) is a coder dispute awaiting owner adjudication; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
 **Branch**: `fix/a70` (from master `eb017102`)
 **Commit**: (1) `13909c2f`; (4) `83311a2b`; (5) `9b0aa71b` and its count-pin repair `dc3abcd7`; (9) `fe99aff4`; (17) `d0ed01eb`; (12), (14) `7576cea7`; (15) `0ef2ac77`; (7) `32d548ec`; (11), (8) `f374e13a`; (2), (3) `a4155f5c`; module versions and this record's close: the branch head
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidates 2-4 and its follow-up)
@@ -456,3 +456,7 @@ for an administrator notification on every mutating action. (16) A Calendar remo
 pre-flight error, whose retry cannot connect, is filed Undetermined though the pool treats that error as proof
 nothing ran (conservative, by design). (17) The pool's "stopped" refusal message contains a line break, so
 the banner and the audit row do too.
+
+## Reviewer comments (supervisor, perm-batch-11)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier=standard pair (grade fallback, owner 2026-08-03) [escalated: T1 *secret* test path]; codex-cli 0.163.0; base eb017102 head d609001e (merged ea565cbd); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat d609001e). Two MEDIUM candidates, admitted as kd-43 and kd-44. Codex confirmed clean: the UPN-only lookup, the dynamic-group refusal, the guarded success rows, the on-prem refusal and failure rows, Undetermined bulk filing, the completion guards and the banner collapse; MigrationService.cs is in the diff only for its result-copy helpers carrying UnconfirmedRights. Artefacts: `.agents/review/perm-batch-11.result.txt`, `.stream.log`, `prompt-perm-batch-11.md`.
