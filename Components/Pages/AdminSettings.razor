@@ -728,9 +728,8 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, EnablementSection, ex, $"Failed to save: {ex.Message}", EnablementSections(changes));
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, EnablementSection, statusMessage, EnablementSections(changes));
         }
         finally
         {
@@ -791,9 +790,10 @@
         {
             // aud-a28k. SetLevel throws when the store refuses the level, and leaves the level in effect
             // unchanged; this used to report and record a level the store had not kept.
-            statusMessage = $"Failed to save log level: {ex.Message.TrimEnd('.')}. The extended log level is still {ExtendedLog.CurrentLevel}.";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex,
+                $"Failed to save log level: {ex.Message.TrimEnd('.')}. The extended log level is still {ExtendedLog.CurrentLevel}.",
+                busy: SettingsSaveAudit.StoreBusyMessage($"Nothing was written; the extended log level is still {ExtendedLog.CurrentLevel}."));
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {
@@ -1212,24 +1212,10 @@
             // and both halves are recorded.
             if (secretChanged)
             {
-                // aud-a28v. The compare holds the settings store's write lock, so a lock held elsewhere for longer than the
-                // store waits - 5 seconds, SqliteConnectionFactory.BusyTimeout - fails it, and with it the whole save, before
-                // anything is written. That used to reach the save's catch as "Failed to save: SQLite Error 5", which said
-                // neither that the store was busy nor that a retry would work. Only the busy result is caught here, as a
-                // refusal; any other failure still reaches the save's catch as a failure.
-                ModuleConfigSaveOutcome secretCheck;
-                try
-                {
-                    secretCheck = await Task.Run(() => ProtectedPrincipalService.CompareDirectoryReadSecretId(loadedSecretId, secretId));
-                }
-                catch (Exception busy) when (ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(busy))
-                {
-                    Logger.LogWarning(busy, "Protected-principals save not attempted: the settings store was busy when the Secret ID compare went to check it");
-                    statusMessage = "Not saved: the settings store was busy - another save, on this instance or the other, held it for longer than this one could wait - so the directory-read credential (Delinea Secret ID) could not be checked. Nothing was written, the protection rules included. Try again in a moment; your changes are still on this page.";
-                    statusIsError = true;
-                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreBusy", statusMessage);
-                    return;
-                }
+                // aud-a28v, aud-a40. The compare holds the settings store's write lock, so a lock held elsewhere for longer than
+                // the store waits fails it, and with it the whole save, before anything is written: the save's catch records
+                // that as a busy store, a refusal.
+                var secretCheck = await Task.Run(() => ProtectedPrincipalService.CompareDirectoryReadSecretId(loadedSecretId, secretId));
 
                 if (secretCheck.Status == ModuleConfigSaveStatus.StoreCorrupt)
                 {
@@ -1322,9 +1308,11 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            // aud-a40. Every store call this reaches is its own transaction, rolled back when it throws, and the secret's write -
+            // the one after the rules - catches its own; so a busy store here wrote nothing, the rules included.
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}",
+                busy: SettingsSaveAudit.StoreBusyMessage("Nothing was written, the protection rules and the directory-read credential (Delinea Secret ID) included."));
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -1381,10 +1369,12 @@
         }
         catch (Exception secretEx)
         {
-            Logger.LogError(secretEx, "The directory-read secret id was not saved; the protection rules were");
-            var message = $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.";
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, SecretSection, message);
-            return message;
+            // aud-a40. A busy store is the secret's refusal - its write was not made - and the message says what landed.
+            if (!ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(secretEx))
+                Logger.LogError(secretEx, "The directory-read secret id was not saved; the protection rules were");
+            return Audit.LogSettingsSaveException(Logger, currentUser, ip, SecretSection, secretEx,
+                $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.",
+                busy: $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {SettingsSaveAudit.StoreBusyCause}. Save again to retry it.");
         }
     }
 

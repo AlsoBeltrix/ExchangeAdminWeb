@@ -350,9 +350,8 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -578,10 +577,9 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
             statusIsError = true;
             completed = (false, statusMessage);
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {
