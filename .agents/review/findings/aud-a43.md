@@ -9,7 +9,7 @@ address comparison never runs for ANY operator and the string match is the whole
 is compared by string only. (3) A grant to a group the operator is a member of is not detected; there is no
 group expansion in the self-grant check. (4) The synchronous `ValidateSelfGrant` is string-match only and
 has no production caller; a future caller reopens what aud-a28y closed.
-**Status**: Fixed on branch, not merged; closed on guard proof below; review pending
+**Status**: Merged `fce22146`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac928f0732402c4c5`
 **Commit**: `4cc5756b` (fix, tests, record); plan `1272a8cf`; comments `bce8d047`
 **Reviewer**: implementer (surfaced by the aud-a28y/a28x/a26t agent, 2026-10-22, candidates 1-4 of its hand-back)
