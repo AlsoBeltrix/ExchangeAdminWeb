@@ -11,7 +11,7 @@ invalid row. (4) `AuditService.LogMailboxPermission` / `LogCalendarPermission` r
 cannot learn the aud-a28u write outcome; the banner says "The audit row could not be written." only when the
 call throws. (5) `SettingsStoreText` has no `ServiceEnablement(bool)`; the pool rebuilds the service wording
 by replacing the page clause.
-**Status**: Merged `81809833`; closed on guard proof; codex review pending
+**Status**: Complete; merged `81809833`; codex perm-batch-6 raised five candidates, admitted as aud-a60 (HIGH) and aud-a61
 **Branch**: `worktree-agent-a80f49ad9ee618412` (from master `132d6e97`)
 **Commit**: plan `1d7346ca`; part 1 `fcac67d7`; part 3 `29d9b16f`; part 2 `b1ec0b5d`; part 4 `43a82568` (after aud-a52's `f7921ce8`); part 5 `0e00ab23`; comments `dcfec67c`
 **Reviewer**: implementer (surfaced by the aud-a43/a44 agent, 2026-10-22, candidates 1-3 and its two "Left for a follow-up" items)
