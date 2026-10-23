@@ -66,7 +66,8 @@ public class AdminBulkJobsRevocationTests
         Assert.Contains("return true;", helper, StringComparison.Ordinal);
         Assert.Contains("return false;", helper, StringComparison.Ordinal);
 
-        // A refusal that leaves no record looks exactly like a bug to whoever investigates it.
-        Assert.Contains("WriteAudit(action, job, success: false);", helper, StringComparison.Ordinal);
+        // A refusal that leaves no record looks exactly like a bug to whoever investigates it. kd-26: and one that names no
+        // reason reads like a cancel that found the job finished, which is Failed too.
+        Assert.Contains("WriteAudit(action, job, success: false, \"Authorization denied.\", refusedAt: \"Authorization\");", helper, StringComparison.Ordinal);
     }
 }
