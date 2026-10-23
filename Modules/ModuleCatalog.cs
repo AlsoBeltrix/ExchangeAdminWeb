@@ -569,7 +569,8 @@ public sealed class ModuleCatalog
             // docs/ProgressCoverage-Plan.md S2).
             // 1.5.0: the unblock is bounded (five minutes) and stops waiting when the operator leaves
             // the page; one that was sent but not confirmed says so and is audited Undetermined, and
-            // one abandoned before it was sent says nothing was changed and is never sent (kd-6).
+            // one abandoned before it was sent says nothing was changed and is never sent (kd-6). A
+            // failed unblock by an authorised servicer keeps the servicer note on its audit row (kd-10).
             Version = "1.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(

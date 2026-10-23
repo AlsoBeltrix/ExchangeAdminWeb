@@ -492,10 +492,10 @@
             // this feature. Review caught it. A serviced unblock succeeds, so the record would
             // have been lost in the one case it exists for.
             //
-            // kd-6: an unblock whose outcome is unknown may have applied, so it keeps the note as well
-            // (pgwt-7: the note must reach the audit whatever the outcome), and its row is filed
+            // kd-10: on EVERY outcome (pgwt-7) - a failed or unconfirmed unblock of a protected principal
+            // must still say who was authorised to attempt it. kd-6: an unconfirmed one is also filed
             // Undetermined rather than Failed (the aud-a73 rule).
-            var serviced = (opResult.Success || outcomeUnknown) && !string.IsNullOrWhiteSpace(gate.AuditDetail)
+            var serviced = !string.IsNullOrWhiteSpace(gate.AuditDetail)
                 ? new Dictionary<string, object?> { ["protectedPrincipalServiced"] = gate.AuditDetail }
                 : null;
             if (outcomeUnknown)
