@@ -57,6 +57,13 @@ module bumps are in their own commit; `ExchangeAdminWeb.csproj` is not edited.
      size read's own catches let through, to reach the throw-as-a-whole path.
    - Mutation: `ArchiveEnabled` not set from the on-premises read (the record's); extras: the marker not copied; the
      size read's `ArchiveFound` not set.
+2. **The mailbox statistics warning** (`Services/RecipientLookupService.cs` 74-93): the catch (90-93) words its warning
+   through `ResolveFailure(ex).primary` (aud-a23i's helper; "Could not retrieve mailbox statistics: <the cmdlet's own
+   words>.") and takes no cancellation (`when (!IsCancellation(ex))`, aud-a23g's rule - one reaches the lookup's own catch,
+   as the archive read's already does); an answer with no row (81, `stat == null`) is the warning "Could not retrieve
+   mailbox statistics: Exchange returned no mailbox statistics." (the marker the Exchange Online size reader gives the same
+   answer) where every figure read "N/A" with nothing said. Tests: `ExchangeAdminWeb.Tests/RecipientLookupFailureTests.cs`.
+   Mutation: raw `ex.Message` again (the record's); extras: the cancellation filter dropped; the no-row warning dropped.
 
 ## Guard proof
 
@@ -83,6 +90,19 @@ parse, the size read throwing as a whole: "Could not be read" beside the warning
 | M1d: the throw-as-a-whole catch sets no marker | service | `07012f76...` / `dfaa57f9...` | 1: the "throws as a whole" case | md5 equal; 77/0 |
 
 On the part-1 commit's tree: full suite 6702 passed / 0 failed / 0 skipped (6693 on master at `eb017102`, plus these 9).
+
+**Part 2** - new `ExchangeAdminWeb.Tests/RecipientLookupFailureTests.cs`, its part-2 tests, the real service over
+`MigrationStubExchange` (a cloud mailbox): `AStatisticsReadThatFails_IsAWarningInTheCmdletsOwnWords` (an error written
+under Stop: exactly "Could not retrieve mailbox statistics: the mailbox database is offline."); `AStatisticsReadWithNoRow_IsAWarning`
+(exactly "... Exchange returned no mailbox statistics."); `ACancelledStatisticsRead_IsNotAStatisticsWarning` (the lookup
+fails; no statistics warning); `StatisticsThatRead_GiveTheirFigures_AndNoWarning` (the control). Same filter, 81 tests.
+
+| Round | md5 before / mutated | Failed (of 81) | Restored |
+| --- | --- | --- | --- |
+| The fix reverted (the service back to part 1's) | `2032c29d...` / `07012f76...` | 3: the three finding tests; the first read "... statistics: The running command stopp..." | md5 equal; 81/0 |
+| M2 (the record's): raw `ex.Message` again | `2032c29d...` / `76046751...` | 1: `AStatisticsReadThatFails...` | md5 equal; 81/0 |
+| M2b: the catch takes a cancellation again | `2032c29d...` / `633b8917...` | 1: `ACancelledStatisticsRead...` | md5 equal; 81/0 |
+| M2c: a no-row answer says nothing again | `2032c29d...` / `184657aa...` | 1: `AStatisticsReadWithNoRow...` | md5 equal; 81/0 |
 
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 
