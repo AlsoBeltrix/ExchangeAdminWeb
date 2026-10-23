@@ -22,7 +22,14 @@ namespace ExchangeAdminWeb.Tests;
 /// The directory call itself needs a live AD, so these cover the decision helpers it defers to
 /// plus the outcome the service returns when AD is absent (the CI condition).
 /// </summary>
-[Collection(LiveDirectoryCollection.Name)]
+/// <remarks>
+/// psl-10. No test here talks to a live directory, so the class is not in LiveDirectoryCollection, whose rule is that such a
+/// class must not join. The one that searched - <see cref="Search_AllObjectKindsIncludingOu_DoNotThrow"/>, through the
+/// production probe, which imports the real module and, where it loads, searches the live directory - takes psl-8's stand-in
+/// (<see cref="ADDirectorySearchServiceTests.CreateService"/>). <see cref="CreateService"/> below is still the production
+/// probe's service, and only the blank-input and short-term tests use it: both return before the probe. A test that needs
+/// the directory belongs on the stand-in, or in ADDirectoryLiveTests.
+/// </remarks>
 public class ADDirectoryValidateExistsTests
 {
     private static ADDirectorySearchService CreateService()
@@ -239,8 +246,11 @@ public class ADDirectoryValidateExistsTests
     {
         // OU routes to Get-ADOrganizationalUnit rather than Get-ADUser/Get-ADGroup, so it needs
         // its own smoke coverage; the existing suite only knew about User/Group/Any.
-        var results = CreateService().Search("test search term", objectKind);
-        Assert.NotNull(results);
+        // psl-10. On psl-8's stand-in, which checks the directory unavailable and its one import before handing the service
+        // over: every kind, OU included, answers nothing and throws nothing - the fail-soft contract, on every host. It used
+        // the production probe, which searched the live directory wherever the module loads.
+        var results = ADDirectorySearchServiceTests.CreateService().Search("test search term", objectKind);
+        Assert.Empty(results);
     }
 
     [Fact]

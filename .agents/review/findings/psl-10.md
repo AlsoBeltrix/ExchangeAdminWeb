@@ -203,3 +203,16 @@ Filter `DhcpAuthorizationPowerShellLifecycleTests` (18); md5 fixed = restored `d
 | 3b | the same, the deauthorize script | `3d2eb52e0a17fa6c8ffbd26cf04297f4` | 1: the deauthorize noise case | PASS 18 |
 
 On the fix, before the round: `DhcpAuthorization*` 21 of 21.
+
+**(4) The validate-exists search theory** - `ADDirectoryValidateExistsTests.Search_AllObjectKindsIncludingOu_DoNotThrow`
+(User, Group, OU, Any) through `ADDirectorySearchServiceTests.CreateService` (now internal), whose guard checks the
+directory unavailable and the stand-in's one import before handing the service over; each kind's search now asserted to
+answer nothing (it asserted only not-null, which a search answering anything would pass). Filter
+`ADDirectoryValidateExistsTests|ADDirectorySearchServiceTests|DirectoryModuleImportTests` less the two live classes (101).
+
+| # | Mutation | File, md5 fixed = restored | md5 mutated | Failing (of 101) | Restored |
+| --- | --- | --- | --- | --- | --- |
+| P3 | the stand-in's session replaced, in the shared helper, by an empty one with autoloading off - it cannot load anything (psl-8's P3 shape; the brief's "the stand-in bypassed", where it can be run) | `ExchangeAdminWeb.Tests/ADDirectorySearchServiceTests.cs` `f7a46304c17c448c82b4f19bf9bab7a0` | `bc130d2b968917cb1cc40d1d2f2795fc` | 21: the theory's four and the 17 other cases through the helper - the guard's pin on the stand-in's import | PASS 101 |
+| P1 | `Search`'s unavailable return answering one result (psl-8's P1 shape) | `Services/ADDirectorySearchService.cs` `4d47d0d45be6dc4d24503ada43165afd` | `812add71d7dc427447748cb54d14c16b` | 7: the theory's four (OU included) and psl-8's three unavailable searches | PASS 101 |
+
+Not run, by design: the theory back on the production probe - the live call this item removes.
