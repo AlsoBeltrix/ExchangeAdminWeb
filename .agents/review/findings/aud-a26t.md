@@ -5,9 +5,9 @@ in `PermissionValidator`'s corrupt-branch log, where no page is involved. (2) `C
 `Audit:LogRoot` is still one shared directory under the temp directory, and the per-validator test
 directories aud-a26q introduced are never deleted (pre-existing shape; not a database, so the
 aud-a26q tripwire does not cover it).
-**Status**: Fixed on the branch (fix commit; comments commit to follow); review pending
+**Status**: Fixed on the branch, not merged; review pending
 **Branch**: `worktree-agent-a4c579a99f70ca768`
-**Commit**: -
+**Commit**: `7c7c1d59` (fix, tests, record; its Fix section first landed in `da615264`, see the record note); plan `7e65ce6a`; comments `5c32669e`
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidates 4 and 5 of its hand-back)
 
 ## Evidence
@@ -150,3 +150,15 @@ verdict is claimed.
   variable first, and the variable handed to the key, is not caught - the gap aud-a26q's scan records for `GetTempPath()`.
 - Other test classes' temp directories are not this finding's; the scan says only that none sets its log root from the
   temp directory in place.
+
+## Branch-tip gates - 2026-10-22 (`5c32669e`: the three fixes, the master merge and the comments)
+
+- Comments `5c32669e`: comment lines only - every changed line is a whole-line `//` or `///` comment, the MD5 of each
+  touched file's code lines is equal before and after it (session-local `codelines.ps1`, eleven files), and the two pages
+  keep 808 and 762 lines.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 61 warnings, all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,947
+  passed / 3 skipped (the three known AD skips) / 0 failed, 5,950 total, 5m32s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

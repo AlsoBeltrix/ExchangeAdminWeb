@@ -7,9 +7,9 @@ module-specific config is ABSENT; an unreadable store is not absent. If the stor
 presence check, a borrow connects under appsettings values (tenant, app ID, certificate) instead of the
 module config's. aud-a28t added `TryGetIsConfigured` beside `IsConfigured` for the permission gate; the
 pool's own three reads still use the permissive path.
-**Status**: Fixed on the branch, with the folded-in aud-a26s follow-up (fix commit; comments commit to follow); review pending
+**Status**: Fixed on the branch, with the folded-in aud-a26s follow-up, not merged; review pending
 **Branch**: `worktree-agent-a4c579a99f70ca768`
-**Commit**: -
+**Commit**: `da615264` (fix, tests, record, the folded-in follow-up); master `8151de3e` merged in first (`8ee81571`); plan `7e65ce6a`; comments `5c32669e`
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -209,3 +209,15 @@ the rule; the fail-closed read this finding adds sits in front of it (a failed r
 
 Done in this finding's fix commit, after the branch merged master `8151de3e` (`8ee81571`): `TryReadExoConfig` resolves all
 three keys through `Resolve`, and the pool reads no `ExchangeOnline:*` setting itself (source check; mutation F1 above).
+
+## Branch-tip gates - 2026-10-22 (`5c32669e`: the three fixes, the master merge and the comments)
+
+- Comments `5c32669e`: comment lines only - every changed line is a whole-line `//` or `///` comment, the MD5 of each
+  touched file's code lines is equal before and after it (session-local `codelines.ps1`, eleven files), and the two pages
+  keep 808 and 762 lines.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 61 warnings, all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,947
+  passed / 3 skipped (the three known AD skips) / 0 failed, 5,950 total, 5m32s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.

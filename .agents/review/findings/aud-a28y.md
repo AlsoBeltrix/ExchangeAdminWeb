@@ -7,9 +7,9 @@ is skipped and the grant is ALLOWED. A self-grant through an alias the string ma
 exactly while Exchange cannot answer. (2) An appsettings `Security:PreventSelfGrant` that is not a boolean
 makes `GetPreventSelfGrant` throw from `bool.Parse` on every self-grant check instead of refusing with a
 reason (pre-existing; aud-a28t fixed the stored value's parse, not the appsettings one).
-**Status**: Fixed on the branch (fix commit; comments commit to follow); review pending
+**Status**: Fixed on the branch, not merged; review pending
 **Branch**: `worktree-agent-a4c579a99f70ca768`
-**Commit**: -
+**Commit**: `b5ab1859` (fix, tests, record); plan `7e65ce6a`; comments `5c32669e`
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidates 2 and 3 of its hand-back)
 
 ## Evidence
@@ -204,3 +204,15 @@ self-review verdict is claimed.
 - The synchronous `ValidateSelfGrant` (the string match alone) is unchanged; nothing in the app calls it, the tests do.
 - The stand-in resolvers and the failing store stand in for Exchange and for a store fault; nothing ran against a tenant
   or a damaged database.
+
+## Branch-tip gates - 2026-10-22 (`5c32669e`: the three fixes, the master merge and the comments)
+
+- Comments `5c32669e`: comment lines only - every changed line is a whole-line `//` or `///` comment, the MD5 of each
+  touched file's code lines is equal before and after it (session-local `codelines.ps1`, eleven files), and the two pages
+  keep 808 and 762 lines.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 61 warnings, all pre-existing, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,947
+  passed / 3 skipped (the three known AD skips) / 0 failed, 5,950 total, 5m32s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
