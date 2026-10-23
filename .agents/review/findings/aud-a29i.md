@@ -1,7 +1,7 @@
 # aud-a29i: a refused page request's audit row does not say which page was refused
 
 **Severity**: LOW - audit completeness. `Middleware/PageRequestRevalidationMiddleware.cs` about 139 and `Authorization/MembershipRevalidatingAuthenticationStateProvider.cs` about 311: the row carries operator, IP, `SessionRevalidation`, `trigger: PageRequest`, reason and removed SIDs, but no route or path, so several refused page requests from one operator cannot be told apart by target during an incident review.
-**Status**: Verified on branch; awaiting merge - admitted 2026-10-23 evening from codex auth-batch-1 on aud-a29g; inside the released scope
+**Status**: Merged to master `d58b5d7c`; codex defect review auth-batch-2 in flight
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), after `2699dd29` (aud-a29h)
 **Commit**: the `fix(aud-a29i)` commit on `fix/a29g` that carries this record
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier=standard pair (grade fallback, owner 2026-08-03) [escalated: T1 Authorization/* paths]; codex-cli 0.163.0; base eb017102 head 2678735e (merged a5d12cc8); 2026-10-23T19:33-19:5xZ; capability proof: AGENTS.md read and git show --stat 2678735e both succeeded

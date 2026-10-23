@@ -1,7 +1,7 @@
 # cdt-44: -AllowRepoint takes the verified config backup from the NEW -PublishPath, not from the folder the live application serves
 
 **Severity**: MEDIUM - with `deploy.ps1 -Force -AllowRepoint -PublishPath <new>` where the new folder has no `appsettings.json`, the cdt-36 guard warns and proceeds, but the backup and config carry-forward read from the new path (`deploy.ps1` about 893, 900, 916), so the OLD live `appsettings.json` and its `ConfigStore:Path` database are neither verified-backed-up nor carried; the app is then re-pointed (about 947-948) and gets generated appsettings (about 1103), likely without the old `ConfigStore:Path`. Explicit consent lowers the likelihood; the impact is a live app moved onto a fresh or empty config store with no verified backup of the store it was serving (Architectural Invariant 3).
-**Status**: Merged to master `0c9917d5`; codex defect review ops-batch-13 in flight. Was: Verified on branch - admitted 2026-10-23 evening from codex ops-batch-12 on cdt-36; inside the released scope
+**Status**: Merged to master `0c9917d5`; codex ops-batch-13 clean on this finding (it raised cdt-51 against the cdt-44 move guard); closes when cdt-51 lands for cdt-44, Complete for the others. Was: Verified on branch - admitted 2026-10-23 evening from codex ops-batch-12 on cdt-36; inside the released scope
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-45 commit `59e2c31e`
 **Commit**: the `fix(cdt-44)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base eb017102 head 493c270d (merged 72430407); 2026-10-23T19:06-19:13Z; capability proof: AGENTS.md read and git show --stat 493c270d both succeeded
@@ -213,3 +213,7 @@ None yet.
 ## Closeout
 
 Pending: commit on `fix/cdt36`, codex review, merge into `master`, branch deletion.
+
+## Reviewer comments (supervisor, ops-batch-13)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 493c270d head 42c2690b (merged 0c9917d5); 2026-10-23 evening; capability proof: AGENTS.md read and git show --stat 42c2690b both succeeded. One candidate across the five-finding range, admitted as cdt-51 (the cdt-44 move guard skips when the old appsettings is absent). Codex confirmed: the IIS read/assertion now precedes pool writes, ACL grants, backup-folder creation, appsettings copies, publish, stop, mirror and appsettings generation; the consent refusal leaves no deploy-side state; the cdt-46 final-path helper fails closed when paths cannot resolve or compilation fails; no stale deploy.ps1 line pointer remains in the touched docs. Artefacts: `.agents/review/ops-batch-13.result.txt`, `.stream.log`, `prompt-ops-batch-13.md`.

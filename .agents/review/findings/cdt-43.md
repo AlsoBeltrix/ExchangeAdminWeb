@@ -78,3 +78,7 @@ None yet.
 ## Closeout
 
 Pending: merge into `master`, branch deletion.
+
+## Reviewer comments (supervisor, ops-batch-13)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 493c270d head 42c2690b (merged 0c9917d5); 2026-10-23 evening; capability proof: AGENTS.md read and git show --stat 42c2690b both succeeded. One candidate across the five-finding range, admitted as cdt-51 (the cdt-44 move guard skips when the old appsettings is absent). Codex confirmed: the IIS read/assertion now precedes pool writes, ACL grants, backup-folder creation, appsettings copies, publish, stop, mirror and appsettings generation; the consent refusal leaves no deploy-side state; the cdt-46 final-path helper fails closed when paths cannot resolve or compilation fails; no stale deploy.ps1 line pointer remains in the touched docs. Artefacts: `.agents/review/ops-batch-13.result.txt`, `.stream.log`, `prompt-ops-batch-13.md`.

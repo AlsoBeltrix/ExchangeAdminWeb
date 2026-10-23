@@ -1,7 +1,7 @@
 # aud-a29h: the revalidation off-switch warning says a removed operator keeps access "until it is reloaded", which is not what happens
 
 **Severity**: LOW - wording that misleads during an incident. `Authorization/MembershipRevalidatingAuthenticationStateProvider.cs` about 238-240 and 247-249, and `README.md` about 873, say that with the off-switch set a removed operator keeps access "until it is reloaded". Under Kerberos a reload keeps the stale access until the ticket renews, and with the switch off page requests are not checked either (aud-a29g). Someone switching revalidation off during an incident would wrongly expect a reload to cut a removed operator off.
-**Status**: Verified on branch; awaiting merge - admitted 2026-10-23 evening from the aud-a29g agent's hand-back; inside the released scope
+**Status**: Merged to master `d58b5d7c`; codex defect review auth-batch-2 in flight
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), continuing from `2678735e`
 **Commit**: the `fix(aud-a29h)` commit on `fix/a29g` that carries this record
 **Reviewer**: implementer (aud-a29g agent, candidate; not yet confirmed by the supervisor)
