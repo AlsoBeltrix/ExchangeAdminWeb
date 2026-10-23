@@ -502,8 +502,8 @@
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); activity.Complete(false, PermissionChangeFailure.Banner(step, ex));
-                result = PermissionResult.Fail(PermissionChangeFailure.Banner(step, ex));
+                var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); // aud-a71: recorded as ExecuteOnPrem's catch records - a write that threw may have applied
+                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : null, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); activity.Complete(false, failed);
             }
         }
         finally

@@ -6,7 +6,7 @@ single-submit write throws after the step is `PermissionChangeFailure.TheWrite`,
 no `Audit.LogMailboxPermission` / `LogCalendarPermission` row; a permission write that may have applied
 leaves no audit evidence (Known Failure Class 1 on the audit side). `ExecuteOnPrem`'s catch (aud-a59) does
 write the row.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (HIGH); folded into the aud-a69 agent's scope; planned
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (HIGH); folded into the aud-a69 agent's scope; fixed on the branch below, not merged; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-7, 2026-10-23, candidate 1)
@@ -98,6 +98,62 @@ Files: `Components/Pages/MailboxPermissions.razor`, `Components/Pages/CalendarPe
 Caller-visible change, by design: a single change whose write - or a step before or after it - throws leaves a Failed row
 carrying the banner the operator saw; when that row cannot be written the banner says so.
 
+## Fix
+
+- `Components/Pages/MailboxPermissions.razor` 528-529 and `Components/Pages/CalendarPermissions.razor` 505-506, in place (808
+  and 762 lines, no registry entry moved): the catch has `failure = PermissionChangeFailure.Banner(step, ex)`, logs the step as
+  before, and writes the change's row through `SelfGrantRefusalRecord.Banner(failure, () => Audit.Log...(...),
+  Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord)` - Mailbox `"{Add|Remove}{permType}"` and the permission
+  type rebuilt from the `fullAccess` and `sendAs` snapshots, Calendar `"SetCalendar"` / `"RemoveCalendar"` and the level
+  (`isSet ? access.ToString() : null`); `success: false`; `errorDetail: failure`; `extra` the success row's,
+  `ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox)`. The
+  banner it returns, a local, is the result and the activity's completion text.
+- `Services/SelfGrantRefusalRecord.cs`: `FailedSingleChangeRecord`, "the failed permission change".
+
+Tests: `PermissionPagesSelfGrantTests` +6 and one strengthened. The drivers take the pool the page's own service borrows from;
+`PoolWhoseWriteBorrowThrows` is a pool over the harness's stand-ins and settings whose first call (the location read) drains
+it, through a call list that records into the harness's (`CallsThen`), and whose next connect throws the test's exception, so
+the write's own borrow throws. `ACloudWriteThatThrows_IsRecordedAsFailed_WithTheBannersText` (each page: the banner in the
+captured words, never the raw text; one Failed row with the action, the permission type or level, the banner as its error, the
+target, the grantee and the written identity; the activity completed with the banner; the location read made, nothing
+written; one warning), `ACloudWriteThatThrows_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten` (each page, the audit file
+held: the banner and the sentence, the activity completed with the same, no row, one warning),
+`ACloudWriteThatThrows_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler` (each page, the writer missing: the banner and the
+sentence; the step's warning and one naming the failed permission change, with the NullReferenceException).
+`AThrowAfterTheWrite_IsNamedAsSuch_InTheCausesOwnWords_NotItsRawText` (aud-a53) now also pins the rows: the success row and a
+failed row of the same action whose error is the after-the-write banner.
+
 ## Guard proof
 
-Pending.
+Session-local driver `mutate.ps1` (session scratchpad, log `a71-mutations.log`), the aud-a60 protocol: the fix staged; per
+mutant the MD5 of each file it touches, the edit (an exact-text replacement that must match exactly once), the MD5 again, a
+Debug build of the test project with 0 errors required, `dotnet test --no-build` filtered to
+`FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~PermissionValidator|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~BulkPermission|FullyQualifiedName~BulkAndOnPrem|FullyQualifiedName~AuditWriterThrowFree`
+(781 tests), the failing names taken from the run, then the file restored from the git index (`git checkout --`), its write
+time advanced so MSBuild rebuilds it, and its MD5 checked equal to the one before. Fixed-file MD5s:
+`Components/Pages/MailboxPermissions.razor` `B97013967CCC1D91823B031C10A8FE71`, `Components/Pages/CalendarPermissions.razor`
+`F4E90B08DE8782CA0E890BBE8157229B` (unmutated: `Services/SelfGrantRefusalRecord.cs` `219E6B641F0E28A6BF34308721D395A2`,
+`ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs` `44DF7D3A382EDD03C395B281B8C05F2B`). Every mutant built with 0
+errors and every restore matched; each kept its page's line count, so ClickGate and ProgressRegistry ran under it and passed.
+After the round, the restored tree rebuilt and the filter: 781/781 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | the audit call removed from the Mailbox Permissions catch (the bare step banner again) | `MailboxPermissions.razor` `ABF38BFF1A0AE14E380B7168A15DA05B` | 4 of 781, each `(page: "Mailbox Permissions")`: `ACloudWriteThatThrows_IsRecordedAsFailed_WithTheBannersText` (no row), `ACloudWriteThatThrows_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten` and `ACloudWriteThatThrows_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler` (the dropped row unsaid), `AThrowAfterTheWrite_IsNamedAsSuch_InTheCausesOwnWords_NotItsRawText` (one row, not two) |
+| M1c | the same on Calendar Permissions | `CalendarPermissions.razor` `A8B29D32C0D40B683C3B37B623008B39` | 4 of 781: the same four tests' `(page: "Calendar Permissions")` rows |
+| E1 | extra: the activity completed with the bare step banner (Mailbox Permissions) | `2D203BBD2A90A9C3ECB0E6E392DB5830` | 1 of 781: `ACloudWriteThatThrows_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten(page: "Mailbox Permissions")` |
+| E2 | extra: `FailedChangeRecord` in place of the new kind (Mailbox Permissions) | `3C682CDCBF84018733DAC7171A74C886` | 1 of 781: `ACloudWriteThatThrows_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler(page: "Mailbox Permissions")` - the warning names the on-premises change |
+
+No separate pre-fix reproduction: M1 and M1c are each catch as it stood, at its call site.
+
+## Known gaps
+
+- The tests reach the catch at the write through the one throw a cloud write has there, the pool's borrow; a delegate that
+  threw past its own catches would reach the same catch and the same record.
+- `ExecuteOnPrem`'s failure row (aud-a59) carries neither the serviced note nor the written identity in `extra`, which its
+  own success rows carry (its `onPremExtra` is a local of the try): a candidate in the hand-back, not changed here.
+- A throw before the write in `SubmitSingle` (the on-premises authorization check, before the confirmation) is now recorded as
+  a failed change of the cloud action's name, as `ExecuteOnPrem` records its own; the location read's refusal and the
+  "Unknown" location still return unrecorded, as before.
+- Nothing ran against Exchange: the stand-in cmdlets behind a test pool, the harness's validator, a substitute progress
+  service.
