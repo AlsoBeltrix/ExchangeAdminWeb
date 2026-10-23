@@ -1,7 +1,7 @@
 # cdt-48: the installer's cdt-15 comparison stays literal, so a junction-spelled IIS path is refused early
 
 **Severity**: LOW - fail-closed but inconsistent with deploy.ps1 after cdt-46. `tools/Install-ExchangeAdminWeb.ps1` (the cdt-15 check) compares paths literally; an application whose IIS `physicalPath` is a junction spelling of the same folder is refused as a move.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from the cdt-36 agent's second hand-back; inside the released scope
+**Status**: Merged to master `fb2b288f`; codex defect review ops-batch-14 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-47 commit `fd7ddf18`
 **Commit**: the `fix(cdt-48)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (cdt-36 agent, candidate; not yet confirmed by the supervisor)

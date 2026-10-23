@@ -1,7 +1,7 @@
 # cdt-51: -AllowRepoint strands an old default config database when the old appsettings.json is gone
 
 **Severity**: MEDIUM - Architectural Invariant 3. `deploy.ps1` about 333 and 983: the cdt-44 stranded-database guard and the fresh-install backup are both gated on `Test-Path` of the old folder's `appsettings.json`. With the IIS app serving `<old>` whose `appsettings.json` is missing but whose `config\exchangeadmin.db` still exists, `-ConfirmFreshInstall -AllowRepoint` (or `-Force -AllowRepoint`) passes the move check, skips both, re-points IIS to `<new>` and writes new appsettings without `ConfigStore:Path`, so the app opens a fresh default database while the old operational one is left behind, not verified-backed-up.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from codex ops-batch-13 on cdt-42..46; inside the released scope
+**Status**: Merged to master `fb2b288f`; codex defect review ops-batch-14 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-50 commit `ff36a296`
 **Commit**: the `fix(cdt-51)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 493c270d head 42c2690b (merged 0c9917d5); 2026-10-23 evening; capability proof: AGENTS.md read and git show --stat 42c2690b both succeeded

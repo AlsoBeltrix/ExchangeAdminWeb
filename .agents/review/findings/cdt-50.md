@@ -1,7 +1,7 @@
 # cdt-50: the cdt-46 8.3 Pester test can skip, and CI fails on any skip
 
 **Severity**: LOW - CI gate risk. The 8.3 short-name test in `tests/ps/AppPoolControl.Tests.ps1` skips when neither the temp volume nor Program Files has a short name; `.github/workflows/ci.yml` fails the powershell job on any skip. Unlikely on windows-latest but not proven.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from the cdt-36 agent's second hand-back; inside the released scope
+**Status**: Merged to master `fb2b288f`; codex defect review ops-batch-14 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-49 commit `e999ddda`
 **Commit**: the `fix(cdt-50)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (cdt-36 agent, candidate; not yet confirmed by the supervisor)

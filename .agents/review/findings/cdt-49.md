@@ -1,7 +1,7 @@
 # cdt-49: in a pool move the active-jobs warning reads the instance running today while the stop hits the new pool
 
 **Severity**: LOW - a warning only. `deploy.ps1`: with `-AllowRepoint` to a new pool, the active-jobs check (`tools/JobStateWarning.psm1`) reads the current instance's jobs database while the stop/start acts on the new pool, so the warning can describe the wrong instance.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from the cdt-36 agent's second hand-back; inside the released scope
+**Status**: Merged to master `fb2b288f`; codex defect review ops-batch-14 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-48 commit `cc5f8c82`
 **Commit**: the `fix(cdt-49)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (cdt-36 agent, candidate; not yet confirmed by the supervisor)
