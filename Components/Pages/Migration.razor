@@ -3661,7 +3661,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-15: the error's own words - a sign-in that fails mid-run arrives here as PowerShell's Stop exception, "The running command stopped because ..." in front
         }
         finally
         {
@@ -3798,7 +3798,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-15: the same, for the mailbox run
         }
         finally
         {
