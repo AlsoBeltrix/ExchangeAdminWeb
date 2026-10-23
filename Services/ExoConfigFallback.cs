@@ -8,11 +8,11 @@ namespace ExchangeAdminWeb.Services;
 /// <para>A stored value is used as it is - an empty one included, which does not fall back. A key with no row takes its
 /// appsettings value (<c>ExchangeOnline:AppId</c>, <c>:Organization</c>, <c>:CertificateSubject</c>) when there is one, a blank
 /// one included; the certificate with no appsettings entry takes the built-in <c>CN=EXO-Automation</c>; anything else is
-/// empty. That is the rule ExoConnectionPool.GetExoConfig applies.</para>
+/// empty. That is the rule ExoConnectionPool applies: it calls this for each key it read.</para>
 /// <para>The Exchange Online Config page used to restate it by hand to caption the fields a fallback supplies, and nothing
 /// kept the two in step. The page calls this now, and ExoConfigFallbackTests holds it to what the pool connects under for
-/// every key and source. The pool is still to call it too (left for a follow-up in the aud-a26s record): until then it keeps
-/// its own copy, and that test is what keeps the two together.</para>
+/// every key and source. The pool calls it too, behind its fail-closed read, so a read that failed never reaches it
+/// (aud-a28x, the follow-up the aud-a26s record named).</para>
 /// </remarks>
 public static class ExoConfigFallback
 {

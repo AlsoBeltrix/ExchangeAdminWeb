@@ -101,6 +101,9 @@ public class PermissionValidator
         return true;
     }
 
+    // aud-a28y. The upgrade fallback for a module config that holds no value. Absent or blank is the default, on; a value that
+    // is neither true nor false refuses self-grants, as a stored one does (aud-a28t), and is named - it used to throw from
+    // bool.Parse on every check, sync and async.
     private bool PreventSelfGrantFromAppsettings()
     {
         var fallback = _config["Security:PreventSelfGrant"];
@@ -604,6 +607,11 @@ public class PermissionValidator
             return "Access denied: You cannot grant permissions to yourself.";
         }
 
+        // aud-a28y. The string match cannot see an alias of the operator's own mailbox, so Exchange is asked who each side
+        // is. That lookup used to answer a failure as "no recipient", and the comparison was skipped: the grant was allowed
+        // exactly while Exchange could not answer - unreachable, not configured, its config unreadable. A lookup that could
+        // not run now refuses, naming who could not be resolved. Exchange's own "no such recipient" is an answer, not a
+        // failure: there is nothing to compare and the string match is the whole answer, as for the excluded-user check.
         var (actorAnswered, actor) = await LookUpRecipientAsync(currentUser, "the self-grant check");
         if (!actorAnswered)
             return SelfGrantCheckIncomplete(currentUser);
@@ -621,9 +629,14 @@ public class PermissionValidator
         return null;
     }
 
+    /// <summary>The refusal when the self-grant check could not put <paramref name="identity"/> to Exchange (aud-a28y).</summary>
     internal static string SelfGrantCheckIncomplete(string identity) =>
         $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{identity}'; nothing was written. Contact your administrator.";
 
+    /// <summary>
+    /// One recipient: a shared directory object id, or the same primary SMTP address - Exchange's own name for the
+    /// recipient, unique in the tenant, which answers when an object id is missing. Two blank ids are no id, not a shared one.
+    /// </summary>
     private static bool SameRecipient(ResolvedRecipient a, ResolvedRecipient b) =>
         (!string.IsNullOrWhiteSpace(a.ExternalDirectoryObjectId)
             && string.Equals(a.ExternalDirectoryObjectId, b.ExternalDirectoryObjectId, StringComparison.OrdinalIgnoreCase))
@@ -682,7 +695,8 @@ public class PermissionValidator
                 _initialized = true;
                 _lastRefresh = UtcNow();
                 _loadedToken = token;
-                // There is no file to fix: the rows and their fix, as the admin pages name them (aud-a26q).
+                // There is no file to fix: the rows and their fix, in the admin pages' words without their reload clause - no
+                // page is involved in a service's log line (aud-a26q, aud-a26t).
                 _logger.LogError("The protected-user list cannot be loaded - every protected-target operation is refused; the load is retried after {Retry}. {Store}",
                     FailedLoadRetry, SettingsStoreText.ServiceModuleConfig("MailboxPermissions"));
                 return;

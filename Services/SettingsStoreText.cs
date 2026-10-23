@@ -2,7 +2,8 @@ namespace ExchangeAdminWeb.Services;
 
 /// <summary>
 /// What the admin pages tell an administrator about a config store they cannot read: where it is and
-/// how it is fixed (aud-a26h).
+/// how it is fixed (aud-a26h). A service's log line or message says the same without the page's reload
+/// clause (aud-a26t).
 /// </summary>
 /// <remarks>
 /// These stores have lived in the SQLite config database since the legacy import, but the banners and
@@ -12,12 +13,14 @@ namespace ExchangeAdminWeb.Services;
 /// </remarks>
 public static class SettingsStoreText
 {
+    // The fix itself, once: a page adds its reload clause; a service has no page to reload (aud-a26t).
     private const string DatabaseFix =
         "Correct it as docs/ConfigDbOperations.md describes, or restore a verified backup the same way, with both application pools stopped";
 
     /// <summary>The fix for a table in the config database.</summary>
     public const string DatabaseRemedy = DatabaseFix + ", then reload this page.";
 
+    /// <summary>The same fix for a service's log line or message, where no page is involved (aud-a26t).</summary>
     public const string ServiceDatabaseRemedy = DatabaseFix + ".";
 
     private const string LegacyRemedy =
@@ -36,6 +39,7 @@ public static class SettingsStoreText
     /// <summary>Why one module's configuration cannot be read, and its fix.</summary>
     public static string ModuleConfig(string moduleId) => ModuleConfigUnreadable(moduleId) + DatabaseRemedy;
 
+    /// <summary><see cref="ModuleConfig"/> for a service's log line or message: the same rows and fix, no page to reload (aud-a26t).</summary>
     public static string ServiceModuleConfig(string moduleId) => ModuleConfigUnreadable(moduleId) + ServiceDatabaseRemedy;
 
     private static string ModuleConfigUnreadable(string moduleId) =>
