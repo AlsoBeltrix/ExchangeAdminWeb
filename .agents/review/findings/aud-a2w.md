@@ -7,7 +7,7 @@ of them. (2) When the Finder row's room read throws (Exchange returns a differen
 the service does not catch it; the page's catch audits and notifies but writes no log line. (3) The
 row's time-zone and recipient refusals do not end "Nothing was written." - a third wording style,
 shared with `SetRoomTypeAsync`, after aud-a2v unified the two preflights.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; plan written, in progress
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a2v agent, 2026-10-22, candidates 1, 3 and 4 of its hand-back)
@@ -90,6 +90,87 @@ code-identical.
 **Files.** `Services/ConferenceRoomService.cs`, `ExchangeAdminWeb.Tests/ConferenceRoomWriteIdentityTests.cs`, this record.
 `Components/Pages/ConferenceRooms.razor` is not touched.
 
+## Fix
+
+- `Services/ConferenceRoomService.cs`, on top of psl-8 (`f5e14730`):
+  - `SetRoomTypeAsync`: each of its four refusals before any write - no validated room, an invalid time zone, the
+    recipient refused, the module's groups unconfigured - is followed by `_logger.LogWarning("Room Type apply for {Room}
+    refused the row; nothing was written: {Refusal}", roomEmail, <the refusal>)` before its return. The time-zone, recipient
+    and groups refusals are built without " Nothing was written." (a local `refusal`, or `recipientError` as
+    `ValidateRoomRecipientAsync` returned it), logged so, and returned with it appended; the no-validated-room refusal is
+    `ValidatedMailbox.Refusal`, as before.
+  - `SetRoomMetadataAndListAsync`: the room read (`ValidateRoomRecipientAsync`) runs in a try whose catch logs
+    `_logger.LogWarning(ex, "Room Finder apply for {Room}: reading the room failed; nothing was written: {Error}",
+    roomEmail, ex.Message)` and rethrows with `throw;`. The time-zone and recipient refusals are built, logged and returned
+    as the Type path's: the line carries the refusal, the message adds " Nothing was written.".
+  - Nothing else: `ValidateRoomRecipientAsync`, the page, the bulk processor and every later step are unchanged.
+- `ExchangeAdminWeb.Tests/ConferenceRoomWriteIdentityTests.cs`: `CapturingLogger` records the exception with each entry;
+  `RefusalLine` gains the Type path's line; aud-a2v's `TheRowsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason` takes the
+  suffix (below); a new section at the end - `AssertSaysNothingWasWrittenOnce`,
+  `TheTypePathsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason` (4), `TheRowsRoomRead_ThatThrows_IsLoggedOnce_AndStillThrows`
+  (2). 6 new cases; the plan's third test, `EveryRefusalTheRowOrTheTypePathDecidesBeforeAnyWrite_SaysNothingWasWritten`, is
+  folded into the two refusal theories as `AssertSaysNothingWasWrittenOnce`, which every case of both runs - the same
+  assertion over the same refusals, without a third copy of their set-up. On the fix the 362 `ConferenceRoom*` cases pass.
+
+**Operator-visible changes.**
+
+- A Room Type apply refused before any write - no validated room, an invalid time zone, a recipient that is not a room
+  mailbox, the module's groups unconfigured - leaves one warning in the application log: "Room Type apply for <room>
+  refused the row; nothing was written: <refusal>". Before, only the result and its audit carried it.
+- A Room Finder row whose room read throws (Exchange answering with another mailbox, or none, or an error) leaves one
+  warning naming the room and the error, with the exception: "Room Finder apply for <room>: reading the room failed;
+  nothing was written: <error>". The row still fails as before - the page's catch audits and notifies the same message.
+- The row's and the Type path's invalid-time-zone, not-a-room-mailbox and (Type) unconfigured-groups refusals end "
+  Nothing was written.", as both preflights' do; so do their audit rows and admin notifications, which carry the message.
+- Nothing else: no outcome, step, write, audit field or notification changes.
+
 ## Guard proof
 
-Pending.
+| Test (`ConferenceRoomWriteIdentityTests`) | What it pins |
+| --- | --- |
+| `TheTypePathsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason` (no validated room, an invalid time zone, a recipient that is not a room mailbox, the module's groups unconfigured) | parts 1 and 3 on the Type path: refused, not partial, no step, `Writes` empty, no credential asked for; the message the refusal, then " Nothing was written." but for the validated-mailbox one; that said once; exactly one entry carries the refusal, a Warning, equal to "Room Type apply for <room> refused the row; nothing was written: <refusal>" |
+| `TheRowsRoomRead_ThatThrows_IsLoggedOnce_AndStillThrows` (another mailbox, none) | part 2: the row still throws, its message Exchange's ("... to a different mailbox ...", "... couldn't be found ..."); nothing written, no credential asked for; exactly one entry carries the message, a Warning, equal to "Room Finder apply for <room>: reading the room failed; nothing was written: <message>", with the thrown exception |
+| `TheRowsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason` (aud-a2v's; changed) | part 3 on the Finder row: its time-zone and recipient messages now end " Nothing was written.", said once, and the line carries the refusal before it; the validated-mailbox one unchanged |
+| `AReadBackOfADifferentMailbox_RefusesBeforeAnyWrite` (aud-a2d's, unchanged) | still green: the row's read of another mailbox throws before any write, as it allows |
+
+**Mutations** (`scratchpad/round/round.ps1`, rows `rows-a2w.ps1`, log `round-a2w.log`; 2026-10-22 18:50-18:59), filter
+`ConferenceRoom` (362 cases), the projects rebuilt each row, failures read from the TRX. `Services/ConferenceRoomService.cs`
+md5 before = after every row: `14f03d1420b2cf172b039ba0090ba9fa` (restored from the git index, the fix staged, and touched).
+
+| # | Mutation (call site) | md5 mutated | Named test failing | Result |
+| --- | --- | --- | --- | --- |
+| M1a | the brief's "one Type log line dropped": no validated room | `db18efabde0f82a00ad349680d93de20` | `TheTypePathsOwnRefusal_...` (no validated room) | FAIL, 1 of 362: no entry carries the refusal |
+| M1b | the same, an invalid time zone | `39fb195b236651d0b13a1d95f2594942` | the same (an invalid time zone) | FAIL, 1 |
+| M1c | the same, the recipient refused | `dae3689c57cf2354c63949c64c461049` | the same (a recipient that is not a room mailbox) | FAIL, 1 |
+| M1d | the same, the groups unconfigured | `390015f6fc63eb4676f118e28f4305a5` | the same (the module's groups unconfigured) | FAIL, 1 |
+| M2 | the brief's "the catch removed": the read called bare | `e5f90ff538b06fca565fba5a1dd04635` | `TheRowsRoomRead_ThatThrows_...` (both) | FAIL, 2: no entry carries the message |
+| M2b | the catch logging and swallowing - the read's message taken for the row's refusal - instead of rethrowing | `b838e56598d46628b448b3f79157d6ab` | the same (both) | FAIL, 2: no exception was thrown - the outcome changed, which the rethrow is there to prevent |
+| M3a | the brief's "one suffix dropped": the Finder row's time zone | `6a0ab83e244aad7e86c0ebba6cc4ffc9` | `TheRowsOwnRefusal_...` (an invalid time zone) | FAIL, 1: the message without " Nothing was written." |
+| M3b | the same, the Finder row's recipient | `7e2c06c207f4425782e21972cde92751` | the same (a recipient that is not a room mailbox) | FAIL, 1 |
+| M3c | the same, the Type path's time zone | `40235660bc24ae4891845847eb134a56` | `TheTypePathsOwnRefusal_...` (an invalid time zone) | FAIL, 1 |
+| M3d | the same, the Type path's recipient | `88dde070486e0a276c9dbdd37dbcd350` | the same (a recipient that is not a room mailbox) | FAIL, 1 |
+| M3e | the same, the Type path's groups | `302361813cb24497f3f7303898aa8df4` | the same (the module's groups unconfigured) | FAIL, 1 |
+| M4 | a second line: `ValidateRoomRecipientAsync` logs its not-a-room refusal too | `49ea2f16fde43a3b926f9d42c0c037ed` | `TheRowsOwnRefusal_...` and `TheTypePathsOwnRefusal_...` (a recipient that is not a room mailbox) | FAIL, 2: two entries carry the refusal |
+| REV | the fix reverted: the service whole as at `f5e14730` (psl-8), the new tests kept (they name nothing the fix adds) | `50b71ae398e1227243a24cd7b2de6b8c` | the four Type cases, both read cases, aud-a2v's two changed cases | FAIL, 8 of 362; the 354 others pass |
+
+After the last row the restored tree rebuilt and `ConferenceRoom*`, `DirectoryModuleImportTests`, `ClickGate*`,
+`ProgressRegistryTests` and `ValidatedWriteCallSiteTests` passed, 758/758. `ConferenceRoomWriteIdentityTests.cs` at the
+round: `a50b7ea381091fa922529d381ed4a94c` (its comments written with the tests).
+
+## Known gaps
+
+- Not changed, outside this record: `SetRoomTypeAsync`'s own room read (`ValidateRoomRecipientAsync`) that throws is not
+  caught or logged by the service either - the same gap as part 2, on the Type path, which the approach does not name;
+  a candidate in the hand-back.
+- The Type path's refusals outside the service do not end "Nothing was written.": the page's "Invalid room type: <type>"
+  (`ConferenceRooms.razor`, line-keyed) and the bulk processor's "Invalid type: <type>" (`ConferenceRoomBulkProcessor`).
+  Both refuse before the service is called; neither is the service's, which the approach's "one rule for the module"
+  covers.
+- The recipient refusal's "not found" stays unreachable through a test (aud-a2v): the room read returns a room or throws.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a56481d2c0a45a8cb`, not merged, not pushed. A module-scoped behaviour change (Conference
+Rooms: four warning lines on the Type path, one on the Finder row's read, and the words of five refusals): the Conference
+Rooms module version bump is due at merge - not made here, `Modules/ModuleCatalog.cs` being outside this brief. No shared
+code changed. Gates are in the branch-tip section the records' last commit adds.

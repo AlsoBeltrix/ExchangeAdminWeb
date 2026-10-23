@@ -373,11 +373,12 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
 
     private sealed class CapturingLogger : ILogger<ConferenceRoomService>
     {
-        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+        // aud-a2w. The exception logged with an entry, too: the row's room read logs the throw it rethrows.
+        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            Entries.Enqueue((logLevel, formatter(state, exception)));
+            Entries.Enqueue((logLevel, formatter(state, exception), exception));
     }
 
     // The calls recorded before the Set-Place - the preflight's - and after it - the write's.
@@ -1286,11 +1287,12 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
 
     private const string NothingWritten = " Nothing was written.";
 
-    // The line each path logs for a refusal - aud-a2t's two room-list lines among them, and since aud-a2v the row's own - for
-    // the room as it was typed.
+    // The line each path logs for a refusal - aud-a2t's two room-list lines among them, since aud-a2v the row's own, and since
+    // aud-a2w the Type path's - for the room as it was typed.
     private static string RefusalLine(string path, string refusal) => path switch
     {
         "Room Finder apply" => $"Room Finder apply for {Typed} refused the row; nothing was written: {refusal}",
+        "Room Type apply" => $"Room Type apply for {Typed} refused the row; nothing was written: {refusal}",
         "City/State/Country preflight" => $"Set-ADUser preflight for {Typed} refused the row; nothing was written: {refusal}",
         "City/State/Country write" => $"Set-ADUser City/State/Country write for {Typed} refused before its write: {refusal}",
         "room-list preflight" => $"Room-list preflight for {Typed} on {List} refused the row; nothing was written: {refusal}",
@@ -1445,8 +1447,9 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     public async Task TheRowsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason(string refusal)
     {
         // Each refusal the row makes before its preflights, with every field set so that a row past it would ask for a
-        // credential and write: refused in no step, nothing written, nothing asked for, its message as before to the byte -
-        // and one warning, the row's, naming the room as typed and the refusal.
+        // credential and write: refused in no step, nothing written, nothing asked for, its message the refusal - since
+        // aud-a2w ending " Nothing was written." but for the validated-mailbox one, which says so in its own words - and one
+        // warning, the row's, naming the room as typed and the refusal.
         ValidatedMailbox? room = Room();
         var timezone = "GMT Standard Time";
         switch (refusal)
@@ -1467,13 +1470,15 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Empty(result.Steps);
         Assert.Empty(_h.Writes);
         Assert.Equal(0, service.CredentialRequests);
-        Assert.Equal(refusal switch
+        var reason = refusal switch
         {
             "no validated room" => ValidatedMailbox.Refusal(Typed),
             "an invalid time zone" => "Invalid timezone: 'Mars Standard Time'.",
             _ => $"'{Typed}' is a EquipmentMailbox, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.",
-        }, result.Message);
-        AssertLoggedOnce(logger, "Room Finder apply", result.Message);
+        };
+        Assert.Equal(refusal == "no validated room" ? reason : reason + NothingWritten, result.Message);
+        AssertSaysNothingWasWrittenOnce(result.Message);
+        AssertLoggedOnce(logger, "Room Finder apply", reason);
     }
 
     [Theory]
@@ -1638,5 +1643,84 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.EndsWith(NothingWritten, result.Message, StringComparison.Ordinal);
         Assert.EndsWith(".", result.Message[..^NothingWritten.Length], StringComparison.Ordinal);
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(result.Message, "Nothing was written"));
+    }
+
+    // ---- aud-a2w: the Type path's refusals are logged, the row's room read that throws is logged, one rule for the module ----
+    // SetRoomTypeAsync refused a row with no validated room, an invalid time zone, a recipient that is not a room mailbox or
+    // the module's groups unconfigured, and logged none of them. A throw from the Finder row's room read left the service
+    // unlogged: the page's catch audits and notifies, and writes no log line. And the row's and the Type path's refusals
+    // said only what was wrong, not that nothing was written, as both preflights' do since aud-a2v.
+
+    // That nothing was written is said once - by the suffix, or by the validated-mailbox refusal's own words.
+    private static void AssertSaysNothingWasWrittenOnce(string message) =>
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(
+            message, "nothing was written", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+
+    [Theory]
+    [InlineData("no validated room")]
+    [InlineData("an invalid time zone")]
+    [InlineData("a recipient that is not a room mailbox")]
+    [InlineData("the module's groups unconfigured")]
+    public async Task TheTypePathsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason(string refusal)
+    {
+        // Each refusal the Type path makes before any write, with everything else in place: refused in no step, nothing
+        // written, nothing asked for, the message the refusal - ending " Nothing was written." but for the validated-mailbox
+        // one - and one warning, the Type path's, naming the room as typed and the refusal.
+        ValidatedMailbox? room = Room();
+        var timezone = "GMT Standard Time";
+        switch (refusal)
+        {
+            case "no validated room": room = null; break;
+            case "an invalid time zone": timezone = "Mars Standard Time"; break;
+            case "a recipient that is not a room mailbox": _h.AddMailbox("room1@contoso.test", Checked, recipientTypeDetails: "EquipmentMailbox"); break;
+            case "the module's groups unconfigured": _h.ModuleConfig.SaveModuleConfig("ConferenceRooms", new Dictionary<string, string>()); break;
+            default: throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null);
+        }
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var result = await service.SetRoomTypeAsync(Typed, room, RoomType.Standard, timezone);
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(result.Steps);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        var reason = refusal switch
+        {
+            "no validated room" => ValidatedMailbox.Refusal(Typed),
+            "an invalid time zone" => "Invalid timezone: 'Mars Standard Time'.",
+            "a recipient that is not a room mailbox" => $"'{Typed}' is a EquipmentMailbox, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.",
+            _ => $"Conference Rooms module is not configured. Set {string.Join(", ", ConferenceRoomService.RequiredGroupConfigKeys)} in Module Config.",
+        };
+        Assert.Equal(refusal == "no validated room" ? reason : reason + NothingWritten, result.Message);
+        AssertSaysNothingWasWrittenOnce(result.Message);
+        AssertLoggedOnce(logger, "Room Type apply", reason);
+    }
+
+    [Theory]
+    [InlineData("another mailbox")]
+    [InlineData("no mailbox")]
+    public async Task TheRowsRoomRead_ThatThrows_IsLoggedOnce_AndStillThrows(string answer)
+    {
+        // The Finder row's read of the validated room throws when Exchange answers with another mailbox or none. It still
+        // throws, with its message as before - the page's catch and the bulk row's audit and notify on it as they did - and
+        // one warning names the room as typed and the message, with the exception. Nothing is written, nothing asked for.
+        if (answer == "another mailbox")
+            _h.Mailboxes[Identity(Checked)] = _h.Mailboxes["execroom@contoso.test"];
+        else
+            _h.Mailboxes.Remove(Identity(Checked));
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => Finder(service, Room(), city: "Dublin"));
+
+        Assert.Contains(answer == "another mailbox" ? "to a different mailbox" : "couldn't be found", thrown.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(thrown.Message, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"Room Finder apply for {Typed}: reading the room failed; nothing was written: {thrown.Message}", logged.Message);
+        Assert.Same(thrown, logged.Exception);
     }
 }

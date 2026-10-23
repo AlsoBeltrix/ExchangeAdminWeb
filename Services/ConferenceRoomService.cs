@@ -493,21 +493,33 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             try { TimeZoneInfo.FindSystemTimeZoneById(timezone); }
             catch (TimeZoneNotFoundException)
             {
+                var refusal = $"Invalid timezone: '{timezone}'.";
                 result.Success = false;
-                result.Message = $"Invalid timezone: '{timezone}'.";
-                _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, result.Message);
+                result.Message = $"{refusal} Nothing was written.";
+                _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
                 return result;
             }
         }
 
         // Not a room mailbox, or - defensively, as GetRoomInfoAsync(ValidatedMailbox) returns a room or throws - not found:
         // one line for either.
-        var (roomInfo, recipientError) = await ValidateRoomRecipientAsync(room, roomEmail);
+        (RoomInfo? info, string? error) recipient;
+        try
+        {
+            recipient = await ValidateRoomRecipientAsync(room, roomEmail);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Room Finder apply for {Room}: reading the room failed; nothing was written: {Error}", roomEmail, ex.Message);
+            throw;
+        }
+        var (roomInfo, recipientError) = recipient;
         if (recipientError != null || roomInfo == null)
         {
+            var refusal = recipientError ?? $"Room '{roomEmail}' not found.";
             result.Success = false;
-            result.Message = recipientError ?? $"Room '{roomEmail}' not found.";
-            _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, result.Message);
+            result.Message = $"{refusal} Nothing was written.";
+            _logger.LogWarning("Room Finder apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
             return result;
         }
 
@@ -881,6 +893,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             result.Success = false;
             result.Message = ValidatedMailbox.Refusal(roomEmail);
+            _logger.LogWarning("Room Type apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, result.Message);
             return result;
         }
 
@@ -889,8 +902,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             try { TimeZoneInfo.FindSystemTimeZoneById(timezone); }
             catch (TimeZoneNotFoundException)
             {
+                var refusal = $"Invalid timezone: '{timezone}'.";
                 result.Success = false;
-                result.Message = $"Invalid timezone: '{timezone}'.";
+                result.Message = $"{refusal} Nothing was written.";
+                _logger.LogWarning("Room Type apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
                 return result;
             }
         }
@@ -899,7 +914,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (recipientError != null)
         {
             result.Success = false;
-            result.Message = recipientError;
+            result.Message = $"{recipientError} Nothing was written.";
+            _logger.LogWarning("Room Type apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, recipientError);
             return result;
         }
 
@@ -910,8 +926,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         var missingGroups = FindMissingRequiredGroups(key => _moduleConfig.GetValue(ModuleId, key));
         if (missingGroups.Count > 0)
         {
+            var refusal = $"Conference Rooms module is not configured. Set {string.Join(", ", missingGroups)} in Module Config.";
             result.Success = false;
-            result.Message = $"Conference Rooms module is not configured. Set {string.Join(", ", missingGroups)} in Module Config.";
+            result.Message = $"{refusal} Nothing was written.";
+            _logger.LogWarning("Room Type apply for {Room} refused the row; nothing was written: {Refusal}", roomEmail, refusal);
             return result;
         }
 
