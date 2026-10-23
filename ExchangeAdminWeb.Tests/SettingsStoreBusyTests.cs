@@ -15,8 +15,8 @@ namespace ExchangeAdminWeb.Tests;
 /// <remarks>
 /// The compiled page through <see cref="SettingsPageHarness"/>, the lock held by a connection of its own on the harness's
 /// database file - another writer, as the other instance or another admin's save would be. The store's wait is the real
-/// one, about 35 seconds (the factory's busy timeout inside the provider's busy retry), so the first case is slow by
-/// design. No directory: the one rule edit is a pattern, which is never looked up.
+/// one, <see cref="SqliteConnectionFactory.BusyTimeout"/> (5 seconds since aud-a41; about 35 before), so the first case is
+/// slow by design. No directory: the one rule edit is a pattern, which is never looked up.
 /// </remarks>
 public sealed class SettingsStoreBusyTests : IDisposable
 {
@@ -105,15 +105,20 @@ public sealed class SettingsStoreBusyTests : IDisposable
         var dirty = SettingsPageHarness.Field<AdminPageDirtyState>(page, typeof(AdminSettingsPage), "dirty");
 
         var holder = HoldWriteLock();
+        var waited = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             await _h.RunAsync(page, "SaveProtectedPrincipals");
         }
         finally
         {
+            waited.Stop();
             Release(holder);
         }
 
+        // aud-a41: the documented wait, once - not the provider's 30-second retry around it.
+        Assert.True(waited.Elapsed < SqliteConnectionFactory.BusyTimeout * 2 - TimeSpan.FromSeconds(1),
+            $"the save waited {waited.Elapsed.TotalSeconds:F2} s for the busy store");
         Assert.Equal("777", StoredSecret());
         Assert.Equal(new[] { "user:" + Cfo }, StoredRules());
         var record = Assert.Single(_h.AuditEvents());

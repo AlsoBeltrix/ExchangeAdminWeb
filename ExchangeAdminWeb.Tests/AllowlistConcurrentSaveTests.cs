@@ -170,7 +170,8 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         Assert.Contains("allowlistVersion = ", load, StringComparison.Ordinal);
 
         var save = AuditCategoryFilingTests.MethodBody(code, "private async Task SaveAllowlistAsync()");
-        Assert.Contains("SaveAllowlistAndAudit(rows, allowlistVersion, ", save, StringComparison.Ordinal);
+        Assert.Contains("var version = allowlistVersion;", save, StringComparison.Ordinal);
+        Assert.Contains("SaveAllowlistAndAudit(rows, version, ", save, StringComparison.Ordinal);
         Assert.Contains("allowlistVersion = result.Version", save, StringComparison.Ordinal);
     }
 

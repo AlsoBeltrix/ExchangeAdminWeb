@@ -319,7 +319,8 @@
             }
             else
             {
-                var outcome = Enablement.SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = moduleEnabled });
+                var wanted = moduleEnabled;
+                var outcome = await Task.Run(() => Enablement.SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = wanted }));
                 if (outcome.StoreCorrupt)
                 {
                     enablementStoreCorrupt = true;
@@ -340,8 +341,8 @@
                     catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ExchangeOnline status change"); }
                 }
 
-                moduleEnabledBaseline = moduleEnabled;
-                statusMessage = moduleEnabled
+                moduleEnabledBaseline = wanted;
+                statusMessage = wanted
                     ? "Exchange Online module enabled. Dependent modules with their own toggles on are now active."
                     : "Exchange Online module disabled. All dependent modules are now inactive.";
                 statusIsError = false;
@@ -491,10 +492,9 @@
             var changed = wanted.Keys
                 .Where(k => !string.Equals(wanted[k], (exoShown.GetValueOrDefault(k) ?? "").Trim(), StringComparison.Ordinal))
                 .ToList();
-            var outcome = ModuleConfigSvc.SaveChangedValues(
-                ExoConnectionPool.ConfigModuleKey,
-                changed.ToDictionary(k => k, k => exoStored.GetValueOrDefault(k) ?? "", StringComparer.OrdinalIgnoreCase),
-                changed.ToDictionary(k => k, k => wanted[k], StringComparer.OrdinalIgnoreCase));
+            var loadedValues = changed.ToDictionary(k => k, k => exoStored.GetValueOrDefault(k) ?? "", StringComparer.OrdinalIgnoreCase);
+            var wantedValues = changed.ToDictionary(k => k, k => wanted[k], StringComparer.OrdinalIgnoreCase);
+            var outcome = await Task.Run(() => ModuleConfigSvc.SaveChangedValues(ExoConnectionPool.ConfigModuleKey, loadedValues, wantedValues));
             if (outcome.Status == ModuleConfigSaveStatus.StoreCorrupt)
             {
                 configCorrupt = true;

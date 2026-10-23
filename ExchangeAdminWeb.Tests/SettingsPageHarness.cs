@@ -93,6 +93,7 @@ internal sealed class SettingsPageHarness : IDisposable
         http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(new NoNetwork()));
         Delinea = new DelineaService(http, Config, NullLogger<DelineaService>.Instance, ExtendedLog, Trace);
         ProtectedStore = new AttributeEditorHarness.SwitchableStore(TestConfigStore.Create(_root));
+        AllowlistStore = new AttributeEditorHarness.SwitchableStore(TestConfigStore.Create(_root));
         ProtectedPrincipals = new ProtectedPrincipalService(
             Env, Config, ModuleConfig, new ProtectedPrincipalRepository(ProtectedStore), Delinea,
             NullLogger<ProtectedPrincipalService>.Instance);
@@ -134,6 +135,10 @@ internal sealed class SettingsPageHarness : IDisposable
     public ExtendedLogService ExtendedLog { get; }
     public DelineaService Delinea { get; }
     public AttributeEditorHarness.SwitchableStore ProtectedStore { get; }
+
+    /// <summary>The attribute allowlist's store, for <see cref="CreateAttributeEditor"/>'s service (aud-a41).</summary>
+    public AttributeEditorHarness.SwitchableStore AllowlistStore { get; }
+
     public ProtectedPrincipalService ProtectedPrincipals { get; }
     public ExoConnectionPool ExoPool { get; }
     public ClientInfoService ClientInfo { get; }
@@ -164,7 +169,7 @@ internal sealed class SettingsPageHarness : IDisposable
             Audit,
             new EmailService(Config, NullLogger<EmailService>.Instance),
             ModuleConfig,
-            new AttributeEditorRepository(TestConfigStore.Create(_root)),
+            new AttributeEditorRepository(AllowlistStore),
             Env,
             NullLogger<ADAttributeEditorService>.Instance);
 
@@ -273,12 +278,15 @@ internal sealed class SettingsPageHarness : IDisposable
     }
 
     /// <summary>Runs one of <paramref name="page"/>'s own methods on the renderer's dispatcher.</summary>
-    public Task RunAsync<TPage>(TPage page, string method) where TPage : ComponentBase
+    public Task RunAsync<TPage>(TPage page, string method, params object?[] args) where TPage : ComponentBase
     {
         var info = typeof(TPage).GetMethod(method, PrivateInstance)
             ?? throw new InvalidOperationException($"{typeof(TPage).Name}.{method} not found - this harness is stale");
-        return _renderer.Dispatcher.InvokeAsync(() => info.Invoke(page, null) as Task ?? Task.CompletedTask);
+        return _renderer.Dispatcher.InvokeAsync(() => info.Invoke(page, args) as Task ?? Task.CompletedTask);
     }
+
+    /// <summary>Runs <paramref name="action"/> on the renderer's dispatcher - the page's circuit - as an event would (aud-a41).</summary>
+    public Task OnDispatcherAsync(Action action) => _renderer.Dispatcher.InvokeAsync(action);
 
     // The setup lifecycle methods await only substitutes that have already completed.
     private void Setup(ComponentBase page, Type declaring, string method)
