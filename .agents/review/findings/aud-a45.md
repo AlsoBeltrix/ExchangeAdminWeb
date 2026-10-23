@@ -5,7 +5,7 @@
 throws, `HasChangedSince` throws into every reader that hits its cache: `ADAttributeEditorService` (two
 sites), `PermissionValidator`, `ProtectedPrincipalService`, `UsageTelemetryService`. aud-a28z guarded
 `ExtendedLogService`'s own call; one guard in `LogOnce` covers all of them.
-**Status**: Merged `2a15e9ed`; closed on guard proof; codex review pending
+**Status**: Complete; merged `2a15e9ed`; codex attr-batch-14 raised one HIGH, admitted as aud-a51
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
 **Commit**: `d552bd61` (fix, tests, record); comments `ab666f85`; plan `45a99de1`
 **Reviewer**: implementer (surfaced by the aud-a28z/a26u/cdt-41 agent, 2026-10-22, candidate 1 of its hand-back)
