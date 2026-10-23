@@ -10,7 +10,7 @@ production probe in `ADDirectorySearchServiceTests` (the three known "AD unavail
 dependency.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
-**Commit**: -
+**Commit**: `f5e14730` (fix, tests, record); plan `ee4c8c5d`; comments `4e0f61a1` (shared with aud-a2w, aud-a2x)
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidates 1, 2 and 5 of its hand-back)
 
 ## Evidence
@@ -243,4 +243,50 @@ Disable and Self-Service Groups (an import's reported, unthrown error no longer 
 versions are due at merge; Conference Rooms' code is the same statements moved (its bump is due with aud-a2w and aud-a2x
 on this branch). No shared code changes behaviour (`ActiveDirectoryModuleImport` gains a corrected comment only, in the
 comments commit), so no base app bump from this record. `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were
-outside this brief. Gates are in the branch-tip section the records' last commit adds.
+outside this brief. Gates are in the branch-tip section below.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`4e0f61a1`), checked comment-only by
+`scratchpad/round/comment_only.ps1` (blank lines and lines whose text starts `//`, `///` included, dropped from each file
+as at `295c4d19` and as committed; the code lines identical in order):
+
+| File | Code lines | Comment and blank lines | md5 after |
+| --- | --- | --- | --- |
+| `Services/ConferenceRoomService.cs` | 1863 = 1863 | 1012 -> 1050 | `c7eaecf299acdc3b3eb003b6dc036e07` |
+| `Services/EmergencyDisableService.cs` | 938 = 938 | 346 -> 359 | `cdf3eb0201ff06f0c8f6d76a7a155fe5` |
+| `Services/SelfServiceGroups/SelfServiceGroupService.cs` | 945 = 945 | 588 -> 609 | `3398a133513bbdfb8184fb85851916cf` |
+| `Services/ModuleCredentialService.cs` | 45 = 45 | 17 -> 25 | `c011e233d1a503157edb87c504261269` |
+| `Services/ActiveDirectoryModuleImport.cs` | 18 = 18 | 18 -> 22 | `d1ccc219c8592efd22ffaab2636eb5e5` |
+
+This record's: the shared import's note at the Conference Rooms preflight's import; Emergency Disable's seam and why its
+steps import through the helper; Self-Service Groups' `PrepareAdRunspace`, group probe and re-read; the helper's remark,
+which said Conference Rooms keeps its own copy. Also, at the coordinator's request, the City/State/Country write's header
+comment, which named `ExchangeServiceBase.CheckAdGroupMembership` - removed on master by aud-a23o (`d690a6c1`) - now
+says the write runs in its own AD runspace "as the Comms-10k service's directory reads do". The test files carry their
+comments from their own commits.
+
+## Branch-tip gates - 2026-10-23 (`4e0f61a1`; the records commit adds only these records)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings - the baseline count - none in a
+  file this branch touches.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 5,758 passed, 0 skipped, 0
+  failed, 5,758 total, 3 m 14 s; nothing hung, no Sequence file. The three known AD skips are 0: the three
+  `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty` now pass on the stand-in. The run still included the
+  live-directory classes, which read the directory on this host (Known gaps).
+- Each fix commit's tree, the suite less the three live-directory classes (Debug, `--no-build` on the round's restored
+  build): `f5e14730` 5,690 passed / 0 skipped / 0 failed; `06c68f89` 5,696 / 0 / 0; `295c4d19` 5,712 / 0 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- No `.ps1` or `.psm1` changed: no PSScriptAnalyzer or Pester run (the round runner, rows, probes and checker are scratch
+  files outside the repository).
+
+**Merge check** (the coordinator's request, 2026-10-23): `git fetch` from both remotes - `origin/master`, `github/master`
+and the local `master` all at `909ec552`, 131 commits past this branch's base `e9886df7`, none touching this branch's twelve
+files. `git merge-tree --write-tree HEAD master`: clean, tree `611ac21d6e40d9e8890bd3c5d022903c0ab56e5f`. That tree, exported
+to the scratchpad (`git archive`), built with 0 errors, and its suite less the live-directory classes passed: 6,297 passed,
+0 skipped, 0 failed, 3 m 31 s - master's own changes to the harness, the test store and the log services included.
+
+**On master since the base**: the audit table's `ExchangeServiceBase.CheckAdGroupMembership` row is moot - the method is
+removed (aud-a23o). The connection pool's follow-up stands, unchanged in shape: at `909ec552` the import is
+`ExoConnectionPool.cs` 746-750, `ReadConnectionIds`' check 711, `NewConnectionId` 782.

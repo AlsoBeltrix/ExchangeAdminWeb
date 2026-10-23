@@ -9,7 +9,7 @@ row's time-zone and recipient refusals do not end "Nothing was written." - a thi
 shared with `SetRoomTypeAsync`, after aud-a2v unified the two preflights.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
-**Commit**: -
+**Commit**: `06c68f89` (fix, tests, record); plan `ee4c8c5d`; comments `4e0f61a1` (shared with psl-8, aud-a2x)
 **Reviewer**: implementer (surfaced by the aud-a2v agent, 2026-10-22, candidates 1, 3 and 4 of its hand-back)
 
 ## Evidence
@@ -173,4 +173,12 @@ round: `a50b7ea381091fa922529d381ed4a94c` (its comments written with the tests).
 Fixed on branch `worktree-agent-a56481d2c0a45a8cb`, not merged, not pushed. A module-scoped behaviour change (Conference
 Rooms: four warning lines on the Type path, one on the Finder row's read, and the words of five refusals): the Conference
 Rooms module version bump is due at merge - not made here, `Modules/ModuleCatalog.cs` being outside this brief. No shared
-code changed. Gates are in the branch-tip section the records' last commit adds.
+code changed.
+
+## Comments, branch-tip gates and the merge check
+
+Shared by the branch's three findings, recorded once in `psl-8.md` ("Comments after the round", "Branch-tip gates"): the
+comments commit `4e0f61a1`, checked code-identical - this record's are the Type path's and the row's notes in
+`ConferenceRoomService` and `ValidateRoomRecipientAsync`'s remark; the Release build, the full suite (5,758 passed, 0
+skipped, 0 failed at `4e0f61a1`), this commit's tree less the live-directory classes (`06c68f89`: 5,696 / 0 / 0), format,
+`git diff --check`, the ASCII lint, and the merge with master `909ec552` (clean).

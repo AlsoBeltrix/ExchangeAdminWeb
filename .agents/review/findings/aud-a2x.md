@@ -5,7 +5,7 @@ carry the same text, so when the secret ID is configured and the lookup itself f
 secret, an HTTP error) the operator is sent to set an ID that is already set.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
-**Commit**: -
+**Commit**: `295c4d19` (fix, tests, record); plan `ee4c8c5d`; comments `4e0f61a1` (shared with psl-8, aud-a2w)
 **Reviewer**: implementer (surfaced by the aud-a2v agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence
@@ -198,4 +198,13 @@ Fixed on branch `worktree-agent-a56481d2c0a45a8cb`, not merged, not pushed. A mo
 Rooms: the words of the four credential refusals when the ID is set) and a shared-code change (`ModuleCredentialService`
 gains `LookupCredentialsAsync` and its result types, its old method unchanged in behaviour): the Conference Rooms module
 version and the base app version are due at merge - not made here, `ExchangeAdminWeb.csproj` and
-`Modules/ModuleCatalog.cs` being outside this brief. Gates are in the branch-tip section the records' last commit adds.
+`Modules/ModuleCatalog.cs` being outside this brief.
+
+## Comments, branch-tip gates and the merge check
+
+Shared by the branch's three findings, recorded once in `psl-8.md` ("Comments after the round", "Branch-tip gates"): the
+comments commit `4e0f61a1`, checked code-identical - this record's are `LookupDirectoryCredentialAsync`'s,
+`DirectoryCredentialRefusal`'s and the lookups' notes in `ConferenceRoomService`, and `ModuleCredentialService`'s two;
+the Release build, the full suite (5,758 passed, 0 skipped, 0 failed at `4e0f61a1`), this commit's tree less the
+live-directory classes (`295c4d19`: 5,712 / 0 / 0), format, `git diff --check`, the ASCII lint, and the merge with master
+`909ec552` (clean).
