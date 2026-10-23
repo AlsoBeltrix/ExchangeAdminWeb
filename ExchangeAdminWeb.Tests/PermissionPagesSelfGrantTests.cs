@@ -319,7 +319,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
         string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
-        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null, bool onPremDenied = false)
+        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null, bool onPremDenied = false,
+        IActivityProgress? progress = null)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -327,7 +328,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         {
             var logger = new CapturingLogger<MailboxPermissions>();
             component = new MailboxPermissions();
-            Wire(component, resolver, audit, logger, email);
+            Wire(component, resolver, audit, logger, email, progress);
             Set(component, "MailboxService", new OnPremMailboxService(_h, connectFailure: onPremConnect));
             SetField(component, "onPremFullAccess", true);
             SetField(component, "onPremSendAs", false);
@@ -337,7 +338,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         {
             var logger = new CapturingLogger<CalendarPermissions>();
             component = new CalendarPermissions();
-            Wire(component, resolver, audit, logger, email);
+            Wire(component, resolver, audit, logger, email, progress);
             Set(component, "CalendarService", new OnPremCalendarService(_h, connectFailure: onPremConnect));
             SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
             warnings = () => logger.Warnings;
@@ -1436,6 +1437,53 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Empty(warnings);
         Assert.Empty(_h.CallsTo("Invoke-Command"));
         Assert.Empty(_h.Writes);
+    }
+
+    // ---- aud-a70 (9): a progress panel that throws on completion never takes the handler with it ---------------------------
+
+    /// <summary>A progress service whose activity throws on every completion, and what it throws.</summary>
+    private static (IActivityProgress Progress, IActivityHandle Activity, Exception Failure) ProgressThatCannotComplete()
+    {
+        var (progress, activity) = WatchedProgress();
+        var failure = new InvalidOperationException("the progress panel is gone");
+        activity.When(handle => handle.Complete(Arg.Any<bool>(), Arg.Any<string?>())).Do(_ => throw failure);
+        return (progress, activity, failure);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ASingleChange_WhoseProgressCannotComplete_EndsWithItsBanner_AndNothingEscapesTheHandler(string page)
+    {
+        // The success path's completion throws; the catch records the step after the write, and its own completion - its
+        // last statement - threw again, out of the handler, the banner and the rows already set.
+        var (progress, activity, failure) = ProgressThatCannotComplete();
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress);
+
+        Assert.False(result.Success);
+        Assert.StartsWith("The change was written, but a step after the write failed: the progress panel is gone.", result.Message, StringComparison.Ordinal);
+        activity.Received(2).Complete(Arg.Any<bool>(), Arg.Any<string?>());
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, warning => Assert.Same(failure, warning.Exception));
+        Assert.Contains("could not be completed", warnings[1].Message, StringComparison.Ordinal);
+        Assert.Equal(2, _h.AuditRows().Count);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChange_WhoseProgressCannotComplete_EndsWithItsResult_AndNothingEscapesTheHandler(string page)
+    {
+        // ExecuteOnPrem completes its activity in its finally, above the staged target's reset: a throw there left the handler
+        // with the target still staged.
+        var (progress, activity, failure) = ProgressThatCannotComplete();
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, progress: progress);
+
+        Assert.True(result.Success, result.Message);
+        activity.Received(1).Complete(true, Arg.Any<string?>());
+        var (message, exception) = Assert.Single(warnings);
+        Assert.Same(failure, exception);
+        Assert.Contains("could not be completed", message, StringComparison.Ordinal);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

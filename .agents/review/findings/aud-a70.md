@@ -64,6 +64,13 @@ written." (the two page texts gain it; `ExchangeServiceBase.LocationReadFailure`
 above the validation (candidates in the hand-back). `ExchangeServiceBaseOnPremReadTests`' line pin follows the new call
 shape (`PermissionResult.Fail(Refused(...))`).
 
+(9) `Components/Pages/MailboxPermissions.razor` 529 and `Components/Pages/CalendarPermissions.razor` 506: `SubmitSingle`'s catch
+ends in `activity.Complete(false, failed)`, unguarded, after the result and the row are set; a completion that throws there
+leaves the handler - and, with no ErrorBoundary in this app, the circuit. It now sits in its own guard ("The progress of
+the change on <target> could not be completed; the result stands"). `ExecuteOnPrem`'s `finally` completes its activity the
+same way (Mailbox 752, Calendar 695), above the staged target's reset, which such a throw skipped: the same guard there. In
+place. `ProcessBulk`'s `finally` has the same shape and is outside this sub-item (a candidate in the hand-back).
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -123,6 +130,21 @@ Repair: the (5) commit `9b0aa71b` ran red in the full suite - 2 of 6,713, `Valid
 (both pages), a count pin of `ValidatedMailbox.WithWrittenIdentity(` calls per page (3) that the refusal row's own call makes
 4. The round's filter had not included that class. The follow-up commit raises the pin to 4 and names the new row; no
 production change. From here every commit runs the full suite before it lands.
+
+### (9) - commit `fix(aud-a70): (9) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry` (455
+tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `632CF15C0209D2C29A912E9BE096B33B`,
+`Components/Pages/CalendarPermissions.razor` `405930F4FA2E3AB8F21D94339D205D19`. Every restore matched; reruns 455/455.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M9 | Mailbox `SubmitSingle`'s catch: the completion's guard removed | `0DB19052F5B0DED8C2232EA7FD7738B6` | 1 of 455: `ASingleChange_WhoseProgressCannotComplete_EndsWithItsBanner_AndNothingEscapesTheHandler(page: "Mailbox Permissions")` - the throw left the handler |
+| M9c | the same on Calendar Permissions | `DCE47A8478B5FACBDB34687316D7C25C` | 1 of 455: the same test's `(page: "Calendar Permissions")` row |
+| E9 | extra, Mailbox `ExecuteOnPrem`'s `finally`: the completion's guard removed | `E76F62E5B88817231BECA6CCAAE15B29` | 1 of 455: `AnOnPremChange_WhoseProgressCannotComplete_EndsWithItsResult_AndNothingEscapesTheHandler(page: "Mailbox Permissions")` |
+| E9c | the same on Calendar Permissions | `43AA1656013D615884DE385C876FB2A8` | 1 of 455: the same test's `(page: "Calendar Permissions")` row |
+
+Each mutant is its completion call as it stood at `eb017102`.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 
