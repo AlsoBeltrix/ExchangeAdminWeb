@@ -37,6 +37,9 @@ public class ExtendedLogService : IDisposable
     // closed queue refused - and since aud-a46 an entry the full queue discarded. Incremented before the drop is
     // reported, so it holds when the report itself fails.
     private long _droppedEntries;
+    // aud-a56. Whether a failed rotation has been reported, until an entry's write finds no rotation to do or makes one:
+    // one report per failure streak. Only the one consumer reads or writes it.
+    private bool _rotationFailureReported;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -306,9 +309,8 @@ public class ExtendedLogService : IDisposable
                 // aud-a46. A StreamWriter over an append stream wrote here: a write that failed part-way left a cut line
                 // the next entry was appended onto, which the event log dropped with it; and under a shared log root it
                 // took no lock against the other instance (aud-a47). The JSONL writer's one-line append, under the file's
-                // lock, writes each entry now. The folder is created before the lock, whose file lives in it.
+                // lock, writes each entry now. Since aud-a56 the appender creates the folder, for both writers.
                 var logPath = ActivePath(entry.LogDate);
-                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
                 AppendLine(logPath, entry);
             }
             catch (Exception ex)
@@ -356,15 +358,30 @@ public class ExtendedLogService : IDisposable
     /// <summary>Test seam (aud-a46): how long the consumer waits for another writer's lock on its file before it drops.</summary>
     internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
-    // One entry, one line or none, under the file's lock (aud-a28z part 3, aud-a47, shared since aud-a46). The two reports
-    // are this service's own, guarded as all its reports are.
+    // One entry, one line or none, under the file's lock (aud-a28z part 3, aud-a47, shared since aud-a46). The reports
+    // are this service's own, guarded as all its reports are. aud-a56: a rotation that fails is reported once per failure
+    // streak, and the entry is still written.
     private void AppendLine(string logPath, PendingLogEntry entry) =>
         JsonlFileAppender.Append(
             logPath,
             entry.Json,
             LockWait,
             JsonlFileAppender.DefaultAccessRefusalGrace,
-            rotateIfFull: () => RotateIfFull(entry.LogDate, logPath),
+            rotateIfFull: () =>
+            {
+                RotateIfFull(entry.LogDate, logPath);
+                _rotationFailureReported = false;
+            },
+            rotationFailed: ex =>
+            {
+                if (_rotationFailureReported)
+                    return;
+
+                _rotationFailureReported = true;
+                ReportSafely(logger => logger.LogWarning(ex,
+                    "Could not rotate the extended log file {Path}, which has reached its size limit: {Reason} The entry was written to it, past the limit. Each entry tries the rotation again; this is not reported again until an entry finds the file rotated or under its limit",
+                    logPath, ex.Message));
+            },
             writeLineBytes: WriteLineBytes,
             repaired: () => ReportSafely(logger => logger.LogWarning(
                 "The extended log file {Path} ended in a partial line, left by a write that did not finish; this entry was started on a new line",
@@ -385,23 +402,9 @@ public class ExtendedLogService : IDisposable
         RotateLogFiles(logDate, activePath);
     }
 
-    private void RotateLogFiles(DateTime logDate, string activePath)
-    {
-        var oldestPath = GetRotatedLogPath(logDate, _maxFilesPerDay - 1);
-        if (File.Exists(oldestPath))
-            File.Delete(oldestPath);
-
-        for (var i = _maxFilesPerDay - 2; i >= 1; i--)
-        {
-            var source = GetRotatedLogPath(logDate, i);
-            if (!File.Exists(source))
-                continue;
-
-            File.Move(source, GetRotatedLogPath(logDate, i + 1), overwrite: true);
-        }
-
-        File.Move(activePath, GetRotatedLogPath(logDate, 1), overwrite: true);
-    }
+    // aud-a56. Gap-aware, so a rotation retried after a failed last move deletes nothing - see JsonlFileAppender.Rotate.
+    private void RotateLogFiles(DateTime logDate, string activePath) =>
+        JsonlFileAppender.Rotate(activePath, _maxFilesPerDay - 1, index => GetRotatedLogPath(logDate, index));
 
     private IEnumerable<string> GetLogPathsForDate(DateTime date)
     {

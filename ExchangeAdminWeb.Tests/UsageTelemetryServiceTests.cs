@@ -353,8 +353,8 @@ public sealed class UsageTelemetryServiceTests : IDisposable
 
         Assert.Equal(200, service.Events.Count);
 
-        // One load is two store reads plus a token read; a cache hit is at most one throttled
-        // token read per two seconds. Uncached this burst costs 400+.
+        // One load is one store read plus a token read (two store reads before aud-a57); a cache
+        // hit is at most one throttled token read per two seconds. Uncached this burst costs 400+.
         Assert.InRange(counting.Reads, 0, 4);
     }
 
@@ -388,6 +388,57 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         Assert.False(service.Enabled());
         service.RecordOpen("s", "GroupManagement", "group-management");
         Assert.Empty(service.Events);
+    }
+
+    /// <summary>
+    /// aud-a57: the switch was read twice - the corruption probe, then the value - and the value's read answers an empty
+    /// config when the store fails, which is a switch never configured, so on. A store that failed between the two reads
+    /// read a switch the operator had turned off as on, and telemetry was recorded.
+    /// </summary>
+    [Fact]
+    public void ASwitchTurnedOff_WhoseStoreFailsAfterOneRead_IsOff()
+    {
+        var store = new ReadsFailAfterStore(TestConfigStore.Create(_dir));
+        var moduleConfig = ConfigOver(store);
+        moduleConfig.SaveModuleConfig(
+            UsageTelemetryService.ConfigModuleId,
+            new Dictionary<string, string> { [UsageTelemetryService.ConfigKey] = "false" });
+        var service = new CapturingTelemetry(
+            Repo(), moduleConfig, new ModuleCatalog(), NullLogger<UsageTelemetryService>.Instance);
+        store.AllowReads(1);
+
+        Assert.False(service.Enabled());
+        service.RecordOpen("s", "GroupManagement", "group-management");
+        Assert.Empty(service.Events);
+    }
+
+    /// <summary>
+    /// aud-a57: a switch that cannot be read is off, and the cache holds that answer exactly as long as it holds a
+    /// readable one - with no write to move the change token, until 30 s have passed - and then reads the store again.
+    /// </summary>
+    [Fact]
+    public void ASwitchThatCannotBeRead_IsOff_ForNoLongerThanTheCacheHoldsAnyAnswer()
+    {
+        var store = new ReadsFailAfterStore(TestConfigStore.Create(_dir));
+        var moduleConfig = ConfigOver(store);
+        moduleConfig.SaveModuleConfig(
+            UsageTelemetryService.ConfigModuleId,
+            new Dictionary<string, string> { [UsageTelemetryService.ConfigKey] = "true" });
+        var logger = new CapturingLogger<UsageTelemetryService>();
+        var service = new CapturingTelemetry(Repo(), moduleConfig, new ModuleCatalog(), logger);
+        var clock = DateTime.UtcNow;
+        service.UtcNow = () => clock;
+        store.AllowReads(0);
+
+        Assert.False(service.Enabled());
+
+        store.AllowReads(int.MaxValue);
+        clock = clock.AddSeconds(29);
+        Assert.False(service.Enabled());
+
+        clock = clock.AddSeconds(2);
+        Assert.True(service.Enabled());
+        Assert.Single(logger.Warnings);
     }
 
     // --- AC3: a telemetry fault never reaches the caller -------------------
@@ -629,9 +680,9 @@ public sealed class UsageTelemetryServiceTests : IDisposable
     // --- helpers -----------------------------------------------------------
 
     /// <summary>
-    /// A telemetry service whose switch read fails after its corruption probe passed - the store's second read fails, as
-    /// a busy shared database's can - with the config service's logger and its own both throwing: one provider behind
-    /// both, as in production.
+    /// A telemetry service whose switch read fails - the store refuses it, as a busy shared database can - with the config
+    /// service's logger and its own both throwing: one provider behind both, as in production. Since aud-a57 the switch is
+    /// one read, so no read is allowed; before, the corruption probe's read passed and the value's read failed.
     /// </summary>
     private UsageTelemetryService ServiceWhoseSwitchReadFails(ILogger<UsageTelemetryService> logger)
     {
@@ -641,7 +692,7 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         var moduleConfig = new ModuleConfigService(
             new ModuleCatalog(), env, new ModuleConfigRepository(store), new ThrowingLogger<ModuleConfigService>());
         var service = new UsageTelemetryService(Repo(), moduleConfig, new ModuleCatalog(), logger);
-        store.AllowReads(1);
+        store.AllowReads(0);
         return service;
     }
 

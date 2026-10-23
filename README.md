@@ -746,7 +746,8 @@ What you need to do:
 - Give each instance's account these rights on `<LogRoot>\ExchangeAdminWeb`: create files,
   and read and write the files there - the other instance's too, its log files and lock files
   alike. The lock does not need delete, but rotation does: without it, a file that reaches its
-  size limit cannot be rotated and the writes to it fail. `deploy.ps1` and the installer grant
+  size limit cannot be rotated. The writes to it still land, in that file past its limit, and
+  the failure is logged as a warning (see Rotation below). `deploy.ps1` and the installer grant
   each instance Modify on the folder, which covers all of it.
 - Both instances must run the same build. A build older than the lock writes without it, and
   while one does, the two can still overwrite each other's rows. The first build with the lock
@@ -970,6 +971,16 @@ Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`,
 - `weekly`: New file each week
 - `monthly`: New file each month
 - `Audit:MaxFileMB` and `Audit:MaxFilesPerPeriod` cap both audit and trace file growth
+- A file that reaches its size limit is rotated before the next write. A rotation that fails -
+  the folder does not let this instance's account delete, or another program holds the file
+  open without delete sharing - does not lose the write: it goes to the full file, past its
+  limit, and every later write tries the rotation again. The failure is logged once as a
+  warning naming the file and the reason, and not again until a write finds the file rotated
+  or under its limit. A retried rotation deletes nothing a completed one would have kept. The
+  same holds for the extended diagnostic log.
+- The log folder is created before every write, so a `<LogRoot>\ExchangeAdminWeb` deleted
+  while the app runs is created again by the next write. A folder that cannot be created is
+  reported the way a lock file the folder refuses is (see Shared log root).
 
 **Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Every entry it drops is counted - one it could not write, or one the full queue discarded - and with **Show diagnostics** on, the Admin Event Log shows that count and names any trace or extended log file it could not read. At shutdown it waits for its queue in proportion to the queue's length - about 26 seconds for a full one, and never less than 5 - and counts as dropped whatever it still could not write. Keep Admin Event Log access tightly scoped.
 
@@ -1031,6 +1042,20 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 - Set `NotifyUsersOnPermissionGrant: true` to enable
 - Sent when permissions are granted or removed
 - Friendly email with mailbox details and security notice
+
+**Boolean settings:** `Email:SmtpUseSsl`, `Email:NotifyUsersOnPermissionGrant` and `ServiceNow:Enabled`
+take `true` or `false`, in any case. Left out or blank, each is `false`. A value that is neither -
+`yes`, `1` - is logged once as a warning naming the setting and the value, and until it is
+corrected it is read as:
+- `Email:SmtpUseSsl`: `true`, TLS when connecting, so a mistyped value never sends mail in clear
+  text. A relay that does not offer TLS on connect then refuses the mail, and each failure is logged.
+- `ServiceNow:Enabled`: `true`, so a mistyped value never passes every ticket unchecked. Without a
+  reachable ServiceNow instance, each ticket's check then fails.
+- `Email:NotifyUsersOnPermissionGrant`: `false`, as when it is left out, and the Home page then does
+  not say that users are notified. Until a follow-up lands, the Mailbox Permissions and Calendar
+  Permissions pages still fail to render on such a value.
+
+Before, such a value stopped the Home page, and every page that sends mail or checks a ticket.
 
 ## Bulk Operations
 

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Serilog.Events;
@@ -144,6 +145,34 @@ public sealed class EventLogDiagnosticsTests : IDisposable
         Assert.Contains("2 lines in the audit log could not be parsed and are not shown.", Rendered(withoutDiagnostics), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("audit")]
+    [InlineData("trace")]
+    public async Task AFileThatCannotBeRead_WithALoggerThatThrows_DoesNotEndTheLoad(string stream)
+    {
+        // aud-a57. The audit and trace reads' catches reported through the page's logger with no guard, so a provider that
+        // threw there ended LoadEvents with its exception, the rest of the range unread.
+        Assert.Equal(JsonlWriteOutcome.Written, _jsonl.WriteAudit(AuditRecord("an audit row")));
+        Assert.Equal(JsonlWriteOutcome.Written, _jsonl.WriteTrace(TraceRecord("a trace step")));
+        var logger = new ThrowingLogger();
+        var page = PageWithDiagnostics(shown: true, logger);
+
+        using (HoldExclusively(stream == "audit" ? AuditFile() : TraceFile()))
+            Assert.Null(await Record.ExceptionAsync(() => LoadEvents(page)));
+
+        Assert.Equal(1, logger.Attempts);
+        var text = Rendered(page);
+        if (stream == "audit")
+        {
+            Assert.Contains("Error reading log", text, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("could not be read", text, StringComparison.Ordinal);
+            Assert.Contains(Path.GetFileName(TraceFile()), text, StringComparison.Ordinal);
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------
 
     private static Dictionary<string, object?> AuditRecord(string action) => new()
@@ -204,13 +233,13 @@ public sealed class EventLogDiagnosticsTests : IDisposable
     private string ExtendedFile() =>
         Path.Combine(_root, "ExchangeAdminWeb", $"exchangeadmin_{DateTime.Now:yyyyMMdd}_extended.jsonl");
 
-    private Page PageWithDiagnostics(bool shown)
+    private Page PageWithDiagnostics(bool shown, ILogger<Page>? logger = null)
     {
         var page = new Page();
         SetProperty(page, "JsonlLog", _jsonl);
         SetProperty(page, "ExtendedLog", _extended);
         SetProperty(page, "Progress", _progress);
-        SetProperty(page, "Logger", NullLogger<Page>.Instance);
+        SetProperty(page, "Logger", logger ?? NullLogger<Page>.Instance);
         SetField(page, "authChecked", true);
         SetField(page, "showDiagnostics", shown);
         return page;
@@ -242,6 +271,25 @@ public sealed class EventLogDiagnosticsTests : IDisposable
         }
 
         return text.ToString();
+    }
+
+    /// <summary>Counts every report and throws once it has, as a failing provider can (aud-a28u).</summary>
+    private sealed class ThrowingLogger : ILogger<Page>
+    {
+        private int _attempts;
+
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Interlocked.Increment(ref _attempts);
+            throw new InvalidOperationException("the logging provider failed");
+        }
     }
 }
 #pragma warning restore BL0006

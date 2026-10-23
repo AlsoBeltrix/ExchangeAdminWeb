@@ -130,14 +130,19 @@ public class UsageTelemetryService
     }
 
     /// <summary>The uncached read behind <see cref="Enabled"/>. Never throws.</summary>
+    /// <remarks>
+    /// One read of the store (aud-a57). It was two - the corruption probe, then the value - and the value's read answers
+    /// an empty config when the store fails, which is a switch never configured, which is on. A read that failed between
+    /// the two read a switch the operator had turned off as on, and the answer was cached.
+    /// </remarks>
     private bool ReadSwitch()
     {
         try
         {
-            if (_moduleConfig.IsModuleCorrupt(ConfigModuleId))
+            if (!_moduleConfig.TryGetModuleConfig(ConfigModuleId, out var values))
                 return LogSwitchUnreadableOnce(null);
 
-            var configured = _moduleConfig.GetValue(ConfigModuleId, ConfigKey);
+            var configured = values.GetValueOrDefault(ConfigKey);
 
             // Absent or blank is not a mistype: the field was never configured, and the
             // documented default is on.

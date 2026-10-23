@@ -27,7 +27,9 @@ public class ServiceNowService
         _instanceUrl = config["ServiceNow:InstanceUrl"] ?? "";
         _username = config["ServiceNow:Username"] ?? "";
         _password = config["ServiceNow:Password"] ?? "";
-        _enabled = bool.Parse(config["ServiceNow:Enabled"] ?? "false");
+        // aud-a58. bool.Parse threw on a value that is neither true nor false, and this singleton, and every ticketed page,
+        // failed with it. A mistyped switch is read as on: dormant would pass every ticket.
+        _enabled = ConfigBoolean.Read(config, "ServiceNow:Enabled", whenBlank: false, whenNotBoolean: true, logger);
 
         _httpClient = httpClientFactory.CreateClient("ServiceNow");
 

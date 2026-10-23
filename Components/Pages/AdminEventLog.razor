@@ -626,7 +626,7 @@
                 catch (Exception ex)
                 {
                     loadError = $"Error reading log: {ex.Message}";
-                    Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
+                    ReportSafely(logger => logger.LogError(ex, "Failed to read audit log file {Path}", filePath));
                 }
             }
 
@@ -661,7 +661,7 @@
                         // aud-a49. Named with the extended log's unreadable files, the aud-a46 shape: this only logged,
                         // so with diagnostics on the page looked complete. The lines read before the failure stay.
                         unreadableDiagnostics.Add($"{Path.GetFileName(filePath)}: {ex.Message}");
-                        Logger.LogError(ex, "Failed to read trace log file {Path}", filePath);
+                        ReportSafely(logger => logger.LogError(ex, "Failed to read trace log file {Path}", filePath));
                     }
                 }
 
@@ -745,6 +745,21 @@
         activity.Complete(
             loadError == null,
             loadError ?? $"{filteredEvents.Count:N0} event(s) in range.");
+    }
+
+    // aud-a57. LoadEvents reports a file it could not read through here (the aud-a28z shape): a logging provider that threw
+    // in those catches ended the load with its exception, the rest of the range unread. The page says what it could not
+    // read either way; nothing is left to report the provider's own failure to.
+    private void ReportSafely(Action<ILogger> report)
+    {
+        try
+        {
+            report(Logger);
+        }
+        catch (Exception)
+        {
+            // Nowhere left to say so.
+        }
     }
 
     private MergedLogEntry? ParseAuditLine(string line, DateTime rangeStartUtc, DateTime rangeEndUtc)
