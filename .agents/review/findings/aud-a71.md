@@ -93,7 +93,8 @@ Permissions. Extras: E1 the activity completed with the bare step banner (Mailbo
 place of the new kind (Mailbox Permissions).
 
 Files: `Components/Pages/MailboxPermissions.razor`, `Components/Pages/CalendarPermissions.razor` (in place),
-`Services/SelfGrantRefusalRecord.cs`, `ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs`, this record.
+`Services/SelfGrantRefusalRecord.cs`, `ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs`, this record; and, as the full suite showed (Guard proof),
+`ExchangeAdminWeb.Tests/ValidatedWriteCallSiteTests.cs`.
 
 Caller-visible change, by design: a single change whose write - or a step before or after it - throws leaves a Failed row
 carrying the banner the operator saw; when that row cannot be written the banner says so.
@@ -145,6 +146,13 @@ After the round, the restored tree rebuilt and the filter: 781/781 green.
 | E2 | extra: `FailedChangeRecord` in place of the new kind (Mailbox Permissions) | `3C682CDCBF84018733DAC7171A74C886` | 1 of 781: `ACloudWriteThatThrows_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler(page: "Mailbox Permissions")` - the warning names the on-premises change |
 
 No separate pre-fix reproduction: M1 and M1c are each catch as it stood, at its call site.
+
+Follow-up, found by the full suite on the fix commit `bc1183ab` (6,546 passed / 2 failed): `ValidatedWriteCallSiteTests.EveryPageWriteAudit_RecordsTheIdentityWritten`
+counts each page's `ValidatedMailbox.WithWrittenIdentity(` sites - 2 on each permission page - and the failure row is a third,
+deliberately (plan item 2). Its two rows now expect 3, with the reason in the test, in a second commit for this finding (no
+amend). M1 and M1c were then run again with that test in the filter (800 tests), same mutant MD5s, every restore matching:
+each fails 5 of 800 - the four named above and `EveryPageWriteAudit_RecordsTheIdentityWritten(page: "MailboxPermissions.razor",
+expected: 3)` / `(page: "CalendarPermissions.razor", expected: 3)`. The restored tree: 800/800 green.
 
 ## Known gaps
 
