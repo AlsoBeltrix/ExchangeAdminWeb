@@ -52,44 +52,46 @@ public static class ClickGateRegistry
     public static readonly IReadOnlyDictionary<string, string> NotYetConverted =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // All nine tier-1 pages - DhcpAuthorization.razor, NamedLocations.razor,
+            // Tier 1, approved 2026-09-18 and converted in the order of docs/ClickGatingAudit-Plan.md
+            // Revision 1: all nine pages - DhcpAuthorization.razor, NamedLocations.razor,
             // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor,
             // GroupManagement.razor, M365GroupManagement.razor, ConferenceRooms.razor and
-            // SelfServiceGroups.razor - are converted and live in Pages above. Nothing below this
-            // line is approved for conversion without an owner go.
+            // SelfServiceGroups.razor - live in Pages above. Tiers 2, 3 and 4 below - the remaining
+            // nineteen pages - were approved by the owner on 2026-10-12 (.agents/decisions.md; the
+            // plan's Status header) and are not started; read the plan's Revision 1 before converting one.
 
             // New module, landed 2026-09-23 with a preflight-only page. Declared here rather than
-            // converted: conversion is the nine-page tier-1 scope in docs/ClickGatingAudit-Plan.md
-            // and this page is not in it. Its one button is already gated on isBusy and on a
+            // converted: conversion was then the nine-page tier-1 scope in docs/ClickGatingAudit-Plan.md,
+            // and this page is in none of its four audited tiers. Its one button is already gated on isBusy and on a
             // non-blank UPN, and the write path it will gain is a later slice that must come with
             // its own gating review.
             ["CloudPasswordReset.razor"] = "new module 2026-09-23, not in the approved tier-1 conversion scope; preflight-only page, its single action gated on isBusy",
 
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
-            ["BlockedSenders.razor"] = "tier 3, not approved; slice 1 prerequisite done - ConfirmUnblock's "
+            ["BlockedSenders.razor"] = "tier 3, approved 2026-10-12, not started; slice 1 prerequisite done - ConfirmUnblock's "
                 + "preflight now fails closed in a catch, guarded by ClickGateStuckFlagTests",
-            ["MessageTrace.razor"] = "tier 4, not approved; slice 1 prerequisite done - ToggleDetail now "
+            ["MessageTrace.razor"] = "tier 4, approved 2026-10-12, not started; slice 1 prerequisite done - ToggleDetail now "
                 + "lowers detailLoading in a token-guarded finally, guarded by ClickGateStuckFlagTests",
 
-            // Tiers 2-4: audited, NOT approved for conversion. Do not convert without an owner go.
-            ["ADAttributeEditor.razor"] = "tier 2, not approved",
-            ["AdminSettings.razor"] = "tier 2, not approved",
-            ["ExchangeOnlineConfig.razor"] = "tier 2, not approved",
-            ["ModuleConfig.razor"] = "tier 2, not approved",
-            ["Comms10k.razor"] = "tier 3, not approved",
-            ["EmergencyDisable.razor"] = "tier 3, not approved",
-            ["LicensingUpdates.razor"] = "tier 3, not approved",
-            ["MfaReset.razor"] = "tier 3, not approved",
-            ["OutOfOffice.razor"] = "tier 3, not approved",
-            ["RiskyUsers.razor"] = "tier 3, not approved; has a partial ActionsDisabled already",
-            ["AdminBulkJobs.razor"] = "tier 4, not approved",
-            ["AdminEventLog.razor"] = "tier 4, not approved",
-            ["BitLockerRecovery.razor"] = "tier 4, not approved",
-            ["DelegationReport.razor"] = "tier 4, not approved",
-            ["MessageTraceReports.razor"] = "tier 4, not approved",
-            ["RecipientLookup.razor"] = "tier 4, not approved",
-            ["ServiceHealth.razor"] = "tier 4, not approved",
+            // Tiers 2-4: audited, and APPROVED for conversion (owner, 2026-10-12; docs/ClickGatingAudit-Plan.md).
+            // Not started. A page leaves this list when its conversion lands with its entry in Pages.
+            ["ADAttributeEditor.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["AdminSettings.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["ExchangeOnlineConfig.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["ModuleConfig.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["Comms10k.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["EmergencyDisable.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["LicensingUpdates.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["MfaReset.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["OutOfOffice.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["RiskyUsers.razor"] = "tier 3, approved 2026-10-12, not started; has a partial ActionsDisabled already",
+            ["AdminBulkJobs.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["AdminEventLog.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["BitLockerRecovery.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["DelegationReport.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["MessageTraceReports.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["RecipientLookup.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["ServiceHealth.razor"] = "tier 4, approved 2026-10-12, not started",
 
             // Parked and out of scope entirely.
             ["AccountLockoutRemediation.razor"] = "module is disabled and parked; not in scope",
