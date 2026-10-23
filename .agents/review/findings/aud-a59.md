@@ -7,8 +7,8 @@ write outcome and a throw is only logged, so the banner never says the row was n
 action name (the aud-a50 part-3 class for the Target column). (4) Test hygiene: `ExchangeWriteHarness.ExchangeKnows`
 leaves `ReadGroupMembersAsync` to NSubstitute's default empty list, so a future cloud-only group test that
 forgets to set up members passes as allowed.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: In progress; plan below, approved under the owner's 2026-10-21 "EVERYTHING" go
+**Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a50/a52 agent, 2026-10-22, candidates 1, 3, 4 and 5 of its hand-back)
 
@@ -32,6 +32,68 @@ At `81809833`: `Components/Pages/MailboxPermissions.razor` 409-425, 696-703, 744
 - Tests through `PermissionPagesSelfGrantTests` and the bulk harness; mutations at the call site: the
   outcome ignored at the denial; raw `ex.Message` again; the blank-Target check removed; the stub default
   again.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 (`.agents/decisions.md` 2026-10-21). Branch `worktree-agent-a83ff1596fd6eee17` from master `a7300dee`: one
+fix commit `fix(permission-pages,permission-bulk): ... (aud-a59)`, fourth of four, after aud-a53 (whose step helper its
+`ExecuteOnPrem` catch reuses); the pages edited in place (808 and 762 lines); comments in the branch's comments-only commit.
+Behaviour: the two pages and the two bulk loops (both module versions) and `SelfGrantRefusalRecord` (base app version).
+
+Evidence re-read at `a7300dee`:
+- `MailboxPermissions.razor` `SubmitSingle` 409-426: the protected-target denial's record (417-419) ignores the writer's
+  outcome inside a try whose catch only logs, so the banner never says the row was not written; `ExecuteOnPrem` 696-703 records
+  its denial (699-701) inside no try of its own - the handler's catch then records again and shows the raw text.
+  `CalendarPermissions.razor` 387-402 (record 393-395) and 650-657 (record 653-655) the same.
+- `ExecuteOnPrem`'s catch, Mailbox 742-748 and Calendar 685-691: the raw `ex.Message` in the record and in the banner, whatever
+  step threw, and the record itself unguarded.
+- `MailboxPermissionService` 226-247 and `CalendarPermissionService` 135-157: aud-a50's blank-User row is refused first; a
+  blank Target goes on to `ValidateTargetMailboxAsync("")` and is recorded as `Bulk*_ExcludedTarget`, the protected-target
+  action.
+- `ExchangeWriteHarness.ExchangeKnows` 518-525 stubs `ResolveRecipientAsync` only, so `ReadGroupMembersAsync` answers
+  NSubstitute's empty list: a cloud-only group test that forgets its members passes as allowed.
+
+1. **The denial's record is outcome-aware and guarded, on both paths.** `SubmitSingle`, in place: the record's outcome is read
+   (`!= JsonlWriteOutcome.Written` adds `SelfGrantRefusalRecord.AuditRowNotWritten` to the banner) and its catch logs and says
+   the same - the shape `SubmitSingle`'s self-grant branch has since aud-a50. `ExecuteOnPrem`, on the record's own four lines:
+   `SelfGrantRefusalRecord.Banner(denial, () => Audit.Log...(...), Logger, target, SelfGrantRefusalRecord.DenialRecord)` - the
+   one-line helper aud-a50 wrote for this handler, given the record's kind so its log line names a protected-target denial.
+2. **`ExecuteOnPrem`'s catch names its step and reports no raw text.** The aud-a53 step local in place (before the write, the
+   write, after it); the catch logs the exception against the target and the step, the banner and the record's `errorDetail`
+   are one text, `PermissionChangeFailure.Banner(step, ex)` (the aud-a23i helper inside it), and the record goes through
+   `SelfGrantRefusalRecord.Banner(..., FailedChangeRecord)`, so a record that cannot be written is said once and nothing escapes
+   the handler.
+3. **A blank Target is an invalid row.** First in each bulk row, before aud-a50's blank-User check, grants and revocations
+   alike: `string.IsNullOrWhiteSpace(row.Target)` records `Bulk{Add|Remove}_NoTarget` (permission "Mailbox") /
+   `Bulk{Set|Remove}Calendar_NoTarget` with `MailboxPermissionService.BulkRowNamesNoTarget`, "No target specified (the Target
+   column is empty)", adds that error and a FAILED entry "No target specified", and continues - before the target check, the
+   self-grant check and the write.
+4. **The harness resolver answers no membership it was not given.** `ExchangeKnows` stubs `ReadGroupMembersAsync` for every
+   group to throw ("stand-in: no members were set for '<group>'"); a test that sets members overrides it for its group.
+
+Tests. `PermissionPagesSelfGrantTests`: each page's `SubmitSingle` and `ExecuteOnPrem` denying a target Exchange holds no
+mailbox for, with the audit file held (the writer drops the row) and with the writer missing (the record throws) - the denial
+followed by "The audit row could not be written.", one warning for the throw, nothing escaping the handler; `ExecuteOnPrem`
+over a step before the write that throws (the on-premises permission check) - the before-the-write text in the record and the
+banner, the cause in its own words, never the raw message. `PermissionValidatorSelfGrantTests` (the bulk loops over the
+harness): an empty and a whitespace Target, both loops, grant and revoke - one `*_NoTarget` record, the FAILED entry and error,
+Exchange never asked, no directory session, nothing written; a valid row after it still processed; the harness resolver's
+`ReadGroupMembersAsync` throwing for a group it was not given, and a cloud-only group grantee whose members no test set
+refused as incomplete.
+
+Mutations at the call site: M1 the outcome ignored at the denial - Mailbox `SubmitSingle`'s record back to the bare call (M1b
+`ExecuteOnPrem`'s back to the bare record); M2 the raw `ex.Message` again in the Mailbox `ExecuteOnPrem` catch; M3 the Mailbox
+loop's blank-Target check removed (M3c the Calendar loop's); M4 the stub default again (`ExchangeKnows` without its
+`ReadGroupMembersAsync` stub).
+
+Files: `Components/Pages/MailboxPermissions.razor`, `Components/Pages/CalendarPermissions.razor` (in place),
+`Services/SelfGrantRefusalRecord.cs`, `Services/MailboxPermissionService.cs`, `Services/CalendarPermissionService.cs`,
+`ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs`, `ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs`,
+`ExchangeAdminWeb.Tests/PermissionValidatorSelfGrantTests.cs`, this record.
+
+Caller-visible change, by design: a protected-target denial whose row was not written says so; an `ExecuteOnPrem` failure says
+which step failed in the command's own words, and its record carries that text; a bulk row with an empty Target is reported
+"No target specified" and audited as `*_NoTarget`.
 
 ## Guard proof
 
