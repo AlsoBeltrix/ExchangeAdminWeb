@@ -76,9 +76,13 @@ public sealed class ClickGateSource
     /// code with markup in them, and their C# comments are blanked too; see
     /// <see cref="BlankControlFlowComments"/>.
     /// </para>
+    /// <para>
+    /// kd-31. So are the markup's HTML comments (<see cref="BlankHtmlComments"/>): what one holds is
+    /// never a control, so a handler or a flag it names must not be read as one.
+    /// </para>
     /// </remarks>
     public static string BlankComments(string source) =>
-        BlankControlFlowComments(source, RazorSyntax.ComponentCommentsBlanked(source));
+        BlankControlFlowComments(source, BlankHtmlComments(source, RazorSyntax.ComponentCommentsBlanked(source)));
 
     /// <summary>
     /// kd-21. <paramref name="blanked"/> - <paramref name="source"/> as kd-12's component view left it -
@@ -148,6 +152,9 @@ public sealed class ClickGateSource
     private static readonly Regex ControlFlowContinuation =
         new(@"\G(?:else\s+if|else|catch|finally|while)\b", RegexOptions.Compiled);
 
+    private static readonly Regex ControlFlowAt =
+        new(@"\G@(?:if|foreach|for|while|switch|lock|using|do|try)\b", RegexOptions.Compiled);
+
     private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
     {
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
@@ -157,16 +164,24 @@ public sealed class ClickGateSource
     /// Walks one body from its opening brace, blanking its code-level comments into
     /// <paramref name="buffer"/>; returns the index after its closing brace, or -1 if it never closes.
     /// </summary>
+    /// <remarks>
+    /// kd-31: a "&lt;" opens markup only where a statement can begin - at the body's start, after a
+    /// "{", "}", ";" or a label's ":", after a skipped element or "@:" line, or straight after a
+    /// template's "@" - and only when it has a tag's shape (<see cref="IsTagShape"/>). Elsewhere it
+    /// is C#: "count&lt;limit" compares and "List&lt;string&gt;" is generic, and reading either as a tag
+    /// lost the rest of the body.
+    /// </remarks>
     private static int WalkCodeBody(string source, string blanked, char[] buffer, int open)
     {
         var depth = 1;
         var i = open + 1;
+        var statementStart = true;
         while (i < source.Length)
         {
             var c = source[i];
             if (blanked[i] != c || char.IsWhiteSpace(c))
             {
-                // Already blanked (a Razor comment, kd-12's comments) or whitespace.
+                // Already blanked (a Razor or HTML comment, kd-12's comments) or whitespace.
                 i++;
                 continue;
             }
@@ -190,30 +205,42 @@ public sealed class ClickGateSource
             {
                 var end = source.IndexOf('\n', i);
                 i = end < 0 ? source.Length : end;
+                statementStart = true;
             }
-            else if (c == '<' && (char.IsLetter(next) || next == '/'))
+            else if (c == '@' && next == '<')
+            {
+                // A Razor template, "@<p>...</p>": what follows is markup wherever it sits.
+                i++;
+                statementStart = true;
+            }
+            else if (c == '<' && statementStart && IsTagShape(blanked, i))
             {
                 i = EndOfElement(blanked, i);
+                statementStart = true;
             }
             else if (c is '"' or '\'' || (c is '@' or '$' && next is '"' or '$' or '@'))
             {
                 var literal = SyntaxFactory.ParseToken(source, i);
                 i += Math.Max(1, literal.Span.Length);
+                statementStart = false;
             }
             else if (c == '{')
             {
                 depth++;
                 i++;
+                statementStart = true;
             }
             else if (c == '}')
             {
                 i++;
                 if (--depth == 0)
                     return i;
+                statementStart = true;
             }
             else
             {
                 i++;
+                statementStart = c is ';' or ':';
             }
         }
 
@@ -221,14 +248,37 @@ public sealed class ClickGateSource
     }
 
     /// <summary>
+    /// kd-31. Whether the "&lt;" at <paramref name="at"/> has a tag's shape: an end-tag slash or
+    /// none, a letter-led name, then whitespace, "&gt;" or "/". "&lt;b)" and "&lt;b;" are comparisons.
+    /// </summary>
+    private static bool IsTagShape(string text, int at)
+    {
+        var nameStart = at + 1 < text.Length && text[at + 1] == '/' ? at + 2 : at + 1;
+        if (nameStart >= text.Length || !char.IsLetter(text[nameStart]))
+            return false;
+
+        var nameEnd = nameStart;
+        while (nameEnd < text.Length && IsNameChar(text[nameEnd]))
+            nameEnd++;
+
+        return nameEnd < text.Length && (char.IsWhiteSpace(text[nameEnd]) || text[nameEnd] is '>' or '/');
+    }
+
+    private static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c is '-' or '.' or ':' or '_';
+
+    /// <summary>
     /// The index after the markup element whose tag opens at <paramref name="start"/>: after its
     /// matching end tag, or after the tag itself when it is an end tag, self-closing or void.
     /// </summary>
+    /// <remarks>
+    /// kd-31: a nested tag of the same name counts only with a tag's shape, so "&lt;b&gt;@(a&lt;b)&lt;/b&gt;"
+    /// closes at its "&lt;/b&gt;" instead of reading "&lt;b)" as a second "&lt;b&gt;" that never closes.
+    /// </remarks>
     private static int EndOfElement(string source, int start)
     {
         var nameStart = source[start + 1] == '/' ? start + 2 : start + 1;
         var nameEnd = nameStart;
-        while (nameEnd < source.Length && (char.IsLetterOrDigit(source[nameEnd]) || source[nameEnd] is '-' or '.' or ':' or '_'))
+        while (nameEnd < source.Length && IsNameChar(source[nameEnd]))
             nameEnd++;
 
         var tagEnd = IndexOfTagEnd(source, nameEnd);
@@ -240,15 +290,30 @@ public sealed class ClickGateSource
             return tagEnd + 1;
 
         var depth = 1;
-        for (var at = source.IndexOf('<', tagEnd + 1); at >= 0; at = source.IndexOf('<', at + 1))
+        for (var at = tagEnd + 1; at < source.Length; at++)
         {
+            if (source[at] == '@')
+            {
+                // A Razor expression or a construct's header in the content is C#: "@(a<b ? x : y)" and
+                // "@if (a<b && c)" compare, they do not open a tag.
+                var construct = ControlFlowAt.Match(source, at);
+                if (at + 1 < source.Length && source[at + 1] == '(')
+                    at = SkipParenthesised(source, at + 1) - 1;
+                else if (construct.Success)
+                    at = SkipParenthesised(source, at + construct.Length) - 1;
+                continue;
+            }
+
+            if (source[at] != '<')
+                continue;
+
             var closing = at + 1 < source.Length && source[at + 1] == '/';
             var candidate = closing ? at + 2 : at + 1;
             if (string.Compare(source, candidate, name, 0, name.Length, StringComparison.OrdinalIgnoreCase) != 0)
                 continue;
 
             var after = candidate + name.Length;
-            if (after < source.Length && (char.IsLetterOrDigit(source[after]) || source[after] is '-' or '.' or ':' or '_'))
+            if (!IsTagShape(source, at) || (after < source.Length && IsNameChar(source[after])))
                 continue;
 
             var end = IndexOfTagEnd(source, after);
@@ -265,6 +330,34 @@ public sealed class ClickGateSource
         }
 
         return source.Length;
+    }
+
+    /// <summary>
+    /// kd-31. <paramref name="blanked"/> with every HTML comment in the markup blanked as well - a
+    /// "&lt;!--" outside the @code regions, not already blanked, through its "--&gt;". One that never
+    /// closes is left alone rather than taken to the end of the file.
+    /// </summary>
+    private static string BlankHtmlComments(string source, string blanked)
+    {
+        var buffer = blanked.ToCharArray();
+        var parsed = RazorSyntax.Parse(source);
+        var regions = parsed.IsRazor ? parsed.Regions.Select(r => r.Raw).ToList() : [];
+
+        for (var at = blanked.IndexOf("<!--", StringComparison.Ordinal); at >= 0;
+             at = blanked.IndexOf("<!--", at + 4, StringComparison.Ordinal))
+        {
+            if (regions.Any(r => r.Contains(at)))
+                continue;
+
+            var close = blanked.IndexOf("-->", at + 4, StringComparison.Ordinal);
+            if (close < 0)
+                break;
+
+            BlankSpan(buffer, at, close + 3);
+            at = close;
+        }
+
+        return new string(buffer);
     }
 
     /// <summary>After any whitespace, then a parenthesised header's matching ")" if one opens there.</summary>

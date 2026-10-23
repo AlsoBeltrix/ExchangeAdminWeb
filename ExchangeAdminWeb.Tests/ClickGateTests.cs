@@ -1377,6 +1377,80 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void BlankCommentsReadsAComparisonOrAGenericInABodyAsCodeNotAsATag()
+    {
+        // kd-31. The kd-21 walker took any "<" followed by a letter for a tag, so "List<string>" and
+        // "row.Count<limit" in a body opened an element that never closed, the walk stopped, and every
+        // comment after them stayed readable. Each comment below follows one of those and names
+        // isBusy = true; the markup around them must stay.
+        var page = string.Join("\n",
+            "@foreach (var row in Rows())",
+            "{",
+            "    var names = new List<string>();",
+            "    // after a generic: isBusy = true;",
+            "    var small = row.Count<limit;",
+            "    // after a comparison: isBusy = true;",
+            "    var cmp = row.Count<b ? 1 : 2;",
+            "    // after a comparison with a space: isBusy = true;",
+            "    if (row.Count<limit) { <td>small</td> }",
+            "    // after a comparison in a condition: isBusy = true;",
+            "    <b>@(row.Count<b ? \"a\" : \"b\")</b>",
+            "    // after an element holding a comparison: isBusy = true;",
+            "    RenderFragment cell = @<td>cell</td>;",
+            "    // after a template: isBusy = true;",
+            "}",
+            "<p>after</p>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private int limit;",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("after a", text, StringComparison.Ordinal);
+        Assert.Contains("var names = new List<string>();", text, StringComparison.Ordinal);
+        Assert.Contains("if (row.Count<limit) { <td>small</td> }", text, StringComparison.Ordinal);
+        Assert.Contains("<b>@(row.Count<b ? \"a\" : \"b\")</b>", text, StringComparison.Ordinal);
+        Assert.Contains("@<td>cell</td>;", text, StringComparison.Ordinal);
+        Assert.Contains("<p>after</p>", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksHtmlCommentsInTheMarkup()
+    {
+        // kd-31. An HTML comment is a comment to every scan here: its text is never a control, so a
+        // handler or a flag it names must not be read as one. Blanked in the markup, kept in a string.
+        var page = string.Join("\n",
+            "<div>",
+            "    <!-- a page comment: <button @onclick=\"StageDeleteSelected\">old</button> -->",
+            "    <button @onclick=\"Go\" disabled=\"@IsBusy\">Go</button>",
+            "    @if (open)",
+            "    {",
+            "        <!-- a body comment with a brace } and isBusy = true; -->",
+            "        // a C# comment after it: isBusy = true;",
+            "        <span>open</span>",
+            "    }",
+            "</div>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private bool open;",
+            "    private string html = \"<!-- not a comment -->\";",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("StageDeleteSelected", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("comment", text.Replace("\"<!-- not a comment -->\"", "", StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Contains("<button @onclick=\"Go\" disabled=\"@IsBusy\">Go</button>", text, StringComparison.Ordinal);
+        Assert.Contains("<span>open</span>", text, StringComparison.Ordinal);
+        Assert.Contains("\"<!-- not a comment -->\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because
