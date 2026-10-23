@@ -80,6 +80,8 @@ public class JsonlLogService
     // and reported Written, and the event log, parsing line by line, dropped both. AppendLine takes such a line back out.
     // aud-a47. The lock below is this instance's only; the file's own lock, taken inside AppendLine, is every writer's -
     // the other instance under a shared log root included. A lock not taken in time is a FileWriteFailed like any other.
+    // aud-a51. So is a lock file the folder refuses: dropped at once, its report saying the folder refused it, not after
+    // the whole bound as if another writer held it.
     private JsonlWriteOutcome WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
         var logPath = "(unresolved)";
@@ -128,6 +130,10 @@ public class JsonlLogService
     /// <summary>Test seam (aud-a47): how long a write waits for another writer's lock on its file before it drops.</summary>
     internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
+    /// <summary>
+    /// Test seam (aud-a51): how long a refusal of the file's lock is retried before the write drops it as the folder's
+    /// refusal.
+    /// </summary>
     internal TimeSpan AccessRefusalGrace { get; set; } = JsonlFileAppender.DefaultAccessRefusalGrace;
 
     // aud-a28z part 3 and aud-a47: one record, one line or none, under the file's lock - see JsonlFileAppender. The two

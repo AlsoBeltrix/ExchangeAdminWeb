@@ -204,6 +204,7 @@
     {
         <p class="text-muted small mb-2">@DroppedEntriesText</p>
     }
+    @* aud-a49. The lines each log held that could not be parsed: one muted line for all three, with diagnostics on or off. *@
     @if (UnparsedLinesText != null)
     {
         <p class="text-muted small mb-2">@UnparsedLinesText</p>
@@ -470,6 +471,9 @@
     private string DroppedEntriesText =>
         $"This instance's extended log has dropped {extendedLogDropped:N0} entr{(extendedLogDropped == 1 ? "y" : "ies")} since it started: "
         + "ones it could not write, and ones its queue discarded when they came faster than the disk took them.";
+    // aud-a49. The lines each parser could not parse, by log, this load. They were dropped and counted nowhere - the cut
+    // line a writer that died mid-write leaves among them. Only the parsers' catches count: a line outside the range, or
+    // a record of another kind, is filtered, not dropped.
     private int unparsedAuditLines;
     private int unparsedTraceLines;
     private int unparsedExtendedLines;
@@ -654,6 +658,8 @@
                     }
                     catch (Exception ex)
                     {
+                        // aud-a49. Named with the extended log's unreadable files, the aud-a46 shape: this only logged,
+                        // so with diagnostics on the page looked complete. The lines read before the failure stay.
                         unreadableDiagnostics.Add($"{Path.GetFileName(filePath)}: {ex.Message}");
                         Logger.LogError(ex, "Failed to read trace log file {Path}", filePath);
                     }
@@ -681,7 +687,7 @@
         }
 
         // aud-a46. Every date's unreadable files in one warning, and the count read once per load - in memory, no disk
-        // call, inside the activity like the readers above.
+        // call, inside the activity like the readers above. Since aud-a49 the warning names the trace files too.
         if (showDiagnostics)
         {
             if (unreadableDiagnostics.Count > 0)
@@ -926,6 +932,7 @@
         }
     }
 
+    // aud-a49. The one muted line: the logs above zero by name, "line" for one, and "is" when the total is one.
     private static string? UnparsedLinesNotice(int audit, int trace, int extended)
     {
         var parts = new[] { (Count: audit, Log: "the audit log"), (Count: trace, Log: "the trace log"), (Count: extended, Log: "the extended diagnostic log") }

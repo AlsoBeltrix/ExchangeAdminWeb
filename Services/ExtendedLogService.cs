@@ -55,6 +55,7 @@ public class ExtendedLogService : IDisposable
         // aud-a46. A full queue discards its oldest entry when writes outpace the disk, and nothing counted it. The
         // callback runs on the writer's thread, after the channel's own lock is released; it counts and never logs - a
         // discard is a burst, and a report per discarded entry would be a flood of its own.
+        // aud-a49. Not a single reader: Dispose takes out, and counts, what the consumer could not write in its bound.
         _writeQueue = Channel.CreateBounded<PendingLogEntry>(new BoundedChannelOptions(MaxQueuedWrites)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -254,6 +255,10 @@ public class ExtendedLogService : IDisposable
         return false;
     }
 
+    // aud-a49. The wait was a fixed 5 s, and a full queue needs about 11 s at the append cost aud-a46 measured: what was
+    // left was neither written nor counted. The wait is now in proportion to the queue's length when Dispose begins, and
+    // never less than the old 5 s. What is still queued after it is taken out, counted as dropped and reported, all before
+    // Dispose returns. The entry the consumer is writing then is its own: written, or counted by its catch.
     public void Dispose()
     {
         _writeQueue.Writer.TryComplete();
@@ -283,8 +288,13 @@ public class ExtendedLogService : IDisposable
             left, (long)bound.TotalMilliseconds));
     }
 
+    /// <summary>Test seam (aud-a49): the shortest wait Dispose gives the consumer - the old fixed wait.</summary>
     internal TimeSpan DisposeFloor { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Test seam (aud-a49): the wait Dispose adds for each entry still queued - about twice the 10.98 ms append aud-a46
+    /// measured, so a full queue of 1,024 gets 25.6 s.
+    /// </summary>
     internal TimeSpan DisposeAllowancePerEntry { get; set; } = TimeSpan.FromMilliseconds(25);
 
     private async Task ProcessQueueAsync()

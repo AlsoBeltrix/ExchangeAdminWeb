@@ -18,7 +18,9 @@ namespace ExchangeAdminWeb.Services;
 ///    through <see cref="Enqueue"/>, and never throws - the kill-switch read, the module
 ///    lookup and the insert are all inside a try/catch. This is the rule the Constitution
 ///    states for audit and notification failures, one layer down: a telemetry fault must not
-///    change, delay or mask the operation that triggered it.
+///    change, delay or mask the operation that triggered it. Since aud-a48 that includes the
+///    reports: each goes through ReportSafely, so a logging provider that throws cannot
+///    break the caller either.
 /// </remarks>
 public class UsageTelemetryService
 {
@@ -101,6 +103,8 @@ public class UsageTelemetryService
     /// <see cref="ConfigChangeWatcher"/> notices a write by either instance within its own
     /// two-second throttle, and <see cref="SwitchCacheTtl"/> bounds staleness if the token
     /// itself cannot be read. A cache hit costs a lock, a compare and a clock read.
+    /// It answers whatever the logging provider does (aud-a48): the Home page renders from it, and Record reads it on the
+    /// audit call's path.
     /// </remarks>
     public virtual bool Enabled()
     {
@@ -214,6 +218,10 @@ public class UsageTelemetryService
         _ = Task.Run(() => InsertQueued(e));
     }
 
+    /// <summary>
+    /// The enqueue task's body (aud-a48): the insert, its failure reported and swallowed, so the task never faults - its
+    /// report threw out of the catch and faulted it, unobserved. Internal so a test can run it on its own thread.
+    /// </summary>
     internal void InsertQueued(UsageEvent e)
     {
         try
@@ -275,6 +283,10 @@ public class UsageTelemetryService
         return false;
     }
 
+    // aud-a48. Every report this service makes goes through here, as the audit writer's and the extended log's do
+    // (aud-a28u, aud-a28z). A provider that threw while reporting took its exception out of Enabled - into the Home page's
+    // render - and out of every Record method, the audit call's last statement among them, after its row was written; and
+    // it faulted the insert's task.
     private void ReportSafely(Action<ILogger> report)
     {
         try
@@ -283,6 +295,7 @@ public class UsageTelemetryService
         }
         catch (Exception)
         {
+            // Nowhere left to say so.
         }
     }
 }
