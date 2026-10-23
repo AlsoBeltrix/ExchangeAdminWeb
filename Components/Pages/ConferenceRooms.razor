@@ -1397,7 +1397,7 @@
 
             if (!Enum.TryParse<RoomType>(typeName, out var roomType))
             {
-                result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}" };
+                result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}. Nothing was written." };
                 return;
             }
 

@@ -282,6 +282,29 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     }
 
     [Fact]
+    public async Task ATypeRowWhoseTypeDoesNotParse_IsRefused_SayingNothingWasWritten()
+    {
+        // aud-a2y (3). Refused before the service is called, so its message - on the row and in its audit - ends "Nothing
+        // was written.", as every refusal the service decides before a write does (aud-a2w).
+        const string refusal = "Invalid type: Boardroom. Nothing was written.";
+        var f = CreateFixture();
+        var job = MakeJob(ConferenceRoomJobPayload.TypeJobType, new ConferenceRoomJobPayload
+        {
+            Kind = ConferenceRoomJobPayload.TypeJobType,
+            TypeRows = [new TypeCsvRow { Email = "room1@x", Type = "Boardroom" }],
+        }, "AllUsers");
+
+        var outcome = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
+        Assert.Equal(refusal, outcome.Message);
+        Assert.Empty(f.Rooms.TypeCalls);
+        f.Audit.Received(1).LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetType_Bulk",
+            "room1@x", false, "INC1", errorDetail: refusal, oldValues: Arg.Any<Dictionary<string, object?>?>(),
+            newValues: Arg.Any<Dictionary<string, object?>?>(), extra: Arg.Any<Dictionary<string, object?>?>());
+    }
+
+    [Fact]
     public async Task Finder_ProtectedTarget_IsBlocked_NotApplied_AuditedDenial()
     {
         // GAP 3 fix: the Finder path now enforces the protected-principal gate.

@@ -7,9 +7,9 @@ is shown whatever the actual reason at six `SelfServiceGroupService` sites and o
 site - the aud-a2x defect in other modules; they can now call `ModuleCredentialService.LookupCredentialsAsync`.
 (3) Refusals outside the service do not end "Nothing was written.": `ConferenceRoomBulkProcessor` "Invalid
 type" and `ConferenceRooms.razor` "Invalid room type" (line-keyed page).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; held by the 2026-10-23 stopping rule (LOW) for after the first dev deploy
-**Branch**: -
-**Commit**: -
+**Status**: Verified on branch; awaiting merge and codex review - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 "EVERYTHING" go
+**Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
+**Commit**: (1) `3f641ce4`, (2) `2de45069`, (3) the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, candidates 1, 7 and 8 of its hand-back)
 
 ## Evidence
@@ -131,3 +131,65 @@ tests name members this item adds (`CredentialUnavailableRefusal`, the `LookupCr
 Before the round, on the fix: the related suites (`GroupCredentialRefusalTests`, `SelfService*`, `GroupManagement*`,
 `GroupMember*`, `GroupBulk*`, `DirectoryModuleImportTests`, `ModuleCredential*`, `ResourceDomainDenies*`,
 `ProtectedGroupWriteTarget*`, `GroupSearchForestScope*`, `ModuleCatalog*`, `AttributeEditor*`) 768 of 768.
+
+**(3) The two refusals outside the service** - `ConferenceRoomBulkProcessorTests.ATypeRowWhoseTypeDoesNotParse_IsRefused_SayingNothingWasWritten`
+(the row failed, its message "Invalid type: Boardroom. Nothing was written.", the service never called, one audit row
+carrying that message as its error); `ConferenceRoomPageTests.ARoomTypeThatDoesNotParse_IsRefused_SayingNothingWasWritten`
+(the real page's `SetSingleRoomType`, the ticket and authorization passed: the banner "Invalid room type: Boardroom.
+Nothing was written.", no Exchange call at all). Filter `ConferenceRoomBulkProcessorTests|ConferenceRoomPageTests` (26).
+
+| # | Mutation | md5 fixed = restored | md5 mutated | Failing (of 26) | Restored |
+| --- | --- | --- | --- | --- | --- |
+| 3a | the bulk suffix dropped - `ConferenceRoomBulkProcessor.cs` as at `2de45069` | `903cb55fea2b9a5de11ed22b54a2bcd0` | `18d6b408727b1a1b1b5c6f8f98ad2015` | 1: the bulk case, "Expected ... Boardroom. Nothing was written. / Actual ... Boardroom" | PASS 26 |
+| 3b | the page suffix dropped - `ConferenceRooms.razor` as at `2de45069` | `dca79be9386db21fff416b44672a0b94` | `0ff410bff9f6dc1c0f27672d0595b2c2` | 1: the page case, the same difference | PASS 26 |
+
+On the fix, before the round: `ConferenceRoom*`, `ClickGate*`, `ProgressRegistry*`, `ModuleCatalog*`, `ValidatedWriteCallSite*`
+829 of 829; the page has 1758 lines, as before.
+
+## Files changed
+
+Snapshot before repair: `3e43b35b`.
+
+- (1) `Services/ConferenceRoomService.cs` (`SetRoomTypeAsync`'s room read); `ExchangeAdminWeb.Tests/ConferenceRoomWriteIdentityTests.cs`
+  (the new theory); `Modules/ModuleCatalog.cs` (Conference Rooms 2.8.0).
+- (2) `Services/GroupManagementService.cs` (`CredentialUnavailableRefusal`, `LookupCredentialsAsync`, the search);
+  `Services/SelfServiceGroups/SelfServiceGroupService.cs` (the six sites, the seam renamed); `ExchangeAdminWeb.Tests/GroupCredentialRefusalTests.cs`
+  (new); `ExchangeAdminWeb.Tests/SelfServiceBulkResolveTests.cs` (its fixture on the renamed seam); `Modules/ModuleCatalog.cs`
+  (Self-Service Groups 1.12.0, Group Management 2.13.0).
+- (3) `Services/Jobs/ConferenceRoomBulkProcessor.cs`; `Components/Pages/ConferenceRooms.razor` (line 1400, in place);
+  `ExchangeAdminWeb.Tests/ConferenceRoomBulkProcessorTests.cs`; `ExchangeAdminWeb.Tests/ConferenceRoomPageTests.cs` (new);
+  `Modules/ModuleCatalog.cs` (the 2.8.0 note).
+- This record.
+
+**Operator-visible changes.** A Room Type apply whose room read throws leaves one warning in the application log, "Room Type
+apply for <room>: reading the room failed; nothing was written: <error>", with the exception; the outcome, audit and
+notification as before. A Self-Service Groups or Group Management refusal for want of the module's AD credential keeps
+"AD credentials unavailable." and says, when the secret ID is set, that Delinea returned no credential for it, or, when the
+module's configuration is unreadable, that the ID could not be read - only for no ID does it still say "Check the
+DelineaSecretId configuration for <module>."; the audit rows and banners that carry it change with it. The page's and a bulk
+row's refusal of a type that does not parse end " Nothing was written." Nothing else.
+
+## Coder dispute
+
+None.
+
+## Known gaps
+
+- (1) The room read inside `RunAsync` (Step 1, `ReadValidatedMailbox`) is not this item's: it runs after the refusals,
+  inside the operation runner, whose own failure handling records it as the step; unchanged.
+- (2) Only the seven sites that said "Check the DelineaSecretId configuration" changed. Group Management's other six
+  credential refusals say "AD credentials unavailable." with no instruction at all, so none misdirects; unchanged, as are
+  other modules' own words (Emergency Disable, Comms-10k, the attribute editor, DHCP's "Enterprise Admin credentials
+  unavailable from Delinea.").
+- (2) The categories are aud-a2x's and as coarse: "Delinea returned no credential" covers a missing bootstrap credential,
+  an HTTP failure, a secret missing a field and an exception; `DelineaService` logs which, and the text points there.
+- (3) The page's invalid-type refusal is reachable only through a crafted request (the select offers the six types); it
+  writes no audit row - nor did it before - which this item, about its words, does not change (a candidate in the hand-back).
+- Source-level and stand-in driven: no directory, Exchange, Delinea or network call was made.
+
+## Closeout
+
+Fixed on branch `fix/psl10-a2y`, not merged, not pushed: (1) `3f641ce4`, (2) `2de45069`, (3) the commit that adds this
+section (its SHA in the implementer's hand-back). Module bumps on this branch: Conference Rooms 2.7.0 -> 2.8.0, Self-Service
+Groups 1.11.3 -> 1.12.0, Group Management 2.12.1 -> 2.13.0. No shared code changed by this record; no base app bump from it.
+Pending: the merge and codex review.
