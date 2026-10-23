@@ -60,9 +60,12 @@ public sealed class BulkJobService
         _registry = registry;
         _logger = logger;
 
-        _staleHeartbeat = TimeSpan.FromMinutes(config.GetValue<double?>("BulkJobs:StaleHeartbeatMinutes") ?? 5);
-        _recentJobLimit = config.GetValue<int?>("BulkJobs:RecentJobLimit") ?? 25;
-        _pruneRetention = TimeSpan.FromDays(config.GetValue<double?>("BulkJobs:RetentionDays") ?? 30);
+        // aud-a62. Read without a throw: GetValue<double?> and GetValue<int?> threw on a value that is not a number, and
+        // this runner is resolved at start-up, so a typo stopped the app from starting. Such a value is the default, named
+        // once; a value that is not finite is one too, since TimeSpan threw on it here.
+        _staleHeartbeat = TimeSpan.FromMinutes(ConfigValue.ReadDouble(config, "BulkJobs:StaleHeartbeatMinutes", 5, logger));
+        _recentJobLimit = ConfigValue.ReadInt(config, "BulkJobs:RecentJobLimit", 25, logger);
+        _pruneRetention = TimeSpan.FromDays(ConfigValue.ReadDouble(config, "BulkJobs:RetentionDays", 30, logger));
     }
 
     // -------------------------------------------------------------------------

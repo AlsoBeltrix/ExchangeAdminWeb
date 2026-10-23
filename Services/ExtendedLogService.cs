@@ -53,8 +53,10 @@ public class ExtendedLogService : IDisposable
         var logRoot = AuditLogRoot.Require(config);
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _legacyConfigFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
-        _maxFileBytes = GetMaxFileBytes(config);
-        _maxFilesPerDay = Math.Clamp(config.GetValue<int?>("ExtendedLog:MaxFilesPerDay") ?? DefaultMaxFilesPerDay, 2, 50);
+        // aud-a62. The limits are read without a throw: GetValue<int?> and GetValue<long?> threw on a value that is not a
+        // number, and this singleton could not be built. Such a value is the default, named once.
+        _maxFileBytes = GetMaxFileBytes(config, logger);
+        _maxFilesPerDay = Math.Clamp(ConfigValue.ReadInt(config, "ExtendedLog:MaxFilesPerDay", DefaultMaxFilesPerDay, logger), 2, 50);
         // aud-a46. A full queue discards its oldest entry when writes outpace the disk, and nothing counted it. The
         // callback runs on the writer's thread, after the channel's own lock is released; it counts and never logs - a
         // discard is a burst, and a report per discarded entry would be a flood of its own.
@@ -339,13 +341,14 @@ public class ExtendedLogService : IDisposable
         }
     }
 
-    private static long GetMaxFileBytes(IConfiguration config)
+    // aud-a62. A byte limit that cannot be read is not set, so the megabyte limit decides, as when it is left out.
+    private static long GetMaxFileBytes(IConfiguration config, ILogger logger)
     {
-        var explicitBytes = config.GetValue<long?>("ExtendedLog:MaxFileBytes");
+        var explicitBytes = ConfigValue.ReadLong(config, "ExtendedLog:MaxFileBytes", whenBlank: null, logger);
         if (explicitBytes.HasValue)
             return Math.Max(1024, explicitBytes.Value);
 
-        var maxFileMB = Math.Max(1, config.GetValue<int?>("ExtendedLog:MaxFileMB") ?? DefaultMaxFileMB);
+        var maxFileMB = Math.Max(1, ConfigValue.ReadInt(config, "ExtendedLog:MaxFileMB", DefaultMaxFileMB, logger));
         return maxFileMB * 1024L * 1024L;
     }
 

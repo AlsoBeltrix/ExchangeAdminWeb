@@ -30,8 +30,10 @@ public class JsonlLogService
         var logRoot = AuditLogRoot.Require(config);
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _rotationPeriod = config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
-        _maxFileBytes = GetMaxFileBytes(config);
-        _maxFilesPerPeriod = Math.Clamp(config.GetValue<int?>("Audit:MaxFilesPerPeriod") ?? DefaultMaxFilesPerPeriod, 2, 50);
+        // aud-a62. The limits are read without a throw: GetValue<int?> and GetValue<long?> threw on a value that is not a
+        // number, and the app then had no audit writer at all. Such a value is the default, named once.
+        _maxFileBytes = GetMaxFileBytes(config, logger);
+        _maxFilesPerPeriod = Math.Clamp(ConfigValue.ReadInt(config, "Audit:MaxFilesPerPeriod", DefaultMaxFilesPerPeriod, logger), 2, 50);
 
         Directory.CreateDirectory(_logFolder);
     }
@@ -217,13 +219,14 @@ public class JsonlLogService
         return Path.Combine(directory, $"{name}.{index}{extension}");
     }
 
-    private static long GetMaxFileBytes(IConfiguration config)
+    // aud-a62. A byte limit that cannot be read is not set, so the megabyte limit decides, as when it is left out.
+    private static long GetMaxFileBytes(IConfiguration config, ILogger logger)
     {
-        var explicitBytes = config.GetValue<long?>("Audit:MaxFileBytes");
+        var explicitBytes = ConfigValue.ReadLong(config, "Audit:MaxFileBytes", whenBlank: null, logger);
         if (explicitBytes.HasValue)
             return Math.Max(1024, explicitBytes.Value);
 
-        var maxFileMB = Math.Max(1, config.GetValue<int?>("Audit:MaxFileMB") ?? DefaultMaxFileMB);
+        var maxFileMB = Math.Max(1, ConfigValue.ReadInt(config, "Audit:MaxFileMB", DefaultMaxFileMB, logger));
         return maxFileMB * 1024L * 1024L;
     }
 

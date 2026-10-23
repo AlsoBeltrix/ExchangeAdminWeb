@@ -7,7 +7,7 @@ which throws on a non-number. (3) `JsonlLogService` (three sites) and `ExtendedL
 read `GetValue<int?>` / `GetValue<long?>` for their file limits in their constructors, which throw on
 non-numbers, so the audit writer or the extended log cannot be built. Each is a singleton every page
 injects, so a typo in one setting fails every resolution.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); in progress, plan committed
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a56/a57/a58 agent, 2026-10-23, candidates 7, 8 and 9 of its hand-back)
@@ -168,6 +168,117 @@ Files:
 - `README.md`
 - this record
 
+## Fix
+
+- New `Services/ConfigValue.cs`, `internal static class ConfigValue`, beside `ConfigBoolean` (left as it is):
+  - `ReadInt(IConfiguration config, string key, int whenBlank, ILogger logger)`: blank or absent is `whenBlank`;
+    `int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, ...)` decides the rest; anything else is
+    `whenBlank`, named.
+  - `ReadLong(..., long? whenBlank, ...)`: the same for `long`, and a null `whenBlank` is named as "not set".
+  - `ReadDouble(..., double whenBlank, ...)`: `NumberStyles.Float`, the invariant culture, and `double.IsFinite`.
+  - The naming is new private `NameOnce`: `Named.TryAdd((key, value), 0)` on a static `ConcurrentDictionary`, then
+    `LogWarning("The configuration value {Key} is '{Value}', which cannot be read as {Kind}; it is read as {Reading} until
+    it is corrected")` in `try { ... } catch (Exception) { }`.
+- `Services/OperationTraceService.cs`:
+  - The constructor is `(IConfiguration config, JsonlLogService log, ILogger<OperationTraceService>? logger = null)`.
+  - `_enabled` is `ConfigBoolean.Read(config, "OperationTrace:Enabled", whenBlank: true, whenNotBoolean: true, logger ??
+    NullLogger<OperationTraceService>.Instance)`, under a three-line comment.
+- `Services/EmailService.cs`: `_smtpPort` is `ConfigValue.ReadInt(config, "Email:SmtpPort", whenBlank: 25, logger)`.
+- `Services/JsonlLogService.cs`:
+  - `_maxFilesPerPeriod` is `Math.Clamp(ConfigValue.ReadInt(config, "Audit:MaxFilesPerPeriod", DefaultMaxFilesPerPeriod,
+    logger), 2, 50)`.
+  - `GetMaxFileBytes(config, logger)`: `ReadLong(config, "Audit:MaxFileBytes", whenBlank: null, logger)` first, then
+    `Math.Max(1, ReadInt(config, "Audit:MaxFileMB", DefaultMaxFileMB, logger))`.
+- `Services/ExtendedLogService.cs`: the same three reads for `ExtendedLog:MaxFilesPerDay`, `ExtendedLog:MaxFileBytes` and
+  `ExtendedLog:MaxFileMB`.
+- `Services/Jobs/BulkJobService.cs`: `ReadDouble(config, "BulkJobs:StaleHeartbeatMinutes", 5, logger)`,
+  `ReadInt(config, "BulkJobs:RecentJobLimit", 25, logger)` and `ReadDouble(config, "BulkJobs:RetentionDays", 30, logger)`.
+- `README.md`, section 3: a "Number settings and the trace switch" paragraph, after the `Audit:LogRoot` requirement.
+
+Tests, new `ExchangeAdminWeb.Tests/ConfigValueTests.cs`, 53 cases:
+- The reads: `ReadInt_TakesAWholeNumber_AndBlankAsItsDefault` (7), `ReadInt_TakesAValueItCannotRead_AsItsDefault_AndNamesIt`
+  (6, "0x32" among them), `ReadLong_TakesAWholeNumber_AndBlankAsNotSet` (4),
+  `ReadLong_TakesAValueItCannotRead_AsItsDefault_AndNamesIt`, `ReadDouble_TakesAFiniteNumber_AndBlankAsItsDefault` (5),
+  `ReadDouble_TakesAValueThatIsNotAFiniteNumber_AsItsDefault_AndNamesIt` (6), `AValueItCannotRead_IsNamedOncePerProcess`,
+  `ALoggerThatThrows_DoesNotStopTheAnswer`.
+- The constructors: `TheAuditWriter_GivenLimitsItCannotRead_IsBuilt_WithItsDefaults`,
+  `TheExtendedLog_GivenLimitsItCannotRead_IsBuilt_WithItsDefaults`, `TheMailService_GivenAPortThatIsNotANumber_IsBuilt_OnPort25`,
+  `TheTraceService_GivenASwitchThatIsNotABoolean_IsBuilt_AndTraces`,
+  `TheTraceService_BuiltByTheContainer_NamesTheValueThroughItsLogger`,
+  `TheBulkJobRunner_GivenSettingsItCannotRead_IsBuilt_WithItsDefaults`.
+- The source check: `TheSourceCheck_NamesTheParsersThatThrow_AndNotTheReadsThatDoNot` (15 samples) and
+  `NoPageOrService_ReadsAConfigurationValueWithAParserThatThrows`.
+
+Caller-visible changes, by design:
+- A number setting, or the trace switch, that cannot be read no longer throws out of a constructor: the audit and trace
+  writer, the trace service, the extended log, the mail service and the bulk job runner are built. The value is read as
+  its default and named once per process for each setting and value.
+- Blank is the default everywhere. Before, a blank `Email:SmtpPort` threw, as did a value of white space only at the
+  `GetValue` sites; an empty value there was already the default.
+- A decimal value the binder read is read the same. Its converter also took a hexadecimal form (`0x32`, `&h32`, `#32`)
+  for the integer settings; that is now named and read as the default. No setting documents one.
+- "NaN" and "Infinity" for `BulkJobs:StaleHeartbeatMinutes` and `BulkJobs:RetentionDays` passed the binder and then threw
+  out of `TimeSpan.FromMinutes` and `TimeSpan.FromDays`. They are named and read as the default.
+- `Audit:MaxFileBytes` or `ExtendedLog:MaxFileBytes` that cannot be read is not set, so its `MaxFileMB` decides, as when
+  it is left out.
+- `OperationTraceService` takes an optional logger, which the container injects.
+
 ## Guard proof
 
-Pending.
+Reproduction:
+- M1, E1, E2, E3 and E4 each put one call site back as it was at `4a7a202e`.
+- Each threw out of its constructor on a value that cannot be read: `FormatException` from `int.Parse`, and the binder's
+  `InvalidOperationException` ("Failed to convert configuration value ... to type ...") from `GetValue`. That is the
+  defect as the record states it.
+- The source check named the line each time.
+
+Driver: session scratchpad `w-a62a63a65/mutate.ps1`, aud-a56's driver pointed at this worktree; spec
+`w-a62a63a65/round-a62.ps1`, log `w-a62a63a65/a62-mutations.log`.
+- For each mutant: the file must equal its staged version, and its MD5 is taken. One literal replacement must match
+  exactly once.
+- A Release build of the solution with 0 errors is required. Then the filter runs with a TRX logger, and the failing
+  tests are read from the TRX.
+- In a `finally`, the file is restored from the index (`git checkout --`), its mtime advanced so MSBuild rebuilds, and
+  its MD5 re-checked.
+
+The filter (272 tests) covers the new tests, aud-a58's, both writers' suites, the mail service's, the trace service's,
+the audit service and writer, and the job runner's:
+`FullyQualifiedName~ConfigValueTests|FullyQualifiedName~ConfigBooleanTests|FullyQualifiedName~JsonlWriter|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~EmailService|FullyQualifiedName~OperationTrace|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~BulkJobService`
+
+Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the restored
+bytes and the filter: 272/272 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 `EmailService`'s `int.Parse(config["Email:SmtpPort"] ?? "25")` again | `EmailService.cs`, `97676757BFBB82EF5592D54809233363` | `868083B3850E33C299412A91F0797CEC` | 2 of 272: `TheMailService_GivenAPortThatIsNotANumber_IsBuilt_OnPort25` - `FormatException` out of the constructor; `NoPageOrService_ReadsAConfigurationValueWithAParserThatThrows` - "Services/EmailService.cs:49" |
+| extra E1 `JsonlLogService`'s `config.GetValue<int?>("Audit:MaxFilesPerPeriod")` again | `JsonlLogService.cs`, `7C9FC645F005FFADEFEE029477C74017` | `BFC651BAE7A79CE96A45165843B94636` | 2 of 272: `TheAuditWriter_GivenLimitsItCannotRead_IsBuilt_WithItsDefaults` - "Failed to convert configuration value ... at 'Audit:MaxFilesPerPeriod' to type 'System.Int32'"; the source check - "Services/JsonlLogService.cs:36" |
+| extra E2 `ExtendedLogService`'s `config.GetValue<long?>("ExtendedLog:MaxFileBytes")` again | `ExtendedLogService.cs`, `A56111C315D655C59867F5681592CF42` | `9D96237A1FC90A98191B9D9FB1FD5448` | 2 of 272: `TheExtendedLog_GivenLimitsItCannotRead_IsBuilt_WithItsDefaults` - the same, to 'System.Int64'; the source check - "Services/ExtendedLogService.cs:347" |
+| extra E3 `OperationTraceService`'s `config.GetValue<bool?>("OperationTrace:Enabled") ?? true` again (the logger expression kept as a discard, so the mutant builds) | `OperationTraceService.cs`, `0781AE6AB9B38B8DAED9561E113841DC` | `4932D5D440FC5A6F40819882B8AA3C8B` | 3 of 272: `TheTraceService_GivenASwitchThatIsNotABoolean_IsBuilt_AndTraces` and `TheTraceService_BuiltByTheContainer_NamesTheValueThroughItsLogger` - "... to type 'System.Boolean'", the second out of the container's resolution; the source check - "Services/OperationTraceService.cs:21" |
+| extra E4 `BulkJobService`'s `config.GetValue<int?>("BulkJobs:RecentJobLimit") ?? 25` again | `BulkJobService.cs`, `969BDBEB7C33292A3F275994C3901AD1` | `DD82526EFA3EC23A0CA986C58E9037C1` | 2 of 272: `TheBulkJobRunner_GivenSettingsItCannotRead_IsBuilt_WithItsDefaults` - "... to type 'System.Int32'"; the source check - "Services/Jobs/BulkJobService.cs:67" |
+| extra E5 the once-per-value guard removed (`if (!(Named.TryAdd((key, value), 0) \|\| true))`) | `ConfigValue.cs`, `5A70626528AAB7DC89CA2146B95017EF` | `B56A875295112F6C0CF2136BAD0EED32` | 1 of 272: `AValueItCannotRead_IsNamedOncePerProcess` - two warnings where one |
+| extra E6 `ReadDouble`'s finite check removed | `ConfigValue.cs`, `5A70626528AAB7DC89CA2146B95017EF` | `5AD81E15F1C1CFDC1383C1F8EC085305` | 5 of 272: `ReadDouble_TakesAValueThatIsNotAFiniteNumber_...` for "NaN", "Infinity", "-Infinity" and "1e400" - the value returned instead of 5; `TheBulkJobRunner_...` - "TimeSpan does not accept floating point Not-a-Number values" out of the constructor |
+
+Unchanged through the round: `ConfigValueTests.cs` `009ADCA4627FDA2AB1C17AD8C58902CA`.
+
+`ClickGate*` and `ProgressRegistryTests`, run alone on the restored tree (Release): 351/351.
+
+Not run, by design:
+- A real SMTP relay - the port is asserted on the built service, and nothing is sent.
+- The app's start-up with a mistyped `BulkJobs:` value - the runner's constructor is the call `Program.cs` 440 makes,
+  and it is built directly.
+
+## Comments after the round
+
+None were needed. The fix's comments were written before the round and are in the bytes measured above.
+
+## Known gaps
+
+- A value that parses but is out of range for its use still throws where a constructor converts it. A finite
+  `BulkJobs:RetentionDays` past `TimeSpan`'s range (about 10,675,199 days, say "30000000") throws `OverflowException`
+  from `TimeSpan.FromDays`, and `BulkJobs:StaleHeartbeatMinutes` likewise. That is a range, not a parse; listed in the
+  hand-back as a candidate.
+- The meaning of a number that parses is unchanged: the clamps and floors at the call sites stay, and a negative
+  `BulkJobs:` value keeps the meaning it had.
+- The once-per-value set lasts for the process and is never trimmed, as aud-a58's is.
+- The source check sees the shapes it names: a typed `GetValue<T>` but `string`, and a numeric `Parse(` or `Convert.ToX(`
+  of a configuration indexer. A parse of a value first copied into a local is not seen.

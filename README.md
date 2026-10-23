@@ -649,6 +649,17 @@ under it or under `wwwroot`). There is no baked-in default: **the app will not s
 `Audit:LogRoot` is unset or blank, so audit logs are never silently misplaced. Each
 environment sets its own value.
 
+**Number settings and the trace switch:** `Audit:MaxFileMB` (default 50), `Audit:MaxFileBytes`
+(not set), `Audit:MaxFilesPerPeriod` (5), `ExtendedLog:MaxFileMB` (10), `ExtendedLog:MaxFileBytes`
+(not set), `ExtendedLog:MaxFilesPerDay` (5), `Email:SmtpPort` (25), `BulkJobs:StaleHeartbeatMinutes`
+(5), `BulkJobs:RecentJobLimit` (25) and `BulkJobs:RetentionDays` (30) take a number, and
+`OperationTrace:Enabled` (`true`) takes `true` or `false`. Left out or blank, each is its default.
+A value that cannot be read - `50MB`, `five`, `yes` - is logged once as a warning naming the
+setting and the value, and is read as the default until it is corrected; a `MaxFileBytes` that
+cannot be read is not set, so its `MaxFileMB` applies. Before, such a value stopped the audit and
+trace writer, the trace, the extended log, the mail service or the bulk job runner from being
+built: every page that needs one failed, and for the job runner the app did not start.
+
 ### 4. Deploy to IIS
 
 **Generic / new environments — use the standalone product installer** in **elevated

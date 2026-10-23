@@ -44,7 +44,9 @@ public class EmailService
         _config = config;
         _logger = logger;
         _smtpHost = config["Email:SmtpHost"] ?? "localhost";
-        _smtpPort = int.Parse(config["Email:SmtpPort"] ?? "25");
+        // aud-a62. int.Parse threw on a port that is not a number, or is blank, and with it this singleton. Such a value is
+        // the default, 25, and is named once; a wrong port fails at connect time, as a wrong number always has.
+        _smtpPort = ConfigValue.ReadInt(config, "Email:SmtpPort", whenBlank: 25, logger);
         _smtpUser = config["Email:SmtpUsername"] ?? "";
         _smtpPass = config["Email:SmtpPassword"] ?? "";
         // aud-a58. bool.Parse threw on a value that is neither true nor false, and this singleton, and every page that sends
