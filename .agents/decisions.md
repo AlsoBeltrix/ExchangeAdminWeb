@@ -70,7 +70,7 @@ the existing discipline (one finding per commit, guard and mutation proof, codex
 records). For `aud-a29b`, whose record lists three options and says the choice should not
 be an agent's, the go selects option 1 (a revalidating authentication state provider, the
 framework's answer and the only option that fixes every page); the owner may veto before it
-lands. Queue and progress: `.agents/state.md` NEXT ACTION.
+lands. Queue and progress: `.agents/review/index.md` (every finding, its status and its reviewer); the stream closed under the 2026-10-23 stopping rule.
 
 ### 2026-10-21 - Orchestrating implementation subagents is allowed; the prohibition is removed
 

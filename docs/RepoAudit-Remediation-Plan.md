@@ -1,6 +1,6 @@
 # Repo Audit Remediation - Plan
 
-Status: **APPROVED 2026-10-19 - all four waves; implementation unstarted.** Source: the six-agent read-only audit of local
+Status: **IMPLEMENTED 2026-10-23 - all four waves landed, reviewed and pushed (`.agents/review/index.md`); the 2026-10-21 fix-everything stream closed the follow-ups.** Source: the six-agent read-only audit of local
 master at `34bac08`, 2026-10-16 (owner-supplied, `repo_audit.md`). Eight high findings, 32
 medium, plus lower-priority items. Nothing in this plan has been implemented.
 
