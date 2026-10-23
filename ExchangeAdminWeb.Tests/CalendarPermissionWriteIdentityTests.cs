@@ -165,6 +165,9 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     {
         var resolver = ExchangeWriteHarness.ExchangeKnows(Typed, "shared@contoso.test", Checked);
         var email = Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>());
+        // aud-a69: the trustee is someone - the directory holds their account. One neither Exchange nor the directory holds is
+        // refused by the self-grant check as a check that could not be completed.
+        _h.Forest.AddUser("jdoe", upn: Trustee, mail: Trustee, proxies: [$"SMTP:{Trustee}"]);
 
         var csv = "Target,User,AccessRight\n"
             + $"{Typed},{Trustee},Reviewer\n"

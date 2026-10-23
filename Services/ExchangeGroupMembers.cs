@@ -9,8 +9,10 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 /// <remarks>
 /// A Microsoft 365 group's members are its member links (<c>Get-UnifiedGroupLinks -LinkType Members</c>); a distribution
-/// group's, a mail-enabled security group's or a room list's are <c>Get-DistributionGroupMember</c>'s answer; every read
-/// asks for all of them (<c>-ResultSize Unlimited</c>). Neither cmdlet follows nesting, so a group among the members is read
+/// group's, a mail-enabled security group's or a room list's are <c>Get-DistributionGroupMember</c>'s answer; a dynamic
+/// distribution group's are the ones Exchange calculated from its filter (<c>Get-DynamicDistributionGroupMember</c>,
+/// aud-a72 - an empty one is no answer, and nothing here evaluates the filter); every read asks for all of them
+/// (<c>-ResultSize Unlimited</c>). No cmdlet follows nesting, so a group among the members is read
 /// in its turn - once, by its address - when Exchange calls it cloud-only, and listed but not read when it calls it synced:
 /// its whole membership is the on-premises directory's, groups Exchange does not list included, and the caller reads it
 /// there. Fail closed: any kind of group not listed here, a nested group without an address or a sync state, more than
@@ -34,6 +36,9 @@ internal static class ExchangeGroupMembers
 
     // RecipientTypeDetails of a Microsoft 365 group.
     private const string UnifiedGroupKind = "GroupMailbox";
+
+    // RecipientTypeDetails of a dynamic distribution group (aud-a72): its members are the ones Exchange calculated from its filter.
+    private const string DynamicGroupKind = "DynamicDistributionGroup";
 
     // The RecipientTypeDetails Get-DistributionGroupMember expands.
     private static readonly HashSet<string> DistributionGroupKinds = new(StringComparer.OrdinalIgnoreCase)
@@ -123,6 +128,20 @@ internal static class ExchangeGroupMembers
               .AddParameter("Identity", identity)
               .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "Stop");
+        }
+        else if (string.Equals(kind, DynamicGroupKind, StringComparison.OrdinalIgnoreCase))
+        {
+            // aud-a72. The members Exchange calculated for the filter; nothing here evaluates it. A calculated membership that
+            // is empty cannot be told from one not yet calculated, so it is no answer - never "not a member".
+            ps.AddCommand("Get-DynamicDistributionGroupMember")
+              .AddParameter("Identity", identity)
+              .AddParameter("ResultSize", "Unlimited")
+              .AddParameter("ErrorAction", "Stop");
+            var calculated = invoke(ps);
+            if (calculated.Count == 0)
+                throw new InvalidOperationException(
+                    $"Exchange Online reports no member of the dynamic distribution group '{identity}', so whether its membership was calculated cannot be told");
+            return calculated;
         }
         else
         {

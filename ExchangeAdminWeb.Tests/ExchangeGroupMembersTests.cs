@@ -46,6 +46,12 @@ public sealed class ExchangeGroupMembersTests : IDisposable
             if ($StandInFailures.ContainsKey("$Identity")) { Write-Error $StandInFailures["$Identity"]; return }
             foreach ($member in $StandInGroups["$Identity"].Members) { [pscustomobject]$member }
         }
+        function global:Get-DynamicDistributionGroupMember {
+            [CmdletBinding()] param($Identity, $ResultSize)
+            [void]$StandInCalls.Add("Get-DynamicDistributionGroupMember $Identity $ResultSize")
+            if ($StandInFailures.ContainsKey("$Identity")) { Write-Error $StandInFailures["$Identity"]; return }
+            foreach ($member in $StandInGroups["$Identity"].Members) { [pscustomobject]$member }
+        }
         """;
 
     public ExchangeGroupMembersTests()
@@ -185,6 +191,40 @@ public sealed class ExchangeGroupMembersTests : IDisposable
         Assert.Contains("Get-UnifiedGroupLinks m365@contoso.test Members Unlimited", Calls);
     }
 
+    // ---- aud-a72: a dynamic distribution group --------------------------------------------------------------------
+
+    private const string Dynamic = "DynamicDistributionGroup";
+
+    [Fact]
+    public void TheMembersOfADynamicDistributionGroup_AreTheOnesExchangeCalculated()
+    {
+        // Classified a group (aud-a60) and read by no cmdlet, so every grant to one was refused as incomplete. Its members are
+        // the ones Exchange calculated from its filter - nothing here evaluates the filter.
+        Group("dynamic@contoso.test", Dynamic, User("a@contoso.test"), User("b@contoso.test"));
+
+        var members = Read("dynamic@contoso.test");
+
+        Assert.Equal(["a@contoso.test", "b@contoso.test"], members.Select(member => member.PrimarySmtpAddress));
+        Assert.False(members[0].IsGroup);
+        Assert.Equal(["Get-Recipient dynamic@contoso.test", "Get-DynamicDistributionGroupMember dynamic@contoso.test Unlimited"], Calls);
+    }
+
+    [Fact]
+    public void ACloudGroupInADynamicGroup_AndADynamicGroupInACloudGroup_AreEachReadInTurn()
+    {
+        // The same rules as any group's members: a cloud-only group among them is read once, by its address.
+        Group("outer@contoso.test", Dl, Nested("dynamic@contoso.test", Dynamic, synced: false));
+        Group("dynamic@contoso.test", Dynamic, User("a@contoso.test"), Nested("inner@contoso.test", Security, synced: false));
+        Group("inner@contoso.test", Security, User("b@contoso.test"));
+
+        var members = Read("outer@contoso.test");
+
+        Assert.Equal(["dynamic@contoso.test", "a@contoso.test", "inner@contoso.test", "b@contoso.test"],
+            members.Select(member => member.PrimarySmtpAddress));
+        Assert.Equal(["Get-Recipient outer@contoso.test", "Get-DistributionGroupMember outer@contoso.test Unlimited",
+            "Get-DynamicDistributionGroupMember dynamic@contoso.test Unlimited", "Get-DistributionGroupMember inner@contoso.test Unlimited"], Calls);
+    }
+
     [Theory]
     [InlineData("UserMailbox", "GroupMailbox", true)]
     [InlineData(Dl, "GroupMailbox", true)]
@@ -237,11 +277,14 @@ public sealed class ExchangeGroupMembersTests : IDisposable
         Assert.DoesNotContain(Calls, call => call.Contains("synced@contoso.test", StringComparison.Ordinal));
     }
 
-    // aud-a61: a nesting past the bound is its own case below, with its own exception and text.
+    // aud-a61: a nesting past the bound is its own case below, with its own exception and text. aud-a72: a dynamic group is
+    // read now, so its row is a group of a kind no cmdlet reads; and a dynamic group's read fails when it fails, and when it
+    // reports no member.
     public static TheoryData<string> Failures =>
     [
-        "not found", "no kind", "a dynamic group", "a nested group without an address", "a nested group without a sync state",
-        "a member read that fails",
+        "not found", "no kind", "a group of a kind no cmdlet reads", "a nested group without an address",
+        "a nested group without a sync state", "a member read that fails", "a dynamic group that reports no member",
+        "a dynamic group whose read fails",
     ];
 
     [Theory]
@@ -257,8 +300,15 @@ public sealed class ExchangeGroupMembersTests : IDisposable
             case "no kind":
                 Group(Root, null, User("a@contoso.test"));
                 break;
-            case "a dynamic group":
-                Group(Root, "DynamicDistributionGroup", User("a@contoso.test"));
+            case "a group of a kind no cmdlet reads":
+                Group(Root, "UniversalSecurityGroup", User("a@contoso.test"));
+                break;
+            case "a dynamic group that reports no member":
+                Group(Root, Dynamic);
+                break;
+            case "a dynamic group whose read fails":
+                Group(Root, Dynamic, User("a@contoso.test"));
+                _failures[Root] = "The operation couldn't be performed because the server is busy.";
                 break;
             case "a nested group without an address":
                 Group(Root, Dl, Nested(null, Security, synced: false));
@@ -340,6 +390,21 @@ public sealed class ExchangeGroupMembersTests : IDisposable
 
         Assert.Equal(["a@contoso.test", "b@contoso.test"], members.Select(member => member.PrimarySmtpAddress));
         Assert.Equal("Unlimited", ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-DistributionGroupMember")), "ResultSize")?.ToString());
+        Assert.Equal(1, _h.Connects);
+    }
+
+    [Fact]
+    public async Task TheResolver_ReadsADynamicGroupsMembers_ThroughThePool()
+    {
+        // aud-a72: through the pool as any group's read, by the dynamic group's own cmdlet.
+        _h.AddMailbox("dynamic@contoso.test", Guid.NewGuid(), recipientTypeDetails: Dynamic);
+        _h.ListMembers.Add("a@contoso.test");
+
+        var members = await ResolverOver(_h.Pool).ReadGroupMembersAsync("dynamic@contoso.test");
+
+        Assert.Equal("a@contoso.test", Assert.Single(members).PrimarySmtpAddress);
+        Assert.Equal("Unlimited", ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember")), "ResultSize")?.ToString());
+        Assert.Empty(_h.CallsTo("Get-DistributionGroupMember"));
         Assert.Equal(1, _h.Connects);
     }
 

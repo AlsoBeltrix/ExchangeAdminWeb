@@ -4,7 +4,7 @@ namespace ExchangeAdminWeb.Services;
 /// The record and the banner of a refused self-grant on the Mailbox Permissions and Calendar Permissions pages (aud-a44,
 /// aud-a50): the refusal the validator gave, and "The audit row could not be written." when its record was not. Since
 /// aud-a59 also the protected-target denial's and the failed on-premises change's (<see cref="DenialRecord"/>,
-/// <see cref="FailedChangeRecord"/>).
+/// <see cref="FailedChangeRecord"/>), and since aud-a71 the failed single change's (<see cref="FailedSingleChangeRecord"/>).
 /// </summary>
 /// <remarks>
 /// <c>ExecuteOnPrem</c> writes its refusal through this, on one line: the pages are line-keyed by ClickGateRegistry, and the
@@ -35,6 +35,12 @@ internal static class SelfGrantRefusalRecord
 
     /// <summary>aud-a59. The record of an on-premises change that failed.</summary>
     internal const string FailedChangeRecord = "the failed on-premises change";
+
+    /// <summary>
+    /// aud-a71. The record of a single change that failed (<c>SubmitSingle</c>): its write, or a step before or after it. Not
+    /// <see cref="FailedChangeRecord"/>, whose words would misname a change Exchange Online was to write.
+    /// </summary>
+    internal const string FailedSingleChangeRecord = "the failed permission change";
 
     /// <summary>
     /// Writes the refusal's record through <paramref name="write"/> and returns the banner: the refusal, and

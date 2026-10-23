@@ -98,7 +98,8 @@ public interface IIdentityResolver
     /// <returns>Every member Exchange reported, nested groups' members included; never null.</returns>
     /// <exception cref="Exception">
     /// Thrown when the membership could not be read in full: Exchange Online unreachable, unreadable or not configured, the
-    /// group not found, a group of a kind the read does not expand, a nested group without an address or a sync state, or
+    /// group not found, a group of a kind the read does not expand, a dynamic distribution group Exchange reports no member of
+    /// (aud-a72), a nested group without an address or a sync state, or
     /// more nested cloud groups than it follows (aud-a61: an exception of its own, so the refusal can name the bound). Never
     /// an empty list standing in for a read that did not complete: the self-grant check takes the answer for evidence.
     /// </exception>

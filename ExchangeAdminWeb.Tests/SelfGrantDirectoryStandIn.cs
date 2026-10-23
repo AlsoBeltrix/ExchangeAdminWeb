@@ -29,7 +29,8 @@ namespace ExchangeAdminWeb.Tests;
 /// <c>Get-ADForest</c> take <c>-Credential</c>, and who each call ran as is kept beside it (<see cref="CallsAs"/>: the
 /// credential's account, or null for the session's own identity). A group can hide its member links from a read made with
 /// no credential (<see cref="Entry.MembersHiddenFromSession"/>): such a read sees no row for them, not an error - as a
-/// directory answers an identity that may not read a link.
+/// directory answers an identity that may not read a link. aud-a69: an object can hide itself from such a read
+/// (<see cref="Entry.HiddenFromSession"/>), which then finds no row for it and follows none of its links.
 /// </remarks>
 internal sealed class SelfGrantDirectoryStandIn
 {
@@ -125,6 +126,12 @@ internal sealed class SelfGrantDirectoryStandIn
         /// </summary>
         public bool MembersHiddenFromSession { get; init; }
 
+        /// <summary>
+        /// aud-a69. The object itself is hidden from a read made with no credential: such a read sees no row for it, and none of
+        /// its links - as a directory answers an identity that may not read the object. A credentialed read sees it.
+        /// </summary>
+        public bool HiddenFromSession { get; init; }
+
         public string Name => Dn[3..Dn.IndexOf(',')];
 
         /// <summary>A security group's groupType: the scope's flag and the security flag.</summary>
@@ -167,7 +174,7 @@ internal sealed class SelfGrantDirectoryStandIn
     /// </summary>
     public Entry AddGroup(string name, string? mail = null, string domainDn = DomainDn, string domainSid = DomainSid,
         int? rid = null, bool universal = false, bool catalogOnly = false, bool domainLocal = false,
-        bool membersHiddenFromSession = false, params Entry[] members)
+        bool membersHiddenFromSession = false, bool hiddenFromSession = false, params Entry[] members)
     {
         var entry = new Entry
         {
@@ -181,6 +188,7 @@ internal sealed class SelfGrantDirectoryStandIn
             Scope = universal ? "Universal" : domainLocal ? "DomainLocal" : "Global",
             CatalogOnly = catalogOnly,
             MembersHiddenFromSession = membersHiddenFromSession,
+            HiddenFromSession = hiddenFromSession,
         };
         _objects.Add(entry);
         return entry;
@@ -302,6 +310,7 @@ internal sealed class SelfGrantDirectoryStandIn
             var match = LdapFilter.Parse(filter);
             return _objects
                 .Where(entry => !groupsOnly || string.Equals(entry.Class, "group", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => credentialed || !entry.HiddenFromSession)
                 .Where(entry => Holds(reach, entry))
                 .Where(entry => match(attribute => Values(entry, attribute, reach, credentialed)))
                 .Select(Row)
@@ -322,9 +331,10 @@ internal sealed class SelfGrantDirectoryStandIn
     // Whose member links a server holds: at the catalog a universal group's only; in a domain its own groups'.
     private static bool LinksHeld(string reach, Entry group) => reach == "forest" ? group.Universal : Holds(reach, group);
 
-    // aud-a60. Whose member links this read can see: a link held, and not hidden from a read made with no credential.
+    // aud-a60. Whose member links this read can see: a link held, and not hidden from a read made with no credential - nor
+    // the group itself (aud-a69).
     private static bool LinksSeen(string reach, Entry group, bool credentialed) =>
-        LinksHeld(reach, group) && (credentialed || !group.MembersHiddenFromSession);
+        LinksHeld(reach, group) && (credentialed || (!group.MembersHiddenFromSession && !group.HiddenFromSession));
 
     private IEnumerable<string> Values(Entry entry, string attribute, string reach, bool credentialed) => attribute.ToLowerInvariant() switch
     {

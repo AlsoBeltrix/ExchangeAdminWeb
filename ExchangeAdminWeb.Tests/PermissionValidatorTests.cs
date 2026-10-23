@@ -260,10 +260,14 @@ public sealed class PermissionValidatorTests : IDisposable
     public async Task ValidateSelfGrant_DifferentUser_ReturnsNull()
     {
         // Past the string match the check finds the operator in the directory and asks Exchange: here the directory holds
-        // the operator and nobody named jdoe, and Exchange knows nobody, so the grant is to someone else.
+        // the operator and nobody named jdoe, and Exchange names jdoe as a recipient of their own, so the grant is to someone
+        // else. aud-a69: a grantee neither Exchange nor the directory holds is refused as a check that could not be completed.
         var forest = new SelfGrantDirectoryStandIn();
         var admin = forest.AddUser("admin", upn: "admin@company.com");
-        var validator = CreateValidator(resolver: ExchangeKnowsNobody());
+        var resolver = ExchangeKnowsNobody();
+        resolver.ResolveRecipientAsync("jdoe@company.com").Returns(
+            new ResolvedRecipient("jdoe@company.com", "ext-jdoe", "UserMailbox", ExistsOnPrem: false));
+        var validator = CreateValidator(resolver: resolver);
         validator.SelfGrantDirectoryRunspace = forest.Open;
 
         var result = await validator.ValidateSelfGrantAsync(

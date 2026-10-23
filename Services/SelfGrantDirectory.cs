@@ -34,8 +34,10 @@ internal sealed record SelfGrantDirectoryObject(
 /// One session per check: a fresh runspace, the ActiveDirectory module (<see cref="ActiveDirectoryModuleImport"/>) and the
 /// host forest's global catalog, discovered from <c>Get-ADForest</c> at runtime - the
 /// <c>PowerShellProtectedGroupDirectory.GlobalCatalog</c> idiom. Nothing is named, defaulted or configured (Architectural
-/// Invariant 7). The lookups of the operator and of the objects a grantee names run under the app pool's identity, as the
-/// other read-only lookups of the signed-in operator do (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>).
+/// Invariant 7). The lookups of the operator run under the app pool's identity, as the other read-only lookups of the signed-in
+/// operator do (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>); a missing or doubled operator refuses. The
+/// lookup of the objects a grantee names runs under the protected-principal directory-read credential (aud-a69,
+/// <see cref="FindNamedBy"/>): its empty answer is what lets a grantee through, so it may not rest on what the app pool can see.
 ///
 /// Every read is <c>Get-ADObject</c> under <c>-ErrorAction Stop</c>, and a cmdlet that wrote to its error stream is a failed
 /// read; so is a row without a DN, an objectGUID or a class. The validator reads "no rows" as an answer, so nothing here
@@ -107,17 +109,30 @@ internal sealed class SelfGrantDirectory : IDisposable
         _runspace.Dispose();
     }
 
-    /// <summary>Every object in the forest whose objectSid is <paramref name="sid"/>.</summary>
+    /// <summary>Every object in the forest whose objectSid is <paramref name="sid"/>, under the session's identity.</summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindBySid(string sid) =>
-        Search(ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, sid), _globalCatalog);
+        Search(ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, sid), _globalCatalog, credential: null);
 
-    /// <summary>Every object in the forest whose userPrincipalName is <paramref name="userPrincipalName"/>.</summary>
+    /// <summary>Every object in the forest whose userPrincipalName is <paramref name="userPrincipalName"/>, under the session's identity.</summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindByUserPrincipalName(string userPrincipalName) =>
-        Search($"(userPrincipalName={Escape(userPrincipalName.Trim())})", _globalCatalog);
+        Search($"(userPrincipalName={Escape(userPrincipalName.Trim())})", _globalCatalog, credential: null);
 
-    /// <summary>Every object in the forest a grantee identity can name (<see cref="GranteeFilter"/>).</summary>
-    internal IReadOnlyList<SelfGrantDirectoryObject> FindNamedBy(string identity, string? canonicalAddress) =>
-        Search(GranteeFilter(identity, canonicalAddress), _globalCatalog);
+    /// <summary>
+    /// Every object in the forest a grantee identity can name (<see cref="GranteeFilter"/>), read under
+    /// <paramref name="credential"/> - the protected-principal directory-read credential (aud-a69): an object the session's
+    /// identity cannot see reads as no row, and no row lets a grantee through.
+    /// </summary>
+    internal IReadOnlyList<SelfGrantDirectoryObject> FindNamedBy(string identity, string? canonicalAddress, PSCredential credential) =>
+        Search(GranteeFilter(identity, canonicalAddress), _globalCatalog,
+            credential ?? throw new ArgumentNullException(nameof(credential)));
+
+    /// <summary>
+    /// <see cref="FindNamedBy"/> under the session's own identity (aud-a69): only for a grantee Exchange Online names when the
+    /// directory-read credential cannot be had, where an object it finds can add a refusal and its empty answer clears nothing
+    /// Exchange's comparison did not.
+    /// </summary>
+    internal IReadOnlyList<SelfGrantDirectoryObject> FindNamedByUnderSessionIdentity(string identity, string? canonicalAddress) =>
+        Search(GranteeFilter(identity, canonicalAddress), _globalCatalog, credential: null);
 
     /// <summary>
     /// Every object a grantee identity can name: the identities Exchange accepts for a grantee that the directory holds -
@@ -189,17 +204,20 @@ internal sealed class SelfGrantDirectory : IDisposable
         }
     }
 
-    private List<SelfGrantDirectoryObject> Search(string filter, string server)
+    // A null credential is the session's own identity; any other is passed as -Credential (aud-a69).
+    private List<SelfGrantDirectoryObject> Search(string filter, string server, PSCredential? credential)
     {
         _ps.Commands.Clear();
         _ps.Streams.Error.Clear();
         try
         {
-            _ps.AddCommand("Get-ADObject")
+            var command = _ps.AddCommand("Get-ADObject")
                .AddParameter("LDAPFilter", filter)
                .AddParameter("Server", server)
-               .AddParameter("Properties", Properties)
-               .AddParameter("ErrorAction", "Stop");
+               .AddParameter("Properties", Properties);
+            if (credential is not null)
+                command.AddParameter("Credential", credential);
+            command.AddParameter("ErrorAction", "Stop");
 
             Collection<PSObject> rows = _ps.Invoke();
             if (_ps.HadErrors)

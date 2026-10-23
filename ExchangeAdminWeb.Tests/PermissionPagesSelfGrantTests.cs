@@ -43,6 +43,10 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         _h.AddMailbox(Target, TargetMailbox);
         var account = _h.Forest.AddUser("jdoe", upn: Upn, mail: Upn, proxies: [$"SMTP:{Upn}"]);
         _jdoe = SelfGrantDirectoryStandIn.Principal(Logon, account.Sid);
+
+        // aud-a69: the someone else the grants below name is someone - the directory holds their account. A grantee neither
+        // Exchange nor the directory holds is refused as a check that could not be completed.
+        _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
     }
 
     public void Dispose() => _h.Dispose();
@@ -107,14 +111,16 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     /// <summary>
     /// Mailbox Permissions' <c>SubmitSingle</c> over a Full Access grant to the alias - or to <paramref name="grantee"/>, on
-    /// <paramref name="target"/> - with the mail and the progress service a test gives (aud-a53, aud-a59).
+    /// <paramref name="target"/> - with the mail and the progress service a test gives (aud-a53, aud-a59), and the pool the
+    /// page's own service borrows from, the harness's unless a test gives one (aud-a71).
     /// </summary>
     private async Task<PermissionResult> SubmitMailboxGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
-        string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null)
+        string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
+        ExoConnectionPool? pool = null)
     {
         var page = new MailboxPermissions();
         Wire(page, resolver, audit, logger, email, progress);
-        Set(page, "MailboxService", new MailboxPermissionService(_h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace));
+        Set(page, "MailboxService", new MailboxPermissionService(pool ?? _h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace));
         SetField(page, "grantFullAccess", true);
         SetField(page, "grantSendAs", false);
         if (grantee is not null) SetField(page, "affectedUser", grantee);
@@ -128,11 +134,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     /// <summary>Calendar Permissions' <c>SubmitSingle</c> over a Reviewer grant, as <see cref="SubmitMailboxGrant"/>.</summary>
     private async Task<PermissionResult> SubmitCalendarGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
-        string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null)
+        string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
+        ExoConnectionPool? pool = null)
     {
         var page = new CalendarPermissions();
         Wire(page, resolver, audit, logger, email, progress);
-        Set(page, "CalendarService", new CalendarPermissionService(_h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
+        Set(page, "CalendarService", new CalendarPermissionService(pool ?? _h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
         SetField(page, "accessRight", CalendarAccessRight.Reviewer);
         if (grantee is not null) SetField(page, "affectedUser", grantee);
         if (target is not null) SetField(page, "targetMailbox", target);
@@ -428,20 +435,21 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     /// <summary>
     /// <paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to the alias, or to
-    /// <paramref name="grantee"/> on <paramref name="target"/>; the result and the page's warnings.
+    /// <paramref name="grantee"/> on <paramref name="target"/>, the page's service over <paramref name="pool"/> when given;
+    /// the result and the page's warnings.
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Submit(
         string page, IIdentityResolver resolver, AuditService audit, string? grantee = null, EmailService? email = null,
-        IActivityProgress? progress = null, string? target = null)
+        IActivityProgress? progress = null, string? target = null, ExoConnectionPool? pool = null)
     {
         if (page == MailboxPage)
         {
             var logger = new CapturingLogger<MailboxPermissions>();
-            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target), logger.Warnings);
+            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target, pool), logger.Warnings);
         }
 
         var calendarLogger = new CapturingLogger<CalendarPermissions>();
-        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target), calendarLogger.Warnings);
+        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target, pool), calendarLogger.Warnings);
     }
 
     [Theory]
@@ -582,6 +590,15 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         activity.Received(1).Complete(false, banner);
         Assert.Same(failure, Assert.Single(warnings).Exception);
         Assert.NotEmpty(_h.Writes);
+
+        // aud-a71: the catch records, as ExecuteOnPrem's does - beside the success row, a failed row that says the change was
+        // written and which step failed after it.
+        var rows = _h.AuditRows();
+        Assert.Equal(2, rows.Count);
+        var written = Assert.Single(rows, row => Text(row, "result") == "Success");
+        var failed = Assert.Single(rows, row => Text(row, "result") == "Failed");
+        Assert.Equal(Text(written, "action"), Text(failed, "action"));
+        Assert.Equal(banner, Text(failed, "error"));
     }
 
     [Theory]
@@ -684,6 +701,138 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal(banner, Text(record, "error"));
         Assert.Same(failure, Assert.Single(warnings).Exception);
         Assert.Empty(_h.CallsTo("Invoke-Command"));
+    }
+
+    // ---- aud-a71: a single change whose write throws is recorded, as the on-premises write's is ----------------------
+
+    /// <summary>
+    /// The harness's call list - every call recorded there as before - that does <paramref name="first"/> once, when the first
+    /// call is recorded through it.
+    /// </summary>
+    private sealed class CallsThen(System.Collections.IList calls, Action first) : System.Collections.ArrayList
+    {
+        private int _fired;
+
+        public override int Add(object? value)
+        {
+            var index = calls.Add(value);
+            if (Interlocked.Exchange(ref _fired, 1) == 0)
+                first();
+            return index;
+        }
+    }
+
+    /// <summary>
+    /// A pool for the page's own service, over the harness's stand-ins and settings: its first call - the location read -
+    /// retires the connection it runs on, and its next connect throws <paramref name="failure"/>. So the location is read and
+    /// the write's own borrow throws, as a borrow the pool refuses or a connection that cannot be had does: the one throw a
+    /// cloud write reaches its handler with, every failure inside the write being reported as a result. The validator keeps
+    /// the harness's pool.
+    /// </summary>
+    private ExoConnectionPool PoolWhoseWriteBorrowThrows(Exception failure)
+    {
+        ExoConnectionPool? pool = null;
+        var connects = 0;
+        pool = new ExoConnectionPool(_h.Config, _h.ModuleConfig, _h.Enablement, NullLogger<ExoConnectionPool>.Instance, _h.Trace,
+            (_, generation, _) =>
+            {
+                if (Interlocked.Increment(ref connects) > 1)
+                    throw failure;
+                var runspace = _h.OpenExchangeRunspace();
+                runspace.SessionStateProxy.SetVariable("Calls", new CallsThen(_h.Calls, () => pool!.DrainPool()));
+                var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+                return new PooledRunspace(runspace, ps, generation, "stand-in");
+            });
+        return pool;
+    }
+
+    /// <summary>What the write's borrow throws here: raw text unlike the PowerShell error it carries.</summary>
+    private static InvalidOperationException LostSession()
+    {
+        var failure = new InvalidOperationException("raw-text-a71");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the session to Exchange Online was lost" };
+        return failure;
+    }
+
+    /// <summary>The banner for <see cref="LostSession"/> at the write: whether the change was made could not be confirmed.</summary>
+    private const string WriteNotConfirmed =
+        "Whether the change was made could not be confirmed: the write failed: the session to Exchange Online was lost. Check the permissions before trying again.";
+
+    /// <summary>A progress service whose activity a test can read back.</summary>
+    private static (IActivityProgress Progress, IActivityHandle Activity) WatchedProgress()
+    {
+        var progress = Substitute.For<IActivityProgress>();
+        var activity = Substitute.For<IActivityHandle>();
+        progress.Begin(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ActivitySize>()).Returns(activity);
+        return (progress, activity);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACloudWriteThatThrows_IsRecordedAsFailed_WithTheBannersText(string page)
+    {
+        // The catch said the change could not be confirmed and recorded nothing: a write that may have applied left no row.
+        var failure = LostSession();
+        using var pool = PoolWhoseWriteBorrowThrows(failure);
+        var (progress, activity) = WatchedProgress();
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress, pool: pool);
+
+        Assert.False(result.Success);
+        Assert.Equal(WriteNotConfirmed, result.Message);
+        Assert.DoesNotContain("raw-text-a71", result.Message, StringComparison.Ordinal);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
+        Assert.Equal(page == MailboxPage ? "FullAccess" : "Reviewer", Text(record, page == MailboxPage ? "permissionType" : "accessRight"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(WriteNotConfirmed, Text(record, "error"));
+        Assert.Equal(Target, Text(record, "target"));
+        Assert.Equal(Other, Text(record, "affectedUser"));
+        Assert.Equal(TargetMailbox.ToString("D"), Text(record, ValidatedMailbox.AuditKey));
+        activity.Received(1).Complete(false, WriteNotConfirmed);
+        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.NotEmpty(_h.CallsTo("Get-Mailbox"));
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACloudWriteThatThrows_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten(string page)
+    {
+        using var pool = PoolWhoseWriteBorrowThrows(LostSession());
+        var (progress, activity) = WatchedProgress();
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress, pool: pool);
+
+        var banner = WriteNotConfirmed + " The audit row could not be written.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        activity.Received(1).Complete(false, banner);
+        Assert.Single(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACloudWriteThatThrows_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler(string page)
+    {
+        var failure = LostSession();
+        using var pool = PoolWhoseWriteBorrowThrows(failure);
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter(), grantee: Other, pool: pool);
+
+        Assert.False(result.Success);
+        Assert.Equal(WriteNotConfirmed + " The audit row could not be written.", result.Message);
+        Assert.Equal(2, warnings.Count);
+        Assert.Same(failure, warnings[0].Exception);
+        Assert.IsType<NullReferenceException>(warnings[1].Exception);
+        Assert.Contains("the failed permission change", warnings[1].Message, StringComparison.Ordinal);
+        Assert.Contains(Target, warnings[1].Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

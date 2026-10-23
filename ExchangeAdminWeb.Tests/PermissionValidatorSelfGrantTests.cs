@@ -266,8 +266,8 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Other);
 
         Assert.Null(result);
-        Assert.Contains(_h.Forest.Searches, search => search ==
-            $"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} {SelfGrantDirectory.GranteeFilter(Other, Other)}");
+        // aud-a69: the grantee is looked up under the directory-read credential.
+        Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(Other, Other)).As);
         Assert.Empty(_h.Forest.Errors);
     }
 
@@ -649,10 +649,12 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
             read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
         Assert.Contains(_h.Forest.CallsAs, read => read.Call.StartsWith("Get-ADForest", StringComparison.Ordinal)
             && read.As == ExchangeWriteHarness.DirectoryReadAccount);
-        // The operator's and the grantee's lookups stay the session's: resolver reads, outside this finding.
+        // The operator's own lookup stays the session's: a resolver read, outside this finding. aud-a69: the grantee's is the
+        // credential's.
         Assert.Contains(_h.Forest.CallsAs, read => read.As is null
             && read.Call.StartsWith($"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} ", StringComparison.Ordinal)
             && read.Call.Contains($"(objectSid={_jdoe.Sid})", StringComparison.Ordinal));
+        Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(Delegates, Delegates)).As);
         Assert.Equal(1, _h.DirectoryReadFetches);
         Assert.Empty(_h.Forest.Errors);
     }
@@ -660,15 +662,12 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     public static TheoryData<string> CredentialsNotToBeHad =>
         ["not configured", "its setting cannot be read", "not retrieved", "the fetch throws", "a blank account"];
 
-    [Theory]
-    [MemberData(nameof(CredentialsNotToBeHad))]
-    public async Task AGroupGrant_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNoMembershipIsRead(string shape)
+    /// <summary>
+    /// A validator over <paramref name="resolver"/> whose directory-read credential cannot be had as <paramref name="shape"/>
+    /// says (one of <see cref="CredentialsNotToBeHad"/>), and the problem its refusal names.
+    /// </summary>
+    private (PermissionValidator Validator, string Problem) WithoutTheCredential(IIdentityResolver resolver, string shape)
     {
-        // The operator is not a member here: the refusal is the question nothing may answer without the credential. The
-        // session identity is never asked in its place - its "no rows" is no answer.
-        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
-        var resolver = ExchangeKnowsTheTarget();
-        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
         var validator = shape == "its setting cannot be read"
             ? _h.NothingProtectedValidator(resolver, UnreadableModuleConfig())
             : _h.NothingProtectedValidator(resolver);
@@ -693,6 +692,19 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
                 validator.DirectoryReadSecretFetch = _ => Task.FromResult<(string username, string password, string domain)?>((" ", "secret", "CONTOSO"));
                 break;
         }
+        return (validator, problem);
+    }
+
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task AGroupGrant_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNoMembershipIsRead(string shape)
+    {
+        // The operator is not a member here: the refusal is the question nothing may answer without the credential. The
+        // session identity is never asked in its place - its "no rows" is no answer.
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var (validator, problem) = WithoutTheCredential(resolver, shape);
 
         var result = await validator.ValidateSelfGrantAsync(Jdoe, Delegates);
 
@@ -705,7 +717,9 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [Fact]
     public async Task AGrantToAPerson_NeedsNoDirectoryReadCredential()
     {
-        // The credential is had only for a group the directory is asked about: a deployment without it still grants to people.
+        // A deployment without the credential still grants to a person Exchange names: Exchange's comparison stands, and the
+        // directory's lookup of the grantee runs as the session, an answer that can only add a refusal (aud-a69). A grantee
+        // Exchange does not name is refused without it (AGranteeExchangeDoesNotName_WithoutTheDirectoryReadCredential_...).
         var resolver = ExchangeKnowsTheTarget();
         resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
         resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
@@ -714,6 +728,182 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other));
         Assert.Equal(0, _h.DirectoryReadFetches);
+        Assert.Null(Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(Other, Other)).As);
+    }
+
+    // ---- aud-a69: the grantee is looked up under the directory-read credential -----------------------------------------
+
+    /// <summary>The grantee's lookup at the catalog, for <paramref name="grantee"/> and Exchange's address for it.</summary>
+    private static string GranteeLookup(string grantee, string? canonicalAddress = null) =>
+        $"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} {SelfGrantDirectory.GranteeFilter(grantee, canonicalAddress)}";
+
+    private const string HiddenGroup = "Hidden Delegates";
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AGroupOnlyTheDirectoryHolds_HiddenFromTheSessionIdentity_IsFoundUnderTheDirectoryReadCredential(bool operatorInside)
+    {
+        // Exchange holds no recipient for it - a security group only the on-premises directory holds - and the session's
+        // identity cannot see it. Looked up as the session, nothing was found, no membership was read and the grant went
+        // through. Under the credential the group is there, and its membership is read under it.
+        _h.Forest.AddGroup(HiddenGroup, hiddenFromSession: true, members: [operatorInside ? _jdoe : _other]);
+        var resolver = ExchangeKnowsTheTarget();
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, HiddenGroup);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(HiddenGroup)).As);
+        Assert.NotEmpty(_h.Forest.MembershipReads);
+        Assert.All(_h.Forest.MembershipReads, read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
+        Assert.Equal(1, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AGranteeNeitherExchangeNorTheDirectoryHolds_IsRefused_AsIncomplete()
+    {
+        // An empty answer was "nothing here is the operator", and the grant went through. A grantee that exists nowhere
+        // cannot be granted anyway, and one the check cannot see must not pass.
+        const string ghost = "ghost@contoso.test";
+        var resolver = ExchangeKnowsTheTarget();
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, ghost);
+
+        Assert.Equal(IncompleteBecause(
+            $"neither Exchange Online nor the on-premises directory holds '{ghost}', so whether it is you could not be checked"), result);
+        Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(ghost)).As);
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task AGranteeExchangeDoesNotName_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNotLookedUp(string shape)
+    {
+        // Only the directory can answer for it, and nothing may answer without the credential: the session's identity is not
+        // asked in its place - its "no rows" is no answer. The directory holds an account by this name that is not the
+        // operator, and the grant went through on the session's read of it.
+        var resolver = ExchangeKnowsTheTarget();
+        var (validator, problem) = WithoutTheCredential(resolver, shape);
+
+        var result = await validator.ValidateSelfGrantAsync(Jdoe, Other);
+
+        Assert.Equal(IncompleteBecause($"the on-premises directory could not resolve '{Other}': {problem}"), result);
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => call == GranteeLookup(Other));
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task OneRun_HasTheDirectoryReadCredentialOnce_AndLooksEveryGranteeUpUnderIt()
+    {
+        // aud-a61's run carries the credential: the rows of a bulk file each look their grantee up under it, fetched once.
+        const string third = "third@contoso.test";
+        _h.Forest.AddUser("third", upn: third, mail: third, proxies: [$"SMTP:{third}"]);
+        var validator = _h.NothingProtectedValidator(ExchangeKnowsTheTarget());
+        var run = new SelfGrantRun();
+
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other, run));
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, third, run));
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other, run));
+
+        Assert.Equal(1, _h.DirectoryReadFetches);
+        var lookups = _h.Forest.CallsAs.Where(read => read.Call == GranteeLookup(Other) || read.Call == GranteeLookup(third)).ToList();
+        Assert.Equal(3, lookups.Count);
+        Assert.All(lookups, read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ASyncedGroupInACloudOnlyGroup_HiddenFromTheSessionIdentity_IsFoundUnderTheDirectoryReadCredential(bool operatorInside)
+    {
+        // Looked up as the session it was not found and the grant was refused unevaluated, though the credential the
+        // evaluation reads under sees it. Found under that credential, it is evaluated.
+        const string synced = "synced-team@contoso.test";
+        _h.Forest.AddGroup("Synced Team", mail: synced, hiddenFromSession: true, members: [operatorInside ? _jdoe : _other]);
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"), GroupMember(synced, synced: true));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(synced, synced)).As);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task ASyncedGroupInACloudOnlyGroup_WithoutTheDirectoryReadCredential_IsRefused_NamingIt_AndNotLookedUpAsTheSession()
+    {
+        // The evaluation it would join cannot be made without the credential, so it is not looked up as the session first.
+        const string synced = "synced-team@contoso.test";
+        _h.Forest.AddGroup("Synced Team", mail: synced, members: [_other]);
+        var validator = _h.NothingProtectedValidator(ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"), GroupMember(synced, synced: true)));
+        ClearTheDirectoryReadSecretId();
+
+        var result = await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(IncompleteBecause(
+            $"whether you are a member of the group '{CloudGroup}' could not be read: {PermissionValidator.DirectoryReadCredentialNotConfigured}"), result);
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => call == GranteeLookup(synced, synced));
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    // ---- aud-a72: a dynamic distribution group's members are read -------------------------------------------------------
+
+    private const string DynamicGroup = "dynamic-team@contoso.test";
+
+    /// <summary>
+    /// Exchange knows the operator's mailbox, and the grantee as a dynamic distribution group only it holds, whose members -
+    /// <paramref name="members"/> - the real resolver reads through the harness's pool and stand-ins: the reader itself, not a
+    /// stub of it.
+    /// </summary>
+    private IIdentityResolver ExchangeHoldsADynamicGroup(params string[] members)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(DynamicGroup).Returns(new ResolvedRecipient(DynamicGroup, "ext-" + DynamicGroup,
+            "DynamicDistributionGroup", ExistsOnPrem: false, RecipientTypeDetails: "DynamicDistributionGroup"));
+        _h.AddMailbox(DynamicGroup, Guid.NewGuid(), recipientTypeDetails: "DynamicDistributionGroup");
+        foreach (var member in members)
+            _h.ListMembers.Add(member);
+        var reader = new ExchangeIdentityResolver(_h.Pool, null!, NullLogger<ExchangeIdentityResolver>.Instance, _h.Config);
+        resolver.ReadGroupMembersAsync(DynamicGroup).Returns(_ => reader.ReadGroupMembersAsync(DynamicGroup));
+        return resolver;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ADynamicDistributionGroup_IsCheckedAgainstTheMembersExchangeCalculated(bool operatorInside)
+    {
+        // A group to the check (aud-a60) that no cmdlet read, so every grant to one was refused as incomplete though
+        // Exchange can say who its members are.
+        var resolver = ExchangeHoldsADynamicGroup(Other, operatorInside ? Upn : "third@contoso.test");
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal("Unlimited",
+            ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember")), "ResultSize")?.ToString());
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [InlineData("the read fails")]
+    [InlineData("no member is reported")]
+    public async Task ADynamicDistributionGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete(string shape)
+    {
+        // A calculated membership that is empty cannot be told from one not yet calculated: no answer, never "not a member".
+        var resolver = shape == "the read fails" ? ExchangeHoldsADynamicGroup(Other) : ExchangeHoldsADynamicGroup();
+        if (shape == "the read fails")
+            _h.Failures["Get-DynamicDistributionGroupMember"] = "The operation couldn't be performed because the server is busy.";
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{DynamicGroup}' could not be read"), result);
+        Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember"));
     }
 
     /// <summary>The directory-read Secret ID the harness stored, cleared: the credential is not configured.</summary>
