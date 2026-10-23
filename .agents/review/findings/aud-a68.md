@@ -37,3 +37,9 @@ warning), 134-138 and 28 (`r.Error`); `Components/Pages/RecipientLookup.razor` 9
 ## Guard proof
 
 Pending.
+
+## Also held (codex, mig-batch-9, 2026-10-23) - LOW
+
+(6) `ExchangeAdminWeb.Tests/RecipientLookupReportedTimeTests.cs` 103: the stand-in's archive read answers no row,
+which aud-a54 now treats as unreadable, so those page-render tests pass while rendering an archive warning a
+no-archive mailbox would not; model "no archive" with a recognised not-found shape and assert `Warnings` empty.

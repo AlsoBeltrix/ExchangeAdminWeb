@@ -4,7 +4,7 @@
 `Get-Mailbox -ErrorAction Ignore`, so a failed cloud read shows as "not a mailbox", and wraps the cloud
 archive statistics read in `catch { }`, so any failure shows as no archive. aud-a23o fixed the on-prem size
 path this service consumes; these two cloud reads are its own.
-**Status**: Merged `671d9bc9`; closed on guard proof; codex review pending
+**Status**: Complete; merged `671d9bc9`; codex mig-batch-9 clean (one test-fixture LOW held in aud-a68)
 **Branch**: `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`)
 **Commit**: `4e2c4e79` (fix, tests, record); plan `3113f6f0`; comments `2e2218e4` (shared with aud-a55)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidate 2 of its hand-back)

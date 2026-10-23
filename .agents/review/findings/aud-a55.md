@@ -7,7 +7,7 @@ offered on NeedsApproval) gates it, so a stale page or a second operator can app
 no longer allows it (the aud-a23r class for the many-user case). (2) `Migration.razor`'s bulk executors
 return silently on "no list loaded" guards. (3) `MigrationService.GetCloudMailboxSizeAsync` reads an archive
 read that returns no rows and no error as no archive (minor: no decision reads the cloud size).
-**Status**: Merged `671d9bc9`; closed on guard proof; codex review pending
+**Status**: Complete; merged `671d9bc9`; codex mig-batch-9 clean (one test-fixture LOW held in aud-a68)
 **Branch**: `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`)
 **Commit**: `d2bcd9c2` (fix, tests, record); plan `3113f6f0`; comments `2e2218e4` (shared with aud-a54)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidates 3, 4 and 5 of its hand-back)
