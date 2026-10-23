@@ -8,7 +8,7 @@ check is a finding. (2) The same branch refuses any Exchange group recipient wit
 group as "could not be completed"; a Microsoft 365 group or any cloud-only group never has one, so every
 Mailbox Permissions and Calendar Permissions grant to such a group now fails before Exchange can write - a
 functional block introduced by aud-a43.
-**Status**: Fixed on branch (folded into the aud-a50 agent's scope), closed on guard proof; not merged, not pushed; codex review pending
+**Status**: Merged `81809833`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a80f49ad9ee618412` (from master `132d6e97`)
 **Commit**: plan `43c47893`; fix `f7921ce8` (after aud-a50 parts 1, 3, 2; before its part 4); comments `dcfec67c`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-5, 2026-10-22, candidates 1 and 2)

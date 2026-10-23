@@ -26,3 +26,10 @@ At `d690a6c1`: `Components/Pages/CalendarPermissions.razor` 506 (the catch), 484
 ## Guard proof
 
 Pending.
+
+## Also noted (aud-a50/a52 agent, 2026-10-22)
+
+The same catch's wording is wrong wherever it runs now: since aud-a28q the audit writers do not throw, so
+"Operation may have succeeded but audit logging failed: {ex.Message}" is reached by other throws (a location
+probe before anything was written, for one) and shows raw exception text. The fix names the step that failed
+and uses the aud-a23i error-text helper, no raw message.
