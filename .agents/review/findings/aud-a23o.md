@@ -9,7 +9,7 @@ base returns null for ANY failure - a guess. (3) `HasCloudMailboxAsync` reads `G
 `-ErrorAction Ignore` and `OnPremRecipientExists` under `SilentlyContinue`: a failed read is "no mailbox".
 (4) `CheckAdGroupMembership` has no caller since aud-a23j but still carries the substring match and the
 Eligible-when-no-user return; a future caller inherits the defect.
-**Status**: Merged `d690a6c1`; closed on guard proof; codex review pending
+**Status**: Merged `d690a6c1`; closed on guard proof; codex review pending; codex misc-batch-1 clean (2026-10-23)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: `990a02ab` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23r, aud-a23q, aud-a23p)
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidates 1, 2, 3 and 6 of its hand-back)

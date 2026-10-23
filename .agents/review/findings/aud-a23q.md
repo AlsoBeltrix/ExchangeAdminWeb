@@ -4,7 +4,7 @@
 visible). `ExecuteBatchAction` and `ExecuteUserAction` return silently on an authorization denial: no
 message, no audit row, while the bulk executors audit a "_Denied" row. The two creates
 (`CreateSingleMigrationBatch`, `CreateMigrationBatch`) show nothing on a denial or on a guard return.
-**Status**: Merged `d690a6c1`; closed on guard proof; codex review pending
+**Status**: Merged `d690a6c1`; closed on guard proof; codex review pending; codex misc-batch-1 clean (2026-10-23)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: `d58a0bc5` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23r, aud-a23o, aud-a23p)
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidate 5 of its hand-back)

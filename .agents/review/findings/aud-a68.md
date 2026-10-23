@@ -43,3 +43,9 @@ Pending.
 (6) `ExchangeAdminWeb.Tests/RecipientLookupReportedTimeTests.cs` 103: the stand-in's archive read answers no row,
 which aud-a54 now treats as unreadable, so those page-render tests pass while rendering an archive warning a
 no-archive mailbox would not; model "no archive" with a recognised not-found shape and assert `Warnings` empty.
+
+## Also held (codex, misc-batch-1, 2026-10-23) - LOW
+
+(7) `Components/Pages/Migration.razor` 3536 and 3702: the bulk executors' authorization-denial audit rows pass no
+`extra`, so they lack `mutationAttempted: false` (the single-action denials through `MigrationService.RecordDenial`
+carry it); route both through `RecordDenial` and add the two denied-authorization tests.
