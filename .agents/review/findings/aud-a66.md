@@ -35,3 +35,12 @@ baselines are read; `Components/Layout/NavMenu.razor` 66/118 (the route change);
 ## Guard proof
 
 Pending.
+
+## Folded in: the in-flight save wait on Module Configuration is unbounded (codex, settings-batch-6, 2026-10-23) - MEDIUM
+
+`Components/Pages/ModuleConfig.razor` around line 953: `OnParametersSetAsync` awaits the aud-a41 in-flight save
+with no timeout; a save task that never completes (a hung store) blocks every later module navigation on that
+page instance until a new circuit. Bound the wait (the store's busy timeout plus a margin) and, when it runs
+out, show a stuck-save notice and refuse the navigation's save bookkeeping rather than hang; the module-local
+captured state this finding introduces is what makes a bounded wait safe (a late completion applies UI state
+only if the page still shows that module). Mutation at the call site: the bound removed.

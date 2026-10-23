@@ -36,3 +36,11 @@ At `86df002a`: `Components/Pages/ModuleConfig.razor` `LoadState` / `ReloadAsync`
 ## Guard proof
 
 Pending.
+
+## Also held (codex, settings-batch-6, 2026-10-23) - LOW
+
+(7) `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs` 58 and `SettingsStoreBusyTests.cs` 128: the `< 9 s` wall-clock
+ceiling can false-fail on a slow runner; keep the structural assertions (`busy_timeout`, `DefaultTimeout`) and
+loosen the elapsed check to "not the 30 s retry loop". (8) `SettingsSaveAuditTests.cs` 644: the helper tripwire
+enumerates catches by `InlineData`, so a new or nested settings-save catch escapes it; discover the catches from
+the page source and require the helper for every non-allowlisted one.

@@ -6,7 +6,7 @@ reason. `CircuitRevalidationTests.ProgramCs_ResolvesTheOffSwitchAndReportsItAtSt
 `IndexOf` on the raw text; a comment naming the call before `app.Run()` satisfies it while the real call is
 removed or moved. The aud-a28w branch tripped the inverse (a comment naming `app.Run()` earlier made it
 fail) and fixed the comment, not the guard.
-**Status**: Merged `86df002a`; closed on guard proof; codex review pending
+**Status**: Complete; merged `86df002a`; codex settings-batch-6 raised one MEDIUM (folded into aud-a66) and two LOWs (held in aud-a67)
 **Branch**: `worktree-agent-a885c578973c1cad3`
 **Commit**: `086501ad` (plan `6db3a417`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (settings-batch-5, 2026-10-22)
