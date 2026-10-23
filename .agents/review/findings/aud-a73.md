@@ -173,7 +173,8 @@ the line-end comment above it is the fix's), so each failure is also the finding
 - `ExecuteOnPrem`'s catch (aud-a59; Mailbox 744-747, Calendar 687-690) files a throw at its own write step Failed under
   the same "could not be confirmed" banner - out of this record's scope (Plan), a candidate in the hand-back. It is reached:
   `MailboxPermissionService.AddMailboxPermissionsOnPremAsync`'s connect sits in a try with only a `finally`, and
-  `CalendarPermissionService.SetCalendarPermissionOnPremAsync` lets every failure of its write out.
+  `CalendarPermissionService.SetCalendarPermissionOnPremAsync` lets every failure of its write out. Admitted as aud-a75 and
+  fixed on this branch (plan `b8bad419`, fix `73af9fc8`).
 - `IsSuccessfulAuditResult` reads any result but "Failed" as a success, so an Undetermined row counts as a non-failure in
   the usage count and completes the audit's implicit trace operation as succeeded (the rule aud-a28z part 5 kept for an
   undetermined eligibility check); filed Failed, this row counted as a failure there. The audit row, its trace step's

@@ -5,9 +5,9 @@
 (reachable: `AddMailboxPermissionsOnPremAsync` calls `ConnectOnPrem` inside a try with only a `finally`; the
 Calendar on-prem set and remove have no catch) is filed Failed while the banner says the outcome could not
 be confirmed; the Undetermined filter does not find it.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a73 agent's branch
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a73 agent's branch; fixed on it, not merged
 **Branch**: `worktree-agent-a22f2baf02d6abcdd` (from master `066ea1a2`, after aud-a73's `ff0b9ded`)
-**Commit**: -
+**Commit**: plan `b8bad419`; fix `73af9fc8`
 **Reviewer**: implementer (surfaced by the aud-a73 agent, 2026-10-23, candidate 1 of its hand-back)
 
 ## Evidence
@@ -113,3 +113,24 @@ line-end comment, so each failure is also the finding's reproduction.
   Undetermined too, as its banner says.
 - Nothing ran against Exchange: the harness's on-premises stand-in through the services' own seam, or a connect that
   throws the test's exception; the harness's validator and directory stand-in.
+
+## Comments after the round
+
+None: the line-end comments were written with the fix (`73af9fc8`) and every mutant ran with them in place.
+
+## Gates - 2026-10-23 (branch tip `73af9fc8`: aud-a73 and aud-a75)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline - none in
+  a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,646
+  passed / 0 skipped / 0 failed, 6,646 total, 4m32s; nothing hung (the blame collector wrote no Sequence file).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0. `git add -A`
+  then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines (`wc -l`).
+
+No AD, Exchange Online, Graph, DHCP or IIS call. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a22f2baf02d6abcdd`, not merged, not pushed. Due at merge: the Mailbox Permissions and
+Calendar Permissions module versions - what `ExecuteOnPrem`'s failure row is filed as. No shared code changes here; the
+base app version is due from aud-a73.
