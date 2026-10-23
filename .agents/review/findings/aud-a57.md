@@ -8,7 +8,7 @@ up to 30 s - a fail-open on the anonymous usage switch. One `TryGetModuleConfig`
 escapes `GetValue` / `GetModuleConfig` into every caller (the aud-a28q/a45 class at the config store).
 (3) `AdminEventLog.razor` `LoadEvents`' audit and trace catches call `Logger.LogError` with no guard, so a
 throwing provider ends the load.
-**Status**: Merged `3da510cb`; closed on guard proof; codex review pending
+**Status**: Complete; merged `3da510cb`; codex attr-batch-16 raised one MEDIUM, admitted as aud-a65
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
 **Commit**: `278dff50` (fix, tests, record); plan `c3960fe9`
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidates 3, 4 and 5 of its hand-back)
