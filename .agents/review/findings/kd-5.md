@@ -1,7 +1,7 @@
 # kd-5: Conference Rooms - CancelJob cancels a running bulk job and audits nothing
 
 **Severity**: MEDIUM - an audit gap on a mutating operator action. `Components/Pages/ConferenceRooms.razor` `CancelJob` (about 837) cancels a running bulk job with no audit row, while `RemoveJob` audits. The Constitution requires audit on every mutating action.
-**Status**: Merged to master `07f2d371`; codex defect review cr-batch-8 in flight
+**Status**: Merged to master `07f2d371`; codex cr-batch-8 raised kd-32 (LOW); closes when it lands
 **Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
 **Commit**: the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
@@ -119,3 +119,7 @@ Fixed on branch `fix/psl10-a2y`, not merged, not pushed: the commit that adds th
 hand-back). Conference Rooms' version moved on this branch with aud-a2y (2.7.0 -> 2.8.0; its note names kd-5). The
 `BulkJobService` change is shared code: a base app version bump is due, outside this brief. Pending: the merge and codex
 review.
+
+## Reviewer comments (supervisor, cr-batch-8)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 3e43b35b head f7b794cb (merged 07f2d371); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat f7b794cb). Two LOW candidates across the range, admitted as kd-32 (against kd-5) and psl-11 (against psl-10 (4)). Codex confirmed: the seven credential refusals use the same LookupCredentialsAsync failure shape; the DHCP 2>$null still lets -ErrorAction Stop terminate and the file is ASCII; the psl-10 stream clears run in finally on exception paths. Artefacts: `.agents/review/cr-batch-8.result.txt`, `.stream.log`, `prompt-cr-batch-8.md`.
