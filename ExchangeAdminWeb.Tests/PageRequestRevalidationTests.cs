@@ -63,6 +63,10 @@ public class PageRequestRevalidationTests
     private const string SectionGroupSid = DomainSid + "-5001";
     private const string LaterGrantedGroupSid = DomainSid + "-5005";
 
+    // For the tests that hold a directory read open while other steps run (aud-a29k): far above any
+    // stall a loaded host has shown (about 10 s), so only a genuine hang can time them out.
+    private static readonly TimeSpan SlowReadLookupTimeout = TimeSpan.FromMinutes(2);
+
     // ------------------------------------------------------------------ the page request, end to end
 
     [Theory]
@@ -403,7 +407,9 @@ public class PageRequestRevalidationTests
     [Fact]
     public async Task AnAnswerFromAReadThatStartedEarlier_DoesNotReplaceALaterOne()
     {
-        using var h = new Harness();
+        // Holds a read open across a whole circuit check: under the default 10 s a stall on a loaded
+        // host timed the early check out (aud-a29k).
+        using var h = new Harness(lookupTimeout: SlowReadLookupTimeout);
         h.Grant("MailboxPermissions", SectionGroupSid);
         var slow = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
@@ -436,7 +442,9 @@ public class PageRequestRevalidationTests
     [Fact]
     public async Task AFailureOfAReadThatStartedEarlier_DoesNotForgetALaterAnswer()
     {
-        using var h = new Harness();
+        // Holds a read open across a circuit check, which a stall over the default 10 s would time out
+        // (aud-a29k).
+        using var h = new Harness(lookupTimeout: SlowReadLookupTimeout);
         h.Grant("MailboxPermissions", SectionGroupSid);
         var slow = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
@@ -570,13 +578,16 @@ public class PageRequestRevalidationTests
         audit.GetProperty("removedGroupSids").EnumerateArray().Select(e => e.GetString() ?? "").ToArray();
 
     // The revalidator moves each check off the caller's thread, so a read is made a moment after the
-    // call returns its task. Waits until the directory has been asked this many times.
+    // call returns its task. Waits until the directory has been asked this many times - for as long as
+    // the harness lets a check take (aud-a29k), so a stall the check itself would absorb cannot fail
+    // the wait instead.
     private static async Task WaitForReadsAsync(Harness h, int reads)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var limit = h.Options.LookupTimeout;
+        var deadline = DateTime.UtcNow + limit;
         while (h.Directory.ReceivedCalls().Count(c => c.GetMethodInfo().Name == nameof(IOperatorMembershipDirectory.GetMembershipAsync)) < reads)
         {
-            Assert.True(DateTime.UtcNow < deadline, $"The directory was not asked {reads} time(s) within 10 seconds.");
+            Assert.True(DateTime.UtcNow < deadline, $"The directory was not asked {reads} time(s) within {limit.TotalSeconds:0} seconds.");
             await Task.Delay(10, Ct);
         }
     }
@@ -677,7 +688,7 @@ public class PageRequestRevalidationTests
         private readonly TempDir _temp = new();
         private CircuitMembershipRevalidator? _revalidator;
 
-        public Harness(bool enabled = true)
+        public Harness(bool enabled = true, TimeSpan? lookupTimeout = null)
         {
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -694,7 +705,7 @@ public class PageRequestRevalidationTests
 
             var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
             Audit = new AuditService(log, new OperationTraceService(config, log));
-            Options = new CircuitRevalidationOptions(TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(10), enabled);
+            Options = new CircuitRevalidationOptions(TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10), enabled);
         }
 
         public SqliteConfigStore Store { get; }
