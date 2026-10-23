@@ -2463,13 +2463,58 @@ public class MigrationStatusPageTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void StripLineComments_BlanksCommentsAndKeepsWhatIsInsideAStringOrAnAttribute()
+    {
+        // kd-20. The helper every scan here reads through cut from any "//" to the end of the line,
+        // so a URL in a string lost its closing quote and the statements after it, and a markup
+        // "https://" took the rest of its tag - the handler included - while a block comment was
+        // read as code.
+        var body = string.Join("\n",
+            "private void Open()",
+            "{",
+            "    var help = \"http://help.contoso.test/migration\"; isBusy = true; // a comment: finally",
+            "    /* a block comment: finally */",
+            "    Go();",
+            "}");
+
+        var stripped = StripLineComments(body);
+
+        Assert.Contains("\"http://help.contoso.test/migration\"; isBusy = true;", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("finally", stripped, StringComparison.Ordinal);
+        Assert.Contains("Go();", stripped, StringComparison.Ordinal);
+        Assert.Equal(body.Length, stripped.Length); // blanked, not cut, so offsets hold
+
+        var page = string.Join("\n",
+            "<a href=\"https://help.contoso.test\" @onclick=\"Open\">Help</a>",
+            "@code {",
+            "    private void Open() { } // the handler",
+            "}");
+
+        var strippedPage = StripLineComments(page);
+
+        Assert.Contains("@onclick=\"Open\"", strippedPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("the handler", strippedPage, StringComparison.Ordinal);
+    }
+
     /// <summary>
-    /// <paramref name="source"/> with line comments removed. The scans below look for words that
+    /// <paramref name="source"/> with its comments blanked. The scans below look for words that
     /// also occur in prose - "await", "finally", the flag names themselves - so a comment
     /// explaining one of these rules would otherwise be read as code breaking it.
     /// </summary>
+    /// <remarks>
+    /// kd-20: lexed, no longer a "//" cut. The regex this replaced removed from any "//" to the end
+    /// of its line, so a string literal holding a URL lost its closing quote and every statement after
+    /// it on the line, and a markup "https://" took the rest of its tag. Now: a page (anything holding
+    /// an @code block) reads through ClickGateSource.BlankComments, the component view kd-12 made - C#
+    /// comment trivia in its C# spans, Razor comments in the markup; a method or member body reads
+    /// through RazorSyntax.CommentsBlanked as C#. Comments are blanked rather than deleted, so offsets
+    /// hold, and block and Razor comments go too. The name is kept so its 46 callers did not move.
+    /// </remarks>
     private static string StripLineComments(string source) =>
-        Regex.Replace(source, @"//[^\r\n]*", "");
+        RazorSyntax.Parse(source).IsRazor
+            ? ClickGateSource.BlankComments(source)
+            : RazorSyntax.CommentsBlanked(source);
 
     /// <summary>
     /// <paramref name="source"/> with Razor <c>@* *@</c> comments removed.
