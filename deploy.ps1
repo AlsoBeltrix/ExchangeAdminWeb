@@ -330,12 +330,21 @@ if (-not $isUpgrade -and $AllowRepoint -and $null -ne $existingApplication) {
     }
 }
 $servingConfigPath = Join-Path $servingFolder "appsettings.json"
-if ($movesFolder -and (Test-Path -LiteralPath $servingConfigPath)) {
+# cdt-51: asked on every folder move, appsettings.json or not. Without the file nothing names a
+# ConfigStore:Path either, and Resolve-ConfigDbPath answers with the default config\exchangeadmin.db -
+# the database the application has been running on - so a missing file is treated as one that names
+# no ConfigStore:Path. With neither a file nor that database the move proceeds: nothing is stranded.
+if ($movesFolder) {
+    $servingHasSettings = Test-Path -LiteralPath $servingConfigPath
     $servingDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
     if (-not (Get-ConfigStorePathSetting -PublishPath $servingFolder) -and (Test-IsSqliteConfigDbPresent -DbPath $servingDbPath)) {
-        Write-Fail "IIS application $ParentSite/$AppAlias keeps its config database inside the folder it is being moved from ('$servingDbPath'): its appsettings.json names no ConfigStore:Path, so after the move it would open a new, empty database under '$PublishPath\config' and leave that one behind. Move the database to a shared path first (tools\Move-ConfigDbToShared.ps1), so that appsettings.json names it, or move the application in IIS by hand. Nothing was deployed."
+        $unnamedBecause = 'it has no appsettings.json to name one'
+        if ($servingHasSettings) { $unnamedBecause = 'its appsettings.json names no ConfigStore:Path' }
+        Write-Fail "IIS application $ParentSite/$AppAlias keeps its config database inside the folder it is being moved from ('$servingDbPath'): $unnamedBecause, so after the move it would open a new, empty database under '$PublishPath\config' and leave that one behind, with no verified backup taken. Restore the appsettings.json that names it, or move the database to a shared path first (tools\Move-ConfigDbToShared.ps1) so that appsettings.json names it, or move the application in IIS by hand. Nothing was deployed."
     }
-    Write-Warn "-AllowRepoint: the configuration is backed up from '$servingFolder', the folder IIS serves the application from now, and its ConfigStore:Path is carried into the appsettings.json generated in '$PublishPath'."
+    if ($servingHasSettings) {
+        Write-Warn "-AllowRepoint: the configuration is backed up from '$servingFolder', the folder IIS serves the application from now, and its ConfigStore:Path is carried into the appsettings.json generated in '$PublishPath'."
+    }
 }
 
 # --- Backups taken before anything is configured ---
@@ -979,8 +988,10 @@ try {
         # install (no appsettings.json) has nothing to back up. The gate is the serving folder's
         # appsettings.json (cdt-44): outside a move that is the old gate - a -ConfirmFreshInstall run
         # has none there, or it would be an upgrade - and a -AllowRepoint move, -Force or not, backs up
-        # the configuration it is moving the application off.
-        if (Test-Path -LiteralPath $servingConfigPath) {
+        # the configuration it is moving the application off. Or the database it resolves to (cdt-51): a
+        # folder whose appsettings.json is gone but whose config\exchangeadmin.db remains is backed up
+        # too, verified, before the deploy, as Invariant 3 asks.
+        if ((Test-Path -LiteralPath $servingConfigPath) -or (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
             Write-Step "Backing up the existing runtime configuration"
             $configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
             New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
