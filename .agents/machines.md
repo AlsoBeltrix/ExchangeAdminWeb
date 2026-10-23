@@ -9,22 +9,14 @@ _First recorded 2026-07-21._
 
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
-- **codex-commercial workspace-write sandbox BROKEN as of 2026-08-28** (codex-cli `0.150.1`,
-  Headroom proxy in path): every process launch - and on the second round even file reads - is
-  rejected pre-launch with `helper_unknown_error: setup refresh had errors`, so guard-proof
-  verification dispatches return `capability_ok:false`. `read-only` dispatches worked the same
-  day (generation passes unaffected). Probe workspace-write with a smoke dispatch before the
-  next verification round; the lst-1 record carries the two failed rounds.
-  **Still broken 2026-08-31** (fsr-1 verification round, direct `codex.cmd exec` with the
-  wrapper env replicated - not the Headroom path - so the proxy is exonerated). PROBE
-  CAVEAT: a smoke that "runs a command" can succeed through a synced MCP server (serena
-  `execute_shell_command`) without touching the native exec sandbox - the 2026-08-31 smoke
-  did exactly that and read as a false pass. A valid probe must force a NATIVE exec (the
-  transcript shows `exec_command` items, not `mcp_tool_call`).
-  Dispatch-transport notes (2026-08-31): the `codex-commercial.ps1` wrapper's CmdletBinding
-  eats `-o`/positional args - dispatch via `codex.cmd` with `CODEX_HOME=.codex-commercial`
-  and OPENAI_*/PORTKEY_* stripped; multi-line prompts must ride STDIN (cmd-shim argument
-  text drops them and codex answers blind - check the transcript has real tool items).
+- **codex is the review harness, and codex-commercial is retired** (owner, 2026-10-20: reviews
+  move to plain `codex`; `CODEX_HOME=~/.codex-commercial` answers 401 on workspace routing
+  discovery). Its wrapper, MCP-server registration and sandbox notes are archived verbatim in
+  `docs/history/state-archive.md` (Archived 2026-10-23). Two of its 2026-08-31 observations may
+  apply to any harness - an assumption, not re-tested: a smoke "run a command" probe can pass
+  through a synced MCP server without touching the native exec sandbox (a valid probe shows
+  `exec_command` items in the transcript, not `mcp_tool_call`), and a multi-line prompt passed as
+  cmd-shim argument text is dropped, so prompts ride STDIN.
 - **codex sandbox for guard-proof verifications (observed 2026-08-27):** `-s read-only`
   denies creating the isolated proof tree, so per-finding verification dispatches honestly
   return `guard_confirmed: false` (one round even returned "invalid" purely on that
@@ -32,15 +24,15 @@ _First recorded 2026-07-21._
   disposable-worktree capability the codereview playbook's self-permissioning contract
   expects - and check `git status` afterwards; both 2026-08-27 runs left the tree untouched.
   Generation (defect-hunt) passes stay `-s read-only`.
-- **Reviewer sandbox history:** native read-only exec failed with codex-cli 0.152.0 on
-  2026-09-02 and worked again with 0.152.1 on 2026-09-03. Current sandbox capability
-  was not re-probed in the 2026-09-14 records sweep; neither observation certifies the
-  current CLI. The workspace-write failure record above still requires a fresh probe.
-- **codex** (codex-cli `0.154.0`, re-probed 2026-09-14 as of `a16c316`;
-  `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
-  gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.
-  `@azure-openai-eus2-global/gpt-5.5-dzs`; the **full prefixed slug must be passed to `--model`**
-  (stripping the `@.../` prefix causes an `Either x-portkey-config or x-portkey-provider` failure).
+- **codex** (codex-cli `0.163.0`, re-probed 2026-10-23;
+  `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) - Portkey gateway, API-key auth.
+  **Run reviews as `codex exec` with NO `--model` flag** (verified 2026-10-20). The configured
+  model carries its provider route: `~/.codex/config.toml` sets
+  `model = "@azure-openai-eus2-global/gpt-5.5-dzs"`, `model_provider = "portkey"` and
+  `model_reasoning_effort = "xhigh"` (re-read 2026-10-23). A bare slug such as `--model gpt-5.5`
+  strips the `@.../` prefix and fails with `Either x-portkey-config or x-portkey-provider header
+  is required`, which looks exactly like the harness being down; read this config before
+  recording codex as unavailable. If `--model` is ever passed, it must be the full prefixed slug.
   The `refresh_token_reused` OAuth errors it prints are harmless noise on the API-key path.
   **`--output-schema` is validated STRICTLY by this gateway (observed 2026-09-30):** every key in
   `properties` must also appear in `required`, or the call dies before the model sees anything
@@ -52,20 +44,11 @@ _First recorded 2026-07-21._
   read-only too** - `git diff --stat` works, `dotnet build`/`dotnet test` are denied because they
   write to `bin/` and `obj/`. Supply the coder's own gate results in the prompt as claims to be
   checked by reading, rather than asking the reviewer to re-run them.
-- **codex-commercial** (same `codex-cli` engine via wrapper
-  `C:\Users\mcoelho\.local\bin\codex-commercial.ps1`) — OpenAI direct, ChatGPT-subscription auth.
-  `CODEX_HOME=C:\Users\mcoelho\.codex-commercial`; the wrapper strips `OPENAI_*`/`PORTKEY_*` env
-  vars so it uses subscription auth, and syncs the ptk MCP block. Configured model `gpt-6-astra`,
-  effort `xhigh` (selected fields in `config.toml` re-read 2026-09-14 as of `a16c316`). Plain slug, **no** provider prefix.
-- **codex-commercial registered as a Claude Code MCP server** (user scope):
-  `claude mcp add codex-commercial -s user -- pwsh -NoProfile -File C:/Users/mcoelho/.local/bin/codex-commercial.ps1 mcp-server`.
-  Use **forward slashes** in the path — the `! `/bash-input layer strips backslashes (observed
-  2026-07-21: a backslash path stored mangled). MCP tools: `mcp__codex-commercial__codex` (start,
-  returns a `threadId`) and `mcp__codex-commercial__codex-reply` (continue). Effort via
-  `config: {"model_reasoning_effort": "max"}`; `sandbox: read-only`; `cwd` pin the repo path. The
-  MCP `codex` tool has no `--output-schema` flag — embed the JSON verdict schema in the prompt and
-  parse it from the reply. Preferred over the CLI for reviews (the CLI `.ps1` wrapper mangles the
-  `exec` positional arg via `ValueFromRemainingArguments`).
+- **agy (Gemini)** (`C:\Users\mcoelho\AppData\Local\agy\bin\agy.exe`, present 2026-10-23) - the
+  owner-dispatched third harness for contested findings (`.agents/repo-guidance.md` Token Budget);
+  `gemini-4-argon-high` reviewed the 2026-10-20 backlog batch 3, assumed through this CLI. It
+  runs headlessly only with `--dangerously-skip-permissions` (owner authorised 2026-10-20):
+  print mode soft-denies every tool confirmation regardless of the allow-list.
 
 ### Deploy
 
@@ -74,17 +57,16 @@ _First recorded 2026-07-21._
   `D:\inetpub\ExchangeAdminWebDev`.
 - `sqlite3.exe` is NO LONGER an ops-script dependency (ConfigDbToolInApp-Plan, decision
   2026-10-22): the scripts run the app's `db` mode through `<ProgramFiles>\dotnet\dotnet.exe`.
-  A per-user, unsigned copy still sits on PATH at
+  A per-user, unsigned copy still sits on PATH (re-checked 2026-10-23) at
   `C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`
   (finding `aud-sqlite3-path`); removing it is the owner's host action, pending.
 - **Shared config database path** (SharedConfigDb-Plan, decision 2026-09-04):
   `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db` - the default `-SharedDbPath` of
   `tools/Move-ConfigDbToShared.ps1` and the value both instances' `appsettings.json` carry
   under `ConfigStore:Path` after the cutover. Prod app root: `D:\inetpub\ExchangeAdminWeb`.
-  **Cutover configuration verified 2026-09-14 as of `a16c316`: both deployed
-  appsettings files name this same existing path.** The path itself was re-confirmed to
-  exist 2026-10-05 as of `25bb108`; the two appsettings files were not re-read by that
-  sweep. Startup-log and cross-instance refresh acceptance checks have never been run.
+  **Cutover configuration re-verified 2026-10-23: both deployed appsettings files name this
+  path under `ConfigStore:Path`, and the file exists.** Only that one field was read.
+  Startup-log and cross-instance refresh acceptance checks have never been run.
 
 ### Directory environment (owner statements, for triage only)
 
@@ -107,23 +89,24 @@ Read-only evidence: DLL FileVersion/LastWriteTime, the `ConfigStore:Path` field 
 both deployed appsettings files, and selected rows in the shared config database.
 No secret values or directory data were read.
 
-**Deployed base versions re-measured 2026-10-12 as of `96cdb89`. The 2026-10-05 reading (both
-at `2.27.0.0`, written 2026-10-02) is SUPERSEDED by the 2026-10-09 redeploy recorded at the
-foot of this file - both instances were redeployed that afternoon and are identical:**
+**Deployed base versions re-measured 2026-10-23 as of `d6003833`**, from FileVersion and
+LastWriteTime off each assembly and nothing else. The 2026-10-12 reading (both at `2.27.1.0`,
+written 2026-10-09) is archived verbatim in `docs/history/state-archive.md` (Archived
+2026-10-23).
 
 - Dev DLL `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` - FileVersion `2.27.1.0`,
-  LastWriteTime `2026-10-09 14:38` (host local time).
-- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - same FileVersion, the same
-  LastWriteTime. **The dev/prod divergence recorded on 2026-10-01 is gone, and so is the
-  reading that the 2026-10-01 deployment freeze was being observed on prod: prod shipped
-  during it, and again on 2026-10-09.** That freeze is `.agents/decisions.md` 2026-10-01 and
+  LastWriteTime `2026-10-14 12:53` (host local time).
+- Prod DLL `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` - FileVersion `2.27.1.0`,
+  LastWriteTime `2026-10-09 14:38`.
+- **Dev's assembly was rewritten on 2026-10-14 at the same FileVersion**, so the 2026-10-12
+  reading that both instances run one identical build no longer holds. Neither carries the
+  fix-everything work stream, which began 2026-10-21.
+- Both instances shipped during the 2026-10-01 deployment freeze (both on 2026-10-02 and
+  2026-10-09, and dev again on 2026-10-14). That freeze is `.agents/decisions.md` 2026-10-01 and
   is the owner's to restate or lift.
-- **Method, and what it does not cover.** The 2026-10-12 reading took FileVersion and
-  LastWriteTime off each assembly and nothing else. The 2026-10-05 reading additionally ran a
-  UTF-16 literal scan of the two DLLs for the module version strings and the
-  `BuildIdentityFilter` member name; **that scan was NOT repeated**, so the deployed Migration
-  descriptor version is unverified at this reading. Either way the method identifies what
-  shipped; it does not prove runtime behaviour, consent or configuration.
+- **Method, and what it does not cover.** FileVersion and LastWriteTime identify what shipped;
+  they do not prove runtime behaviour, consent or configuration, and no module-version scan of
+  the DLLs has been repeated since 2026-10-05.
 - `ExchangeAdminWeb.csproj` owns the base version number and `Modules/ModuleCatalog.cs` owns
   the module versions; neither is copied here.
 
@@ -135,8 +118,8 @@ The old separate dev/prod and missing-initial-configuration records are supersed
 
 ### Cloud owner diagnostic files (2026-09-14)
 
-**Re-measured 2026-10-05 as of `25bb108`: NEITHER file is in the workspace any more** (same
-reading as 2026-10-01). A recursive search of the repo for `CloudAccountOwnerCoverage*`
+**Re-measured 2026-10-23: NEITHER file is in the workspace** (as on 2026-10-01 and 2026-10-05).
+A recursive search of the repo for `CloudAccountOwnerCoverage*`
 returns nothing, so the 2026-09-14 reading below is stale as to location. Both were
 gitignored, so git cannot say where they went and this sweep did not look outside the repo;
 treat their disposition as unknown rather than as settled.
@@ -191,9 +174,19 @@ got a run killed by the harness for memory pressure on 2026-09-25. Capped, it co
 measurable: re-timed 2026-10-05 as of `25bb108` at 5m08s for the full Release suite
 (3579 passed / 0 failed / 3 skipped).
 
-_Re-probed 2026-09-14 as of `a16c316`._ Pester `6.0.1`, PSScriptAnalyzer `1.25.0`,
-and ActiveDirectory `1.0.1.0` are installed; the
-PowerShell suites run under `pwsh` (`C:\Program Files\PowerShell\7\pwsh.exe`), not 5.1.
+_Re-probed 2026-10-23._ Pester `6.2.0` (with `6.0.1`, `5.7.1` and `3.4.0` also installed; the
+local gates and CI import `6.2.0` by `-RequiredVersion`, `cdt-40`), PSScriptAnalyzer `1.25.0`
+(with `1.24.0`; CI pins `1.25.0`, `cdt-39`) and ActiveDirectory `1.0.1.0`. The PowerShell suites
+run under `pwsh` (`C:\Program Files\PowerShell\7\pwsh.exe`), not 5.1.
+
+### Machine-local helper scripts (not in the repo)
+
+- `capture-exchangeadminweb-memory.ps1`, the memory capture the two dated memory sections below
+  rely on, and `Test-DefenderLocationExport.ps1`, a post-deploy checker that answers the three
+  Defender location unknowns from an exported CSV (validated against the owner's 2026-10-13
+  export), were both recorded under `%TEMP%`. On 2026-10-23 neither was at the root of
+  `C:\Users\mcoelho\AppData\Local\Temp` or of any numbered session folder under it; a deeper
+  search was not completed.
 
 ### Claude Code transcript root (`tools/Get-TokenUsage.ps1`)
 
