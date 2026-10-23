@@ -30,12 +30,14 @@ public class ExchangeIdentityResolverTests
         string? recipientType = "UserMailbox",
         object? isDirSynced = null,
         bool omitIsDirSynced = false,
-        object? exchangeGuid = null)
+        object? exchangeGuid = null,
+        string? recipientTypeDetails = null)
     {
         var o = new PSObject();
         if (primarySmtp != null) o.Properties.Add(new PSNoteProperty("PrimarySmtpAddress", primarySmtp));
         if (externalId != null) o.Properties.Add(new PSNoteProperty("ExternalDirectoryObjectId", externalId));
         if (recipientType != null) o.Properties.Add(new PSNoteProperty("RecipientType", recipientType));
+        if (recipientTypeDetails != null) o.Properties.Add(new PSNoteProperty("RecipientTypeDetails", recipientTypeDetails));
         if (!omitIsDirSynced) o.Properties.Add(new PSNoteProperty("IsDirSynced", isDirSynced ?? false));
         if (exchangeGuid != null) o.Properties.Add(new PSNoteProperty("ExchangeGuid", exchangeGuid));
         return o;
@@ -108,6 +110,23 @@ public class ExchangeIdentityResolverTests
 
         Assert.Equal("abc-123", result!.ExternalDirectoryObjectId);
         Assert.Equal("MailUniversalDistributionGroup", result.RecipientType);
+    }
+
+    [Fact]
+    public void MapRecipient_CarriesRecipientTypeDetails_AndAMicrosoft365GroupIsAGroup()
+    {
+        // aud-a60. Get-Recipient reports a Microsoft 365 group with RecipientType UserMailbox: its RecipientTypeDetails,
+        // GroupMailbox, is what says it is a group, and the self-grant check now reads it.
+        var group = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(primarySmtp: "team@contoso.com", recipientType: "UserMailbox", recipientTypeDetails: "GroupMailbox")),
+            "team@contoso.com");
+        var person = ExchangeIdentityResolver.MapRecipient(
+            Results(Recipient(recipientType: "UserMailbox", recipientTypeDetails: "UserMailbox")), "user@contoso.com");
+
+        Assert.Equal("GroupMailbox", group!.RecipientTypeDetails);
+        Assert.True(group.IsGroup);
+        Assert.Equal("UserMailbox", person!.RecipientTypeDetails);
+        Assert.False(person.IsGroup);
     }
 
     [Fact]

@@ -479,11 +479,28 @@ internal sealed class ExchangeWriteHarness : IDisposable
             Mailboxes[alias] = entry;
     }
 
+    /// <summary>aud-a60. The Secret ID <see cref="NothingProtectedValidator"/> stores for the protected-principal directory-read credential.</summary>
+    public const int DirectoryReadSecretId = 4242;
+
+    /// <summary>aud-a60. The account the stand-in secret store gives for <see cref="DirectoryReadSecretId"/>, as a credential names it.</summary>
+    public const string DirectoryReadAccount = @"CONTOSO\svc-dirread";
+
+    private int _directoryReadFetches;
+
+    /// <summary>aud-a60. How many times a validator asked the stand-in secret store for the directory-read secret.</summary>
+    public int DirectoryReadFetches => Volatile.Read(ref _directoryReadFetches);
+
     /// <summary>
     /// A real <see cref="PermissionValidator"/> with no protection configured, asking Exchange
     /// through <paramref name="resolver"/> - so the bulk loops bind each row through a real check.
     /// </summary>
-    public PermissionValidator NothingProtectedValidator(IIdentityResolver resolver)
+    /// <remarks>
+    /// aud-a60. The self-grant check reads group membership under the protected-principal directory-read credential: its
+    /// Secret ID is stored here, and the validator's secret fetch is a stand-in that gives <see cref="DirectoryReadAccount"/>
+    /// for it and counts each fetch - no secret store is reached. <paramref name="protectedPrincipalsConfig"/>, when given, is
+    /// the module config the protected-principal service reads that setting from (a store that cannot be read, for one).
+    /// </remarks>
+    public PermissionValidator NothingProtectedValidator(IIdentityResolver resolver, ModuleConfigService? protectedPrincipalsConfig = null)
     {
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(Dir);
@@ -492,7 +509,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
         var extLog = new ExtendedLogService(Config, env, TestConfigStore.CreateAppSettings(Dir),
             NullLogger<ExtendedLogService>.Instance);
         var delinea = new DelineaService(httpClientFactory, Config, NullLogger<DelineaService>.Instance, extLog, Trace);
-        var protectedPrincipals = new ProtectedPrincipalService(env, Config, ModuleConfig,
+        ModuleConfig.UpdateModuleValues(ProtectedPrincipalService.ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ProtectedPrincipalService.DirectoryReadSecretConfigKey] = DirectoryReadSecretId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            });
+        var protectedPrincipals = new ProtectedPrincipalService(env, Config, protectedPrincipalsConfig ?? ModuleConfig,
             TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance);
         var servicers = new ProtectedPrincipalServicerService(
             new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(),
@@ -508,6 +530,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
             NullLogger<PermissionValidator>.Instance, scopeFactory)
         {
             SelfGrantDirectoryRunspace = Forest.Open,
+            DirectoryReadSecretFetch = secretId =>
+            {
+                Interlocked.Increment(ref _directoryReadFetches);
+                return Task.FromResult<(string username, string password, string domain)?>(
+                    secretId == DirectoryReadSecretId ? ("svc-dirread", "stand-in-secret", "CONTOSO") : null);
+            },
         };
     }
 
@@ -515,10 +543,17 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// An Exchange resolver that knows <paramref name="typed"/> as <paramref name="mailbox"/> and
     /// nobody else: every other identity, the self-grant check's included, is "no such recipient".
     /// </summary>
+    /// <remarks>
+    /// aud-a59. It reads no group's members unless a test sets them: <c>ReadGroupMembersAsync</c> throws for every group, so a
+    /// test of a cloud-only group that forgets its members fails as a membership that could not be read, never passes as one
+    /// nobody belongs to - NSubstitute's own answer, an empty list. A test that sets members for its group overrides this.
+    /// </remarks>
     public static IIdentityResolver ExchangeKnows(string typed, string primary, Guid mailbox)
     {
         var resolver = Substitute.For<IIdentityResolver>();
         resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
+        resolver.ReadGroupMembersAsync(Arg.Any<string>()).Returns(call => Task.FromException<IReadOnlyList<ExchangeGroupMember>>(
+            new InvalidOperationException($"stand-in: no members were set for '{call.Arg<string>()}'")));
         resolver.ResolveRecipientAsync(typed).Returns(
             new ResolvedRecipient(primary, "ext-" + primary, "UserMailbox", ExistsOnPrem: false, ExchangeGuid: mailbox));
         return resolver;

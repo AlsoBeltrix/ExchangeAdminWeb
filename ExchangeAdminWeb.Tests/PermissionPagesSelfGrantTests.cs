@@ -63,8 +63,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         return resolver;
     }
 
-    /// <summary>The services <c>SubmitSingle</c> reaches before its write, set on <paramref name="page"/>.</summary>
-    private void Wire(ComponentBase page, IIdentityResolver resolver, AuditService audit, ILogger logger)
+    /// <summary>
+    /// The services <c>SubmitSingle</c> reaches before its write, set on <paramref name="page"/>; the mail and the progress
+    /// service a test gives, else a substitute mail service and a real progress service (aud-a53).
+    /// </summary>
+    private void Wire(ComponentBase page, IIdentityResolver resolver, AuditService audit, ILogger logger,
+        EmailService? email = null, IActivityProgress? progress = null)
     {
         var auth = Substitute.For<AuthenticationStateProvider>();
         auth.GetAuthenticationStateAsync().Returns(new AuthenticationState(_jdoe));
@@ -78,10 +82,10 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Set(page, "ServiceNow", new ServiceNowService(_h.Config, NullLogger<ServiceNowService>.Instance, http));
         Set(page, "Validator", _h.NothingProtectedValidator(resolver));
         Set(page, "Audit", audit);
-        Set(page, "Email", Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>()));
+        Set(page, "Email", email ?? Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>()));
         Set(page, "ClientInfo", new ClientInfoService());
         Set(page, "Logger", logger);
-        Set(page, "Progress", new ActivityProgressService());
+        Set(page, "Progress", progress ?? new ActivityProgressService());
         SetField(page, "currentUser", Logon);
         SetField(page, "tabIndex", 0);
         SetField(page, "targetMailbox", Target);
@@ -101,13 +105,20 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     private static Task Call(object page, string method) =>
         (Task)page.GetType().GetMethod(method, Members)!.Invoke(page, null)!;
 
-    private async Task<PermissionResult> SubmitMailboxGrant(IIdentityResolver resolver, AuditService audit, ILogger logger)
+    /// <summary>
+    /// Mailbox Permissions' <c>SubmitSingle</c> over a Full Access grant to the alias - or to <paramref name="grantee"/>, on
+    /// <paramref name="target"/> - with the mail and the progress service a test gives (aud-a53, aud-a59).
+    /// </summary>
+    private async Task<PermissionResult> SubmitMailboxGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
+        string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null)
     {
         var page = new MailboxPermissions();
-        Wire(page, resolver, audit, logger);
+        Wire(page, resolver, audit, logger, email, progress);
         Set(page, "MailboxService", new MailboxPermissionService(_h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace));
         SetField(page, "grantFullAccess", true);
         SetField(page, "grantSendAs", false);
+        if (grantee is not null) SetField(page, "affectedUser", grantee);
+        if (target is not null) SetField(page, "targetMailbox", target);
 
         await Call(page, "SubmitSingle");
 
@@ -115,12 +126,16 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         return Assert.IsType<PermissionResult>(GetField<PermissionResult>(page, "result"));
     }
 
-    private async Task<PermissionResult> SubmitCalendarGrant(IIdentityResolver resolver, AuditService audit, ILogger logger)
+    /// <summary>Calendar Permissions' <c>SubmitSingle</c> over a Reviewer grant, as <see cref="SubmitMailboxGrant"/>.</summary>
+    private async Task<PermissionResult> SubmitCalendarGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
+        string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null)
     {
         var page = new CalendarPermissions();
-        Wire(page, resolver, audit, logger);
+        Wire(page, resolver, audit, logger, email, progress);
         Set(page, "CalendarService", new CalendarPermissionService(_h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
         SetField(page, "accessRight", CalendarAccessRight.Reviewer);
+        if (grantee is not null) SetField(page, "affectedUser", grantee);
+        if (target is not null) SetField(page, "targetMailbox", target);
 
         await Call(page, "SubmitSingle");
 
@@ -250,9 +265,9 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     /// <summary>The grant <c>SubmitSingle</c> stages before the operator's confirmation: the target, the grantee and the ticket.</summary>
-    private static void Stage(object page, string grantee)
+    private static void Stage(object page, string grantee, string target = Target)
     {
-        SetField(page, "onPremTarget", Target);
+        SetField(page, "onPremTarget", target);
         SetField(page, "onPremUser", grantee);
         SetField(page, "onPremTicket", "INC100");
     }
@@ -260,10 +275,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// <summary>
     /// What the operator's Continue reaches: <paramref name="page"/>'s <c>ExecuteOnPrem</c>, over a staged Full Access
     /// (Mailbox Permissions) or Reviewer (Calendar Permissions) grant to <paramref name="grantee"/>; the result and the
-    /// warnings the page logged.
+    /// warnings the page logged; the mail service a test gives (aud-a53); the staged target a test gives, and an exception the
+    /// on-premises permission check throws (aud-a59).
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
-        string page, string grantee, IIdentityResolver resolver, AuditService audit)
+        string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
+        string target = Target, Exception? onPremAuthorization = null)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -271,7 +288,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         {
             var logger = new CapturingLogger<MailboxPermissions>();
             component = new MailboxPermissions();
-            Wire(component, resolver, audit, logger);
+            Wire(component, resolver, audit, logger, email);
             Set(component, "MailboxService", new OnPremMailboxService(_h));
             SetField(component, "onPremFullAccess", true);
             SetField(component, "onPremSendAs", false);
@@ -281,12 +298,19 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         {
             var logger = new CapturingLogger<CalendarPermissions>();
             component = new CalendarPermissions();
-            Wire(component, resolver, audit, logger);
+            Wire(component, resolver, audit, logger, email);
             Set(component, "CalendarService", new OnPremCalendarService(_h));
             SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
             warnings = () => logger.Warnings;
         }
-        Stage(component, grantee);
+        Stage(component, grantee, target);
+        if (onPremAuthorization is not null)
+        {
+            var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
+            authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
+                    page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
+                .Returns(Task.FromException<AuthorizationResult>(onPremAuthorization));
+        }
 
         await Call(component, "ExecuteOnPrem");
 
@@ -295,16 +319,25 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         return (Assert.IsType<PermissionResult>(GetField<PermissionResult>(component, "result")), warnings());
     }
 
+    /// <summary>
+    /// aud-a61. The write-time re-check's refusal, as its banner shows it: the validator's refusal, and that the same check had
+    /// passed before the confirmation - the operator could not tell the two apart.
+    /// </summary>
+    private static readonly string RefusedAtWrite =
+        SelfGrantRefusal + " The same check had passed before you confirmed; made again right before the write, it refused.";
+
     [Theory]
     [MemberData(nameof(Pages))]
     public async Task TheOnPremWrite_ReChecksTheGrantee_RightBeforeItWrites_AndRefusesASelfGrant(string page)
     {
         var (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
 
+        // aud-a61: the banner says the earlier check had passed, and the record is the write-time action, not SubmitSingle's;
+        // the record's error is the validator's own refusal still.
         Assert.False(result.Success);
-        Assert.Equal(SelfGrantRefusal, result.Message);
+        Assert.Equal(RefusedAtWrite, result.Message);
         var record = Assert.Single(_h.AuditRows());
-        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttempt" : "SetCalendar_SelfGrantAttempt", Text(record, "action"));
+        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttemptAtWrite" : "SetCalendar_SelfGrantAttemptAtWrite", Text(record, "action"));
         Assert.Equal(SelfGrantRefusal, Text(record, "error"));
         Assert.Equal(CloudAlias, Text(record, "affectedUser"));
         Assert.Equal("Failed", Text(record, "result"));
@@ -335,7 +368,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     {
         var (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter());
 
-        AssertTheBanner(result, SelfGrantRefusal, warnings);
+        AssertTheBanner(result, RefusedAtWrite, warnings);
         Assert.Empty(_h.CallsTo("Invoke-Command"));
     }
 
@@ -393,18 +426,22 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         }
     }
 
-    /// <summary><paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to the alias; the result and the page's warnings.</summary>
+    /// <summary>
+    /// <paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to the alias, or to
+    /// <paramref name="grantee"/> on <paramref name="target"/>; the result and the page's warnings.
+    /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Submit(
-        string page, IIdentityResolver resolver, AuditService audit)
+        string page, IIdentityResolver resolver, AuditService audit, string? grantee = null, EmailService? email = null,
+        IActivityProgress? progress = null, string? target = null)
     {
         if (page == MailboxPage)
         {
             var logger = new CapturingLogger<MailboxPermissions>();
-            return (await SubmitMailboxGrant(resolver, audit, logger), logger.Warnings);
+            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target), logger.Warnings);
         }
 
         var calendarLogger = new CapturingLogger<CalendarPermissions>();
-        return (await SubmitCalendarGrant(resolver, audit, calendarLogger), calendarLogger.Warnings);
+        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target), calendarLogger.Warnings);
     }
 
     [Theory]
@@ -434,7 +471,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
 
         Assert.False(result.Success);
-        Assert.Equal(SelfGrantRefusal + " The audit row could not be written.", result.Message);
+        Assert.Equal(RefusedAtWrite + " The audit row could not be written.", result.Message);
         Assert.Empty(warnings);
         Assert.Empty(_h.AuditRows());
         Assert.Empty(_h.CallsTo("Invoke-Command"));
@@ -453,6 +490,200 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Same(failure, exception);
         Assert.Contains(Target, message, StringComparison.Ordinal);
         Assert.DoesNotContain("payload-5e1f", banner, StringComparison.Ordinal);
+    }
+
+    // ---- aud-a53: a notification or a record that throws leaves the change's result; a step that throws is named -------
+
+    public static TheoryData<string, string> PagesAndNotifications => new()
+    {
+        { MailboxPage, "admin" }, { MailboxPage, "user" }, { MailboxPage, "owner" },
+        { CalendarPage, "admin" }, { CalendarPage, "user" }, { CalendarPage, "owner" },
+    };
+
+    /// <summary>An EmailService whose <paramref name="which"/> notification throws; every other notification succeeds.</summary>
+    private EmailService EmailWhere(string? which)
+    {
+        var email = Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>());
+        var refused = Task.FromException(new InvalidOperationException("the mail relay refused the message - payload-a53"));
+        if (which == "admin")
+            email.SendAdminNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<string?>()).Returns(refused);
+        if (which == "user")
+            email.SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>())
+                .Returns(refused);
+        if (which == "owner")
+            email.SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>())
+                .Returns(refused);
+        return email;
+    }
+
+    /// <summary>The three notifications <paramref name="email"/> was asked to send, each counted.</summary>
+    private static void AssertEveryNotificationWasSent(EmailService email)
+    {
+        email.Received(1).SendAdminNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<string?>());
+        email.Received(1).SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        email.Received(1).SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndNotifications))]
+    public async Task AWrittenChange_WhenANotificationThrows_StandsAsWritten_AndTheOtherNotificationsAreStillSent(string page, string which)
+    {
+        // The notifications sat unguarded in SubmitSingle's try, whose catch turned any throw into "Operation may have
+        // succeeded but audit logging failed" - a written change shown as failed, the rest of the mails unsent.
+        var email = EmailWhere(which);
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.DoesNotContain("audit logging failed", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        var (_, exception) = Assert.Single(warnings);
+        Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
+        Assert.Equal("Success", Text(Assert.Single(_h.AuditRows()), "result"));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AWrittenChange_WhenItsRecordThrows_StandsAsWritten(string page)
+    {
+        // Audit failure must not make an already-completed operation appear to have failed; it is logged on its own.
+        var email = EmailWhere(null);
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter(), grantee: Other, email: email);
+
+        Assert.True(result.Success, result.Message);
+        AssertEveryNotificationWasSent(email);
+        var (_, exception) = Assert.Single(warnings);
+        Assert.IsType<NullReferenceException>(exception);
+        Assert.NotEmpty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AThrowAfterTheWrite_IsNamedAsSuch_InTheCausesOwnWords_NotItsRawText(string page)
+    {
+        // The one throw left past the write: the activity's completion. The banner says the change was written and which
+        // step failed, in the words ExchangeServiceBase.ResolveFailure takes from the exception (aud-a23i), not its raw text.
+        var progress = Substitute.For<IActivityProgress>();
+        var activity = Substitute.For<IActivityHandle>();
+        progress.Begin(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ActivitySize>()).Returns(activity);
+        var failure = new InvalidOperationException("raw-text-a53");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the progress panel is gone" };
+        activity.When(handle => handle.Complete(true, Arg.Any<string?>())).Do(_ => throw failure);
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress);
+
+        var banner = "The change was written, but a step after the write failed: the progress panel is gone. Check the permissions to confirm the result.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        Assert.DoesNotContain("raw-text-a53", result.Message, StringComparison.Ordinal);
+        activity.Received(1).Complete(false, banner);
+        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.NotEmpty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndNotifications))]
+    public async Task AnOnPremChange_WhenANotificationThrows_StandsAsWritten(string page, string which)
+    {
+        // ExecuteOnPrem sent the same three notifications inside a try whose catch recorded the written change as failed.
+        var email = EmailWhere(which);
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, email);
+
+        Assert.True(result.Success, result.Message);
+        AssertEveryNotificationWasSent(email);
+        Assert.Single(warnings);
+        Assert.All(_h.AuditRows(), row => Assert.Equal("Success", Text(row, "result")));
+    }
+
+    [Theory]
+    [InlineData("a step before the write", "The change was not made: a step before the write failed: the cmdlet's own words. Nothing was written.")]
+    [InlineData("the write", "Whether the change was made could not be confirmed: the write failed: the cmdlet's own words. Check the permissions before trying again.")]
+    [InlineData("a step after the write", "The change was written, but a step after the write failed: the cmdlet's own words. Check the permissions to confirm the result.")]
+    public void TheStepBanner_SaysWhatCouldHaveBeenWritten_InTheCausesOwnWords(string step, string banner)
+    {
+        var failure = new InvalidOperationException("raw-text-a53");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the cmdlet's own words.", "a second record" };
+
+        Assert.Equal(banner, PermissionChangeFailure.Banner(step, failure));
+        Assert.Equal(banner.Replace("the cmdlet's own words", "plain text", StringComparison.Ordinal),
+            PermissionChangeFailure.Banner(step, new InvalidOperationException("plain text.")));
+    }
+
+    // ---- aud-a59: the protected-target denial says when its row was not written; ExecuteOnPrem's catch names its step --
+
+    private const string Unknown = "nobody@contoso.test";
+
+    public static TheoryData<string, bool> PagesAndPaths => new()
+    {
+        { MailboxPage, false }, { MailboxPage, true }, { CalendarPage, false }, { CalendarPage, true },
+    };
+
+    /// <summary>
+    /// <paramref name="page"/>'s single submit, or its on-premises write when <paramref name="onPrem"/>, of a grant to a target
+    /// Exchange holds no mailbox for - which the protected-target check denies - with <paramref name="audit"/>.
+    /// </summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Deny(
+        string page, bool onPrem, AuditService audit) => onPrem
+        ? await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), audit, target: Unknown)
+        : await Submit(page, ExchangeNamesTheAliasAsTheOperator(), audit, grantee: Other, target: Unknown);
+
+    [Theory]
+    [MemberData(nameof(PagesAndPaths))]
+    public async Task AProtectedTargetDenial_WhoseRowTheWriterDrops_SaysTheRowCouldNotBeWritten(string page, bool onPrem)
+    {
+        // The writer does not throw (aud-a28q); it hands back that it dropped the row, and the denial's record ignored that.
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await Deny(page, onPrem, _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Equal(PermissionValidator.NoMailboxMessage(Unknown) + " The audit row could not be written.", result.Message);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndPaths))]
+    public async Task AProtectedTargetDenial_WhoseRecordThrows_SaysSo_AndNothingEscapesTheHandler(string page, bool onPrem)
+    {
+        // ExecuteOnPrem's record sat in no try of its own: the throw went to the handler's catch, whose own record threw again
+        // out of the handler.
+        var (result, warnings) = await Deny(page, onPrem, AuditWithoutAWriter());
+
+        Assert.False(result.Success);
+        Assert.Equal(PermissionValidator.NoMailboxMessage(Unknown) + " The audit row could not be written.", result.Message);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.IsType<NullReferenceException>(exception);
+        Assert.Contains("protected-target denial", message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremStepThatThrowsBeforeTheWrite_IsNamed_InTheCausesOwnWords_AndItsRecordCarriesTheSameText(string page)
+    {
+        // ExecuteOnPrem's catch recorded and showed the raw exception text, whatever had thrown.
+        var failure = new InvalidOperationException("raw-text-a59");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the policy store cannot be read" };
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit,
+            onPremAuthorization: failure);
+
+        var banner = "The change was not made: a step before the write failed: the policy store cannot be read. Nothing was written.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
+        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

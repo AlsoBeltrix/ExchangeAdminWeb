@@ -109,7 +109,8 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
             ExternalDirectoryObjectId: recipient.Properties["ExternalDirectoryObjectId"]?.Value?.ToString(),
             RecipientType: recipient.Properties["RecipientType"]?.Value?.ToString(),
             ExistsOnPrem: synced,
-            ExchangeGuid: ReadExchangeGuid(recipient));
+            ExchangeGuid: ReadExchangeGuid(recipient),
+            RecipientTypeDetails: recipient.Properties["RecipientTypeDetails"]?.Value?.ToString());
     }
 
     /// <summary>

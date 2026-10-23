@@ -150,6 +150,23 @@ public sealed class ExoConnectionPool : IDisposable
         _cleanupTimer = new Timer(CleanupIdle, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
+    /// <summary>
+    /// psl-9. Test seam: the session the connect step opens - the default runspace with the Bypass policy, not yet opened. A
+    /// test hands back one of stand-in cmdlets, so the step itself runs with no module and no tenant (the <c>connect</c> seam
+    /// replaces the whole step).
+    /// </summary>
+    internal Func<Runspace> ConnectRunspace { get; set; } = DefaultConnectRunspace;
+
+    /// <summary>psl-9. Test seam: the thumbprint of the certificate the connect step signs in with, for its subject.</summary>
+    internal Func<string, string> CertificateThumbprint { get; set; } = subject => FindCertificate(subject).Thumbprint;
+
+    private static Runspace DefaultConnectRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
     /// <summary>Test seam: the current pool generation (incremented by every drain).</summary>
     internal long ConfigGeneration => Interlocked.Read(ref _configGeneration);
 
@@ -732,9 +749,7 @@ public sealed class ExoConnectionPool : IDisposable
     {
         var (appId, organization, certSubject) = config;
 
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        var runspace = RunspaceFactory.CreateRunspace(iss);
+        var runspace = ConnectRunspace();
         runspace.Open();
         var ps = PowerShell.Create();
         ps.Runspace = runspace;
@@ -743,13 +758,24 @@ public sealed class ExoConnectionPool : IDisposable
         {
             _operationTrace.Step("ExoConnectionCreating", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization });
 
+            // psl-9. The ActiveDirectoryModuleImport.Import shape: under Stop the cmdlet's own failure throws and leaves no
+            // record, and the finally clears what a record written past the preference would leave - ReadConnectionIds, next,
+            // takes any record in the stream for its own failure, and an unreadable snapshot leaves the new connection's id
+            // unknown.
             ps.AddCommand("Import-Module")
               .AddParameter("Name", "ExchangeOnlineManagement")
               .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            try
+            {
+                ps.Invoke();
+            }
+            finally
+            {
+                ps.Commands.Clear();
+                ps.Streams.Error.Clear();
+            }
 
-            var cert = FindCertificate(certSubject);
+            var thumbprint = CertificateThumbprint(certSubject);
 
             // A6B: the connect and the two reads around it are one critical section. The id is
             // only identifiable as "the one that appeared", so nothing else may connect in
@@ -764,7 +790,7 @@ public sealed class ExoConnectionPool : IDisposable
 
                 ps.AddCommand("Connect-ExchangeOnline")
                   .AddParameter("AppId", appId)
-                  .AddParameter("CertificateThumbprint", cert.Thumbprint)
+                  .AddParameter("CertificateThumbprint", thumbprint)
                   .AddParameter("Organization", organization)
                   .AddParameter("ShowBanner", false)
                   .AddParameter("ErrorAction", "Stop");

@@ -14,14 +14,23 @@ namespace ExchangeAdminWeb.Services;
 /// in its turn - once, by its address - when Exchange calls it cloud-only, and listed but not read when it calls it synced:
 /// its whole membership is the on-premises directory's, groups Exchange does not list included, and the caller reads it
 /// there. Fail closed: any kind of group not listed here, a nested group without an address or a sync state, more than
-/// <see cref="MaxGroupsRead"/> groups, or a read that fails throws; nothing here returns a short list for a read that did
-/// not complete. The cmdlets' members and properties are as Exchange Online documents them (labelled assumption in the
-/// aud-a52 record; no live call is made by any test).
+/// <see cref="MaxNestedGroups"/> nested groups, or a read that fails throws; nothing here returns a short list for a read
+/// that did not complete. The cmdlets' members and properties are as Exchange Online documents them (labelled assumption in
+/// the aud-a52 record; no live call is made by any test).
 /// </remarks>
 internal static class ExchangeGroupMembers
 {
-    /// <summary>The most groups one read follows - the group and those nested in it; more refuses.</summary>
-    internal const int MaxGroupsRead = 50;
+    /// <summary>
+    /// The most cloud groups one read follows below the group it was asked for (aud-a61); a membership that nests more is
+    /// refused (<see cref="ExchangeGroupNestingBoundException"/>), never read short.
+    /// </summary>
+    /// <remarks>
+    /// Exchange documents no nesting limit for distribution groups, so this bound is the check's own: it ends a read that
+    /// would not end. Each group is read once, by its address, so a cycle costs one read, and only cloud-only groups count - a
+    /// synced one is the directory's to read. 250, five times aud-a52's 50 (which counted the group itself), takes a deep list
+    /// of lists while keeping one check to a few hundred pooled reads.
+    /// </remarks>
+    internal const int MaxNestedGroups = 250;
 
     // RecipientTypeDetails of a Microsoft 365 group.
     private const string UnifiedGroupKind = "GroupMailbox";
@@ -64,13 +73,10 @@ internal static class ExchangeGroupMembers
         var members = new List<ExchangeGroupMember>();
         var queue = new Queue<(string Identity, string? Kind)>();
         queue.Enqueue((identity, root.RecipientTypeDetails));
-        var read = 0;
+        var nested = 0;
         while (queue.Count > 0)
         {
             var (next, kind) = queue.Dequeue();
-            if (++read > MaxGroupsRead)
-                throw new InvalidOperationException($"'{identity}' holds more than {MaxGroupsRead} groups");
-
             foreach (var row in MembersOf(ps, next, kind, invoke))
             {
                 var member = ToMember(row);
@@ -88,8 +94,11 @@ internal static class ExchangeGroupMembers
 
                 var address = member.PrimarySmtpAddress
                     ?? throw new InvalidOperationException($"a group in '{next}' has no primary SMTP address");
-                if (visited.Add(address))
-                    queue.Enqueue((address, member.RecipientTypeDetails));
+                if (!visited.Add(address))
+                    continue;
+                if (++nested > MaxNestedGroups)
+                    throw new ExchangeGroupNestingBoundException(identity, MaxNestedGroups);
+                queue.Enqueue((address, member.RecipientTypeDetails));
             }
         }
 
@@ -152,4 +161,18 @@ internal static class ExchangeGroupMembers
         string s when bool.TryParse(s, out var parsed) => parsed,
         _ => null,
     };
+}
+
+/// <summary>
+/// aud-a61. A group whose nested cloud groups run past <see cref="ExchangeGroupMembers.MaxNestedGroups"/>: the read stopped
+/// there, so its membership was not read whole. The self-grant check refuses on it, naming the bound.
+/// </summary>
+internal sealed class ExchangeGroupNestingBoundException(string group, int bound)
+    : InvalidOperationException($"'{group}' holds more than {bound} nested groups")
+{
+    /// <summary>The group the read was asked for.</summary>
+    public string Group { get; } = group;
+
+    /// <summary>The bound the read ran past.</summary>
+    public int Bound { get; } = bound;
 }

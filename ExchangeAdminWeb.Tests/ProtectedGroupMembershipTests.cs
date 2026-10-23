@@ -638,10 +638,13 @@ public class ProtectedGroupMembershipTests
     }
 
     [Fact]
-    public void TheCredentialedReads_KeepTheirCredential_AndTheSessionIdentityReads_CarryNone()
+    public void EveryRead_CarriesItsCredential_AndNoFormWithoutOneRemains()
     {
-        // aud-a52. The self-grant check runs the same reads under its own session's identity, with the catalog that session
-        // found; the protected-principal check's reads, built with its credential, still pass it on every read.
+        // aud-a60. aud-a52 gave the self-grant check a form of these reads under its session's own identity, with no
+        // credential, and an identity that cannot see a member link reads it as no row - which the evaluator takes for "not a
+        // member". The self-grant check reads under the protected-principal directory-read credential now, as the
+        // protected-principal check does: every read passes the credential it was built with, the catalog's discovery too,
+        // and nothing builds the class without one.
         using var runspace = System.Management.Automation.Runspaces.RunspaceFactory.CreateRunspace();
         runspace.Open();
         var calls = new System.Collections.ArrayList();
@@ -652,18 +655,29 @@ public class ProtectedGroupMembershipTests
             init.AddScript("""
                 function global:Get-ADGroup {
                     [CmdletBinding()] param($LDAPFilter, $Server, $Properties, $Credential)
-                    [void]$ReadCalls.Add("$Server credential=$($PSBoundParameters.ContainsKey('Credential'))")
+                    [void]$ReadCalls.Add("Get-ADGroup $Server as $($Credential.UserName)")
+                }
+                function global:Get-ADForest {
+                    [CmdletBinding()] param($Credential)
+                    [void]$ReadCalls.Add("Get-ADForest as $($Credential.UserName)")
+                    [pscustomobject]@{ GlobalCatalogs = @('gc.a.example') }
                 }
                 """).Invoke();
         }
         using var ps = System.Management.Automation.PowerShell.Create();
         ps.Runspace = runspace;
         var credential = new System.Management.Automation.PSCredential("svc", new System.Net.NetworkCredential("", "secret").SecurePassword);
+        var directory = new PowerShellProtectedGroupDirectory(ps, credential);
 
-        new PowerShellProtectedGroupDirectory(ps, credential).FindGroups(GroupLookupKey.Sid, $"{SidA}-512", DomainA);
-        PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, "gc.a.example:3268").FindGroups(GroupLookupKey.Sid, $"{SidA}-512", null);
+        directory.FindGroups(GroupLookupKey.Sid, $"{SidA}-512", DomainA);
+        directory.FindGroups(GroupLookupKey.Sid, $"{SidA}-512", null);
 
-        Assert.Equal([$"{DomainA} credential=True", "gc.a.example:3268 credential=False"], calls.Cast<string>());
-        Assert.Throws<ArgumentException>(() => PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, " "));
+        Assert.Equal([$"Get-ADGroup {DomainA} as svc", "Get-ADForest as svc", "Get-ADGroup gc.a.example:3268 as svc"], calls.Cast<string>());
+        const System.Reflection.BindingFlags Every = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
+        var type = typeof(PowerShellProtectedGroupDirectory);
+        Assert.All(type.GetConstructors(Every & ~System.Reflection.BindingFlags.Static), constructor =>
+            Assert.Contains(constructor.GetParameters(), parameter => parameter.ParameterType == typeof(System.Management.Automation.PSCredential)));
+        Assert.DoesNotContain(type.GetMethods(Every), method => method.IsStatic && method.ReturnType == type);
     }
 }

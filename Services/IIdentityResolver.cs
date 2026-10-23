@@ -23,12 +23,37 @@ namespace ExchangeAdminWeb.Services;
 /// protected-principal check requires that object to prove before it is accepted (aud-a2c). An
 /// address can be carried by any AD object; this cannot be, by accident.
 /// </param>
+/// <param name="RecipientTypeDetails">
+/// Exchange's finer kind of the recipient, or null when it reported none (aud-a60). A Microsoft 365 group's
+/// RecipientType names no group; this does (<c>GroupMailbox</c>).
+/// </param>
 public sealed record ResolvedRecipient(
     string PrimarySmtpAddress,
     string? ExternalDirectoryObjectId,
     string? RecipientType,
     bool ExistsOnPrem,
-    Guid? ExchangeGuid = null);
+    Guid? ExchangeGuid = null,
+    string? RecipientTypeDetails = null)
+{
+    /// <summary>Whether Exchange reports a group, by either kind it gave (<see cref="ExchangeRecipientKinds.NamesAGroup"/>).</summary>
+    public bool IsGroup => ExchangeRecipientKinds.NamesAGroup(RecipientType, RecipientTypeDetails);
+}
+
+/// <summary>Which recipients Exchange reports as groups (aud-a60).</summary>
+public static class ExchangeRecipientKinds
+{
+    /// <summary>
+    /// True when either kind Exchange gave names a group: one that carries "Group" - <c>GroupMailbox</c> (a Microsoft 365
+    /// group, whose RecipientType is <c>UserMailbox</c>), <c>MailUniversalDistributionGroup</c>,
+    /// <c>MailUniversalSecurityGroup</c>, <c>MailNonUniversalGroup</c>, <c>DynamicDistributionGroup</c> and the other group
+    /// kinds - or <c>RoomList</c>.
+    /// </summary>
+    public static bool NamesAGroup(string? recipientType, string? recipientTypeDetails) =>
+        CarriesGroup(recipientType) || CarriesGroup(recipientTypeDetails)
+        || string.Equals(recipientTypeDetails?.Trim(), "RoomList", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CarriesGroup(string? kind) => kind?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true;
+}
 
 /// <summary>One member of an Exchange Online group, as Exchange reported it (aud-a52).</summary>
 /// <param name="PrimarySmtpAddress">The member's primary address; null when Exchange reported none.</param>
@@ -41,8 +66,8 @@ public sealed record ExchangeGroupMember(
     string? RecipientTypeDetails,
     bool? IsDirSynced)
 {
-    /// <summary>Every kind of group Exchange reports carries "Group" in its RecipientType.</summary>
-    public bool IsGroup => RecipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true;
+    /// <summary>Whether Exchange reports a group, by either kind it gave (<see cref="ExchangeRecipientKinds.NamesAGroup"/>).</summary>
+    public bool IsGroup => ExchangeRecipientKinds.NamesAGroup(RecipientType, RecipientTypeDetails);
 }
 
 /// <remarks>
@@ -74,8 +99,8 @@ public interface IIdentityResolver
     /// <exception cref="Exception">
     /// Thrown when the membership could not be read in full: Exchange Online unreachable, unreadable or not configured, the
     /// group not found, a group of a kind the read does not expand, a nested group without an address or a sync state, or
-    /// more groups than it reads. Never an empty list standing in for a read that did not complete: the self-grant check
-    /// takes the answer for evidence.
+    /// more nested cloud groups than it follows (aud-a61: an exception of its own, so the refusal can name the bound). Never
+    /// an empty list standing in for a read that did not complete: the self-grant check takes the answer for evidence.
     /// </exception>
     Task<IReadOnlyList<ExchangeGroupMember>> ReadGroupMembersAsync(string group);
 }

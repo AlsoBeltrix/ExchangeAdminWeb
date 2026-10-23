@@ -4,7 +4,11 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -583,6 +587,262 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Empty(_h.Forest.Errors);
     }
 
+    // ---- aud-a60: a Microsoft 365 group; membership read under the directory-read credential -------------------
+
+    private const string Microsoft365Group = "m365-team@contoso.test";
+
+    /// <summary>Exchange knows the operator's mailbox, and the grantee as a Microsoft 365 group in the shape Get-Recipient gives.</summary>
+    private static IIdentityResolver ExchangeHoldsAMicrosoft365Group(params ExchangeGroupMember[] members)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(Microsoft365Group).Returns(new ResolvedRecipient(
+            Microsoft365Group, "ext-" + Microsoft365Group, "UserMailbox", ExistsOnPrem: false, RecipientTypeDetails: "GroupMailbox"));
+        resolver.ReadGroupMembersAsync(Microsoft365Group).Returns((IReadOnlyList<ExchangeGroupMember>)members);
+        return resolver;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AMicrosoft365Group_InTheShapeGetRecipientGives_IsCheckedAgainstItsMembers(bool operatorInside)
+    {
+        // Get-Recipient reports a Microsoft 365 group with RecipientType UserMailbox and RecipientTypeDetails GroupMailbox. Read
+        // by its type alone it was a person: Exchange was never asked for its members, and a grant to one holding the operator
+        // went through.
+        var resolver = ExchangeHoldsAMicrosoft365Group(Person(Other, "ext-other"),
+            operatorInside ? Person(Upn, "ext-jdoe") : Person("third@contoso.test", "ext-third"));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Microsoft365Group);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        await resolver.Received(1).ReadGroupMembersAsync(Microsoft365Group);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    public static TheoryData<string> HiddenLinks => ["the granted group's own", "a group nested in it"];
+
+    [Theory]
+    [MemberData(nameof(HiddenLinks))]
+    public async Task AMembershipTheSessionIdentityCannotSee_IsReadUnderTheDirectoryReadCredential_AndRefused(string hidden)
+    {
+        // The directory finds the group but shows its member links only to an identity that may read them: any other read
+        // gets no rows, not an error, and the evaluator took no rows for "not a member". Under the protected-principal
+        // directory-read credential - the one the protected-principal check reads with - the links are there.
+        if (hidden == "the granted group's own")
+        {
+            _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, membersHiddenFromSession: true, members: [_other, _jdoe]);
+        }
+        else
+        {
+            var team = _h.Forest.AddGroup("Inner Team", membersHiddenFromSession: true, members: [_jdoe]);
+            _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [team]);
+        }
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(SelfGrantRefusal, result);
+        Assert.NotEmpty(_h.Forest.MembershipReads);
+        Assert.All(_h.Forest.CallsAs.Where(read => read.Call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)),
+            read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
+        Assert.Contains(_h.Forest.CallsAs, read => read.Call.StartsWith("Get-ADForest", StringComparison.Ordinal)
+            && read.As == ExchangeWriteHarness.DirectoryReadAccount);
+        // The operator's and the grantee's lookups stay the session's: resolver reads, outside this finding.
+        Assert.Contains(_h.Forest.CallsAs, read => read.As is null
+            && read.Call.StartsWith($"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} ", StringComparison.Ordinal)
+            && read.Call.Contains($"(objectSid={_jdoe.Sid})", StringComparison.Ordinal));
+        Assert.Equal(1, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    public static TheoryData<string> CredentialsNotToBeHad =>
+        ["not configured", "its setting cannot be read", "not retrieved", "the fetch throws", "a blank account"];
+
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task AGroupGrant_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNoMembershipIsRead(string shape)
+    {
+        // The operator is not a member here: the refusal is the question nothing may answer without the credential. The
+        // session identity is never asked in its place - its "no rows" is no answer.
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var validator = shape == "its setting cannot be read"
+            ? _h.NothingProtectedValidator(resolver, UnreadableModuleConfig())
+            : _h.NothingProtectedValidator(resolver);
+        var problem = PermissionValidator.DirectoryReadCredentialNotRetrieved;
+        switch (shape)
+        {
+            case "not configured":
+                ClearTheDirectoryReadSecretId();
+                problem = PermissionValidator.DirectoryReadCredentialNotConfigured;
+                break;
+            case "its setting cannot be read":
+                problem = PermissionValidator.DirectoryReadCredentialUnreadable;
+                break;
+            case "not retrieved":
+                validator.DirectoryReadSecretFetch = _ => Task.FromResult<(string username, string password, string domain)?>(null);
+                break;
+            case "the fetch throws":
+                validator.DirectoryReadSecretFetch = _ =>
+                    Task.FromException<(string username, string password, string domain)?>(new InvalidOperationException("the secret store is unreachable"));
+                break;
+            default:
+                validator.DirectoryReadSecretFetch = _ => Task.FromResult<(string username, string password, string domain)?>((" ", "secret", "CONTOSO"));
+                break;
+        }
+
+        var result = await validator.ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{Delegates}' could not be read: {problem}"), result);
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => call.StartsWith("Get-ADGroup ", StringComparison.Ordinal));
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AGrantToAPerson_NeedsNoDirectoryReadCredential()
+    {
+        // The credential is had only for a group the directory is asked about: a deployment without it still grants to people.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
+        var validator = _h.NothingProtectedValidator(resolver);
+        ClearTheDirectoryReadSecretId();
+
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other));
+        Assert.Equal(0, _h.DirectoryReadFetches);
+    }
+
+    /// <summary>The directory-read Secret ID the harness stored, cleared: the credential is not configured.</summary>
+    private void ClearTheDirectoryReadSecretId() =>
+        _h.ModuleConfig.UpdateModuleValues(ProtectedPrincipalService.ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [ProtectedPrincipalService.DirectoryReadSecretConfigKey] = "" });
+
+    /// <summary>Module config over the harness's database through a store whose every read fails.</summary>
+    private ModuleConfigService UnreadableModuleConfig()
+    {
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_h.Dir);
+        return new ModuleConfigService(new ModuleCatalog(), env,
+            new ModuleConfigRepository(new UnreadableStore(TestConfigStore.Create(_h.Dir))), NullLogger<ModuleConfigService>.Instance);
+    }
+
+    /// <summary>A config store whose every read fails; writes pass.</summary>
+    private sealed class UnreadableStore(IConfigStore inner) : IConfigStore
+    {
+        public long GetChangeToken() => inner.GetChangeToken();
+
+        public T Read<T>(Func<SqliteConnection, T> read) => throw new InvalidOperationException("config store unreadable");
+
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => inner.Write(write);
+
+        public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
+    }
+
+    // ---- aud-a61: one run reads each group once; the nesting bound named ---------------------------------------
+
+    [Fact]
+    public async Task OneRun_ReadsACloudGroupsMembersOnce_ForEveryCheckThatNamesIt_AndANewRunReadsAgain()
+    {
+        // A bulk file's rows naming one large group each read its whole membership: 200 rows, 200 traversals.
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"));
+        var validator = _h.NothingProtectedValidator(resolver);
+        var run = new SelfGrantRun();
+
+        for (var row = 0; row < 3; row++)
+            Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup, run));
+
+        await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup));
+        await resolver.Received(2).ReadGroupMembersAsync(CloudGroup);
+    }
+
+    [Fact]
+    public async Task OneRun_KeepsAReadThatFailed_AndRefusesEveryCheckAlike()
+    {
+        // The failure is kept with the run, not retried row by row: every row naming the group is told the same.
+        var resolver = ExchangeHoldsTheCloudGroup();
+        resolver.ReadGroupMembersAsync(CloudGroup).Returns(
+            Task.FromException<IReadOnlyList<ExchangeGroupMember>>(new InvalidOperationException("Exchange Online is unreachable")));
+        var validator = _h.NothingProtectedValidator(resolver);
+        var run = new SelfGrantRun();
+
+        for (var row = 0; row < 3; row++)
+            Assert.Equal(IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read"),
+                await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup, run));
+
+        await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
+    }
+
+    [Fact]
+    public async Task OneRun_EvaluatesADirectoryGroupOnce_AndHasItsCredentialOnce()
+    {
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var validator = _h.NothingProtectedValidator(resolver);
+        var run = new SelfGrantRun();
+
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Delegates, run));
+        var oneEvaluation = _h.Forest.MembershipReads.Count;
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Delegates, run));
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Delegates, run));
+
+        Assert.True(oneEvaluation > 0);
+        Assert.Equal(oneEvaluation, _h.Forest.MembershipReads.Count);
+        Assert.Equal(1, _h.DirectoryReadFetches);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task BothBulkLoops_ReadAGroupTheirRowsShare_Once(bool calendar, bool readFails)
+    {
+        // The loop is one run: three rows granting one cloud group read its members once - and, when that read fails, fail
+        // all three alike, each recorded with the validator's refusal.
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"));
+        if (readFails)
+            resolver.ReadGroupMembersAsync(CloudGroup).Returns(
+                Task.FromException<IReadOnlyList<ExchangeGroupMember>>(new InvalidOperationException("Exchange Online is unreachable")));
+        var rows = string.Concat(Enumerable.Repeat(Row(calendar, CloudGroup), 3));
+
+        var bulk = await RunBulk(calendar, grant: true, rows, resolver);
+
+        await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
+        if (readFails)
+        {
+            Assert.Equal(3, bulk.FailedCount);
+            var refusal = IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read");
+            Assert.All(bulk.Entries, entry => Assert.Equal(refusal, entry.Message));
+            Assert.Equal(3, _h.AuditRows().Count(row => Text(row, "action").EndsWith("_SelfGrantAttempt", StringComparison.Ordinal)
+                && Text(row, "error") == refusal));
+        }
+        else
+        {
+            Assert.Equal(3, bulk.SuccessCount);
+        }
+    }
+
+    [Fact]
+    public async Task ACloudGroupNestingPastTheBound_IsRefused_SayingSo()
+    {
+        // A traversal cut off at the bound is no answer: refused as incomplete, and the refusal names the bound rather than
+        // reading as a membership that could not be read for any reason.
+        var resolver = ExchangeHoldsTheCloudGroup();
+        resolver.ReadGroupMembersAsync(CloudGroup).Returns(Task.FromException<IReadOnlyList<ExchangeGroupMember>>(
+            new ExchangeGroupNestingBoundException(CloudGroup, ExchangeGroupMembers.MaxNestedGroups)));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(IncompleteBecause(
+            $"the group '{CloudGroup}' holds more than {ExchangeGroupMembers.MaxNestedGroups} nested groups, more than the check reads"), result);
+    }
+
     // ---- Exchange Online (aud-a28y) ----------------------------------------------------------------
 
     [Theory]
@@ -793,6 +1053,93 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.NotEmpty(_h.Writes);
     }
 
+    // aud-a59: a row that names no target is an invalid row too, refused before any check - it was recorded under the
+    // protected-target check's action.
+
+    private const string NoTarget = "No target specified (the Target column is empty)";
+
+    public static TheoryData<bool, bool, string> BlankTargetRows => new()
+    {
+        { false, true, "" }, { false, true, "   " }, { false, false, "" }, { false, false, "   " },
+        { true, true, "" }, { true, true, "   " }, { true, false, "" }, { true, false, "   " },
+    };
+
+    private static string RowFor(bool calendar, string target, string user) =>
+        calendar ? $"{target},{user},Reviewer\n" : $"{target},{user},True,False,False\n";
+
+    private static string NoTargetAction(bool calendar, bool grant) => calendar
+        ? $"Bulk{(grant ? "Set" : "Remove")}Calendar_NoTarget"
+        : $"Bulk{(grant ? "Add" : "Remove")}_NoTarget";
+
+    [Theory]
+    [MemberData(nameof(BlankTargetRows))]
+    public async Task ABulkRowThatNamesNoTarget_IsAnInvalidRow_RefusedBeforeAnyCheck(bool calendar, bool grant, string target)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+
+        var bulk = await RunBulk(calendar, grant, RowFor(calendar, target, Other), resolver);
+
+        Assert.Equal(0, bulk.SuccessCount);
+        Assert.Equal(1, bulk.FailedCount);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(NoTargetAction(calendar, grant), Text(record, "action"));
+        Assert.Equal(NoTarget, Text(record, "error"));
+        Assert.Equal("Failed", Text(record, "result"));
+        var entry = Assert.Single(bulk.Entries);
+        Assert.Equal("FAILED", entry.Status);
+        Assert.Equal("No target specified", entry.Message);
+        Assert.Equal($"{target}/{Other}: {NoTarget}", Assert.Single(bulk.Errors));
+        await resolver.DidNotReceive().ResolveRecipientAsync(Arg.Any<string>());
+        Assert.Empty(_h.Forest.Calls);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, _h.Connects);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task ARowAfterOneThatNamesNoTarget_IsStillProcessed(bool calendar, bool grant)
+    {
+        // The control: the invalid row ends that row only.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+
+        var bulk = await RunBulk(calendar, grant, RowFor(calendar, "", Other) + Row(calendar, Other), resolver);
+
+        Assert.Equal(1, bulk.SuccessCount);
+        Assert.Equal(1, bulk.FailedCount);
+        Assert.Equal(["FAILED", "SUCCESS"], bulk.Entries.Select(entry => entry.Status));
+        Assert.Single(_h.AuditRows(), row => Text(row, "action") == NoTargetAction(calendar, grant));
+        Assert.NotEmpty(_h.Writes);
+    }
+
+    // aud-a59: the harness resolver answers no membership a test did not give it.
+
+    [Fact]
+    public async Task TheHarnessResolver_ReadsNoMembershipItWasNotGiven()
+    {
+        // NSubstitute answered an unset ReadGroupMembersAsync with an empty list, so a cloud-only group test that forgot its
+        // members read "nobody is a member" and passed as allowed.
+        var resolver = ExchangeKnowsTheTarget();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => resolver.ReadGroupMembersAsync(CloudGroup));
+    }
+
+    [Fact]
+    public async Task ACloudOnlyGroupWhoseMembersNoTestSet_IsRefused_AsIncomplete()
+    {
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(CloudGroup).Returns(
+            new ResolvedRecipient(CloudGroup, "ext-" + CloudGroup, "MailUniversalSecurityGroup", ExistsOnPrem: false));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read"), result);
+    }
+
     /// <summary>
     /// "unreachable": Exchange cannot answer for the operator, so the check cannot be completed. "alias": Exchange names
     /// the grantee as the operator's own mailbox, a self-grant the string match misses. "no operator": the loop was handed
@@ -819,21 +1166,23 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     // ---- the source ------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("Components/Pages/MailboxPermissions.razor", 2)]
-    [InlineData("Components/Pages/CalendarPermissions.razor", 2)]
-    [InlineData("Services/MailboxPermissionService.cs", 1)]
-    [InlineData("Services/CalendarPermissionService.cs", 1)]
-    public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath, int sites)
+    [InlineData("Components/Pages/MailboxPermissions.razor", 2, 1)]
+    [InlineData("Components/Pages/CalendarPermissions.razor", 2, 1)]
+    [InlineData("Services/MailboxPermissionService.cs", 1, 0)]
+    [InlineData("Services/CalendarPermissionService.cs", 1, 0)]
+    public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath, int sites, int atWrite)
     {
         // The two bulk loops are driven above and the two pages in PermissionPagesSelfGrantTests; this reads every record
         // from the source, comments blanked. Each records the refusal it was handed, as their protected-target denials
         // already do, rather than a fixed sentence that says every refusal was a self-grant. aud-a50: each page records
-        // the refusal in SubmitSingle and again in ExecuteOnPrem, which checks the grantee right before the on-prem write.
+        // the refusal in SubmitSingle and again in ExecuteOnPrem, which checks the grantee right before the on-prem write;
+        // aud-a61: that one under its own action, *_SelfGrantAttemptAtWrite.
         var path = AuditCategoryFilingTests.FindRepoFile(relativePath.Split('/'));
         var code = RazorSyntax.CommentsBlanked(File.ReadAllText(path));
 
-        var records = Regex.Matches(code, @"_SelfGrantAttempt""").ToList();
+        var records = Regex.Matches(code, @"_SelfGrantAttempt(?:AtWrite)?""").ToList();
         Assert.Equal(sites, records.Count);
+        Assert.Equal(atWrite, Regex.Matches(code, @"_SelfGrantAttemptAtWrite""").Count);
         foreach (var record in records)
         {
             var detail = Regex.Match(code[record.Index..], @"errorDetail:\s*([^,)]+)");
@@ -867,8 +1216,15 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         const BindingFlags Every = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
         Assert.DoesNotContain(typeof(PermissionValidator).GetMethods(Every), method => method.Name == "ValidateSelfGrant");
-        var check = Assert.Single(typeof(PermissionValidator).GetMethods(Every),
-            method => method.Name == nameof(PermissionValidator.ValidateSelfGrantAsync));
+        // The check every page calls, and aud-a61's overload the bulk loops call within one run: each takes the principal
+        // and the grantee first.
+        var checks = typeof(PermissionValidator).GetMethods(Every)
+            .Where(method => method.Name == nameof(PermissionValidator.ValidateSelfGrantAsync)).ToList();
+        Assert.Equal(2, checks.Count);
+        var check = Assert.Single(checks, method => method.IsPublic);
         Assert.Equal(new[] { typeof(ClaimsPrincipal), typeof(string) }, check.GetParameters().Select(p => p.ParameterType));
+        var withinARun = Assert.Single(checks, method => !method.IsPublic);
+        Assert.Equal(new[] { typeof(ClaimsPrincipal), typeof(string), typeof(SelfGrantRun) },
+            withinARun.GetParameters().Select(p => p.ParameterType));
     }
 }
