@@ -46,7 +46,7 @@ public sealed class MigrationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: null);
 
-        var (allowed, excluded, notes) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, notes, _) = await service.PartitionByProtectionAsync(
             ["vip@contoso.com"], UserIn(ServicerSid));
 
         Assert.Empty(allowed);
@@ -59,7 +59,7 @@ public sealed class MigrationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (allowed, excluded, notes) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, notes, _) = await service.PartitionByProtectionAsync(
             ["vip@contoso.com"], UserIn("S-1-5-21-1-2-3-9999"));
 
         Assert.Empty(allowed);
@@ -72,7 +72,7 @@ public sealed class MigrationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (allowed, excluded, notes) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, notes, _) = await service.PartitionByProtectionAsync(
             ["vip@contoso.com"], UserIn(ServicerSid));
 
         Assert.Equal(["vip@contoso.com"], allowed);
@@ -93,7 +93,7 @@ public sealed class MigrationServicerTests : IDisposable
         // batch must produce two notes, each naming its own target.
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (allowed, _, notes) = await service.PartitionByProtectionAsync(
+        var (allowed, _, notes, _) = await service.PartitionByProtectionAsync(
             ["vip1@contoso.com", "vip2@contoso.com"], UserIn(ServicerSid));
 
         Assert.Equal(2, allowed.Count);
@@ -108,7 +108,7 @@ public sealed class MigrationServicerTests : IDisposable
         // The containment that stops per-module scoping collapsing into a global bypass.
         var service = CreateService(servicerGroups: null, otherModuleServicerGroups: [ServicerSid]);
 
-        var (allowed, excluded, _) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, _, _) = await service.PartitionByProtectionAsync(
             ["vip@contoso.com"], UserIn(ServicerSid));
 
         Assert.Empty(allowed);
@@ -120,7 +120,7 @@ public sealed class MigrationServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        var (allowed, excluded, notes) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, notes, _) = await service.PartitionByProtectionAsync(
             ["vip@contoso.com"], actingUser: null);
 
         Assert.Empty(allowed);
@@ -135,7 +135,7 @@ public sealed class MigrationServicerTests : IDisposable
         // the target is protected, so there is no exclusion for a servicer to override.
         var service = CreateService(servicerGroups: [ServicerSid], resolutionUnavailable: true);
 
-        var (allowed, excluded, notes) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, notes, _) = await service.PartitionByProtectionAsync(
             ["vip@contoso.com"], UserIn(ServicerSid));
 
         Assert.Empty(allowed);

@@ -81,7 +81,19 @@ public sealed class MigrationReportExportProcessor : IBulkJobProcessor
         var takenAtUtc = DateTime.UtcNow;
         try
         {
-            var text = await _migration.GetMigrationUserReportAsync(email);
+            var report = await _migration.GetMigrationUserReportAsync(email);
+            // aud-a23k. A failed fetch is a Failed row naming why, and nothing is stored for the zip to carry. The fetch
+            // used to hand back its failure as text, which was stored as this mailbox's report on a Succeeded row.
+            if (report.Text is not { } text)
+            {
+                _logger.LogWarning("Report fetch failed for {Email}: {Reason}", email, report.Failure);
+                return new BulkJobRowOutcome
+                {
+                    Target = email,
+                    Status = BulkJobRowStatus.Failed,
+                    Message = $"Report could not be fetched: {report.Failure}",
+                };
+            }
 
             _reports.Write(payload.BatchName, email, text, takenAtUtc);
 

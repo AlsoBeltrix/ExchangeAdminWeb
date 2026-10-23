@@ -122,15 +122,15 @@
                                 }
                             </ul>
                         }
-                        @if (singleResult.MailboxSizeGB > 0 || singleResult.ArchiveSizeGB > 0)
+                        @if (singleResult.MailboxSizeGB > 0 || singleResult.ArchiveSizeGB > 0 || singleResult.MailboxSizeUnreadable != null || singleResult.ArchiveSizeUnreadable != null)
                         {
                             <p class="mb-1">
-                                <strong>Mailbox:</strong> @singleResult.MailboxSizeGB.ToString("F2") GB
-                                @if (singleResult.ArchiveSizeGB > 0)
+                                <strong>Mailbox:</strong> @(singleResult.MailboxSizeUnreadable is null ? $"{singleResult.MailboxSizeGB:F2} GB" : $"could not be read ({singleResult.MailboxSizeUnreadable})") @* aud-a23k: a size that could not be read says so, and why - it was 0, or not shown *@
+                                @if (singleResult.ArchiveSizeGB > 0 || singleResult.ArchiveSizeUnreadable != null)
                                 {
-                                    <text> | <strong>Archive:</strong> @singleResult.ArchiveSizeGB.ToString("F2") GB</text>
+                                    <text> | <strong>Archive:</strong> @(singleResult.ArchiveSizeUnreadable is null ? $"{singleResult.ArchiveSizeGB:F2} GB" : $"could not be read ({singleResult.ArchiveSizeUnreadable})")</text>
                                 }
-                                | <strong>Total:</strong> @singleResult.TotalSizeGB.ToString("F2") GB
+                                @if (singleResult.MailboxSizeUnreadable is null && singleResult.ArchiveSizeUnreadable is null) { <text>| <strong>Total:</strong> @singleResult.TotalSizeGB.ToString("F2") GB</text> } @* aud-a23k: no total beside a size that could not be read *@
                             </p>
                         }
                         @if (singleResult.MailboxExceedsQuota)
@@ -293,13 +293,13 @@
                                             }
                                         </td>
                                         <td style="text-align: right;">
-                                            @if (item.MailboxSizeGB > 0 || item.ArchiveSizeGB > 0)
+                                            @if (item.MailboxSizeGB > 0 || item.ArchiveSizeGB > 0 || item.MailboxSizeUnreadable != null || item.ArchiveSizeUnreadable != null)
                                             {
-                                                <span class="@(item.MailboxExceedsQuota ? "text-warning" : null)">@item.MailboxSizeGB.ToString("F2")</span>
-                                                @if (item.ArchiveSizeGB > 0)
+                                                <span class="@(item.MailboxExceedsQuota ? "text-warning" : null)">@(item.MailboxSizeUnreadable is null ? item.MailboxSizeGB.ToString("F2") : $"could not be read ({item.MailboxSizeUnreadable})")</span> @* aud-a23k: the same in the bulk table *@
+                                                @if (item.ArchiveSizeGB > 0 || item.ArchiveSizeUnreadable != null)
                                                 {
                                                     <text> + </text>
-                                                    <span class="@(item.ArchiveExceedsQuota ? "text-warning" : null)">@item.ArchiveSizeGB.ToString("F2") archive</span>
+                                                    <span class="@(item.ArchiveExceedsQuota ? "text-warning" : null)">@(item.ArchiveSizeUnreadable is null ? $"{item.ArchiveSizeGB:F2} archive" : $"archive could not be read ({item.ArchiveSizeUnreadable})")</span>
                                                 }
                                                 @if (item.ExceedsQuota)
                                                 {
@@ -1208,7 +1208,7 @@
    Only Close dismisses it - no backdrop click, no Escape. The report may have cost twenty
    minutes and the operator is reading it; a stray click outside must not be able to take it
    away. It survives the dismiss anyway (R24a), but the interruption is the cost. *@
-@if (reportUser != null && userReport != null)
+@if (reportUser != null && (userReport != null || reportFailure != null))
 {
     var reportRow = batchUsers?.FirstOrDefault(u =>
         string.Equals(u.EmailAddress, reportUser, StringComparison.OrdinalIgnoreCase));
@@ -1232,7 +1232,7 @@
                 <div class="ms-auto d-flex gap-2">
                     @* Export writes the whole report to a file rather than making anyone select
                        tens of thousands of lines out of a scroll box. *@
-                    <button class="btn btn-sm btn-outline-secondary" disabled="@IsBusy"
+                    <button class="btn btn-sm btn-outline-secondary" disabled="@(IsBusy || userReport == null)"
                             @onclick="ExportOpenReportAsync">Export</button>
                     @if (reportFetchedAtUtc.HasValue)
                     {
@@ -1253,7 +1253,7 @@
                 </div>
             </div>
             <div class="card-body p-0">
-                <pre class="mig-report-text mb-0">@userReport</pre>
+                @if (reportFailure != null) { <div class="alert alert-danger m-3" role="alert">The report could not be retrieved: @reportFailure</div> } else { <pre class="mig-report-text mb-0">@userReport</pre> } @* aud-a23k: a failed fetch is a failure, outside the report body - its text was shown, stored and exported as the report *@
             </div>
         </div>
     </div>
@@ -1556,10 +1556,10 @@
     // paths too, and after this page's audit and notification work rather than at the service call.
     // aud-a23i: a LOAD completes with its real outcome - not succeeded, with the failure text, when
     // its read failed or could not reach an answer - so nothing here calls a failed load done.
-    // ActivityProgressService.Finish discards both today (the frame is live only, and says so on
-    // itself); the handle is still this page's own statement of how the work ended. The writes
-    // still pass true, which records ENDED, not SUCCEEDED; if a retained result line is ever
-    // reintroduced (it should not be, `.agents/decisions.md` 2026-10-02) they need one too.
+    // aud-a23m: so does every WRITE, from a local set where its outcome is known, so no later await
+    // can change it. ActivityProgressService.Finish discards both today (the frame is live only, and
+    // says so on itself); the handle is still this page's own statement of how the work ended, should
+    // a retained result line ever return (it should not, `.agents/decisions.md` 2026-10-02).
 
     private bool isLoading = false;
     private bool isCreating = false;
@@ -1635,7 +1635,7 @@
     private string? actionInProgress;
     private string? loadingReport;
     private string? reportUser;
-    private string? userReport;
+    private string? userReport; private string? reportFailure; // aud-a23k: why the last fetch has no report; null when it has one, and cleared wherever userReport is
     private List<UnreadableMigrationMailbox> unreadableMailboxes = []; // aud-a23i: the rows the last mailbox load could not read; set only by ReplaceBatchUsers
     // R24a. When the report on screen was taken, so the dialog can say so and the operator can
     // judge whether refreshing is worth twenty minutes. Null for an error, which is not a report.
@@ -1884,7 +1884,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {batchName}: {ex.Message}";
+            loadFailure = $"Unable to load mailboxes in {batchName}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; // aud-a23l: the cmdlet's own words, without PowerShell's "The running command stopped ..." prefix
         }
         finally
         {
@@ -1947,7 +1947,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {requested}: {ex.Message}";
+            loadFailure = $"Unable to load mailboxes in {requested}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; // aud-a23l: the same
         }
         finally
         {
@@ -1985,15 +1985,15 @@
                 var protectedNote = $"PROTECTED PRINCIPAL — escalate (not migrated){(string.IsNullOrWhiteSpace(singleResult.ProtectionNote) ? "" : $": {singleResult.ProtectionNote}")}";
                 checkDetail = string.IsNullOrWhiteSpace(checkDetail) ? protectedNote : $"{checkDetail}; {protectedNote}";
             }
+            try { Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
+                singleTicketNumber, checkDetail); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the audit is its own step - a throw from it reached the check's catch and replaced the verdict
 
-            Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
-                singleTicketNumber, checkDetail);
-
-            // Send admin notification
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CheckMigrationEligibility_{singleMigrationDirection}", singleEmail, "N/A",
                 singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, singleTicketNumber,
-                checkDetail);
+                checkDetail); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: so is the notification (Constitution: its failure must not change or mask the result)
         }
         catch (Exception ex)
         {
@@ -2004,8 +2004,8 @@
             };
             singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
             checkFailure = $"Could not be determined: {ex.Message}";
-            Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
-                "Error", singleTicketNumber, ex.Message);
+            try { Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
+                "Error", singleTicketNumber, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
         }
         finally
         {
@@ -2025,7 +2025,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
-
+        string? createFailure = "Nothing was created."; // aud-a23m: the create's outcome for its activity, which completed true on every path
 
         try
         {
@@ -2044,7 +2044,7 @@
 
             singleCreateResult = await MigrationSvc.CreateMigrationBatchAsync(
                 singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete, authState.User);
-
+            createFailure = singleCreateResult.Success ? null : singleCreateResult.Message; // aud-a23m: set where the outcome is known, so no later await can change it
             var ipAddress = clientIpAddress;
             var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
             var singleCreatedCount = 1 - singleExcluded.Count;
@@ -2073,20 +2073,20 @@
             var singleExclusionNote = singleExcluded.Count > 0
                 ? $" | EXCLUDED protected principals (not migrated): {string.Join("; ", singleExcluded)}"
                 : "";
-
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
                 singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}{singleExclusionNote}",
-                singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message);
+                singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", singleMigrationDirection, finalBatchName); } // aud-a23m: a notification that threw reached the catch below and replaced the created batch's result
         }
         catch (Exception ex)
         {
-            singleCreateResult = PermissionResult.Fail(ex.Message);
+            singleCreateResult = PermissionResult.Fail(createFailure = ex.Message);
         }
         finally
         {
             isCreating = false;
-            activity.Complete(true);
+            activity.Complete(createFailure is null, createFailure);
         }
     }
 
@@ -2166,7 +2166,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Creating the migration batch", ActivitySize.Unknown);
-
+        string? createFailure = "Nothing was created."; // aud-a23m: the create's outcome for its activity, which completed true on every path
 
         try
         {
@@ -2190,7 +2190,7 @@
 
             createResult = await MigrationSvc.CreateMigrationBatchAsync(
                 migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete, authState.User);
-
+            createFailure = createResult.Success ? null : createResult.Message; // aud-a23m: the same
             var ipAddress = clientIpAddress;
             var bulkExcluded = createResult.ExcludedTargets ?? Array.Empty<string>();
             var createdCount = eligibleEmails.Count - bulkExcluded.Count;
@@ -2219,20 +2219,20 @@
             var bulkExclusionNote = bulkExcluded.Count > 0
                 ? $" | EXCLUDED {bulkExcluded.Count} protected principal(s) (not migrated): {string.Join("; ", bulkExcluded)}"
                 : "";
-
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
                 $"{createdCount} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}{bulkExclusionNote}",
-                createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message);
+                createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", migrationDirection, finalBatchName); } // aud-a23m: the same for the bulk create
         }
         catch (Exception ex)
         {
-            createResult = PermissionResult.Fail(ex.Message);
+            createResult = PermissionResult.Fail(createFailure = ex.Message);
         }
         finally
         {
             isCreating = false;
-            activity.Complete(true);
+            activity.Complete(createFailure is null, createFailure);
         }
     }
 
@@ -3294,7 +3294,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
-
+        string? actionFailure = "Nothing was done."; // aud-a23m: the write's outcome for its activity, which completed true on every path
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -3303,7 +3303,7 @@
 
             var result = await action();
             batchActionResult = result;
-
+            actionFailure = result.Success ? null : result.Message;
             try
             {
                 Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, ticket, result.Success ? null : result.Message);
@@ -3333,12 +3333,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(actionFailure is null, actionFailure);
         }
     }
 
@@ -3358,7 +3358,7 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", $"{auditAction} on {target}", ActivitySize.Unknown);
-
+        string? actionFailure = "Nothing was done."; // aud-a23m: the write's outcome for its activity, which completed true on every path
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -3367,7 +3367,7 @@
 
             var result = await action();
             batchActionResult = result;
-
+            actionFailure = result.Success ? null : result.Message;
             try
             {
                 Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, ticket, result.Success ? null : result.Message);
@@ -3396,12 +3396,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(actionFailure is null, actionFailure);
         }
     }
 
@@ -3523,14 +3523,14 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Removing completed batches", ActivitySize.Unknown);
-
+        string? bulkFailure = "Nothing was done."; // aud-a23m: the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
             {
-                batchActionResult = PermissionResult.Fail("Authorization denied.");
+                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
@@ -3559,7 +3559,7 @@
                     Message = $"Nothing to do: none of {skipped.Count} selected batches is eligible.",
                     Detail = "Why each one was skipped is on its row."
                 };
-                return;
+                bulkFailure = null; return;
             }
 
             var succeeded = 0;
@@ -3638,7 +3638,7 @@
             batchActionResult = errors.Count == 0
                 ? new PermissionResult { Success = true, Message = summary, Detail = "Exchange works in the background - use Refresh to follow it. Per-batch results are on the rows." }
                 : PermissionResult.Fail(summary, "Per-batch results are on the rows.");
-
+            bulkFailure = errors.Count == 0 ? null : summary;
             try
             {
                 await Email.SendAdminNotificationAsync(
@@ -3657,12 +3657,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(bulkFailure is null, bulkFailure);
             isLoadingStatus = false;
         }
     }
@@ -3689,14 +3689,14 @@
 
         using var activity = Progress.Begin(
             "Exchange Migration", "Applying the bulk mailbox action", ActivitySize.Unknown);
-
+        string? bulkFailure = "Nothing was done."; // aud-a23m: the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
             {
-                batchActionResult = PermissionResult.Fail("Authorization denied.");
+                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied",
@@ -3723,7 +3723,7 @@
                     Message = $"Nothing to do: none of {plan.Skipped.Count} selected mailboxes is eligible.",
                     Detail = "Why each one was skipped is on its row."
                 };
-                return;
+                bulkFailure = null; return;
             }
 
             var succeeded = 0;
@@ -3782,7 +3782,7 @@
             batchActionResult = errors.Count == 0
                 ? new PermissionResult { Success = true, Message = summary, Detail = "Exchange works in the background - use Refresh to follow it. Per-mailbox results are on the rows." }
                 : PermissionResult.Fail(summary, "Per-mailbox results are on the rows.");
-
+            bulkFailure = errors.Count == 0 ? null : summary;
             try
             {
                 await Email.SendAdminNotificationAsync(
@@ -3807,12 +3807,12 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
         }
         finally
         {
             actionInProgress = null;
-            activity.Complete(true);
+            activity.Complete(bulkFailure is null, bulkFailure);
         }
     }
 
@@ -3922,7 +3922,7 @@
     private void DismissReportModal()
     {
         reportUser = null;
-        userReport = null;
+        userReport = null; reportFailure = null; // aud-a23k: the failure goes with the report
         reportFetchedAtUtc = null;
     }
 
@@ -3937,7 +3937,7 @@
     {
         reportGeneration++;
         reportUser = null;
-        userReport = null;
+        userReport = null; reportFailure = null; // aud-a23k: the failure goes with the report
         reportFetchedAtUtc = null;
         loadingReport = null;
 
@@ -4006,7 +4006,7 @@
         var stored = ReportStore.TryRead(expandedBatch, emailAddress, DateTime.UtcNow);
         if (stored != null)
         {
-            userReport = stored.Text;
+            userReport = stored.Text; reportFailure = null; // aud-a23k: a stored copy is a report
             reportFetchedAtUtc = stored.FetchedAtUtc;
             reportUser = emailAddress;
             return;
@@ -4040,32 +4040,32 @@
         string? fetchFailure = null; // aud-a23i: why the fetch failed, for its activity, superseded or not
         try
         {
-            var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
+            var report = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
+            fetchFailure = report.Failure is null ? null : $"The report for {emailAddress} could not be fetched: {report.Failure}"; // aud-a23k: a failed fetch is its activity's failure, superseded or not (aud-a23i)
             if (generation != reportGeneration) return;
-
             // Stored before it is rendered, so the modal and any later consumer read the same
             // bytes (R24c, and R31e depends on it). A store failure must not lose the report the
             // operator just waited twenty minutes for - it is shown either way, just not kept.
             try
             {
-                ReportStore.Write(batch, emailAddress, text, takenAtUtc);
+                if (report.Text is { } text) ReportStore.Write(batch, emailAddress, text, takenAtUtc); // aud-a23k: a report is stored; a failure never is
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Migration report for {Email} could not be stored", emailAddress);
             }
 
-            userReport = text;
-            reportFetchedAtUtc = takenAtUtc;
+            userReport = report.Text; reportFailure = report.Failure; // aud-a23k: a failure is shown as one, outside the report body
+            reportFetchedAtUtc = report.Text is null ? null : takenAtUtc;
             reportUser = emailAddress;
         }
         catch (Exception ex)
         {
-            fetchFailure = $"The report for {emailAddress} could not be fetched: {ex.Message}";
+            fetchFailure = $"The report for {emailAddress} could not be fetched: {ExchangeServiceBase.ResolveFailure(ex).primary}"; // aud-a23l: the cmdlet's own words
             if (generation != reportGeneration) return;
             // NOT stored. An error string is not a report, and keeping it would serve the failure
             // back on the next open as though it were the answer.
-            userReport = $"Error: {ex.Message}";
+            userReport = null; reportFailure = ExchangeServiceBase.ResolveFailure(ex).primary;
             reportFetchedAtUtc = null;
             reportUser = emailAddress;
         }

@@ -1959,7 +1959,7 @@ public class MigrationStatusPageTests
         //
         // Close must call the hiding one. The invalidating one belongs to the row-reload paths.
         var dialog = ExtractSpan(
-            ReadPage(), "@if (reportUser != null && userReport != null)", "</div>\n}");
+            ReadPage(), "@if (reportUser != null && (userReport != null || reportFailure != null))", "</div>\n}");
 
         Assert.Contains("@onclick=\"DismissReportModal\"", dialog, StringComparison.Ordinal);
         Assert.DoesNotContain("InvalidateStoredReports", dialog, StringComparison.Ordinal);
@@ -1997,15 +1997,17 @@ public class MigrationStatusPageTests
 
         // Re-fetching is its own deliberate control, and its tooltip states the cost.
         var dialog = ExtractSpan(
-            ReadPage(), "@if (reportUser != null && userReport != null)", "</div>\n}");
+            ReadPage(), "@if (reportUser != null && (userReport != null || reportFailure != null))", "</div>\n}");
         Assert.Contains("RefetchUserReport", dialog, StringComparison.Ordinal);
         Assert.Matches(@"twenty minutes", dialog);
 
         // An error is NOT stored: keeping it would serve the failure back on the next open as
-        // though it were the answer.
+        // though it were the answer. aud-a23k: a failed fetch is a failure outcome, not text - the
+        // write is for a report only, and the page's own catch, after it, stores nothing.
         var fetchBody = StripLineComments(GetMethodBody("FetchUserReport"));
         var write = fetchBody.IndexOf("ReportStore.Write(", StringComparison.Ordinal);
-        var errorBranch = fetchBody.IndexOf("$\"Error: {ex.Message}\"", StringComparison.Ordinal);
+        Assert.Contains("if (report.Text is { } text) ReportStore.Write(", fetchBody, StringComparison.Ordinal);
+        var errorBranch = fetchBody.LastIndexOf("reportFailure = ", StringComparison.Ordinal);
         Assert.True(write > 0 && errorBranch > write,
             "the store write must be on the success path only");
     }
@@ -2120,7 +2122,7 @@ public class MigrationStatusPageTests
         // Close is rendered only once a report has landed, and it lives in the dialog now rather
         // than in a drawer under the row (R24).
         var dialog = ExtractSpan(
-            ReadPage(), "@if (reportUser != null && userReport != null)", "mig-report-text");
+            ReadPage(), "@if (reportUser != null && (userReport != null || reportFailure != null))", "mig-report-text");
         Assert.Contains("@onclick=\"DismissReportModal\"", dialog, StringComparison.Ordinal);
 
         // Sample CSV serves a constant; it must not grow a call into Exchange.
