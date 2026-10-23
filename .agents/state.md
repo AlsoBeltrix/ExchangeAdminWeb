@@ -29,10 +29,14 @@ Each slice's arrangement and cost go in `.agents/token-log.md`.
 `Modules/ModuleCatalog.cs`, which owns which ones. The last gate results are in
 `## Verification`.
 
-**NEXT ACTION - the one open item:** `aud-a76`, one agent, dispatched 2026-10-23: a MEDIUM on how
-the audit files a permission write that fails before its command is submitted
-(`.agents/review/findings/aud-a76.md`). After it lands: its codex review, a final full suite,
-push, and the hand-over to the owner. Deployment is the owner's; nothing in this stream deploys.
+**The stream is closed (2026-10-23).** `aud-a76` landed (`03261f7c`, codex perm-batch-10 clean); every
+merged finding is codex-reviewed (`.agents/review/index.md`). Final gates on master as of `cfccec59`:
+Release build 0 errors / 19 warnings; full suite 6693 passed / 0 failed / 0 skipped; `dotnet format`,
+`git diff --check` and the ASCII lint clean. **NEXT ACTION: the owner's first dev deploy and the checklist
+below.** Deployment is the owner's; nothing in this stream deploys. The held LOW backlog and the three
+never-dispatched items (`aud-a2e`, `cdt-36`, `aud-a29g`) are the index rows whose Status says "held by the
+2026-10-23 stopping rule"; `aud-a2e` is an authorization gap (Known Failure Class 3) and is the first to take
+up after the deploy.
 
 ### The owner's checklist around the first dev deploy
 
