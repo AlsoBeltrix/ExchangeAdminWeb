@@ -95,6 +95,8 @@ A read-only JSONL audit log viewer, also gated by `Security:AdminGroups`.
 - Filter by category, user, IP address, and result (Success/Failed).
 - Displays full event detail in an expandable JSON view.
 - Download CSV includes a `Ticket` column carrying the stored audit/trace ticket field.
+- A line in a log file that cannot be parsed is not shown, and the page says how many such lines
+  each log had. One example is the cut line a writer that stopped mid-write leaves.
 
 **Usage telemetry.** An "Events | Usage" toggle above the filters switches the page to an
 anonymous usage view: per module, how many times it was opened, how many audited actions ran,
@@ -726,19 +728,29 @@ default both to one root. They then append to the same daily audit, trace and ex
 diagnostic files. That is safe only because every writer serialises across processes:
 
 - Before it touches a log file, each writer takes that file's lock: `<file>.lock` beside it,
-  opened exclusively and deleted when released.
+  opened exclusively. The open handle is the lock, not the file. After the write the file is
+  removed if the folder allows it, and otherwise left in place, empty and harmless.
 - It holds the lock through rotation, the write, and the take-back of a write that fails
   part-way.
-- A write that cannot take the lock within 2 seconds is dropped and logged as a failed audit
-  write: its trace step says the row was not written. It is never written over the other
-  instance's row.
+- A write that cannot take the lock within 2 seconds, because the other instance holds it, is
+  dropped and logged as a failed audit write: its trace step says the row was not written. It
+  is never written over the other instance's row.
+- A lock file the folder refuses - this instance's account may not create it, or may not read
+  and write the one already there - is not a wait. The write is dropped at once and logged as a
+  failed audit write, and the error says the log folder refused the lock file.
 - The lock is the file system's, so it holds whichever account each app pool runs as.
 - Readers never take it, and a `.lock` file is not a log.
 
 What you need to do:
 
-- Both instances must run a build that takes the lock. An older build writes without it, and
-  while one does, the two can still overwrite each other's rows.
+- Give each instance's account these rights on `<LogRoot>\ExchangeAdminWeb`: create files,
+  and read and write the files there - the other instance's too, its log files and lock files
+  alike. The lock does not need delete, but rotation does: without it, a file that reaches its
+  size limit cannot be rotated and the writes to it fail. `deploy.ps1` and the installer grant
+  each instance Modify on the folder, which covers all of it.
+- Both instances must run the same build. A build older than the lock writes without it, and
+  while one does, the two can still overwrite each other's rows. The first build with the lock
+  also needs delete rights to open a lock file that is already there.
 - To avoid the question altogether, give each instance its own `Audit:LogRoot`. That is a
   deploy-config change: `-LogRoot` on `deploy.ps1` and `tools/deploy-pipeline.ps1`, or the
   installer's prompt.
@@ -959,7 +971,7 @@ Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`,
 - `monthly`: New file each month
 - `Audit:MaxFileMB` and `Audit:MaxFilesPerPeriod` cap both audit and trace file growth
 
-**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Every entry it drops is counted - one it could not write, or one the full queue discarded - and with **Show diagnostics** on, the Admin Event Log shows that count and names any extended log file it could not read. Keep Admin Event Log access tightly scoped.
+**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Every entry it drops is counted - one it could not write, or one the full queue discarded - and with **Show diagnostics** on, the Admin Event Log shows that count and names any trace or extended log file it could not read. At shutdown it waits for its queue in proportion to the queue's length - about 26 seconds for a full one, and never less than 5 - and counts as dropped whatever it still could not write. Keep Admin Event Log access tightly scoped.
 
 ### Delinea Secret Server
 

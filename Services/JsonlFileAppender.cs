@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -18,6 +19,10 @@ namespace ExchangeAdminWeb.Services;
 /// considered and rejected: its default DACL shuts out an instance running as another account, a DACL broad enough to
 /// fix that lets any local user hold the predictable name and stall every audit write, and it serialises only writers
 /// on one host that name the root the same way (the aud-a47 record).
+/// aud-a51. The lock is the open handle, never the file. It was opened DeleteOnClose, which asks for delete access, so
+/// in a folder that grants create, read and write but not delete, a lock file already there refused every writer every
+/// time: each record waited out the bound and was dropped as if another writer held it. It is opened without that now,
+/// and after release the file is removed where the folder allows it and otherwise left, empty and harmless.
 /// </remarks>
 internal static class JsonlFileAppender
 {
@@ -26,6 +31,14 @@ internal static class JsonlFileAppender
     /// milliseconds; the bound is what a hung holder costs each write.
     /// </summary>
     internal static readonly TimeSpan DefaultLockWait = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long an access refusal at the lock file is retried before it is the folder's refusal (aud-a51). A writer that
+    /// opens the lock file while a third party deletes it - an instance on the aud-a47 build deletes it on close - is
+    /// refused access for a moment; the longest run measured was 5.1 ms, under six contending threads. A refusal that
+    /// outlasts this is the folder's, and costs each write this long, never the bound.
+    /// </summary>
+    internal static readonly TimeSpan DefaultAccessRefusalGrace = TimeSpan.FromMilliseconds(100);
 
     // The two refusals that mean another handle holds the lock file (HRESULT low words).
     private const int ErrorSharingViolation = 32;
@@ -43,11 +56,14 @@ internal static class JsonlFileAppender
     /// <remarks>
     /// The callbacks are the caller's reports and must not throw: <paramref name="repaired"/> after a write that first
     /// ended a cut tail, <paramref name="truncationFailed"/> when taking a failed line back failed too.
+    /// <paramref name="lockWait"/> bounds the wait for another writer's lock, and <paramref name="accessRefusalGrace"/> the
+    /// retry of a refusal (aud-a51).
     /// </remarks>
     internal static void Append(
         string path,
         string json,
         TimeSpan lockWait,
+        TimeSpan accessRefusalGrace,
         Action rotateIfFull,
         Action<Stream, byte[]> writeLineBytes,
         Action repaired,
@@ -55,7 +71,7 @@ internal static class JsonlFileAppender
     {
         // aud-a47. The lock before anything else: an offset, a size or a last byte read without it can be stale by the
         // time it is used.
-        using var held = Lock(path, lockWait);
+        using var held = Lock(path, lockWait, accessRefusalGrace);
         rotateIfFull();
 
         // aud-a28z part 3, moved here from the JSONL writer. One record, one line, or none. The line - the bytes
@@ -84,37 +100,47 @@ internal static class JsonlFileAppender
     }
 
     /// <summary>
-    /// Takes <paramref name="path"/>'s lock: an exclusive handle on its lock file, deleted when the handle closes. A held
-    /// lock is retried, pausing 1 ms and doubling to 16 ms, until <paramref name="wait"/> has passed; then
-    /// <see cref="JsonlLockTimeoutException"/>. Any other failure to open it propagates at once.
+    /// Takes <paramref name="path"/>'s lock: an exclusive handle on its lock file. A sharing or lock violation is another
+    /// writer's handle, retried - pausing 1 ms and doubling to 16 ms - until <paramref name="wait"/> has passed; then
+    /// <see cref="JsonlLockTimeoutException"/>. An access refusal is retried for <paramref name="accessRefusalGrace"/>, then
+    /// <see cref="JsonlLockRefusedException"/>, which any other IO failure to open it is at once (aud-a51).
     /// </summary>
-    internal static IDisposable Lock(string path, TimeSpan wait)
+    internal static IDisposable Lock(string path, TimeSpan wait, TimeSpan accessRefusalGrace)
     {
         var lockPath = LockPathFor(path);
         var clock = Stopwatch.StartNew();
         var pause = 1;
+        TimeSpan? refusedSince = null;
         while (true)
         {
-            Exception refusal;
             try
             {
-                return File.OpenHandle(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, FileOptions.DeleteOnClose);
+                return new HeldLock(lockPath, File.OpenHandle(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
             }
             catch (IOException ex) when (IsHeldElsewhere(ex))
             {
-                refusal = ex;
+                refusedSince = null;
+
+                // A live writer that hangs holding the lock costs this wait and no more: the record is dropped, its report
+                // naming the lock, and never written without it.
+                if (clock.Elapsed >= wait)
+                    throw new JsonlLockTimeoutException(lockPath, wait, ex);
             }
             catch (UnauthorizedAccessException ex)
             {
-                // What a contender meets while the holder's close is deleting the file. A folder that refuses the lock for
-                // good meets it too, and costs each write its full wait (the aud-a47 record's known gaps).
-                refusal = ex;
+                // aud-a51. Not contention: the folder refuses this account the lock file, or a third party is deleting
+                // it. This was waited for to the bound and reported as another writer's lock. It gets the grace now,
+                // counted from the first refusal of an unbroken run - a sharing violation ends a run - and is then the
+                // folder's refusal, reported as such.
+                refusedSince ??= clock.Elapsed;
+                if (clock.Elapsed - refusedSince.Value >= accessRefusalGrace)
+                    throw new JsonlLockRefusedException(lockPath, ex);
             }
-
-            // A live writer that hangs holding the lock costs this wait and no more: the record is dropped, its report
-            // naming the lock, and never written without it.
-            if (clock.Elapsed >= wait)
-                throw new JsonlLockTimeoutException(lockPath, wait, refusal);
+            catch (IOException ex)
+            {
+                // A missing folder, a device error: no wait helps. The record is dropped now, the reason inside.
+                throw new JsonlLockRefusedException(lockPath, ex);
+            }
 
             Thread.Sleep(pause);
             pause = Math.Min(pause * 2, LongestPauseMilliseconds);
@@ -123,6 +149,44 @@ internal static class JsonlFileAppender
 
     private static bool IsHeldElsewhere(IOException ex) =>
         (ex.HResult & 0xFFFF) is ErrorSharingViolation or ErrorLockViolation;
+
+    // The lock is this handle, not the file (aud-a51): closing it releases the lock, whatever then becomes of the file.
+    private sealed class HeldLock(string lockPath, SafeFileHandle handle) : IDisposable
+    {
+        public void Dispose()
+        {
+            handle.Dispose();
+            RemoveIfFree(lockPath);
+        }
+    }
+
+    // Best effort, once the handle is closed (aud-a51): the file is moved out of the lock's name, then deleted. A plain
+    // delete leaves the name delete-pending for a moment, and a writer that opens it then is refused access, which reads
+    // as the folder refusing the lock - 576 refusals in 3 s under six contending threads, against none for the move. A
+    // move of a file another writer holds is refused with a sharing violation, so it never removes a held lock.
+    private static void RemoveIfFree(string lockPath)
+    {
+        var released = lockPath + "." + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.Move(lockPath, released);
+        }
+        catch (Exception)
+        {
+            // Another writer holds it by now, or the folder does not allow deleting: it stays, and the next writer
+            // opens it.
+            return;
+        }
+
+        try
+        {
+            File.Delete(released);
+        }
+        catch (Exception)
+        {
+            // Out of the lock's name already, so no lock; and a name no log or glob matches.
+        }
+    }
 
     // The last byte read back; the stream is left at the end, where the line is written.
     private static bool EndsWithNewline(FileStream file)
@@ -152,6 +216,19 @@ internal static class JsonlFileAppender
 internal sealed class JsonlLockTimeoutException(string lockPath, TimeSpan wait, Exception innerException)
     : IOException(
         $"Another writer held the lock {lockPath} for longer than {wait.TotalMilliseconds:0} ms; the record was not written, so that it is never written at an offset read without the lock",
+        innerException)
+{
+    public string LockPath { get; } = lockPath;
+}
+
+/// <summary>
+/// The log folder refused a JSONL writer its lock file (aud-a51): this account may not create, read or write it, or the
+/// open failed for a reason other than another writer's handle. The record is dropped at once; the writer's recovery
+/// path reports it with this exception, which names the lock file and the rights it needs, the refusal inside.
+/// </summary>
+internal sealed class JsonlLockRefusedException(string lockPath, Exception innerException)
+    : IOException(
+        $"The log folder refused the lock file {lockPath}: {innerException.Message} The record was not written. The account this instance runs as must be able to create files in the log folder and to read and write the files there",
         innerException)
 {
     public string LockPath { get; } = lockPath;

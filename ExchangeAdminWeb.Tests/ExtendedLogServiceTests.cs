@@ -444,6 +444,33 @@ public class ExtendedLogServiceTests
     }
 
     [Fact]
+    public void TheConsumer_InAFolderThatLetsItWriteButNotDelete_WritesEveryEntry()
+    {
+        // aud-a51. The shared appender opened its lock DeleteOnClose: where the folder grants create, read and write but
+        // not delete, a lock file already there refused every open, and every entry waited out the bound and was dropped.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+
+        using (JsonlWriterLockTests.DenyDeleting(Path.Combine(temp.Path, "ExchangeAdminWeb")))
+        {
+            foreach (var lockPath in TodaysLockPaths(temp.Path))
+                File.WriteAllBytes(lockPath, []);
+
+            service.Write(LogEventLevel.Error, "first", "Test");
+            service.Write(LogEventLevel.Error, "second", "Test");
+            service.Dispose();
+        }
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["first", "second"], messages);
+        Assert.Equal(0, service.DroppedEntryCount);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
     public void GetEntries_WhenAFileCannotBeRead_SaysWhichAndWhy_AndKeepsTheLinesItCouldRead()
     {
         // A bare catch emptied the whole answer, so the event log showed "no diagnostics" for "could not be read".
@@ -510,6 +537,95 @@ public class ExtendedLogServiceTests
         Assert.Equal(5, service.DroppedEntryCount);
     }
 
+    [Fact]
+    public void Dispose_GivesTheQueueTimeInProportionToItsLength()
+    {
+        // aud-a49. Dispose waited a fixed 5 s, and a full queue needs about 11 s at the append cost aud-a46 measured: the
+        // rest was neither written nor counted.
+        using var temp = new TempDirectory();
+        var service = CreateService(temp.Path);
+        service.SetLevel("Error");
+        service.DisposeFloor = TimeSpan.FromMilliseconds(100);
+        service.DisposeAllowancePerEntry = TimeSpan.FromMilliseconds(100);
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        service.WriteLineBytes = (file, line) =>
+        {
+            if (!entered.IsSet)
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(60));
+            }
+            else
+            {
+                Thread.Sleep(5);
+            }
+
+            file.Write(line);
+        };
+
+        service.Write(LogEventLevel.Error, "held", "Test");
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+        for (var i = 0; i < 100; i++)
+            service.Write(LogEventLevel.Error, $"queued {i}", "Test");
+
+        release.Set();
+        service.Dispose();
+
+        Assert.Equal(0, service.DroppedEntryCount);
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(101, messages.Count);
+    }
+
+    [Fact]
+    public void Dispose_CountsWhatItCouldNotWriteInItsBound_BeforeItReturns()
+    {
+        // aud-a49. What Dispose left in the queue when its wait ran out was dropped with the process and counted nowhere.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+        service.DisposeFloor = TimeSpan.Zero;
+        service.DisposeAllowancePerEntry = TimeSpan.FromMilliseconds(1);
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        service.WriteLineBytes = (file, line) =>
+        {
+            if (!entered.IsSet)
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(60));
+            }
+
+            file.Write(line);
+        };
+
+        try
+        {
+            service.Write(LogEventLevel.Error, "held", "Test");
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+            for (var i = 0; i < 50; i++)
+                service.Write(LogEventLevel.Error, $"queued {i}", "Test");
+
+            service.Dispose();
+
+            Assert.Equal(50, service.DroppedEntryCount);
+            var report = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+            Assert.Contains("50 entries", report.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        Assert.True(SpinWait.SpinUntil(() => service.GetEntries(DateTime.Today).Entries.Count == 1, TimeSpan.FromSeconds(10)),
+            "the entry the consumer held was never written");
+        var (messages, _) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(["held"], messages);
+        Assert.Equal(50, service.DroppedEntryCount);
+    }
+
     /// <summary>
     /// Today's entries as the Admin Event Log reads them - each line GetEntries returns parsed on its own, as
     /// ParseExtendedLine does, a line that does not parse dropped - by message, and how many were dropped.
@@ -542,9 +658,20 @@ public class ExtendedLogServiceTests
         var held = new[] { now, now.AddMinutes(1) }
             .Select(date => Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl"))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => new FileStream(JsonlFileAppender.LockPathFor(path), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .Select(path => JsonlFileAppender.Lock(path, TimeSpan.FromSeconds(10), JsonlFileAppender.DefaultAccessRefusalGrace))
             .ToList();
         return new HeldFiles(held);
+    }
+
+    /// <summary>Today's extended log lock files - and the next minute's, across midnight.</summary>
+    private static List<string> TodaysLockPaths(string logRoot)
+    {
+        var now = DateTime.Now;
+        return new[] { now, now.AddMinutes(1) }
+            .Select(date => JsonlFileAppender.LockPathFor(
+                Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl")))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>Holds today's extended log file - and the next minute's, across midnight - open with no sharing.</summary>
@@ -560,12 +687,12 @@ public class ExtendedLogServiceTests
         return new HeldFiles(held);
     }
 
-    private sealed class HeldFiles(List<FileStream> streams) : IDisposable
+    private sealed class HeldFiles(IEnumerable<IDisposable> held) : IDisposable
     {
         public void Dispose()
         {
-            foreach (var stream in streams)
-                stream.Dispose();
+            foreach (var item in held)
+                item.Dispose();
         }
     }
 
