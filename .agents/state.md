@@ -36,7 +36,11 @@ Release build 0 errors / 19 warnings; full suite 6693 passed / 0 failed / 0 skip
 below.** Deployment is the owner's; nothing in this stream deploys. The held LOW backlog and the three
 never-dispatched items (`aud-a2e`, `cdt-36`, `aud-a29g`) are the index rows whose Status says "held by the
 2026-10-23 stopping rule"; `aud-a2e` is an authorization gap (Known Failure Class 3) and is the first to take
-up after the deploy.
+up after the deploy. Handoff 2026-10-23, verified head `e314166a`, tree clean but for the owner's untracked
+`docs/TacticalAdminAccounts-Plan.md` (not this stream's; left alone). Owner rulings after the hand-over: the Directory
+Read Credential will be the privileged write secret (`.agents/decisions.md` 2026-10-23); the held backlog was asked
+about, not released - no agent runs. Dev may deploy any green master; dev does not depend on prod (the audit-file lock
+and the SQLite engine notes describe the dev/prod interval only).
 
 ### The owner's checklist around the first dev deploy
 
