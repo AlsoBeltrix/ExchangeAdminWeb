@@ -5,7 +5,7 @@
 throws, `HasChangedSince` throws into every reader that hits its cache: `ADAttributeEditorService` (two
 sites), `PermissionValidator`, `ProtectedPrincipalService`, `UsageTelemetryService`. aud-a28z guarded
 `ExtendedLogService`'s own call; one guard in `LogOnce` covers all of them.
-**Status**: In progress - plan below, approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28z/a26u/cdt-41 agent, 2026-10-22, candidate 1 of its hand-back)
@@ -80,6 +80,65 @@ green): M1 the guard removed (the bare `_logger?.LogWarning(...)` again).
 
 Files: `Services/Storage/ConfigChangeWatcher.cs`, `ExchangeAdminWeb.Tests/ConfigChangeWatcherTests.cs`, this record.
 
+## Fix
+
+- `Services/Storage/ConfigChangeWatcher.cs` `LogOnce`: the `_logger?.LogWarning(...)` call sits in
+  `try { ... } catch (Exception) { }`. Its message and the flag's handling are unchanged. A report that throws still
+  counts as the streak's one attempt.
+
+Tests: `ExchangeAdminWeb.Tests/ConfigChangeWatcherTests.cs` +6. Helpers: `Answer` (the call's answer, asserting it did
+not throw), `TokenSwitchStore` (a real store whose change token the test can make unreadable) and
+`ThrowingLogger<T>` (counts each report and throws).
+- `TheWatcher_GivenALoggerThatThrows_StillAnswers`, four causes:
+  - `CurrentToken`'s read fails: `Unknown`, one report attempted.
+  - `HasChangedSince`'s read fails: false, one attempted.
+  - A read fails after a success: false, a second attempted.
+  - A value loaded under `Unknown`, the store readable again: true.
+- `AReader_GivenALoggerThatThrows_AndAnUnreadableToken_StillAnswers`, two paths, through `UsageTelemetryService.Enabled`
+  over a real config store:
+  - The cache hit, after a load while the token read: true.
+  - The load, the token unreadable from the start: true.
+  - One report attempted in each path.
+
+Caller-visible change, by design: a logging provider that throws while the watcher reports an unreadable change token
+no longer takes its exception out of `CurrentToken` or `HasChangedSince`, and so out of no caching reader either. The
+readers are the usage-telemetry switch (on the audit path and the Home page), the permission validator, the
+protected-principal service, the attribute editor's allowlist and legend, and the extended log's level. Each now
+answers as it does with a provider that works:
+- the cache is served when a check cannot read the token;
+- a load proceeds with `Unknown`;
+- a value loaded under `Unknown` reloads at the next successful check.
+
+Nothing else changes.
+
 ## Guard proof
 
-Pending.
+Reproduction: M1 is `LogOnce` as at `2df48c36`, its report unguarded at the call site. Each failure is the defect as the
+record states it: the provider's exception ("the logging provider failed") escapes the watcher's call and, in the
+reader cases, `UsageTelemetryService.Enabled`.
+
+Same driver as aud-a47's (session scratchpad `mutate/round-a45.ps1`, log `mutate/a45-mutations.log`). The filter (257
+tests) covers the watcher's tests and the caching readers' suites:
+`FullyQualifiedName~ConfigChangeWatcherTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~ProtectedPrincipalServiceTests|FullyQualifiedName~PermissionValidatorTests|FullyQualifiedName~ADAttributeEditorServiceTests`
+
+The mutant built with 0 errors, and the restore matched its original MD5. After the round, a rebuild on the restored
+bytes and the filter: 257/257 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the guard removed (the bare `_logger?.LogWarning(...)` again) | `ConfigChangeWatcher.cs`, `F911F25F60A389211F70AEB578C3B7B4` | `7ADA2E8E6732BD9C2543DD06903AAE83` | 6 of 257: `TheWatcher_GivenALoggerThatThrows_StillAnswers`, all four causes, and `AReader_GivenALoggerThatThrows_AndAnUnreadableToken_StillAnswers`, both paths - in each, "the logging provider failed" thrown out of the call instead of its answer |
+
+Unchanged through the round: `ConfigChangeWatcherTests.cs` `2B66F8EB3EBEA36C0F90E20D187C9491`. The code comment is
+written after the round, in its own commit, so the MD5 above is this commit's bytes.
+
+Not run, by design: the other readers by name - the permission validator, the protected-principal service and the
+attribute editor. Their files are other agents' in this round, and each reaches the watcher the same way, through
+`HasChangedSince` and `CurrentToken`, which the theory covers. Their own suites are in the filter and stay green.
+
+## Known gaps
+
+- The flag stays set when the report fails, so a provider that throws once loses the report for the rest of that
+  failure streak, not just the one line. With nowhere to report its own failure, the next success resets it, as before.
+- `UsageTelemetryService.Record`'s catch (240-243 at `2df48c36`) reports a failure through the same logger, unguarded.
+  It is the next call on the audit path with a provider that throws. It is another agent's file and another finding's
+  defect - not the watcher's - and is listed as a candidate in the hand-back.

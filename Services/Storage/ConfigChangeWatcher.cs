@@ -117,6 +117,12 @@ public sealed class ConfigChangeWatcher
             _failureLogged = true;
         }
 
-        _logger?.LogWarning(ex, "Config change token could not be read; cached config is served until the next successful check or its TTL");
+        try
+        {
+            _logger?.LogWarning(ex, "Config change token could not be read; cached config is served until the next successful check or its TTL");
+        }
+        catch (Exception)
+        {
+        }
     }
 }
