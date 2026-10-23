@@ -1,7 +1,7 @@
 # kd-2: Migration - a tick from batch A survives into batch B as "Actions (1)" with no ticked row
 
 **Severity**: LOW - confusing, not destructive. `Components/Pages/Migration.razor` `AdoptSelectionAsOpenBatch` (about 1840) never clears `selectedMailboxes`; `MigrationUserActionPlanner.PruneSelection` runs only through `TicksInThisBatch()` (about 2774).
-**Status**: Verified on branch; awaiting merge and codex review (released by the owner's 2026-10-23 evening ruling, `.agents/decisions.md`; approved under the 2026-10-21 go)
+**Status**: Merged to master `44fb74aa`; codex defect review mig-batch-10 in flight
 **Branch**: `fix/a68-kd2` (forked at `eb017102`; worktree `D:\source\ExchangeAdminWeb-wt\a68-kd2`), shared with aud-a68
 **Commit**: `14bf6a4f` (fix, tests, record); the Migration module bump (1.23.3 -> 1.24.0, shared with aud-a68 parts 5 and 7) and this record's close: the commit that completes this record (`git log -1 -- .agents/review/findings/kd-2.md`)
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)

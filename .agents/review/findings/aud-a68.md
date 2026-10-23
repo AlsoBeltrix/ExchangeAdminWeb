@@ -12,7 +12,7 @@ catch writes no audit row when the lookup throws, and the activity ends as "This
 page says all lookups are logged. (5) `Migration.razor` labels every `ExecuteBulkBatchAction` activity
 "Removing completed batches" and hard-codes the busy reason "clearing", though the executor runs Delete,
 Complete, Schedule, Stop, Remove Completed and Resume (line-keyed page; edit in place).
-**Status**: Verified on branch; awaiting merge and codex review (approved under the owner's 2026-10-21 "EVERYTHING" go; released by the 2026-10-23 evening ruling)
+**Status**: Merged to master `44fb74aa`; codex defect review mig-batch-10 in flight
 **Branch**: `fix/a68-kd2` (forked at `eb017102`; worktree `D:\source\ExchangeAdminWeb-wt\a68-kd2`)
 **Commit**: part 1 `3ba9dfa4`, 2 `1963cb79`, 3 `28256d97`, 4 `37a2696b`, 6 `6f0d6dfd`, 5 `ffe2d99b`, 7 `39a878cd`; the module bumps and this record's close: the commit that completes this record (`git log -1 -- .agents/review/findings/aud-a68.md`)
 **Reviewer**: implementer (surfaced by the aud-a55/a54 agent, 2026-10-23, candidates 1-5 of its hand-back)
