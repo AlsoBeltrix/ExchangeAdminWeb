@@ -3008,6 +3008,43 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     /// <summary>
+    /// kd-7. The step the page's ticket refusals record as <c>refusedAt</c> (<see cref="WithRefusal"/>).
+    /// </summary>
+    public const string TicketRefusalStep = "TicketValidation";
+
+    /// <summary>
+    /// kd-7. <paramref name="extra"/> with the aud-a28 refusal fields - <c>refusedAt</c> = <paramref name="refusedAt"/> and
+    /// <c>mutationAttempted</c> = false - created when absent; unchanged when <paramref name="refusedAt"/> is null. The page's
+    /// ticket refusals pass it, so their rows say that nothing was sent to Exchange or the directory, which is what tells a
+    /// refusal apart from a failed write.
+    /// </summary>
+    public static Dictionary<string, object?>? WithRefusal(Dictionary<string, object?>? extra, string? refusedAt)
+    {
+        if (refusedAt is null)
+            return extra;
+        extra ??= new Dictionary<string, object?>();
+        extra["refusedAt"] = refusedAt;
+        extra["mutationAttempted"] = false;
+        return extra;
+    }
+
+    /// <summary>
+    /// kd-7. The refusal a blank ticket gets on the Conference Rooms page, or null when one was given; the page asks
+    /// ServiceNow only about a ticket that is present.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ServiceNowService.ValidateTicketAsync"/> passes every ticket - a blank one included - while the integration is
+    /// dormant, so the page's ServiceNow check alone admitted a blank ticket on a deployment without it and the buttons'
+    /// emptiness clauses were the only enforcement. The message is the one that service gives a blank ticket when it is enabled,
+    /// so the operator reads the same refusal either way. It lives here rather than on the page because the page is line-keyed
+    /// by ClickGateRegistry and the fix had to leave its line count alone.
+    /// </remarks>
+    public static TicketValidationResult? RequireTicket(string? ticket) =>
+        string.IsNullOrWhiteSpace(ticket)
+            ? new TicketValidationResult { IsValid = false, Message = "Ticket number is required" }
+            : null;
+
+    /// <summary>
     /// aud-a2r. The admin notification's row carrying <see cref="RoomOperationResult.DirectoryAttributesConfirmed"/>
     /// (<see cref="NotificationDetails"/>).
     /// </summary>

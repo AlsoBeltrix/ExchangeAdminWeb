@@ -906,7 +906,9 @@ public sealed class ModuleCatalog
             // target (Protected Group Targets) before anything is written and again before each
             // write into it; a protected list refuses the row unless an authorised servicer acts
             // on the page (aud-a2e).
-            Version = "2.7.0",
+            // 2.8.0: a blank ticket is refused by all four write handlers, before their
+            // authorization re-check; the dormant ServiceNow client passed one (kd-7).
+            Version = "2.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

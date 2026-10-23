@@ -1,9 +1,9 @@
 # kd-7: M365 Group Management validates no ticket; the same shape on Named Locations delete and twice on Conference Rooms
 
 **Severity**: MEDIUM - mutating actions without the ticket validation the Constitution and the other modules apply. `M365GroupManagement` validates no ticket on its writes; `NamedLocations` delete and two Conference Rooms paths share the shape. Conference Rooms and Named Locations were not re-verified at the last state pass; the implementing agent verifies each before writing.
-**Status**: In progress - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
+**Status**: Verified on branch; awaiting merge and codex review (released by the owner's 2026-10-23 evening ruling; approved under the 2026-10-21 go)
 **Branch**: `fix/kd7-kd8` (worktree `D:\source\ExchangeAdminWeb-wt\kd7-kd8`, from master `3e43b35b`)
-**Commit**: -
+**Commit**: `cd25a924` (M365 Group Management), `11408fae` (Named Locations), the Conference Rooms commit after it on `fix/kd7-kd8`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects"; M365 re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -93,6 +93,28 @@ The M365 shape, on `NamedLocations.razor` at `cd25a924` (lines unchanged from `3
   secret. Mutation: `DeleteLocation`'s gate removed; the presence half removed.
 - Module `NamedLocations` 1.3.3 -> 1.4.0; README states the requirement.
 
+### What changes - Conference Rooms (commit 3)
+
+In place, so `ConferenceRooms.razor` keeps its 1758 lines and no `ClickGateRegistry` key or count moves (another
+worktree is editing this page); lines are those of `3e43b35b`, unchanged at `11408fae`:
+
+- The four ticket checks (`:1033`, `:1277`, `:1383`, `:1587`) become
+  `ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket)`: a blank ticket gets the
+  refusal `ServiceNowService` itself gives one when enabled ("Ticket number is required"), so it flows into the existing
+  refusal branch - banner "Ticket validation failed: ...", audited, return - and ServiceNow is asked only about a ticket
+  that is present. Each check stays above the authorization re-check, where it was; the
+  `ServiceNow.ValidateTicketAsync(` text `ProgressRegistry` pins on these handlers stays in each body.
+- The four refusal audit calls (`:1037`, `:1281`, `:1387`, `:1591`) pass `refusedAt: TicketRefusalStep`, and
+  `AuditFinderAction` / `AuditTypeAction` (`:1718-1731`) gain that optional parameter on their existing signature and
+  body lines, merging it through `ConferenceRoomService.WithRefusal`: the row gains `refusedAt` "TicketValidation" and
+  `mutationAttempted` false, for the existing invalid-ticket refusal as well as the new blank one.
+- `Services/ConferenceRoomService.cs`, beside `WithAttributesConfirmed`: `TicketRefusalStep`, `WithRefusal` and
+  `RequireTicket` - there rather than on the page because the page's line count had to stay put.
+- Guard: `ConferenceRoomTicketPresenceTests` drives the four handlers with a substitute authorization service that
+  is never called when the ticket refuses and refuses when it is. Mutation: `RequireTicket` answering null for a blank
+  ticket; one site's check reverted to the bare ServiceNow call.
+- Module `ConferenceRooms` 2.7.0 -> 2.8.0 (the version this branch saw; another worktree may bump it as well).
+
 ## Files changed
 
 Commit 1, M365 Group Management:
@@ -122,6 +144,16 @@ Commit 2, Named Locations:
 - `ExchangeAdminWeb.Tests/NamedLocationsTicketGateTests.cs` - new.
 - `Modules/ModuleCatalog.cs` - `NamedLocations` 1.3.3 -> 1.4.0.
 - `README.md` - the Named Locations section states the ticket requirement.
+
+Commit 3, Conference Rooms:
+
+- `Components/Pages/ConferenceRooms.razor` - in place, 1758 lines before and after (diff map: 37 line keys, none moved):
+  the four ticket-check lines, the four refusal audit lines, and the signature and body lines of `AuditFinderAction` and
+  `AuditTypeAction`. Twelve lines in all; `ClickGateRegistry` and `ProgressRegistry` untouched.
+- `Services/ConferenceRoomService.cs` - `TicketRefusalStep`, `WithRefusal`, `RequireTicket` after
+  `WithAttributesConfirmed`.
+- `ExchangeAdminWeb.Tests/ConferenceRoomTicketPresenceTests.cs` - new.
+- `Modules/ModuleCatalog.cs` - `ConferenceRooms` 2.7.0 -> 2.8.0, with a version note.
 
 ## Guard proof
 
@@ -167,6 +199,31 @@ refusal, no query; the control reaches the service and emails once.
 Restored byte-exact with a fresh mtime (md5 `175da707`), rebuilt, rerun: 15 passed; with the ClickGate and
 ProgressRegistry groups, 369 passed.
 
+### Conference Rooms
+
+`ConferenceRoomTicketPresenceTests` (17 cases) drives `SetupSingleRoom`, `ApplyFinderCsv`, `SetSingleRoomType` and
+`ApplyTypeCsv` with only what runs up to the ticket check set, and a substitute authorization service - the next step -
+that refuses.
+
+- `AWriteWithNoTicket_IsRefusedAndAudited_BeforeAnythingElseRuns` (4 x `""`, `"   "`, ServiceNow dormant): one Failed
+  row - `ConferenceRooms_SetMetadata` or `ConferenceRooms_SetType`, the room or "(bulk)", "Ticket validation failed:
+  Ticket number is required", `refusedAt` "TicketValidation", `mutationAttempted` false, no ticket - the banner says the
+  same, and the authorization service was never called.
+- `AWriteWithATicketServiceNowRejects_IsRefusedWithTheSameAuditedDenial` (4; enabled stub, "not found"): the existing
+  invalid-ticket refusal, now carrying the same two fields; one query; authorization never called.
+- `AWriteWithATicket_GoesOnToTheAuthorizationCheck` (4, the control): authorization called once, the banner is its
+  "Authorization denied.", and no row carries `refusedAt`.
+- `RequireTicket_RefusesOnlyABlankTicket`.
+
+| Mutation | Result |
+| --- | --- |
+| M1: `RequireTicket` answers null for every ticket (service md5 `97c5f9a4` -> `3b5b422a`) | FAIL, 9 of 17 - every blank-ticket case (`Assert.Single() Failure: The collection was empty`: the blank ticket passed the dormant client and reached the authorization check) and the unit case |
+| M2: `SetSingleRoomType`'s check reverted to the bare ServiceNow call (page md5 `902ca738` -> `ba52464f`) | FAIL, 2 of 17 - that handler's two blank-ticket cases |
+| M3: `ApplyFinderCsv`'s refusal row without `refusedAt` (page md5 -> `7c620744`) | FAIL, 3 of 17 - that handler's blank and rejected cases |
+
+Each restored byte-exact with a fresh mtime (service `97c5f9a4`, page `902ca738`), rebuilt, rerun: 17 passed; with the
+ClickGate and ProgressRegistry groups, 368 passed.
+
 ## Coder dispute
 
 None.
@@ -176,7 +233,20 @@ None.
 - The refusal sends no administrator email, as the authorization denial beside it does not: nothing reached Graph.
   Recorded so a reviewer does not take it for an omission (Constitution, Notifications: mutating actions notify; a
   refused attempt is audited, as here).
-- No live check: no Graph or ServiceNow call was made; rendering is not exercised (no bUnit harness).
+- The same dormant pass-through leaves the inline-ServiceNow pages outside this record with markup-only presence:
+  `MailboxPermissions.razor:394` / `:587`, `CalendarPermissions.razor:374` / `:548`, `GroupManagement.razor:573` /
+  `:702` / `:933` / `:1078`, `DhcpAuthorization.razor:302` (its deauthorize at `:385` does check), `MfaReset.razor:325` call
+  `ServiceNow.ValidateTicketAsync` with no presence check first, so on a dormant deployment a blank ticket that bypasses
+  the button reaches the write (`ClickGateRegistry` already calls the Mailbox Permissions clauses "the only
+  enforcement"). Reported to the supervisor as a candidate, not fixed here. Comms-10k is exempt: its ticket is optional
+  by design.
+- `ClickGateRegistry`'s ConferenceRooms notes on 125 and 158 ("ServiceNow validation would reject an empty ticket",
+  "re-checked by ServiceNow validation") were true only with the integration enabled; they are true now through
+  `RequireTicket`. Left as written so the entry another worktree is editing is not touched.
+- The pages' three helper shapes differ for a reason: M365 and Named Locations got page-local helpers below their
+  registered lines; Conference Rooms had to keep its line count, so its helpers are statics in its service. No shared
+  helper, because a new shared one would be the base-version change this stream rules out.
+- No live check: no Graph, Exchange or ServiceNow call was made; rendering is not exercised (no bUnit harness).
 
 ## Reviewer comments
 

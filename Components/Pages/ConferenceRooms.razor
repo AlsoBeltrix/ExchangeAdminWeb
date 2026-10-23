@@ -1030,11 +1030,11 @@
 
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                AuditFinderAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
+                AuditFinderAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
 
@@ -1274,11 +1274,11 @@
 
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                AuditFinderAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
+                AuditFinderAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
             if (!await ReauthorizeAsync()) return;
@@ -1380,11 +1380,11 @@
         try
         {
             activity.Step("checking the request");
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                AuditTypeAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
+                AuditTypeAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
 
@@ -1584,11 +1584,11 @@
 
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                AuditTypeAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
+                AuditTypeAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
             if (!await ReauthorizeAsync()) return;
@@ -1717,17 +1717,17 @@
 
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null)
+        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null, string? refusedAt = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ConferenceRoomService.WithAttributesConfirmed(ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, writtenDirectoryObject), membershipConfirmed), attributesConfirmed)); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ConferenceRoomService.WithRefusal(ConferenceRoomService.WithAttributesConfirmed(ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, writtenDirectoryObject), membershipConfirmed), attributesConfirmed), refusedAt)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 
     private void AuditTypeAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null, ValidatedMailbox? room = null)
+        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? refusedAt = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room)); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ConferenceRoomService.WithRefusal(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room), refusedAt)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 
