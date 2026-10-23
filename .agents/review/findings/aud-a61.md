@@ -9,7 +9,7 @@ refusal shows the generic refusal and records the same `*_SelfGrantAttempt` acti
 check, so the operator cannot tell that the first check passed and the state changed in between.
 **Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: plan `fa1ed15c`; fix - the commit that carries this text (after aud-a60's `e06c1c2d`)
+**Commit**: plan `fa1ed15c`; fix `d945d8c7` (after aud-a60's `e06c1c2d`); comments `1c982906`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-6, 2026-10-22, candidates 3, 4 and 5)
 
 ## Evidence
@@ -168,3 +168,30 @@ read), and M2 the refusal as it stood.
   refused as incomplete, naming it. Not measured against a tenant.
 - What is per row stays per row: the operator's and the grantee's lookups (two Exchange reads) and the directory session (a
   runspace and the ActiveDirectory module) - the cost aud-a43 records.
+
+## Comments after the round
+
+In the branch's comments commit `1c982906` (aud-a60's record has the check): `Services/PermissionValidator.cs`'s remarks name
+the run where the membership reads are described, and `Services/IIdentityResolver.cs`'s `ReadGroupMembersAsync` names the
+bound's own exception; code lines equal before and after. The other comments of this record were written with the fix.
+
+## Gates - 2026-10-23 (branch tip `1c982906`: the five fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline, 19 at
+  `a7300dee`, the same nineteen - none in a touched file. NuGet audit on (NU1902/3/4 errors): none raised.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,387 passed / 3 skipped (the
+  three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 6,390 total, 6m55s;
+  nothing hung (the blame folder empty, no Sequence file). After aud-a60 alone: 6,333 / 3 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `git add -A` then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool over
+stand-in cmdlets or a stand-in resolver, the on-premises session the harness's `DefineOnPremSession`, the secret store a
+stand-in fetch, the pool's connect step a local runspace of stand-in functions. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a83ff1596fd6eee17`, not merged, not pushed. Due at merge: the base app version - the shared
+`PermissionValidator`, `ExchangeGroupMembers`, `SelfGrantRefusalRecord` and the new `SelfGrantRun` - and the Mailbox
+Permissions and Calendar Permissions module versions: a bulk file reads a shared group once, the nesting bound and its
+refusal, and the write-time refusal's text and audit action.

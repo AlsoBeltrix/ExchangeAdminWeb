@@ -7,7 +7,7 @@ id goes unidentified and the connection is left to time out (the aud-a6b disconn
 it).
 **Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a60/a61/a53/a59 agent's scope
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: plan `4614080e`; fix - the commit that carries this text (after aud-a59's `7328135e`)
+**Commit**: plan `4614080e`; fix `69720893` (after aud-a59's `7328135e`)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, its "Left for a follow-up")
 
 ## Evidence
@@ -95,3 +95,26 @@ id. No separate pre-fix reproduction: E1 is the import as it stood.
   stand-in functions in a local runspace.
 - `ReadConnectionIds` still clears only the commands before its own read; the import's clear is what keeps it to its own
   records, as the coordinator's fix places it.
+
+## Comments after the round
+
+None: the record's comments were written with the fix; the comments commit `1c982906` touches no file of it.
+
+## Gates - 2026-10-23 (branch tip `1c982906`: the five fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline, 19 at
+  `a7300dee`, the same nineteen - none in a touched file. NuGet audit on (NU1902/3/4 errors): none raised.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,387 passed / 3 skipped (the
+  three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 6,390 total, 6m55s;
+  nothing hung (the blame folder empty, no Sequence file). After aud-a60 alone: 6,333 / 3 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `git add -A` then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool over
+stand-in cmdlets or a stand-in resolver, the on-premises session the harness's `DefineOnPremSession`, the secret store a
+stand-in fetch, the pool's connect step a local runspace of stand-in functions. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a83ff1596fd6eee17`, not merged, not pushed. Due at merge: the base app version - the shared
+`ExoConnectionPool`. No module version moves.

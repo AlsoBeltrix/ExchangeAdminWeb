@@ -9,7 +9,7 @@ leaves `ReadGroupMembersAsync` to NSubstitute's default empty list, so a future 
 forgets to set up members passes as allowed.
 **Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: plan `fa1ed15c`; fix - the commit that carries this text (after aud-a53's `4580c404`)
+**Commit**: plan `fa1ed15c`; fix `7328135e` (after aud-a53's `4580c404`)
 **Reviewer**: implementer (surfaced by the aud-a50/a52 agent, 2026-10-22, candidates 1, 3, 4 and 5 of its hand-back)
 
 ## Evidence
@@ -151,3 +151,27 @@ No separate pre-fix reproduction: each mutant is the code as it stood at its cal
   only a missing writer - reaches this catch, which says the change was written and a later step failed, and records a failure
   beside the success rows.
 - A blank Target and a blank User on one row is reported as the Target's (it is checked first).
+
+## Comments after the round
+
+None: this record's comments were written with the fix, and the comments commit `1c982906` touches none of its files.
+
+## Gates - 2026-10-23 (branch tip `1c982906`: the five fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline, 19 at
+  `a7300dee`, the same nineteen - none in a touched file. NuGet audit on (NU1902/3/4 errors): none raised.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,387 passed / 3 skipped (the
+  three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 6,390 total, 6m55s;
+  nothing hung (the blame folder empty, no Sequence file). After aud-a60 alone: 6,333 / 3 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `git add -A` then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool over
+stand-in cmdlets or a stand-in resolver, the on-premises session the harness's `DefineOnPremSession`, the secret store a
+stand-in fetch, the pool's connect step a local runspace of stand-in functions. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a83ff1596fd6eee17`, not merged, not pushed. Due at merge: the base app version - the shared
+`SelfGrantRefusalRecord` - and the Mailbox Permissions and Calendar Permissions module versions: the denial banner, the
+on-premises catch's text and record, and the bulk loops' `*_NoTarget` rows.

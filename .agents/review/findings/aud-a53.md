@@ -7,7 +7,7 @@ failed"; the admin notifications inside that try are not guarded on their own, s
 replace a successful write's result with that text.
 **Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: plan `fa1ed15c`; fix - the commit that carries this text (after aud-a61's `d945d8c7`)
+**Commit**: plan `fa1ed15c`; fix `4580c404` (after aud-a61's `d945d8c7`)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -131,3 +131,27 @@ The same catch's wording is wrong wherever it runs now: since aud-a28q the audit
 "Operation may have succeeded but audit logging failed: {ex.Message}" is reached by other throws (a location
 probe before anything was written, for one) and shows raw exception text. The fix names the step that failed
 and uses the aud-a23i error-text helper, no raw message.
+
+## Comments after the round
+
+None: this record's comments were written with the fix, and the comments commit `1c982906` touches none of its files.
+
+## Gates - 2026-10-23 (branch tip `1c982906`: the five fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline, 19 at
+  `a7300dee`, the same nineteen - none in a touched file. NuGet audit on (NU1902/3/4 errors): none raised.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,387 passed / 3 skipped (the
+  three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 6,390 total, 6m55s;
+  nothing hung (the blame folder empty, no Sequence file). After aud-a60 alone: 6,333 / 3 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `git add -A` then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool over
+stand-in cmdlets or a stand-in resolver, the on-premises session the harness's `DefineOnPremSession`, the secret store a
+stand-in fetch, the pool's connect step a local runspace of stand-in functions. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a83ff1596fd6eee17`, not merged, not pushed. Due at merge: the base app version - the new shared
+`PermissionChangeFailure` - and the Mailbox Permissions and Calendar Permissions module versions: what the single-change and
+on-premises handlers show when a notification, the record or a step throws.

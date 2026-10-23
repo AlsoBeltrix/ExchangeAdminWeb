@@ -13,7 +13,7 @@ though the data was unavailable. The safety then rests on the deployment's read 
 Architectural Invariant 7 forbids.
 **Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: plan `fa1ed15c`; fix - the commit that carries this text
+**Commit**: plan `fa1ed15c`; fix `e06c1c2d`; comments `1c982906`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-6, 2026-10-22, candidates 1 and 2)
 
 ## Evidence
@@ -228,3 +228,37 @@ No separate pre-fix reproduction: M1 is the classification as it stood, and M2 t
   no membership read. A candidate in the hand-back.
 - A deployment with no directory-read credential configured cannot grant Mailbox Permissions or Calendar Permissions to a
   group the directory holds: refused as incomplete, naming the setting (the Admin Settings follow-up above).
+
+## Comments after the round
+
+In the branch's comments commit `1c982906`, checked comment-only by `codelines.ps1` (session scratchpad `a60`): every added or
+removed line is a whole-line `//` or `///` comment, and each file's code lines - blanks and whole-line comments stripped - hash
+the same before and after: `Services/PermissionValidator.cs` (8 changed lines) `352BCD7055AFBE0CFE4B8F6706B4C14F`,
+`Services/IIdentityResolver.cs` (4) `94BDA56D9D4EAD6C78683BFC71A8F82D`. It corrects `CompareInDirectoryAsync`'s remark,
+which still named the removed session-identity reads (`SelfGrantDirectory.Groups`), and names the bound and the run where the
+cloud read is described. The other comments of this record were written with the fix.
+
+## Gates - 2026-10-23 (branch tip `1c982906`: the five fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline, 19 at
+  `a7300dee`, the same nineteen - none in a touched file. NuGet audit on (NU1902/3/4 errors): none raised.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,387 passed / 3 skipped (the
+  three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 6,390 total, 6m55s;
+  nothing hung (the blame folder empty, no Sequence file). After aud-a60 alone: 6,333 / 3 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `git add -A` then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool over
+stand-in cmdlets or a stand-in resolver, the on-premises session the harness's `DefineOnPremSession`, the secret store a
+stand-in fetch, the pool's connect step a local runspace of stand-in functions. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a83ff1596fd6eee17`, not merged, not pushed. Due at merge: the base app version - the shared
+`PermissionValidator`, `IIdentityResolver`'s records (`ResolvedRecipient.RecipientTypeDetails`, `ExchangeRecipientKinds`),
+`ExchangeIdentityResolver`, `PowerShellProtectedGroupDirectory` (also the protected-principal check's and the self-service
+DACL check's reads; their credentialed path is unchanged, the class byte for byte as before aud-a52 but its summary) and
+`SelfGrantDirectory` - and the Mailbox Permissions and Calendar Permissions module versions: what a grant to a group is
+refused or allowed on, and that it now needs the protected-principal directory-read credential. Deployment note for the
+release: a deployment that has not configured the Directory Read Credential (Admin Settings, Protected principals) refuses
+every Mailbox Permissions and Calendar Permissions grant to a group the directory holds, naming the setting.
