@@ -1,9 +1,9 @@
 # kd-2: Migration - a tick from batch A survives into batch B as "Actions (1)" with no ticked row
 
 **Severity**: LOW - confusing, not destructive. `Components/Pages/Migration.razor` `AdoptSelectionAsOpenBatch` (about 1840) never clears `selectedMailboxes`; `MigrationUserActionPlanner.PruneSelection` runs only through `TicksInThisBatch()` (about 2774).
-**Status**: Open - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
-**Branch**: -
-**Commit**: -
+**Status**: Verified on branch; awaiting merge and codex review (released by the owner's 2026-10-23 evening ruling, `.agents/decisions.md`; approved under the 2026-10-21 go)
+**Branch**: `fix/a68-kd2` (forked at `eb017102`; worktree `D:\source\ExchangeAdminWeb-wt\a68-kd2`), shared with aud-a68
+**Commit**: `14bf6a4f` (fix, tests, record); the Migration module bump (1.23.3 -> 1.24.0, shared with aud-a68 parts 5 and 7) and this record's close: the commit that completes this record (`git log -1 -- .agents/review/findings/kd-2.md`)
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -67,8 +67,10 @@ restores byte-exact from a copy outside the tree with a fresh mtime (session scr
 | K1 (the record's): the clear removed at `AdoptSelectionAsOpenBatch` | `7fd3115d...` / `41fb7a4c...` | 2: the row click and the tick boxes | md5 equal; 427/0 |
 | K2: the clear removed at `SyncOpenBatchFromUrl` | `7fd3115d...` / `213bae6f...` | 1: the address | md5 equal; 427/0 |
 
-With the fix: `Migration|ClickGate|ProgressRegistry`, 1107 passed / 0 failed. On the kd-2 commit's tree (`14bf6a4f`):
-full suite 6720 passed / 0 failed / 0 skipped.
+With the fix: `Migration|ClickGate|ProgressRegistry`, 1107 passed / 0 failed, on the exact tree. On the kd-2 commit's
+tree (`14bf6a4f`): full suite 6720 passed / 0 failed / 0 skipped - a run that overlapped aud-a68 part 5's edit to this
+page, which the page-reading tests read from disk, so the 1107 above is the exact-tree proof for those; the branch tip's
+full suite (`aud-a68.md`, "Branch-tip gates") covers both.
 
 ## Coder dispute
 
@@ -85,3 +87,12 @@ way in the same commit.
 - `docs/MigrationRemoveCompleted-Plan.md` (Implemented, history) still describes the pre-fix condition in its rc-2
   paragraph; left as history.
 - No circuit or browser ran: the handlers and the compiled render tree were driven directly.
+
+## Reviewer comments
+
+Pending: the codex defect review of the merged group (the supervisor dispatches it).
+
+## Closeout
+
+Fixed on branch `fix/a68-kd2`; not merged, not pushed. Pending step: the supervisor's merge into master, then the codex
+review; at merge take this branch's copy of this record.

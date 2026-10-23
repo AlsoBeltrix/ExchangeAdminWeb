@@ -12,9 +12,9 @@ catch writes no audit row when the lookup throws, and the activity ends as "This
 page says all lookups are logged. (5) `Migration.razor` labels every `ExecuteBulkBatchAction` activity
 "Removing completed batches" and hard-codes the busy reason "clearing", though the executor runs Delete,
 Complete, Schedule, Stop, Remove Completed and Resume (line-keyed page; edit in place).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; held by the 2026-10-23 stopping rule (LOW) for after the first dev deploy
-**Branch**: -
-**Commit**: -
+**Status**: Verified on branch; awaiting merge and codex review (approved under the owner's 2026-10-21 "EVERYTHING" go; released by the 2026-10-23 evening ruling)
+**Branch**: `fix/a68-kd2` (forked at `eb017102`; worktree `D:\source\ExchangeAdminWeb-wt\a68-kd2`)
+**Commit**: part 1 `3ba9dfa4`, 2 `1963cb79`, 3 `28256d97`, 4 `37a2696b`, 6 `6f0d6dfd`, 5 `ffe2d99b`, 7 `39a878cd`; the module bumps and this record's close: the commit that completes this record (`git log -1 -- .agents/review/findings/aud-a68.md`)
 **Reviewer**: implementer (surfaced by the aud-a55/a54 agent, 2026-10-23, candidates 1-5 of its hand-back)
 
 ## Evidence
@@ -117,12 +117,31 @@ module bumps are in their own commit; `ExchangeAdminWeb.csproj` is not edited.
    call, comments stripped. Tests: `MigrationDenialTests`, the two denied-authorization cases. Mutation: each executor's
    denial back to its old inline row, one at a time - a row without `mutationAttempted` again.
 
+## Files changed
+
+- `Services/ExchangeServiceBase.cs` (part 1): `MailboxSizes.ArchiveFound`, set by the on-premises archive read. Additive;
+  nothing else reads it.
+- `Services/RecipientLookupService.cs` (parts 1-3); `Models/LookupModels.cs` (part 1, comment only).
+- `Components/Pages/RecipientLookup.razor` (part 4): `RunLookup`, 233 -> 254 lines; not line-keyed
+  (`ClickGateRegistry.NotYetConverted`), and `ProgressRegistry`'s one pin unchanged.
+- `Components/Pages/Migration.razor` (parts 5 and 7): part 5 in place (474, 1635, 3520, 3525, 3664 at `eb017102`); part
+  7 the two denials, 4377 -> 4353 lines, every hunk below the highest line-keyed entry (1540), so no key moved;
+  `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` `ExpectedLineCount` 4377 -> 4353.
+- `Modules/ModuleCatalog.cs`: Recipient Lookup 1.0.4 -> 1.1.0, Migration 1.23.3 -> 1.24.0 (their own commit; covers kd-2
+  too). `ExchangeAdminWeb.csproj` not edited.
+- Tests, new: `RecipientLookupOnPremArchiveTests.cs`, `RecipientLookupFailureTests.cs`, `MigrationBulkBatchActivityTests.cs`.
+  Changed: `MigrationStubExchange.cs` (`OnPremStatisticsCancelled`; `RecipientLookup(bool connects)`; `ConnectFailure`),
+  `RecipientLookupReportedTimeTests.cs` (part 6), `MigrationVerdictAndWriteOutcomeTests.cs` (part 5's two labels),
+  `MigrationDenialTests.cs` (part 7), `MigrationStatusPageTests.cs` (part 7's tripwire).
+
 ## Guard proof
 
 Protocol, every part: the file's md5 (as checked out, CRLF) before, the fix reverted or mutated, the filtered tests run
 and the failures named, the file restored byte-exact from a copy outside the tree with a fresh mtime, md5 equal, the
 same filter green again. Drivers in the session scratchpad (`work/runf.sh`, `work/mut.sh`). No Exchange, no directory:
-every cmdlet is a stand-in in an in-process runspace.
+every cmdlet is a stand-in in an in-process runspace. Each code commit's full suite ran on its own tree; many tests read
+the pages from disk as they run, so where a run overlapped a later edit (kd-2's; part 5's first) the page-reading
+classes had also run on the exact tree first, and part 5 was re-run clean.
 
 **Part 1** - new `ExchangeAdminWeb.Tests/RecipientLookupOnPremArchiveTests.cs`, 4 tests (9 cases), the real service over
 `MigrationStubExchange` (a mail user in Exchange Online, a mailbox on-premises) and the page's compiled render tree:
@@ -240,7 +259,8 @@ Filter `MigrationDenialTests|MigrationStatusPageTests|ClickGate`, 441 tests. The
 Re-anchor (`.agents/playbooks/clickgate-reanchor.md`): `git diff -U0` gives two hunks, at old lines 3532 and 3698, so
 every line up to 3531 maps to itself and every registered line (the highest is 1540) is unchanged; `ExpectedLineCount`
 4377 -> 4353, and the ClickGate filter is green. With the fix: `Migration|ClickGate|ProgressRegistry`, 1116 passed / 0
-failed.
+failed. On the part-7 commit's tree (`39a878cd`), nothing edited during the run: full suite 6729 passed / 0 failed / 0
+skipped.
 
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 
@@ -253,3 +273,52 @@ no-archive mailbox would not; model "no archive" with a recognised not-found sha
 (7) `Components/Pages/Migration.razor` 3536 and 3702: the bulk executors' authorization-denial audit rows pass no
 `extra`, so they lack `mutationAttempted: false` (the single-action denials through `MigrationService.RecordDenial`
 carry it); route both through `RecordDenial` and add the two denied-authorization tests.
+
+## Coder dispute
+
+None on the findings. Two readings, settled by reading the files and stated rather than done silently:
+
+- Part 1 needed the shared base: a size above zero cannot say there is an archive (Exchange's not-found and an empty
+  archive are both 0 GB with no marker), so `MailboxSizes` gained `ArchiveFound`, additive and read by Recipient Lookup
+  alone. The brief named module files only and said not to bump the csproj; whether this shared-file touch wants a base
+  bump is the supervisor's call. Not bumped.
+- "Three raw-message wordings": the statistics warning (part 2), `r.Error` (part 3) and the page's own catch (part 4),
+  which a failed sign-in reaches as PowerShell's Stop exception because the pool rethrows it unchanged. The location
+  warning and the on-premises size warning also format `ex.Message`, but every message that reaches them is one the
+  base composed, with no prefix; left as they were (named as candidates for their cancellation handling).
+- Part 3 also makes the lookup's own "Recipient '<x>' not found." reachable for Exchange's not-found by structure: the
+  record's (3) names that dead path as half the defect, while its Approach bullet named only the helper.
+
+## Known gaps
+
+- Assumptions, labelled, no live call: Exchange Online reports a missing recipient from Get-Recipient in a shape
+  `IsNotFound` reads (part 3, aud-a23h's); on-premises Exchange answers an archive statistics row, through remoting, for
+  a mailbox that has an archive (part 1, as the stand-in does). If either is wrong the page says so in Exchange's words.
+- Part 1: `ArchiveFound` is false from the Exchange Online size read in MigrationService, which does not set it and whose
+  callers do not ask (said on the property). The on-premises read asks only TotalItemSize, so an on-premises archive's
+  "Archive Deleted" and "Archive Items" read "N/A", as the on-premises mailbox's deleted-item rows already did. An
+  on-premises mailbox whose archive is in Exchange Online shows what the on-premises read answers; not modelled.
+- Part 4: `Progress.Begin` stays outside the lookup's try, as in the page's other handlers; it does not throw.
+- Part 5: the mailbox twin's activity stays "Applying the bulk mailbox action" - generic, not wrong, not in the record.
+- Part 7: the bulk denials' row target stays the run's notification action ("Migration_StopSelected"), as before.
+- One full-suite run (part 4's tree) missed `SettingsStoreBusyTests`' wall-clock bound under other agents' load; that
+  class passed alone straight after. Named as a candidate.
+- No circuit or browser ran: the pages' handlers and compiled render trees were driven directly.
+
+## Branch-tip gates
+
+On the final tree (every code commit, the two module bumps, both records; nothing edited during the run):
+`dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors / 19 warnings (the baseline's 19, none in a touched file); `dotnet
+test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` 6729 passed / 0 failed / 0 skipped (6693 at `eb017102` plus the branch's 36 new cases); `dotnet format ExchangeAdminWeb.slnx
+--verify-no-changes --no-restore` exit 0; `git diff --check` exit 0; `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1`
+exit 0. No PowerShell changed, so PSScriptAnalyzer and Pester were not run. No manual check: nothing here is
+deployable to a live system from a worktree, and nothing was deployed.
+
+## Reviewer comments
+
+Pending: the codex defect review of the merged group (the supervisor dispatches it).
+
+## Closeout
+
+Fixed on branch `fix/a68-kd2`; not merged, not pushed. Pending step: the supervisor's merge into master, then the codex
+review; at merge take this branch's copy of this record.
