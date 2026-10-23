@@ -940,6 +940,37 @@ public abstract class ExchangeServiceBase
     protected static bool IsConnectionError(Exception? ex) => ExoConnectionPool.IsConnectionError(ex);
 
     /// <summary>
+    /// aud-a70 (14). A PowerShell remoting transport failure in <paramref name="ex"/> or an exception it wraps: the session to
+    /// on-premises Exchange broke, whatever its words - its messages ("Processing data from remote server ... failed") carry
+    /// none of the ones <see cref="IsConnectionError"/> reads.
+    /// </summary>
+    internal static bool IsTransportFailure(Exception? ex)
+    {
+        for (var depth = 0; ex is not null && depth < 16; depth++, ex = ex.InnerException)
+        {
+            if (ex is System.Management.Automation.Remoting.PSRemotingTransportException)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// aud-a70 (14). Whether a write command whose invoke failed once it was sent may still have taken: the failure is its
+    /// session's - a dead or broken connection, as the pool reads one (<see cref="IsConnectionError"/>, a remoting transport
+    /// failure) - and not the pre-flight error that proves no cmdlet ran (<see cref="ExoConnectionPool.IsRetriablePrecheckError"/>).
+    /// Any other failure is Exchange's answer: it refused the write, and nothing was written by it.
+    /// </summary>
+    /// <param name="ex">What the command's invoke threw.</param>
+    /// <param name="tracker">
+    /// What that invoke classified, its error stream's records included - <see cref="Invoke(PowerShell, ConnectionErrorTracker)"/>
+    /// clears them before it throws, so the exception alone no longer carries them.
+    /// </param>
+    protected internal static bool OutcomeUnknown(Exception ex, ConnectionErrorTracker tracker) =>
+        (tracker.HasConnectionError || IsConnectionError(ex) || IsTransportFailure(ex))
+        && !(tracker.HasRetriablePrecheckError || ExoConnectionPool.IsRetriablePrecheckError(ex));
+
+    /// <summary>
     /// Set the tracker's connection/precheck flags from a thrown exception and/or the error
     /// stream. Discard is gated by the broad <see cref="IsConnectionError"/>; retry by the narrow
     /// <see cref="ExoConnectionPool.IsRetriablePrecheckError"/> (which implies a connection error).
@@ -947,8 +978,9 @@ public abstract class ExchangeServiceBase
     /// </summary>
     private static void ClassifyConnectionError(ConnectionErrorTracker tracker, Exception? thrown, PowerShell ps)
     {
-        bool conn = (thrown != null && IsConnectionError(thrown))
-            || ps.Streams.Error.Any(e => IsConnectionError(e.Exception));
+        // aud-a70 (14): and a remoting transport failure, whatever its words - the session to on-premises Exchange breaking.
+        bool conn = (thrown != null && (IsConnectionError(thrown) || IsTransportFailure(thrown)))
+            || ps.Streams.Error.Any(e => IsConnectionError(e.Exception) || IsTransportFailure(e.Exception));
         bool precheck = (thrown != null && ExoConnectionPool.IsRetriablePrecheckError(thrown))
             || ps.Streams.Error.Any(e => ExoConnectionPool.IsRetriablePrecheckError(e.Exception));
 

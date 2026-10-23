@@ -77,6 +77,38 @@ line of its own, so the banner and the row's error it becomes carried a line bre
 white space now read as one space (`OneLine`), so every banner is one line whatever its cause. The pool's own message is
 unchanged: other modules show it, and they are not this finding's.
 
+(12) and (14), one cluster: both turn on telling Exchange's answer from a session that failed once the command was sent.
+At `eb017102`: `Services/CalendarPermissionService.cs` 368 and 419 - the on-premises set's and removal's one `Invoke(ps)` -
+let every failure out as an exception after the aud-a76 mark, so a write Exchange refused was filed Undetermined, "could
+not be confirmed" (12). `Services/MailboxPermissionService.cs` `TryRight` (163-174) and `TryRightOnPrem` (185-198) file every
+right's failure Failed, and the Calendar cloud writes (40-73, 91-104, through `ExchangeServiceBase.RunAsync` 49-107) make every
+failure a failed result: a right whose command was sent and whose session then dropped is filed Failed, though its outcome
+is unknown (14).
+- One reading of a failed command, new `ExchangeServiceBase.OutcomeUnknown(ex, tracker)`: the failure is its session's - what
+  the pool reads as a dead session (`IsConnectionError`, which the command's own invoke records in its tracker before it
+  clears the error stream), or a remoting transport failure by its type (new `IsTransportFailure`, which
+  `ClassifyConnectionError` now reads too: an on-premises transport failure carries none of the words `IsConnectionError`
+  reads) - and not the pre-flight error that proves no cmdlet ran. Anything else is Exchange's answer.
+- The record's "sent" flag: `RightOutcome.Unconfirmed` (factory `Unanswered`) and `PermissionResult.UnconfirmedRights` (with
+  `Unconfirmed`): sent, and its session failed before Exchange answered. `TryRight` and `TryRightOnPrem` give each right its
+  own tracker - the cloud one carried to the operation's, so the pool still discards a poisoned connection - and file a
+  session failure `Unanswered`; `MailboxPermissionOutcome` says those rights not confirmed ("Whether SendAs was granted on
+  <target> could not be confirmed: <the session's words>. Check the permissions before trying again."), beside what took and
+  what Exchange refused. The Calendar cloud writes keep the attempt's tracker and, once marked, make a session failure's result
+  unconfirmed. The on-premises Calendar writes catch their invoke: Exchange's answer is a failed result - "Failed on <target>
+  calendar (on-premises): <its words>.", as `TryRightOnPrem` makes one (12) - and a session failure an unconfirmed one.
+- The pages and the bulk loops file it: each change's own record takes `filedAs: PermissionChangeFailure.FiledAs(result[,
+  right])` - Undetermined for an unconfirmed right, per right on Mailbox Permissions' on-premises rows - on `SubmitSingle`
+  (Mailbox 505, Calendar 480), `ExecuteOnPrem` (Mailbox 717-718 and 723-724, Calendar 665-668) and the bulk rows
+  (`MailboxPermissionService` 371-375, `CalendarPermissionService` 250-254). The banner is the result's own text.
+- Every copy of a result carries the new field: `PermissionResult.WithServicedNote` and `WithMessage`, and
+  `MigrationService.WithProtectionOutcome` and `WithDetail`, which `MigrationResultRewrapTests` holds to every field (no
+  Migration behaviour changes: no migration result is ever unconfirmed).
+aud-a76's `AnOnPremCalendarWriteThatFailsOnceSent_GoesOutAsItIs` and `AnOnPremWriteThatThrowsOnceSent_IsRecordedAsUndetermined_WithTheBannersText`
+asserted the throw (12) removes; they are retargeted to Exchange's refusal - a failed result, a Failed row - and the
+session's failure has tests of its own. Test seam: `ExchangeWriteHarness.OnPremTransportFailures` - the stand-in
+Invoke-Command runs the script, then writes a `PSRemotingTransportException` as a session that broke before its answer does.
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -162,6 +194,30 @@ Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~Permissio
 | M17 | `Banner`'s cause trimmed only again (`OneLine` removed) | `A9B8DCD1F1195D08A053D6007AB65CB6` | 3 of 119: `TheStepBanner_IsOneLine_WhateverLinesItsCauseSpans`, `ACloudWriteWhoseBorrowIsRefused_IsRecordedAsFailed_NothingWasWritten(page: "Mailbox Permissions", refusal: "pool stopped")` and its `(page: "Calendar Permissions", ...)` row - the line break in the banner and the row |
 
 M17 is the cause's line as it stood at `eb017102`.
+
+### (12) and (14) - commit `fix(aud-a70): (12), (14) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~PermissionWriteSubmission|FullyQualifiedName~MailboxPermissionOutcome|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry`
+(508 tests). Fixed-file MD5s: `Services/MailboxPermissionService.cs` `074F0F0302E52F19983767DC39334286`,
+`Services/CalendarPermissionService.cs` `BB04EA3613D8625E0AD69C2E696D0DCD`, `Services/ExchangeServiceBase.cs`
+`C38AAB8164170255FE3B9B83E7A85D69`, `Components/Pages/MailboxPermissions.razor` `E2AEC0C06175EE28E63CA82E75230037`
+(unmutated: `Components/Pages/CalendarPermissions.razor` `3527941B4E6873F8183ABE0B7D8B4563`, `Services/MailboxPermissionOutcome.cs`
+`218A026E6222EAAE960110D3AE4E6EEE`, `Models/PermissionResult.cs` `31291F11CF3ED6DA2D52ECA7414469CE`,
+`Services/PermissionChangeFailure.cs` `698E2F8B08211DA8DFAB2018782076E2`). Every restore matched; reruns 508/508.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M12 | the on-premises Calendar set's invoke let out again (its catch removed) | `CalendarPermissionService.cs` `14590BD914AACBC44FA8C2D922C81B2A` | 4 of 508: `AnOnPremCalendarWrite_ExchangeRefuses_IsAFailedResult_NotAThrow(write: "SetCalendarPermissionOnPrem", ...)`, `AnOnPremCalendarWrite_WhoseSessionBreaksOnceSent_IsUnconfirmed(write: "SetCalendarPermissionOnPrem", ...)`, `AnOnPremCalendarWriteExchangeRefuses_IsItsOwnFailedRow_AsMailboxPermissionsIs`, `AnOnPremWriteWhoseSessionBreaksOnceSent_IsRecordedAsUndetermined(page: "Calendar Permissions")` |
+| M14a | `TryRight` files every failure Failed again | `MailboxPermissionService.cs` `DD12EF0BB493DFEB0675AF7D556888E1` | 4 of 508: both `ACloudMailboxRight_WhoseSessionFailsOnceSent_IsUnconfirmed_AndTheRightThatTookStands` rows, `ACloudWriteWhoseSessionFailsOnceSent_IsRecordedAsUndetermined(page: "Mailbox Permissions")`, `ABulkRow_WhoseWriteIsUnconfirmed_IsRecordedAsUndetermined(mailbox: True)` |
+| M14b | `TryRightOnPrem` files every failure Failed again | `F0879D40B15C472F895F7B56CC3A4E08` | 3 of 508: both `AnOnPremMailboxRight_WhoseSessionBreaksOnceSent_IsUnconfirmed` rows, `AnOnPremWriteWhoseSessionBreaksOnceSent_IsRecordedAsUndetermined(page: "Mailbox Permissions")` |
+| M14c | the Calendar cloud set returns RunAsync's result as it is | `CalendarPermissionService.cs` `A97AC3EBB259095EE9FF6BDB73DF5B6C` | 3 of 508: `ACloudCalendarWrite_WhoseSessionFailsOnceSent_IsUnconfirmed(write: "SetCalendarPermission")`, `ACloudWriteWhoseSessionFailsOnceSent_IsRecordedAsUndetermined(page: "Calendar Permissions")`, `ABulkRow_WhoseWriteIsUnconfirmed_IsRecordedAsUndetermined(mailbox: False)` |
+| M14d | Mailbox `SubmitSingle`'s row without `filedAs` | `MailboxPermissions.razor` `25FF16452F40559879E000625DDB8196` | 1 of 508: `ACloudWriteWhoseSessionFailsOnceSent_IsRecordedAsUndetermined(page: "Mailbox Permissions")` - filed Failed |
+| E14e | extra: `OutcomeUnknown` ignores the pre-flight error | `ExchangeServiceBase.cs` `F68A708F180F18717F9292622DF22BDB` | 1 of 508: `ACloudMailboxRight_ExchangeRefuses_OrThatMeetsThePreFlightError_IsFailed_AsBefore(failure: "You must call Connect-ExchangeOnline ...")` |
+| E14f | extra: `ClassifyConnectionError` reads no transport failure | `7171E3FBFB49927A966C30DD2EE0E61F` | 6 of 508: both `AnOnPremMailboxRight_WhoseSessionBreaksOnceSent_...`, both `AnOnPremCalendarWrite_WhoseSessionBreaksOnceSent_...` rows, both `AnOnPremWriteWhoseSessionBreaksOnceSent_IsRecordedAsUndetermined` rows |
+| E14g | extra: the Mailbox bulk row without `filedAs` | `MailboxPermissionService.cs` `27230E71FAA95BC9377382498D76C0CD` | 1 of 508: `ABulkRow_WhoseWriteIsUnconfirmed_IsRecordedAsUndetermined(mailbox: True)` |
+
+M12, M14a, M14b and M14c are each write as it stood at `eb017102` (M12 the set's one invoke; the removal's catch has the same
+shape, driven by the removal rows of the same tests); M14d the row as it stood.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 

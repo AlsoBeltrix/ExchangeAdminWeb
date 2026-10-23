@@ -186,6 +186,49 @@ public class MailboxPermissionOutcomeTests
         Assert.Equal(expected, result.Message);
     }
 
+    // ---------------------------------------------------------------- aud-a70 (14): a right whose outcome is unknown
+
+    [Fact]
+    public void Grant_ARightWhoseSessionFailedOnceSent_IsNeitherApplied_NorFailed_AndIsNamed()
+    {
+        // Sent, and the session failed before Exchange answered: what took stands, and the rest is said not confirmed - the
+        // record files it Undetermined, never Failed.
+        var result = MailboxPermissionOutcome.ForGrant(Target, User, [
+            RightOutcome.Ok("FullAccess"),
+            RightOutcome.Unanswered("SendAs", "the session was lost.")
+        ]);
+
+        Assert.False(result.Success);
+        Assert.True(result.Unconfirmed);
+        Assert.Equal(new[] { "FullAccess" }, result.AppliedRights!);
+        Assert.Equal(new[] { "SendAs" }, result.UnconfirmedRights!);
+        Assert.Equal($"Granted FullAccess on {Target}. Whether SendAs was granted on {Target} could not be confirmed: the session was lost. Check the permissions before trying again.",
+            result.Message);
+    }
+
+    [Fact]
+    public void Revoke_ARightRefused_AndTwoUnknown_SaysEachAsWhatItIs()
+    {
+        var result = MailboxPermissionOutcome.ForRevoke(Target, User, [
+            RightOutcome.Failed("FullAccess", "not found."),
+            RightOutcome.Unanswered("SendAs", "the session was lost"),
+            RightOutcome.Unanswered("Other", "the connection closed"),
+        ], onPrem: true);
+
+        Assert.False(result.Success);
+        Assert.Equal(new[] { "SendAs", "Other" }, result.UnconfirmedRights!);
+        Assert.Empty(result.AppliedRights!);
+        Assert.Equal($"Failed: FullAccess: not found. Whether SendAs and Other were removed on {Target} (on-premises) could not be confirmed: SendAs: the session was lost; Other: the connection closed. Check the permissions before trying again.",
+            result.Message);
+    }
+
+    [Fact]
+    public void AKnownOutcome_IsNotUnconfirmed()
+    {
+        Assert.False(MailboxPermissionOutcome.ForGrant(Target, User, [RightOutcome.Failed("FullAccess", "denied")]).Unconfirmed);
+        Assert.False(MailboxPermissionOutcome.ForGrant(Target, User, [RightOutcome.Ok("FullAccess")]).Unconfirmed);
+    }
+
     [Theory]
     [InlineData(false, "Failed on ceo@analog.com: FullAccess: denied")]
     [InlineData(true, "Failed on ceo@analog.com (on-premises): FullAccess: denied")]

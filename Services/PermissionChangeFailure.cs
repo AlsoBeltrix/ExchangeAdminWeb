@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -63,6 +64,14 @@ internal static class PermissionChangeFailure
     /// and this one says a later step failed.
     /// </summary>
     internal static AuditResult AuditResultOf(string step) => step == TheWrite ? AuditResult.Undetermined : AuditResult.Failed;
+
+    /// <summary>
+    /// aud-a70 (14). What a change's own record is filed under when its result says more than its success: Undetermined when a
+    /// right's outcome is unknown (<see cref="PermissionResult.UnconfirmedRights"/>) - <paramref name="right"/>'s when one is
+    /// named, any right's otherwise. Else null: Success or Failed from the success the record is given, as always.
+    /// </summary>
+    internal static AuditResult? FiledAs(PermissionResult result, string? right = null) =>
+        (right is null ? result.Unconfirmed : result.UnconfirmedRights?.Contains(right) == true) ? AuditResult.Undetermined : null;
 
     // aud-a70 (17). The banner is one line, and so is the record's error it becomes: a cause's line breaks and runs of white
     // space read as one space. The pool's "stopped" refusal is an ObjectDisposedException, whose message puts the object's

@@ -39,6 +39,16 @@ public class PermissionResult
     public IReadOnlyList<string>? AppliedRights { get; init; }
 
     /// <summary>
+    /// aud-a70 (14). The rights whose command was sent to Exchange and whose session then failed before Exchange answered:
+    /// whether each took is unknown, so the change is neither applied nor failed and its record is filed Undetermined. Null or
+    /// empty when every right's outcome is known. A result carrying any is not a success.
+    /// </summary>
+    public IReadOnlyList<string>? UnconfirmedRights { get; init; }
+
+    /// <summary>aud-a70 (14). Whether any right's outcome is unknown (<see cref="UnconfirmedRights"/>).</summary>
+    public bool Unconfirmed => UnconfirmedRights is { Count: > 0 };
+
+    /// <summary>
     /// False when the operation succeeded without changing anything. See
     /// <see cref="NoChange"/>.
     /// </summary>
@@ -96,6 +106,7 @@ public class PermissionResult
                 Detail = Detail,
                 ExcludedTargets = ExcludedTargets,
                 AppliedRights = AppliedRights,
+                UnconfirmedRights = UnconfirmedRights,
                 Changed = Changed,
                 ServicedNote = servicedNote,
             };
@@ -112,6 +123,7 @@ public class PermissionResult
         ExcludedTargets = ExcludedTargets,
         UnverifiedTargets = UnverifiedTargets,
         AppliedRights = AppliedRights,
+        UnconfirmedRights = UnconfirmedRights,
         Changed = Changed,
         ServicedNote = ServicedNote,
     };

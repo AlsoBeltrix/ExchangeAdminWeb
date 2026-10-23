@@ -26,19 +26,21 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// The mailbox the protected-principal check validated (aud-a2d). Its GUID is the mailbox part
     /// of the folder identity written; null refuses before a connection is borrowed.
     /// </param>
-    public Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, CalendarAccessRight accessRight)
+    public async Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, CalendarAccessRight accessRight)
     {
         if (mailbox is null)
-            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
+            return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
         string? calendarPath = null;
         string? resolvedMailbox = null;
+        ConnectionErrorTracker? attempt = null;
 
         // aud-a76. RunAsync makes every failure of the operation a result, so the one throw that leaves is the pool's - its
         // borrow, before the mark below - and it leaves as a PermissionWriteNotSubmittedException: nothing was sent.
         var submission = new PermissionWriteSubmission();
-        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
+        var result = await submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
+            attempt = tracker; // aud-a70 (14): what this attempt's invokes, and RunAsync's own catch, read its failure as
             resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
             ValidateRecipient(ps, user);
 
@@ -71,16 +73,18 @@ public class CalendarPermissionService : ExchangeServiceBase
                 Invoke(ps, tracker);
             }
         }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null)));
+        return Unanswered(result, submission, attempt, $"Whether {user} was granted {accessRight} on the calendar of {resolvedMailbox ?? targetMailbox} could not be confirmed");
     }
 
     /// <param name="mailbox">As on <see cref="SetCalendarPermissionAsync"/>: null refuses.</param>
-    public Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user)
+    public async Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user)
     {
         if (mailbox is null)
-            return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
+            return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
         string? calendarPath = null;
         string? resolvedMailbox = null;
+        ConnectionErrorTracker? attempt = null;
 
         // Single-write (Remove-MailboxFolderPermission): safe to retry on a dead pooled session.
         // The preceding Get-* validations are reads. SetCalendarPermissionAsync is deliberately
@@ -88,8 +92,9 @@ public class CalendarPermissionService : ExchangeServiceBase
         // aud-a76: marked as SetCalendarPermissionAsync is. The mark outlives a retry: once a first
         // attempt reached its command, a retry whose borrow then fails is still a submitted write.
         var submission = new PermissionWriteSubmission();
-        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
+        var result = await submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
+            attempt = tracker; // aud-a70 (14): as SetCalendarPermissionAsync's; a retry's attempt replaces the first's
             resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
             ValidateRecipient(ps, user);
 
@@ -102,7 +107,26 @@ public class CalendarPermissionService : ExchangeServiceBase
             submission.Submitting(); // aud-a76: the write command is invoked next
             Invoke(ps, tracker);
         }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true));
+        return Unanswered(result, submission, attempt, $"Whether the calendar permission of {user} on the calendar of {resolvedMailbox ?? targetMailbox} was removed could not be confirmed");
     }
+
+    /// <summary>aud-a70 (14). The right a calendar write's <see cref="PermissionResult.UnconfirmedRights"/> names: its one folder permission.</summary>
+    internal const string CalendarRight = "Calendar";
+
+    /// <summary>aud-a70 (14). A calendar write whose outcome is unknown: not a success, its one folder permission unconfirmed.</summary>
+    private static PermissionResult NotConfirmed(string message, string? detail = null) =>
+        new() { Success = false, Message = message, Detail = detail, UnconfirmedRights = [CalendarRight] };
+
+    /// <summary>
+    /// aud-a70 (14). A cloud write's result as its outcome reads. Once its command was sent (the aud-a76 mark), a failure the
+    /// attempt reads as its session's - a dead or broken connection, not the pre-flight error that proves nothing ran - leaves
+    /// the folder permission unconfirmed: <paramref name="whether"/>, the session's words, and what to do. Exchange's own
+    /// refusal, and every other result, stand as they are.
+    /// </summary>
+    private static PermissionResult Unanswered(PermissionResult result, PermissionWriteSubmission submission, ConnectionErrorTracker? attempt, string whether) =>
+        !result.Success && submission.Submitted && attempt is { HasConnectionError: true, HasRetriablePrecheckError: false }
+            ? NotConfirmed($"{whether}: {result.Message.Trim().TrimEnd('.')}. Check the permissions before trying again.", result.Detail)
+            : result;
 
     /// <param name="actingUser">
     /// REQUIRED and not defaulted: the protected-principal servicer decision needs a real
@@ -251,7 +275,8 @@ public class CalendarPermissionService : ExchangeServiceBase
                     currentUser, ipAddress, action, row.Target, row.User,
                     isSet ? row.AccessRight : null, result.Success, ticketNumber,
                     extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), targetValidation.Mailbox),
-                    errorDetail: result.Success ? null : result.Message);
+                    errorDetail: result.Success ? null : result.Message,
+                    filedAs: PermissionChangeFailure.FiledAs(result)); // aud-a70 (14): a write whose outcome is unknown files the row Undetermined
 
                 // Audit finding A24, and the trustee label matches the single-target path: a
                 // calendar notice names the target as "<address> (Calendar)". A calendar row
@@ -365,7 +390,22 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("ScriptBlock", script)
                   .AddParameter("ArgumentList", new object[] { mailbox.Identity, user, accessRight });
                 submission.Submitting(); // aud-a76: the Invoke-Command is sent next
-                Invoke(ps);
+                var sent = new ConnectionErrorTracker();
+                try
+                {
+                    Invoke(ps, sent);
+                }
+                catch (Exception ex)
+                {
+                    // aud-a70 (12): Exchange refusing the write is a failed result, as TryRightOnPrem makes one on Mailbox
+                    // Permissions - it answered, and nothing was written by it; it was let out as an exception, which the page
+                    // filed "could not be confirmed". (14): a session that broke once the command was sent leaves it unknown.
+                    _logger.LogWarning(ex, "The on-premises calendar permission write on {Target} failed", targetMailbox);
+                    var cause = ResolveFailure(ex).primary.Trim().TrimEnd('.');
+                    return OutcomeUnknown(ex, sent)
+                        ? NotConfirmed($"Whether {user} was granted {accessRight} on {targetMailbox} calendar (on-premises) could not be confirmed: {cause}. Check the permissions before trying again.")
+                        : PermissionResult.Fail($"Failed on {targetMailbox} calendar (on-premises): {cause}.");
+                }
 
                 return new PermissionResult { Success = true, Message = $"{user} granted {accessRight} on {targetMailbox} calendar (on-premises)." };
             }
@@ -416,7 +456,20 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("ScriptBlock", script)
                   .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
                 submission.Submitting(); // aud-a76: the Invoke-Command is sent next
-                Invoke(ps);
+                var sent = new ConnectionErrorTracker();
+                try
+                {
+                    Invoke(ps, sent);
+                }
+                catch (Exception ex)
+                {
+                    // aud-a70 (12), (14): as SetCalendarPermissionOnPremAsync's.
+                    _logger.LogWarning(ex, "The on-premises calendar permission removal on {Target} failed", targetMailbox);
+                    var cause = ResolveFailure(ex).primary.Trim().TrimEnd('.');
+                    return OutcomeUnknown(ex, sent)
+                        ? NotConfirmed($"Whether the calendar permissions of {user} on {targetMailbox} (on-premises) were removed could not be confirmed: {cause}. Check the permissions before trying again.")
+                        : PermissionResult.Fail($"Failed on {targetMailbox} calendar (on-premises): {cause}.");
+                }
 
                 return new PermissionResult { Success = true, Message = $"Calendar permissions removed for {user} on {targetMailbox} (on-premises)." };
             }

@@ -502,8 +502,8 @@
                     currentUser, ipAddress, action, target, user, permType,
                     opResult.Success, ticket,
                     autoMapping: isAdd && fullAccess ? autoMap : null,
-                    errorDetail: opResult.Success ? null : opResult.Message,
-                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.SingleChangeRecord); // aud-a53: in its own guard, the change's result standing; aud-a70 (1): a row not written is said in the banner
+                    errorDetail: opResult.Success ? null : opResult.Message, filedAs: PermissionChangeFailure.FiledAs(opResult),
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.SingleChangeRecord); // aud-a53: in its own guard, the change's result standing; aud-a70 (1): a row not written is said in the banner; (14): a right whose outcome is unknown files it Undetermined
 
                 // Send admin notification
                 try { await Email.SendAdminNotificationAsync(
@@ -715,13 +715,13 @@
             {
                 var faSuccess = opResult.Success || applied.Contains("FullAccess");
                 rowsWritten &= SelfGrantRefusalRecord.Recorded(() => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}FullAccess", target, user, "FullAccess",
-                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message, extra: onPremExtra), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord); // aud-a70 (1): in its own guard - a throw is logged and the change's result stands
+                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message, extra: onPremExtra, filedAs: PermissionChangeFailure.FiledAs(opResult, "FullAccess")), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord); // aud-a70 (1): in its own guard - a throw is logged and the change's result stands; (14): an unconfirmed right's row is Undetermined
             }
             if (sendAs)
             {
                 var saSuccess = opResult.Success || applied.Contains("SendAs");
                 rowsWritten &= SelfGrantRefusalRecord.Recorded(() => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}SendAs", target, user, "SendAs",
-                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message, extra: onPremExtra), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord);
+                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message, extra: onPremExtra, filedAs: PermissionChangeFailure.FiledAs(opResult, "SendAs")), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord);
             }
 
             var isPartial = !opResult.Success && applied.Count > 0;

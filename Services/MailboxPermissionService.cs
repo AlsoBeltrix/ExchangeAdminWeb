@@ -67,7 +67,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
             if (fullAccess)
             {
-                outcomes.Add(TryRight("FullAccess", () =>
+                outcomes.Add(TryRight(tracker, "FullAccess", own =>
                 {
                     ps.AddCommand("Add-MailboxPermission")
                       .AddParameter("Identity", mailbox.Identity)
@@ -75,20 +75,20 @@ public class MailboxPermissionService : ExchangeServiceBase
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("AutoMapping", autoMapping)
                       .AddParameter("Confirm", false);
-                    Invoke(ps, tracker);
+                    Invoke(ps, own);
                 }));
             }
 
             if (sendAs)
             {
-                outcomes.Add(TryRight("SendAs", () =>
+                outcomes.Add(TryRight(tracker, "SendAs", own =>
                 {
                     ps.AddCommand("Add-RecipientPermission")
                       .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("Trustee", user)
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
-                    Invoke(ps, tracker);
+                    Invoke(ps, own);
                 }));
             }
 
@@ -123,27 +123,27 @@ public class MailboxPermissionService : ExchangeServiceBase
 
             if (fullAccess)
             {
-                outcomes.Add(TryRight("FullAccess", () =>
+                outcomes.Add(TryRight(tracker, "FullAccess", own =>
                 {
                     ps.AddCommand("Remove-MailboxPermission")
                       .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("User", user)
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("Confirm", false);
-                    Invoke(ps, tracker);
+                    Invoke(ps, own);
                 }));
             }
 
             if (sendAs)
             {
-                outcomes.Add(TryRight("SendAs", () =>
+                outcomes.Add(TryRight(tracker, "SendAs", own =>
                 {
                     ps.AddCommand("Remove-RecipientPermission")
                       .AddParameter("Identity", mailbox.Identity)
                       .AddParameter("Trustee", user)
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
-                    Invoke(ps, tracker);
+                    Invoke(ps, own);
                 }));
             }
 
@@ -158,18 +158,26 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// <remarks>
     /// <c>Invoke(ps, tracker)</c> still flags connection errors before throwing, so a poisoned
     /// pooled connection is discarded by <c>RunPooledQueryAsync</c> even though the failure is
-    /// swallowed here.
+    /// swallowed here: what the right's own invoke flags is carried to the operation's tracker.
+    /// aud-a70 (14): and read for the right itself - a failure its session caused once the command was sent leaves the right
+    /// unconfirmed (<see cref="ExchangeServiceBase.OutcomeUnknown"/>), where Exchange's own refusal is a failed right.
     /// </remarks>
-    private static RightOutcome TryRight(string right, Action apply)
+    private static RightOutcome TryRight(ConnectionErrorTracker operation, string right, Action<ConnectionErrorTracker> apply)
     {
+        var own = new ConnectionErrorTracker();
         try
         {
-            apply();
+            apply(own);
             return RightOutcome.Ok(right);
         }
         catch (Exception ex)
         {
-            return RightOutcome.Failed(right, ex.Message);
+            return OutcomeUnknown(ex, own) ? RightOutcome.Unanswered(right, ex.Message) : RightOutcome.Failed(right, ex.Message);
+        }
+        finally
+        {
+            operation.HasConnectionError |= own.HasConnectionError;
+            operation.HasRetriablePrecheckError |= own.HasRetriablePrecheckError;
         }
     }
 
@@ -181,19 +189,22 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// The clear is load-bearing, not tidiness: the on-prem paths reuse ONE PowerShell instance
     /// across both rights, so a failed command left in the pipeline (or its error stream) would be
     /// re-invoked with, and attributed to, the next right.
+    /// aud-a70 (14): the right's invoke classifies its own failure, so a session that broke once its Invoke-Command was sent
+    /// leaves the right unconfirmed, where Exchange's own refusal is a failed right.
     /// </remarks>
-    private static RightOutcome TryRightOnPrem(PowerShell ps, string right, Action apply)
+    private static RightOutcome TryRightOnPrem(PowerShell ps, string right, Action<ConnectionErrorTracker> apply)
     {
+        var sent = new ConnectionErrorTracker();
         try
         {
-            apply();
+            apply(sent);
             return RightOutcome.Ok(right);
         }
         catch (Exception ex)
         {
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
-            return RightOutcome.Failed(right, ex.Message);
+            return OutcomeUnknown(ex, sent) ? RightOutcome.Unanswered(right, ex.Message) : RightOutcome.Failed(right, ex.Message);
         }
     }
 
@@ -372,7 +383,8 @@ public class MailboxPermissionService : ExchangeServiceBase
                     currentUser, ipAddress, action, row.Target, row.User, permType,
                     result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
                     errorDetail: result.Success ? null : result.Message,
-                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), targetValidation.Mailbox));
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), targetValidation.Mailbox),
+                    filedAs: PermissionChangeFailure.FiledAs(result)); // aud-a70 (14): a right whose outcome is unknown files the row Undetermined
 
                 // Audit finding A24. The row was audited and the operator's administrators got
                 // a summary; the trustee and the mailbox owner got nothing. AppliedRights rather
@@ -478,27 +490,27 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (fullAccess)
                 {
-                    outcomes.Add(TryRightOnPrem(ps, "FullAccess", () =>
+                    outcomes.Add(TryRightOnPrem(ps, "FullAccess", sent =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $User) Add-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
-                        Invoke(ps);
+                        Invoke(ps, sent);
                     }));
                 }
 
                 if (sendAs)
                 {
-                    outcomes.Add(TryRightOnPrem(ps, "SendAs", () =>
+                    outcomes.Add(TryRightOnPrem(ps, "SendAs", sent =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $Trustee) Get-Mailbox -Identity $Identity -ErrorAction Stop | Add-ADPermission -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
-                        Invoke(ps);
+                        Invoke(ps, sent);
                     }));
                 }
 
@@ -548,27 +560,27 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (fullAccess)
                 {
-                    outcomes.Add(TryRightOnPrem(ps, "FullAccess", () =>
+                    outcomes.Add(TryRightOnPrem(ps, "FullAccess", sent =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $User) Remove-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
-                        Invoke(ps);
+                        Invoke(ps, sent);
                     }));
                 }
 
                 if (sendAs)
                 {
-                    outcomes.Add(TryRightOnPrem(ps, "SendAs", () =>
+                    outcomes.Add(TryRightOnPrem(ps, "SendAs", sent =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $Trustee) Get-Mailbox -Identity $Identity -ErrorAction Stop | Remove-ADPermission -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
                           .AddParameter("Session", session)
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
-                        Invoke(ps);
+                        Invoke(ps, sent);
                     }));
                 }
 
