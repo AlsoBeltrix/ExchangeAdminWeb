@@ -983,6 +983,46 @@ Describe 'cdt-15: an update refuses to move an existing application to another p
         }
     }
 
+    It 'names a spelling it cannot resolve on disk, and only that one (cdt-52, real files)' {
+        # The refusal named both folders but not that one of them is missing. Test-SamePhysicalFolder
+        # matches two spellings by final path only when both exist, so a missing one reads as a move;
+        # the note says which, in deploy.ps1's words (its cdt-46 test pins the same sentence).
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt52_' + [guid]::NewGuid().ToString('N'))
+        $folder = Join-Path $root 'Publish Folder'
+        $sibling = Join-Path $root 'Another Publish Folder'
+        $missing = Join-Path $root 'missing'
+        $gone = Join-Path $root 'gone'
+        $note = 'A spelling that cannot be resolved on disk is not taken as the same folder:'
+        $refusal = {
+            param([string]$Pool, [string]$Served, [string]$Publish)
+            $thrown = $null
+            try { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool $Pool -ExistingPhysicalPath $Served -AppPoolName 'Pool' -PublishPath $Publish } catch { $thrown = $_.Exception.Message }
+            $thrown
+        }
+        try {
+            New-Item -ItemType Directory -Path $folder, $sibling -Force | Out-Null
+
+            & $refusal 'Pool' $folder $missing |
+                Should -BeLike "IIS application Site/App already exists, with files at '$folder' (this run: -PublishPath '$missing'). $note '$missing'. An update must name the pool and folder it was installed with*Re-run with -AppPoolName 'Pool' -PublishPath '$folder'*Nothing was changed." -Because 'the run names a folder that is not there'
+            & $refusal 'Pool' $missing $folder |
+                Should -BeLike "*(this run: -PublishPath '$folder'). $note '$missing'. An update*" -Because 'IIS names a folder that is not there, and the one that exists is not named'
+            & $refusal 'Pool' $missing $gone |
+                Should -BeLike "*(this run: -PublishPath '$gone'). $note '$missing', '$gone'. An update*" -Because 'neither is there: both are named, IIS first'
+
+            foreach ($case in @(
+                    @{ Pool = 'Pool'; Served = $folder; Publish = $sibling; Because = 'two folders that both exist and differ are refused as before' }
+                    @{ Pool = 'OtherPool'; Served = $missing; Publish = $missing; Because = 'only the pool differs: one spelling, so there is no folder to resolve' }
+                    @{ Pool = 'Pool'; Served = ''; Publish = $folder; Because = 'an application with no folder is refused, and an empty spelling is not named' }
+                )) {
+                $thrown = & $refusal $case.Pool $case.Served $case.Publish
+                $thrown | Should -BeLike '*Nothing was changed.' -Because $case.Because
+                $thrown | Should -Not -BeLike "*$note*" -Because $case.Because
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'reads the application and asserts once, at script level, before anything changes (AST)' {
         $ast = $script:Cdt15Ast
         $statements = @($ast.EndBlock.Statements)
