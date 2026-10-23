@@ -566,3 +566,73 @@ function Assert-AppPoolServesPath {
 }
 
 Export-ModuleMember -Function Assert-AppPoolServesPath
+
+function Get-AppPoolOtherApplication {
+    <#
+    .SYNOPSIS
+        Lists the IIS applications an app pool serves besides the instance whose files are at a folder.
+
+    .DESCRIPTION
+        cdt-54. Stopping a pool stops every application it serves. Assert-AppPoolServesPath looks only
+        at what is at or inside the folder about to be replaced, so an application elsewhere that runs
+        under the same pool was stopped with it, unannounced. This lists those: every site root and
+        application IIS runs under the named pool whose files are neither at the folder nor inside it.
+        The folder's own nodes are the instance being deployed; a node inside the folder is refused
+        before the stop anyway (aud-a38i).
+
+        Folders compare as in Assert-AppPoolServesPath: lexically, at a directory boundary, or by
+        final path when both resolve (cdt-46). Pool names compare case-insensitively. It errs toward
+        listing: a node is left out only when its lexical or final path puts it at or inside the
+        folder, so an application with no folder, or one whose folder cannot be resolved, is listed.
+
+        Virtual directories are not read. Each belongs to an application, which is listed if it is
+        another one; counting them would report the instance's own virtual directories as other
+        applications.
+
+    .OUTPUTS
+        Location, ApplicationPool and PhysicalPath of each other application; nothing when there is
+        none. Throws when IIS cannot be read.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PhysicalPath,
+
+        # Every site root and application IIS knows: the first half of Assert-AppPoolServesPath's
+        # probe, without the virtual directories.
+        [scriptblock]$ApplicationsProbe = {
+            foreach ($site in @(Get-Website)) {
+                [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
+                foreach ($app in @(Get-WebApplication -Site $site.name)) {
+                    [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
+                }
+            }
+        }
+    )
+
+    try {
+        $applications = @(& $ApplicationsProbe)
+    } catch {
+        throw "Cannot read the IIS sites and applications, so the applications app pool '$Name' serves besides the one at '$PhysicalPath' cannot be listed: $($_.Exception.Message)"
+    }
+
+    $target = ConvertTo-ComparablePhysicalPath $PhysicalPath
+    $targetFinal = Resolve-FinalPhysicalPath $target
+    foreach ($node in $applications) {
+        if (-not [string]::Equals([string]$node.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $lexical = ConvertTo-ComparablePhysicalPath $node.PhysicalPath
+        if ($lexical) {
+            if (Test-PhysicalPathInside $lexical $target) { continue }
+            if ($null -ne $targetFinal) {
+                $final = Resolve-FinalPhysicalPath $lexical
+                if ($null -ne $final -and (Test-PhysicalPathInside $final $targetFinal)) { continue }
+            }
+        }
+        $node
+    }
+}
+
+Export-ModuleMember -Function Get-AppPoolOtherApplication
