@@ -112,6 +112,44 @@ public class ModuleConfigServiceTests
         Assert.True(broken.IsModuleCorrupt("Migration"));
     }
 
+    /// <summary>
+    /// aud-a57: a failed read was reported through the service's logger with no guard, so a provider that threw took its
+    /// exception into every caller of GetValue and GetModuleConfig instead of the empty config they answer when the store
+    /// cannot be read.
+    /// </summary>
+    [Theory]
+    [InlineData("GetValue")]
+    [InlineData("GetModuleConfig")]
+    public void AReadThroughAStoreThatFails_WithALoggerThatThrows_AnswersEmpty(string reader)
+    {
+        using var temp = new TempDir();
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(temp.Path);
+        var logger = new ThrowingLogger();
+        var service = new ModuleConfigService(new ModuleCatalog(), env, new ModuleConfigRepository(new ThrowingStore()), logger);
+
+        switch (reader)
+        {
+            case "GetValue":
+                string? value = "not read";
+                Assert.Null(Record.Exception(() => value = service.GetValue("Migration", "OnPremTargetDatabases")));
+                Assert.Null(value);
+                break;
+
+            case "GetModuleConfig":
+                Dictionary<string, string>? config = null;
+                Assert.Null(Record.Exception(() => config = service.GetModuleConfig("Migration")));
+                Assert.NotNull(config);
+                Assert.Empty(config);
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(reader), reader, null);
+        }
+
+        Assert.Equal(1, logger.Attempts);
+    }
+
     [Fact]
     public void Construction_ImportsPerModuleLegacyFile_ThenArchives()
     {
@@ -173,6 +211,25 @@ public class ModuleConfigServiceTests
         env.ContentRootPath.Returns(contentRoot);
         return new ModuleConfigService(new ModuleCatalog(), env,
             TestConfigStore.CreateModuleConfig(contentRoot), Substitute.For<ILogger<ModuleConfigService>>());
+    }
+
+    /// <summary>Counts every report and throws once it has, as a failing provider can (aud-a28u).</summary>
+    private sealed class ThrowingLogger : ILogger<ModuleConfigService>
+    {
+        private int _attempts;
+
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Interlocked.Increment(ref _attempts);
+            throw new InvalidOperationException("the logging provider failed");
+        }
     }
 
     private sealed class ThrowingStore : IConfigStore

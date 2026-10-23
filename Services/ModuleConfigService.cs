@@ -287,7 +287,17 @@ public class ModuleConfigService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to read module config for {Module}", moduleId);
+            // aud-a57. Reporting the failed read must not fail the read: a provider that threw here took its exception
+            // into every caller of GetValue and GetModuleConfig instead of the empty config (aud-a28u's guard).
+            try
+            {
+                _logger.LogError(ex, "Failed to read module config for {Module}", moduleId);
+            }
+            catch (Exception)
+            {
+                // Nowhere left to say so.
+            }
+
             return new(StringComparer.OrdinalIgnoreCase);
         }
     }
