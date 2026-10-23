@@ -237,7 +237,17 @@ public class ConfigChangeWatcherTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
+            // aud-a74. The pools of this test's own databases only, so their pooled connections let the folder go: the
+            // classes running beside it hold connections of their own (the AttributeEditorHarness shape).
+            foreach (var name in new[] { "exchangeadmin.db", "usage.db" })
+            {
+                SqliteConnection.ClearPool(new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = Path.Combine(dir, name),
+                    Mode = SqliteOpenMode.ReadWriteCreate,
+                }.ToString()));
+            }
+
             try { Directory.Delete(dir, recursive: true); }
             catch (IOException) { /* best effort */ }
         }

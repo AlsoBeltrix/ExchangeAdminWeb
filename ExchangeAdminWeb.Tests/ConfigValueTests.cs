@@ -31,7 +31,14 @@ public sealed class ConfigValueTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        // aud-a74. The pool of this test's own database only - the extended log's case makes it - so its pooled connection
+        // lets the folder go: the classes running beside it hold connections of their own (the AttributeEditorHarness shape).
+        SqliteConnection.ClearPool(new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(_root, "app", "exchangeadmin.db"),
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString()));
+
         try { Directory.Delete(_root, recursive: true); }
         catch (IOException) { /* best effort */ }
     }

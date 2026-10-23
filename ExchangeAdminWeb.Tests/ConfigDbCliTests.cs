@@ -175,7 +175,14 @@ public class ConfigDbCliTests
         using var temp = new TempDir();
         var jobsDb = Path.Combine(temp.Path, "exchangeadmin-jobs.db");
         new JobStoreMigrator(new SqliteConnectionFactory(jobsDb)).Migrate();
-        SqliteConnection.ClearAllPools();
+
+        // aud-a74. The migration's pooled connection closed, and only that one: the classes running beside this one hold
+        // connections of their own (the AttributeEditorHarness shape). Every connection below is unpooled.
+        SqliteConnection.ClearPool(new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = jobsDb,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString()));
 
         using (var c = ConfigDbTestFiles.Open(jobsDb))
         {
@@ -225,7 +232,13 @@ public class ConfigDbCliTests
         using var temp = new TempDir();
         var jobsDb = Path.Combine(temp.Path, "exchangeadmin-jobs.db");
         new JobStoreMigrator(new SqliteConnectionFactory(jobsDb)).Migrate();
-        SqliteConnection.ClearAllPools();
+
+        // aud-a74. The migration's pooled connection closed, and only that one, as above.
+        SqliteConnection.ClearPool(new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = jobsDb,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+        }.ToString()));
 
         var result = Run("active-jobs", jobsDb);
 
