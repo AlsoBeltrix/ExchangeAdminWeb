@@ -61,20 +61,20 @@ This is the evidence base for everything that follows. Each row was read, not re
 | Target framework `net10.0-windows10.0.17763.0` | `ExchangeAdminWeb.csproj:4` | Windows. The `10.0.17763.0` OS suffix is not decoration: it turns on the Windows SDK / WinRT projections, which is the only reason the next row compiles. |
 | Delinea bootstrap credential | `Services/CredentialManagerService.cs:1,11-12` | `using Windows.Security.Credentials;` and `new PasswordVault()`. WinRT credential locker. Microsoft's reference states plainly: "Lockers are specific to a user." |
 | Delinea client uses it | `Services/DelineaService.cs:28-46` | `CredentialManagerService.ReadCredential(_credentialTarget)`; on empty it blanks `_apiUsername`/`_apiKey` and every secret fetch then fails closed. |
-| App pool loads a user profile | `deploy.ps1:287`, `tools/Install-ExchangeAdminWeb.ps1:595` | `processModel.loadUserProfile = $true`. This is the repo's own evidence that the credential store is profile-bound. |
+| App pool loads a user profile | `deploy.ps1` and `tools/Install-ExchangeAdminWeb.ps1`, each at `Set-ItemProperty ... processModel.loadUserProfile` | `processModel.loadUserProfile = $true`. This is the repo's own evidence that the credential store is profile-bound. |
 | Browser authentication | `Program.cs:38-39` | `AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate()`. |
 | Hosting model | `web.config:6-8` | `AspNetCoreModuleV2`, `hostingModel="inprocess"`. The app runs inside `w3wp.exe`, not behind a reverse proxy. |
-| IIS auth configuration | `deploy.ps1:372-394`, `tools/Install-ExchangeAdminWeb.ps1:691-695` | Windows auth on, kernel mode off, `useAppPoolCredentials` true, anonymous off, **and the Negotiate provider removed**. |
-| App pool identity | `deploy.ps1:289-295` | `identityType 3` (a specific domain user) with a password; the installer also supports `identityType 4` (ApplicationPoolIdentity) at line 605. |
+| IIS auth configuration | `deploy.ps1` and `tools/Install-ExchangeAdminWeb.ps1`, their `windowsAuthentication` and `anonymousAuthentication` `Set-WebConfigurationProperty` calls | Windows auth on, kernel mode off, `useAppPoolCredentials` true, anonymous off, **and the Negotiate provider removed**. |
+| App pool identity | `deploy.ps1`, its "Configuring app pool" step | `identityType 3` (a specific domain user) with a password; the installer also supports `identityType 4` (ApplicationPoolIdentity), in its app pool step. |
 | On-prem AD, ambient identity | `Services/ADDirectorySearchService.cs:496,551,560` | `iss.ImportPSModule("ActiveDirectory")`, then `Get-ADForest` to find a global catalog and query `host:3268`. No `-Credential`: this path runs as the app pool identity. |
 | On-prem AD, explicit credential | 12 services, e.g. `Services/GroupManagementService.cs` (x15), `Services/SelfServiceGroups/SelfServiceGroupService.cs:947,1472-1478` | `Import-Module ActiveDirectory` plus `-Credential` from a `PSCredential` built out of a Delinea secret. |
 | The AD module itself | host-installed | `ActiveDirectory 1.0.1.0` at `C:\Windows\system32\WindowsPowerShell\v1.0\Modules\ActiveDirectory` on the current deploy host. RSAT. Not in this repo, not restored by NuGet. |
 | Exchange Online | `Services/ExoConnectionPool.cs:422-443` | `Microsoft.PowerShell.SDK` 7.6.1 (`ExchangeAdminWeb.csproj:30`) hosting an in-process runspace, then `Import-Module ExchangeOnlineManagement` and `Connect-ExchangeOnline -AppId -CertificateThumbprint -Organization`. The module is host-installed from the gallery, not bundled. |
-| The EXO certificate | `Services/ExoConnectionPool.cs:507-529` | `new X509Store(StoreName.My, StoreLocation.LocalMachine)`, falling back to `CurrentUser`. A Windows certificate store, with a private key the deploy scripts explicitly ACL to the app pool identity (`deploy.ps1:323`, `tools/Install-ExchangeAdminWeb.ps1:621-639`). |
+| The EXO certificate | `Services/ExoConnectionPool.cs:507-529` | `new X509Store(StoreName.My, StoreLocation.LocalMachine)`, falling back to `CurrentUser`. A Windows certificate store, with a private key the deploy scripts explicitly ACL to the app pool identity (the certificate private-key ACL step of `deploy.ps1` and of `tools/Install-ExchangeAdminWeb.ps1`). |
 | Shared config database | `Services/Storage/ConfigStorePath.cs:38-53`, `Program.cs:50-64` | An **absolute local** path that **must already exist**. UNC is refused by name. Drive-relative is refused. |
 | Per-instance databases and logs | `Program.cs:82,91,28` | `config/exchangeadmin-jobs.db`, `config/exchangeadmin-usage.db`, `logs/app-.log`, all under the content root. |
 | PathBase | `Program.cs:354-358` | `Application:PathBase`, default `/ExchangeAdminWeb`; the app calls `UsePathBase` itself. |
-| Deploy tooling | `deploy.ps1:45-48` | `WebAdministration` and therefore **Windows PowerShell 5.1** - the script throws with that exact instruction if the `IIS:` drive is missing. |
+| Deploy tooling | `deploy.ps1`'s opening `Import-Module WebAdministration` and its `IIS:` drive check | `WebAdministration` and therefore **Windows PowerShell 5.1** - the script throws with that exact instruction if the `IIS:` drive is missing. |
 
 Four independent Windows dependencies, then. The WinRT credential locker, the RSAT
 `ActiveDirectory` module, the Windows certificate store, and the IIS provider in the deploy
@@ -152,8 +152,8 @@ Windows Authentication.** A Kestrel-in-container deployment is equivalent for ev
 that one thing, and inequivalent for that one thing in a way that section 3 has to deal with.
 
 One caveat that is easy to miss and expensive to discover late: the deploy scripts do not merely
-enable Windows auth, they **remove the Negotiate provider**, with the comment on `deploy.ps1:381`
-saying why - "Remove Negotiate provider - forces NTLM which works without SPN registration". The
+enable Windows auth, they **remove the Negotiate provider**, with the comment above the Negotiate
+`Remove-WebConfigurationProperty` call in `deploy.ps1` saying why - "Remove Negotiate provider - forces NTLM which works without SPN registration". The
 app is therefore authenticating browsers with raw NTLM today, deliberately, to avoid needing an
 SPN. Kestrel cannot reproduce that. Microsoft's Windows authentication guidance is explicit:
 "Kestrel requires the `Negotiate` header prefix, it doesn't support directly specifying `NTLM`
@@ -211,7 +211,8 @@ it determines whether a bad deploy is loud or quiet. Three distinct failure shap
    failure, and it is the one this app is most exposed to because it has never had an SPN.
 3. **Authentication fails outright at runtime.** Every endpoint in this app is behind
    `.RequireAuthorization()` (`Program.cs:375`), and anonymous authentication is disabled in the
-   IIS configuration the scripts write (`deploy.ps1:392-394`). There is no configured anonymous
+   IIS configuration the scripts write (`deploy.ps1`'s `anonymousAuthentication` `enabled`
+   `$false`). There is no configured anonymous
    fallback, so the answer to "does everyone get a 401, or a silent fallback to anonymous?" is
    **everyone gets a 401** - the app is not reachable, rather than reachable and unprotected.
    That is the correct failure direction and worth stating plainly, because it means a botched
@@ -234,8 +235,8 @@ Browser authentication is the half everyone anticipates. This is the half that s
 `Services/CredentialManagerService.cs:11-12` implements that with the WinRT
 `PasswordVault`. Microsoft's reference for that class states: "Lockers are specific to a
 user." The repo corroborates the profile dependency independently - both deploy paths set
-`processModel.loadUserProfile = $true` (`deploy.ps1:287`,
-`tools/Install-ExchangeAdminWeb.ps1:595`), which exists precisely so the app pool identity has a
+`processModel.loadUserProfile = $true` (the `processModel.loadUserProfile` setting in `deploy.ps1`
+and `tools/Install-ExchangeAdminWeb.ps1`), which exists precisely so the app pool identity has a
 profile for that locker to live in.
 
 Now put that in a container:
@@ -312,7 +313,8 @@ The Exchange Online path has the same shape for the same reason plus one of its 
 `X509Store(StoreName.My, StoreLocation.LocalMachine)`. A container has its own empty machine
 store, so the certificate and its private key must be mounted or injected at run time and ACLed
 to the container identity - reproducing, in a new mechanism, the ACL step the deploy scripts
-perform today at `deploy.ps1:323` and `tools/Install-ExchangeAdminWeb.ps1:621-639`.
+perform today in the certificate private-key ACL step of `deploy.ps1` and of
+`tools/Install-ExchangeAdminWeb.ps1`.
 
 ---
 
@@ -412,7 +414,8 @@ prerequisite the owner must arrange in Active Directory.
 `deploy.ps1` or ADI-specific configuration." That script is the repo's existing answer to the
 owner's actual question, and it is close. Its own header describes a fresh install that builds
 from source, creates and configures the app pool and web application, generates
-`appsettings.json`, seeds config, and sets ACLs (`tools/Install-ExchangeAdminWeb.ps1:11-17`).
+`appsettings.json`, seeds config, and sets ACLs (the "Fresh install" list in
+`tools/Install-ExchangeAdminWeb.ps1`'s help).
 
 What it does **not** do is establish the host prerequisites, and that is precisely the gap
 between "run one script" and "spend a day figuring out why the app starts but every module
@@ -443,8 +446,8 @@ alternative, offered so the owner can compare it against 13 to 17 sessions.**
   secret and seeding the bootstrap credential, and choosing `ConfigStorePath`. This is the
   artifact that turns "deploy elsewhere" from tribal knowledge into a document, and it is the
   single highest-value item in this list.
-- **Slice 4, optional - `-PlanOnly` parity for `deploy.ps1`.** `tools/deploy-pipeline.ps1:82`
-  currently warns "deploy.ps1 has no native plan mode yet; -PlanOnly skips the dev deploy
+- **Slice 4, optional - `-PlanOnly` parity for `deploy.ps1`.** `tools/deploy-pipeline.ps1`'s
+  `-PlanOnly` branch currently warns "deploy.ps1 has no native plan mode yet; -PlanOnly skips the dev deploy
   entirely", which means the pipeline's dry run does not actually dry-run the deploy. Closing
   that is independently worth doing and is required by `.agents/repo-guidance.md` Architectural
   Invariant 4 and by the Constitution's "Do not change production deployment behavior without
@@ -559,7 +562,8 @@ Each answerable in one line. Numbered for reference.
 5. **Must a new deployment reuse this Exchange Online app registration and certificate, or get
    its own?** This changes the runbook and the certificate-provisioning step materially.
 6. **Is registering SPNs in the forest acceptable?** The current deployment deliberately avoids
-   them (`deploy.ps1:381`); any Kestrel-hosted deployment, containerized or not, needs them.
+   them (the Negotiate provider removal in `deploy.ps1`); any Kestrel-hosted deployment,
+   containerized or not, needs them.
 7. **Should slice 4 (`-PlanOnly` parity for `deploy.ps1`) be pulled out and done on its own
    merits?** It is an existing invariant-4 gap that this investigation surfaced and that does not
    depend on any answer above.
