@@ -683,7 +683,9 @@ environments; it is intentionally separate from the standalone installer.
 `-Force` (which regenerates `appsettings.json`) and `-ConfirmFreshInstall` take the fresh-install
 path, which points the IIS application at the run's `-PublishPath` and `-AppPoolName`: if the
 application already exists with another folder or pool, the run is refused before anything is
-configured, unless `-AllowRepoint` says the move is intended.
+configured, unless `-AllowRepoint` says the move is intended. An upgrade is checked the same way,
+before it configures the pool or grants any folder access, and is refused, `-AllowRepoint` or not:
+an upgrade never moves the application.
 
 The deploy/install scripts will:
 - Stop the application pool

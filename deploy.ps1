@@ -35,7 +35,8 @@ param(
     # cdt-36: -Force and -ConfirmFreshInstall take the fresh-install path, which points an EXISTING
     # IIS application at this run's -PublishPath and -AppPoolName. A run whose folder or pool differs
     # from the ones IIS serves the application from is refused before anything is configured; this
-    # switch is the explicit way to move it. An upgrade never re-points the application.
+    # switch is the explicit way to move it. An upgrade never re-points the application, and refuses a
+    # pool or folder that does not serve it with or without this switch (cdt-42).
     [switch]$AllowRepoint,
     [switch]$NonInteractive
 )
@@ -199,6 +200,10 @@ function Write-AppSettingsFile {
 # pass. The installer makes the same check (cdt-15); here -AllowRepoint is the explicit way to move
 # the application. Folders compare as Assert-AppPoolServesPath compares them, through the module's
 # ConvertTo-ComparablePhysicalPath: by equality, case-insensitively, never by prefix.
+# cdt-42. An upgrade never moves the application, but it configures the pool -AppPoolName names and
+# grants ACLs under -PublishPath before its own binding check, so a pool or folder that does not serve
+# the application was changed and only then refused. On an upgrade (-Upgrade) a difference therefore
+# always refuses: -AllowRepoint cannot make an upgrade right, since nothing on that path re-points.
 function Assert-ApplicationTargetUnchanged {
     param(
         [string]$Location,
@@ -207,7 +212,8 @@ function Assert-ApplicationTargetUnchanged {
         [string]$ExistingPhysicalPath,
         [string]$AppPoolName,
         [string]$PublishPath,
-        [switch]$AllowRepoint
+        [switch]$AllowRepoint,
+        [switch]$Upgrade
     )
 
     if (-not $Exists) {
@@ -229,6 +235,11 @@ function Assert-ApplicationTargetUnchanged {
     if ($differences.Count -eq 0) {
         Write-Success "IIS application $Location runs under app pool '$ExistingPool' with its files at '$ExistingPhysicalPath': the pool and folder this run names, so it is deployed in place"
         return
+    }
+    if ($Upgrade) {
+        $switchNote = ''
+        if ($AllowRepoint) { $switchNote = ' -AllowRepoint does not apply: only a -Force or -ConfirmFreshInstall run re-points an application.' }
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). An upgrade configures the app pool and the folders it names before it deploys, and never moves the application, so this run would change a pool or folder that does not serve it. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder', or move the application in IIS first.$switchNote Nothing was deployed."
     }
     if ($AllowRepoint) {
         Write-Warn "IIS application $Location exists, with $($differences -join ' and '). -AllowRepoint: this run MOVES it to app pool '$AppPoolName' with its files at '$PublishPath'. The old pool and folder are left as they are, no longer serving it."
@@ -285,24 +296,25 @@ Write-Host "  Publish : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray
 Write-Host ""
 
-# --- The IIS application a fresh install or -Force would re-point (cdt-36) ---
+# --- The IIS application this run deploys to (cdt-36, cdt-42) ---
 
-# Read before anything below touches IIS, an ACL or the publish folder: the fresh-install branch sets
-# an existing application's folder and pool to this run's -PublishPath and -AppPoolName, so a run that
-# would move it is refused here, unless -AllowRepoint says the move is intended. Read-only, and it
-# prints what it compared, so a plan mode could run it as it is (this script has none). A lookup that
-# fails refuses: the run cannot show that it does not move the application. An upgrade never
-# re-points it, and its own checks before the stop refuse a pool or folder that does not serve it.
-if (-not $isUpgrade) {
-    Write-Step "Checking IIS application $ParentSite/$AppAlias"
-    $existingApplication = $null
-    try {
-        $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
-    } catch {
-        Write-Fail "Cannot read IIS application $ParentSite/$AppAlias ($($_.Exception.Message)), so it cannot be confirmed that this run does not move it to another folder or app pool. Nothing was deployed."
-    }
-    Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath -AllowRepoint:$AllowRepoint
+# Read on every run, before anything below touches IIS, an ACL or the publish folder. The
+# fresh-install branch (-Force, -ConfirmFreshInstall) points an existing application at this run's
+# -PublishPath and -AppPoolName, so a run that would move it is refused here unless -AllowRepoint says
+# the move is intended (cdt-36). An upgrade never moves it, but the pool step and the ACL grants below
+# act on the pool and folder it names before the upgrade branch asks IIS which pool serves the
+# application, so an upgrade whose pool or folder does not serve it is refused here, before they run,
+# whatever the switches (cdt-42). Read-only, and it prints what it compared, so a plan mode could run
+# it as it is (this script has none). A lookup that fails refuses: the run cannot show that the pool
+# and folder it names are the ones serving the application.
+Write-Step "Checking IIS application $ParentSite/$AppAlias"
+$existingApplication = $null
+try {
+    $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
+} catch {
+    Write-Fail "Cannot read IIS application $ParentSite/$AppAlias ($($_.Exception.Message)), so it cannot be confirmed that the app pool and folder this run names are the ones serving it. Nothing was deployed."
 }
+Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath -AllowRepoint:$AllowRepoint -Upgrade:$isUpgrade
 
 # --- Collect & validate config (fresh install only) ---
 

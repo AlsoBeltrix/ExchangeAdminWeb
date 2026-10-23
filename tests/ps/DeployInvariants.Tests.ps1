@@ -801,10 +801,15 @@ Describe 'deploy.ps1' {
         foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
             . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
         }
-        $steps = @($s.Ast.EndBlock.Statements | Where-Object {
-                $_ -is [System.Management.Automation.Language.IfStatementAst] -and $_.Extent.Text -match 'Assert-ApplicationTargetUnchanged ' })
-        $steps.Count | Should -Be 1 -Because 'one script-level statement reads the application and checks it'
-        $region = $steps[0].Extent.Text
+        # The check is script-level statements, from its step line to the assertion; since cdt-42 they
+        # run on every run, so no condition wraps them.
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Step "Checking IIS application $ParentSite/$AppAlias"') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Assert-ApplicationTargetUnchanged *') { $i } })
+        $from.Count | Should -Be 1 -Because 'one script-level step line opens the check'
+        $to.Count | Should -Be 1 -Because 'one script-level statement checks the application'
+        $to[0] | Should -BeGreaterThan $from[0]
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
 
         Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
         try {
@@ -873,9 +878,11 @@ Describe 'deploy.ps1' {
                 $unreadable.Calls | Should -BeExactly $read
             }
 
-            $upgrade = & $run 'OtherPool|D:\example\other' 'upgrade' $false
-            $upgrade.Thrown | Should -BeNullOrEmpty -Because 'an upgrade never re-points the application; its own checks before the stop refuse a pool or folder that does not serve it'
-            $upgrade.Calls | Should -BeExactly '' -Because 'an upgrade reads nothing here'
+            # cdt-42 checks an upgrade too, and its own tests cover what it refuses there. Here: the same
+            # values pass, and the read is still the one call.
+            $upgrade = & $run 'ExamplePool|D:\example\publish' 'upgrade' $false
+            $upgrade.Thrown | Should -BeNullOrEmpty -Because 'an upgrade of the application IIS serves from this pool and folder proceeds'
+            $upgrade.Calls | Should -BeExactly $read -Because 'an upgrade reads the application before anything as well (cdt-42), and changes nothing here'
         } finally {
             Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
         }
@@ -885,26 +892,29 @@ Describe 'deploy.ps1' {
         $statements = @($s.Ast.EndBlock.Statements)
         $find = { param($test) for ($i = 0; $i -lt $statements.Count; $i++) { if (& $test $statements[$i]) { $i } } }
 
-        $check = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Extent.Text -match 'Assert-ApplicationTargetUnchanged ' })
-        $check.Count | Should -Be 1 -Because 'the application is checked once, at script level'
-        $if = $statements[$check[0]]
-        $if.Clauses.Count | Should -Be 1
-        $if.ElseClause | Should -BeNullOrEmpty
-        $if.Clauses[0].Item1.Extent.Text | Should -BeExactly '-not $isUpgrade' -Because 'every run down the fresh-install branch re-points an existing application: -Force and -ConfirmFreshInstall alike'
+        # The step line, the variable's reset, the read and the assertion: four consecutive script-level
+        # statements, under no condition - since cdt-42 every run checks, upgrades included.
+        $stepAt = @(& $find { param($st) $st.Extent.Text -eq 'Write-Step "Checking IIS application $ParentSite/$AppAlias"' })
+        $stepAt.Count | Should -Be 1 -Because 'the application is checked once, at script level'
+        $check = $stepAt
+        $readAt = @(& $find { param($st) $st -is [System.Management.Automation.Language.TryStatementAst] -and $st.Body.Extent.Text -match ([regex]::Escape('$existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop')) })
+        $readAt.Count | Should -Be 1 -Because 'the application is read once, at script level'
+        $assertAt = @(& $find { param($st) $st.Extent.Text -like 'Assert-ApplicationTargetUnchanged *' })
+        $assertAt.Count | Should -Be 1 -Because 'and checked once, at script level'
+        $statements[$stepAt[0] + 1].Extent.Text | Should -BeExactly '$existingApplication = $null'
+        $readAt[0] | Should -Be ($stepAt[0] + 2)
+        $assertAt[0] | Should -Be ($readAt[0] + 1) -Because 'nothing runs between the read and the check'
 
-        $reads = @($if.Clauses[0].Item2.Statements | Where-Object { $_ -is [System.Management.Automation.Language.TryStatementAst] })
-        $reads.Count | Should -Be 1
-        $reads[0].Body.Extent.Text | Should -Match ([regex]::Escape('$existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop'))
-        $reads[0].CatchClauses.Count | Should -Be 1
-        $reads[0].Finally | Should -BeNullOrEmpty
-        @($reads[0].CatchClauses[0].Body.Statements).Count | Should -Be 1
-        $reads[0].CatchClauses[0].Body.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "Cannot read IIS application $ParentSite/$AppAlias *' -Because 'a lookup that fails refuses the run'
+        $read = $statements[$readAt[0]]
+        $read.CatchClauses.Count | Should -Be 1
+        $read.Finally | Should -BeNullOrEmpty
+        @($read.CatchClauses[0].Body.Statements).Count | Should -Be 1
+        $read.CatchClauses[0].Body.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "Cannot read IIS application $ParentSite/$AppAlias *' -Because 'a lookup that fails refuses the run'
 
         $asserts = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-ApplicationTargetUnchanged' }, $true))
-        $asserts.Count | Should -Be 1 -Because 'one call, in this statement'
+        $asserts.Count | Should -Be 1 -Because 'one call, in the script itself'
         $assert = $asserts[0]
-        [object]::ReferenceEquals($assert.Parent.Parent, $if.Clauses[0].Item2) | Should -BeTrue -Because 'a statement of the block itself, so nothing conditional or catching sits around it'
-        $assert.Extent.StartOffset | Should -BeGreaterThan $reads[0].Extent.EndOffset
+        [object]::ReferenceEquals($assert.Parent.Parent, $s.Ast.EndBlock) | Should -BeTrue -Because 'a statement of the script itself: nothing conditional or catching sits around it, so every run checks (cdt-42)'
         foreach ($pair in @(
                 @('Location', '"$ParentSite/$AppAlias"'),
                 @('Exists', '($null -ne $existingApplication)'),
@@ -912,7 +922,8 @@ Describe 'deploy.ps1' {
                 @('ExistingPhysicalPath', '"$($existingApplication.PhysicalPath)"'),
                 @('AppPoolName', '$AppPoolName'),
                 @('PublishPath', '$PublishPath'),
-                @('AllowRepoint', '$AllowRepoint'))) {
+                @('AllowRepoint', '$AllowRepoint'),
+                @('Upgrade', '$isUpgrade'))) {
             Get-NamedArgumentText $assert $pair[0] | Should -BeExactly $pair[1] -Because "-$($pair[0]) carries what IIS reported or what this run names"
         }
 
@@ -933,14 +944,157 @@ Describe 'deploy.ps1' {
 
         $consent[0] | Should -BeLessThan $check[0] -Because 'an unconsented fresh install is still refused by the consent check first'
         $banner[0] | Should -BeLessThan $check[0]
-        $check[0] | Should -BeLessThan $collect[0] -Because 'a run that would move the application is refused before anything is prompted for'
-        $check[0] | Should -BeLessThan $poolRead[0]
-        $check[0] | Should -BeLessThan $changes[0] -Because 'it refuses before IIS, an ACL or the publish folder is touched'
-        $check[0] | Should -BeLessThan $modeTry[0]
+        $assertAt[0] | Should -BeLessThan $collect[0] -Because 'a run that would move the application is refused before anything is prompted for'
+        $assertAt[0] | Should -BeLessThan $poolRead[0] -Because 'and before the pool it names is read (cdt-42)'
+        $assertAt[0] | Should -BeLessThan $changes[0] -Because 'it refuses before IIS, an ACL or the publish folder is touched - on an upgrade too (cdt-42)'
+        $assertAt[0] | Should -BeLessThan $modeTry[0]
 
         $switch = @($s.Ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AllowRepoint' })
         $switch.Count | Should -Be 1
         $switch[0].StaticType | Should -Be ([System.Management.Automation.SwitchParameter]) -Because 'a move is opted into by name, never defaulted'
+    }
+
+    It 'refuses an upgrade whose pool or folder does not serve the application, -AllowRepoint or not (cdt-42)' {
+        # An upgrade never moves the application, but it configures the pool and the folders it names
+        # before its own binding check, so on an upgrade every difference refuses: the switch that
+        # consents to a fresh install's move cannot make an upgrade right.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt42Printed.Add("$Object") }
+            $check = {
+                param([bool]$Exists, [string]$Pool, [string]$Folder, [bool]$Allow)
+                $script:cdt42Printed = New-Object System.Collections.Generic.List[string]
+                $thrown = $null
+                try {
+                    Assert-ApplicationTargetUnchanged -Location 'Example Site/ExampleApp' -Exists $Exists -ExistingPool $Pool -ExistingPhysicalPath $Folder -AppPoolName 'ExamplePool' -PublishPath 'D:\example\publish' -AllowRepoint:$Allow -Upgrade
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt42Printed -join "`n") }
+            }
+
+            (& $check $false '' '' $false).Thrown | Should -BeNullOrEmpty -Because 'an upgrade whose application is missing creates it later, as before'
+            $same = & $check $true 'examplepool' 'd:\EXAMPLE\publish\' $false
+            $same.Thrown | Should -BeNullOrEmpty -Because 'the same pool and folder, however spelled, is the application this upgrade deploys to'
+            $same.Printed | Should -BeLike '*deployed in place*'
+
+            $cases = @(
+                @{ Case = 'another pool'; Pool = 'OtherPool'; Folder = 'D:\example\publish'; Expect = "app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')" }
+                @{ Case = 'another folder'; Pool = 'ExamplePool'; Folder = 'D:\example\other'; Expect = "files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')" }
+                @{ Case = 'a folder that only starts with the run''s'; Pool = 'ExamplePool'; Folder = 'D:\example\publishOld'; Expect = "files at 'D:\example\publishOld'" }
+                @{ Case = 'no folder'; Pool = 'ExamplePool'; Folder = ''; Expect = "files at '' (this run: -PublishPath 'D:\example\publish')" }
+            )
+            foreach ($c in $cases) {
+                foreach ($allow in $false, $true) {
+                    $r = & $check $true $c.Pool $c.Folder $allow
+                    $r.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with *$($c.Expect)*An upgrade configures the app pool and the folders it names before it deploys, and never moves the application*Re-run with -AppPoolName '$($c.Pool)' -PublishPath '$($c.Folder)', or move the application in IIS first.*Nothing was deployed." -Because "an upgrade must not configure a pool or folder that does not serve the application ($($c.Case), -AllowRepoint $allow)"
+                    if ($allow) {
+                        $r.Thrown | Should -BeLike '*-AllowRepoint does not apply: only a -Force or -ConfirmFreshInstall run re-points an application.*'
+                    } else {
+                        $r.Thrown | Should -Not -BeLike '*-AllowRepoint does not apply*'
+                    }
+                    $r.Printed | Should -Not -BeLike '*MOVES it*' -Because 'an upgrade never moves the application'
+                }
+            }
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'runs an upgrade''s real steps from the check through the ACL grants: a pool or folder that does not serve the application is refused before the pool is configured or any folder is granted (cdt-42)' {
+        # The upgrade path configured the pool -AppPoolName names and granted its account Modify on this
+        # instance's folders, and only then, inside its branch, asked IIS which pool serves the
+        # application. The real statements run here in order, from the one after the banner through the
+        # last grant, with IIS, the pool provider, the certificate store, the folders and the ACL helper
+        # stubbed, each call recorded.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Prompt-Value', 'Prompt-SecureValue', 'SecureString-ToPlain', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Success "Config folder ACL set: $configFolder"') { $i } })
+        $from.Count | Should -Be 1 -Because 'the banner names the application once'
+        $to.Count | Should -Be 1 -Because 'the last grant reports once'
+        $region = ($statements[($from[0] + 1)..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+        $region | Should -Match ([regex]::Escape('Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name managedRuntimeVersion')) -Because 'the region holds the pool step'
+        $region | Should -Match ([regex]::Escape('Set-AclChecked $configFolder $ServiceAccount')) -Because 'and the grants'
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt42Printed.Add("$Object") }
+            ${function:Get-WebApplication} = {
+                param($Name, $Site, $ErrorAction)
+                $null = $ErrorAction
+                $script:cdt42Calls.Add("lookup($Site/$Name)")
+                if ($script:cdt42Iis -eq 'throws') { throw 'Cannot read configuration file due to insufficient permissions' }
+                if ($script:cdt42Iis -eq 'absent') { return }
+                $pool, $folder = $script:cdt42Iis -split '\|', 2
+                [pscustomobject]@{ applicationPool = $pool; PhysicalPath = $folder }
+            }
+            # The pool the run names exists and runs as a user - another instance's pool would - and
+            # every folder exists, so nothing is created.
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $script:cdt42Calls.Add("exists($Path)"); $true }
+            ${function:Get-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name) $script:cdt42Calls.Add("read($Path|$Name)"); [pscustomobject]@{ identityType = 'SpecificUser'; userName = 'EXAMPLE\svc-other' } }
+            ${function:New-WebAppPool} = { param($Name) $script:cdt42Calls.Add("New-WebAppPool($Name)") }
+            ${function:Set-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name, $Value) $null = $Value; $script:cdt42Calls.Add("set($Path|$Name)") }
+            ${function:Get-ChildItem} = { param([Parameter(Position = 0)]$Path) $script:cdt42Calls.Add("certs($Path)") }
+            ${function:New-Item} = { $script:cdt42Calls.Add('New-Item') }
+            ${function:Set-AclChecked} = { param([Parameter(Position = 0)]$Path, [Parameter(Position = 1)]$Identity, [Parameter(Position = 2)]$Rights) $script:cdt42Calls.Add("grant($Path|$Identity|$Rights)") }
+
+            $run = {
+                param([string]$Iis, [bool]$Allow)
+                $script:cdt42Iis = $Iis
+                $script:cdt42Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt42Printed = New-Object System.Collections.Generic.List[string]
+                # Read only by the lifted statements: an upgrade - appsettings.json present, no -Force.
+                Set-Variable -Name isUpgrade -Value $true
+                Set-Variable -Name Force -Value ([switch]$false)
+                Set-Variable -Name ConfirmFreshInstall -Value ([switch]$false)
+                Set-Variable -Name AllowRepoint -Value ([switch]$Allow)
+                Set-Variable -Name NonInteractive -Value ([switch]$true)
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                Set-Variable -Name LogRoot -Value 'D:\example\logs'
+                Set-Variable -Name CertSubject -Value 'CN=Example'
+                Set-Variable -Name ServiceAccount -Value $null
+                Set-Variable -Name ServiceAccountPassword -Value $null
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = @($script:cdt42Calls); Printed = ($script:cdt42Printed -join "`n") }
+            }
+            $read = 'lookup(Example Site/ExampleApp)'
+
+            $same = & $run 'ExamplePool|D:\example\publish' $false
+            $same.Thrown | Should -BeNullOrEmpty -Because 'the pool and folder IIS serves the application from are the ones this upgrade names'
+            $same.Calls[0] | Should -BeExactly $read -Because 'the application is read before anything else'
+            $same.Calls | Should -Contain 'set(IIS:\AppPools\ExamplePool|managedRuntimeVersion)' -Because 'the pool step runs once the check passes'
+            $same.Calls | Should -Contain 'grant(D:\example\publish\config|EXAMPLE\svc-other|(OI)(CI)M)' -Because 'and so do the grants'
+
+            $cases = @(
+                @{ Case = 'another existing pool that runs as a user'; Iis = 'OtherPool|D:\example\publish'; Allow = $false; Expect = "IIS application Example Site/ExampleApp already exists, with app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')*An upgrade configures*" }
+                @{ Case = 'another folder'; Iis = 'ExamplePool|D:\example\other'; Allow = $false; Expect = "IIS application Example Site/ExampleApp already exists, with files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')*An upgrade configures*" }
+                @{ Case = 'another pool, with -AllowRepoint'; Iis = 'OtherPool|D:\example\publish'; Allow = $true; Expect = '*An upgrade configures*-AllowRepoint does not apply*' }
+                @{ Case = 'an application IIS cannot read'; Iis = 'throws'; Allow = $false; Expect = 'Cannot read IIS application Example Site/ExampleApp (Cannot read configuration file due to insufficient permissions)*' }
+            )
+            foreach ($c in $cases) {
+                $r = & $run $c.Iis $c.Allow
+                $r.Thrown | Should -BeLike "$($c.Expect)Nothing was deployed." -Because "an upgrade must be refused before it changes anything ($($c.Case))"
+                ($r.Calls -join ',') | Should -BeExactly $read -Because "the read is the only call - no pool read, set or creation, no folder, no grant ($($c.Case))"
+            }
+
+            $absent = & $run 'absent' $false
+            $absent.Thrown | Should -BeNullOrEmpty -Because 'an upgrade whose application is missing still goes on to create it, as before'
+            $absent.Calls[0] | Should -BeExactly $read
+            $absent.Calls | Should -Contain 'set(IIS:\AppPools\ExamplePool|startMode)'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It 'backs up the runtime config directory before the upgrade mirror (incident fix #4)' {

@@ -238,6 +238,11 @@ because both reach the branch that re-points.
   still written before a refusal; both are backups.
 - The check reads IIS once, before the prompts and the publish; a change another hand makes to the
   application between that read and the re-point is not seen.
+- **Widened by cdt-42** (`fix/cdt36`, after `493c270d`): the check now runs on every run, upgrades
+  included, and an upgrade's difference refuses whatever the switches. The statement test and the AST
+  test above were updated in place, names kept: they find the check as script-level statements, and
+  the statement test's "an upgrade makes no call at all" pin is reversed. See
+  `.agents/review/findings/cdt-42.md`.
 
 ## Reviewer comments
 
