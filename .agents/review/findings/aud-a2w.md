@@ -7,7 +7,7 @@ of them. (2) When the Finder row's room read throws (Exchange returns a differen
 the service does not catch it; the page's catch audits and notifies but writes no log line. (3) The
 row's time-zone and recipient refusals do not end "Nothing was written." - a third wording style,
 shared with `SetRoomTypeAsync`, after aud-a2v unified the two preflights.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
+**Status**: Merged `9293b77a`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
 **Commit**: `06c68f89` (fix, tests, record); plan `ee4c8c5d`; comments `4e0f61a1` (shared with psl-8, aud-a2x)
 **Reviewer**: implementer (surfaced by the aud-a2v agent, 2026-10-22, candidates 1, 3 and 4 of its hand-back)

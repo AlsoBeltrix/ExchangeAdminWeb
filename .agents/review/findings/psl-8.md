@@ -8,7 +8,7 @@ taken for a later read's error. (3) The full-suite gate imports the real ActiveD
 production probe in `ADDirectorySearchServiceTests` (the three known "AD unavailable" skips); psl-7's new
 `CreateProbeRunspace` seam would let those tests use a stand-in, removing the suite's one live-module
 dependency.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; fixed on branch, not merged, not pushed; review pending
+**Status**: Merged `9293b77a`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
 **Commit**: `f5e14730` (fix, tests, record); plan `ee4c8c5d`; comments `4e0f61a1` (shared with aud-a2w, aud-a2x)
 **Reviewer**: implementer (surfaced by the psl-7/a28q/a26o agent, 2026-10-22, candidates 1, 2 and 5 of its hand-back)
