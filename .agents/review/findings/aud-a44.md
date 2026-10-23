@@ -7,7 +7,7 @@ misleading (aud-a28t added `TryGetModuleEnabled` for exactly this). (2) In `Mail
 but audit logging failed: {ex.Message}": it says self-grant for a check that could not be completed
 (aud-a28y) and shows a raw exception message; since aud-a28q the writers do not throw, so the branch is
 nearly dead, but the text is wrong where it can run.
-**Status**: Merged `fce22146`; closed on guard proof; codex review pending
+**Status**: Complete; merged `fce22146`; codex perm-batch-5 raised two MEDIUMs, admitted as aud-a52
 **Branch**: `worktree-agent-ac928f0732402c4c5`
 **Commit**: `8a90e8fa` (fix, tests, record); plan `1272a8cf`; comments `bce8d047`; after aud-a43 `4cc5756b`
 **Reviewer**: implementer (surfaced by the aud-a28y/a28x/a26t agent, 2026-10-22, candidates 5 and 6 of its hand-back)
