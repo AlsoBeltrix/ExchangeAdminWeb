@@ -1002,6 +1002,18 @@ try {
             }
         }
 
+        # cdt-49. A -AllowRepoint move takes the instance IIS runs today down when the application is
+        # re-pointed just below - IIS unloads an application whose pool or folder changes - which is
+        # before any pool is stopped. So that instance's active bulk jobs are reported here, naming it;
+        # the check before the stop further down then reads the instance the stop acts on.
+        $movedOffPool = "$($existingApplication.applicationPool)"
+        $movesApplication = $AllowRepoint -and $null -ne $existingApplication -and
+            ($movesFolder -or -not [string]::Equals($movedOffPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase))
+        if ($movesApplication) {
+            Write-Host "       Active bulk jobs of the instance IIS runs today, under app pool '$movedOffPool' with its files at '$servingFolder': re-pointing the application interrupts them." -ForegroundColor DarkGray
+            Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
+        }
+
         # Web application
         Write-Step "Configuring web application: $ParentSite/$AppAlias"
 
@@ -1044,8 +1056,15 @@ try {
 
         # Stop pool before file swap
         Write-Step "Stopping app pool for file deployment"
-        # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
+        # Warn (do not block) if a durable bulk job is active - recycling interrupts it. The jobs read
+        # are those of the instance the stop acts on: -AppPoolName, which now serves -PublishPath
+        # (cdt-49). Outside a move that is the serving folder, as before; in a move whose folder stays,
+        # it is the folder just reported above, so it is not read twice.
+        $stoppedConfigDir = Join-Path $PublishPath "config"
+        if (-not $movesApplication -or -not (Test-SamePhysicalFolder -Path $stoppedConfigDir -Other $runtimeConfigDir)) {
+            Write-Host "       Active bulk jobs of app pool '$AppPoolName', with its files at '$PublishPath', which is stopped next:" -ForegroundColor DarkGray
+            Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $stoppedConfigDir -AppPath $StagingPath | Out-Null
+        }
         # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
         # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
         # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an

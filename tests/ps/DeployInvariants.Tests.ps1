@@ -1399,6 +1399,84 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'reports the active jobs of the instance a -AllowRepoint move takes down before the re-point, and checks the stopped pool''s own (cdt-49)' {
+        # The one check came after the re-point - which already took the instance IIS ran down - and read
+        # the serving folder whatever pool the stop then acted on. The fresh-install branch's real
+        # statements from the move report through the check before the stop, with IIS and the jobs
+        # check stubbed, each call recorded in order.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $branch = @((Get-FreshInstallBranch $s).Statements)
+        $from = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i].Extent.Text -like '$movedOffPool = *') { $i } })
+        # Up to the statement right before the binding read, whatever the check before the stop reads.
+        $bound = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i].Extent.Text -like '$boundPool = *') { $i } })
+        $from.Count | Should -Be 1 -Because 'one statement of the branch starts the move report'
+        $bound.Count | Should -Be 1
+        $to = @($bound[0] - 1)
+        $branch[$to[0]].Extent.Text | Should -Match 'Assert-NoActiveBulkJobsBeforeRecycle' -Because 'the jobs of the pool that is stopped are checked right before its binding is read'
+        $region = ($branch[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt49Printed.Add("$Object") }
+            ${function:Get-Website} = { param($Name, $ErrorAction) $null = $ErrorAction; [pscustomobject]@{ name = $Name } }
+            ${function:Get-WebApplication} = { param($Name, $Site, $ErrorAction) $null = $Name, $Site, $ErrorAction; $script:cdt49App }
+            ${function:Set-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name, $Value) $null = $Path, $Value; $script:cdt49Calls.Add("set($Name)") }
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $null = $Path; $true }
+            ${function:New-Item} = { $script:cdt49Calls.Add('New-Item') }
+            ${function:New-WebApplication} = { $script:cdt49Calls.Add('New-WebApplication') }
+            ${function:Set-WebConfigurationProperty} = { $script:cdt49Calls.Add('auth') }
+            ${function:Remove-WebConfigurationProperty} = { $script:cdt49Calls.Add('auth') }
+            ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $null = $AppPath; $script:cdt49Calls.Add("jobs($ConfigDir)"); 0 }
+
+            $run = {
+                param([string]$OldPool, [string]$OldFolder, [string]$Pool, [bool]$Allow, [bool]$Exists)
+                $script:cdt49Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt49Printed = New-Object System.Collections.Generic.List[string]
+                $app = $null
+                if ($Exists) { $app = [pscustomobject]@{ applicationPool = $OldPool; PhysicalPath = $OldFolder } }
+                $script:cdt49App = $app
+                $publish = 'D:\example\publish'
+                $moves = $Allow -and $Exists -and -not (Test-SamePhysicalFolder -Path $OldFolder -Other $publish)
+                $serving = $publish
+                if ($moves) { $serving = $OldFolder }
+                # Read only by the lifted statements: what the script level set before the branch.
+                Set-Variable -Name AllowRepoint -Value ([switch]$Allow)
+                Set-Variable -Name existingApplication -Value $app
+                Set-Variable -Name movesFolder -Value $moves
+                Set-Variable -Name servingFolder -Value $serving
+                Set-Variable -Name runtimeConfigDir -Value (Join-Path $serving 'config')
+                Set-Variable -Name PublishPath -Value $publish
+                Set-Variable -Name AppPoolName -Value $Pool
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name StagingPath -Value 'D:\example\staging'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = @($script:cdt49Calls | Where-Object { $_ -ne 'auth' }); Printed = ($script:cdt49Printed -join "`n") }
+            }
+
+            $both = & $run 'OldPool' 'D:\example\old' 'NewPool' $true $true
+            $both.Thrown | Should -BeNullOrEmpty
+            ($both.Calls -join ',') | Should -BeExactly 'jobs(D:\example\old\config),set(physicalPath),set(applicationPool),jobs(D:\example\publish\config)' -Because 'the instance the move takes down is reported before the re-point, and the pool that is stopped is checked from its own folder'
+            $both.Printed | Should -BeLike "*Active bulk jobs of the instance IIS runs today, under app pool 'OldPool' with its files at 'D:\example\old': re-pointing the application interrupts them.*Active bulk jobs of app pool 'NewPool', with its files at 'D:\example\publish', which is stopped next:*" -Because 'each check says which instance it read'
+
+            $poolOnly = & $run 'OldPool' 'D:\example\publish' 'NewPool' $true $true
+            ($poolOnly.Calls -join ',') | Should -BeExactly 'jobs(D:\example\publish\config),set(physicalPath),set(applicationPool)' -Because 'a pool-only move reports the instance once, before the re-point; the stopped pool now serves the same folder'
+            $poolOnly.Printed | Should -BeLike "*under app pool 'OldPool' with its files at 'D:\example\publish': re-pointing*"
+
+            $inPlace = & $run 'ExamplePool' 'D:\example\publish' 'ExamplePool' $false $true
+            ($inPlace.Calls -join ',') | Should -BeExactly 'set(physicalPath),set(applicationPool),jobs(D:\example\publish\config)' -Because 'a run that moves nothing checks once, before the stop, as before'
+
+            $fresh = & $run '' '' 'ExamplePool' $false $false
+            ($fresh.Calls -join ',') | Should -BeExactly 'New-WebApplication,jobs(D:\example\publish\config)' -Because 'a fresh install checks once, before the stop'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'backs up the runtime config directory before the upgrade mirror (incident fix #4)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
@@ -1506,9 +1584,14 @@ Describe 'deploy.ps1' {
                     $node -is [System.Management.Automation.Language.CommandAst] -and
                     $node.GetCommandName() -eq 'Assert-NoActiveBulkJobsBeforeRecycle'
                 }, $true))
-        $jobChecks.Count | Should -Be 2 -Because 'the upgrade and the fresh-install path both recycle'
+        # The upgrade's check and, since cdt-49, the fresh-install path's two: the report of the instance a
+        # -AllowRepoint move takes down (the serving folder's, $runtimeConfigDir) and the check before the
+        # stop, of the instance the stop acts on ($stoppedConfigDir, -PublishPath's config\).
+        $jobChecks.Count | Should -Be 3 -Because 'the upgrade recycles; the fresh-install path reports a moved instance and checks the stopped one'
+        $configDirs = @($jobChecks | ForEach-Object { if ($_.Extent.Text -match '-ConfigDir (\$\w+)\b') { $Matches[1] } })
+        ($configDirs | Sort-Object) -join ',' | Should -BeExactly '$runtimeConfigDir,$runtimeConfigDir,$stoppedConfigDir'
         foreach ($call in $jobChecks) {
-            $call.Extent.Text | Should -Match '-ConfigDir \$runtimeConfigDir\b'
+            $call.Extent.Text | Should -Match '-ConfigDir \$(runtimeConfigDir|stoppedConfigDir)\b'
         }
     }
 
