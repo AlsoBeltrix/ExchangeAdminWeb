@@ -50,3 +50,13 @@ groups. (11) `Services/ExchangeGroupMembers.cs` 140: a dynamic distribution grou
 matches nobody returns zero rows and is refused as incomplete, so an empty dynamic group can never be granted
 while empty; distinguish "not calculated/unavailable" from an empty calculated membership if Exchange offers a
 signal, else document the refusal.
+
+## Also held (aud-a73 agent, 2026-10-23) - LOW
+
+(12) `SetCalendarPermissionOnPremAsync` and `RemoveCalendarPermissionOnPremAsync` let a cmdlet refusal out as an
+exception rather than a failed result, so a write Exchange refused reads "could not be confirmed"; the Mailbox
+on-prem write reports a refusal through `TryRightOnPrem` - do the same. (13) `IsSuccessfulAuditResult` treats
+any result but "Failed" as a success, so an Undetermined permission row (aud-a73) counts as a success in usage
+telemetry and completes the audit's trace operation as succeeded (the aud-a28z part-5 rule kept for
+eligibility checks; `docs/UsageTelemetry-Plan.md` 343 specified `result == "Success"`) - an owner call whether
+Undetermined counts as neither.
