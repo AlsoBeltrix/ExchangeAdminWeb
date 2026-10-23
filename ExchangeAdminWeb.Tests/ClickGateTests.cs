@@ -1451,6 +1451,107 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void BlankCommentsReadsAnElementAfterABraceLessHeaderAsMarkup()
+    {
+        // kd-42. After a brace-less control-flow header the statement is markup when it is a tag.
+        // Razor refuses that in a page (RZ1008), but read as C# the element's text was code: the
+        // brace in each one below ended its body early and the comment after it stayed readable.
+        // Each comment names isBusy = true. The last body is the control: a ")" that closes no
+        // header is not a statement start, so "(limit) <b ?" still compares.
+        var page = string.Join("\n",
+            "@if (open)",
+            "{",
+            "    if (rows > 0) <p>if } brace</p>",
+            "    // after a brace-less if: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    if (rows > 1) Count(); else <p>else } brace</p>",
+            "    // after a brace-less else: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    foreach (var cell in cells) <td>foreach } brace</td>",
+            "    // after a brace-less foreach: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    for (var i = 0; i < rows; i++) <span>for } brace</span>",
+            "    // after a brace-less for: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    while (Next()) <em>while } brace</em>",
+            "    // after a brace-less while: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    var pick = (limit) <b ? 1 : 2;",
+            "    // after a parenthesised comparison: isBusy = true;",
+            "}",
+            "<p>after</p>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private bool open;",
+            "    private int rows;",
+            "    private int limit;",
+            "    private int b;",
+            "    private int[] cells = [];",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("after a", text, StringComparison.Ordinal);
+        Assert.Contains("if (rows > 0) <p>if } brace</p>", text, StringComparison.Ordinal);
+        Assert.Contains("else <p>else } brace</p>", text, StringComparison.Ordinal);
+        Assert.Contains("<td>foreach } brace</td>", text, StringComparison.Ordinal);
+        Assert.Contains("<span>for } brace</span>", text, StringComparison.Ordinal);
+        Assert.Contains("<em>while } brace</em>", text, StringComparison.Ordinal);
+        Assert.Contains("var pick = (limit) <b ? 1 : 2;", text, StringComparison.Ordinal);
+        Assert.Contains("<p>after</p>", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksHtmlCommentsInAnAtCodeTemplate()
+    {
+        // kd-42. A render-fragment template in @code is markup inside a code region, so an HTML
+        // comment in it is a comment: one holding a whole button, and one whose text has a "//" that
+        // the region's Roslyn view reads as C# and blanks to the end of its line, "-->" included.
+        // Elsewhere in @code a "<!--" is a string's text and stays, even in a string holding a
+        // template's text.
+        var page = string.Join("\n",
+            "<table>@Row</table>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private string before = \"<!-- a string before -->\";",
+            "    private string quoted = \"@<b><!-- a string holding a template --></b>\";",
+            "    private RenderFragment Row => @<tr>",
+            "        <!-- a template comment: <button @onclick=\"StageDeleteSelected\">old</button> -->",
+            "        <td><button @onclick=\"Go\" disabled=\"@isBusy\">Go</button></td>",
+            "        <!-- see https://example.test/why -->",
+            "    </tr>;",
+            "    // after the template: isBusy = true;",
+            "    private string after = \"<!-- a string after -->\";",
+            "    private void Go() { }",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("StageDeleteSelected", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("template comment", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("see https", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.Contains("<td><button @onclick=\"Go\" disabled=\"@isBusy\">Go</button></td>", text, StringComparison.Ordinal);
+        Assert.Contains("</tr>;", text, StringComparison.Ordinal);
+        Assert.Contains("\"<!-- a string before -->\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"@<b><!-- a string holding a template --></b>\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"<!-- a string after -->\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because

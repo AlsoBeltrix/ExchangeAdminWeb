@@ -80,6 +80,11 @@ public sealed class ClickGateSource
     /// kd-31. So are the markup's HTML comments (<see cref="BlankHtmlComments"/>): what one holds is
     /// never a control, so a handler or a flag it names must not be read as one.
     /// </para>
+    /// <para>
+    /// kd-42. And so are the HTML comments in an @code block's render-fragment templates, which are
+    /// markup inside a code region; and in a control-flow body, an element after a brace-less header
+    /// ("if (x) &lt;p&gt;...&lt;/p&gt;") is read as markup, not as code.
+    /// </para>
     /// </remarks>
     public static string BlankComments(string source) =>
         BlankControlFlowComments(source, BlankHtmlComments(source, RazorSyntax.ComponentCommentsBlanked(source)));
@@ -155,6 +160,9 @@ public sealed class ClickGateSource
     private static readonly Regex ControlFlowAt =
         new(@"\G@(?:if|foreach|for|while|switch|lock|using|do|try)\b", RegexOptions.Compiled);
 
+    private static readonly Regex StatementKeyword =
+        new(@"\G(?:if|else|foreach|for|while|do|using|lock|fixed)\b", RegexOptions.Compiled);
+
     private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
     {
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
@@ -165,17 +173,29 @@ public sealed class ClickGateSource
     /// <paramref name="buffer"/>; returns the index after its closing brace, or -1 if it never closes.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// kd-31: a "&lt;" opens markup only where a statement can begin - at the body's start, after a
     /// "{", "}", ";" or a label's ":", after a skipped element or "@:" line, or straight after a
     /// template's "@" - and only when it has a tag's shape (<see cref="IsTagShape"/>). Elsewhere it
     /// is C#: "count&lt;limit" compares and "List&lt;string&gt;" is generic, and reading either as a tag
     /// lost the rest of the body.
+    /// </para>
+    /// <para>
+    /// kd-42: so can one after "else" or "do", or after the ")" that closes the header of an "if",
+    /// "for", "foreach", "while", "using", "lock" or "fixed" - a brace-less body. Razor refuses markup
+    /// there in a compiled page (RZ1008), so only text that is not one, a fixture, can hold it; read
+    /// as C#, the element's text was code and a brace in it ended the body early. Any other ")" is
+    /// not a statement start: "(a) &lt;b ? x : y" compares.
+    /// </para>
     /// </remarks>
     private static int WalkCodeBody(string source, string blanked, char[] buffer, int open)
     {
         var depth = 1;
         var i = open + 1;
         var statementStart = true;
+        var parens = 0;
+        var headers = new Stack<int>();
+        var headerPending = false;
         while (i < source.Length)
         {
             var c = source[i];
@@ -237,10 +257,33 @@ public sealed class ClickGateSource
                     return i;
                 statementStart = true;
             }
+            else if (statementStart && StatementKeyword.Match(source, i) is { Success: true } keyword)
+            {
+                // kd-42. "else" and "do" leave a statement start; a header keyword waits for its "(".
+                i += keyword.Length;
+                headerPending = keyword.Value is not ("else" or "do");
+                statementStart = !headerPending;
+            }
             else
             {
                 i++;
-                statementStart = c is ';' or ':';
+                var closesHeader = false;
+                if (c == '(')
+                {
+                    parens++;
+                    if (headerPending)
+                        headers.Push(parens);
+                }
+                else if (c == ')')
+                {
+                    closesHeader = headers.Count > 0 && headers.Peek() == parens;
+                    if (closesHeader)
+                        headers.Pop();
+                    parens--;
+                }
+
+                headerPending = false;
+                statementStart = closesHeader || c is ';' or ':';
             }
         }
 
@@ -337,17 +380,39 @@ public sealed class ClickGateSource
     /// "&lt;!--" outside the @code regions, not already blanked, through its "--&gt;". One that never
     /// closes is left alone rather than taken to the end of the file.
     /// </summary>
+    /// <remarks>
+    /// kd-42. Inside an @code region a render-fragment template is markup too (<see cref="TemplatesIn"/>),
+    /// and an HTML comment in one is blanked through the first "--&gt;" before the template ends - found
+    /// in the source, because the region's Roslyn view reads a "//" in the comment's text as a C#
+    /// comment and has already blanked the rest of that line. Anywhere else in a region a "&lt;!--" is
+    /// C# text, a string's contents, and stays.
+    /// </remarks>
     private static string BlankHtmlComments(string source, string blanked)
     {
         var buffer = blanked.ToCharArray();
         var parsed = RazorSyntax.Parse(source);
         var regions = parsed.IsRazor ? parsed.Regions.Select(r => r.Raw).ToList() : [];
+        var templates = regions.SelectMany(r => TemplatesIn(source, blanked, r.Start, r.End)).ToList();
 
         for (var at = blanked.IndexOf("<!--", StringComparison.Ordinal); at >= 0;
              at = blanked.IndexOf("<!--", at + 4, StringComparison.Ordinal))
         {
             if (regions.Any(r => r.Contains(at)))
+            {
+                var template = templates.FindIndex(t => at >= t.Start && at < t.End);
+                if (template < 0)
+                    continue;
+
+                var end = templates[template].End;
+                var inTemplate = source.IndexOf("-->", at + 4, Math.Max(0, end - at - 4), StringComparison.Ordinal);
+                if (inTemplate >= 0)
+                {
+                    BlankSpan(buffer, at, inTemplate + 3);
+                    at = inTemplate;
+                }
+
                 continue;
+            }
 
             var close = blanked.IndexOf("-->", at + 4, StringComparison.Ordinal);
             if (close < 0)
@@ -358,6 +423,43 @@ public sealed class ClickGateSource
         }
 
         return new string(buffer);
+    }
+
+    /// <summary>
+    /// kd-42. The render-fragment templates in the @code region from <paramref name="start"/> to
+    /// <paramref name="end"/>: each "@&lt;" at code level - not in a comment or a literal - through the
+    /// end of the element it opens. One whose element does not end inside the region is not taken.
+    /// </summary>
+    private static List<(int Start, int End)> TemplatesIn(string source, string blanked, int start, int end)
+    {
+        var templates = new List<(int Start, int End)>();
+        var i = start;
+        while (i < end)
+        {
+            var c = source[i];
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+            if (blanked[i] != c || char.IsWhiteSpace(c))
+            {
+                i++;
+            }
+            else if (c == '@' && next == '<' && IsTagShape(blanked, i + 1))
+            {
+                var element = EndOfElement(blanked, i + 1);
+                if (element <= end)
+                    templates.Add((i + 1, element));
+                i = element <= end ? element : i + 2;
+            }
+            else if (c is '"' or '\'' || (c is '@' or '$' && next is '"' or '$' or '@'))
+            {
+                i += Math.Max(1, SyntaxFactory.ParseToken(source, i).Span.Length);
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return templates;
     }
 
     /// <summary>After any whitespace, then a parenthesised header's matching ")" if one opens there.</summary>
