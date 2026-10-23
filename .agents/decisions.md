@@ -5,21 +5,14 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
-### 2026-10-23 - The Directory Read Credential is the privileged write secret; the held backlog is worked over the weekend
+### 2026-10-23 - The Directory Read Credential is the privileged write secret
 
-Owner rulings 2026-10-23, after the fix-everything hand-over. (1) "reading AD is not restricted here" and "we do
-not store unrestricted, non-privileged secrets in secret server": the Admin Settings "Directory Read
+Owner ruling 2026-10-23, after the fix-everything hand-over: "reading AD is not restricted here" and "we do
+not store unrestricted, non-privileged secrets in secret server"; the Admin Settings "Directory Read
 Credential (Delinea Secret ID)" will be set to the same secret the privileged on-premises writes use ("I'll
 just keep it the same secret as the privileged writes"). The code keeps its fail-closed shape (no credential,
 no group check); this environment supplies the credential. Recorded as an environment fact for triage, not as
-a code assumption (Invariant 7). (2) "what lows are left? ... may as well do all the lows over the weekend":
-the items held by the 2026-10-23 stopping rule (every index row whose Status says so, including the three
-never-dispatched MEDIUMs aud-a2e, cdt-36 and aud-a29g that the 2026-10-21 go already covered) are released
-for implementation now, under the same arrangement (Opus 5.5 agents in worktrees, one finding per commit,
-mutation proof, codex review per merged group). aud-a2e reverses the ProtectedGroupWriteTarget-Plan scope
-that excluded Conference Rooms: its room-list group write is checked against Protected Group Targets like
-every other mutating module (Known Failure Class 3; the Constitution lists only two exemptions). Deployment
-stays the owner's; dev may deploy any green master while this runs.
+a code assumption (Invariant 7). The held LOW backlog stays held: the owner asked what was left and gave no go.
 
 ### 2026-10-23 - The fix-everything loop has a stopping rule
 
