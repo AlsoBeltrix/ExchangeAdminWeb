@@ -319,6 +319,8 @@
             }
             else
             {
+                // aud-a41. The toggle written, and the baseline after it, are the one this save began with: the write runs off
+                // the circuit, since it can wait up to the store's busy timeout for a lock held elsewhere.
                 var wanted = moduleEnabled;
                 var outcome = await Task.Run(() => Enablement.SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = wanted }));
                 if (outcome.StoreCorrupt)
@@ -491,6 +493,8 @@
             var changed = wanted.Keys
                 .Where(k => !string.Equals(wanted[k], (exoShown.GetValueOrDefault(k) ?? "").Trim(), StringComparison.Ordinal))
                 .ToList();
+            // aud-a41. Built here, on the circuit, from this page's load; the write itself runs off the circuit, as it can wait up
+            // to the store's busy timeout for a lock held elsewhere. What it saved is the locals, so a field typed meanwhile stays.
             var loadedValues = changed.ToDictionary(k => k, k => exoStored.GetValueOrDefault(k) ?? "", StringComparer.OrdinalIgnoreCase);
             var wantedValues = changed.ToDictionary(k => k, k => wanted[k], StringComparer.OrdinalIgnoreCase);
             var outcome = await Task.Run(() => ModuleConfigSvc.SaveChangedValues(ExoConnectionPool.ConfigModuleKey, loadedValues, wantedValues));

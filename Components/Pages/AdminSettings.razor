@@ -521,6 +521,11 @@
     }
 
     /// <summary>The five rule baselines become <paramref name="rules"/> - what the store holds after a save.</summary>
+    /// <remarks>
+    /// Required after saving, not merely tidy: this save does not reload the page, so a stale baseline would count the edits
+    /// just persisted all over again on the next one. What was saved, not the lists as they are now (aud-a41): the save's
+    /// store calls run off the circuit, and an edit made while they waited must still count as unsaved.
+    /// </remarks>
     private void SetRulesBaseline(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData rules)
     {
         ppUsersBaseline = rules.Users.ToList();
@@ -653,6 +658,8 @@
         // a refused or failed attempt to change who can use a module, or who is protected, left no
         // trace. Read above the try, so the catch has the ip too.
         var ip = ClientInfo.GetIpForUser(currentUser);
+        // aud-a41. What this save writes, and what its records name, taken before anything waits: its write runs off the
+        // circuit, and a toggle switched while it waits is not part of this save - it stays unsaved.
         var changes = ChangedToggles();
         try
         {
@@ -687,6 +694,8 @@
 
             // aud-a28k. Only the toggles the admin changed, each decided against its row under the write lock:
             // writing the whole loaded map switched back every toggle changed elsewhere since the page loaded.
+            // aud-a41. Off the circuit, as every write on this page: a write waits up to the store's busy timeout for a lock
+            // held elsewhere - the other instance's save, or another admin's - and called on the circuit it froze the page.
             var outcome = await Task.Run(() => Enablement.SetModulesEnabled(changes));
             if (outcome.StoreCorrupt)
             {
@@ -710,6 +719,8 @@
 
             // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
             // the operator to confirm leaving a page they just saved.
+            // aud-a41. The baseline takes the toggles this save wrote, and the recount keeps any switched while it waited:
+            // the guard then asks before the reload drops them, which is the one prompt it should give.
             foreach (var (moduleId, enabled) in changes)
                 moduleEnablementBaseline[moduleId] = enabled;
             RecountModules();
@@ -777,6 +788,7 @@
             }
 
             var previousLevel = ExtendedLog.CurrentLevel;
+            // aud-a41. The level written and recorded is the one chosen when this save began; its write runs off the circuit.
             var level = selectedLogLevel;
             await Task.Run(() => ExtendedLog.SetLevel(level));
 
@@ -1191,6 +1203,9 @@
                 return;
             }
 
+            // aud-a41. What this save writes, taken before its first store call. Each of its three calls runs off the circuit - a
+            // call can wait up to the store's busy timeout for a lock held elsewhere, and on the circuit that wait froze the page -
+            // so the admin can edit while it runs, and an edit made then is not part of this save.
             var loadedSecretId = ppDirectoryReadSecretIdBaseline;
             var newConfig = new ProtectedPrincipalConfig
             {
@@ -1284,6 +1299,8 @@
             // lists: another save may have changed only an entry's casing. The lists become the rows under the lock -
             // the rows the version below is of - so the page shows them, and a later save, which passes the version
             // check, writes them rather than this page's stale casing.
+            // aud-a41. The lists take those rows only while they still hold what this save wrote: an edit made while it waited
+            // stays on the page. The baseline becomes what the store now holds, so the recount below still counts that edit.
             var rulesNow = alreadyApplied && outcome.After is { } held ? held : RulesOf(newConfig);
             if (ListsHold(newConfig))
                 ShowRules(rulesNow);
@@ -1361,6 +1378,8 @@
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the directory-read secret id change"); }
 
             var stored = outcome.After.GetValueOrDefault(ProtectedPrincipalService.DirectoryReadSecretConfigKey) ?? "";
+            // aud-a41. The field takes the stored value only while it still holds what this save wrote; a value typed while the
+            // write waited stays, counted unsaved against the new baseline.
             ppDirectoryReadSecretIdBaseline = stored;
             if (string.Equals(ppDirectoryReadSecretId.Trim(), secretId, StringComparison.Ordinal))
                 ppDirectoryReadSecretId = stored;

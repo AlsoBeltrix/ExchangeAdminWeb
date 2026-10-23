@@ -878,7 +878,9 @@
         await save;
     }
 
-    // aud-a41. The save the Save button started, until it completes.
+    // aud-a41. The save the Save button started, until it completes. The page is reused when its route moves to another module,
+    // and a save's store write runs off the circuit, so another module can be opened while one waits; the parameter load waits
+    // for this first, so a save's bookkeeping lands on the state of the module it saved and not on the next one's.
     private Task? saveInFlight;
 
     /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
@@ -947,6 +949,7 @@
     {
         if (ModuleId == loadedModuleId) return;
 
+        // aud-a41. A save on the module shown finishes before another module is loaded over it (see saveInFlight).
         if (saveInFlight is { IsCompleted: false } inFlight)
         {
             await Task.WhenAny(inFlight);
@@ -1203,6 +1206,8 @@
             // value this page loaded. Replacing the whole config from the page's copy wrote back every key changed
             // elsewhere since the load - keys the page does not show, such as the ExcludedUsers protection list,
             // included.
+            // aud-a41. Taken before the write, which runs off the circuit - it can wait up to the store's busy timeout for a lock
+            // held elsewhere - and the baseline below takes what was written, so a value typed while it waited stays unsaved.
             var changed = ChangedConfigKeys();
             var loadedValues = changed.ToDictionary(k => k, k => configBaseline.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase);
             var wantedValues = changed.ToDictionary(k => k, k => currentConfigState.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase);
@@ -1314,6 +1319,8 @@
             // aud-a28k. This module only, and only when toggled, decided against its row under the write lock:
             // the whole-map write it replaces switched back any module changed elsewhere between its read and
             // its write.
+            // aud-a41. The toggle written, and the baseline after it, are the one this save began with; the write runs off the
+            // circuit, and a toggle switched while it waits stays counted for the reload's guard.
             var wanted = moduleEnabled;
             var changes = wanted == moduleEnabledBaseline
                 ? new Dictionary<string, bool>()
@@ -1434,6 +1441,8 @@
             var loaded = edited.Keys.ToDictionary(
                 a => a, a => (accessBaseline.GetValueOrDefault(a) ?? new List<string>()).ToArray(), StringComparer.OrdinalIgnoreCase);
 
+            // aud-a41. Off the circuit, as every write on this page: it can wait up to the store's busy timeout for a lock held
+            // elsewhere. The snapshot above is what it writes.
             var outcome = await Task.Run(() => SectionAccess.SaveEditedAliases(loaded, edited));
             if (outcome.Status == SectionAccessSaveStatus.StoreCorrupt)
             {
@@ -1997,6 +2006,8 @@
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
 
+            // aud-a41. Taken before the write, which runs off the circuit. This section's count is a tally, not a diff, so after
+            // the save it keeps only the edits made while the write waited.
             var version = allowlistVersion;
             var performedBy = currentUser;
             var editsSaved = dirty.SectionCount(SecAttrs);
