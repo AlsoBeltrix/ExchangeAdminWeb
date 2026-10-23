@@ -4,11 +4,15 @@ using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Progress;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -634,14 +638,19 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     [InlineData("a step before the write", "The change was not made: a step before the write failed: the cmdlet's own words. Nothing was written.")]
     [InlineData("the write", "Whether the change was made could not be confirmed: the write failed: the cmdlet's own words. Check the permissions before trying again.")]
     [InlineData("a step after the write", "The change was written, but a step after the write failed: the cmdlet's own words. Check the permissions to confirm the result.")]
+    [InlineData("the connection to Exchange", "Nothing was written: the connection to Exchange failed: the cmdlet's own words.")]
     public void TheStepBanner_SaysWhatCouldHaveBeenWritten_InTheCausesOwnWords(string step, string banner)
     {
+        // aud-a76: at the connection the throw is the service's word that nothing was sent, the cause inside it - and the
+        // banner is the cause's words, not the wrapper's, which restates only the cause's raw message.
+        Exception Thrown(Exception cause) =>
+            step == PermissionChangeFailure.TheConnection ? new PermissionWriteNotSubmittedException(cause) : cause;
         var failure = new InvalidOperationException("raw-text-a53");
         failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the cmdlet's own words.", "a second record" };
 
-        Assert.Equal(banner, PermissionChangeFailure.Banner(step, failure));
+        Assert.Equal(banner, PermissionChangeFailure.Banner(step, Thrown(failure)));
         Assert.Equal(banner.Replace("the cmdlet's own words", "plain text", StringComparison.Ordinal),
-            PermissionChangeFailure.Banner(step, new InvalidOperationException("plain text.")));
+            PermissionChangeFailure.Banner(step, Thrown(new InvalidOperationException("plain text."))));
     }
 
     // ---- aud-a59: the protected-target denial says when its row was not written; ExecuteOnPrem's catch names its step --
@@ -737,29 +746,38 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     /// <summary>
-    /// A pool for the page's own service, over the harness's stand-ins and settings: its first call - the location read -
-    /// retires the connection it runs on, and its next connect throws <paramref name="failure"/>. So the location is read and
-    /// the write's own borrow throws, as a borrow the pool refuses or a connection that cannot be had does: the one throw a
-    /// cloud write reaches its handler with, every failure inside the write being reported as a result. The validator keeps
-    /// the harness's pool.
+    /// A pool for the page's own service, over the harness's stand-ins and settings - its module config the one a test gives,
+    /// else the harness's: its first call - the location read - does <paramref name="atTheLocationRead"/> to it, once, and
+    /// every connect after its first throws <paramref name="connectFailure"/> when a test gives one. So the location is read
+    /// and the write's own borrow meets what the test arranged: a borrow the pool refuses, or a connection that cannot be
+    /// had - the one throw a cloud write reaches its handler with, every failure inside the write being reported as a result
+    /// (aud-a71). The validator keeps the harness's pool.
     /// </summary>
-    private ExoConnectionPool PoolWhoseWriteBorrowThrows(Exception failure)
+    private ExoConnectionPool PoolWhoseWriteBorrowFails(Action<ExoConnectionPool> atTheLocationRead, Exception? connectFailure = null,
+        ModuleConfigService? moduleConfig = null)
     {
         ExoConnectionPool? pool = null;
         var connects = 0;
-        pool = new ExoConnectionPool(_h.Config, _h.ModuleConfig, _h.Enablement, NullLogger<ExoConnectionPool>.Instance, _h.Trace,
+        pool = new ExoConnectionPool(_h.Config, moduleConfig ?? _h.ModuleConfig, _h.Enablement, NullLogger<ExoConnectionPool>.Instance, _h.Trace,
             (_, generation, _) =>
             {
-                if (Interlocked.Increment(ref connects) > 1)
-                    throw failure;
+                if (Interlocked.Increment(ref connects) > 1 && connectFailure is not null)
+                    throw connectFailure;
                 var runspace = _h.OpenExchangeRunspace();
-                runspace.SessionStateProxy.SetVariable("Calls", new CallsThen(_h.Calls, () => pool!.DrainPool()));
+                runspace.SessionStateProxy.SetVariable("Calls", new CallsThen(_h.Calls, () => atTheLocationRead(pool!)));
                 var ps = PowerShell.Create();
                 ps.Runspace = runspace;
                 return new PooledRunspace(runspace, ps, generation, "stand-in");
             });
         return pool;
     }
+
+    /// <summary>
+    /// <see cref="PoolWhoseWriteBorrowFails"/> whose location read retires the connection it runs on, so the write's own borrow
+    /// connects again, and that connect throws <paramref name="failure"/>.
+    /// </summary>
+    private ExoConnectionPool PoolWhoseWriteBorrowThrows(Exception failure) =>
+        PoolWhoseWriteBorrowFails(pool => pool.DrainPool(), failure);
 
     /// <summary>What the write's borrow throws here: raw text unlike the PowerShell error it carries.</summary>
     private static InvalidOperationException LostSession()
@@ -769,9 +787,18 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         return failure;
     }
 
-    /// <summary>The banner for <see cref="LostSession"/> at the write: whether the change was made could not be confirmed.</summary>
+    /// <summary>
+    /// The banner for <see cref="LostSession"/> at the write once its command was sent: whether the change was made could not
+    /// be confirmed.
+    /// </summary>
     private const string WriteNotConfirmed =
         "Whether the change was made could not be confirmed: the write failed: the session to Exchange Online was lost. Check the permissions before trying again.";
+
+    /// <summary>
+    /// aud-a76. The banner for <see cref="LostSession"/> as the write's own borrow throws it, before its command was sent:
+    /// nothing was written.
+    /// </summary>
+    private const string WriteNotSent = "Nothing was written: the connection to Exchange failed: the session to Exchange Online was lost.";
 
     /// <summary>A progress service whose activity a test can read back.</summary>
     private static (IActivityProgress Progress, IActivityHandle Activity) WatchedProgress()
@@ -782,31 +809,95 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         return (progress, activity);
     }
 
-    [Theory]
-    [MemberData(nameof(Pages))]
-    public async Task ACloudWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText(string page)
+    // ---- aud-a76: a write that failed before its command was sent is filed Failed, nothing written ---------------------
+
+    /// <summary>What a cloud write's own borrow can meet before its command is sent, on each page.</summary>
+    public static TheoryData<string, string> PagesAndRefusedBorrows => new()
     {
-        // The catch said the change could not be confirmed and recorded nothing: a write that may have applied left no row.
-        // aud-a73: and the row it then wrote was filed Failed, where the Admin Event Log's Undetermined filter did not find it.
-        var failure = LostSession();
-        using var pool = PoolWhoseWriteBorrowThrows(failure);
+        { MailboxPage, "Exchange Online disabled" }, { MailboxPage, "settings unreadable" }, { MailboxPage, "connect busy" },
+        { MailboxPage, "pool stopped" }, { MailboxPage, "connection lost" },
+        { CalendarPage, "Exchange Online disabled" }, { CalendarPage, "settings unreadable" }, { CalendarPage, "connect busy" },
+        { CalendarPage, "pool stopped" }, { CalendarPage, "connection lost" },
+    };
+
+    /// <summary>A store whose reads fail once a test says so, as a store that cannot be read; writes pass.</summary>
+    private sealed class StoreThatFailsWhenTold(IConfigStore inner) : IConfigStore
+    {
+        private volatile bool _failing;
+
+        public void Fail() => _failing = true;
+
+        public long GetChangeToken() => inner.GetChangeToken();
+
+        public T Read<T>(Func<SqliteConnection, T> read) =>
+            _failing ? throw new InvalidOperationException("config store unreadable") : inner.Read(read);
+
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => inner.Write(write);
+
+        public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
+    }
+
+    /// <summary>
+    /// A pool for a cloud write whose own borrow meets <paramref name="refusal"/>, arranged at the location read, and in
+    /// <paramref name="cause"/> the words the pool gives it in: Exchange Online switched off; the ExchangeOnline rows, read
+    /// through a store of their own, unreadable from then on; the connect refused as busy, in <c>CreateConnected</c>'s own
+    /// words for its connect gate; the pool stopped; or the connection lost (<see cref="LostSession"/>, whose captured words
+    /// are the cause).
+    /// </summary>
+    private ExoConnectionPool PoolWhoseWriteBorrowMeets(string refusal, out string cause)
+    {
+        switch (refusal)
+        {
+            case "Exchange Online disabled":
+                cause = "Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.";
+                return PoolWhoseWriteBorrowFails(_ =>
+                    _h.Enablement.SaveEnablement(new Dictionary<string, bool> { [ExoConnectionPool.ConfigModuleKey] = false }));
+            case "settings unreadable":
+                var rows = new StoreThatFailsWhenTold(TestConfigStore.Create(_h.Dir));
+                var env = Substitute.For<IWebHostEnvironment>();
+                env.ContentRootPath.Returns(_h.Dir);
+                cause = "Exchange Online settings could not be read: " + SettingsStoreText.ServiceModuleConfig(ExoConnectionPool.ConfigModuleKey);
+                return PoolWhoseWriteBorrowFails(_ => rows.Fail(), moduleConfig: new ModuleConfigService(
+                    new ModuleCatalog(), env, new ModuleConfigRepository(rows), NullLogger<ModuleConfigService>.Instance));
+            case "connect busy":
+                cause = "Exchange service is busy establishing connections. Please try again shortly.";
+                return PoolWhoseWriteBorrowThrows(new InvalidOperationException(cause));
+            case "pool stopped":
+                cause = new ObjectDisposedException(typeof(ExoConnectionPool).FullName).Message;
+                return PoolWhoseWriteBorrowFails(pool => pool.Dispose());
+            default:
+                cause = "the session to Exchange Online was lost";
+                return PoolWhoseWriteBorrowThrows(LostSession());
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndRefusedBorrows))]
+    public async Task ACloudWriteWhoseBorrowIsRefused_IsRecordedAsFailed_NothingWasWritten(string page, string refusal)
+    {
+        // aud-a71: the catch said the change could not be confirmed and recorded nothing; aud-a73 filed its row Undetermined.
+        // But a cloud write's one throw is its own borrow - the pool refusing it, or the connection failing - before any
+        // command was sent (aud-a76): nothing can have been written, so the row is Failed and says so, in the pool's words.
+        using var pool = PoolWhoseWriteBorrowMeets(refusal, out var cause);
         var (progress, activity) = WatchedProgress();
 
         var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress, pool: pool);
 
+        var banner = $"Nothing was written: the connection to Exchange failed: {cause.Trim().TrimEnd('.')}.";
         Assert.False(result.Success);
-        Assert.Equal(WriteNotConfirmed, result.Message);
+        Assert.Equal(banner, result.Message);
         Assert.DoesNotContain("raw-text-a71", result.Message, StringComparison.Ordinal);
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
         Assert.Equal(page == MailboxPage ? "FullAccess" : "Reviewer", Text(record, page == MailboxPage ? "permissionType" : "accessRight"));
-        Assert.Equal("Undetermined", Text(record, "result"));
-        Assert.Equal(WriteNotConfirmed, Text(record, "error"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
         Assert.Equal(Target, Text(record, "target"));
         Assert.Equal(Other, Text(record, "affectedUser"));
         Assert.Equal(TargetMailbox.ToString("D"), Text(record, ValidatedMailbox.AuditKey));
-        activity.Received(1).Complete(false, WriteNotConfirmed);
-        Assert.Same(failure, Assert.Single(warnings).Exception);
+        activity.Received(1).Complete(false, banner);
+        var thrown = Assert.IsType<PermissionWriteNotSubmittedException>(Assert.Single(warnings).Exception);
+        Assert.Equal(Assert.IsAssignableFrom<Exception>(thrown.InnerException).Message, thrown.Message);
         Assert.NotEmpty(_h.CallsTo("Get-Mailbox"));
         Assert.Empty(_h.Writes);
     }
@@ -822,7 +913,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         using (HoldTheAuditFile())
             (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress, pool: pool);
 
-        var banner = WriteNotConfirmed + " The audit row could not be written.";
+        var banner = WriteNotSent + " The audit row could not be written.";
         Assert.False(result.Success);
         Assert.Equal(banner, result.Message);
         activity.Received(1).Complete(false, banner);
@@ -841,13 +932,43 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter(), grantee: Other, pool: pool);
 
         Assert.False(result.Success);
-        Assert.Equal(WriteNotConfirmed + " The audit row could not be written.", result.Message);
+        Assert.Equal(WriteNotSent + " The audit row could not be written.", result.Message);
         Assert.Equal(2, warnings.Count);
-        Assert.Same(failure, warnings[0].Exception);
+        Assert.Same(failure, Assert.IsType<PermissionWriteNotSubmittedException>(warnings[0].Exception).InnerException);
         Assert.IsType<NullReferenceException>(warnings[1].Exception);
         Assert.Contains("the failed permission change", warnings[1].Message, StringComparison.Ordinal);
         Assert.Contains(Target, warnings[1].Message, StringComparison.Ordinal);
         Assert.Empty(_h.Writes);
+    }
+
+    [Fact]
+    public async Task ACloudRemovalWhoseRetryCannotConnect_AfterItsCommandWasSent_IsRecordedAsUndetermined()
+    {
+        // aud-a76. The one cloud write that can throw after its command was sent: the Calendar removal, which the pool runs
+        // again when its session answers with the pre-flight error. Here the first attempt sends Remove-MailboxFolderPermission,
+        // which answers so, and the retry's connect fails. Nothing rests "nothing was written" on the pool's reading of that
+        // error: the command was sent, so the row is Undetermined, as its banner says.
+        var failure = LostSession();
+        using var pool = PoolWhoseWriteBorrowFails(_ => { }, failure);
+        _h.Failures["Remove-MailboxFolderPermission"] = "You must call Connect-ExchangeOnline before calling any other cmdlet.";
+        var logger = new CapturingLogger<CalendarPermissions>();
+        var page = new CalendarPermissions();
+        Wire(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+        Set(page, "CalendarService", new CalendarPermissionService(pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
+        SetField(page, "tabIndex", 1);
+        SetField(page, "affectedUser", Other);
+
+        await Call(page, "SubmitSingle");
+
+        var result = Assert.IsType<PermissionResult>(GetField<PermissionResult>(page, "result"));
+        Assert.False(result.Success);
+        Assert.Equal(WriteNotConfirmed, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("RemoveCalendar", Text(record, "action"));
+        Assert.Equal("Undetermined", Text(record, "result"));
+        Assert.Equal(WriteNotConfirmed, Text(record, "error"));
+        Assert.Same(failure, Assert.Single(logger.Warnings).Exception);
+        Assert.Single(_h.CallsTo("Remove-MailboxFolderPermission"));
     }
 
     // ---- aud-a73: a write whose outcome is unknown is filed Undetermined; a step before or after it, Failed --------------
@@ -855,9 +976,27 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     [Theory]
     [InlineData(PermissionChangeFailure.BeforeTheWrite, AuditResult.Failed)]
     [InlineData(PermissionChangeFailure.TheWrite, AuditResult.Undetermined)]
+    [InlineData(PermissionChangeFailure.TheConnection, AuditResult.Failed)]
     [InlineData(PermissionChangeFailure.AfterTheWrite, AuditResult.Failed)]
     public void TheStepsAuditResult_IsUndetermined_OnlyAtTheWrite(string step, AuditResult filed) =>
         Assert.Equal(filed, PermissionChangeFailure.AuditResultOf(step));
+
+    [Theory]
+    [InlineData(PermissionChangeFailure.BeforeTheWrite, true, PermissionChangeFailure.BeforeTheWrite)]
+    [InlineData(PermissionChangeFailure.BeforeTheWrite, false, PermissionChangeFailure.BeforeTheWrite)]
+    [InlineData(PermissionChangeFailure.TheWrite, true, PermissionChangeFailure.TheConnection)]
+    [InlineData(PermissionChangeFailure.TheWrite, false, PermissionChangeFailure.TheWrite)]
+    [InlineData(PermissionChangeFailure.AfterTheWrite, true, PermissionChangeFailure.AfterTheWrite)]
+    [InlineData(PermissionChangeFailure.AfterTheWrite, false, PermissionChangeFailure.AfterTheWrite)]
+    public void TheStageOfAThrow_IsTheConnection_OnlyForAWriteThatWasNeverSent(string step, bool neverSent, string stage)
+    {
+        // aud-a76: only the service's word that the write's command was never sent moves a throw at the write - to the
+        // connection, where nothing can have been written. Any other throw there may have written.
+        var cause = new InvalidOperationException("the cause");
+        Exception thrown = neverSent ? new PermissionWriteNotSubmittedException(cause) : cause;
+
+        Assert.Equal(stage, PermissionChangeFailure.StageOf(step, thrown));
+    }
 
     /// <summary>
     /// A pool for the page's own service whose Exchange Online answers, as Exchange does, that it holds no such mailbox: an
@@ -962,27 +1101,71 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Pages))]
-    public async Task AnOnPremWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText(string page)
+    public async Task AnOnPremWriteWhoseConnectFails_IsRecordedAsFailed_NothingWasWritten(string page)
     {
-        // ExecuteOnPrem's catch said the change could not be confirmed and filed its row Failed, where the Admin Event Log's
-        // Undetermined filter did not find it. The throw here is the write's connect, which sits outside every catch of the
-        // write. A throw before the write stays Failed: aud-a59's AnOnPremStepThatThrowsBeforeTheWrite_... pins it.
+        // aud-a75 filed a throw at ExecuteOnPrem's write step Undetermined, and this one with it: the write's connect, which
+        // throws before any Invoke-Command is sent. aud-a76: the service says so, so nothing can have been written - Failed,
+        // in the connect's captured words, never its raw text. A throw before the write stays Failed as before: aud-a59's
+        // AnOnPremStepThatThrowsBeforeTheWrite_... pins it.
         var failure = new InvalidOperationException("raw-text-a75");
         failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the on-premises session could not be opened" };
 
         var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremConnect: failure);
 
-        var banner = "Whether the change was made could not be confirmed: the write failed: the on-premises session could not be opened. Check the permissions before trying again.";
+        var banner = "Nothing was written: the connection to Exchange failed: the on-premises session could not be opened.";
         Assert.False(result.Success);
         Assert.Equal(banner, result.Message);
         Assert.DoesNotContain("raw-text-a75", result.Message, StringComparison.Ordinal);
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
-        Assert.Equal("Undetermined", Text(record, "result"));
+        Assert.Equal("Failed", Text(record, "result"));
         Assert.Equal(banner, Text(record, "error"));
-        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.Same(failure, Assert.IsType<PermissionWriteNotSubmittedException>(Assert.Single(warnings).Exception).InnerException);
         Assert.Empty(_h.CallsTo("Invoke-Command"));
         Assert.Empty(_h.Writes);
+    }
+
+    [Fact]
+    public async Task AnOnPremWriteThatThrowsOnceSent_IsRecordedAsUndetermined_WithTheBannersText()
+    {
+        // ExecuteOnPrem's catch said the change could not be confirmed and filed its row Failed, where the Admin Event Log's
+        // Undetermined filter did not find it (aud-a75). The throw that reaches it once the write was sent (aud-a76): Calendar
+        // Permissions' remote set fails, its fallback add fails too, and the Invoke-Command throws what the command said.
+        _h.Failures["Set-MailboxFolderPermission"] = "the folder permission could not be set";
+        _h.Failures["Add-MailboxFolderPermission"] = "the folder permission could not be added";
+
+        var (result, warnings) = await ConfirmOnPrem(CalendarPage, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        var banner = "Whether the change was made could not be confirmed: the write failed: the folder permission could not be added. Check the permissions before trying again.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Undetermined", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
+        Assert.IsNotType<PermissionWriteNotSubmittedException>(Assert.Single(warnings).Exception);
+        Assert.Single(_h.CallsTo("Invoke-Command"));
+        Assert.Equal(new[] { "Set-MailboxFolderPermission", "Add-MailboxFolderPermission" }, _h.Writes);
+    }
+
+    [Fact]
+    public async Task AnOnPremRightExchangeRefuses_IsItsOwnFailedRow_AsBefore()
+    {
+        // The Mailbox Permissions counterpart, which aud-a76 leaves as it was: each right is TryRightOnPrem, so Exchange
+        // refusing one is the write's result, not a throw - its own row Failed, through the write's own record, and nothing
+        // reaches the catch. So no throw after an on-premises Mailbox Permissions command was sent reaches the catch.
+        _h.Failures["Add-MailboxPermission"] = "the grant was refused";
+
+        var (result, warnings) = await ConfirmOnPrem(MailboxPage, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Contains("the grant was refused", result.Message, StringComparison.Ordinal);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("OnPrem_AddFullAccess", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Message, Text(record, "error"));
+        Assert.Empty(warnings);
+        Assert.Single(_h.CallsTo("Invoke-Command"));
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

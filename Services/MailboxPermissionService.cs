@@ -47,7 +47,10 @@ public class MailboxPermissionService : ExchangeServiceBase
         // CSV report (and inviting a "retry" that re-runs both). Invoke(ps, tracker) still
         // flags connection errors before throwing, so RunPooledQueryAsync discards a
         // poisoned pooled connection even though the per-right catch swallows the error.
-        return RunPooledQueryAsync((ps, tracker) =>
+        // aud-a76: so the one throw that leaves is the pool's - its borrow, before the mark below - and it leaves as a
+        // PermissionWriteNotSubmittedException: nothing was sent.
+        var submission = new PermissionWriteSubmission();
+        return submission.TrackAsync(() => RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
@@ -60,6 +63,7 @@ public class MailboxPermissionService : ExchangeServiceBase
             }
 
             var outcomes = new List<RightOutcome>();
+            submission.Submitting(); // aud-a76: the first write command is invoked below
 
             if (fullAccess)
             {
@@ -89,7 +93,7 @@ public class MailboxPermissionService : ExchangeServiceBase
             }
 
             return MailboxPermissionOutcome.ForGrant(targetMailbox, user, outcomes);
-        });
+        }));
     }
 
     /// <param name="mailbox">As on <see cref="AddMailboxPermissionsAsync"/>: null refuses.</param>
@@ -99,8 +103,10 @@ public class MailboxPermissionService : ExchangeServiceBase
             return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
 
         // Per-right try/catch with aggregation - see AddMailboxPermissionsAsync for why
-        // the previous single-Fail RunAsync shape lost partial-success information.
-        return RunPooledQueryAsync((ps, tracker) =>
+        // the previous single-Fail RunAsync shape lost partial-success information, and for
+        // the mark (aud-a76).
+        var submission = new PermissionWriteSubmission();
+        return submission.TrackAsync(() => RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
@@ -113,6 +119,7 @@ public class MailboxPermissionService : ExchangeServiceBase
             }
 
             var outcomes = new List<RightOutcome>();
+            submission.Submitting(); // aud-a76: the first write command is invoked below
 
             if (fullAccess)
             {
@@ -141,7 +148,7 @@ public class MailboxPermissionService : ExchangeServiceBase
             }
 
             return MailboxPermissionOutcome.ForRevoke(targetMailbox, user, outcomes);
-        });
+        }));
     }
 
     /// <summary>
@@ -444,11 +451,15 @@ public class MailboxPermissionService : ExchangeServiceBase
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
-        var creds = await GetModuleCredentialsAsync("on-prem mailbox permission operation");
+        // aud-a76: the credentials, the throttle, the runspace, the connect and the session read come before the mark, so a
+        // throw from any of them leaves as a PermissionWriteNotSubmittedException: nothing was sent. Each right's own
+        // failure is a result (TryRightOnPrem), as before.
+        var submission = new PermissionWriteSubmission();
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation"));
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -461,6 +472,7 @@ public class MailboxPermissionService : ExchangeServiceBase
             {
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                submission.Submitting(); // aud-a76: the first Invoke-Command is sent below
 
                 var outcomes = new List<RightOutcome>();
 
@@ -502,7 +514,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle));
     }
 
     /// <summary>The on-premises revoke; bound exactly as <see cref="AddMailboxPermissionsOnPremAsync"/>.</summary>
@@ -511,11 +523,13 @@ public class MailboxPermissionService : ExchangeServiceBase
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
-        var creds = await GetModuleCredentialsAsync("on-prem mailbox permission operation");
+        // aud-a76: marked as AddMailboxPermissionsOnPremAsync is.
+        var submission = new PermissionWriteSubmission();
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation"));
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -528,6 +542,7 @@ public class MailboxPermissionService : ExchangeServiceBase
             {
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                submission.Submitting(); // aud-a76: the first Invoke-Command is sent below
 
                 var outcomes = new List<RightOutcome>();
 
@@ -569,6 +584,6 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle));
     }
 }

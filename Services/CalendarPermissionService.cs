@@ -34,7 +34,10 @@ public class CalendarPermissionService : ExchangeServiceBase
         string? calendarPath = null;
         string? resolvedMailbox = null;
 
-        return RunAsync((ps, tracker) =>
+        // aud-a76. RunAsync makes every failure of the operation a result, so the one throw that leaves is the pool's - its
+        // borrow, before the mark below - and it leaves as a PermissionWriteNotSubmittedException: nothing was sent.
+        var submission = new PermissionWriteSubmission();
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
             ValidateRecipient(ps, user);
@@ -51,6 +54,7 @@ public class CalendarPermissionService : ExchangeServiceBase
               .AddParameter("User", user)
               .AddParameter("AccessRights", level)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // aud-a76: the write command is invoked next
             try
             {
                 Invoke(ps, tracker);
@@ -66,7 +70,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
             }
-        }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null));
+        }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null)));
     }
 
     /// <param name="mailbox">As on <see cref="SetCalendarPermissionAsync"/>: null refuses.</param>
@@ -81,7 +85,10 @@ public class CalendarPermissionService : ExchangeServiceBase
         // Single-write (Remove-MailboxFolderPermission): safe to retry on a dead pooled session.
         // The preceding Get-* validations are reads. SetCalendarPermissionAsync is deliberately
         // NOT opted in: it is a Set-then-fallback-Add (two writes) per the retry-safety audit.
-        return RunAsync((ps, tracker) =>
+        // aud-a76: marked as SetCalendarPermissionAsync is. The mark outlives a retry: once a first
+        // attempt reached its command, a retry whose borrow then fails is still a submitted write.
+        var submission = new PermissionWriteSubmission();
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
             ValidateRecipient(ps, user);
@@ -92,8 +99,9 @@ public class CalendarPermissionService : ExchangeServiceBase
               .AddParameter("Identity", calendarPath)
               .AddParameter("User", user)
               .AddParameter("Confirm", false);
+            submission.Submitting(); // aud-a76: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true);
+        }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true));
     }
 
     /// <param name="actingUser">
@@ -323,11 +331,15 @@ public class CalendarPermissionService : ExchangeServiceBase
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
-        var creds = await GetModuleCredentialsAsync("on-prem calendar permission operation");
+        // aud-a76: the credentials, the throttle, the runspace, the connect and the session read come before the mark, so a
+        // throw from any of them leaves as a PermissionWriteNotSubmittedException: nothing was sent. A throw from the
+        // Invoke-Command itself, once sent, goes out as it is - a write whose outcome is unknown.
+        var submission = new PermissionWriteSubmission();
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation"));
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -352,6 +364,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("Session", session)
                   .AddParameter("ScriptBlock", script)
                   .AddParameter("ArgumentList", new object[] { mailbox.Identity, user, accessRight });
+                submission.Submitting(); // aud-a76: the Invoke-Command is sent next
                 Invoke(ps);
 
                 return new PermissionResult { Success = true, Message = $"{user} granted {accessRight} on {targetMailbox} calendar (on-premises)." };
@@ -366,7 +379,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle));
     }
 
     /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>.</summary>
@@ -375,11 +388,13 @@ public class CalendarPermissionService : ExchangeServiceBase
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
-        var creds = await GetModuleCredentialsAsync("on-prem calendar permission operation");
+        // aud-a76: marked as SetCalendarPermissionOnPremAsync is.
+        var submission = new PermissionWriteSubmission();
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation"));
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -400,6 +415,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("Session", session)
                   .AddParameter("ScriptBlock", script)
                   .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
+                submission.Submitting(); // aud-a76: the Invoke-Command is sent next
                 Invoke(ps);
 
                 return new PermissionResult { Success = true, Message = $"Calendar permissions removed for {user} on {targetMailbox} (on-premises)." };
@@ -414,6 +430,6 @@ public class CalendarPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle));
     }
 }
