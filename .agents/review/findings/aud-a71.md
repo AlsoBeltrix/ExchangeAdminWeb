@@ -6,7 +6,7 @@ single-submit write throws after the step is `PermissionChangeFailure.TheWrite`,
 no `Audit.LogMailboxPermission` / `LogCalendarPermission` row; a permission write that may have applied
 leaves no audit evidence (Known Failure Class 1 on the audit side). `ExecuteOnPrem`'s catch (aud-a59) does
 write the row.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (HIGH); folded into the aud-a69 agent's scope; fixed on the branch below, not merged; closed on guard proof; codex review pending
+**Status**: Merged `6a971048`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
 **Commit**: plan `a8fdcbf5`; fix `bc1183ab`; the census follow-up `9d3697ee`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-7, 2026-10-23, candidate 1)

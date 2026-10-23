@@ -27,3 +27,16 @@ At `c89f639c`: `Components/Pages/MailboxPermissions.razor` 717-724; `Components/
 ## Guard proof
 
 Pending.
+
+## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
+
+(4) `ExecuteOnPrem`'s failure row carries neither the servicer note nor the written identity (Mailbox 745-747,
+Calendar 688-690). (5) `SubmitSingle` refusals before the write still return with no audit row: the
+location-read failure (Mailbox 461 / Calendar 431), the "Unknown" location, and the on-prem authorization
+refusal. (6) aud-a69 residual: without the directory-read credential, a grantee Exchange names is looked up
+as the app pool; a name Exchange Online and the directory resolve to different objects, hidden from the app
+pool, on the on-prem write path, would not be compared - refusing every grant without the credential would
+close it (an owner call). (7) The operator's own lookups still run as the app pool; with a UPN-only sign-in
+(which Negotiate never produces) a hidden account reads as "no account" and no group is checked. (8) A
+dynamic group's members are as of Exchange's last calculation. (9) Latent: an `activity.Complete` that
+throws inside `SubmitSingle`'s catch still escapes the handler (the result and the audit row are set first).
