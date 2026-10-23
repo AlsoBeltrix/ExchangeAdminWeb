@@ -117,6 +117,16 @@ public sealed class ConfigChangeWatcher
             _failureLogged = true;
         }
 
-        _logger?.LogWarning(ex, "Config change token could not be read; cached config is served until the next successful check or its TTL");
+        // aud-a45. The logger is the caching reader's own, and this runs on its cache hit and its load, before the answer
+        // a failed read gets: a provider that threw took its exception out of CurrentToken and HasChangedSince into every
+        // reader. The report is the aud-a28u nested guard's; the answers stay a working provider's.
+        try
+        {
+            _logger?.LogWarning(ex, "Config change token could not be read; cached config is served until the next successful check or its TTL");
+        }
+        catch (Exception)
+        {
+            // Nowhere left to say so. The streak's one attempt is spent, as a working provider's would be.
+        }
     }
 }

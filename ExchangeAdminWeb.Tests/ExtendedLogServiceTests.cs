@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
@@ -40,7 +42,7 @@ public class ExtendedLogServiceTests
         using var appendHandle = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
         using var service = CreateService(temp.Path);
 
-        var entries = service.GetEntries(DateTime.Today);
+        var entries = service.GetEntries(DateTime.Today).Entries;
 
         Assert.Single(entries);
         Assert.Contains("first", entries[0]);
@@ -60,7 +62,7 @@ public class ExtendedLogServiceTests
             ["ExtendedLog:MaxFilesPerDay"] = "3"
         });
 
-        var entries = service.GetEntries(DateTime.Today, maxLines: 10);
+        var entries = service.GetEntries(DateTime.Today, maxLines: 10).Entries;
 
         Assert.Equal(3, entries.Count);
         Assert.Contains("oldest", entries[0]);
@@ -361,6 +363,190 @@ public class ExtendedLogServiceTests
         Assert.Contains(logger.Entries, e => e.Text == "Failed to persist extended log level");
     }
 
+    // ---- aud-a46: one line or none, under the file's lock; a read says what it could not read; every drop counted --
+
+    [Fact]
+    public void TheConsumer_GivenAnEntryThatFailsHalfWritten_TakesItBack_SoTheFileHoldsExactlyTheEntriesWritten()
+    {
+        // The consumer wrote through a StreamWriter over an append stream: a write that failed part-way left a tail with
+        // no newline, the next entry was appended onto it, and the event log, parsing line by line, dropped both.
+        using var temp = new TempDirectory();
+        var service = CreateService(temp.Path);
+        service.SetLevel("Error");
+        service.WriteLineBytes = static (file, line) =>
+        {
+            if (Encoding.UTF8.GetString(line).Contains("\"lost\"", StringComparison.Ordinal))
+            {
+                file.Write(line, 0, line.Length / 2);
+                throw new IOException("the disk is full");
+            }
+
+            file.Write(line);
+        };
+
+        foreach (var message in new[] { "before", "lost", "after", "after that" })
+            service.Write(LogEventLevel.Error, message, "Test");
+        service.Dispose();
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["before", "after", "after that"], messages);
+        Assert.Equal(1, service.DroppedEntryCount);
+    }
+
+    [Fact]
+    public void TheConsumer_GivenATailADeadProcessLeft_StartsTheNextEntryOnItsOwnLine_AndReportsTheRepair()
+    {
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+        var path = GetTodayLogPath(temp.Path);
+        File.WriteAllText(path, "{\"message\":\"earlier\"}" + Environment.NewLine + "{\"message\":\"cut off");
+
+        service.Write(LogEventLevel.Error, "next", "Test");
+        service.Dispose();
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(["earlier", "next"], messages);
+        Assert.Equal(1, unparsed);
+        Assert.Equal(0, service.DroppedEntryCount);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Text.Contains(path, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TheConsumer_TakesTheFilesLock_AndAWaitThatRunsOutIsACountedDrop()
+    {
+        // The other instance writes the same file under a shared log root (aud-a47): the consumer waits its bound for
+        // the file's lock, and an entry it cannot lock for is dropped and counted, never written beside the other's.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+        service.LockWait = TimeSpan.FromMilliseconds(300);
+
+        using (HoldTodaysLock(temp.Path))
+        {
+            service.Write(LogEventLevel.Error, "an entry while another writer holds the file", "Test");
+            Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, TimeSpan.FromSeconds(10)),
+                "the consumer never dropped the entry it could not take the lock for");
+        }
+
+        service.Write(LogEventLevel.Error, "an entry once the lock is free", "Test");
+        service.Dispose();
+
+        var (messages, _) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(["an entry once the lock is free"], messages);
+        Assert.Equal(1, service.DroppedEntryCount);
+        var report = Assert.Single(logger.Entries, e => e.Level == LogLevel.Error);
+        Assert.Equal("Failed to write extended log entry", report.Text);
+        Assert.IsType<JsonlLockTimeoutException>(report.Exception);
+    }
+
+    [Fact]
+    public void GetEntries_WhenAFileCannotBeRead_SaysWhichAndWhy_AndKeepsTheLinesItCouldRead()
+    {
+        // A bare catch emptied the whole answer, so the event log showed "no diagnostics" for "could not be read".
+        using var temp = new TempDirectory();
+        Directory.CreateDirectory(Path.Combine(temp.Path, "ExchangeAdminWeb"));
+        File.WriteAllText(GetTodayRotatedLogPath(temp.Path, 1), "{\"message\":\"older\"}" + Environment.NewLine);
+        File.WriteAllText(GetTodayLogPath(temp.Path), "{\"message\":\"current\"}" + Environment.NewLine);
+        using var service = CreateService(temp.Path, new Dictionary<string, string?>
+        {
+            ["ExtendedLog:MaxFilesPerDay"] = "2"
+        });
+
+        ExtendedLogRead read;
+        using (new FileStream(GetTodayLogPath(temp.Path), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            read = service.GetEntries(DateTime.Today, maxLines: 10);
+
+        Assert.Contains("older", Assert.Single(read.Entries));
+        Assert.StartsWith(Path.GetFileName(GetTodayLogPath(temp.Path)) + ": ", Assert.Single(read.Unreadable), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFullQueue_CountsTheEntriesItDiscards()
+    {
+        // The queue discards its oldest entry when writes outpace the disk; nothing counted those.
+        using var temp = new TempDirectory();
+        var service = CreateService(temp.Path);
+        service.SetLevel("Error");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        service.WriteLineBytes = (file, line) =>
+        {
+            if (!entered.IsSet)
+            {
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(60));
+            }
+
+            file.Write(line);
+        };
+
+        service.Write(LogEventLevel.Error, "held", "Test");
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+        for (var i = 0; i < 1024 + 5; i++)
+            service.Write(LogEventLevel.Error, $"queued {i}", "Test");
+
+        Assert.Equal(5, service.DroppedEntryCount);
+        release.Set();
+        var drained = false;
+        for (var poll = 0; poll < 600 && !drained; poll++)
+        {
+            drained = service.GetEntries(DateTime.Today, maxLines: 5000).Entries.Count == 1025;
+            if (!drained)
+                Thread.Sleep(100);
+        }
+
+        Assert.True(drained, "the queue never drained");
+        service.Dispose();
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(1025, messages.Count);
+        Assert.Equal(["held", "queued 5"], messages.Take(2));
+        Assert.Equal("queued 1028", messages[^1]);
+        Assert.Equal(5, service.DroppedEntryCount);
+    }
+
+    /// <summary>
+    /// Today's entries as the Admin Event Log reads them - each line GetEntries returns parsed on its own, as
+    /// ParseExtendedLine does, a line that does not parse dropped - by message, and how many were dropped.
+    /// </summary>
+    private static (List<string> Messages, int Unparsed) ReadAsTheEventLogDoes(ExtendedLogService service)
+    {
+        var messages = new List<string>();
+        var unparsed = 0;
+        foreach (var line in service.GetEntries(DateTime.Today, maxLines: 5000).Entries)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                messages.Add(document.RootElement.GetProperty("message").GetString() ?? "");
+            }
+            catch (JsonException)
+            {
+                unparsed++;
+            }
+        }
+
+        return (messages, unparsed);
+    }
+
+    /// <summary>Holds today's extended log lock - and the next minute's, across midnight - as another writer would.</summary>
+    private static IDisposable HoldTodaysLock(string logRoot)
+    {
+        Directory.CreateDirectory(Path.Combine(logRoot, "ExchangeAdminWeb"));
+        var now = DateTime.Now;
+        var held = new[] { now, now.AddMinutes(1) }
+            .Select(date => Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new FileStream(JsonlFileAppender.LockPathFor(path), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .ToList();
+        return new HeldFiles(held);
+    }
+
     /// <summary>Holds today's extended log file - and the next minute's, across midnight - open with no sharing.</summary>
     private static IDisposable HoldTodaysLogFile(string logRoot)
     {
@@ -383,7 +569,7 @@ public class ExtendedLogServiceTests
         }
     }
 
-    private sealed record LogEntry(LogLevel Level, string Text);
+    private sealed record LogEntry(LogLevel Level, string Text, Exception? Exception = null);
 
     /// <summary>Records every entry; when <see cref="Throws"/> is set, throws once it has, as a failing provider can.</summary>
     private sealed class CapturingLogger : ILogger<ExtendedLogService>
@@ -405,7 +591,7 @@ public class ExtendedLogServiceTests
             LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             lock (_entries)
-                _entries.Add(new LogEntry(logLevel, formatter(state, exception)));
+                _entries.Add(new LogEntry(logLevel, formatter(state, exception), exception));
 
             if (Throws)
                 throw new InvalidOperationException("the logging provider failed");

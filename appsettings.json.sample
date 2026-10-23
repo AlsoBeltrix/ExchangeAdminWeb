@@ -13,6 +13,7 @@
     "Organization": "yourorg.onmicrosoft.com",
     "CertificateSubject": "CN=EXO-Automation"
   },
+  "_AuditNote": "Two instances on one server may share one Audit:LogRoot. That is safe only because every writer takes a lock file beside the log file it writes (<file>.lock, deleted when released), so the instances' rows never overwrite each other. A write that cannot take the lock within 2 seconds is dropped and logged as a failed audit write. Both instances must run a build that takes the lock. See README 'Shared log root'.",
   "Audit": {
     "LogRoot": "E:\\WWWOutput",
     "RotationPeriod": "daily"

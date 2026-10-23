@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -79,6 +78,8 @@ public class JsonlLogService
     // aud-a28z (codex attr-batch-12, parts 3 and 4). "Never half a line" held for a record that could not be serialised,
     // not for one whose write failed part-way: that left a tail with no newline, the next record was appended onto it
     // and reported Written, and the event log, parsing line by line, dropped both. AppendLine takes such a line back out.
+    // aud-a47. The lock below is this instance's only; the file's own lock, taken inside AppendLine, is every writer's -
+    // the other instance under a shared log root included. A lock not taken in time is a FileWriteFailed like any other.
     private JsonlWriteOutcome WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
         var logPath = "(unresolved)";
@@ -91,7 +92,7 @@ public class JsonlLogService
 
             lock (_lock)
             {
-                logPath = GetWritableLogPath(stream);
+                logPath = ActivePath(stream);
                 AppendLine(logPath, json, stream);
             }
 
@@ -124,59 +125,24 @@ public class JsonlLogService
     /// </summary>
     internal Action<Stream, byte[]> WriteLineBytes { get; set; } = static (file, line) => file.Write(line);
 
-    // aud-a28z part 3. One record, one line, or none. The line - the bytes StreamWriter.WriteLine wrote: UTF-8 and the
-    // platform's newline - goes in one write on an unbuffered stream, so nothing is held back that a later flush could
-    // append after a truncation. A write that fails part-way is taken back to the length the file had before it, best
-    // effort. And a file that ends mid-line - a truncation that failed, or a writer that died - is ended first, so this
-    // record starts on its own line; the half line stays, one line the event log drops, and the repair is reported.
-    // *Assumption, not probed*: one writer per file - the lock serialises this process's writes, and a second process
-    // appending to the same file could already interleave its rows with these.
-    private void AppendLine(string logPath, string json, LogStream stream)
-    {
-        using var file = new FileStream(logPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
-        var start = file.Seek(0, SeekOrigin.End);
-        var repair = start > 0 && !EndsWithNewline(file);
-        var line = Encoding.UTF8.GetBytes(repair ? Environment.NewLine + json + Environment.NewLine : json + Environment.NewLine);
+    /// <summary>Test seam (aud-a47): how long a write waits for another writer's lock on its file before it drops.</summary>
+    internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
-        try
-        {
-            WriteLineBytes(file, line);
-        }
-        catch (Exception)
-        {
-            TruncateTo(file, start, logPath, stream);
-            throw;
-        }
-
-        if (repair)
-        {
-            ReportSafely(logger => logger.LogWarning(
+    // aud-a28z part 3 and aud-a47: one record, one line or none, under the file's lock - see JsonlFileAppender. The two
+    // reports are this writer's, word for word as they were before the append moved there.
+    private void AppendLine(string logPath, string json, LogStream stream) =>
+        JsonlFileAppender.Append(
+            logPath,
+            json,
+            LockWait,
+            rotateIfFull: () => RotateIfFull(logPath),
+            writeLineBytes: WriteLineBytes,
+            repaired: () => ReportSafely(logger => logger.LogWarning(
                 "The JSONL {Stream} file {Path} ended in a partial line, left by a write that did not finish; this event was started on a new line",
-                stream, logPath));
-        }
-    }
-
-    // The last byte read back; the stream is left at the end, where the line is written.
-    private static bool EndsWithNewline(FileStream file)
-    {
-        file.Seek(-1, SeekOrigin.End);
-        return file.ReadByte() == '\n';
-    }
-
-    // Best effort: a truncation that fails is reported, and the next write ends the half line before its own.
-    private void TruncateTo(FileStream file, long length, string logPath, LogStream stream)
-    {
-        try
-        {
-            file.SetLength(length);
-        }
-        catch (Exception ex)
-        {
-            ReportSafely(logger => logger.LogWarning(ex,
+                stream, logPath)),
+            truncationFailed: ex => ReportSafely(logger => logger.LogWarning(ex,
                 "Could not remove the partial JSONL {Stream} line a failed write left in {Path}; the next event will start on a new line",
-                stream, logPath));
-        }
-    }
+                stream, logPath)));
 
     // Every report the writer makes - the drop, a repair, a truncation that failed - goes through here (aud-a28u's guard,
     // one place since aud-a28z): a provider that throws while reporting must not fail the write.
@@ -199,14 +165,17 @@ public class JsonlLogService
     private static string? TextField(Dictionary<string, object?>? evt, string key) =>
         evt is not null && evt.TryGetValue(key, out var value) ? value as string : null;
 
-    private string GetWritableLogPath(LogStream stream)
+    // The record's file, by date and stream: a name only, read from nothing on disk, so it is chosen before the lock.
+    private string ActivePath(LogStream stream) => Path.Combine(_logFolder, GetLogFilename(DateTime.Now, stream));
+
+    // Reads and changes the file system, so it runs under the file's lock (aud-a47): two writers that both found the file
+    // full would otherwise both rotate it.
+    private void RotateIfFull(string activePath)
     {
-        var activePath = Path.Combine(_logFolder, GetLogFilename(DateTime.Now, stream));
         if (!File.Exists(activePath) || new FileInfo(activePath).Length < _maxFileBytes)
-            return activePath;
+            return;
 
         RotateLogFiles(activePath);
-        return activePath;
     }
 
     private void RotateLogFiles(string activePath)
