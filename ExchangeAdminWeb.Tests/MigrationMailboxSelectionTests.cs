@@ -13,7 +13,8 @@ namespace ExchangeAdminWeb.Tests;
 /// Finding kd-2. Opening a different migration batch never cleared the mailbox ticks: a mailbox ticked in batch A stayed in
 /// the selection while batch B was open, so B's pane drew "Actions (1)" over rows none of which was ticked - and every
 /// reader of the selection that is not pruned to the open batch (the action bar, its count, the report export) read A's
-/// tick in B.
+/// tick in B. Finding kd-13: a mailbox action staged in batch A stayed staged in B, its confirm bar counting A's mailboxes
+/// over B's rows.
 /// </summary>
 /// <remarks>
 /// The page's own handlers over <see cref="MigrationStubExchange"/> - the batch list and each batch's mailboxes from the
@@ -128,6 +129,111 @@ public sealed class MigrationMailboxSelectionTests : IDisposable
         Assert.Equal(BatchA, OpenBatch(page));
         Assert.Equal([Alice], Ticked(page));
         Assert.Equal(2, ActionBars(page));
+    }
+
+    // ---- kd-13: what was staged on the last batch's mailboxes -------------------------------------
+
+    private static void Run(Migration page, string method, params object?[] arguments) =>
+        typeof(Migration).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, arguments);
+
+    private static string? Staged(Migration page) => (string?)Field("pendingActionLabel").GetValue(page);
+
+    // Opens a batch by one of the three routes: a row click, the tick boxes (unticking whatever is open, ticking the batch),
+    // or the address, which is browser Back or a pasted link.
+    private static async Task Open(RenderableMigration page, InteractiveRenderer renderer, string route, string batch)
+    {
+        switch (route)
+        {
+            case "a row click":
+                await renderer.Dispatcher.InvokeAsync(() => Call(page, "SelectOnlyBatch", batch));
+                break;
+            case "the tick boxes":
+                if (OpenBatch(page) is { } open)
+                    await renderer.Dispatcher.InvokeAsync(() => Call(page, "ToggleBatchSelected", open, false));
+                await renderer.Dispatcher.InvokeAsync(() => Call(page, "ToggleBatchSelected", batch, true));
+                break;
+            default:
+                page.OpenBatchParameter = batch;
+                await renderer.Dispatcher.InvokeAsync(() => Call(page, "SyncOpenBatchFromUrl"));
+                break;
+        }
+    }
+
+    // The finding, by each route kd-2 covers. Before: batch B open, A's "Pause" still staged, its confirm bar counting A's
+    // mailbox over B's rows, and Confirm re-planned against B and did nothing.
+    [Theory]
+    [InlineData("a row click")]
+    [InlineData("the tick boxes")]
+    [InlineData("the address")]
+    public async Task OpeningAnotherBatch_WithdrawsAMailboxActionStagedOnTheLast(string route)
+    {
+        var page = await PageWithTheBatchListLoaded();
+        using var renderer = new InteractiveRenderer();
+        renderer.Attach(page);
+        await Open(page, renderer, route, BatchA);
+        await renderer.Dispatcher.InvokeAsync(() => Tick(page, Alice));
+        await renderer.Dispatcher.InvokeAsync(() => Run(page, "StagePauseMailboxes"));
+        Assert.Equal("Pause", Staged(page));
+
+        await Open(page, renderer, route, BatchB);
+
+        Assert.Equal(BatchB, OpenBatch(page));
+        Assert.Null(Staged(page));
+        Assert.Null(Field("pendingActionCallback").GetValue(page));
+        Assert.Null(Field("pendingUserActionPlan").GetValue(page));
+    }
+
+    // A row's own action names one of the last batch's mailboxes; Remove completed is the one with a fixed scope. Both go.
+    [Theory]
+    [InlineData("a row's action")]
+    [InlineData("Remove completed")]
+    public async Task OpeningAnotherBatch_WithdrawsTheOtherMailboxActions(string staged)
+    {
+        var page = await PageWithTheBatchListLoaded();
+        var (from, to) = staged == "a row's action" ? (BatchA, BatchB) : (BatchB, BatchA);
+        await Call(page, "SelectOnlyBatch", from);
+        if (staged == "a row's action")
+            Run(page, "PauseUser", Alice);
+        else
+            Run(page, "StageRemoveCompletedMailboxes");
+        Assert.NotNull(Staged(page));
+
+        await Call(page, "SelectOnlyBatch", to);
+
+        Assert.Null(Staged(page));
+        Assert.False((bool)Field("pendingActionScopeIsFixed").GetValue(page)!);
+    }
+
+    // The controls. The batch already open is not a different list, so what is staged on it stays; and a batch action stays
+    // through a change of open batch, because it re-plans from the live batch selection at Confirm (D2(a)) - ticking a
+    // second batch is an input to it.
+    [Theory]
+    [InlineData("its row clicked again")]
+    [InlineData("its mailboxes refreshed")]
+    public async Task TheSameBatch_KeepsWhatIsStagedOnIt(string how)
+    {
+        var page = await PageWithTheBatchListLoaded();
+        await Call(page, "SelectOnlyBatch", BatchA);
+        Tick(page, Alice);
+        Run(page, "StagePauseMailboxes");
+
+        await (how == "its row clicked again" ? Call(page, "SelectOnlyBatch", BatchA) : Call(page, "RefreshBatchUsers", BatchA));
+
+        Assert.Equal("Pause", Staged(page));
+    }
+
+    [Fact]
+    public async Task ABatchActionStagedBeforeTheSwitch_StaysStaged()
+    {
+        var page = await PageWithTheBatchListLoaded();
+        await Call(page, "SelectOnlyBatch", BatchA);
+        Run(page, "StageStopSelected");
+        Assert.Equal("Stop", Staged(page));
+
+        await Call(page, "ToggleBatchSelected", BatchB, true);
+
+        Assert.Null(OpenBatch(page));
+        Assert.Equal("Stop", Staged(page));
     }
 
     private sealed class RecordingNavigation : NavigationManager

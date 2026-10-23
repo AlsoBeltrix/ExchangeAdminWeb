@@ -83,7 +83,8 @@ way in the same commit.
 - A staged mailbox action survives a change of open batch: its confirm bar (at the top of the table once its rows are no
   longer loaded) still offers batch A's count over batch B. Confirm re-plans against the live rows and acts on nothing -
   not destructive, and pre-existing (it re-planned against B before this fix too) - but it disagrees with the rows shown.
-  Named as a candidate, not fixed: withdrawing it is a staged-action rule (rc-5's) this record does not cover.
+  Named as a candidate, not fixed: withdrawing it is a staged-action rule (rc-5's) this record does not cover. Admitted
+  as kd-13 and fixed on this branch (`WithdrawStagedMailboxAction`, on this record's two lines).
 - `docs/MigrationRemoveCompleted-Plan.md` (Implemented, history) still describes the pre-fix condition in its rc-2
   paragraph; left as history.
 - No circuit or browser ran: the handlers and the compiled render tree were driven directly.
