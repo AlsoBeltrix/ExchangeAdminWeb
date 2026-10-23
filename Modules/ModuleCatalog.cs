@@ -816,7 +816,9 @@ public sealed class ModuleCatalog
             // 1.2.3: the method lookup the operator runs before the reset reports its Graph
             // round trip instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.2.4",
+            // 1.3.0: a reset refuses a blank ticket itself, before ServiceNow, which passes one
+            // while it is dormant (kd-18).
+            Version = "1.3.0",
             MainPermission = new(
                 "Access",
                 "MfaReset",
