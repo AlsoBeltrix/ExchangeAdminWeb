@@ -7,12 +7,19 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 /// <param name="Right">"FullAccess" or "SendAs".</param>
 /// <param name="Error">null when the right was applied; the failure text otherwise.</param>
-public sealed record RightOutcome(string Right, string? Error)
+/// <param name="Unconfirmed">
+/// aud-a70 (14). The right's command was sent and its session failed before Exchange answered: whether it took is unknown.
+/// False for a right Exchange refused - it answered - and for one that never reached Exchange.
+/// </param>
+public sealed record RightOutcome(string Right, string? Error, bool Unconfirmed = false)
 {
     public bool Succeeded => Error is null;
 
     public static RightOutcome Ok(string right) => new(right, null);
     public static RightOutcome Failed(string right, string error) => new(right, error);
+
+    /// <summary>aud-a70 (14). Sent, and its session failed before Exchange answered (<see cref="Unconfirmed"/>).</summary>
+    public static RightOutcome Unanswered(string right, string error) => new(right, error, Unconfirmed: true);
 }
 
 /// <summary>
@@ -45,8 +52,11 @@ public static class MailboxPermissionOutcome
     public static PermissionResult ForGrant(
         string targetMailbox, string user, IReadOnlyList<RightOutcome> outcomes, bool onPrem = false)
     {
-        var (granted, failed) = Split(outcomes);
+        var (granted, failed, unconfirmed) = Split(outcomes);
         var where = onPrem ? " (on-premises)" : "";
+
+        if (unconfirmed.Count > 0)
+            return NotConfirmed(targetMailbox, where, "granted", granted, failed, unconfirmed);
 
         if (failed.Count > 0 && granted.Count > 0)
         {
@@ -94,8 +104,11 @@ public static class MailboxPermissionOutcome
     public static PermissionResult ForRevoke(
         string targetMailbox, string user, IReadOnlyList<RightOutcome> outcomes, bool onPrem = false)
     {
-        var (removed, failed) = Split(outcomes);
+        var (removed, failed, unconfirmed) = Split(outcomes);
         var where = onPrem ? " (on-premises)" : "";
+
+        if (unconfirmed.Count > 0)
+            return NotConfirmed(targetMailbox, where, "removed", removed, failed, unconfirmed);
 
         if (failed.Count > 0 && removed.Count > 0)
         {
@@ -125,19 +138,51 @@ public static class MailboxPermissionOutcome
             : new PermissionResult { Success = true, Message = $"{rights} rights removed for {user} on {targetMailbox}", AppliedRights = removed };
     }
 
-    private static (List<string> Succeeded, List<string> Failed) Split(IReadOnlyList<RightOutcome> outcomes)
+    /// <summary>
+    /// aud-a70 (14). A grant or revoke with a right whose outcome is unknown: not a success, and not a failure either - what
+    /// took and what Exchange refused are said as such, and the rest is said not confirmed, with the session's own words and
+    /// what to do. <see cref="PermissionResult.UnconfirmedRights"/> names those rights, so the record is filed Undetermined.
+    /// </summary>
+    private static PermissionResult NotConfirmed(string targetMailbox, string where, string verb, List<string> done,
+        List<string> failed, List<RightOutcome> unconfirmed)
+    {
+        var said = new List<string>();
+        if (done.Count > 0)
+            said.Add($"{char.ToUpperInvariant(verb[0])}{verb[1..]} {string.Join(", ", done)} on {targetMailbox}{where}.");
+        if (failed.Count > 0)
+            said.Add($"Failed: {string.Join("; ", failed.Select(f => f.Trim().TrimEnd('.')))}.");
+        var rights = unconfirmed.Select(o => o.Right).ToList();
+        var causes = unconfirmed.Count == 1
+            ? unconfirmed[0].Error!.Trim().TrimEnd('.')
+            : string.Join("; ", unconfirmed.Select(o => $"{o.Right}: {o.Error!.Trim().TrimEnd('.')}"));
+        said.Add($"Whether {string.Join(" and ", rights)} {(rights.Count == 1 ? "was" : "were")} {verb} on {targetMailbox}{where} could not be confirmed: {causes}. Check the permissions before trying again.");
+
+        return new PermissionResult
+        {
+            Success = false,
+            Message = string.Join(" ", said),
+            Detail = done.Count > 0 ? string.Join(", ", done) : null,
+            AppliedRights = done,
+            UnconfirmedRights = rights,
+        };
+    }
+
+    private static (List<string> Succeeded, List<string> Failed, List<RightOutcome> Unconfirmed) Split(IReadOnlyList<RightOutcome> outcomes)
     {
         var succeeded = new List<string>();
         var failed = new List<string>();
+        var unconfirmed = new List<RightOutcome>();
 
         foreach (var o in outcomes)
         {
             if (o.Succeeded)
                 succeeded.Add(o.Right);
+            else if (o.Unconfirmed)
+                unconfirmed.Add(o);
             else
                 failed.Add($"{o.Right}: {o.Error}");
         }
 
-        return (succeeded, failed);
+        return (succeeded, failed, unconfirmed);
     }
 }

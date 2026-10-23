@@ -63,6 +63,14 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
+    /// aud-a70 (14). On-premises commands whose session breaks once they are sent: the stand-in Invoke-Command runs a script
+    /// naming a key - the command takes - and then writes a remoting transport failure with the value as its message, as a
+    /// session that broke before its answer came back does. The message carries none of the words a connection error is read
+    /// by, so only the failure's type can say what it is.
+    /// </summary>
+    public Hashtable OnPremTransportFailures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// aud-a2s. <see cref="Failures"/> for the directory stand-ins, once a <c>Set-Place</c> has been called: the same keys and
     /// the same failure, made only by a call after one - the on-prem room-list add's steps, not its preflight's, which
     /// come before it.
@@ -735,6 +743,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Mailboxes", Mailboxes);
         rs.SessionStateProxy.SetVariable("DirectoryObjects", DirectoryObjects);
         rs.SessionStateProxy.SetVariable("Failures", Failures);
+        rs.SessionStateProxy.SetVariable("OnPremTransportFailures", OnPremTransportFailures);
         rs.SessionStateProxy.SetVariable("FailuresAfterSetPlace", FailuresAfterSetPlace);
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
         rs.SessionStateProxy.SetVariable("ListSyncState", ListSyncState);
@@ -998,6 +1007,14 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [CmdletBinding()] param($Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList)
             [void]$global:Calls.Add(@{ '__Command' = 'Invoke-Command'; Session = $Session; Script = $ScriptBlock.ToString(); ArgumentList = $ArgumentList })
             & $ScriptBlock @ArgumentList
+            # aud-a70 (14). The session breaking once the command was sent: it ran, and its answer never came back.
+            foreach ($key in @($global:OnPremTransportFailures.Keys)) {
+                if ($ScriptBlock.ToString().Contains("$key")) {
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Management.Automation.Remoting.PSRemotingTransportException]::new("$($global:OnPremTransportFailures[$key])"),
+                        'JobFailure', [System.Management.Automation.ErrorCategory]::OpenError, $Session))
+                }
+            }
         }
         function global:Remove-PSSession { param($Session) }
         function global:Add-ADPermission {

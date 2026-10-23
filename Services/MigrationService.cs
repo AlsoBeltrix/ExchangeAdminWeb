@@ -918,6 +918,7 @@ https://admin.exchange.microsoft.com/#/migration";
             ExcludedTargets = excludedTargets,
             UnverifiedTargets = unverifiedTargets,
             AppliedRights = result.AppliedRights,
+            UnconfirmedRights = result.UnconfirmedRights,
             Changed = result.Changed,
             ServicedNote = servicedSummary,
         };
@@ -964,6 +965,7 @@ https://admin.exchange.microsoft.com/#/migration";
             ExcludedTargets = result.ExcludedTargets,
             UnverifiedTargets = result.UnverifiedTargets,
             AppliedRights = result.AppliedRights,
+            UnconfirmedRights = result.UnconfirmedRights,
             Changed = result.Changed,
             ServicedNote = result.ServicedNote,
         };

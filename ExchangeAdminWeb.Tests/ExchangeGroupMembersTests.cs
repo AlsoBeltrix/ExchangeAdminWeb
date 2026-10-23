@@ -326,6 +326,21 @@ public sealed class ExchangeGroupMembersTests : IDisposable
         Assert.ThrowsAny<Exception>(() => Read(Root));
     }
 
+    [Fact]
+    public void ADynamicGroupThatReportsNoMember_ThrowsNamingIt_AtTheRootOrNested()
+    {
+        // aud-a70 (11). Still no answer - an empty calculated membership cannot be told from one not yet calculated - but the
+        // throw names the group read empty, so the check can say which: the grantee itself, or a group nested in it.
+        const string Root = "team@contoso.test";
+        const string Inner = "inner-dynamic@contoso.test";
+        Group(Root, Dynamic);
+        Group("outer@contoso.test", Dl, User("a@contoso.test"), Nested(Inner, Dynamic, synced: false));
+        Group(Inner, Dynamic);
+
+        Assert.Equal(Root, Assert.Throws<ExchangeDynamicGroupEmptyException>(() => Read(Root)).Group);
+        Assert.Equal(Inner, Assert.Throws<ExchangeDynamicGroupEmptyException>(() => Read("outer@contoso.test")).Group);
+    }
+
     /// <summary>A chain of <paramref name="nested"/> cloud groups below group0, the last holding a@contoso.test.</summary>
     private void Chain(int nested)
     {

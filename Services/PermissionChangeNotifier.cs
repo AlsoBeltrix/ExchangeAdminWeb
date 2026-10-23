@@ -23,6 +23,37 @@ namespace ExchangeAdminWeb.Services;
 public static class PermissionChangeNotifier
 {
     /// <summary>
+    /// aud-a70 (15). What an administrator notification's action carries when the change's outcome is unknown: the subject reads
+    /// "FAILED" for anything but a success, and this says the change may have been made all the same.
+    /// </summary>
+    public const string UnconfirmedSuffix = "_UNCONFIRMED";
+
+    /// <summary>
+    /// aud-a70 (15). The administrator notification of a single change its handler's catch files Undetermined - a write that
+    /// may have been made, and so a mutating action administrators are told of (Constitution, Notifications): its action
+    /// marked <see cref="UnconfirmedSuffix"/>, not a success, the banner as its detail. Sent only when <paramref name="filed"/>
+    /// is Undetermined: a failure before the write, or at the connection, wrote nothing. No user or owner notification - they
+    /// say access changed, which nobody can say here. A throw is logged against the target, and the result stands.
+    /// </summary>
+    public static async Task NotifyAdminIfUnconfirmedAsync(AuditResult filed, EmailService email, string performedBy,
+        string ipAddress, string action, string target, string user, string permissionType, string ticket, string detail,
+        ILogger logger)
+    {
+        if (filed != AuditResult.Undetermined)
+            return;
+
+        try
+        {
+            await email.SendAdminNotificationAsync(performedBy, ipAddress, action + UnconfirmedSuffix, target, user,
+                permissionType, false, ticket, detail);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "The administrator notification for {Target} could not be sent; the change stands", target);
+        }
+    }
+
+    /// <summary>
     /// Notifies the trustee and the owner, if anything was applied.
     /// </summary>
     /// <param name="appliedRights">

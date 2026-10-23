@@ -41,15 +41,15 @@ public sealed class ValidatedWriteCallSiteTests
     }
 
     [Theory]
-    [InlineData("MailboxPermissions.razor", 3)]
-    [InlineData("CalendarPermissions.razor", 3)]
+    [InlineData("MailboxPermissions.razor", 4)]
+    [InlineData("CalendarPermissions.razor", 4)]
     [InlineData("OutOfOffice.razor", 1)]
     [InlineData("ConferenceRooms.razor", 2)]
     public void EveryPageWriteAudit_RecordsTheIdentityWritten(string page, int expected)
     {
         // The audit keeps the typed target; the identity written rides in extra beside it. aud-a71: on the two permission
         // pages the single change's failure row records it too - the cloud success row, that failure row and the
-        // on-premises write's rows.
+        // on-premises write's rows. aud-a70 (5): and the row of a change refused before its write (SubmitSingle's Refused).
         var source = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page));
 
         Assert.Equal(expected, Regex.Matches(source, @"ValidatedMailbox\.WithWrittenIdentity\(").Count);

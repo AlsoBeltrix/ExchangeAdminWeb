@@ -132,15 +132,17 @@ internal static class ExchangeGroupMembers
         else if (string.Equals(kind, DynamicGroupKind, StringComparison.OrdinalIgnoreCase))
         {
             // aud-a72. The members Exchange calculated for the filter; nothing here evaluates it. A calculated membership that
-            // is empty cannot be told from one not yet calculated, so it is no answer - never "not a member".
+            // is empty cannot be told from one not yet calculated, so it is no answer - never "not a member". aud-a70 (11):
+            // Exchange Online documents no signal that tells the two apart (an empty list is how a group whose first
+            // calculation is still running reads, and CalculatedMembershipUpdateTime says when it last refreshed, not whether
+            // it has calculated at all), so the refusal stays, and names the group (ExchangeDynamicGroupEmptyException).
             ps.AddCommand("Get-DynamicDistributionGroupMember")
               .AddParameter("Identity", identity)
               .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "Stop");
             var calculated = invoke(ps);
             if (calculated.Count == 0)
-                throw new InvalidOperationException(
-                    $"Exchange Online reports no member of the dynamic distribution group '{identity}', so whether its membership was calculated cannot be told");
+                throw new ExchangeDynamicGroupEmptyException(identity);
             return calculated;
         }
         else
@@ -180,6 +182,18 @@ internal static class ExchangeGroupMembers
         string s when bool.TryParse(s, out var parsed) => parsed,
         _ => null,
     };
+}
+
+/// <summary>
+/// aud-a70 (11). A dynamic distribution group Exchange Online reports no member of - at the root of a read or nested in it:
+/// an empty calculated membership cannot be told from one not yet calculated, so the membership was not read. The self-grant
+/// check refuses on it, naming the group, so the refusal is not read as an outage.
+/// </summary>
+internal sealed class ExchangeDynamicGroupEmptyException(string group)
+    : InvalidOperationException($"Exchange Online reports no member of the dynamic distribution group '{group}', so whether its membership was calculated cannot be told")
+{
+    /// <summary>The dynamic group read empty.</summary>
+    public string Group { get; } = group;
 }
 
 /// <summary>

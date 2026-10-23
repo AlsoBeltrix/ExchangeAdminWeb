@@ -259,7 +259,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// a test gives, else the harness's (aud-a73); its connect throwing the exception a test gives (aud-a75).
     /// </summary>
     private sealed class OnPremMailboxService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null,
-        Exception? connectFailure = null)
+        Exception? connectFailure = null, string? onPremScript = null)
         : MailboxPermissionService(pool ?? h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
@@ -270,12 +270,13 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             if (connectFailure is not null)
                 throw connectFailure;
             h.DefineOnPremSession(ps);
+            DefineOnPrem(ps, onPremScript);
         }
     }
 
     /// <summary>The on-premises Calendar Permissions write, as <see cref="OnPremMailboxService"/>.</summary>
     private sealed class OnPremCalendarService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null,
-        Exception? connectFailure = null)
+        Exception? connectFailure = null, string? onPremScript = null)
         : CalendarPermissionService(pool ?? h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
@@ -286,7 +287,20 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             if (connectFailure is not null)
                 throw connectFailure;
             h.DefineOnPremSession(ps);
+            DefineOnPrem(ps, onPremScript);
         }
+    }
+
+    /// <summary>aud-a70 (5). A test's own stand-ins, defined in an on-premises session after the harness's, so they take their place.</summary>
+    private static void DefineOnPrem(PowerShell ps, string? script)
+    {
+        if (script is null)
+            return;
+        using var define = PowerShell.Create();
+        define.Runspace = ps.Runspace;
+        define.AddScript(script).Invoke();
+        if (define.HadErrors)
+            throw new InvalidOperationException("the test's on-premises stand-ins could not be defined");
     }
 
     /// <summary>The grant <c>SubmitSingle</c> stages before the operator's confirmation: the target, the grantee and the ticket.</summary>
@@ -305,7 +319,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
         string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
-        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null)
+        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null, bool onPremDenied = false,
+        IActivityProgress? progress = null)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -313,7 +328,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         {
             var logger = new CapturingLogger<MailboxPermissions>();
             component = new MailboxPermissions();
-            Wire(component, resolver, audit, logger, email);
+            Wire(component, resolver, audit, logger, email, progress);
             Set(component, "MailboxService", new OnPremMailboxService(_h, connectFailure: onPremConnect));
             SetField(component, "onPremFullAccess", true);
             SetField(component, "onPremSendAs", false);
@@ -323,18 +338,21 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         {
             var logger = new CapturingLogger<CalendarPermissions>();
             component = new CalendarPermissions();
-            Wire(component, resolver, audit, logger, email);
+            Wire(component, resolver, audit, logger, email, progress);
             Set(component, "CalendarService", new OnPremCalendarService(_h, connectFailure: onPremConnect));
             SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
             warnings = () => logger.Warnings;
         }
         Stage(component, grantee, target);
-        if (onPremAuthorization is not null)
+        if (onPremAuthorization is not null || onPremDenied)
         {
+            // aud-a70 (5): or the operator is not permitted to change on-premises permissions.
             var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
             authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
                     page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
-                .Returns(Task.FromException<AuthorizationResult>(onPremAuthorization));
+                .Returns(onPremAuthorization is not null
+                    ? Task.FromException<AuthorizationResult>(onPremAuthorization)
+                    : Task.FromResult(AuthorizationResult.Failed()));
         }
 
         await Call(component, "ExecuteOnPrem");
@@ -584,6 +602,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (_, exception) = Assert.Single(warnings);
         Assert.IsType<NullReferenceException>(exception);
         Assert.NotEmpty(_h.Writes);
+        // aud-a70 (1): the banner says the row was not written.
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -883,9 +903,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
         var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress, pool: pool);
 
-        var banner = $"Nothing was written: the connection to Exchange failed: {cause.Trim().TrimEnd('.')}.";
+        // aud-a70 (17): one line - the pool's "stopped" refusal puts its object's name on a line of its own.
+        var banner = $"Nothing was written: the connection to Exchange failed: {OneLine(cause).TrimEnd('.')}.";
         Assert.False(result.Success);
         Assert.Equal(banner, result.Message);
+        Assert.DoesNotContain('\n', result.Message);
+        Assert.DoesNotContain('\r', result.Message);
         Assert.DoesNotContain("raw-text-a71", result.Message, StringComparison.Ordinal);
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
@@ -1126,26 +1149,72 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     [Fact]
-    public async Task AnOnPremWriteThatThrowsOnceSent_IsRecordedAsUndetermined_WithTheBannersText()
+    public async Task AnOnPremCalendarWriteExchangeRefuses_IsItsOwnFailedRow_AsMailboxPermissionsIs()
     {
-        // ExecuteOnPrem's catch said the change could not be confirmed and filed its row Failed, where the Admin Event Log's
-        // Undetermined filter did not find it (aud-a75). The throw that reaches it once the write was sent (aud-a76): Calendar
-        // Permissions' remote set fails, its fallback add fails too, and the Invoke-Command throws what the command said.
+        // aud-a70 (12). The remote set failed, its fallback add failed too, and the Invoke-Command threw what the command said:
+        // the catch filed a write Exchange refused as one that could not be confirmed (aud-a75, aud-a76). Exchange answered, so
+        // the write is a failed result - its own row Failed through the write's own record, as on Mailbox Permissions.
         _h.Failures["Set-MailboxFolderPermission"] = "the folder permission could not be set";
         _h.Failures["Add-MailboxFolderPermission"] = "the folder permission could not be added";
 
         var (result, warnings) = await ConfirmOnPrem(CalendarPage, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
 
-        var banner = "Whether the change was made could not be confirmed: the write failed: the folder permission could not be added. Check the permissions before trying again.";
         Assert.False(result.Success);
-        Assert.Equal(banner, result.Message);
+        Assert.Equal($"Failed on {Target} calendar (on-premises): the folder permission could not be added.", result.Message);
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal("OnPrem_SetCalendar", Text(record, "action"));
-        Assert.Equal("Undetermined", Text(record, "result"));
-        Assert.Equal(banner, Text(record, "error"));
-        Assert.IsNotType<PermissionWriteNotSubmittedException>(Assert.Single(warnings).Exception);
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Message, Text(record, "error"));
+        Assert.Empty(warnings);
         Assert.Single(_h.CallsTo("Invoke-Command"));
         Assert.Equal(new[] { "Set-MailboxFolderPermission", "Add-MailboxFolderPermission" }, _h.Writes);
+    }
+
+    // ---- aud-a70 (14): a write whose session failed once its command was sent is filed Undetermined ----------------------
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACloudWriteWhoseSessionFailsOnceSent_IsRecordedAsUndetermined(string page)
+    {
+        // The right's result said Failed (TryRight; Calendar's RunAsync) though its command was sent and its outcome is unknown.
+        const string lost = "the session to Exchange Online was lost";
+        _h.Failures["Add-MailboxPermission"] = lost;
+        _h.Failures["Set-MailboxFolderPermission"] = lost;
+        _h.Failures["Add-MailboxFolderPermission"] = lost;
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.False(result.Success);
+        Assert.True(result.Unconfirmed);
+        Assert.Contains($"could not be confirmed: {lost}. Check the permissions before trying again.", result.Message, StringComparison.Ordinal);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
+        Assert.Equal("Undetermined", Text(record, "result"));
+        Assert.Equal(result.Message, Text(record, "error"));
+        // Nothing is known to have changed, so neither the user nor the owner is told it did.
+        await email.DidNotReceive().SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        await email.DidNotReceive().SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremWriteWhoseSessionBreaksOnceSent_IsRecordedAsUndetermined(string page)
+    {
+        const string broken = "Processing data from remote server failed";
+        _h.OnPremTransportFailures[TheWrite(page)] = broken;
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.True(result.Unconfirmed);
+        Assert.Contains($"could not be confirmed: {broken}. Check the permissions before trying again.", result.Message, StringComparison.Ordinal);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Undetermined", Text(record, "result"));
+        Assert.Equal(result.Message, Text(record, "error"));
+        Assert.Single(_h.CallsTo(TheWrite(page)));
+        Assert.DoesNotContain(warnings, warning => warning.Exception is not null && warning.Message.Contains("failed at", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1153,7 +1222,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     {
         // The Mailbox Permissions counterpart, which aud-a76 leaves as it was: each right is TryRightOnPrem, so Exchange
         // refusing one is the write's result, not a throw - its own row Failed, through the write's own record, and nothing
-        // reaches the catch. So no throw after an on-premises Mailbox Permissions command was sent reaches the catch.
+        // reaches the catch. So no throw after an on-premises Mailbox Permissions command was sent reaches the catch. aud-a70
+        // (14): a session that breaks once sent is the right's result too, unconfirmed (AnOnPremWriteWhoseSessionBreaksOnceSent_...).
         _h.Failures["Add-MailboxPermission"] = "the grant was refused";
 
         var (result, warnings) = await ConfirmOnPrem(MailboxPage, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
@@ -1166,6 +1236,425 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal(result.Message, Text(record, "error"));
         Assert.Empty(warnings);
         Assert.Single(_h.CallsTo("Invoke-Command"));
+    }
+
+    // ---- aud-a70 (1): a written change's own record sits in a guard, and a row not written is said ------------------------
+
+    /// <summary>The write each page's grant to someone else makes, on-premises or in Exchange Online alike.</summary>
+    private static string TheWrite(string page) => page == MailboxPage ? "Add-MailboxPermission" : "Set-MailboxFolderPermission";
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AWrittenChange_WhoseRowTheWriterDrops_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(string page)
+    {
+        // The writer hands back that it dropped the row (aud-a28u) and logs it; the change's banner said nothing of it.
+        var email = EmailWhere(null);
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChange_WhoseRecordThrows_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(string page)
+    {
+        // ExecuteOnPrem's success records sat in no guard: a throw went to the catch, which said "The change was written, but a
+        // step after the write failed" and showed the written change as failed.
+        var email = EmailWhere(null);
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter(), email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("a step after the write failed", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.IsType<NullReferenceException>(exception);
+        Assert.Contains("the on-premises permission change", message, StringComparison.Ordinal);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChange_WhoseRowTheWriterDrops_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(string page)
+    {
+        var email = EmailWhere(null);
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    [Fact]
+    public void AChangesOwnRecord_SaysWhetherItsRowWasWritten_AndAThrowNeverLeavesIt()
+    {
+        var logger = new CapturingLogger<MailboxPermissions>();
+        var failure = new InvalidOperationException("the disk is full - payload-a70");
+        var ok = PermissionResult.Ok("granted");
+
+        Assert.True(SelfGrantRefusalRecord.Recorded(() => JsonlWriteOutcome.Written, logger, Target, SelfGrantRefusalRecord.OnPremChangeRecord));
+        Assert.False(SelfGrantRefusalRecord.Recorded(() => JsonlWriteOutcome.FileWriteFailed, logger, Target, SelfGrantRefusalRecord.OnPremChangeRecord));
+        Assert.Empty(logger.Warnings);
+        Assert.False(SelfGrantRefusalRecord.Recorded(() => throw failure, logger, Target, SelfGrantRefusalRecord.OnPremChangeRecord));
+        var (message, exception) = Assert.Single(logger.Warnings);
+        Assert.Same(failure, exception);
+        Assert.Equal($"Failed to write audit for the on-premises permission change on {Target}; the change stands", message);
+
+        Assert.Same(ok, SelfGrantRefusalRecord.Said(ok, written: true));
+        var said = SelfGrantRefusalRecord.Said(ok, written: false);
+        Assert.True(said.Success);
+        Assert.Equal("granted The audit row could not be written.", said.Message);
+    }
+
+    // ---- aud-a70 (4): the on-premises write's failure row carries what the write was bound to -----------------------------
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChangeThatFails_IsRecordedWithTheIdentityItWasBoundTo(string page)
+    {
+        // ExecuteOnPrem's catch recorded a failed change with neither the identity written nor the servicer note, which its
+        // success rows and SubmitSingle's catch row carry: the row did not say which mailbox the failed change was bound to.
+        // Both ride one dictionary, built from the write-time re-check, so the identity here is the note's carrier too.
+        var failure = new InvalidOperationException("the on-premises session could not be opened");
+
+        await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremConnect: failure);
+
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(TargetMailbox.ToString("D"), Text(record, ValidatedMailbox.AuditKey));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChangeThatFailsBeforeItsReCheck_IsRecordedWithNoIdentity(string page)
+    {
+        // A throw before the write-time re-check has nothing validated to name, and the row carries none.
+        var failure = new InvalidOperationException("the policy store cannot be read");
+
+        await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremAuthorization: failure);
+
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.False(record.TryGetProperty(ValidatedMailbox.AuditKey, out _));
+    }
+
+    // ---- aud-a70 (5): a refusal before the write is recorded, as a throw before it is ---------------------------------------
+
+    public static TheoryData<string, string> PagesAndRefusalsBeforeTheWrite => new()
+    {
+        { MailboxPage, "the location cannot be read" }, { MailboxPage, "no mailbox anywhere" }, { MailboxPage, "on-premises not permitted" },
+        { CalendarPage, "the location cannot be read" }, { CalendarPage, "no mailbox anywhere" }, { CalendarPage, "on-premises not permitted" },
+    };
+
+    /// <summary>On-premises Exchange answering, as Exchange does, that it holds no such mailbox and no such remote mailbox.</summary>
+    private const string OnPremHoldsNothing = """
+        function global:Get-Mailbox {
+            [CmdletBinding()] param([Parameter(Position = 0)] $Identity)
+            Write-StandInCall 'Get-Mailbox' $PSBoundParameters
+            Write-Error -Message "The operation couldn't be performed because object '$Identity' couldn't be found." -Category ObjectNotFound
+        }
+        function global:Get-RemoteMailbox {
+            [CmdletBinding()] param([Parameter(Position = 0)] $Identity)
+            Write-StandInCall 'Get-RemoteMailbox' $PSBoundParameters
+            Write-Error -Message "The operation couldn't be performed because object '$Identity' couldn't be found." -Category ObjectNotFound
+        }
+        """;
+
+    /// <summary>
+    /// <paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to someone else, refused before its write
+    /// as <paramref name="refusal"/> says: Exchange Online's location read failing; neither Exchange Online nor on-premises
+    /// Exchange holding the mailbox; or on-premises Exchange holding it and the operator not permitted to change it there. The
+    /// result, the page's warnings, the refusal's words and whether anything was staged for confirmation.
+    /// </summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings, string Refusal, bool Staged)> RefuseBeforeTheWrite(
+        string page, string refusal)
+    {
+        ExoConnectionPool? pool = null;
+        string? onPremScript = null;
+        string expected;
+        switch (refusal)
+        {
+            case "the location cannot be read":
+                _h.Failures["Get-Mailbox"] = "the directory is busy";
+                expected = $"Could not determine mailbox location for {Target}: Exchange Online could not be asked: the directory is busy. Nothing was written.";
+                break;
+            case "no mailbox anywhere":
+                pool = PoolWhereExchangeOnlineHoldsNoMailbox();
+                onPremScript = OnPremHoldsNothing;
+                expected = $"Could not determine mailbox location for {Target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found. Nothing was written.";
+                break;
+            default:
+                pool = PoolWhereExchangeOnlineHoldsNoMailbox();
+                expected = $"{Target} is an on-premises mailbox. Please escalate this ticket to the Exchange team. Nothing was written.";
+                break;
+        }
+
+        try
+        {
+            ComponentBase component;
+            Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
+            if (page == MailboxPage)
+            {
+                var logger = new CapturingLogger<MailboxPermissions>();
+                component = new MailboxPermissions();
+                Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+                Set(component, "MailboxService", new OnPremMailboxService(_h, pool, WithAnOnPremServer(), onPremScript: onPremScript));
+                SetField(component, "grantFullAccess", true);
+                SetField(component, "grantSendAs", false);
+                warnings = () => logger.Warnings;
+            }
+            else
+            {
+                var logger = new CapturingLogger<CalendarPermissions>();
+                component = new CalendarPermissions();
+                Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+                Set(component, "CalendarService", new OnPremCalendarService(_h, pool, WithAnOnPremServer(), onPremScript: onPremScript));
+                SetField(component, "accessRight", CalendarAccessRight.Reviewer);
+                warnings = () => logger.Warnings;
+            }
+            SetField(component, "affectedUser", Other);
+            if (refusal == "on-premises not permitted")
+            {
+                var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
+                authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
+                        page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
+                    .Returns(Task.FromResult(AuthorizationResult.Failed()));
+            }
+
+            await Call(component, "SubmitSingle");
+
+            Assert.False(GetField<bool>(component, "isLoading"));
+            return (Assert.IsType<PermissionResult>(GetField<PermissionResult>(component, "result")), warnings(), expected,
+                GetField<bool>(component, "onPremConfirmPending"));
+        }
+        finally
+        {
+            pool?.Dispose();
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndRefusalsBeforeTheWrite))]
+    public async Task ARefusalBeforeTheWrite_IsRecordedAsFailed_NothingWasWritten(string page, string refusal)
+    {
+        // SubmitSingle's refusals once the target was validated returned with no audit row - a refused change the event log
+        // never saw. Each is now the change's own row, Failed, its error the refusal, with the identity it was bound to.
+        var (result, warnings, expected, staged) = await RefuseBeforeTheWrite(page, refusal);
+
+        Assert.False(result.Success);
+        Assert.Equal(expected, result.Message);
+        Assert.False(staged);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
+        Assert.Equal(page == MailboxPage ? "FullAccess" : "Reviewer", Text(record, page == MailboxPage ? "permissionType" : "accessRight"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(expected, Text(record, "error"));
+        Assert.Equal(Other, Text(record, "affectedUser"));
+        Assert.Equal(TargetMailbox.ToString("D"), Text(record, ValidatedMailbox.AuditKey));
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheOnPremWrite_WhenNotAuthorized_IsRecordedAsFailed_NothingWasWritten(string page)
+    {
+        // ExecuteOnPrem's own authorization refusal, the twin of SubmitSingle's on-premises refusal, returned with no row too.
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremDenied: true);
+
+        Assert.False(result.Success);
+        Assert.Equal("Authorization denied for on-prem operations. Nothing was written.", result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Message, Text(record, "error"));
+        Assert.Empty(warnings);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+        Assert.Empty(_h.Writes);
+    }
+
+    // ---- aud-a70 (9): a progress panel that throws on completion never takes the handler with it ---------------------------
+
+    /// <summary>A progress service whose activity throws on every completion, and what it throws.</summary>
+    private static (IActivityProgress Progress, IActivityHandle Activity, Exception Failure) ProgressThatCannotComplete()
+    {
+        var (progress, activity) = WatchedProgress();
+        var failure = new InvalidOperationException("the progress panel is gone");
+        activity.When(handle => handle.Complete(Arg.Any<bool>(), Arg.Any<string?>())).Do(_ => throw failure);
+        return (progress, activity, failure);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ASingleChange_WhoseProgressCannotComplete_EndsWithItsBanner_AndNothingEscapesTheHandler(string page)
+    {
+        // The success path's completion throws; the catch records the step after the write, and its own completion - its
+        // last statement - threw again, out of the handler, the banner and the rows already set.
+        var (progress, activity, failure) = ProgressThatCannotComplete();
+
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress);
+
+        Assert.False(result.Success);
+        Assert.StartsWith("The change was written, but a step after the write failed: the progress panel is gone.", result.Message, StringComparison.Ordinal);
+        activity.Received(2).Complete(Arg.Any<bool>(), Arg.Any<string?>());
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, warning => Assert.Same(failure, warning.Exception));
+        Assert.Contains("could not be completed", warnings[1].Message, StringComparison.Ordinal);
+        Assert.Equal(2, _h.AuditRows().Count);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChange_WhoseProgressCannotComplete_EndsWithItsResult_AndNothingEscapesTheHandler(string page)
+    {
+        // ExecuteOnPrem completes its activity in its finally, above the staged target's reset: a throw there left the handler
+        // with the target still staged.
+        var (progress, activity, failure) = ProgressThatCannotComplete();
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, progress: progress);
+
+        Assert.True(result.Success, result.Message);
+        activity.Received(1).Complete(true, Arg.Any<string?>());
+        var (message, exception) = Assert.Single(warnings);
+        Assert.Same(failure, exception);
+        Assert.Contains("could not be completed", message, StringComparison.Ordinal);
+    }
+
+    // ---- aud-a70 (17): a banner is one line, whatever lines its cause spans ----------------------------------------------
+
+    /// <summary><paramref name="text"/> with its line breaks and runs of white space as one space each.</summary>
+    private static string OneLine(string text) =>
+        string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    [Fact]
+    public void TheStepBanner_IsOneLine_WhateverLinesItsCauseSpans()
+    {
+        // The pool's "stopped" refusal is an ObjectDisposedException, whose message puts the object's name on a line of its
+        // own: the banner, and the row's error it becomes, carried the line break.
+        var stopped = new ObjectDisposedException(typeof(ExoConnectionPool).FullName);
+        Assert.Contains('\n', stopped.Message);
+
+        var banner = PermissionChangeFailure.Banner(PermissionChangeFailure.TheConnection, new PermissionWriteNotSubmittedException(stopped));
+        var twoLines = PermissionChangeFailure.Banner(PermissionChangeFailure.TheWrite, new InvalidOperationException("the first line\r\n  and the second."));
+
+        Assert.Equal($"Nothing was written: the connection to Exchange failed: {OneLine(stopped.Message).TrimEnd('.')}.", banner);
+        Assert.Contains(typeof(ExoConnectionPool).FullName!, banner, StringComparison.Ordinal);
+        Assert.Equal("Whether the change was made could not be confirmed: the write failed: the first line and the second. Check the permissions before trying again.", twoLines);
+        Assert.All(new[] { banner, twoLines }, text => Assert.False(text.Contains('\n') || text.Contains('\r'), text));
+    }
+
+    // ---- aud-a70 (15): a change filed Undetermined tells the administrators, and no one else -------------------------------
+
+    /// <summary>The actions of the administrator notifications <paramref name="email"/> was asked to send, in order.</summary>
+    private static IReadOnlyList<string> AdminActions(EmailService email) =>
+        email.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(EmailService.SendAdminNotificationAsync))
+            .Select(call => (string)call.GetArguments()[2]!)
+            .ToList();
+
+    [Fact]
+    public async Task ASingleChangeItsCatchFilesUndetermined_TellsTheAdministrators_AndNoOneElse()
+    {
+        // The Calendar removal whose retry could not connect once its command was sent (aud-a76's case) is filed Undetermined -
+        // it may have been made - and sent no notification at all.
+        using var pool = PoolWhoseWriteBorrowFails(_ => { }, LostSession());
+        _h.Failures["Remove-MailboxFolderPermission"] = "You must call Connect-ExchangeOnline before calling any other cmdlet.";
+        var email = EmailWhere(null);
+        var page = new CalendarPermissions();
+        Wire(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, new CapturingLogger<CalendarPermissions>(), email);
+        Set(page, "CalendarService", new CalendarPermissionService(pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
+        SetField(page, "tabIndex", 1);
+        SetField(page, "affectedUser", Other);
+
+        await Call(page, "SubmitSingle");
+
+        Assert.Equal("Undetermined", Text(Assert.Single(_h.AuditRows()), "result"));
+        await email.Received(1).SendAdminNotificationAsync(Logon, Arg.Any<string>(), "RemoveCalendar_UNCONFIRMED", Target, Other, "Remove",
+            false, "INC100", WriteNotConfirmed);
+        Assert.Single(AdminActions(email));
+        await email.DidNotReceive().SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        await email.DidNotReceive().SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AWriteWhoseOutcomeIsUnknown_TellsTheAdministratorsItIsUnconfirmed(string page)
+    {
+        // Its administrator notification went out under the change's own action and "FAILED", as though nothing had been made.
+        const string lost = "the session to Exchange Online was lost";
+        _h.Failures["Add-MailboxPermission"] = lost;
+        _h.Failures["Set-MailboxFolderPermission"] = lost;
+        _h.Failures["Add-MailboxFolderPermission"] = lost;
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.True(result.Unconfirmed);
+        Assert.Equal(new[] { (page == MailboxPage ? "AddFullAccess" : "SetCalendar") + PermissionChangeNotifier.UnconfirmedSuffix }, AdminActions(email));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremWriteWhoseOutcomeIsUnknown_TellsTheAdministratorsItIsUnconfirmed(string page)
+    {
+        _h.OnPremTransportFailures[TheWrite(page)] = "Processing data from remote server failed";
+        var email = EmailWhere(null);
+
+        var (result, _) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, email);
+
+        Assert.True(result.Unconfirmed);
+        Assert.Equal(new[] { (page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar") + PermissionChangeNotifier.UnconfirmedSuffix }, AdminActions(email));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AChangeThatWroteNothing_SendsNoUnconfirmedNotification(string page)
+    {
+        // A borrow refused before the command was sent wrote nothing: it is Failed, and no administrator is told of a change
+        // that may have been made.
+        using var pool = PoolWhoseWriteBorrowThrows(LostSession());
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email, pool: pool);
+
+        Assert.Equal(WriteNotSent, result.Message);
+        Assert.Empty(AdminActions(email));
+    }
+
+    [Fact]
+    public async Task TheUnconfirmedNotification_IsSentOnlyForAnUndeterminedChange_AndAThrowIsLogged()
+    {
+        var email = EmailWhere(null);
+        var logger = new CapturingLogger<MailboxPermissions>();
+
+        foreach (var filed in new[] { AuditResult.Success, AuditResult.Failed })
+            await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(filed, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        Assert.Empty(AdminActions(email));
+
+        await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(AuditResult.Undetermined, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        await email.Received(1).SendAdminNotificationAsync(Logon, "10.0.0.5", "AddFullAccess_UNCONFIRMED", Target, Other, "FullAccess", false, "INC100", "the banner");
+        Assert.Empty(logger.Warnings);
+
+        await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(AuditResult.Undetermined, EmailWhere("admin"), Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        var (message, exception) = Assert.Single(logger.Warnings);
+        Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

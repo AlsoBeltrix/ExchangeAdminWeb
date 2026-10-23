@@ -731,6 +731,65 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Null(Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(Other, Other)).As);
     }
 
+    // ---- aud-a70 (7): an operator known only by a UPN claim is looked up under the directory-read credential ---------------
+
+    /// <summary>The operator's lookup by <paramref name="upn"/>, at the catalog.</summary>
+    private static bool LooksUpTheOperatorBy(string call, string upn) =>
+        call.StartsWith($"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} ", StringComparison.Ordinal)
+        && call.Contains($"(userPrincipalName={upn})", StringComparison.Ordinal);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnOperatorKnownByTheirUpnClaim_HiddenFromTheSessionIdentity_IsFoundUnderTheDirectoryReadCredential(bool operatorInside)
+    {
+        // A sign-in that carries a UPN claim and no SID - which Negotiate never gives - was looked up as the session: an account
+        // that identity cannot see read as no account, no on-premises group was then asked about, and a grant to a group holding
+        // the operator went through.
+        const string claimed = "jd.hidden@contoso.test";
+        var hidden = _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
+        {
+            Dn = $"CN=jd.hidden,OU=Staff,{SelfGrantDirectoryStandIn.DomainDn}",
+            Class = "user",
+            Upn = claimed,
+            Mail = claimed,
+            Sam = "jd.hidden",
+            Sid = SelfGrantDirectoryStandIn.DomainSid + "-7001",
+            PrimaryGroupId = SelfGrantDirectoryStandIn.DomainUsersRid,
+            Proxies = [$"SMTP:{claimed}"],
+            HiddenFromSession = true,
+        });
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [operatorInside ? hidden : _other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(claimed).Returns(Recipient(claimed, "ext-jd-hidden"));
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var principal = SelfGrantDirectoryStandIn.Principal(@"CONTOSO\jd.hidden", upn: claimed);
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(principal, Delegates);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => LooksUpTheOperatorBy(read.Call, claimed)).As);
+        Assert.Equal(1, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task AnOperatorKnownOnlyByTheirUpnClaim_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete(string shape)
+    {
+        // Nothing may answer "no account" for them without the credential: the session's identity is not asked in its place.
+        const string claimed = "jdoe.claim@contoso.test";
+        var resolver = ExchangeKnowsTheTarget();
+        var (validator, problem) = WithoutTheCredential(resolver, shape);
+        var principal = SelfGrantDirectoryStandIn.Principal(Logon, upn: claimed);
+
+        var result = await validator.ValidateSelfGrantAsync(principal, Other);
+
+        Assert.Equal(IncompleteBecause($"the signed-in operator '{Logon}' could not be looked up in the on-premises directory by their user principal name: {problem}"), result);
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => LooksUpTheOperatorBy(call, claimed));
+        await resolver.DidNotReceive().ResolveRecipientAsync(claimed);
+    }
+
     // ---- aud-a69: the grantee is looked up under the directory-read credential -----------------------------------------
 
     /// <summary>The grantee's lookup at the catalog, for <paramref name="grantee"/> and Exchange's address for it.</summary>
@@ -902,7 +961,12 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
 
-        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{DynamicGroup}' could not be read"), result);
+        // aud-a70 (11): no member reported is still a refusal, and it now says so - the group and why - where it read as the
+        // same "could not be read" as an outage.
+        Assert.Equal(shape == "no member is reported"
+                ? IncompleteBecause($"Exchange Online reports no member of the dynamic distribution group '{DynamicGroup}', and an empty membership cannot be told from one it has not calculated yet, so whether you are a member of '{DynamicGroup}' could not be checked")
+                : IncompleteBecause($"whether you are a member of the group '{DynamicGroup}' could not be read"),
+            result);
         Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember"));
     }
 

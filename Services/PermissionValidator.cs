@@ -676,7 +676,13 @@ public class PermissionValidator
 
         using (directory)
         {
-            var (account, exchangeIdentity, problem) = await Task.Run(() => EstablishOperator(directory, actingUser));
+            // aud-a70 (7). A sign-in that carries a UPN claim and no SID is looked up by that UPN, and its empty answer means no
+            // on-premises account - then no on-premises group is asked about - so the lookup runs under the directory-read
+            // credential, as the grantee's does (aud-a69): had here, once per run, for such a sign-in only.
+            var upnLookup = ClaimValue(actingUser, ClaimTypes.PrimarySid) is null && UpnClaim(actingUser) is not null
+                ? await run.DirectoryReadCredentialAsync(DirectoryReadCredentialAsync)
+                : default;
+            var (account, exchangeIdentity, problem) = await Task.Run(() => EstablishOperator(directory, actingUser, upnLookup));
             if (problem is not null)
                 return SelfGrantCheckIncompleteBecause(problem);
 
@@ -712,14 +718,16 @@ public class PermissionValidator
     /// the forest through its catalog so an operator from any of its domains is found. Exactly one object is the operator;
     /// none or several is a question the check cannot answer, and refuses. The UPN claim, when a sign-in carries one, is the
     /// identity put to Exchange; otherwise the account's userPrincipalName - a Negotiate token carries no UPN claim, so today
-    /// it is always the account's. A read that throws refuses.
+    /// it is always the account's. A read that throws refuses. aud-a70 (7): a sign-in with a UPN claim and no SID is looked up
+    /// by that UPN under the directory-read credential (<paramref name="upnLookup"/>), since none found there means no
+    /// on-premises group is asked about; without the credential it refuses, naming why.
     /// </remarks>
     private (SelfGrantDirectoryObject? account, string? exchangeIdentity, string? problem) EstablishOperator(
-        SelfGrantDirectory directory, ClaimsPrincipal actingUser)
+        SelfGrantDirectory directory, ClaimsPrincipal actingUser, (PSCredential? Credential, string? Problem) upnLookup)
     {
         var name = actingUser.Identity?.Name;
         var who = string.IsNullOrWhiteSpace(name) ? "the signed-in operator" : $"the signed-in operator '{name}'";
-        var upnClaim = ClaimValue(actingUser, ClaimTypes.Upn) ?? ClaimValue(actingUser, "preferred_username");
+        var upnClaim = UpnClaim(actingUser);
         var sid = ClaimValue(actingUser, ClaimTypes.PrimarySid);
 
         try
@@ -744,7 +752,14 @@ public class PermissionValidator
 
             if (upnClaim is not null)
             {
-                var byUpn = directory.FindByUserPrincipalName(upnClaim);
+                // aud-a70 (7). An account the session's identity cannot see reads as none, and none clears every group.
+                if (upnLookup.Credential is null)
+                {
+                    _logger.LogWarning("The self-grant check cannot look {Operator} up by their user principal name: {Problem} - failing closed", name, upnLookup.Problem);
+                    return (null, null, $"{who} could not be looked up in the on-premises directory by their user principal name: {upnLookup.Problem}");
+                }
+
+                var byUpn = directory.FindByUserPrincipalName(upnClaim, upnLookup.Credential);
                 if (byUpn.Count > 1)
                     return (null, null, $"the on-premises directory holds {Accounts(byUpn.Count)} for {who}");
 
@@ -941,6 +956,13 @@ public class PermissionValidator
             _logger.LogWarning(ex, "The self-grant check stopped reading the members of {Affected}: more than {Bound} nested groups - failing closed", affectedUser, ex.Bound);
             return (SelfGrantCheckIncompleteBecause($"the group '{affectedUser}' holds more than {ex.Bound} nested groups, more than the check reads"), []);
         }
+        catch (ExchangeDynamicGroupEmptyException ex)
+        {
+            // aud-a70 (11). No member is no answer for a dynamic group (aud-a72); the refusal says which group and why, so the
+            // operator can tell it from an outage - and it is still a refusal, never "not a member".
+            _logger.LogWarning(ex, "The self-grant check found no calculated member of the dynamic distribution group {Group} in {Affected} - failing closed", ex.Group, affectedUser);
+            return (SelfGrantCheckIncompleteBecause(DynamicGroupReadEmpty(ex.Group, affectedUser)), []);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "The self-grant check could not read the members of {Affected} from Exchange Online - failing closed", affectedUser);
@@ -1059,6 +1081,13 @@ public class PermissionValidator
     private static bool IsGroupRecipient(ResolvedRecipient recipient) =>
         recipient.IsGroup;
 
+    /// <summary>
+    /// aud-a70 (11). Why a grant to <paramref name="affectedUser"/> could not be checked when Exchange Online reports no member of
+    /// the dynamic distribution group <paramref name="group"/> - the grantee itself or a group nested in it.
+    /// </summary>
+    internal static string DynamicGroupReadEmpty(string group, string affectedUser) =>
+        $"Exchange Online reports no member of the dynamic distribution group '{group}', and an empty membership cannot be told from one it has not calculated yet, so whether you are a member of '{affectedUser}' could not be checked";
+
     /// <summary>The credential's problem when its setting cannot be read (aud-a60).</summary>
     internal const string DirectoryReadCredentialUnreadable =
         "the protected-principal directory-read credential's setting could not be read";
@@ -1128,6 +1157,10 @@ public class PermissionValidator
         foreach (var c in password) securePassword.AppendChar(c);
         return new PSCredential(fullUsername, securePassword);
     }
+
+    // The sign-in's UPN claim, as EstablishOperator reads it: the UPN claim type, else preferred_username.
+    private static string? UpnClaim(ClaimsPrincipal principal) =>
+        ClaimValue(principal, ClaimTypes.Upn) ?? ClaimValue(principal, "preferred_username");
 
     // A claim's value, trimmed; null when the principal carries none or a blank one.
     private static string? ClaimValue(ClaimsPrincipal principal, string type)

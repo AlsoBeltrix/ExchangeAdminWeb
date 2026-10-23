@@ -172,19 +172,155 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
     [Theory]
     [InlineData("SetCalendarPermissionOnPrem", "Add-MailboxFolderPermission")]
     [InlineData("RemoveCalendarPermissionOnPrem", "Remove-MailboxFolderPermission")]
-    public async Task AnOnPremCalendarWriteThatFailsOnceSent_GoesOutAsItIs(string write, string command)
+    public async Task AnOnPremCalendarWrite_ExchangeRefuses_IsAFailedResult_NotAThrow(string write, string command)
     {
-        // The on-premises Calendar write's one Invoke-Command lets out what its remote command threw: sent, so never marked as
-        // not sent, and its page files it Undetermined. The set falls back to an add, which fails here as well.
+        // aud-a70 (12). aud-a76's case: the one Invoke-Command let out what its remote command threw, and the page filed a write
+        // Exchange refused as one that could not be confirmed. Exchange answered: the write is a failed result, as Mailbox
+        // Permissions' TryRightOnPrem makes one, in the command's own words. The set falls back to an add, which fails too.
         _h.Failures["Set-MailboxFolderPermission"] = "the folder permission could not be set";
         _h.Failures[command] = "the remote command failed";
 
-        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => OnPrem(write));
+        var result = await OnPrem(write);
 
-        Assert.IsNotType<PermissionWriteNotSubmittedException>(thrown);
-        Assert.Contains("the remote command failed", thrown.Message, StringComparison.Ordinal);
+        Assert.False(result.Success);
+        Assert.False(result.Unconfirmed);
+        Assert.Equal($"Failed on {Typed} calendar (on-premises): the remote command failed.", result.Message);
         Assert.Single(_h.CallsTo("Invoke-Command"));
         Assert.Single(_h.CallsTo(command));
+    }
+
+    // ---- aud-a70 (14): a write that fails once sent reads as what failed - Exchange's answer, or its session ------------------
+
+    /// <summary>What a session that drops mid-command throws in Exchange Online: words the pool reads as a dead session.</summary>
+    private const string SessionLost = "the session to Exchange Online was lost";
+
+    /// <summary>What a session that breaks on premises says: none of the words a connection error is read by.</summary>
+    private const string TransportFailure = "Processing data from remote server failed";
+
+    [Theory]
+    [InlineData("AddMailboxPermissions", "Add-RecipientPermission", "granted")]
+    [InlineData("RemoveMailboxPermissions", "Remove-RecipientPermission", "removed")]
+    public async Task ACloudMailboxRight_WhoseSessionFailsOnceSent_IsUnconfirmed_AndTheRightThatTookStands(string write, string command, string verb)
+    {
+        // TryRight filed a right whose command was sent and whose session then dropped as Failed, though its outcome is unknown.
+        _h.Failures[command] = SessionLost;
+
+        var result = await Cloud(write, _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.Equal(new[] { "FullAccess" }, result.AppliedRights!);
+        Assert.Equal(new[] { "SendAs" }, result.UnconfirmedRights!);
+        Assert.Equal($"{char.ToUpperInvariant(verb[0])}{verb[1..]} FullAccess on {Typed}. Whether SendAs was {verb} on {Typed} could not be confirmed: {SessionLost}. Check the permissions before trying again.",
+            result.Message);
+        Assert.Single(_h.CallsTo(command));
+    }
+
+    [Theory]
+    [InlineData("the trustee is not valid")]
+    [InlineData("You must call Connect-ExchangeOnline before calling any other cmdlet.")]
+    public async Task ACloudMailboxRight_ExchangeRefuses_OrThatMeetsThePreFlightError_IsFailed_AsBefore(string failure)
+    {
+        // Exchange answering is a known outcome; the pre-flight error proves no cmdlet ran. Neither is unconfirmed.
+        _h.Failures["Add-RecipientPermission"] = failure;
+
+        var result = await Cloud("AddMailboxPermissions", _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.False(result.Unconfirmed);
+        Assert.StartsWith($"Partial: granted FullAccess on {Typed}. Failed: SendAs: {failure}", result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SetCalendarPermission")]
+    [InlineData("RemoveCalendarPermission")]
+    public async Task ACloudCalendarWrite_WhoseSessionFailsOnceSent_IsUnconfirmed(string write)
+    {
+        // RunAsync made the dropped session a failed result, filed Failed though the write may have taken.
+        _h.Failures["Set-MailboxFolderPermission"] = SessionLost;
+        _h.Failures["Add-MailboxFolderPermission"] = SessionLost;
+        _h.Failures["Remove-MailboxFolderPermission"] = SessionLost;
+
+        var result = await Cloud(write, _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.Equal(new[] { CalendarPermissionService.CalendarRight }, result.UnconfirmedRights!);
+        Assert.Contains($"could not be confirmed: {SessionLost}. Check the permissions before trying again.", result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SetCalendarPermission")]
+    [InlineData("RemoveCalendarPermission")]
+    public async Task ACloudCalendarWrite_ExchangeRefuses_IsFailed_AsBefore(string write)
+    {
+        _h.Failures["Set-MailboxFolderPermission"] = "There is no existing permission entry found for user: jdoe.";
+        _h.Failures["Add-MailboxFolderPermission"] = "the permission could not be added";
+        _h.Failures["Remove-MailboxFolderPermission"] = "There is no existing permission entry found for user: jdoe.";
+
+        var result = await Cloud(write, _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.False(result.Unconfirmed);
+    }
+
+    [Theory]
+    [InlineData("AddMailboxPermissionsOnPrem", "Add-ADPermission", "granted")]
+    [InlineData("RemoveMailboxPermissionsOnPrem", "Remove-ADPermission", "removed")]
+    public async Task AnOnPremMailboxRight_WhoseSessionBreaksOnceSent_IsUnconfirmed(string write, string command, string verb)
+    {
+        // TryRightOnPrem filed every failure Failed. A remoting transport failure, whose words name no connection, is the
+        // session's - its type says so.
+        _h.OnPremTransportFailures[command] = TransportFailure;
+
+        var result = await OnPrem(write);
+
+        Assert.False(result.Success);
+        Assert.Equal(new[] { "FullAccess" }, result.AppliedRights!);
+        Assert.Equal(new[] { "SendAs" }, result.UnconfirmedRights!);
+        Assert.Equal($"{char.ToUpperInvariant(verb[0])}{verb[1..]} FullAccess on {Typed} (on-premises). Whether SendAs was {verb} on {Typed} (on-premises) could not be confirmed: {TransportFailure}. Check the permissions before trying again.",
+            result.Message);
+        Assert.Single(_h.CallsTo(command));
+    }
+
+    [Theory]
+    [InlineData("SetCalendarPermissionOnPrem", "Set-MailboxFolderPermission")]
+    [InlineData("RemoveCalendarPermissionOnPrem", "Remove-MailboxFolderPermission")]
+    public async Task AnOnPremCalendarWrite_WhoseSessionBreaksOnceSent_IsUnconfirmed(string write, string command)
+    {
+        _h.OnPremTransportFailures[command] = TransportFailure;
+
+        var result = await OnPrem(write);
+
+        Assert.False(result.Success);
+        Assert.Equal(new[] { CalendarPermissionService.CalendarRight }, result.UnconfirmedRights!);
+        Assert.Contains($"could not be confirmed: {TransportFailure}. Check the permissions before trying again.", result.Message, StringComparison.Ordinal);
+        Assert.Single(_h.CallsTo(command));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ABulkRow_WhoseWriteIsUnconfirmed_IsRecordedAsUndetermined(bool mailbox)
+    {
+        // The bulk loops filed a row by its success alone: a row whose outcome is unknown read as Failed there too.
+        _h.Failures[mailbox ? "Add-MailboxPermission" : "Set-MailboxFolderPermission"] = SessionLost;
+        _h.Failures["Add-MailboxFolderPermission"] = SessionLost;
+        var resolver = ExchangeWriteHarness.ExchangeKnows(Typed, "shared@contoso.test", Checked);
+        var email = Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>());
+        _h.Forest.AddUser("jdoe", upn: Trustee, mail: Trustee, proxies: [$"SMTP:{Trustee}"]);
+        var validator = _h.NothingProtectedValidator(resolver);
+
+        var bulk = mailbox
+            ? await MailboxService(_h.Pool).ProcessMailboxPermissionsCsvAsync(
+                Csv("Target,User,FullAccess,SendAs,AutoMapping\n" + $"{Typed},{Trustee},True,False,False\n"), isAdd: true, validator,
+                ExchangeWriteHarness.OperatorLogonName, _h.Audit, email, "10.0.0.5", "INC100", actingUser: _h.Operator)
+            : await CalendarService(_h.Pool).ProcessCalendarPermissionsCsvAsync(
+                Csv("Target,User,AccessRight\n" + $"{Typed},{Trustee},Reviewer\n"), isSet: true, validator,
+                ExchangeWriteHarness.OperatorLogonName, _h.Audit, email, "10.0.0.5", "INC100", actingUser: _h.Operator);
+
+        Assert.Equal(0, bulk.SuccessCount);
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == (mailbox ? "BulkAdd_FullAccess" : "BulkSetCalendar"));
+        Assert.Equal("Undetermined", row.GetProperty("result").GetString());
+        Assert.Contains("could not be confirmed", row.GetProperty("error").GetString(), StringComparison.Ordinal);
     }
 
     // ---- the bulk loops ------------------------------------------------------------------------------------------------
