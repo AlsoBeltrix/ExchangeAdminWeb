@@ -3,7 +3,7 @@
 **Severity**: LOW - a test-infrastructure defect. `ExchangeAdminWeb.Tests/ClickGateSource.cs` `ExtractBlock` (about 364) ends a block at the wrong place when a brace sits inside a string literal; `Tags()` in the same file is quote-aware. A guard reading a mis-sized block can pass or fail the wrong code.
 **Status**: Verified on branch; awaiting merge and codex review
 **Branch**: `fix/kd-misc` (worktree `D:\source\ExchangeAdminWeb-wt\kd-misc`, from master `eb017102`)
-**Commit**: -
+**Commit**: fix `99d5d63f` (test infrastructure; no module version)
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -78,7 +78,7 @@ difference the new test. **No ClickGate test changed result.**
 page under `Components/Pages` that contains the word - 115 method bodies, a superset of
 `EveryRegisteredFlagIsLoweredInAFinally`'s calls - with the old raw count and the new code: **0 differences**. No
 registered page's finally contains a brace, or the word, inside a literal today, so no earlier result rested on a
-mis-read block; the defect was latent.
+mis-read block; the defect was latent. Full suite at `99d5d63f`: 6720 passed / 0 failed.
 
 ## Coder dispute
 
@@ -103,4 +103,8 @@ None yet (codex review pending, dispatched by the supervising session).
 
 ## Closeout
 
-Pending: merge into master, codex review, branch deletion.
+Pending: merge into master, codex review, branch deletion. Branch-tip gates at `d79e1b79` (the branch's last code
+commit): Release build 0 errors / 19 warnings (all pre-existing, none in a changed file);
+`dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` 6720 passed / 0 failed / 0 skipped;
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1` clean. PSScriptAnalyzer and Pester not run: no PowerShell file changed.

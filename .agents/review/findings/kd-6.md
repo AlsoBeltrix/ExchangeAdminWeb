@@ -3,7 +3,7 @@
 **Severity**: LOW - a hang risk. `Services/BlockedSenderService.cs` `UnblockSenderAsync` (about 48) runs the unblock with no cancellation and no bound, so a stuck Exchange Online call holds the circuit's operation indefinitely.
 **Status**: Verified on branch; awaiting merge and codex review
 **Branch**: `fix/kd-misc` (worktree `D:\source\ExchangeAdminWeb-wt\kd-misc`, from master `eb017102`)
-**Commit**: -
+**Commit**: fix `b5673b23`; module version in `d79e1b79`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -144,4 +144,8 @@ None yet (codex review pending, dispatched by the supervising session).
 
 ## Closeout
 
-Pending: merge into master, codex review, branch deletion.
+Pending: merge into master, codex review, branch deletion. Branch-tip gates at `d79e1b79` (the branch's last code
+commit): Release build 0 errors / 19 warnings (all pre-existing, none in a changed file);
+`dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` 6720 passed / 0 failed / 0 skipped;
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1` clean. PSScriptAnalyzer and Pester not run: no PowerShell file changed.

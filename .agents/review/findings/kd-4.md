@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - a destructive action's confirmation lives only in the UI. `Components/Pages/IntuneDevices.razor` `WipeNameConfirmed` (about 404) disables the button; the wipe handler never re-reads the confirmation, so a stale render, a double-dispatch or a programmatic click wipes without the typed name matching.
 **Status**: Verified on branch; awaiting merge and codex review
 **Branch**: `fix/kd-misc` (worktree `D:\source\ExchangeAdminWeb-wt\kd-misc`, from master `eb017102`)
-**Commit**: -
+**Commit**: fix `665d80cc`; module version in `d79e1b79`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -87,7 +87,7 @@ mismatch rows (`Expected: 0, Actual: 1` Graph attempts: the wipe was sent with t
 tripwire. Restored byte-exact (md5 `b273d65c` again) with a fresh mtime, rebuilt, rerun: 230 passed.
 
 Re-anchor: `FullyQualifiedName~ClickGate` with the Intune, progress and wiring filters, 623 passed, before the
-mutation round.
+mutation round. Full suite at `665d80cc`: 6713 passed / 0 failed.
 
 ## Coder dispute
 
@@ -109,4 +109,8 @@ None yet (codex review pending, dispatched by the supervising session).
 
 ## Closeout
 
-Pending: merge into master, codex review, branch deletion.
+Pending: merge into master, codex review, branch deletion. Branch-tip gates at `d79e1b79` (the branch's last code
+commit): Release build 0 errors / 19 warnings (all pre-existing, none in a changed file);
+`dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` 6720 passed / 0 failed / 0 skipped;
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1` clean. PSScriptAnalyzer and Pester not run: no PowerShell file changed.

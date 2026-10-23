@@ -3,7 +3,7 @@
 **Severity**: LOW - a stale statement in a code file. `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` about line 75 says tiers 2-4 are audited and not approved for conversion; the owner approved them 2026-10-12 (`.agents/decisions.md`). It is a code file, so correcting it is a code change, which is why it sat in `.agents/state.md` Blockers.
 **Status**: Verified on branch; awaiting merge and codex review
 **Branch**: `fix/kd-misc` (worktree `D:\source\ExchangeAdminWeb-wt\kd-misc`, from master `eb017102`)
-**Commit**: -
+**Commit**: fix `14edf320` (comments and unread strings; no module version)
 **Reviewer**: implementer (recorded in `.agents/state.md` Blockers, re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -62,8 +62,8 @@ The diff, in substance (see the commit for the exact text):
 
 Not applicable: no behaviour changed, so there is nothing a test could bite on. The reason strings are never read by an
 assertion (`ClickGateTests` reads `NotYetConverted.Keys` and `ContainsKey` only, `:68` and `:87`), and no script reads
-them (`tools/`, `tests/ps` checked). Run to show nothing moved: `FullyQualifiedName~ClickGate` and the full suite (see
-the hand-back's verification line).
+them (`tools/`, `tests/ps` checked). Run to show nothing moved: `FullyQualifiedName~ClickGate` 317 passed, and the full
+suite at `14edf320` 6720 passed / 0 failed.
 
 ## Coder dispute
 
@@ -81,4 +81,8 @@ None yet (codex review pending, dispatched by the supervising session).
 
 ## Closeout
 
-Pending: merge into master, codex review, branch deletion.
+Pending: merge into master, codex review, branch deletion. Branch-tip gates at `d79e1b79` (the branch's last code
+commit): Release build 0 errors / 19 warnings (all pre-existing, none in a changed file);
+`dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` 6720 passed / 0 failed / 0 skipped;
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1` clean. PSScriptAnalyzer and Pester not run: no PowerShell file changed.

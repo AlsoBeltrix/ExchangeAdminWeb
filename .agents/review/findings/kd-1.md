@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - an authorization gap. `Services/MessageTraceExportListing.cs` `GetExports` lists every operator's finished exports and `TryDownloadAsync` checks the ticket and the export's state but never the submitter, so any operator holding the Message Trace policy can download any other operator's detail export (message metadata for addresses they never searched).
 **Status**: Verified on branch; awaiting merge and codex review
 **Branch**: `fix/kd-misc` (worktree `D:\source\ExchangeAdminWeb-wt\kd-misc`, from master `eb017102`)
-**Commit**: -
+**Commit**: fix `c139a31b`; module version in `d79e1b79`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
 
 ## Evidence
@@ -117,7 +117,10 @@ pre-mutation file) with a fresh mtime, rebuilt and rerun:
 | M3 | the page drops the extra: `..., ticket, result.AuditExtra);` -> `..., ticket);` | 1 failed: the page denial row | 37 passed |
 | M4 | one page of the ownership scope only: `while (jobs.Count < ListLimit)` -> `while (jobs.Count == 0)` | 1 failed: the 150-export read | 37 passed |
 
-Branch-level gates for this commit: see the hand-back's verification line (the full suite is run on each commit).
+Full suite at `c139a31b`: 6706 passed / 1 failed - `SqliteBusyWaitTests.AWriteThatMeetsAHeldLock_FailsBusy_AfterTheDocumentedWait`
+("the write waited 9.93 s: more than one busy wait of 5 s"), a timing test in the config store this commit does not
+touch, run while several other agents' suites loaded the host; rerun alone it passed (5 of 5). Every later commit's
+full suite passed with it included.
 
 ## Coder dispute
 
@@ -154,4 +157,8 @@ None yet (codex review pending, dispatched by the supervising session).
 
 ## Closeout
 
-Pending: merge into master, codex review, branch deletion.
+Pending: merge into master, codex review, branch deletion. Branch-tip gates at `d79e1b79` (the branch's last code
+commit): Release build 0 errors / 19 warnings (all pre-existing, none in a changed file);
+`dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` 6720 passed / 0 failed / 0 skipped;
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1` clean. PSScriptAnalyzer and Pester not run: no PowerShell file changed.
