@@ -197,6 +197,15 @@ No separate pre-fix reproduction: M1 is the lookup as it stood, at its call site
 - Every grant the check reaches the directory for now fetches the directory-read secret once per run (one HTTP call to the
   secret store; the store keeps no cache), where only a grant to a group did.
 
+## Left for a follow-up (file owned by another agent)
+
+- `Components/Pages/AdminSettings.razor` 282 (`placeholder="Required when groups or OUs are configured"`) and 289 ("Read-only
+  AD credential for group membership and OU checks."), as at `15eb1449`: aud-a60 recorded that the Directory Read Credential is
+  also what a Mailbox Permissions or Calendar Permissions grant to a group needs. After aud-a69 it is also what a grant to a
+  grantee Exchange Online holds no recipient for needs, and it is used for every grant's directory lookup when configured. The
+  texts could say so, for example "Required when groups or OUs are configured, and for Mailbox and Calendar Permissions grants
+  to groups and to grantees only the on-premises directory holds". Not changed: the page is another agent's.
+
 ## Comments after the round
 
 In the branch's comments commit `a9ce01f5`, checked comment-only by `codelines.ps1` (session scratchpad): its 8 changed lines
