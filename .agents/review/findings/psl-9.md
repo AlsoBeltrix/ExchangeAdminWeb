@@ -5,9 +5,9 @@ imports ExchangeOnlineManagement and clears only `ps.Commands`; `ReadConnectionI
 `ps.Streams.Error.Count > 0` and takes a record the import left for its own failure, so the new connection's
 id goes unidentified and the connection is left to time out (the aud-a6b disconnect-by-id path cannot find
 it).
-**Status**: In progress; plan below; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a60/a61/a53/a59 agent's scope
+**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a60/a61/a53/a59 agent's scope
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: -
+**Commit**: plan `4614080e`; fix - the commit that carries this text (after aud-a59's `7328135e`)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, its "Left for a follow-up")
 
 ## Evidence
@@ -62,6 +62,36 @@ Files: `Services/ExoConnectionPool.cs`, `ExchangeAdminWeb.Tests/ExoConnectionPoo
 Caller-visible change: none in text. A connection whose module import left an error record past Stop is identified, and
 disconnected by its own id when it is retired, where it was disposed and left to time out.
 
+## Fix
+
+- `Services/ExoConnectionPool.cs` `CreateConnected`: the import under Stop inside `try { ps.Invoke(); } finally {
+  ps.Commands.Clear(); ps.Streams.Error.Clear(); }`; the session from `ConnectRunspace()` (default `DefaultConnectRunspace`, the
+  runspace it built before) and the thumbprint from `CertificateThumbprint(certSubject)` (default
+  `FindCertificate(subject).Thumbprint`, as before). Nothing else in the step changed.
+- New `ExchangeAdminWeb.Tests/ExoConnectionPoolConnectTests.cs`:
+  `ANewConnection_IsIdentified_AndDisconnectedByItsOwnId_WhateverTheImportLeft` (the import writing an error record past Stop,
+  and not): the borrowed connection's id is `c-new`, the one that appeared; the connect was handed the organization and the
+  seam's thumbprint; no "could not identify" warning; the drain disconnects `c-new` by id and no disconnect fails.
+
 ## Guard proof
 
-Pending.
+The aud-a60 driver and protocol (the aud-a60 record's Guard proof; log `psl9-mutations.log`). Filter
+`FullyQualifiedName~ExoConnection|FullyQualifiedName~ExoConfigFallback|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~ExchangeServiceBase`
+(203 tests). Fixed-file MD5: `Services/ExoConnectionPool.cs` `4916D3F09DEE89129F9A4197A924BF12`. Both mutants built with 0
+errors and both restores matched. After the round, the restored tree rebuilt and the filter: 203/203 green - and again after the test took `TestContext.Current.CancellationToken` for its borrow (the format gate's xUnit1051), the service file untouched.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | the stream clear dropped: the import's `finally` clears the commands only | `116EDD57737DA927ABD669E10198DD1C` | 1 of 203: `ExoConnectionPoolConnectTests.ANewConnection_IsIdentified_AndDisconnectedByItsOwnId_WhateverTheImportLeft(importWritesAnError: True)` - no id, so no disconnect by id |
+| E1 | extra: the import back to its old two lines (`ps.Invoke(); ps.Commands.Clear();`) | `DEA64ABFCE50E5CE885C9632E3647051` | 1 of 203: the same row |
+
+The control row (`importWritesAnError: False`) passes under both mutants: only a record the import leaves behind loses the
+id. No separate pre-fix reproduction: E1 is the import as it stood.
+
+## Known gaps
+
+- Labelled assumption, as psl-7's record has it: the real module's import writes no error past Stop; were one written, the
+  session goes on with the module loaded and the record cleared. Nothing ran against the module or a tenant: the step ran over
+  stand-in functions in a local runspace.
+- `ReadConnectionIds` still clears only the commands before its own read; the import's clear is what keeps it to its own
+  records, as the coordinator's fix places it.
