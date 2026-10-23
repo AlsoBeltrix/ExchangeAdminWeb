@@ -8,7 +8,7 @@ answer. (2) The `ExcludedADGroups` module setting description says "Comma-separa
 each value must be an identity `Get-ADGroup -Identity` resolves (aud-a23j), nor that a DN cannot be entered
 because the setting splits at commas. (3) The mailbox-load banner says "Unable to load mailboxes" with no
 reason; the reason reaches only the activity text.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch; closed on guard proof; not merged (approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidates 4, 7 and 8 of its hand-back)
@@ -89,4 +89,73 @@ header's single wording; P7 `WithDetail` drops `UnverifiedTargets`.
 
 ## Guard proof
 
-Pending.
+Built as the Plan. The fix commit carries no new code comments. `Components/Pages/Migration.razor` is 4377 lines before and
+after: `git diff --numstat` 12/12, each changed line replaced in place (198, 205, 368, 375, 1041, 1633, 1887, 1950, 2065,
+2074, 2211, 2220); none registered, no registered snippet changed. `Modules/ModuleCatalog.cs`: one line, the ExcludedADGroups
+description (435); no `Version` touched.
+
+- `Models/PermissionResult.cs` (base app): `UnverifiedTargets` (17), beside `ExcludedTargets`.
+- `Services/MigrationService.cs`: the all-excluded result carries it (705); the success formatter's exclusion block (798):
+  only protected - the header and the escalation line exactly as before; otherwise "EXCLUDED, NOT migrated (N) - <summary>",
+  the entries, the advice for the kinds present; the re-wrap called with the partition's fourth list (825);
+  `WithProtectionOutcome` (871) owns `UnverifiedTargets` (880) and words its NOTE through `ExclusionSummary` (886):
+  only protected - "N protected principal(s) were excluded and NOT migrated." as before; none protected - "N target(s) could
+  not be verified as unprotected and were excluded, NOT migrated."; a mix - "N target(s) were excluded and NOT migrated: K
+  protected principal(s) and M that could not be verified as unprotected."; `ExclusionAdvice` (897): the escalation sentence,
+  the recheck sentence, or both; `WithDetail` carries it (921).
+- `Components/Pages/Migration.razor`: the two banners' headline (198, 368) `ExclusionSummary`, their closing paragraph (205,
+  375) `ExclusionAdvice`; the exclusion audit rows (2065, 2211) "Excluded - could not be verified as unprotected, not
+  migrated" for an unverified entry, the protected text unchanged; the notification notes (2074, 2220) " | EXCLUDED (not
+  migrated): <summary> <entries>"; the load banner (1041) "<the load's failure>. Refresh to try again.", from
+  `mailboxLoadFailure` (declared on 1633's line, set on 1887's and 1950's lines when the load still owns the pane).
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: the recording mail stand-in keeps each notification's note (`Notes`).
+- `ExchangeAdminWeb.Tests/MigrationResultRewrapTests.cs`: `UnverifiedTargets` listed as `WithProtectionOutcome`'s own; the
+  call-site pin takes the fourth argument. `MigrationMailboxLoadTests`: the banner assertion takes the reason.
+
+New `ExchangeAdminWeb.Tests/MigrationExclusionWordingTests.cs`, 7 tests:
+
+| Test | Pins |
+| --- | --- |
+| `ABatchCreatedWithBothKindsExcluded_NamesThemApart` | **the finding**: one protected, one unverified, one clear - the NOTE, `ExcludedTargets`, `UnverifiedTargets`, the Detail block. Before: "2 protected principal(s)", "EXCLUDED - protected principals" |
+| `ABatchCreatedWithOnlyUnverifiedExclusions_CallsNoneOfThemProtected` | none called a protected principal; the recheck advice |
+| `ABatchCreatedWithOnlyProtectedExclusions_ReadsAsBefore` | the control: NOTE and Detail exactly as before |
+| `ThePagesBulkCreate_NamesEachKindApart_InTheBanner_TheAuditRows_AndTheNotification` | **the finding, the page**: the banner's summary and both advices, one row per exclusion with its own kind's errorDetail, the note; and no "2 protected principal(s)" anywhere it renders |
+| `ThePagesSingleCreate_OfAnUnverifiedTarget_DoesNotCallItProtected` | the single create: banner, row, note |
+| `TheExcludedGroupsSetting_SaysWhatAValueMustBe` | **(2)**: the description names Get-ADGroup -Identity, exactly one domain of the forest, and that a DN cannot be entered |
+| `AFailedMailboxLoad_SaysWhyInThePane` | **(3)**: "Unable to load mailboxes in Wave_12: the mailbox query was refused. Refresh to try again." |
+
+**Against the unfixed code: not runnable as a whole** - `UnverifiedTargets` and the mail stand-in's notes are new, so each
+behaviour was put back at its own call site instead, and each revert fails the tests that pin it.
+
+Mutations at the call site, by the same driver and protocol, over the 2008 tests of the filter extended by `ModuleCatalog*`
+for this finding. Bytes (LF) before every mutation and after every restore: page `a99a3c59778eafe9a2787b57bc34503b`, service
+`a76687f894eb7a508c14e564517ad2e7`.
+
+| Mutation | File | md5 mutated | Failed (of 2008) | Restored, rerun |
+| --- | --- | --- | --- | --- |
+| P1 (the record's): one site's single wording again - the bulk banner's headline (368) | page | `88a1267a2325602d7a2ec4a5d5d9820a` | 1: `ThePagesBulkCreate...` | equal; 2008/0 |
+| P2 (the record's): the load banner without the reason (1041) | page | `88928da5082b136a59a83c7e79409ff1` | 2: `AFailedMailboxLoad_SaysWhyInThePane`, `MigrationMailboxLoadTests.AFailedLoadRendersAnError...` | equal; 2008/0 |
+| P3: the NOTE's single wording again | service | `6f72a479be7a689e6c0d8145413e5cf6` | 3: `ABatchCreatedWithBothKinds...`, `...OnlyUnverified...`, `ThePagesBulkCreate...` (the message renders above the banner) | equal; 2008/0 |
+| P4: an unverified exclusion's audit row filed "protected principal" again (2211) | page | `48339ece130f2f00e126e5784ad19ce1` | 1: `ThePagesBulkCreate...` | equal; 2008/0 |
+| P5: the notification note's single wording again (2220) | page | `34e324278be8d15063466a846197e8cb` | 1: `ThePagesBulkCreate...` | equal; 2008/0 |
+| P6: the Detail header's single wording again | service | `cbf385a3b0b9235b82375d9bb13ae521` | 2: `ABatchCreatedWithBothKinds...`, `...OnlyUnverified...` | equal; 2008/0 |
+| P7: `WithDetail` drops `UnverifiedTargets` | service | `1c2939259a14ee1805391fa571c4e7c3` | 1: `MigrationResultRewrapTests.EveryRewrap_CarriesEveryFieldItDoesNotOwn` (WithDetail) | equal; 2008/0 |
+
+md5s (LF) of the other files at the fix commit: `PermissionResult.cs` `ded36f71838037e6f15601afa4037e74`, `ModuleCatalog.cs`
+`ea2914c82475cee104e033b78e54c0b4`, `MigrationStubExchange.cs` `caa9777a99011ad2db0cbe6fddcabb07`,
+`MigrationExclusionWordingTests.cs` `1e1732df8cedacf0dd9afcd64ff04ee3` (the round ran on
+`f8eaaf410f9662f501bed0258926124a`; the ASCII gate then asked for two string literals as `⚠` / `—` escapes - the
+same strings, no test changed - and the 2008 re-ran green), `MigrationResultRewrapTests.cs`
+`e5592a6494e3a5cc82a1a840a8a4d64f`, `MigrationMailboxLoadTests.cs` `5c32019b248f3f2f22f7f4c9b2a094b9`.
+
+On the fix commit's tree: Release build 0 errors, 59 warnings, the baseline's 19 code warnings and no other; the 2008 focused
+tests 2008/0; `dotnet format --verify-no-changes` exit 0; `git diff --cached --check` exit 0; `tools/Test-AsciiOnly.ps1` exit
+0; `wc -l` 4377.
+
+## Known gaps
+
+- `PermissionResult` gains a property (base app): no other module sets or reads it.
+- The exclusion audit rows keep their action name, "CreateMigrationBatch_<direction>_ProtectedExclusion", for both kinds: it
+  names the gate's exclusion, and a filter on it finds both; the row's errorDetail says which.
+- Each banner's list still shows every entry with the gate's own reason, as before; the headline and the closing advice are
+  what now tell the kinds apart.

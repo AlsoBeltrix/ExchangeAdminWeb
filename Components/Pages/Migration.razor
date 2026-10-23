@@ -195,14 +195,14 @@
                         @if (singleCreateResult.ExcludedTargets is { Count: > 0 } singleExcluded)
                         {
                             <div class="alert alert-warning mt-3">
-                                <strong>⚠ @singleExcluded.Count protected principal(s) were excluded and NOT migrated.</strong>
+                                <strong>⚠ @MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)</strong>
                                 <ul class="mb-2 mt-2">
                                     @foreach (var item in singleExcluded)
                                     {
                                         <li>@item</li>
                                     }
                                 </ul>
-                                <p class="mb-0">Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.</p>
+                                <p class="mb-0">@MigrationService.ExclusionAdvice(singleExcluded, singleCreateResult.UnverifiedTargets)</p>
                             </div>
                         }
                     }
@@ -365,14 +365,14 @@
                         @if (createResult.ExcludedTargets is { Count: > 0 } bulkExcluded)
                         {
                             <div class="alert alert-warning mt-3">
-                                <strong>⚠ @bulkExcluded.Count protected principal(s) were excluded and NOT migrated.</strong>
+                                <strong>⚠ @MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)</strong>
                                 <ul class="mb-2 mt-2">
                                     @foreach (var item in bulkExcluded)
                                     {
                                         <li>@item</li>
                                     }
                                 </ul>
-                                <p class="mb-0">Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.</p>
+                                <p class="mb-0">@MigrationService.ExclusionAdvice(bulkExcluded, createResult.UnverifiedTargets)</p>
                             </div>
                         }
                     }
@@ -1038,7 +1038,7 @@
                                     }
                                     else if (mailboxLoadFailed)
                                     {
-                                        <p class="text-danger text-center my-5" role="alert">Unable to load mailboxes. Refresh to try again.</p>
+                                        <p class="text-danger text-center my-5" role="alert">@((mailboxLoadFailure ?? "Unable to load mailboxes").TrimEnd('.')). Refresh to try again.</p>
                                     }
                                     else if (batchUsers == null)
                                     {
@@ -1630,7 +1630,7 @@
     // batch change.
     private int batchUsersGeneration;
     private List<MigrationUserInfo>? batchUsers;
-    private bool mailboxLoadFailed;
+    private bool mailboxLoadFailed; private string? mailboxLoadFailure;
     private string? loadingBatchUsers;
     private string? actionInProgress;
     private string? loadingReport;
@@ -1884,7 +1884,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {batchName}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; // aud-a23l: the cmdlet's own words, without PowerShell's "The running command stopped ..." prefix
+            loadFailure = $"Unable to load mailboxes in {batchName}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; if (generation == batchUsersGeneration) mailboxLoadFailure = loadFailure; // aud-a23l: the cmdlet's own words, without PowerShell's "The running command stopped ..." prefix
         }
         finally
         {
@@ -1947,7 +1947,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {requested}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; // aud-a23l: the same
+            loadFailure = $"Unable to load mailboxes in {requested}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; if (generation == batchUsersGeneration) mailboxLoadFailure = loadFailure; // aud-a23l: the same
         }
         finally
         {
@@ -2062,7 +2062,7 @@
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
                         $"CreateMigrationBatch_{singleMigrationDirection}_ProtectedExclusion", excluded,
-                        false, singleTicketNumber, "Excluded — protected principal, not migrated");
+                        false, singleTicketNumber, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated");
                 }
             }
             catch (Exception ex)
@@ -2071,7 +2071,7 @@
             }
 
             var singleExclusionNote = singleExcluded.Count > 0
-                ? $" | EXCLUDED protected principals (not migrated): {string.Join("; ", singleExcluded)}"
+                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)} {string.Join("; ", singleExcluded)}"
                 : "";
             try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
@@ -2208,7 +2208,7 @@
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
                         $"CreateMigrationBatch_{migrationDirection}_ProtectedExclusion", excluded,
-                        false, bulkTicketNumber, "Excluded — protected principal, not migrated");
+                        false, bulkTicketNumber, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated");
                 }
             }
             catch (Exception ex)
@@ -2217,7 +2217,7 @@
             }
 
             var bulkExclusionNote = bulkExcluded.Count > 0
-                ? $" | EXCLUDED {bulkExcluded.Count} protected principal(s) (not migrated): {string.Join("; ", bulkExcluded)}"
+                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)} {string.Join("; ", bulkExcluded)}"
                 : "";
             try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,

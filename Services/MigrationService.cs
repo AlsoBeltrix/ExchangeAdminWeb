@@ -701,7 +701,8 @@ public class MigrationService : ExchangeServiceBase
                 Success = false,
                 Message = AllExcludedMessage(excludedTargets, unverifiedTargets),
                 Detail = "Excluded:\n" + string.Join("\n", excludedTargets),
-                ExcludedTargets = excludedTargets
+                ExcludedTargets = excludedTargets,
+                UnverifiedTargets = unverifiedTargets
             };
         }
 
@@ -794,11 +795,14 @@ Auto-Complete: {autoComplete}";
 
             if (excludedTargets.Count > 0)
             {
+                var (header, advice) = unverifiedTargets.Count == 0
+                    ? ($"EXCLUDED - protected principals, NOT migrated ({excludedTargets.Count}):", "Escalate these to an administrator outside this tool if migration is required.")
+                    : ($"EXCLUDED, NOT migrated ({excludedTargets.Count}) - {ExclusionSummary(excludedTargets, unverifiedTargets)}", ExclusionAdvice(excludedTargets, unverifiedTargets));
                 details += $@"
 
-EXCLUDED - protected principals, NOT migrated ({excludedTargets.Count}):
+{header}
 {string.Join("\n", excludedTargets)}
-Escalate these to an administrator outside this tool if migration is required.";
+{advice}";
             }
 
             details += @"
@@ -818,7 +822,7 @@ https://admin.exchange.microsoft.com/#/migration";
         // (and prepend a clear note to the success message) without losing anything else.
         if (excludedTargets.Count > 0 || servicedSummary != null)
         {
-            return WithProtectionOutcome(result, excludedTargets, servicedSummary);
+            return WithProtectionOutcome(result, excludedTargets, servicedSummary, unverifiedTargets);
         }
 
         return result;
@@ -864,19 +868,39 @@ https://admin.exchange.microsoft.com/#/migration";
     /// so a field the model gains later is held to the same rule. With <see cref="WithDetail"/>, the
     /// module's only copies of a result.
     /// </remarks>
-    internal static PermissionResult WithProtectionOutcome(PermissionResult result, IReadOnlyList<string> excludedTargets, string? servicedSummary)
+    internal static PermissionResult WithProtectionOutcome(PermissionResult result, IReadOnlyList<string> excludedTargets, string? servicedSummary, IReadOnlyList<string>? unverifiedTargets = null)
         => new()
         {
             Success = result.Success,
             Message = result.Success && excludedTargets.Count > 0
-                ? $"{result.Message} NOTE: {excludedTargets.Count} protected principal(s) were excluded and NOT migrated."
+                ? $"{result.Message} NOTE: {ExclusionSummary(excludedTargets, unverifiedTargets)}"
                 : result.Message,
             Detail = result.Detail,
             ExcludedTargets = excludedTargets,
+            UnverifiedTargets = unverifiedTargets,
             AppliedRights = result.AppliedRights,
             Changed = result.Changed,
             ServicedNote = servicedSummary,
         };
+
+    internal static string ExclusionSummary(IReadOnlyList<string> excluded, IReadOnlyList<string>? unverified)
+    {
+        var notVerified = excluded.Count(entry => unverified?.Contains(entry) == true);
+        var protectedCount = excluded.Count - notVerified;
+        if (notVerified == 0)
+            return $"{excluded.Count} protected principal(s) were excluded and NOT migrated.";
+        if (protectedCount == 0)
+            return $"{notVerified} target(s) could not be verified as unprotected and were excluded, NOT migrated.";
+        return $"{excluded.Count} target(s) were excluded and NOT migrated: {protectedCount} protected principal(s) and {notVerified} that could not be verified as unprotected.";
+    }
+
+    internal static string ExclusionAdvice(IReadOnlyList<string> excluded, IReadOnlyList<string>? unverified)
+    {
+        const string escalate = "Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.";
+        const string recheck = "A target whose protection check could not answer is excluded until it can be verified as unprotected; check it again once the protection check is available.";
+        var notVerified = excluded.Count(entry => unverified?.Contains(entry) == true);
+        return notVerified == 0 ? escalate : notVerified == excluded.Count ? recheck : $"{escalate} {recheck}";
+    }
 
     /// <summary>
     /// The same result with <see cref="PermissionResult.Detail"/> replaced and every other field
@@ -894,6 +918,7 @@ https://admin.exchange.microsoft.com/#/migration";
             Message = result.Message,
             Detail = detail,
             ExcludedTargets = result.ExcludedTargets,
+            UnverifiedTargets = result.UnverifiedTargets,
             AppliedRights = result.AppliedRights,
             Changed = result.Changed,
             ServicedNote = result.ServicedNote,

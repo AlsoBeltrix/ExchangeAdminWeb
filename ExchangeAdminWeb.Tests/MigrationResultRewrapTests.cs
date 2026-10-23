@@ -109,7 +109,7 @@ public class MigrationResultRewrapTests
         {
             nameof(MigrationService.WithProtectionOutcome) => (
                 MigrationService.WithProtectionOutcome(source, ["ceo@contoso.com - protected principal"], "serviced: rewrap"),
-                new[] { nameof(PermissionResult.Message), nameof(PermissionResult.ExcludedTargets), nameof(PermissionResult.ServicedNote) }),
+                new[] { nameof(PermissionResult.Message), nameof(PermissionResult.ExcludedTargets), nameof(PermissionResult.UnverifiedTargets), nameof(PermissionResult.ServicedNote) }),
             nameof(MigrationService.WithDetail) => (
                 MigrationService.WithDetail(source, "Audit logging failed: rewrap"),
                 new[] { nameof(PermissionResult.Detail) }),
@@ -143,7 +143,7 @@ public class MigrationResultRewrapTests
         var code = RazorSyntax.CommentsBlanked(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "MigrationService.cs")));
         var create = AuditCategoryFilingTests.MethodBody(code, "public async Task<PermissionResult> CreateMigrationBatchAsync(");
 
-        Assert.Contains("return WithProtectionOutcome(result, excludedTargets, servicedSummary);", create);
+        Assert.Contains("return WithProtectionOutcome(result, excludedTargets, servicedSummary, unverifiedTargets);", create);
         Assert.DoesNotMatch(FieldByFieldCopy, create);
 
         // The two helpers' own copies, and nothing else in the file.

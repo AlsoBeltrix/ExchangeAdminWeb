@@ -411,16 +411,27 @@ internal sealed class MigrationStubExchange : IDisposable
     internal sealed class RecordingEmail(IConfiguration config, bool throws) : EmailService(config, NullLogger<EmailService>.Instance)
     {
         private readonly List<string> _sent = [];
+        private readonly List<string> _notes = [];
 
         public IReadOnlyList<string> Sent
         {
             get { lock (_sent) return _sent.ToList(); }
         }
 
+        /// <summary>aud-a23p. Each notification's note (its permissionType argument), in the order sent.</summary>
+        public IReadOnlyList<string> Notes
+        {
+            get { lock (_sent) return _notes.ToList(); }
+        }
+
         public override Task SendAdminNotificationAsync(string performedBy, string ipAddress, string action, string targetMailbox,
             string affectedUser, string permissionType, bool success, string ticketNumber, string? errorDetail = null)
         {
-            lock (_sent) _sent.Add(action);
+            lock (_sent)
+            {
+                _sent.Add(action);
+                _notes.Add(permissionType);
+            }
             return throws
                 ? Task.FromException(new InvalidOperationException("the mail relay refused the message"))
                 : Task.CompletedTask;

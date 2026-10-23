@@ -77,7 +77,8 @@ public sealed class MigrationMailboxLoadTests : IDisposable
         await LoadPageMailboxes(page);
         var rendered = page.RenderText();
 
-        Assert.Contains("Unable to load mailboxes. Refresh to try again.", rendered, StringComparison.Ordinal);
+        // aud-a23p: the reason, in the cmdlet's own words, where it said only "Unable to load mailboxes.".
+        Assert.Contains("Unable to load mailboxes in Wave 12 / Operations: Mailbox query unavailable. Refresh to try again.", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("contains no mailboxes", rendered, StringComparison.Ordinal);
         Assert.Null(PageField("loadingBatchUsers").GetValue(page));
     }

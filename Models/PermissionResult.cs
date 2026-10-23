@@ -14,6 +14,8 @@ public class PermissionResult
     /// </summary>
     public IReadOnlyList<string>? ExcludedTargets { get; init; }
 
+    public IReadOnlyList<string>? UnverifiedTargets { get; init; }
+
     /// <summary>
     /// The rights that were actually applied, whether or not the operation succeeded overall.
     /// Null or empty when nothing landed.
