@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
@@ -35,7 +37,7 @@ internal static class PermissionChangeFailure
     internal static string Banner(string step, Exception ex)
     {
         // aud-a76: a write never sent is told in its cause's words - the exception the service wrapped, not the wrapper.
-        var cause = ExchangeServiceBase.ResolveFailure(ex is PermissionWriteNotSubmittedException { InnerException: { } wrapped } ? wrapped : ex).primary.Trim().TrimEnd('.');
+        var cause = OneLine(ExchangeServiceBase.ResolveFailure(ex is PermissionWriteNotSubmittedException { InnerException: { } wrapped } ? wrapped : ex).primary).TrimEnd('.');
         return step switch
         {
             BeforeTheWrite => $"The change was not made: {step} failed: {cause}. Nothing was written.",
@@ -61,4 +63,11 @@ internal static class PermissionChangeFailure
     /// and this one says a later step failed.
     /// </summary>
     internal static AuditResult AuditResultOf(string step) => step == TheWrite ? AuditResult.Undetermined : AuditResult.Failed;
+
+    // aud-a70 (17). The banner is one line, and so is the record's error it becomes: a cause's line breaks and runs of white
+    // space read as one space. The pool's "stopped" refusal is an ObjectDisposedException, whose message puts the object's
+    // name on a line of its own.
+    private static string OneLine(string text) => WhiteSpace.Replace(text, " ").Trim();
+
+    private static readonly Regex WhiteSpace = new(@"\s+", RegexOptions.CultureInvariant);
 }

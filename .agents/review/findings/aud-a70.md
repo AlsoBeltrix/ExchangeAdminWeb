@@ -71,6 +71,12 @@ the change on <target> could not be completed; the result stands"). `ExecuteOnPr
 same way (Mailbox 752, Calendar 695), above the staged target's reset, which such a throw skipped: the same guard there. In
 place. `ProcessBulk`'s `finally` has the same shape and is outside this sub-item (a candidate in the hand-back).
 
+(17) `Services/PermissionChangeFailure.cs` 38 (`Banner`): the cause is trimmed only. The pool's "stopped" refusal is an
+`ObjectDisposedException` (`Services/ExoConnectionPool.cs` 270, 308, 358, 369), whose message puts "Object name: '...'" on a
+line of its own, so the banner and the row's error it becomes carried a line break. The cause's line breaks and runs of
+white space now read as one space (`OneLine`), so every banner is one line whatever its cause. The pool's own message is
+unchanged: other modules show it, and they are not this finding's.
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -145,6 +151,17 @@ tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `632CF15C02
 | E9c | the same on Calendar Permissions | `43AA1656013D615884DE385C876FB2A8` | 1 of 455: the same test's `(page: "Calendar Permissions")` row |
 
 Each mutant is its completion call as it stood at `eb017102`.
+
+### (17) - commit `fix(aud-a70): (17) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~PermissionWriteSubmission` (119 tests). Fixed-file MD5:
+`Services/PermissionChangeFailure.cs` `8EC30F93A434695D37990019FC0FB59C`. The restore matched; rerun 119/119.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M17 | `Banner`'s cause trimmed only again (`OneLine` removed) | `A9B8DCD1F1195D08A053D6007AB65CB6` | 3 of 119: `TheStepBanner_IsOneLine_WhateverLinesItsCauseSpans`, `ACloudWriteWhoseBorrowIsRefused_IsRecordedAsFailed_NothingWasWritten(page: "Mailbox Permissions", refusal: "pool stopped")` and its `(page: "Calendar Permissions", ...)` row - the line break in the banner and the row |
+
+M17 is the cause's line as it stood at `eb017102`.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 

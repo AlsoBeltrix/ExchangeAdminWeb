@@ -903,9 +903,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
         var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, progress: progress, pool: pool);
 
-        var banner = $"Nothing was written: the connection to Exchange failed: {cause.Trim().TrimEnd('.')}.";
+        // aud-a70 (17): one line - the pool's "stopped" refusal puts its object's name on a line of its own.
+        var banner = $"Nothing was written: the connection to Exchange failed: {OneLine(cause).TrimEnd('.')}.";
         Assert.False(result.Success);
         Assert.Equal(banner, result.Message);
+        Assert.DoesNotContain('\n', result.Message);
+        Assert.DoesNotContain('\r', result.Message);
         Assert.DoesNotContain("raw-text-a71", result.Message, StringComparison.Ordinal);
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
@@ -1484,6 +1487,29 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (message, exception) = Assert.Single(warnings);
         Assert.Same(failure, exception);
         Assert.Contains("could not be completed", message, StringComparison.Ordinal);
+    }
+
+    // ---- aud-a70 (17): a banner is one line, whatever lines its cause spans ----------------------------------------------
+
+    /// <summary><paramref name="text"/> with its line breaks and runs of white space as one space each.</summary>
+    private static string OneLine(string text) =>
+        string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    [Fact]
+    public void TheStepBanner_IsOneLine_WhateverLinesItsCauseSpans()
+    {
+        // The pool's "stopped" refusal is an ObjectDisposedException, whose message puts the object's name on a line of its
+        // own: the banner, and the row's error it becomes, carried the line break.
+        var stopped = new ObjectDisposedException(typeof(ExoConnectionPool).FullName);
+        Assert.Contains('\n', stopped.Message);
+
+        var banner = PermissionChangeFailure.Banner(PermissionChangeFailure.TheConnection, new PermissionWriteNotSubmittedException(stopped));
+        var twoLines = PermissionChangeFailure.Banner(PermissionChangeFailure.TheWrite, new InvalidOperationException("the first line\r\n  and the second."));
+
+        Assert.Equal($"Nothing was written: the connection to Exchange failed: {OneLine(stopped.Message).TrimEnd('.')}.", banner);
+        Assert.Contains(typeof(ExoConnectionPool).FullName!, banner, StringComparison.Ordinal);
+        Assert.Equal("Whether the change was made could not be confirmed: the write failed: the first line and the second. Check the permissions before trying again.", twoLines);
+        Assert.All(new[] { banner, twoLines }, text => Assert.False(text.Contains('\n') || text.Contains('\r'), text));
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
