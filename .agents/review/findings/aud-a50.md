@@ -11,8 +11,8 @@ invalid row. (4) `AuditService.LogMailboxPermission` / `LogCalendarPermission` r
 cannot learn the aud-a28u write outcome; the banner says "The audit row could not be written." only when the
 call throws. (5) `SettingsStoreText` has no `ServiceEnablement(bool)`; the pool rebuilds the service wording
 by replacing the page clause.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
+**Status**: In progress; plan committed
+**Branch**: `worktree-agent-a80f49ad9ee618412`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a43/a44 agent, 2026-10-22, candidates 1-3 and its two "Left for a follow-up" items)
 
@@ -37,6 +37,100 @@ At `fce22146`: `Components/Pages/MailboxPermissions.razor` 693-695 and 708-709, 
 - Tests through `PermissionPagesSelfGrantTests`, the bulk loops' harness, `AuditWriterThrowFreeTests` and
   `StoreTextSurfaceTests`; mutations at the call site: the re-check removed; the stored-value once-guard
   removed; the blank-User check removed; the outcome ignored on one page; the pool's replace again.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("fix all the bugs ... EVERYTHING", `.agents/decisions.md` 2026-10-21). Branch
+`worktree-agent-a80f49ad9ee618412` from master `132d6e97`. One commit per part, in the order 1, 3, 2, 4, 5; aud-a52
+(folded into this agent's scope by the supervisor; its own record, plan and commit) lands between part 2 and part 4 so
+the validator work is contiguous; then one comments-only commit after every mutation round. Behaviour: the shared
+`PermissionValidator`, `AuditService`, `ExoConnectionPool` and `SettingsStoreText` (base app version) and what the Mailbox
+Permissions and Calendar Permissions pages and bulk loops refuse and say (both module versions); the bumps are the
+supervisor's at merge (`ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` are outside this brief).
+
+Evidence re-read at `132d6e97`:
+- `MailboxPermissions.razor` `ExecuteOnPrem` 693-703 re-validates the target against `onPremAuthState.User`, then writes
+  at 707-709; no self-grant check. `SubmitSingle` 429-457 runs it before staging the on-premises write (468-484) and the
+  operator's confirmation, an unbounded pause. `CalendarPermissions.razor` the same: 647-657, then the write at 659-663;
+  `SubmitSingle` 404-427. Lines free for an in-place statement: Mailbox 704 and 706, Calendar 658 (blank).
+- `PermissionValidator.GetPreventSelfGrant` 116: a stored value that is neither true nor false is named on every check;
+  `PreventSelfGrantFromAppsettings` 132-134 carries aud-a43's once-guard (`AppsettingsValuesNamed`).
+- `MailboxPermissionService` 218-297 / `CalendarPermissionService` 133-185: nothing checks `row.User` before the target
+  check (252 / 140) and the self-grant check (277 / 165), which puts '' to Exchange and records `*_SelfGrantAttempt`.
+- `AuditService.LogMailboxPermission` 47-78 and `LogCalendarPermission` 80-109 return void; `WriteAuditEvent` 466-520
+  computes the outcome at 491. Two source guards hold its shape: `UsageTelemetryServiceTests.AuditService_HookIsLastInWriteAuditEvent`
+  (another agent's file, not edited) finds `private void WriteAuditEvent(` and requires the telemetry call to stay its
+  last statement; `AuditExtraChannelTests` reads only `public void Log...` methods and looks for `WriteAuditEvent(evt);`.
+- `SettingsStoreText.Enablement` 30-32 and `ServiceModuleConfig` 43; `ExoConnectionPool.UnreadableEnablement` 223-226
+  rebuilds the service wording by replacing `DatabaseRemedy` in the page text.
+
+1. **Part 1 - the on-premises write re-checks the grantee.** `ExecuteOnPrem`, Add (Mailbox) / Set (Calendar) only, after
+   the target re-check and before the write: `Validator.ValidateSelfGrantAsync(onPremAuthState.User, user)` - the token
+   the target re-check was just decided against, and the staged grantee. A refusal writes the record `SubmitSingle`
+   writes (`Add{permType}_SelfGrantAttempt` / `SetCalendar_SelfGrantAttempt`, the validator's refusal as `errorDetail`; the
+   on-premises path carries no auto-mapping), shows the banner `SubmitSingle` shows (the refusal, and "The audit row could
+   not be written." when its record fails), sets `result` and `outcome`, and returns: nothing written. In place, one
+   statement: Mailbox 704, Calendar 658; 808 and 762 lines kept, no registry entry moves. The record-and-banner step is
+   new `Services/SelfGrantRefusalRecord.cs` (`Banner(refusal, write, logger, target)`, `SubmitSingle`'s catch as a
+   method): one free line cannot hold `SubmitSingle`'s try/catch, which stays as it is.
+2. **Part 3 - a blank User is an invalid row.** First in each bulk row, Add and Remove alike (the `_NoPermissions`
+   shape): `string.IsNullOrWhiteSpace(row.User)` records `Bulk{Add|Remove}_NoUser` / `Bulk{Set|Remove}Calendar_NoUser`
+   with "No user specified (the User column is empty)", adds a FAILED entry "No user specified", and continues - before
+   the target check, the self-grant check and the write.
+3. **Part 2 - the stored value is named once.** `GetPreventSelfGrant`: a static `StoredValuesNamed` beside
+   `AppsettingsValuesNamed`; the warning once per process per value; every check still refuses on it.
+4. **Part 4 - the pages learn the write's outcome.** `AuditService`: the shared writer becomes
+   `private void WriteAuditEvent(Dictionary<string, object?> evt, out JsonlWriteOutcome outcome)`, its body unchanged but
+   for the outcome being its out parameter - so `private void WriteAuditEvent(` and the telemetry call as its last
+   statement both stand - and `private void WriteAuditEvent(Dictionary<string, object?> evt) => WriteAuditEvent(evt, out _);`
+   follows it, so no other method changes. `LogMailboxPermission` and `LogCalendarPermission` return `JsonlWriteOutcome`
+   (`WriteAuditEvent(evt, out var outcome); return outcome;`); a caller that ignores it compiles and behaves as before.
+   The pages, in place: `SubmitSingle`'s record becomes `if (Audit.Log...(...) != JsonlWriteOutcome.Written) selfGrantError
+   += " The audit row could not be written.";` inside its existing try, whose catch still covers a throw;
+   `SelfGrantRefusalRecord.Banner` takes `Func<JsonlWriteOutcome>` and adds the sentence when the outcome is not
+   `Written`, so `ExecuteOnPrem`'s line does not change. `AuditExtraChannelTests`' source readers accept the return type
+   and the out form (still: every method taking `extra` merges it before it writes).
+5. **Part 5 - the service wording for an unreadable enablement.** `SettingsStoreText.ServiceEnablement(bool
+   legacyImportFailed)` beside `ServiceModuleConfig`: the legacy-file text as `Enablement` gives it (it has no page
+   clause), else the table sentence with `ServiceDatabaseRemedy`; the table sentence one private constant both forms use.
+   `ExoConnectionPool.UnreadableEnablement => SettingsStoreText.ServiceEnablement(_enablement.LegacyImportFailed)`. The
+   text the pool says is unchanged.
+
+Tests:
+- Part 1, `PermissionPagesSelfGrantTests`: each page's `ExecuteOnPrem` driven through its compiled code (services and
+  the staged fields set by reflection, as aud-a43's driver does `SubmitSingle`) over an on-premises service whose
+  credential and session are the harness's (the `*WriteIdentityTests` shape). A staged grant to a grantee Exchange names
+  as the operator is refused right before the write: the banner is the refusal, one `*_SelfGrantAttempt` record carries
+  it, no on-premises command runs. The control, a grantee who is someone else: the write runs and its record is a
+  success. A refusal whose record throws: the banner says so, one warning. Unit cases for `SelfGrantRefusalRecord`.
+  Updated, not weakened: `PermissionValidatorSelfGrantTests`' two source checks expect two record sites and two check
+  sites on each page, every record's `errorDetail` the refusal it was handed, every check the token its page decided the
+  target against (`validationAuthState.User` in `SubmitSingle`, `onPremAuthState.User` in `ExecuteOnPrem`).
+- Part 3, `PermissionValidatorSelfGrantTests` (the bulk loops over the harness): an empty and a whitespace User, Add and
+  Remove, both loops - one `*_NoUser` record, a FAILED entry, Exchange never asked, no directory session, nothing written
+  or connected; a valid row after it is still processed.
+- Part 2, `PermissionValidatorConfigReadTests`: a stored value of the test's own, two validations and a second validator
+  over it - one warning, every check refused; another value is named in its turn.
+- Part 4, `AuditWriterThrowFreeTests`: both methods return `Written`, `NotSerializable` (an unwritable value in `extra`)
+  and `FileWriteFailed` (the file held). `PermissionPagesSelfGrantTests`: each page's `SubmitSingle` and `ExecuteOnPrem`
+  with the audit file held, so the writer drops the row and nothing throws - the banner is the refusal and the sentence,
+  and the page logs no exception.
+- Part 5, `StoreTextSurfaceTests`: the service enablement text is the page text without its reload clause, and the
+  legacy text is one text in both. `ExoConnectionPoolConfigReadTests`: the borrow's refusal is exactly the prefix and
+  `ServiceEnablement(legacy)` for both stores, and a code-view guard that `UnreadableEnablement` calls `ServiceEnablement`
+  and replaces nothing - the replace says the same words today, so only the guard can tell the two apart.
+
+Mutations at the call site (md5 before, mutate, rebuild, filtered tests, failing names recorded, restore from git, touch,
+rebuild, md5 equal, filtered tests green): M1 the Mailbox Permissions `ExecuteOnPrem` re-check removed, M1c the Calendar
+Permissions one; M3 the Mailbox Permissions blank-User check removed, M3c the Calendar one; M2 the stored-value once-guard
+removed; M4 the outcome ignored on one page (Mailbox Permissions `SubmitSingle`'s `if` back to the bare call), extra E4
+`SelfGrantRefusalRecord` ignoring the outcome; M5 the pool's replace again, extra E5 `ServiceEnablement(false)` on the page
+remedy.
+
+Files: `Components/Pages/MailboxPermissions.razor` and `Components/Pages/CalendarPermissions.razor` (in place),
+`Services/SelfGrantRefusalRecord.cs` (new), `Services/PermissionValidator.cs`, `Services/MailboxPermissionService.cs`,
+`Services/CalendarPermissionService.cs`, `Services/AuditService.cs` (the two methods and `WriteAuditEvent` only),
+`Services/SettingsStoreText.cs`, `Services/ExoConnectionPool.cs`, the tests named, this record.
 
 ## Guard proof
 
