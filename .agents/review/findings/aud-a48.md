@@ -6,9 +6,9 @@
 `Enabled()` and `Record` into the last statement of `AuditService.WriteAuditEvent` (`_usage?.RecordAction`)
 after the operation completed, and into the Home page's render (`@if (Usage.Enabled())`); in the enqueue task
 it faults a fire-and-forget task unobserved.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on the branch, not merged; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
-**Commit**: -
+**Commit**: `df58ee19` (fix, tests, record); comments `c2d6215d`; plan `5ed8a5a8`
 **Reviewer**: implementer (surfaced by the aud-a47/a45/a46 agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -181,3 +181,30 @@ answering whatever the provider does.
   in the hand-back.
 - `InsertQueued` is internal so a test can run the task's body. The task itself is still not observed: a fault it could
   still meet, other than a report's, would go unobserved as before. The body's catch takes every exception.
+
+## Comments after the round
+
+Written after all three findings' rounds, in their own commit (`c2d6215d`), and checked as aud-a51's record says. This
+record's file: `Services/UsageTelemetryService.cs` `2DB82918757112613B597AF2F4E73AED` -> `9F43D9F7FDF5B881C7118B6871950426`.
+It has 166 code lines, their MD5 `418CF71C620C89CE1B6D85120BF7A334` on both sides. 13 lines were added and 1 extended
+(14 in, 1 out):
+- the class's "cannot break the caller" rule, which now covers the reports (the extended line);
+- that `Enabled()` answers whatever the provider does;
+- `InsertQueued`'s purpose;
+- why the reports are guarded, and the guard's empty catch.
+
+## Branch-tip gates
+
+See aud-a51's record for the branch's gates.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac1038e1d7ece4ae5`, not merged, not pushed. The service is shared - every audit call and
+the Home page reach it - so the base app version is due, and no module's own behaviour changed. The bump is the
+supervisor's, at merge, because `ExchangeAdminWeb.csproj` was outside this brief. No file another agent owns was touched:
+`Services/AuditService.cs` and `Components/Pages/Home.razor` needed no change. So nothing is left for a follow-up under
+that heading; the candidates are in the hand-back.
+
+## Codex review
+
+Pending.

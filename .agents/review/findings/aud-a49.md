@@ -7,9 +7,9 @@ silently with no count; the cut line a dead writer leaves (which the aud-a28z ta
 without a trace in the UI. (3) `ExtendedLogService.Dispose` waits 5 s for the consumer; at about 10 ms per
 append a full 1,024-entry queue needs about 11 s, so shutdown can leave hundreds of entries unwritten and not
 counted in `DroppedEntryCount`.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
+**Status**: Fixed on the branch, not merged; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
-**Commit**: -
+**Commit**: `6372c392` (fix, tests, README, record); comments `c2d6215d`; plan `5ed8a5a8`
 **Reviewer**: implementer (surfaced by the aud-a47/a45/a46 agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
 
 ## Evidence
@@ -219,3 +219,39 @@ driven through the seams.
   count lives in memory either way; the report is the one trace that outlives the process.
 - The trace catch's log line, like the audit catch's, still calls the page's logger unguarded (aud-a28q's class, in the
   page). It is listed as a candidate in the hand-back.
+
+## Comments after the round
+
+Written after all three findings' rounds, in their own commit (`c2d6215d`), and checked as aud-a51's record says. This
+record's files:
+- `Components/Pages/AdminEventLog.razor` `FDA7E9CFCDE3845C999320A414F0AAB9` -> `3F8DB6623CDA20078CADEF46260DFC05`: 1,289 code
+  lines, their MD5 `2C0E7A110340D0E6B68A11C839EDA875` on both sides. 7 lines were added, for:
+  - the notice;
+  - the counters and what they count;
+  - the trace catch;
+  - the notice's wording.
+  - One more was extended: the post-loop comment now says the warning names the trace files too.
+  - The page grows from 1,673 lines to 1,680. It is NotYetConverted, so no key moves.
+- `Services/ExtendedLogService.cs` `0CC372ADB3FE3F15C31888D3BAE5E5B1` -> `EB73D9F300CEF8E461637AEEE967DCA6`: 310 code lines,
+  their MD5 `8E22FA0363ACD1407A02EC8395282870` on both sides. 10 lines were added:
+  - why the queue has a second reader;
+  - why `Dispose` waits in proportion and counts what is left;
+  - the two seams.
+
+## Branch-tip gates
+
+See aud-a51's record for the branch's gates. `ClickGate*` and `ProgressRegistryTests` were run alone at the tip, as that
+record says.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac1038e1d7ece4ae5`, not merged, not pushed. Two layers changed, so two bumps are due:
+- Shared infrastructure, the extended log's `Dispose`: the base app version.
+- The Admin Event Log's behaviour - an unreadable trace file named, and the unparsed lines counted: its module version.
+
+Both bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs` and the csproj version elements were outside this
+brief. No file another agent owns was needed, so nothing is left for a follow-up under that heading.
+
+## Codex review
+
+Pending.

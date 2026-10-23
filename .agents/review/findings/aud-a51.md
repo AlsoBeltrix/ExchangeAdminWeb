@@ -8,9 +8,9 @@ dropped, and the logged exception is `JsonlLockTimeoutException` "Another writer
 writer is contending and the real cause is permissions. `AuditService.WriteAuditEvent` calls the writer
 synchronously on the circuit path, so each affected row also stalls the operator for 2 s before it is lost.
 The test lock holders do not use `DeleteOnClose`, so the edge is uncovered.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a48/a49 agent's scope; in progress (plan below)
+**Status**: Fixed on the branch, not merged; approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a48/a49 agent's scope
 **Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
-**Commit**: -
+**Commit**: `3277a185` (fix, tests, README, record); comments `c2d6215d`; plan `5ed8a5a8`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-14, 2026-10-22)
 
 ## Evidence
@@ -276,10 +276,81 @@ account.
   on the same build, as the README says.
 - An access refusal is retried for 100 ms before it is reported. A refusal that outlasts that while a third party
   deletes the lock file is reported as the folder's refusal and the row is dropped. The longest such run measured was
-  5.1 ms, an aud-a47-build instance's delete on close, under six contending threads.
+  5.1 ms, with six threads all opening the lock as the aud-a47 build does (Plan, evidence 6). A mix of the two builds
+  was not probed.
 - A refused lock file costs each write 100 ms, on the operator's thread for an audit write, until the folder is fixed.
   Each write reports it.
 - A writer killed while it holds the lock leaves the lock file in place. The next writer opens it.
 - The release's move can leave `<lock>.<32 hex>` behind if its delete fails. No log name or glob matches it.
 - Rotation still needs delete: in a folder without it, a file that reaches its size limit cannot be rotated, and every
   write to it fails, reported. That is not this finding's defect; it is listed as a candidate in the hand-back.
+
+## Comments after the round
+
+Written after all three findings' rounds, in their own commit (`c2d6215d`), with aud-a48's and aud-a49's. Checked by
+`check-comment-only.ps1` (session scratchpad `mutate/`), on aud-a47's definition: a file's code lines are every line
+neither blank nor a comment (`//`, `///`, a one-line Razor `@* *@`). They must be identical, in order, between `6372c392`
+and `c2d6215d`, line by line and by the MD5 of the code lines.
+- Its negative controls, the three fix commits, each fail on every code file they change: 5, 2 and 4 files.
+- Run on aud-a47's own comments commit (`543f5d5f..ab666f85`), it reproduces that record's published file and code-line
+  MD5s for all five files.
+
+This record's files:
+- `Services/JsonlFileAppender.cs` `DAA28E10B524854EF664C0B53297C84D` -> `2081391684DC8E21680C92D40ADA1D29`: 132 code lines,
+  their MD5 `2F000C7938038CABEE029AA535892E21` on both sides. 31 lines were added and 3 rewritten (34 in, 3 out):
+  - the class's aud-a51 remark: the lock is the handle;
+  - the grace and why 100 ms;
+  - `Append`'s two bounds;
+  - the refusal branch and the at-once branch;
+  - the handle, and why the release moves before it deletes;
+  - the refusal exception.
+  - The rewritten lines are `Lock`'s summary, which named the file deleted on close.
+- `Services/JsonlLogService.cs` `1B0D9E1F006E6B43131A60C3FA4EEA90` -> `5EE3D98CD0862C4D4BEF868A60383EA7`: 167 code lines,
+  their MD5 `CE5AEBFFC3E69E61452301E7C479E350` on both sides. 6 lines were added: the refused lock in `WriteToFile`'s
+  comment, and the grace seam.
+
+## Branch-tip gates - 2026-10-22 (`c2d6215d`: the plan, the three fixes and the comments)
+
+These gates are this branch's, shared by aud-a48's and aud-a49's records.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors, 19 warnings. That is the baseline taken
+  at `132d6e97` before any change: CS8604, CS8602, CS0649 and CS0414 in `GroupManagement.razor`, `SelfServiceGroups.razor`,
+  `HeaderAnalysisService.cs`, `AccountLockoutRemediationService.cs`, `MigrationReportExportProcessor.cs`,
+  `RiskyUsers.razor`, `MessageTrace.razor` and `Comms10kApprovedSetTests.cs`. None is in a file this branch touches, and
+  NuGet audit raised nothing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0.
+  - 6,139 passed / 3 skipped / 0 failed, 6,142 total, 6m05s.
+  - The three skips are the known AD ones, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`.
+  - Nothing hung, and no Sequence file was written.
+  - The fifteen new cases are this branch's: aud-a51 five, aud-a48 six, aud-a49 four. The base was not run separately;
+    6,127 is expected at `132d6e97`.
+  - The full suite was run at the tip only. Each fix commit's own bytes ran its round's filter green before it was made:
+    192, 160 and 511 tests.
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, each run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. These were run on each fix commit's and the comments commit's
+  staged bytes before it was made, and again on this records commit. The plan commit, records only, had
+  `git diff --check`.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell changed.
+
+No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, push or deployment. The stand-ins were:
+- real JSONL writers and a real extended log over temp folders;
+- raw handles and directories as the other instance and as a refused lock file;
+- a deny ACE for the test's own account on a temp folder;
+- real config stores whose reads the tests can fail.
+
+No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac1038e1d7ece4ae5`, not merged, not pushed. This is shared infrastructure, the appender
+every audit, trace and extended write ends in, so the base app version is due. The bump is the supervisor's, at merge,
+because `ExchangeAdminWeb.csproj` was outside this brief.
+
+No file another agent owns was needed, so nothing is left for a follow-up under that heading. `Services/AuditService.cs`'s
+synchronous write (491) now costs a refused lock file the 100 ms grace, not the 2 s bound. Moving the write off the
+operator's thread would remove what a live contender still costs, but that is aud-a47's known gap and a design change
+of its own.
+
+## Codex review
+
+Pending.
