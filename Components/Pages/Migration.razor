@@ -3874,7 +3874,7 @@
                 // R9 and R26. Finding takes the operator TO the batch, and arriving at a batch is
                 // selecting it - there is no third state where the pane shows one thing and the
                 // tick boxes another. Adopt navigates and loads, so nothing is fetched here.
-                selectedBatches.Clear();
+                selectedBatches.Clear(); WithdrawStagedMailboxAction(); // kd-35: before the list is cleared below - kd-13's withdrawal finds a row's action among the loaded mailboxes, so read after the clear it found none, and Confirm ran the last batch's row action over this one
                 selectedBatches.Add(matchedBatch.BatchName);
                 batchUsers = null;
                 InvalidateStoredReports(matchedBatch.BatchName);
@@ -3905,7 +3905,7 @@
             }
 
             highlightedUser = searchResult.Email;
-            selectedBatches.Clear();
+            selectedBatches.Clear(); WithdrawStagedMailboxAction(); // kd-35: the same, for a mailbox found in its batch
             selectedBatches.Add(searchResult.BatchId!);
             batchUsers = null;
             InvalidateStoredReports(searchResult.BatchId);
