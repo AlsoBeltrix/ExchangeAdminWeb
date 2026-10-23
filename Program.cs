@@ -514,6 +514,12 @@ try
     // ClientInfoMiddleware for consistency with it. Records page requests while they are being
     // served so the status frame reports a fact rather than inferring one in the browser.
     app.UseMiddleware<PageLoadMiddleware>();
+    // Every page is prerendered: its initialization runs during this request, before any circuit and
+    // so before the circuit's revalidation. This confirms the request's access first, with the same
+    // check the circuit runs, and renders nothing for a principal it refuses (aud-a29g). After
+    // authorization, so a request the page's own policy denies costs no directory read; inside the
+    // page-load scope above, so a page waiting on the directory is reported as loading.
+    app.UseMiddleware<PageRequestRevalidationMiddleware>();
     app.UseAntiforgery();
 
     app.MapRazorComponents<App>()
