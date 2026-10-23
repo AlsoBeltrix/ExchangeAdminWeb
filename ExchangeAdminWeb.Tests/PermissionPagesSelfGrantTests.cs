@@ -1559,6 +1559,104 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.All(new[] { banner, twoLines }, text => Assert.False(text.Contains('\n') || text.Contains('\r'), text));
     }
 
+    // ---- aud-a70 (15): a change filed Undetermined tells the administrators, and no one else -------------------------------
+
+    /// <summary>The actions of the administrator notifications <paramref name="email"/> was asked to send, in order.</summary>
+    private static IReadOnlyList<string> AdminActions(EmailService email) =>
+        email.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(EmailService.SendAdminNotificationAsync))
+            .Select(call => (string)call.GetArguments()[2]!)
+            .ToList();
+
+    [Fact]
+    public async Task ASingleChangeItsCatchFilesUndetermined_TellsTheAdministrators_AndNoOneElse()
+    {
+        // The Calendar removal whose retry could not connect once its command was sent (aud-a76's case) is filed Undetermined -
+        // it may have been made - and sent no notification at all.
+        using var pool = PoolWhoseWriteBorrowFails(_ => { }, LostSession());
+        _h.Failures["Remove-MailboxFolderPermission"] = "You must call Connect-ExchangeOnline before calling any other cmdlet.";
+        var email = EmailWhere(null);
+        var page = new CalendarPermissions();
+        Wire(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, new CapturingLogger<CalendarPermissions>(), email);
+        Set(page, "CalendarService", new CalendarPermissionService(pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
+        SetField(page, "tabIndex", 1);
+        SetField(page, "affectedUser", Other);
+
+        await Call(page, "SubmitSingle");
+
+        Assert.Equal("Undetermined", Text(Assert.Single(_h.AuditRows()), "result"));
+        await email.Received(1).SendAdminNotificationAsync(Logon, Arg.Any<string>(), "RemoveCalendar_UNCONFIRMED", Target, Other, "Remove",
+            false, "INC100", WriteNotConfirmed);
+        Assert.Single(AdminActions(email));
+        await email.DidNotReceive().SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        await email.DidNotReceive().SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AWriteWhoseOutcomeIsUnknown_TellsTheAdministratorsItIsUnconfirmed(string page)
+    {
+        // Its administrator notification went out under the change's own action and "FAILED", as though nothing had been made.
+        const string lost = "the session to Exchange Online was lost";
+        _h.Failures["Add-MailboxPermission"] = lost;
+        _h.Failures["Set-MailboxFolderPermission"] = lost;
+        _h.Failures["Add-MailboxFolderPermission"] = lost;
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.True(result.Unconfirmed);
+        Assert.Equal(new[] { (page == MailboxPage ? "AddFullAccess" : "SetCalendar") + PermissionChangeNotifier.UnconfirmedSuffix }, AdminActions(email));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremWriteWhoseOutcomeIsUnknown_TellsTheAdministratorsItIsUnconfirmed(string page)
+    {
+        _h.OnPremTransportFailures[TheWrite(page)] = "Processing data from remote server failed";
+        var email = EmailWhere(null);
+
+        var (result, _) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, email);
+
+        Assert.True(result.Unconfirmed);
+        Assert.Equal(new[] { (page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar") + PermissionChangeNotifier.UnconfirmedSuffix }, AdminActions(email));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AChangeThatWroteNothing_SendsNoUnconfirmedNotification(string page)
+    {
+        // A borrow refused before the command was sent wrote nothing: it is Failed, and no administrator is told of a change
+        // that may have been made.
+        using var pool = PoolWhoseWriteBorrowThrows(LostSession());
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email, pool: pool);
+
+        Assert.Equal(WriteNotSent, result.Message);
+        Assert.Empty(AdminActions(email));
+    }
+
+    [Fact]
+    public async Task TheUnconfirmedNotification_IsSentOnlyForAnUndeterminedChange_AndAThrowIsLogged()
+    {
+        var email = EmailWhere(null);
+        var logger = new CapturingLogger<MailboxPermissions>();
+
+        foreach (var filed in new[] { AuditResult.Success, AuditResult.Failed })
+            await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(filed, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        Assert.Empty(AdminActions(email));
+
+        await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(AuditResult.Undetermined, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        await email.Received(1).SendAdminNotificationAsync(Logon, "10.0.0.5", "AddFullAccess_UNCONFIRMED", Target, Other, "FullAccess", false, "INC100", "the banner");
+        Assert.Empty(logger.Warnings);
+
+        await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(AuditResult.Undetermined, EmailWhere("admin"), Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        var (message, exception) = Assert.Single(logger.Warnings);
+        Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
+    }
+
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
     private sealed class CapturingLogger<T> : ILogger<T>
     {

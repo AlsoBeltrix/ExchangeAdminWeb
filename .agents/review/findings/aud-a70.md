@@ -109,6 +109,17 @@ asserted the throw (12) removes; they are retargeted to Exchange's refusal - a f
 session's failure has tests of its own. Test seam: `ExchangeWriteHarness.OnPremTransportFailures` - the stand-in
 Invoke-Command runs the script, then writes a `PSRemotingTransportException` as a session that broke before its answer does.
 
+(15) An Undetermined single change notified no one: `SubmitSingle`'s catch (Mailbox 528-529, Calendar 505-506) and
+`ExecuteOnPrem`'s (Mailbox 744-747, Calendar 687-690) send nothing. Each catch now calls new
+`PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(filed, ...)`: when its row is filed Undetermined, the administrator
+notification - its action marked `_UNCONFIRMED`, not a success, the banner as its detail; a throw logged, the result
+standing. A result left unconfirmed through (14) reaches the success path's administrator notification already: its action
+takes the same mark there (Mailbox 510 and 729, Calendar 485 and 671). No user or owner notification in either case: those
+say access changed, which nobody can say. A change that wrote nothing (Failed) is unchanged. Through a helper rather than a
+second `Email.SendAdminNotificationAsync(` in `SubmitSingle`: ProgressRegistry holds every such call ahead of the handler's
+first `Complete`, which a call in the catch is not. After (12) and (14) no failure the services let out reaches
+`ExecuteOnPrem`'s catch at the write step - the call there is kept for the shape, and is not proven by a test (Known gaps).
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -218,6 +229,23 @@ Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~Permissio
 
 M12, M14a, M14b and M14c are each write as it stood at `eb017102` (M12 the set's one invoke; the removal's catch has the same
 shape, driven by the removal rows of the same tests); M14d the row as it stood.
+
+### (15) - commit `fix(aud-a70): (15) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~PermissionWriteSubmission`
+(496 tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `F82E851C85151B71A618C2B0213E7052`,
+`Components/Pages/CalendarPermissions.razor` `F4B8A74937A5AB9FE5D833483F568E66`, `Services/PermissionChangeNotifier.cs`
+`DB2A761821841D6A08B7DE5F3EFD9602`. Every restore matched; reruns 496/496.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M15 | Calendar `SubmitSingle`'s catch without the Undetermined notification | `CalendarPermissions.razor` `62BE66B5C6736302FFEEBA5822EEF7BB` | 1 of 496: `ASingleChangeItsCatchFilesUndetermined_TellsTheAdministrators_AndNoOneElse` - no one told |
+| M15b | Mailbox `SubmitSingle`'s administrator notification without the unconfirmed mark | `MailboxPermissions.razor` `4E9F45DEBCB94F6DF31165B916E82E3B` | 1 of 496: `AWriteWhoseOutcomeIsUnknown_TellsTheAdministratorsItIsUnconfirmed(page: "Mailbox Permissions")` |
+| E15 | extra: the helper's Undetermined gate removed | `PermissionChangeNotifier.cs` `1A5C0C211CAE795DF034C8195308CA74` | 3 of 496: `TheUnconfirmedNotification_IsSentOnlyForAnUndeterminedChange_AndAThrowIsLogged`, both `AChangeThatWroteNothing_SendsNoUnconfirmedNotification` rows |
+| E15b | extra: Mailbox `ExecuteOnPrem`'s administrator notification without the mark | `MailboxPermissions.razor` `A687578320491DC3E96324BC73AD9D30` | 1 of 496: `AnOnPremWriteWhoseOutcomeIsUnknown_TellsTheAdministratorsItIsUnconfirmed(page: "Mailbox Permissions")` |
+
+M15 is the catch as it stood at `eb017102`; M15b and E15b the notifications' actions as they stood. `ExecuteOnPrem`'s catch
+call has no mutant: no failure reaches it there (Known gaps).
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 
