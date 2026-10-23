@@ -14,6 +14,10 @@ public class JsonlLogService
     private readonly int _maxFilesPerPeriod;
     private readonly ILogger<JsonlLogService> _logger;
     private readonly object _lock = new();
+
+    // aud-a56. The streams whose failed rotation has been reported, until a write to them finds no rotation to do or makes
+    // one: one report per failure streak, not one per row. Under _lock.
+    private readonly HashSet<LogStream> _rotationFailureReported = [];
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -138,13 +142,27 @@ public class JsonlLogService
 
     // aud-a28z part 3 and aud-a47: one record, one line or none, under the file's lock - see JsonlFileAppender. The two
     // reports are this writer's, word for word as they were before the append moved there.
+    // aud-a56. A rotation that fails is reported once per failure streak of its stream, and the event is still written.
     private void AppendLine(string logPath, string json, LogStream stream) =>
         JsonlFileAppender.Append(
             logPath,
             json,
             LockWait,
             AccessRefusalGrace,
-            rotateIfFull: () => RotateIfFull(logPath),
+            rotateIfFull: () =>
+            {
+                RotateIfFull(logPath);
+                _rotationFailureReported.Remove(stream);
+            },
+            rotationFailed: ex =>
+            {
+                if (_rotationFailureReported.Add(stream))
+                {
+                    ReportSafely(logger => logger.LogWarning(ex,
+                        "Could not rotate the JSONL {Stream} file {Path}, which has reached its size limit: {Reason} The event was written to it, past the limit. Each write tries the rotation again; this is not reported again until a write finds the file rotated or under its limit",
+                        stream, logPath, ex.Message));
+                }
+            },
             writeLineBytes: WriteLineBytes,
             repaired: () => ReportSafely(logger => logger.LogWarning(
                 "The JSONL {Stream} file {Path} ended in a partial line, left by a write that did not finish; this event was started on a new line",
@@ -187,23 +205,9 @@ public class JsonlLogService
         RotateLogFiles(activePath);
     }
 
-    private void RotateLogFiles(string activePath)
-    {
-        var oldestPath = GetRotatedLogPath(activePath, _maxFilesPerPeriod - 1);
-        if (File.Exists(oldestPath))
-            File.Delete(oldestPath);
-
-        for (var i = _maxFilesPerPeriod - 2; i >= 1; i--)
-        {
-            var source = GetRotatedLogPath(activePath, i);
-            if (!File.Exists(source))
-                continue;
-
-            File.Move(source, GetRotatedLogPath(activePath, i + 1), overwrite: true);
-        }
-
-        File.Move(activePath, GetRotatedLogPath(activePath, 1), overwrite: true);
-    }
+    // aud-a56. Gap-aware, so a rotation retried after a failed last move deletes nothing - see JsonlFileAppender.Rotate.
+    private void RotateLogFiles(string activePath) =>
+        JsonlFileAppender.Rotate(activePath, _maxFilesPerPeriod - 1, index => GetRotatedLogPath(activePath, index));
 
     private static string GetRotatedLogPath(string activePath, int index)
     {

@@ -471,6 +471,78 @@ public class ExtendedLogServiceTests
     }
 
     [Fact]
+    public void TheConsumer_GivenAFullFileItCannotRotate_WritesEveryEntry_AndReportsItOnce()
+    {
+        // aud-a56. The shared appender let a rotation that threw fail the write, so every entry to a full file was dropped
+        // and counted until a rotation succeeded. The full file here is held open as a tailer holds it: no delete sharing,
+        // so it cannot be moved.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, new Dictionary<string, string?> { ["ExtendedLog:MaxFileBytes"] = "1024" }, logger: logger);
+        service.SetLevel("Error");
+        var logPath = GetTodayLogPath(temp.Path);
+        var fillers = Enumerable.Range(1, 12).Select(i => $"filler {i:00}").ToList();
+        File.WriteAllLines(logPath, fillers.Select(message => JsonSerializer.Serialize(new { message, pad = new string('x', 90) })));
+        Assert.True(new FileInfo(logPath).Length >= 1024, "the setup did not fill the file");
+
+        using (new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            service.Write(LogEventLevel.Error, "first", "Test");
+            service.Write(LogEventLevel.Error, "second", "Test");
+            service.Dispose();
+        }
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal([.. fillers, "first", "second"], messages);
+        Assert.Equal(0, service.DroppedEntryCount);
+        Assert.False(File.Exists(GetTodayRotatedLogPath(temp.Path, 1)), "the full file was rotated after all");
+        var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains(logPath, warning.Text, StringComparison.Ordinal);
+        Assert.NotNull(warning.Exception);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public void TheConsumer_GivenItsFolderRemoved_CreatesItAgain_AndWritesTheNextEntry()
+    {
+        // aud-a56. The appender creates the folder before every write now, for both writers; the consumer created it
+        // itself, and moving that into the appender must not lose it.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+        service.Write(LogEventLevel.Error, "before the folder went", "Test");
+        Assert.True(SpinWait.SpinUntil(() => ReadAsTheEventLogDoes(service).Messages.Count == 1, TimeSpan.FromSeconds(10)),
+            "the consumer never wrote the first entry");
+
+        var folder = Path.Combine(temp.Path, "ExchangeAdminWeb");
+        Assert.True(SpinWait.SpinUntil(() => TryDelete(folder), TimeSpan.FromSeconds(10)), "the folder could not be removed");
+
+        service.Write(LogEventLevel.Error, "after the folder went", "Test");
+        service.Dispose();
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["after the folder went"], messages);
+        Assert.Equal(0, service.DroppedEntryCount);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+
+        static bool TryDelete(string path)
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+    }
+
+    [Fact]
     public void GetEntries_WhenAFileCannotBeRead_SaysWhichAndWhy_AndKeepsTheLinesItCouldRead()
     {
         // A bare catch emptied the whole answer, so the event log showed "no diagnostics" for "could not be read".

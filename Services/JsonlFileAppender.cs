@@ -54,8 +54,9 @@ internal static class JsonlFileAppender
     /// (the caller's size check and rotation), the offset, the repair, the write and any take-back all run under it.
     /// </summary>
     /// <remarks>
-    /// The callbacks are the caller's reports and must not throw: <paramref name="repaired"/> after a write that first
-    /// ended a cut tail, <paramref name="truncationFailed"/> when taking a failed line back failed too.
+    /// The callbacks are the caller's reports and must not throw: <paramref name="rotationFailed"/> when the rotation threw
+    /// and the line goes to the file as it is (aud-a56), <paramref name="repaired"/> after a write that first ended a cut
+    /// tail, <paramref name="truncationFailed"/> when taking a failed line back failed too.
     /// <paramref name="lockWait"/> bounds the wait for another writer's lock, and <paramref name="accessRefusalGrace"/> the
     /// retry of a refusal (aud-a51).
     /// </remarks>
@@ -65,14 +66,30 @@ internal static class JsonlFileAppender
         TimeSpan lockWait,
         TimeSpan accessRefusalGrace,
         Action rotateIfFull,
+        Action<Exception> rotationFailed,
         Action<Stream, byte[]> writeLineBytes,
         Action repaired,
         Action<Exception> truncationFailed)
     {
+        // aud-a56. The folder before the lock, whose file lives in it, on every write: it was created once, so a folder
+        // removed while the app ran refused every row until a restart.
+        EnsureFolder(path);
+
         // aud-a47. The lock before anything else: an offset, a size or a last byte read without it can be stale by the
         // time it is used.
         using var held = Lock(path, lockWait, accessRefusalGrace);
-        rotateIfFull();
+
+        // aud-a56. A rotation that fails does not fail the write: the line goes to the file as it is, past its limit, and
+        // the next write tries the rotation again. It threw out of here, and every row to a full file was dropped until a
+        // rotation succeeded - a folder without delete, another program holding the file without delete sharing.
+        try
+        {
+            rotateIfFull();
+        }
+        catch (Exception ex)
+        {
+            rotationFailed(ex);
+        }
 
         // aud-a28z part 3, moved here from the JSONL writer. One record, one line, or none. The line - the bytes
         // StreamWriter.WriteLine wrote: UTF-8 and the platform's newline - goes in one write on an unbuffered stream, so
@@ -206,6 +223,52 @@ internal static class JsonlFileAppender
         {
             truncationFailed(ex);
         }
+    }
+
+    // aud-a56. A folder that cannot be created is the folder refusing this writer its lock file, reported at once as the
+    // aud-a51 refusal is, the cause inside.
+    private static void EnsureFolder(string path)
+    {
+        var folder = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(folder))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new JsonlLockRefusedException(LockPathFor(path), ex);
+        }
+    }
+
+    /// <summary>
+    /// Rotates the full <paramref name="activePath"/> to place 1 (aud-a56). The rotated files below the first free place
+    /// each move one place on first; the oldest, at place <paramref name="places"/>, is deleted only when every place is
+    /// taken; and no move overwrites a file. Runs under the file's lock.
+    /// </summary>
+    /// <remarks>
+    /// The writers' rotation deleted the oldest file and moved every other one on before it moved the full file. When that
+    /// last move failed - the full file held open without delete sharing - each retry deleted one more rotated file, until
+    /// none was left. A rotation that fails at its last move now leaves place 1 free, so a retry moves only the full file
+    /// and deletes nothing.
+    /// </remarks>
+    internal static void Rotate(string activePath, int places, Func<int, string> rotatedPath)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(places, 1);
+
+        var free = 1;
+        while (free < places && File.Exists(rotatedPath(free)))
+            free++;
+
+        if (File.Exists(rotatedPath(free)))
+            File.Delete(rotatedPath(free));
+
+        for (var place = free - 1; place >= 1; place--)
+            File.Move(rotatedPath(place), rotatedPath(place + 1));
+
+        File.Move(activePath, rotatedPath(1));
     }
 }
 

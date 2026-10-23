@@ -7,7 +7,7 @@ an editor) fails the write, and from then on every row to that file is dropped u
 by default once the file reaches 50 MB. (2) `JsonlLogService` creates `<LogRoot>\ExchangeAdminWeb` once, in
 its constructor; if the folder is deleted while the app runs, every audit and trace write fails until a
 restart (the extended log recreates it on every entry).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan written)
+**Status**: Fixed on branch, not merged; guard proof below
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidates 1 and 2 of its hand-back)
@@ -152,6 +152,120 @@ Files:
 - `README.md`
 - this record
 
+## Fix
+
+- `Services/JsonlFileAppender.cs`:
+  - `Append` takes `rotationFailed` after `rotateIfFull`.
+    - Before the lock it calls new private `EnsureFolder(path)`: `Directory.CreateDirectory` of the file's folder. An
+      `IOException` or `UnauthorizedAccessException` there is thrown as `JsonlLockRefusedException(LockPathFor(path), ex)`.
+    - Under the lock, `rotateIfFull()` sits in a try whose catch calls `rotationFailed(ex)`. The append then goes on
+      unchanged.
+  - New `internal static void Rotate(string activePath, int places, Func<int, string> rotatedPath)`:
+    - It finds `free`, the first place below `places` with no file, or `places` itself.
+    - It deletes the file at `free` only if one is there, which happens only when every place is taken.
+    - It moves places `free - 1` down to 1 each one on, then the active file to place 1. No move overwrites.
+    - `places` below 1 throws.
+- `Services/JsonlLogService.cs`:
+  - New `_rotationFailureReported` (`HashSet<LogStream>`, under `_lock`).
+  - `AppendLine`'s `rotateIfFull` runs `RotateIfFull`, then removes the stream from the set.
+  - Its `rotationFailed` adds the stream. When it was not there, it reports through `ReportSafely`: `LogWarning(ex, "Could
+    not rotate the JSONL {Stream} file {Path}, which has reached its size limit: {Reason} The event was written to it, past
+    the limit. Each write tries the rotation again; this is not reported again until a write finds the file rotated or
+    under its limit")`.
+  - `RotateLogFiles` is `JsonlFileAppender.Rotate(activePath, _maxFilesPerPeriod - 1, index => GetRotatedLogPath(activePath,
+    index))`.
+- `Services/ExtendedLogService.cs`:
+  - New `_rotationFailureReported` (a `bool` only the consumer touches), with the same reset and report for the extended
+    file ("The entry was written to it ... until an entry finds the file rotated or under its limit").
+  - `RotateLogFiles` goes through `JsonlFileAppender.Rotate`.
+  - The consumer's `Directory.CreateDirectory` is gone; the appender creates the folder.
+- `README.md`:
+  - "Shared log root": the rotation sentence says the writes land in the full file and the failure is logged.
+  - "Rotation": two new bullets, on a rotation that fails and on the folder created before every write.
+
+Tests:
+- `ExchangeAdminWeb.Tests/JsonlWriterRotationTests.cs` (new), +9:
+  - `AFullFileThatCannotBeRotated_StillTakesEveryRow_AndTheFailureIsReportedOnce`: audit and trace, by each of the two
+    causes.
+  - `AFailureStreak_EndsWhenARotationSucceeds_AndTheNextFailureIsReportedAgain`.
+  - `ARotationThatFailedAtItsLastMove_DeletesNothingMoreWhenItIsRetried`.
+  - `ALogFolderRemovedWhileTheAppRuns_IsCreatedAgain_AndTheNextRowIsWritten`: audit and trace.
+  - `ALogFolderThatCannotBeCreated_IsTheFoldersRefusal_AtOnce_AndTheNextRowIsWrittenOnceItCanBe`.
+  - Helpers: `Writer` (`Audit:MaxFileBytes` 1024), `FillPastTheLimit`, `RotatedFile`, `Obstruct`, `Hold`, `Rows` and
+    `RowsIn` (parsed as the Admin Event Log parses a line), and a `CapturingLogger` with `Errors` and `Warnings`. The
+    folder-denies-delete cause reuses aud-a51's `JsonlWriterLockTests.DenyDeleting`.
+- `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`, +2:
+  - `TheConsumer_GivenAFullFileItCannotRotate_WritesEveryEntry_AndReportsItOnce`.
+  - `TheConsumer_GivenItsFolderRemoved_CreatesItAgain_AndWritesTheNextEntry`.
+
+Caller-visible changes, by design:
+- A rotation that fails no longer drops the row. The row is written to the full file, past its size limit, and is reported
+  `Written`. One warning per failure streak names the stream, the file and the reason. Every later write tries again.
+- A rotation that fails part-way deletes nothing more on its retries. Rotated files are kept in order with a gap where a
+  rotation stopped, and readers already skip a place with no file.
+- The log folder is created before every audit, trace and extended write. A folder that cannot be created is a
+  `JsonlLockRefusedException`, at once.
+- An extended entry whose folder cannot be created is reported with that exception, where the raw exception was before.
+  It is still dropped and counted.
+
 ## Guard proof
 
-Pending.
+Reproduction:
+- M1 puts back the merged call site, `rotateIfFull()` with no guard.
+  - Every row to a full file the rotation cannot move was `FileWriteFailed`, with either cause and on both streams.
+  - Every extended entry to such a file was dropped.
+- M2 is the merged folder handling: only the constructor creates the folder. With the folder removed while the writer
+  lives, each next row was `FileWriteFailed`, and the extended entry was dropped.
+- E1 is the merged rotation, moved unchanged into `Rotate`. Its retries deleted the file at place 2, the rows a completed
+  rotation keeps.
+
+Session-local driver (session scratchpad `mutate/mutate.ps1`, spec `mutate/round-a56.ps1`, log `mutate/a56-mutations.log`):
+- For each mutant: the file must equal its staged version, and its MD5 is taken. One literal replacement must match exactly
+  once.
+- A Release build of the solution with 0 errors is required. Then the filter runs with a TRX logger, and the failing tests
+  are read from the TRX.
+- In a `finally`, the file is restored from the index (`git checkout --`), its mtime advanced so MSBuild rebuilds, and its
+  MD5 re-checked.
+- The filter (219 tests) is aud-a51's, with `JsonlWriterLockTests` widened to `JsonlWriter`:
+  `FullyQualifiedName~JsonlWriter|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~AuditExtraChannelTests|FullyQualifiedName~AuditCategoryFilingTests|FullyQualifiedName~EventLog`
+- Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the restored
+  bytes and the filter: 219/219 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the rotation failure failing the write again (`rotateIfFull();` with no try in `Append`) | `JsonlFileAppender.cs`, `DC89243CFA1B0E03A10E2D13AAF76E02` | `959220AE2812B5FBBC1DE06128EF9D2A` | 7 of 219: `AFullFileThatCannotBeRotated_...`, all four cases - three `FileWriteFailed` where `Written`; `AFailureStreak_...` and `ARotationThatFailedAtItsLastMove_...` - `FileWriteFailed` at the first held write; `TheConsumer_GivenAFullFileItCannotRotate_...` - "first" and "second" missing after the twelve fillers |
+| M2 the constructor-only folder creation again (`EnsureFolder(path);` removed from `Append`) | `JsonlFileAppender.cs`, `DC89243CFA1B0E03A10E2D13AAF76E02` | `6871C2FEBF3BE3EFE281E9BC2CC0B2D3` | 4 of 219: `ALogFolderRemovedWhileTheAppRuns_...`, audit and trace - `FileWriteFailed` where `Written`; `ALogFolderThatCannotBeCreated_...` - the row after the file is removed `FileWriteFailed`; `TheConsumer_GivenItsFolderRemoved_...` - `[]` where `["after the folder went"]` |
+| extra E1 the merged rotation again in `Rotate` (delete the oldest, move every place on, overwrite) | `JsonlFileAppender.cs`, `DC89243CFA1B0E03A10E2D13AAF76E02` | `D34D2D29AC65E142E40922E828689D9A` | 1 of 219: `ARotationThatFailedAtItsLastMove_...` - "exchangeadmin_20261023.2.jsonl is not there": the second held write's retry deleted it |
+| extra E2 the report on every failed write (`... .Add(stream) \|\| true`) | `JsonlLogService.cs`, `162259BFE9B0D338E9A6EBBB2531FF83` | `7AD40BC44474C78D3F73DA5552D572CD` | 6 of 219: `AFullFileThatCannotBeRotated_...`, all four cases - three warnings where one; `AFailureStreak_...` - two where one; `ARotationThatFailedAtItsLastMove_...` - three where one |
+| extra E3 the streak never ending (`_rotationFailureReported.Remove(stream);` removed) | `JsonlLogService.cs`, `162259BFE9B0D338E9A6EBBB2531FF83` | `C7F1997FF649AC41891D7D530D8AB30F` | 1 of 219: `AFailureStreak_...` - one warning where two: the failure after a successful rotation went unreported |
+
+E2 failed nothing in the extended log's tests, whose streak is its own field. Its extended test asserts one warning, and
+passes under every mutant but M1.
+
+Unchanged through the round:
+- `ExtendedLogService.cs` `156155DAA88DA1DCEE3653625A0A490E`
+- `JsonlWriterRotationTests.cs` `3359972DFE7FC7936D89496FFD11DA55`
+- `ExtendedLogServiceTests.cs` `29CF5665284725B9B7F94716C5EDBFD1`
+
+Any later comment edit is in its own commit, checked code-identical, so these MD5s are this commit's bytes.
+
+Not run, by design:
+- a real SIEM tailer or editor - the held handle is the same open such a program makes;
+- a folder whose ACL was set by `icacls` - the deny ACE is aud-a51's, for the test's own account, on a temp folder;
+- a log root on an SMB share.
+
+## Known gaps
+
+- The first attempt of a rotation that fails at its last move has already deleted the oldest rotated file and moved the
+  others on, as a completed rotation does. A full file that stays unrotatable then sits beside one rotated file fewer
+  than the limit allows, until it can be moved. The retries delete nothing more.
+- While a rotation keeps failing, the full file grows without bound, one row past its limit at a time. The warning is
+  the operator's cue, and is given once per streak.
+- A streak ends when a write finds the file rotated or under its limit. A write to a new day's file ends the streak, so
+  that file, if it fills and cannot be rotated either, is reported in its own right.
+- *Assumption, not probed*: another process creating a file at a rotated place between `Rotate`'s check and its move.
+  The move would fail, since moves no longer overwrite, and the failure is reported like any other.
+- `EnsureFolder` runs before the lock. A folder removed between it and the lock's open is the aud-a51 refusal for that
+  row, at once, and the next row creates the folder again.
+- The extended log's consumer still counts a folder it cannot create as a dropped entry, as before. Only the exception
+  it reports is different.
