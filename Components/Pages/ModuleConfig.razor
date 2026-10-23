@@ -865,6 +865,8 @@
     /// </summary>
     private async Task SaveCurrentTabAsync()
     {
+        // aud-a66. The load and the module the save is for, taken before it starts: a route change waits only for the saves
+        // of the load it replaces, and its notice names the module of any save it stops waiting for.
         var started = load;
         var name = module?.DisplayName ?? ModuleId;
         var save = tab switch
@@ -888,25 +890,57 @@
         }
     }
 
-    // aud-a41. The saves the Save button started, until each completes. The page is reused when its route moves to another module,
-    // and a save's store write runs off the circuit, so another module can be opened while one waits; the parameter load waits
-    // for these first, so a save's bookkeeping lands on the state of the module it saved and not on the next one's.
+    // aud-a41, aud-a66. The saves the Save button started, until each completes, with the load each began on and its module's
+    // name. The page is reused when its route moves to another module, and a save's directory confirmation and store write run
+    // off the circuit, so another module can be opened while saves wait; the parameter load waits for these first, so a save's
+    // bookkeeping lands on the state of the module it saved and not on the next one's. A list, not one field: a double click
+    // before the disabled Save renders, or a direct event, starts a second save before the first ends, and a field holding
+    // only the latest let the route change load another module under the first, which then wrote to it (aud-a66).
     private readonly List<(Task Save, int Load, string Module)> savesInFlight = new();
 
+    // aud-a66 (codex settings-batch-6). The longest a route change waits for those saves: the store's one busy wait (aud-a41;
+    // measured up to 5.97 s) with 5 s for the rest of a save. Unbounded, a store that never answered held every later move of
+    // this page instance until a new circuit. A directory confirmation can take longer (up to 30 s per new grant on the
+    // runspace lock); past the bound the next module loads anyway, and the save's captured state keeps it off that module:
+    // Shows refuses its write, Holds its page state. An instance field, so a test can shorten it.
     private TimeSpan saveWaitBound = ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory.BusyTimeout + TimeSpan.FromSeconds(5);
 
+    // aud-a66. The page's loads, counted by LoadState - the one place the page's module and its state are replaced.
     private int load;
 
+    /// <summary>
+    /// aud-a66. Whether the page still shows the module a save took before its first await: the test before its write. On
+    /// the module id, not the load - the write is the save's own captured diff, decided row by row under the write lock, so
+    /// whether it may go ahead depends on its target, not on whether the page read that module again.
+    /// </summary>
     private bool Shows(string moduleId) => string.Equals(module?.Id, moduleId, StringComparison.Ordinal);
 
+    /// <summary>
+    /// aud-a66. Whether the page still holds the load a save began on: the test before the save changes any page state. A
+    /// later load, of this module or another, is not the state the save diffed against.
+    /// </summary>
     private bool Holds(int started) => module is not null && load == started;
 
+    // aud-a66. What a save says, and records, when its page moved to another module while it waited - for the directory, or
+    // for its authorization re-check - before it wrote anything.
     private const string PageMovedRefusal =
         "Not saved: the page moved to another module while this save waited, so nothing was written. Open the module again and save.";
 
+    // aud-a66. A save's message on a load other than the one it began on: named for its module, so it cannot be read as being
+    // about the module shown.
     private static string? OnAnotherModule(AdminModuleDescriptor saved, string? message) =>
         message is null ? null : $"{saved.DisplayName}: {message}";
 
+    /// <summary>
+    /// aud-a41, aud-a66. Waits for every unfinished save of the current load - looking again after each one ends, so a save
+    /// started meanwhile is waited for too - for at most <see cref="saveWaitBound"/> in all.
+    /// </summary>
+    /// <returns>The names of the modules whose saves were still running when the bound ran out; null when none was.</returns>
+    /// <remarks>
+    /// A save of an earlier load is not waited for: the route change that stopped waiting for it has loaded since, and the
+    /// save can no longer touch the page (Shows, Holds), so a save that never ends costs one bounded wait, not every move
+    /// after it. Task.WhenAny, as aud-a41's wait was: a save that faulted is finished, and its fault is its own handler's.
+    /// </remarks>
     private async Task<List<string>?> WaitForThisLoadsSavesAsync()
     {
         var waited = System.Diagnostics.Stopwatch.StartNew();
@@ -930,6 +964,8 @@
         return null;
     }
 
+    // aud-a66 (codex settings-batch-6). What a route change shows when it stopped waiting for a save: which module's save is
+    // still running, and that it cannot change the module now shown. Seconds in the invariant culture, as the bound is fixed.
     private string UnfinishedSaveNotice(List<string> unfinished, AdminModuleDescriptor next)
     {
         var modules = string.Join(", ", unfinished);
@@ -1004,7 +1040,8 @@
     {
         if (ModuleId == loadedModuleId) return;
 
-        // aud-a41. A save on the module shown finishes before another module is loaded over it (see savesInFlight).
+        // aud-a41, aud-a66. The saves on the module shown finish before another module is loaded over it - for at most
+        // saveWaitBound (see savesInFlight and WaitForThisLoadsSavesAsync).
         var unfinished = await WaitForThisLoadsSavesAsync();
         if (ModuleId == loadedModuleId) return;
 
@@ -1017,6 +1054,8 @@
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
+        // aud-a66. Into a local, and shown with its state after the awaits below: until then the page keeps the module it shows
+        // and that module's state, so a save started while this load waits takes one module's id with that module's state.
         var next = Catalog.GetById(ModuleId);
         if (next == null || next.IsSystemModule)
         {
@@ -1048,6 +1087,7 @@
         // Opening on a tab this operator cannot see would render an empty page.
         tab = FirstVisibleTab();
 
+        // aud-a66. Past the bound: say which module's save is still running, and that it cannot change this one.
         if (unfinished is not null)
         {
             statusMessage = UnfinishedSaveNotice(unfinished, next);
@@ -1061,6 +1101,8 @@
     {
         if (module == null) return;
 
+        // aud-a66. A new load. A save begun on an earlier one changes none of this state (Holds) and no longer owns the Save
+        // button: one that outlasted the route change's wait would otherwise keep this module's Save disabled.
         load++;
         saving = false;
 
@@ -1155,6 +1197,7 @@
             .ToList();
 
     /// <summary>A config key as the Configuration tab heads it: its field label, with the key.</summary>
+    // aud-a66. Named by the descriptor the save took, as MaskIfSecret.
     private static string ConfigKeyName(AdminModuleDescriptor saved, string key)
     {
         var field = saved.ConfigFields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
@@ -1228,6 +1271,9 @@
         // included.
         // aud-a41. Taken before the write, which runs off the circuit - it can wait up to the store's busy timeout for a lock
         // held elsewhere - and the baseline below takes what was written, so a value typed while it waited stays unsaved.
+        // aud-a66. All of it, with the module, its id, the page's load and the load's corrupt flag, before the first await:
+        // the page can open another module - or this one again - while the save waits, and nothing after an await may read
+        // the page for this save. The record masks secrets and names keys by this descriptor too.
         var saved = module;
         var moduleId = saved.Id;
         var started = load;
@@ -1278,6 +1324,7 @@
                 return;
             }
 
+            // aud-a66. Immediately before the write: a page that moved to another module while this save waited gets nothing.
             if (!Shows(moduleId))
             {
                 statusMessage = PageMovedRefusal;
@@ -1332,6 +1379,7 @@
 
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the values just persisted all over again on the next edit.
+            // aud-a66. Only on the load this save began on: another load's state is not what it diffed against.
             if (Holds(started))
             {
                 foreach (var (key, value) in wantedValues)
@@ -1352,6 +1400,7 @@
         }
         finally
         {
+            // aud-a66. On another load the Save button belongs to that load, and this save's message names its module.
             if (Holds(started)) saving = false;
             else statusMessage = OnAnotherModule(saved, statusMessage);
         }
@@ -1366,6 +1415,8 @@
         // its write.
         // aud-a41. The toggle written, and the baseline after it, are the one this save began with; the write runs off the
         // circuit, and a toggle switched while it waits stays counted for the reload's guard.
+        // aud-a66. Both, with the module, its id, the page's load and the load's corrupt flag, before the first await (as
+        // SaveConfigAsync).
         var saved = module;
         var moduleId = saved.Id;
         var started = load;
@@ -1409,6 +1460,7 @@
                 return;
             }
 
+            // aud-a66. Immediately before the write, as SaveConfigAsync.
             if (!Shows(moduleId))
             {
                 statusMessage = PageMovedRefusal;
@@ -1442,6 +1494,8 @@
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module status change"); }
             }
 
+            // aud-a66. The baseline, the count, the render and the reload belong to the load this save began on; on another the
+            // page is not reloaded under the module it now shows, and the message names this save's module.
             if (Holds(started))
             {
                 moduleEnabledBaseline = wanted;
@@ -1472,6 +1526,7 @@
         }
         finally
         {
+            // aud-a66. On another load the Save button belongs to that load, and this save's message names its module.
             if (Holds(started)) saving = false;
             else statusMessage = OnAnotherModule(saved, statusMessage);
         }
@@ -1485,6 +1540,10 @@
         // loaded is confirmed to be a group in the directory first. The Add buttons stay live
         // while the lookup runs, so persisting the live lists afterwards would let a row added
         // mid-lookup ride an unchecked save.
+        // aud-a66. Taken before the first await, not after the authorization re-check, with what it is diffed against (the
+        // baseline), the names picked on the page, the sections the records list, the module, its id and the page's load:
+        // the page can open another module while the lookup runs, and the aliases and baseline read after it were that
+        // module's.
         var saved = module;
         var moduleId = saved.Id;
         var started = load;
@@ -1544,6 +1603,8 @@
                 return;
             }
 
+            // aud-a66. After the directory confirmation and before the write: a page that moved to another module while the
+            // lookup ran gets nothing - neither this module's diff nor one computed against the other's baseline.
             if (!Shows(moduleId))
             {
                 statusMessage = PageMovedRefusal;
@@ -1622,6 +1683,7 @@
 
             // The baseline is what was SAVED, so a row added during the lookup still counts as an
             // unsaved edit rather than vanishing from the dirty count.
+            // aud-a66. Only on the load this save began on.
             if (Holds(started))
             {
                 accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
@@ -1641,6 +1703,7 @@
         }
         finally
         {
+            // aud-a66. On another load the Save button belongs to that load, and this save's message names its module.
             if (Holds(started)) saving = false;
             else statusMessage = OnAnotherModule(saved, statusMessage);
         }
@@ -1669,6 +1732,9 @@
 
         // aud-a1b, the same rule as the access save: confirm every grant this save adds, and
         // persist the snapshot that was confirmed, never the live list.
+        // aud-a66. The snapshot, the baseline it is diffed against, the module, its id and the page's load, before the first
+        // await: the page can open another module while the lookup runs, and the id and baseline read after it applied this
+        // module's diff, computed against the other's baseline, to the other module.
         var saved = module;
         var moduleId = saved.Id;
         var started = load;
@@ -1712,6 +1778,7 @@
                 return;
             }
 
+            // aud-a66. After the directory confirmation and before the write, as the access save.
             if (!Shows(moduleId))
             {
                 statusMessage = PageMovedRefusal;
@@ -1762,6 +1829,7 @@
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the groups just persisted all over again on the next edit. The
             // baseline is what was SAVED, so a row added during the lookup stays an unsaved edit.
+            // aud-a66. Only on the load this save began on.
             if (Holds(started))
             {
                 moduleAdminGroupsBaseline = new List<string>(snapshot);
@@ -1779,6 +1847,7 @@
         }
         finally
         {
+            // aud-a66. On another load the Save button belongs to that load, and this save's message names its module.
             if (Holds(started)) saving = false;
             else statusMessage = OnAnotherModule(saved, statusMessage);
         }
@@ -1822,6 +1891,8 @@
             : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, DisplayNameFor);
     }
 
+    // aud-a66. By the descriptor the save took, never the page's: after a move the page's is another module's, whose fields
+    // would mask - or fail to mask - this module's keys.
     private string MaskIfSecret(AdminModuleDescriptor saved, string key, string value)
     {
         if (string.IsNullOrEmpty(value)) return "(empty)";
@@ -2131,6 +2202,8 @@
         // out here and vanish without a word. The save refuses it by its position (aud-a26f).
         // aud-a41. Taken before the write, which runs off the circuit. This section's count is a tally, not a diff, so after
         // the save it keeps only the edits made while the write waited.
+        // aud-a66. The rows, the version and the count, with the module, its id and the page's load, before the first await:
+        // the authorization re-check is against this module's admins, not those of a module the page opened meanwhile.
         var saved = module;
         var moduleId = saved.Id;
         var started = load;
@@ -2165,6 +2238,8 @@
                 return;
             }
 
+            // aud-a66. Immediately before the write, as SaveConfigAsync; recorded through the allowlist's own refusal record, the
+            // only one this page writes for it, and told in the page-wide message, since this module's banner is not shown.
             if (!Shows(moduleId))
             {
                 statusMessage = OnAnotherModule(saved, PageMovedRefusal);
@@ -2174,6 +2249,8 @@
             }
 
             var result = await Task.Run(() => AttrEditorService.SaveAllowlistAndAudit(rows, version, performedBy, ip));
+            // aud-a66. Finished after the page moved: the outcome is told, named for its module, and the allowlist state the
+            // page holds - version, banner, count - is left alone.
             if (!Holds(started))
             {
                 statusMessage = OnAnotherModule(saved, result.Success ? "The attribute allowlist was saved." : result.Error);
@@ -2209,6 +2286,7 @@
         }
         finally
         {
+            // aud-a66. On another load the Save button belongs to that load.
             if (Holds(started)) saving = false;
         }
     }
