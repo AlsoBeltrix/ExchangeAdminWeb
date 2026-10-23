@@ -9,7 +9,7 @@ its constructor; if the folder is deleted while the app runs, every audit and tr
 restart (the extended log recreates it on every entry).
 **Status**: Fixed on branch, not merged; guard proof below
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
-**Commit**: -
+**Commit**: `0ccdc758` (fix, tests, README, record); comments `173613a7`; plan `c3960fe9`
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidates 1 and 2 of its hand-back)
 
 ## Evidence
@@ -284,3 +284,44 @@ Checked by `check-comment-only.ps1` (session scratchpad `mutate/`):
   row, at once, and the next row creates the folder again.
 - The extended log's consumer still counts a folder it cannot create as a dropped entry, as before. Only the exception
   it reports is different.
+
+## Branch-tip gates - 2026-10-23 (`173613a7`: the plans, the three fixes and the comments)
+
+These gates are this branch's, shared by aud-a57's and aud-a58's records.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors, 19 warnings.
+  - That is the baseline taken at `a7300dee` before any change: CS8604, CS8602, CS0649 and CS0414 in
+    `GroupManagement.razor`, `SelfServiceGroups.razor`, `HeaderAnalysisService.cs`, `AccountLockoutRemediationService.cs`,
+    `MigrationReportExportProcessor.cs`, `RiskyUsers.razor`, `MessageTrace.razor` and `Comms10kApprovedSetTests.cs`.
+  - None is in a file this branch touches, and NuGet audit raised nothing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0.
+  - 6,344 passed / 3 skipped / 0 failed, 6,347 total, 6m55s.
+  - The three skips are the known AD ones, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`.
+  - Nothing hung, and no Sequence file was written.
+  - The thirty-seven new cases are this branch's: aud-a56 eleven, aud-a57 six, aud-a58 twenty. The base was not run
+    separately; 6,310 is expected at `a7300dee`.
+  - The full suite was run at the tip only. Each fix commit's own bytes ran its round's filter green before it was made:
+    219, 218 and 206 tests.
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, each run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+  - The format check and `git diff --check` ran on each fix commit's staged bytes before it was made, with a per-file
+    non-ASCII scan of its code files.
+  - All three ran on `173613a7`. `git diff --check` and the ASCII check ran again on this records commit.
+  - The plan commit, records only, had `git diff --check`.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell changed.
+
+No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, ServiceNow, push or deployment. The stand-ins were:
+- real JSONL writers and a real extended log over temp folders;
+- raw handles as the other program holding a full file;
+- a deny ACE for the test's own account on a temp folder;
+- real config stores whose reads the tests can fail;
+- the Admin Event Log's and the Home page's own render trees, driven by reflection;
+- a substitute HTTP client factory that is never called.
+
+No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a7b48a52dcf67eb2b`, not merged, not pushed. The appender every audit, trace and
+extended-log write ends in is shared infrastructure, so the base app version is due. The bump is the supervisor's, at
+merge: `ExchangeAdminWeb.csproj` was outside this brief.

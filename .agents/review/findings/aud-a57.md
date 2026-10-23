@@ -10,7 +10,7 @@ escapes `GetValue` / `GetModuleConfig` into every caller (the aud-a28q/a45 class
 throwing provider ends the load.
 **Status**: Fixed on branch, not merged; guard proof below
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
-**Commit**: -
+**Commit**: `278dff50` (fix, tests, record); plan `c3960fe9`
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidates 3, 4 and 5 of its hand-back)
 
 ## Evidence
@@ -213,3 +213,14 @@ one comments-only commit touches `Services/JsonlLogService.cs` only (aud-a56's r
 - The Admin Event Log's other `Logger` calls are still unguarded: the undo preview's catch, the undo's catch, the audit
   of an undo not run and the usage read's catch (listed in the hand-back as candidates). This record guards `LoadEvents`
   only.
+
+## Branch-tip gates
+
+See aud-a56's record for the branch's gates.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a7b48a52dcf67eb2b`, not merged, not pushed. Two bumps are due, both the supervisor's at
+merge, since `ExchangeAdminWeb.csproj` and `Modules/ModuleCatalog.cs` were outside this brief:
+- the base app version, for the usage-telemetry switch and the module-config read, which are shared;
+- the Admin Event Log's module version, for its load.

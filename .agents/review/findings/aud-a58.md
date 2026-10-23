@@ -6,7 +6,7 @@ to render for every user until the setting is corrected (the aud-a28y/a43 `bool.
 landing page).
 **Status**: Fixed on branch, not merged; guard proof below
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
-**Commit**: -
+**Commit**: `81333106` (fix, tests, README, record); plan `c3960fe9`
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidate 6 of its hand-back)
 
 ## Evidence
@@ -241,3 +241,14 @@ one comments-only commit touches `Services/JsonlLogService.cs` only (aud-a56's r
 - The once-per-value set lasts for the process and is never trimmed. It holds one entry per distinct mistyped value seen.
 - Other configuration reads with a parser that throws are not this record's: `Services/OperationTraceService.cs` 15
   (`GetValue<bool?>`) and `Services/EmailService.cs` 47 (`int.Parse`). Both are listed in the hand-back as candidates.
+
+## Branch-tip gates
+
+See aud-a56's record for the branch's gates.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a7b48a52dcf67eb2b`, not merged, not pushed. The Home page, the mail service, the ServiceNow
+client and the new helper are shared and belong to no module, so the base app version is due. The bump is the
+supervisor's, at merge: `ExchangeAdminWeb.csproj` was outside this brief. The two pages under "Left for a follow-up" wait
+on their owner's round.
