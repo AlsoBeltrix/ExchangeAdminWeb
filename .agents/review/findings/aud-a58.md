@@ -4,7 +4,7 @@
 ?? "false")` during render; a value such as "yes" or "1" throws `FormatException` and the Home page fails
 to render for every user until the setting is corrected (the aud-a28y/a43 `bool.Parse` class, on the
 landing page).
-**Status**: Fixed on branch, not merged; guard proof below
+**Status**: Merged `3da510cb`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
 **Commit**: `81333106` (fix, tests, README, record); plan `c3960fe9`
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidate 6 of its hand-back)

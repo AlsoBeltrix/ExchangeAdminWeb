@@ -7,7 +7,7 @@ an editor) fails the write, and from then on every row to that file is dropped u
 by default once the file reaches 50 MB. (2) `JsonlLogService` creates `<LogRoot>\ExchangeAdminWeb` once, in
 its constructor; if the folder is deleted while the app runs, every audit and trace write fails until a
 restart (the extended log recreates it on every entry).
-**Status**: Fixed on branch, not merged; guard proof below
+**Status**: Merged `3da510cb`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a7b48a52dcf67eb2b` (from `a7300dee`)
 **Commit**: `0ccdc758` (fix, tests, README, record); comments `173613a7`; plan `c3960fe9`
 **Reviewer**: implementer (surfaced by the aud-a51/a48/a49 agent, 2026-10-22, candidates 1 and 2 of its hand-back)
