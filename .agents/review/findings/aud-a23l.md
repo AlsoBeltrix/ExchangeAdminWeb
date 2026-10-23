@@ -7,7 +7,7 @@ from `RunAsync`. (2) When every target is excluded because the protection check 
 says the target "is a protected principal". (3) `AuditService.LogMigrationCheck` files an Undetermined
 verdict under result "Ineligible" (the `status` field does say Undetermined), so the Admin Event Log's
 result filter cannot find it.
-**Status**: Parts 1 and 2 fixed on branch, guard proof below; part 3 left for a follow-up (files owned by another agent); not merged, not pushed
+**Status**: Merged `09d3bacb` (parts 1 and 2); part 3 folded into aud-a28z; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
 **Commit**: `26237a55` (parts 1 and 2: fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23j, aud-a23m, aud-a23k)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidates 3, 4 and 8 of its hand-back)

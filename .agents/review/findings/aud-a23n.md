@@ -9,7 +9,7 @@ tests cannot see it; the record labelled this an unverified assumption. (2) The 
 only that a batch named after the mailbox exists, not its state: a batch already completed, failed or
 syncing passes the guard, and the approval then fails at a later step after `Set-MigrationUser` /
 `Set-MigrationBatch -CompleteAfter` already wrote.
-**Status**: Fixed on branch, guard proof below; not merged, not pushed
+**Status**: Merged `09d3bacb`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
 **Commit**: `2249d828` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23j, aud-a23m, aud-a23k, aud-a23l)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (mig-batch-6, 2026-10-22, candidates 1 and 2)

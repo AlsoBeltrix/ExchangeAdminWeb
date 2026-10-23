@@ -4,7 +4,7 @@
 fetch into report text ("Error retrieving report: ..."); the page stores that text as the report, shows it
 as such, and its activity completes as succeeded. (2) For moves back on-prem, a failed
 `GetCloudMailboxSizeAsync` is shown as 0 GB, so a size-based decision reads an empty mailbox.
-**Status**: Fixed on branch, guard proof below; not merged, not pushed
+**Status**: Merged `09d3bacb`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
 **Commit**: `e455a37f` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23j, aud-a23m, aud-a23l)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidates 2 and 7 of its hand-back)

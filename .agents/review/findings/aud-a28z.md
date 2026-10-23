@@ -49,3 +49,14 @@ category and path but not who did what: no operation id, actor, IP, target, tick
 gap cannot be reconciled. Fix: the guarded recovery log includes those as string-only fields through
 `TextField` (never the payload, never a raw `ToString`). Test: the recovery log line for a dropped row
 contains the operation id and actor. Mutation at the call site: the identity fields dropped from the log.
+
+## Folded in: LogMigrationCheck files Undetermined under result "Ineligible" and the Admin Event Log filter has no Undetermined option (aud-a23l part 3, 2026-10-22) - LOW
+
+(5) `Services/AuditService.cs` `LogMigrationCheck` (around line 127 at `b16898dc`):
+`["result"] = status == "Eligible" ? "Success" : "Ineligible"` files every non-Eligible status - `Undetermined`
+(aud-a23h) and the page catch's "Error" - under result "Ineligible". Fix: a third result for an undetermined
+check (`status switch { "Eligible" => "Success", "Ineligible" => "Ineligible", _ => "Undetermined" }`), so
+neither "Undetermined" nor "Error" is filed as an ineligibility. `Components/Pages/AdminEventLog.razor` lines
+91-96 (the Result filter's options All, Success, Failed, Ineligible): add an "Undetermined" option; the badge
+at 264 already shows any result other than Success and Failed as warning. Test: an Undetermined check's row
+carries result "Undetermined" and the filter finds it. Mutation at the call site: the two-way ternary again.
