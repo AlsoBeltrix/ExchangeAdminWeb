@@ -234,6 +234,43 @@ public sealed class ConferenceRoomPageTests : IDisposable
         Assert.False(row.TryGetProperty("mutationAttempted", out _));
     }
 
+    // ---- kd-52: the four writes' access refusal is audited, once ------------------------------------
+    // Each write handler re-checks access after its ticket check (ReauthorizeAsync); a refusal set the banner and recorded
+    // nothing. It now writes one row - the handler's action and target, the refusal and the aud-a28 fields - the shape kd-27's
+    // job controls file.
+
+    [Theory]
+    [InlineData("SetupSingleRoom", "ConferenceRooms_SetMetadata", "room1@contoso.test")]
+    [InlineData("ApplyFinderCsv", "ConferenceRooms_SetMetadata", "(bulk)")]
+    [InlineData("SetSingleRoomType", "ConferenceRooms_SetType", "room1@contoso.test")]
+    [InlineData("ApplyTypeCsv", "ConferenceRooms_SetType", "(bulk)")]
+    public async Task ARevokedOperatorsWrite_IsRefused_AndAuditedOnce(string handler, string action, string target)
+    {
+        var page = BuildPage(authorized: false);
+        SetField(page, "roomEmail", "room1@contoso.test");
+        SetField(page, "ticketNumber", "INC100");
+        SetField(page, "csvFinderTicket", "INC100");
+        SetField(page, "typeRoomEmail", "room1@contoso.test");
+        SetField(page, "typeTicketNumber", "INC100");
+        SetField(page, "selectedRoomType", "Standard");
+        SetField(page, "csvTypeTicket", "INC100");
+
+        await (Task)Method(handler).Invoke(page, null)!;
+
+        var row = Assert.Single(_h.AuditRows());
+        Assert.Equal(action, row.GetProperty("action").GetString());
+        Assert.Equal("operator", row.GetProperty("user").GetString());
+        Assert.Equal(OperatorIp, row.GetProperty("ip").GetString());
+        Assert.Equal(target, row.GetProperty("target").GetString());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("INC100", row.GetProperty("ticket").GetString());
+        Assert.Equal("Authorization denied.", row.GetProperty("error").GetString());
+        Assert.Equal("Authorization", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal("Authorization denied.", Assert.IsType<RoomOperationResult>(GetField(page, "result")).Message);
+        Assert.Empty(_h.Calls);
+    }
+
     // ---- kd-27: the job controls re-check access at the click -------------------------------------
     // Cancel and Remove acted on whatever the operator could do when the page loaded. They now re-check it as the four write
     // handlers do (ReauthorizeAsync) before any store call; a refusal leaves the job as it was and is audited under the

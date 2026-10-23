@@ -927,7 +927,10 @@ public sealed class ModuleCatalog
             // leaves the job alone and is audited (kd-27). The single room's refusal of a type that is
             // no name is audited as a refusal (kd-29). A cancel that found the job finished or gone is
             // audited as refused by the job's state, nothing changed (kd-32).
-            Version = "2.10.0",
+            // 2.13.0 (2.11.0 and 2.12.0 are master's, the second from the merge of the batch above): a
+            // write refused at its access re-check - Room Finder or Room Type, single or CSV - is audited
+            // once, as a refusal, as the job controls' is (kd-52).
+            Version = "2.13.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
