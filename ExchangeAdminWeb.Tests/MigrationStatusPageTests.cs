@@ -2516,16 +2516,55 @@ public class MigrationStatusPageTests
             ? ClickGateSource.BlankComments(source)
             : RazorSyntax.CommentsBlanked(source);
 
+    [Fact]
+    public void StripRazorComments_BlanksRazorCommentsAndKeepsAStringThatHoldsTheirMarkers()
+    {
+        // kd-30. The helper 18 scans here read through removed from any "@*" to the next "*@" wherever
+        // they were, so a "@*" in a C# string took the code after it with it - here, a whole method.
+        var page = string.Join("\n",
+            "@* a markup comment: StageDeleteSelected *@",
+            "<button @onclick=\"StageDeleteSelected\" disabled=\"@IsBusy\">Delete</button>",
+            "@code {",
+            "    private string open = \"@*\";",
+            "    private bool isBusy;",
+            "    private void StageDeleteSelected() { isBusy = true; }",
+            "    private string close = \"*@\";",
+            "    @* a comment in the code block: isBusy = true; *@",
+            "}");
+
+        var stripped = StripRazorComments(page);
+
+        Assert.Contains("private void StageDeleteSelected() { isBusy = true; }", stripped, StringComparison.Ordinal);
+        Assert.Contains("\"@*\"", stripped, StringComparison.Ordinal);
+        Assert.Contains("\"*@\"", stripped, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(stripped, @"isBusy = true;"));
+        Assert.DoesNotContain("a markup comment", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("a comment in the code block", stripped, StringComparison.Ordinal);
+        Assert.Equal(page.Length, stripped.Length); // blanked, not removed, so offsets hold
+
+        // A markup slice - a row, a render-fragment member - has no @code block and is read as markup.
+        var row = StripRazorComments("<tr>@* a row comment *@<td>x</td></tr>");
+        Assert.DoesNotContain("a row comment", row, StringComparison.Ordinal);
+        Assert.Contains("<td>x</td></tr>", row, StringComparison.Ordinal);
+    }
+
     /// <summary>
-    /// <paramref name="source"/> with Razor <c>@* *@</c> comments removed.
+    /// <paramref name="source"/> with its Razor <c>@* *@</c> comments blanked.
     /// </summary>
     /// <remarks>
     /// The markup's prose explains the very rules these guards assert - which phrase must not sit
     /// beside which - so a comment documenting a rule would otherwise be read as code breaking it.
     /// Same reasoning as <see cref="StripLineComments"/>, for the other comment syntax on the page.
+    /// <para>
+    /// kd-30: through the lexer-based view kd-20 routes a page to, ClickGateSource.BlankComments,
+    /// rather than a regex. The regex removed from any "@*" to the next "*@" wherever they were, so a
+    /// "@*" in a C# string took the code after it with it. The view reads its input as a component -
+    /// a page, a markup slice, a render-fragment member - blanks Razor comments in the markup only,
+    /// and blanks the C# comments of the page's code spans as well; blanked, not deleted, so offsets
+    /// hold.
+    /// </para>
     /// </remarks>
-    private static string StripRazorComments(string source) =>
-        Regex.Replace(source, @"@\*.*?\*@", "", RegexOptions.Singleline);
+    private static string StripRazorComments(string source) => ClickGateSource.BlankComments(source);
 
     /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
     private static string WholeWord(string identifier) =>
