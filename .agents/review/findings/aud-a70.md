@@ -119,6 +119,11 @@ Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate
 
 Each mutant is its refusal as it stood at `eb017102` but for the "Nothing was written." its text now ends with.
 
+Repair: the (5) commit `9b0aa71b` ran red in the full suite - 2 of 6,713, `ValidatedWriteCallSiteTests.EveryPageWriteAudit_RecordsTheIdentityWritten`
+(both pages), a count pin of `ValidatedMailbox.WithWrittenIdentity(` calls per page (3) that the refusal row's own call makes
+4. The round's filter had not included that class. The follow-up commit raises the pin to 4 and names the new row; no
+production change. From here every commit runs the full suite before it lands.
+
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 
 (4) `ExecuteOnPrem`'s failure row carries neither the servicer note nor the written identity (Mailbox 745-747,
