@@ -299,11 +299,11 @@
 
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{dns} ({ip})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize ticket validation"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{dns} ({ip})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize ticket validation"); }
                 return;
             }
 
@@ -449,4 +449,19 @@
             isOperating = false;
         }
     }
+
+    /// <summary>
+    /// kd-18. The refusal a blank ticket gets on the authorize path, or null when one was given;
+    /// ServiceNow is asked only about a ticket that is present.
+    /// </summary>
+    /// <remarks>
+    /// ServiceNowService passes every ticket - a blank one included - while the integration is
+    /// dormant, so AuthorizeServer's ServiceNow check alone did not make a ticket required, and the
+    /// Authorize button's emptiness clause was the only enforcement. RemoveServer already checks
+    /// presence itself. The message is the one that service gives a blank ticket when it is enabled.
+    /// </remarks>
+    private static TicketValidationResult? MissingTicket(string ticket) =>
+        string.IsNullOrWhiteSpace(ticket)
+            ? new TicketValidationResult { IsValid = false, Message = "Ticket number is required" }
+            : null;
 }
