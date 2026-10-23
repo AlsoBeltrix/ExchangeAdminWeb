@@ -34,17 +34,16 @@ internal sealed record SelfGrantDirectoryObject(
 /// One session per check: a fresh runspace, the ActiveDirectory module (<see cref="ActiveDirectoryModuleImport"/>) and the
 /// host forest's global catalog, discovered from <c>Get-ADForest</c> at runtime - the
 /// <c>PowerShellProtectedGroupDirectory.GlobalCatalog</c> idiom. Nothing is named, defaulted or configured (Architectural
-/// Invariant 7). The reads run under the app pool's identity, as the other read-only lookups of the signed-in operator do
-/// (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>); the protected-principal directory-read secret stays
-/// with the protected-principal check.
+/// Invariant 7). The lookups of the operator and of the objects a grantee names run under the app pool's identity, as the
+/// other read-only lookups of the signed-in operator do (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>).
 ///
 /// Every read is <c>Get-ADObject</c> under <c>-ErrorAction Stop</c>, and a cmdlet that wrote to its error stream is a failed
 /// read; so is a row without a DN, an objectGUID or a class. The validator reads "no rows" as an answer, so nothing here
 /// may report one for a read that did not complete.
 ///
-/// aud-a52. Whether a group holds the operator is read through <see cref="Groups"/>: the protected-group evaluator's reads
-/// (<see cref="PowerShellProtectedGroupDirectory"/>, the same failed-read rule) in this session, under its identity and with
-/// its catalog. aud-a43's direct member-link read is gone; the evaluator reads nesting and the primary group.
+/// aud-a52. Whether a group holds the operator is the protected-group evaluator's question, read in this session. aud-a60:
+/// under the protected-principal directory-read credential (<see cref="GroupsUnder"/>), not the session's identity - an
+/// identity that finds a group but cannot see some of its member links gets no rows, not an error.
 /// </remarks>
 internal sealed class SelfGrantDirectory : IDisposable
 {
@@ -60,14 +59,15 @@ internal sealed class SelfGrantDirectory : IDisposable
         _runspace = runspace;
         _ps = ps;
         _globalCatalog = globalCatalog;
-        Groups = PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, globalCatalog);
     }
 
     /// <summary>
-    /// The reads <see cref="ProtectedGroupMembership.Evaluate"/> needs, over this session's runspace: no credential, the
-    /// catalog this session found (aud-a52).
+    /// The reads <see cref="ProtectedGroupMembership.Evaluate"/> needs, over this session's runspace and under
+    /// <paramref name="credential"/> - the protected-principal directory-read credential (aud-a60), never this session's
+    /// own identity: a membership link that identity cannot see reads as no row, and "no row" is the evaluator's evidence.
     /// </summary>
-    internal IProtectedGroupDirectory Groups { get; }
+    internal IProtectedGroupDirectory GroupsUnder(PSCredential credential) =>
+        new PowerShellProtectedGroupDirectory(_ps, credential ?? throw new ArgumentNullException(nameof(credential)));
 
     /// <summary>The production session, built as every directory path here builds it; not yet opened.</summary>
     internal static Runspace DefaultRunspace()

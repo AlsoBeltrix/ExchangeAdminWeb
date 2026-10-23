@@ -25,9 +25,11 @@ namespace ExchangeAdminWeb.Tests;
 /// (<c>member:1.2.840.113556.1.4.1941:=</c>) follows only the links the server asked holds - its own domain's groups, or
 /// at the catalog the universal ones - and the bit-and rule reads <c>groupType</c>; every domain holds its Domain Users
 /// group, the primary group of its accounts. A filter naming an attribute the stand-in does not hold, or a construct it
-/// does not read, is an error, so no test can pass through a filter it did not evaluate. No stub declares a
-/// <c>Credential</c> parameter: the self-grant reads run under the session's own identity, and a credential passed is a
-/// binding error.
+/// does not read, is an error, so no test can pass through a filter it did not evaluate. aud-a60: the search stubs and
+/// <c>Get-ADForest</c> take <c>-Credential</c>, and who each call ran as is kept beside it (<see cref="CallsAs"/>: the
+/// credential's account, or null for the session's own identity). A group can hide its member links from a read made with
+/// no credential (<see cref="Entry.MembersHiddenFromSession"/>): such a read sees no row for them, not an error - as a
+/// directory answers an identity that may not read a link.
 /// </remarks>
 internal sealed class SelfGrantDirectoryStandIn
 {
@@ -63,6 +65,18 @@ internal sealed class SelfGrantDirectoryStandIn
 
     /// <summary>Every step a stub was asked to run, in order.</summary>
     public IList Calls { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>aud-a60. Who each of <see cref="Calls"/> ran as, in the same order: the credential's account, or "" for none.</summary>
+    public IList Identities { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>aud-a60. Every step with who it ran as: the credential's account, or null for the session's own identity.</summary>
+    public IReadOnlyList<(string Call, string? As)> CallsAs =>
+        Calls.Cast<string>().Zip(Identities.Cast<string>(), (call, who) => (call, who.Length == 0 ? null : who)).ToList();
+
+    /// <summary>aud-a60. Every membership read (a search on <c>member</c>, by either cmdlet) with who it ran as.</summary>
+    public IReadOnlyList<(string Call, string? As)> MembershipReads =>
+        CallsAs.Where(read => read.Call.StartsWith("Get-AD", StringComparison.Ordinal)
+            && read.Call.Contains("(member", StringComparison.OrdinalIgnoreCase)).ToList();
 
     /// <summary>
     /// How a step fails instead of answering: "Import-Module", "Get-ADForest", "Get-ADObject" or "Get-ADGroup" (every
@@ -106,6 +120,11 @@ internal sealed class SelfGrantDirectoryStandIn
         /// <summary>Held by the catalog and not by its own domain - a domain that cannot answer for it.</summary>
         public bool CatalogOnly { get; init; }
 
+        /// <summary>
+        /// aud-a60. Member links a read made with no credential cannot see: the group is found, its links read as none.
+        /// </summary>
+        public bool MembersHiddenFromSession { get; init; }
+
         public string Name => Dn[3..Dn.IndexOf(',')];
 
         /// <summary>A security group's groupType: the scope's flag and the security flag.</summary>
@@ -147,7 +166,8 @@ internal sealed class SelfGrantDirectoryStandIn
     /// members: global unless <paramref name="universal"/> or <paramref name="domainLocal"/>.
     /// </summary>
     public Entry AddGroup(string name, string? mail = null, string domainDn = DomainDn, string domainSid = DomainSid,
-        int? rid = null, bool universal = false, bool catalogOnly = false, bool domainLocal = false, params Entry[] members)
+        int? rid = null, bool universal = false, bool catalogOnly = false, bool domainLocal = false,
+        bool membersHiddenFromSession = false, params Entry[] members)
     {
         var entry = new Entry
         {
@@ -160,6 +180,7 @@ internal sealed class SelfGrantDirectoryStandIn
             Members = [.. members.Select(member => member.Dn)],
             Scope = universal ? "Universal" : domainLocal ? "DomainLocal" : "Global",
             CatalogOnly = catalogOnly,
+            MembersHiddenFromSession = membersHiddenFromSession,
         };
         _objects.Add(entry);
         return entry;
@@ -185,34 +206,40 @@ internal sealed class SelfGrantDirectoryStandIn
         return new ClaimsPrincipal(new ClaimsIdentity(claims, authenticated ? "Negotiate" : null));
     }
 
+    // aud-a60: every stub records who it ran as beside the call - the credential's account, or "" for none - and a search
+    // tells the forest whether it carried a credential.
     private static readonly (string Name, string Body)[] Stubs =
     [
         ("Import-Module", """
             [CmdletBinding()] param([string] $Name)
             [void]$SelfGrantCalls.Add("Import-Module $Name")
+            [void]$SelfGrantIdentities.Add('')
             $problem = $SelfGrantProblem.Invoke('Import-Module', '', '')
             if ($problem) { Write-Error $problem }
             """),
         ("Get-ADForest", """
-            [CmdletBinding()] param()
+            [CmdletBinding()] param([System.Management.Automation.PSCredential] $Credential)
             [void]$SelfGrantCalls.Add('Get-ADForest')
+            [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADForest', '', '')
             if ($problem) { Write-Error $problem; return }
             [pscustomobject]@{ GlobalCatalogs = [string[]]$SelfGrantCatalogs.Invoke() }
             """),
         ("Get-ADObject", """
-            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties)
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential)
             [void]$SelfGrantCalls.Add("Get-ADObject $Server $LDAPFilter")
+            [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, $LDAPFilter)
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $false)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $false, [bool]$Credential)) { $row }
             """),
         ("Get-ADGroup", """
-            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties)
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential)
             [void]$SelfGrantCalls.Add("Get-ADGroup $Server $LDAPFilter")
+            [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADGroup', $Server, $LDAPFilter)
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $true)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $true, [bool]$Credential)) { $row }
             """),
     ];
 
@@ -227,9 +254,10 @@ internal sealed class SelfGrantDirectoryStandIn
 
         var state = InitialSessionState.CreateDefault2();
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCalls", Calls, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantIdentities", Identities, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantProblem", (Func<string, string, string, string?>)Problem, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCatalogs", (Func<string[]>)(() => GlobalCatalogs), null));
-        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch", (Func<string, string, bool, object[]>)Search, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch", (Func<string, string, bool, bool, object[]>)Search, null));
         foreach (var (name, body) in Stubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, body));
         return RunspaceFactory.CreateRunspace(state);
@@ -266,7 +294,7 @@ internal sealed class SelfGrantDirectoryStandIn
         return null;
     }
 
-    private object[] Search(string filter, string server, bool groupsOnly)
+    private object[] Search(string filter, string server, bool groupsOnly, bool credentialed)
     {
         try
         {
@@ -275,7 +303,7 @@ internal sealed class SelfGrantDirectoryStandIn
             return _objects
                 .Where(entry => !groupsOnly || string.Equals(entry.Class, "group", StringComparison.OrdinalIgnoreCase))
                 .Where(entry => Holds(reach, entry))
-                .Where(entry => match(attribute => Values(entry, attribute, reach)))
+                .Where(entry => match(attribute => Values(entry, attribute, reach, credentialed)))
                 .Select(Row)
                 .Cast<object>()
                 .ToArray();
@@ -294,7 +322,11 @@ internal sealed class SelfGrantDirectoryStandIn
     // Whose member links a server holds: at the catalog a universal group's only; in a domain its own groups'.
     private static bool LinksHeld(string reach, Entry group) => reach == "forest" ? group.Universal : Holds(reach, group);
 
-    private IEnumerable<string> Values(Entry entry, string attribute, string reach) => attribute.ToLowerInvariant() switch
+    // aud-a60. Whose member links this read can see: a link held, and not hidden from a read made with no credential.
+    private static bool LinksSeen(string reach, Entry group, bool credentialed) =>
+        LinksHeld(reach, group) && (credentialed || !group.MembersHiddenFromSession);
+
+    private IEnumerable<string> Values(Entry entry, string attribute, string reach, bool credentialed) => attribute.ToLowerInvariant() switch
     {
         "objectsid" => One(entry.Sid),
         "userprincipalname" => One(entry.Upn),
@@ -305,14 +337,14 @@ internal sealed class SelfGrantDirectoryStandIn
         "name" or "cn" => One(entry.Name),
         "distinguishedname" => One(entry.Dn),
         "objectclass" => One(entry.Class),
-        "member" => LinksHeld(reach, entry) ? entry.Members : [],
-        MemberChain => LinksHeld(reach, entry) ? Chain(entry, reach) : [],
+        "member" => LinksSeen(reach, entry, credentialed) ? entry.Members : [],
+        MemberChain => LinksSeen(reach, entry, credentialed) ? Chain(entry, reach, credentialed) : [],
         "grouptype" => entry.GroupType is int type ? [type.ToString(CultureInfo.InvariantCulture)] : [],
         _ => throw new InvalidOperationException($"stand-in: the filter names '{attribute}', which it does not hold"),
     };
 
-    // Every DN reached from the group through member links the server holds.
-    private List<string> Chain(Entry group, string reach)
+    // Every DN reached from the group through member links the server holds and this read can see.
+    private List<string> Chain(Entry group, string reach, bool credentialed)
     {
         var reached = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Dn };
@@ -325,7 +357,7 @@ internal sealed class SelfGrantDirectoryStandIn
                 var nested = _objects.FirstOrDefault(candidate =>
                     string.Equals(candidate.Class, "group", StringComparison.OrdinalIgnoreCase)
                     && string.Equals(candidate.Dn, dn, StringComparison.OrdinalIgnoreCase));
-                if (nested is not null && seen.Add(dn) && LinksHeld(reach, nested))
+                if (nested is not null && seen.Add(dn) && LinksSeen(reach, nested, credentialed))
                     queue.Enqueue(nested);
             }
         }

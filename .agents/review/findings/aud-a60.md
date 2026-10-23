@@ -11,9 +11,9 @@ credential; where that identity can discover the catalog and resolve the grantee
 `ProtectedGroupMembership.Evaluate` answers no match with `Incomplete=false`, and the grant is allowed
 though the data was unavailable. The safety then rests on the deployment's read visibility, which
 Architectural Invariant 7 forbids.
-**Status**: In progress; plan below, approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: -
+**Commit**: plan `fa1ed15c`; fix - the commit that carries this text
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-6, 2026-10-22, candidates 1 and 2)
 
 ## Evidence
@@ -147,6 +147,84 @@ members. A grant to any group the directory holds needs the protected-principal 
 incomplete, naming it, while that credential is not configured or cannot be retrieved. Each group grantee costs one secret
 fetch.
 
+## Fix
+
+- `Services/IIdentityResolver.cs`: `ResolvedRecipient` gains `RecipientTypeDetails` (its last parameter, optional) and
+  `IsGroup`; new `ExchangeRecipientKinds.NamesAGroup(type, details)` - either kind carrying "Group", or `RoomList`;
+  `ExchangeGroupMember.IsGroup` asks it too.
+- `Services/ExchangeIdentityResolver.cs` `MapRecipient`: `RecipientTypeDetails` from the `Get-Recipient` row.
+- `Services/PermissionValidator.cs`: `IsGroupRecipient` is `recipient.IsGroup`. `CompareInDirectoryAsync`, with groups to
+  evaluate and an operator account, first has the credential (`DirectoryReadCredentialAsync`): the setting probed
+  (`TryGetDirectoryReadSecret`; false refuses with `DirectoryReadCredentialUnreadable` and one error naming the rows), the
+  Secret ID read as the protected-principal check reads it (`GetDirectoryReadSecretId`; none refuses with
+  `DirectoryReadCredentialNotConfigured`), the secret fetched (`DirectoryReadSecretFetch`, a test seam, else
+  `FetchDirectoryReadSecretAsync`: `DelineaService` from the validator's scope factory, a throw when none is registered) - a
+  throw, a null or a blank account refuses with `DirectoryReadCredentialNotRetrieved` - and the account named `DOMAIN\name`
+  unless the secret names it qualified (the protected-principal check's form). Each refuses "whether you are a member of the
+  group '<x>' could not be read: <the problem>", one warning logged. The evaluation runs over `directory.GroupsUnder(credential)`.
+- `Services/SelfGrantDirectory.cs`: `Groups` removed; `GroupsUnder(credential)` is the credentialed
+  `PowerShellProtectedGroupDirectory` over this session's runspace.
+- `Services/PowerShellProtectedGroupDirectory.cs`: `UnderSessionIdentity`, its constructor and its flag removed; the class is
+  byte for byte what it was before aud-a52 (`132d6e97`) but for its summary line.
+
+Tests: `SelfGrantDirectoryStandIn` - the search stubs and `Get-ADForest` take `-Credential`; `Identities`, `CallsAs` and
+`MembershipReads` say who each call ran as; `MembersHiddenFromSession` hides a group's links from a read with no credential
+(`AddGroup(membersHiddenFromSession:)`). `ExchangeWriteHarness.NothingProtectedValidator` stores Secret ID
+`DirectoryReadSecretId` (4242) and sets the fetch seam to a stand-in that gives `svc-dirread` of `CONTOSO` for it and counts
+`DirectoryReadFetches`; it takes the Protected Principals module config optionally. `PermissionValidatorSelfGrantTests` +10:
+`AMicrosoft365Group_InTheShapeGetRecipientGives_IsCheckedAgainstItsMembers` (the operator inside: refused; not: allowed;
+Exchange asked once either way), `AMembershipTheSessionIdentityCannotSee_IsReadUnderTheDirectoryReadCredential_AndRefused` (the
+granted group's links hidden; a nested group's: refused, every `Get-ADGroup` read and the catalog's discovery as
+`CONTOSO\svc-dirread`, the operator's own lookup as the session, one fetch), `AGroupGrant_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNoMembershipIsRead`
+(not configured, its setting unreadable, not retrieved, the fetch throwing, a blank account: the refusal naming each, no
+`Get-ADGroup` read at all), `AGrantToAPerson_NeedsNoDirectoryReadCredential`. `ExchangeGroupMembersTests`: the stubs in the
+real shape (`Microsoft365Type`, `UserMailbox`); +15 - `AMicrosoft365GroupNestedInIt_IsAGroup_ByItsDetails_AndIsRead` and
+`ARecipientIsAGroup_WhenEitherKindExchangeGaveNamesOne` (14 rows, the member and the recipient alike).
+`ExchangeIdentityResolverTests.MapRecipient_CarriesRecipientTypeDetails_AndAMicrosoft365GroupIsAGroup`.
+`ProtectedGroupMembershipTests.EveryRead_CarriesItsCredential_AndNoFormWithoutOneRemains` replaces aud-a52's two-form test:
+both reads and the catalog's discovery as the credential's account, every instance constructor taking a credential, no static
+factory of the class.
+
+## Left for a follow-up (file owned by another agent)
+
+- `Components/Pages/AdminSettings.razor` 282 (the placeholder "Required when groups or OUs are configured") and 289 ("Read-only
+  AD credential for group membership and OU checks."): the Directory Read Credential is now also what a Mailbox Permissions or
+  Calendar Permissions grant to a group needs - without it every such grant is refused as incomplete. Both texts should say
+  so, for example "Required when groups or OUs are configured, and for Mailbox and Calendar Permissions grants to groups".
+
 ## Guard proof
 
-Pending.
+Session-local driver `mutate.ps1` (session scratchpad `a60`, log `a60-mutations.log`): the fix staged; per mutant: the MD5 of
+each file it touches, the edits (an exact-text replacement that must match exactly once, or the whole file as at a revision),
+the MD5 again, a Debug build of the test project with 0 errors required, `dotnet test --no-build` filtered to
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ProtectedGroupMembership|FullyQualifiedName~ResourceDomainDenies|FullyQualifiedName~GroupMemberNesting|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeIdentityResolver`
+(442 tests), the failing names taken from the run, then each file restored from the git index (`git checkout --`), its write
+time advanced so MSBuild rebuilds it, and its MD5 checked equal to the one before. Fixed-file MD5s:
+`Services/PermissionValidator.cs` `64ACACCBBB3CD100A02870CDF3F5AC6B`, `Services/IIdentityResolver.cs`
+`7883E50450CF26010DF4D47ABB849B85`, `Services/ExchangeIdentityResolver.cs` `554F27730DC13ED6844A97FC311BA413`,
+`Services/PowerShellProtectedGroupDirectory.cs` `6FE3B486BFE41365BD00F4E99F8FE1A1`, `Services/SelfGrantDirectory.cs`
+`E93483FD83D4B08CAF206E6835BF35AD`. Every mutant built with 0 errors and every restore matched. After the round, the restored
+tree rebuilt and the filter: 442/442 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | `IsGroupRecipient` on `RecipientType` alone again (the line as it stood) | `PermissionValidator.cs` `63E9FF247BE1C42ADEDF45452FF9313D` | 2 of 442: both `AMicrosoft365Group_InTheShapeGetRecipientGives_IsCheckedAgainstItsMembers` rows - the operator inside allowed; not inside, Exchange never asked |
+| M2 | the session-identity reads again: `PowerShellProtectedGroupDirectory.cs` and `SelfGrantDirectory.cs` as at `a7300dee`, the evaluation over `directory.Groups` with no credential had | `763F5452C35110B068AE9FC1179ABDA5`, `655601E2340033D00267B8A3AE2E8AD9`, `PermissionValidator.cs` `1EF05D71F91FEA3AA49E2B208882D982` | 8 of 442: both `AMembershipTheSessionIdentityCannotSee_...` rows (allowed), all five `AGroupGrant_WithoutTheDirectoryReadCredential_...` rows (allowed, read without it), `ProtectedGroupMembershipTests.EveryRead_CarriesItsCredential_AndNoFormWithoutOneRemains` |
+| E1 | extra: `ExchangeGroupMember.IsGroup` on `RecipientType` alone | `IIdentityResolver.cs` `499ECE73EC55AFE6273BEC3604F8279F` | 5 of 442: `ACloudGroupNestedInIt_IsReadToo`, `AMicrosoft365GroupNestedInIt_IsAGroup_ByItsDetails_AndIsRead` (the nested Microsoft 365 group not read), three `ARecipientIsAGroup_...` rows (`UserMailbox`/`GroupMailbox`, no type/`GroupMailbox`, no type/`RoomList`) |
+| E2 | extra: `MapRecipient` dropping `RecipientTypeDetails` | `ExchangeIdentityResolver.cs` `821C9053AE91C4C3CF583BA8F40D3907` | 1 of 442: `MapRecipient_CarriesRecipientTypeDetails_AndAMicrosoft365GroupIsAGroup` |
+| E3 | extra: a credential that cannot be had taken as "not a member" (`return null;`) | `PermissionValidator.cs` `81E512FC67CD39F0D0D5414794DC9E1D` | 5 of 442: every `AGroupGrant_WithoutTheDirectoryReadCredential_...` row - allowed |
+| E4 | extra: `GroupsUnder` handing the directory no credential (`null!`) | `SelfGrantDirectory.cs` `095D349FEF45B7084B5690794CB7F564` | 2 of 442: both `AMembershipTheSessionIdentityCannotSee_...` rows - the reads carried none, the hidden links read as no rows, allowed |
+
+No separate pre-fix reproduction: M1 is the classification as it stood, and M2 the reads as they stood, each at its call site.
+
+## Known gaps
+
+- Labelled assumptions, as the plan records them: a Microsoft 365 group's kinds as `Get-Recipient` reports them, and the
+  protected-principal directory-read credential reading every link the membership needs. Nothing ran against a tenant or a
+  forest.
+- The operator's and the grantee's lookups (`SelfGrantDirectory.FindBySid`, `FindByUserPrincipalName`, `FindNamedBy`) still
+  run under the app pool's identity: resolver reads, outside this finding. A grantee object hidden from that identity reads as
+  no object, so a group Exchange Online does not name at all - one only the on-premises directory holds - is then allowed with
+  no membership read. A candidate in the hand-back.
+- A deployment with no directory-read credential configured cannot grant Mailbox Permissions or Calendar Permissions to a
+  group the directory holds: refused as incomplete, naming the setting (the Admin Settings follow-up above).

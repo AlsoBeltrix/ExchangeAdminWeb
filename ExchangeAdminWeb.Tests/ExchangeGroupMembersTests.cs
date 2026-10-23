@@ -75,11 +75,16 @@ public sealed class ExchangeGroupMembersTests : IDisposable
     private const string Security = "MailUniversalSecurityGroup";
     private const string Microsoft365 = "GroupMailbox";
 
+    // aud-a60. The RecipientType Exchange reports for a Microsoft 365 group: no group in it - only its RecipientTypeDetails,
+    // GroupMailbox, says it is one. These stubs gave it a distribution group's type, which hid that the check read the type
+    // alone.
+    private const string Microsoft365Type = "UserMailbox";
+
     private void Group(string address, string? kind, params Hashtable[] members) => _groups[address] = new Hashtable
     {
         ["Address"] = address,
         ["Kind"] = kind,
-        ["Type"] = kind == Microsoft365 ? Dl : kind,
+        ["Type"] = kind == Microsoft365 ? Microsoft365Type : kind,
         ["Members"] = members,
     };
 
@@ -94,7 +99,7 @@ public sealed class ExchangeGroupMembersTests : IDisposable
 
     private static Hashtable Nested(string? address, string kind, bool? synced)
     {
-        var row = new Hashtable { ["RecipientType"] = kind == Microsoft365 ? Dl : kind, ["RecipientTypeDetails"] = kind };
+        var row = new Hashtable { ["RecipientType"] = kind == Microsoft365 ? Microsoft365Type : kind, ["RecipientTypeDetails"] = kind };
         if (address is not null)
             row["PrimarySmtpAddress"] = address;
         if (synced is not null)
@@ -160,6 +165,49 @@ public sealed class ExchangeGroupMembersTests : IDisposable
             members.Select(member => member.PrimarySmtpAddress));
         Assert.Contains("Get-DistributionGroupMember inner@contoso.test Unlimited", Calls);
         Assert.Contains("Get-UnifiedGroupLinks m365@contoso.test Members Unlimited", Calls);
+    }
+
+    [Fact]
+    public void AMicrosoft365GroupNestedInIt_IsAGroup_ByItsDetails_AndIsRead()
+    {
+        // aud-a60. Exchange reports a Microsoft 365 group with RecipientType UserMailbox; only RecipientTypeDetails names it a
+        // group. Read by its type alone it was a person: its members were never read, and the self-grant check compared the
+        // group itself with the operator.
+        Group("outer@contoso.test", Dl, Nested("m365@contoso.test", Microsoft365, synced: false));
+        Group("m365@contoso.test", Microsoft365, User("inside@contoso.test"));
+
+        var members = Read("outer@contoso.test");
+
+        var nested = Assert.Single(members, member => member.PrimarySmtpAddress == "m365@contoso.test");
+        Assert.Equal(Microsoft365Type, nested.RecipientType);
+        Assert.True(nested.IsGroup);
+        Assert.Contains(members, member => member.PrimarySmtpAddress == "inside@contoso.test");
+        Assert.Contains("Get-UnifiedGroupLinks m365@contoso.test Members Unlimited", Calls);
+    }
+
+    [Theory]
+    [InlineData("UserMailbox", "GroupMailbox", true)]
+    [InlineData(Dl, "GroupMailbox", true)]
+    [InlineData(null, "GroupMailbox", true)]
+    [InlineData(Dl, Dl, true)]
+    [InlineData(Security, Security, true)]
+    [InlineData("MailNonUniversalGroup", "MailNonUniversalGroup", true)]
+    [InlineData("DynamicDistributionGroup", "DynamicDistributionGroup", true)]
+    [InlineData(Dl, "RoomList", true)]
+    [InlineData(null, "RoomList", true)]
+    [InlineData("UserMailbox", "UserMailbox", false)]
+    [InlineData("UserMailbox", "SharedMailbox", false)]
+    [InlineData("MailUser", "GuestMailUser", false)]
+    [InlineData("MailContact", "MailContact", false)]
+    [InlineData(null, null, false)]
+    public void ARecipientIsAGroup_WhenEitherKindExchangeGaveNamesOne(string? type, string? details, bool group)
+    {
+        // aud-a60. One rule for a grantee and for a member: a person read as a group is refused as incomplete (its membership
+        // cannot be read), a group read as a person is allowed - so the rule reads either kind. Rows 1-3 are a Microsoft 365
+        // group as Get-Recipient, Get-UnifiedGroup and a row without a type report it.
+        Assert.Equal(group, ExchangeRecipientKinds.NamesAGroup(type, details));
+        Assert.Equal(group, new ExchangeGroupMember("x@contoso.test", null, type, details, false).IsGroup);
+        Assert.Equal(group, new ResolvedRecipient("x@contoso.test", null, type, false, RecipientTypeDetails: details).IsGroup);
     }
 
     [Fact]

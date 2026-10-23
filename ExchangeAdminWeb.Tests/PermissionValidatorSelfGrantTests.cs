@@ -4,7 +4,11 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -581,6 +585,161 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         Assert.Equal(IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read"), result);
         Assert.Empty(_h.Forest.Errors);
+    }
+
+    // ---- aud-a60: a Microsoft 365 group; membership read under the directory-read credential -------------------
+
+    private const string Microsoft365Group = "m365-team@contoso.test";
+
+    /// <summary>Exchange knows the operator's mailbox, and the grantee as a Microsoft 365 group in the shape Get-Recipient gives.</summary>
+    private static IIdentityResolver ExchangeHoldsAMicrosoft365Group(params ExchangeGroupMember[] members)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(Microsoft365Group).Returns(new ResolvedRecipient(
+            Microsoft365Group, "ext-" + Microsoft365Group, "UserMailbox", ExistsOnPrem: false, RecipientTypeDetails: "GroupMailbox"));
+        resolver.ReadGroupMembersAsync(Microsoft365Group).Returns((IReadOnlyList<ExchangeGroupMember>)members);
+        return resolver;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AMicrosoft365Group_InTheShapeGetRecipientGives_IsCheckedAgainstItsMembers(bool operatorInside)
+    {
+        // Get-Recipient reports a Microsoft 365 group with RecipientType UserMailbox and RecipientTypeDetails GroupMailbox. Read
+        // by its type alone it was a person: Exchange was never asked for its members, and a grant to one holding the operator
+        // went through.
+        var resolver = ExchangeHoldsAMicrosoft365Group(Person(Other, "ext-other"),
+            operatorInside ? Person(Upn, "ext-jdoe") : Person("third@contoso.test", "ext-third"));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Microsoft365Group);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        await resolver.Received(1).ReadGroupMembersAsync(Microsoft365Group);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    public static TheoryData<string> HiddenLinks => ["the granted group's own", "a group nested in it"];
+
+    [Theory]
+    [MemberData(nameof(HiddenLinks))]
+    public async Task AMembershipTheSessionIdentityCannotSee_IsReadUnderTheDirectoryReadCredential_AndRefused(string hidden)
+    {
+        // The directory finds the group but shows its member links only to an identity that may read them: any other read
+        // gets no rows, not an error, and the evaluator took no rows for "not a member". Under the protected-principal
+        // directory-read credential - the one the protected-principal check reads with - the links are there.
+        if (hidden == "the granted group's own")
+        {
+            _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, membersHiddenFromSession: true, members: [_other, _jdoe]);
+        }
+        else
+        {
+            var team = _h.Forest.AddGroup("Inner Team", membersHiddenFromSession: true, members: [_jdoe]);
+            _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [team]);
+        }
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(SelfGrantRefusal, result);
+        Assert.NotEmpty(_h.Forest.MembershipReads);
+        Assert.All(_h.Forest.CallsAs.Where(read => read.Call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)),
+            read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
+        Assert.Contains(_h.Forest.CallsAs, read => read.Call.StartsWith("Get-ADForest", StringComparison.Ordinal)
+            && read.As == ExchangeWriteHarness.DirectoryReadAccount);
+        // The operator's and the grantee's lookups stay the session's: resolver reads, outside this finding.
+        Assert.Contains(_h.Forest.CallsAs, read => read.As is null
+            && read.Call.StartsWith($"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} ", StringComparison.Ordinal)
+            && read.Call.Contains($"(objectSid={_jdoe.Sid})", StringComparison.Ordinal));
+        Assert.Equal(1, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    public static TheoryData<string> CredentialsNotToBeHad =>
+        ["not configured", "its setting cannot be read", "not retrieved", "the fetch throws", "a blank account"];
+
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task AGroupGrant_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNoMembershipIsRead(string shape)
+    {
+        // The operator is not a member here: the refusal is the question nothing may answer without the credential. The
+        // session identity is never asked in its place - its "no rows" is no answer.
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var validator = shape == "its setting cannot be read"
+            ? _h.NothingProtectedValidator(resolver, UnreadableModuleConfig())
+            : _h.NothingProtectedValidator(resolver);
+        var problem = PermissionValidator.DirectoryReadCredentialNotRetrieved;
+        switch (shape)
+        {
+            case "not configured":
+                ClearTheDirectoryReadSecretId();
+                problem = PermissionValidator.DirectoryReadCredentialNotConfigured;
+                break;
+            case "its setting cannot be read":
+                problem = PermissionValidator.DirectoryReadCredentialUnreadable;
+                break;
+            case "not retrieved":
+                validator.DirectoryReadSecretFetch = _ => Task.FromResult<(string username, string password, string domain)?>(null);
+                break;
+            case "the fetch throws":
+                validator.DirectoryReadSecretFetch = _ =>
+                    Task.FromException<(string username, string password, string domain)?>(new InvalidOperationException("the secret store is unreachable"));
+                break;
+            default:
+                validator.DirectoryReadSecretFetch = _ => Task.FromResult<(string username, string password, string domain)?>((" ", "secret", "CONTOSO"));
+                break;
+        }
+
+        var result = await validator.ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{Delegates}' could not be read: {problem}"), result);
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => call.StartsWith("Get-ADGroup ", StringComparison.Ordinal));
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AGrantToAPerson_NeedsNoDirectoryReadCredential()
+    {
+        // The credential is had only for a group the directory is asked about: a deployment without it still grants to people.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
+        var validator = _h.NothingProtectedValidator(resolver);
+        ClearTheDirectoryReadSecretId();
+
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other));
+        Assert.Equal(0, _h.DirectoryReadFetches);
+    }
+
+    /// <summary>The directory-read Secret ID the harness stored, cleared: the credential is not configured.</summary>
+    private void ClearTheDirectoryReadSecretId() =>
+        _h.ModuleConfig.UpdateModuleValues(ProtectedPrincipalService.ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [ProtectedPrincipalService.DirectoryReadSecretConfigKey] = "" });
+
+    /// <summary>Module config over the harness's database through a store whose every read fails.</summary>
+    private ModuleConfigService UnreadableModuleConfig()
+    {
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_h.Dir);
+        return new ModuleConfigService(new ModuleCatalog(), env,
+            new ModuleConfigRepository(new UnreadableStore(TestConfigStore.Create(_h.Dir))), NullLogger<ModuleConfigService>.Instance);
+    }
+
+    /// <summary>A config store whose every read fails; writes pass.</summary>
+    private sealed class UnreadableStore(IConfigStore inner) : IConfigStore
+    {
+        public long GetChangeToken() => inner.GetChangeToken();
+
+        public T Read<T>(Func<SqliteConnection, T> read) => throw new InvalidOperationException("config store unreadable");
+
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => inner.Write(write);
+
+        public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
     }
 
     // ---- Exchange Online (aud-a28y) ----------------------------------------------------------------
