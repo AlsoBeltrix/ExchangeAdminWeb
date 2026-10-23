@@ -29,6 +29,39 @@ public enum RoomType
     Executive
 }
 
+/// <summary>
+/// kd-28. A <see cref="RoomType"/> read from text by its NAME, and only by its name.
+/// </summary>
+/// <remarks>
+/// Enum.TryParse takes a number for any enum, and a comma list it ORs into one value, defined or not: a CSV type of "4"
+/// applied CEO - which removes every existing calendar permission - "9" wrote CustomAttribute9 "RoomType:9", and
+/// "Video,Restricted" would have applied Exception. Rejecting digits and requiring Enum.IsDefined still lets the comma list
+/// through, so the text has to be one of the names.
+/// </remarks>
+public static class RoomTypeNames
+{
+    /// <summary>
+    /// True, with the type, when <paramref name="text"/>, trimmed, is one of the type names - exactly, or ignoring case when
+    /// <paramref name="ignoreCase"/> is true. A number, a comma list, a blank or any other text is false.
+    /// </summary>
+    public static bool TryParse(string? text, bool ignoreCase, out RoomType type)
+    {
+        var name = text?.Trim();
+        var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var candidate in Enum.GetValues<RoomType>())
+        {
+            if (string.Equals(candidate.ToString(), name, comparison))
+            {
+                type = candidate;
+                return true;
+            }
+        }
+
+        type = default;
+        return false;
+    }
+}
+
 public class RoomTypeDefinition
 {
     public RoomType Type { get; init; }

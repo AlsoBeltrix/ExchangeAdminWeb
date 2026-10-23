@@ -920,7 +920,10 @@ public sealed class ModuleCatalog
             // refusals of a type they cannot parse say that nothing was written (aud-a2y). Cancelling
             // a bulk job writes an audit row - operator, job, ticket, and whether it was cancelled,
             // refused or failed - as removing one does (kd-5).
-            Version = "2.8.0",
+            // 2.10.0 (2.9.0 is master's, from the merge of the batch above): a room type is read by
+            // its name only - "4", "9" or "Video,Restricted" in a CSV or a request is refused, where
+            // Enum.TryParse applied CEO, an undefined type or Exception (kd-28).
+            Version = "2.10.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

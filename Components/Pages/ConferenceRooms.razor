@@ -1395,7 +1395,7 @@
             // the banner carries the reason.
             if (!await ReauthorizeAsync()) return;
 
-            if (!Enum.TryParse<RoomType>(typeName, out var roomType))
+            if (!RoomTypeNames.TryParse(typeName, ignoreCase: false, out var roomType))
             {
                 result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}. Nothing was written." };
                 return;
@@ -1499,7 +1499,7 @@
                 var row = pr.Row!;
                 typeCsvData.Add(row);
 
-                if (!Enum.TryParse<RoomType>(row.Type, true, out var roomType))
+                if (!RoomTypeNames.TryParse(row.Type, ignoreCase: true, out var roomType))
                 {
                     typePreview.Add(new RoomTypePreviewRow
                     {

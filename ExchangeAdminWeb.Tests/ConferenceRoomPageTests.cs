@@ -58,6 +58,28 @@ public sealed class ConferenceRoomPageTests : IDisposable
         Assert.Empty(_h.Calls);
     }
 
+    [Theory]
+    [InlineData("4")]
+    [InlineData("Video,Restricted")]
+    public async Task ARoomTypeGivenAsANumberOrACommaList_IsRefused_NotApplied(string typeName)
+    {
+        // kd-28. Enum.TryParse took "4" for CEO - which removes every existing calendar permission - and a comma list for the
+        // value its names OR to. The single room is parsed by name, as the CSV paths are: refused before the protection gate
+        // or the service, nothing sent to Exchange.
+        var page = BuildPage();
+        SetField(page, "typeRoomEmail", "room1@contoso.test");
+        SetField(page, "selectedRoomType", typeName);
+        SetField(page, "typeTicketNumber", "INC100");
+        SetField(page, "typeTimezone", "GMT Standard Time");
+
+        await (Task)Method("SetSingleRoomType").Invoke(page, null)!;
+
+        var result = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        Assert.False(result.Success);
+        Assert.Equal($"Invalid room type: {typeName}. Nothing was written.", result.Message);
+        Assert.Empty(_h.Calls);
+    }
+
     // ---- kd-5: cancelling a bulk job writes the audit row removing one does ----
     // The jobs panel's Cancel stopped a queued or running job and recorded nothing, while Remove beside it audits. It now
     // writes RemoveJob's row - operator, IP, the job, its ticket, the job as rendered - with whether the cancel took effect:

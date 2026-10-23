@@ -34,6 +34,8 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         public readonly List<ValidatedMailbox?> Rooms = new();
         // aud-a2e. The operator each Room Finder row was handed, for the room list's write-target check.
         public readonly List<System.Security.Claims.ClaimsPrincipal?> ActingUsers = new();
+        // kd-28. The type each Room Type row was applied as.
+        public readonly List<RoomType> TypesApplied = new();
         public Func<string, RoomOperationResult> Result = email =>
             new RoomOperationResult { Email = email, Success = true, Message = "ok" };
 
@@ -51,6 +53,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             string site = "none", string? arbiter = null, bool removeExistingPermissions = false)
         {
             TypeCalls.Add(roomEmail);
+            TypesApplied.Add(roomType);
             Rooms.Add(room);
             return Task.FromResult(Result(roomEmail));
         }
@@ -303,6 +306,44 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             "room1@x", false, "INC1", errorDetail: refusal, oldValues: Arg.Any<Dictionary<string, object?>?>(),
             newValues: Arg.Any<Dictionary<string, object?>?>(), extra: Arg.Any<Dictionary<string, object?>?>());
     }
+
+    [Theory]
+    [InlineData("4")]
+    [InlineData("9")]
+    [InlineData("Video,Restricted")]
+    public async Task ATypeRowGivenANumberOrACommaList_IsRefused_NotApplied(string type)
+    {
+        // kd-28. Enum.TryParse took each of these: "4" as CEO, which removes every existing calendar permission; "9" as an
+        // undefined type, written to CustomAttribute9 as "RoomType:9"; "Video,Restricted" as Exception. A type is its name.
+        var refusal = $"Invalid type: {type}. Nothing was written.";
+        var f = CreateFixture();
+
+        var outcome = await f.Processor.ProcessRowAsync(TypeRowJob(type), 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
+        Assert.Equal(refusal, outcome.Message);
+        Assert.Empty(f.Rooms.TypeCalls);
+        f.Audit.Received(1).LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetType_Bulk",
+            "room1@x", false, "INC1", errorDetail: refusal, oldValues: Arg.Any<Dictionary<string, object?>?>(),
+            newValues: Arg.Any<Dictionary<string, object?>?>(), extra: Arg.Any<Dictionary<string, object?>?>());
+    }
+
+    [Fact]
+    public async Task ATypeRowGivenAName_IsApplied_CaseIgnoredAsBefore()
+    {
+        var f = CreateFixture();
+
+        var outcome = await f.Processor.ProcessRowAsync(TypeRowJob("ceo"), 0, CancellationToken.None);
+
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.Equal([RoomType.CEO], f.Rooms.TypesApplied);
+    }
+
+    private static BulkJob TypeRowJob(string type) => MakeJob(ConferenceRoomJobPayload.TypeJobType, new ConferenceRoomJobPayload
+    {
+        Kind = ConferenceRoomJobPayload.TypeJobType,
+        TypeRows = [new TypeCsvRow { Email = "room1@x", Type = type }],
+    }, "AllUsers");
 
     [Fact]
     public async Task Finder_ProtectedTarget_IsBlocked_NotApplied_AuditedDenial()
