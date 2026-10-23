@@ -2002,10 +2002,10 @@
                 EmailAddress = singleEmail,
                 Status = MigrationStatus.Undetermined // aud-a23h: a throw before the service returned is no verdict either
             };
-            singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
-            checkFailure = $"Could not be determined: {ex.Message}";
+            singleResult.IneligibilityReasons.Add($"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // kd-34: the error's own words (aud-a23i's helper) - a sign-in that fails under Stop arrives as PowerShell's Stop exception, "The running command stopped because ..." in front
+            checkFailure = $"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             try { Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
-                "Error", singleTicketNumber, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
+                "Error", singleTicketNumber, ExchangeServiceBase.ResolveFailure(ex).primary); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
         }
         finally
         {
@@ -2081,7 +2081,7 @@
         }
         catch (Exception ex)
         {
-            singleCreateResult = PermissionResult.Fail(createFailure = ex.Message);
+            singleCreateResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -2144,12 +2144,12 @@
             {
                 BatchName = "Error",
                 Success = false,
-                Message = ex.Message,
+                Message = ExchangeServiceBase.ResolveFailure(ex).primary, // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
                 Direction = migrationDirection
             };
-            bulkFailure = $"The bulk eligibility check failed: {ex.Message}";
+            bulkFailure = $"The bulk eligibility check failed: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             Audit.LogMigrationAction(currentUser, clientIpAddress,
-                $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ex.Message);
+                $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ExchangeServiceBase.ResolveFailure(ex).primary);
         }
         finally
         {
@@ -2227,7 +2227,7 @@
         }
         catch (Exception ex)
         {
-            createResult = PermissionResult.Fail(createFailure = ex.Message);
+            createResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -2294,7 +2294,7 @@
         }
         catch (Exception ex)
         {
-            (migrationBatches, unreadableBatches, batchListFailure) = MigrationBatchList.Failed(ex.Message); // aud-a23g: a throw before the service returns (the borrow, the connect) is the same failed load
+            (migrationBatches, unreadableBatches, batchListFailure) = MigrationBatchList.Failed(ExchangeServiceBase.ResolveFailure(ex).primary); // aud-a23g: a throw before the service returns (the borrow, the connect) is the same failed load; kd-34: in its own words
             batchActionResult = null; // as on success: a bulk action's reload puts its own result back beside the failure, not under "Failed to load"
         }
         finally
@@ -3348,7 +3348,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -3411,7 +3411,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -3915,7 +3915,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(searchFailure = $"Search failed: {ex.Message}");
+            batchActionResult = PermissionResult.Fail(searchFailure = $"Search failed: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
