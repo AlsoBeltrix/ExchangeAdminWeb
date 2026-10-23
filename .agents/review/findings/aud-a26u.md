@@ -7,7 +7,7 @@ editor writes text attributes only. (2) An attribute holding several binary valu
 several-values wording rather than named as binary. (3) On the Admin Event Log page, a closed undo
 preview's progress bar stays visible until its handler returns (cosmetic; aud-a26r cleared the loading
 guard, not the bar).
-**Status**: Merged `36da9789`; closed on guard proof; codex review pending
+**Status**: Merged `36da9789`; closed on guard proof; codex attr-batch-13 raised one HIGH, admitted as aud-a47
 **Branch**: `worktree-agent-aca5b5b4f6295736c` (from `18530b58`)
 **Commit**: `2904ec9b` (fix, tests, record); comments `7698c096`; plan `5a6e5a5d`
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
