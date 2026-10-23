@@ -249,6 +249,64 @@ public class ADDirectorySearchServiceTests
         return RunspaceFactory.CreateRunspace(state);
     }
 
+    // ---- psl-11: an AVAILABLE stand-in, so a search reaches its commands ------------------------------------------
+
+    internal const string StandInGlobalCatalog = "gc01.example.test";
+
+    /// <summary>
+    /// The service with both its sessions standing in (psl-11): the probe's import loads, so the directory reads as
+    /// available - checked here, with the probe's one import - and the search's session answers <c>Get-ADUser</c>,
+    /// <c>Get-ADGroup</c>, <c>Get-ADOrganizationalUnit</c> and <c>Get-ADForest</c> with one object each, noting every call in
+    /// <paramref name="calls"/> as "command" or, for a group, "command|server". Every command is an advanced function and
+    /// autoloading is off in both sessions, so neither can load a module or reach a directory.
+    /// </summary>
+    internal static ADDirectorySearchService AvailableStandInService(List<string> calls)
+    {
+        var probeCalls = new List<string>();
+        var svc = new ADDirectorySearchService(NullLogger<ADDirectorySearchService>.Instance)
+        {
+            CreateProbeRunspace = () => StandInSession(probeCalls, ("Import-Module", """
+                [CmdletBinding()] param([Parameter(Position = 0)] $Name)
+                $global:DirectoryCalls.Add("Import-Module|$Name")
+                """)),
+            CreateSearchRunspace = () => StandInSession(calls,
+                ("Get-ADUser", """
+                    [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
+                    $global:DirectoryCalls.Add('Get-ADUser')
+                    [pscustomobject]@{ DisplayName = 'Alex Doe'; DistinguishedName = 'CN=Alex Doe,OU=Staff,DC=example,DC=test'; SamAccountName = 'adoe'; UserPrincipalName = 'alex.doe@example.test'; mail = 'alex.doe@example.test' }
+                    """),
+                ("Get-ADGroup", """
+                    [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
+                    $global:DirectoryCalls.Add("Get-ADGroup|$Server")
+                    [pscustomobject]@{ DisplayName = 'Finance Approvers'; Name = 'Finance Approvers'; DistinguishedName = 'CN=Finance Approvers,OU=Groups,DC=example,DC=test'; SamAccountName = 'FinanceApprovers'; mail = $null; objectSid = 'S-1-5-21-1000000000-1000000000-1000000000-2001' }
+                    """),
+                ("Get-ADOrganizationalUnit", """
+                    [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
+                    $global:DirectoryCalls.Add('Get-ADOrganizationalUnit')
+                    [pscustomobject]@{ Name = 'Test Rooms'; DistinguishedName = 'OU=Test Rooms,DC=example,DC=test' }
+                    """),
+                ("Get-ADForest", $$"""
+                    [CmdletBinding()] param()
+                    $global:DirectoryCalls.Add('Get-ADForest')
+                    [pscustomobject]@{ GlobalCatalogs = @('{{StandInGlobalCatalog}}') }
+                    """)),
+        };
+
+        Assert.True(svc.IsAvailable);
+        Assert.Equal(["Import-Module|ActiveDirectory"], probeCalls);
+        return svc;
+    }
+
+    private static Runspace StandInSession(List<string> calls, params (string Name, string Body)[] commands)
+    {
+        var state = InitialSessionState.CreateDefault();
+        state.Variables.Add(new SessionStateVariableEntry("PSModuleAutoloadingPreference", "None", "no autoloading"));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryCalls", calls, "the calls the session took"));
+        foreach (var (name, body) in commands)
+            state.Commands.Add(new SessionStateFunctionEntry(name, body));
+        return RunspaceFactory.CreateRunspace(state);
+    }
+
     private sealed record Logged(LogLevel Level, string Message, Exception? Exception);
 
     private sealed class CapturingLogger : ILogger<ADDirectorySearchService>
