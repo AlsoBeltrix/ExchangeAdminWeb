@@ -134,7 +134,7 @@ public sealed class RecipientLookupOnPremArchiveTests : IDisposable
     [InlineData("the read fails", "The on-premises archive size could not be read: Get-MailboxStatistics -Archive failed: the archive database is offline.")]
     [InlineData("the read answers no row", "The on-premises archive size could not be read: on-premises Exchange returned no archive statistics.")]
     [InlineData("the size does not parse", "The on-premises archive size could not be read: the reported TotalItemSize 'Unlimited' is not a size this app can read.")]
-    [InlineData("the size read throws as a whole", "Could not retrieve on-premises mailbox size: the on-premises size read was cancelled")]
+    [InlineData("the size read throws as a whole", "Could not retrieve on-premises mailbox size: the credential store is unreachable")]
     public async Task AnOnPremArchiveThatCannotBeRead_IsCouldNotBeRead_NeverDisabled(string how, string warning)
     {
         switch (how)
@@ -149,7 +149,9 @@ public sealed class RecipientLookupOnPremArchiveTests : IDisposable
                 _exchange.Behaviour["OnPremArchiveSize"] = "Unlimited";
                 break;
             default:
-                _exchange.Behaviour["OnPremStatisticsCancelled"] = true;
+                // kd-14: a throw that is not a cancellation - the size read's credentials failing - since a cancellation
+                // now leaves the lookup rather than reaching this catch.
+                _exchange.Failures["OnPrem Credentials on-prem mailbox size check"] = "the credential store is unreachable";
                 break;
         }
 

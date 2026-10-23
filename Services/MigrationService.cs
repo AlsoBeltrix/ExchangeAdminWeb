@@ -973,15 +973,19 @@ https://admin.exchange.microsoft.com/#/migration";
     // text the page shows and ends the activity with. It returned in silence: no banner, no row, an activity that read
     // "Nothing was done.". A failed audit write is logged and swallowed, as the bulk executors' is, so it cannot take the
     // denial's place. Static, with the page's services passed in, so each page line stays one statement (the page is
-    // line-keyed by ClickGateRegistry).
+    // line-keyed by ClickGateRegistry). kd-17: a bulk run's denial passes the names it would have acted on as targets, and
+    // the row carries them - its target being the run's scope ("2 batch(es)"), which names none of them.
     internal static string RecordDenial(AuditService audit, ILogger logger, string actor, string ipAddress,
-        string auditAction, string description, string target, string ticket, string policy)
+        string auditAction, string description, string target, string ticket, string policy, IReadOnlyList<string>? targets = null)
     {
         try
         {
+            var extra = new Dictionary<string, object?> { ["mutationAttempted"] = false };
+            if (targets is not null)
+                extra["targets"] = targets.ToArray();
             audit.LogMigrationAction(actor, ipAddress, $"{auditAction}_Denied", target, false, ticket,
                 errorDetail: $"{policy} authorization denied",
-                extra: new Dictionary<string, object?> { ["mutationAttempted"] = false });
+                extra: extra);
         }
         catch (Exception ex)
         {

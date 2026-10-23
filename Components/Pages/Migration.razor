@@ -1844,7 +1844,7 @@
             return;
 
         expandedBatch = open;
-        batchUsersGeneration++; selectedMailboxes.Clear(); // kd-2: a different batch is a different list - a new generation and no tick carried over, as the filter and the page below are not; kept, batch A's tick drew "Actions (1)" over batch B with no row ticked
+        batchUsersGeneration++; selectedMailboxes.Clear(); WithdrawStagedMailboxAction(); // kd-2: a different batch is a different list - a new generation and no tick carried over, as the filter and the page below are not; kept, batch A's tick drew "Actions (1)" over batch B with no row ticked. kd-13: nor what was staged on A's mailboxes
         batchUsers = null;
         InvalidateStoredReports(open);
 
@@ -1912,7 +1912,7 @@
             return;
 
         expandedBatch = requested;
-        batchUsersGeneration++; selectedMailboxes.Clear(); // kd-2: the same for a batch opened from the address (Back, a pasted link, a reconnect)
+        batchUsersGeneration++; selectedMailboxes.Clear(); WithdrawStagedMailboxAction(); // kd-2, kd-13: the same for a batch opened from the address (Back, a pasted link, a reconnect)
         batchUsers = null;
         InvalidateStoredReports(requested);
 
@@ -2682,6 +2682,21 @@
             CancelPendingAction();
         else
             ClearStagedPreview();
+    }
+
+    // What a change of open batch does to whatever is staged. Finding kd-13.
+    //
+    // An action on the open batch's mailboxes is withdrawn: a mailbox-bar action, Remove completed among them (each stages a
+    // mailbox plan), or one row's action (its target is one of the loaded mailboxes). Its rows are about to go, and it stayed
+    // up over the next batch, its confirm bar counting mailboxes that batch does not have. Read before batchUsers is nulled,
+    // so a row's target is matched against the batch it was staged on. A batch action is left alone: it re-plans from the
+    // live batch selection at Confirm (D2(a)), so the tick that changed the open batch is an input to it.
+    private void WithdrawStagedMailboxAction()
+    {
+        if (pendingActionLabel != null
+            && (pendingUserAction != null
+                || batchUsers?.Any(u => string.Equals(u.EmailAddress, pendingActionTarget, StringComparison.OrdinalIgnoreCase)) == true))
+            CancelPendingAction();
     }
 
     private void ClampMailboxPages()
@@ -3529,7 +3544,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, notificationAction, ticket, "MigrationManage")); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied."
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, $"{batchNames.Count} batch(es)", ticket, "MigrationManage", batchNames)); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied." kd-17: its target is what the run would have acted on, the confirm bar's "N batch(es)" with the names in targets, where it was the notification action
 
             if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 
@@ -3646,7 +3661,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-15: the error's own words - a sign-in that fails mid-run arrives here as PowerShell's Stop exception, "The running command stopped because ..." in front
         }
         finally
         {
@@ -3684,7 +3699,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", notificationAction, ticket, "MigrationManage")); return; } // aud-a68: the same, for the mailbox run
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", $"{plan.Eligible.Count} mailbox(es)", ticket, "MigrationManage", plan.Eligible)); return; } // aud-a68: the same, for the mailbox run; kd-17: and the same target, "N mailbox(es)" with the addresses in targets
 
             if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 
@@ -3783,7 +3798,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(bulkFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(bulkFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-15: the same, for the mailbox run
         }
         finally
         {

@@ -16,6 +16,8 @@ namespace ExchangeAdminWeb.Tests;
 /// that prefix, and the lookup's "Recipient '&lt;x&gt;' not found." was reached only by an empty answer. (4) The page's
 /// <c>RunLookup</c> caught a lookup that threw with no audit row - though the page says all lookups are logged - and left
 /// its activity to end "This did not finish."; and its one catch also took a failed audit write as the lookup's error.
+/// Finding kd-14: the location read's and the on-premises size read's catches took a cancellation and worded from
+/// <c>ex.Message</c>, as (2) had fixed for the statistics read only.
 /// </summary>
 /// <remarks>
 /// The real <see cref="RecipientLookupService"/> over <see cref="MigrationStubExchange"/>'s Exchange Online stand-ins
@@ -189,7 +191,7 @@ public sealed class RecipientLookupFailureTests : IDisposable
     public async Task ALookupThatThrowsUnderStop_IsShownInTheCmdletsOwnWords()
     {
         const string failure = "the certificate is not in the store";
-        _exchange.ConnectFailure = AStopFailure(failure);
+        _exchange.ConnectFailure = StopFailure(failure);
         var page = LookupPage(_exchange.RecipientLookup(connects: false));
 
         await RunLookup(page);
@@ -197,25 +199,6 @@ public sealed class RecipientLookupFailureTests : IDisposable
         Assert.Equal(failure, Shown(page).Error);
         Assert.Equal(failure, Assert.Single(_exchange.AuditEvents()).GetProperty("error").GetString());
         Assert.Equal((false, failure), Assert.Single(_progress.Handles).Outcome);
-    }
-
-    // What a cmdlet's error under -ErrorAction Stop is, made the way PowerShell makes one: a stand-in that writes the error,
-    // called with Stop.
-    private static Exception AStopFailure(string message)
-    {
-        using var ps = PowerShell.Create();
-        ps.AddScript("""
-            param([string] $Text)
-            function Connect-StandIn {
-                [CmdletBinding()]
-                param([string] $Text)
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.InvalidOperationException]::new($Text), 'StubConnect', [System.Management.Automation.ErrorCategory]::NotSpecified, $null))
-            }
-            Connect-StandIn -Text $Text -ErrorAction Stop
-            """).AddArgument(message);
-        var failure = Assert.ThrowsAny<RuntimeException>(() => ps.Invoke());
-        Assert.StartsWith("The running command stopped", failure.Message, StringComparison.Ordinal);
-        return failure;
     }
 
     // The controls: a lookup that answers - with the recipient, or with Exchange saying there is none - is audited and ends
@@ -253,5 +236,62 @@ public sealed class RecipientLookupFailureTests : IDisposable
 
         Assert.Null(Shown(page).Error);
         Assert.Equal((true, (string?)null), Assert.Single(_progress.Handles).Outcome);
+    }
+
+    // ---- kd-14: the location and on-premises size reads' catches -----------------------------------
+
+    // A recipient Exchange Online holds as a mail user, its mailbox on-premises: the location read asks on-premises, and the
+    // on-premises size read follows.
+    private void AnOnPremMailbox()
+    {
+        _exchange.OnPremConfigured = true;
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailUser"));
+        _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+    }
+
+    private static bool IsACancellation(Exception thrown)
+    {
+        for (Exception? cause = thrown; cause != null; cause = cause.InnerException)
+        {
+            if (cause is OperationCanceledException or PipelineStoppedException)
+                return true;
+        }
+        return false;
+    }
+
+    // The finding. A cancellation is not a read that failed (aud-a23g's rule): it leaves the lookup, which the page shows as
+    // the lookup's error (aud-a68 (4)). Before, either catch filed it as a warning beside a lookup that carried on.
+    [Theory]
+    [InlineData("the location read")]
+    [InlineData("the on-premises size read")]
+    public async Task ACancelledRead_LeavesTheLookup_AndIsNoWarning(string read)
+    {
+        AnOnPremMailbox();
+        if (read == "the location read")
+            _exchange.Failures["OnPrem Credentials on-prem mailbox location check"] = new OperationCanceledException("the location read was cancelled");
+        else
+            _exchange.Behaviour["OnPremStatisticsCancelled"] = true;
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(LookedUp);
+
+        Assert.True(IsACancellation(thrown), thrown.ToString());
+    }
+
+    // What reaches either catch is in the error's own words: here the read's credential lookup fails with PowerShell's Stop
+    // text, which before stood in front of the error in the warning.
+    [Theory]
+    [InlineData("on-prem mailbox location check", "Could not determine mailbox location: ")]
+    [InlineData("on-prem mailbox size check", "Could not retrieve on-premises mailbox size: ")]
+    public async Task AReadThatFailsUnderStop_IsAWarningInTheErrorsOwnWords(string purpose, string warning)
+    {
+        AnOnPremMailbox();
+        const string failure = "the credential store refused the request";
+        _exchange.Failures[$"OnPrem Credentials {purpose}"] = StopFailure(failure);
+
+        var result = await LookedUp();
+
+        Assert.Null(result.Error);
+        Assert.Contains(warning + failure, result.Warnings);
+        Assert.DoesNotContain(result.Warnings, shown => shown.Contains("The running command stopped", StringComparison.Ordinal));
     }
 }
