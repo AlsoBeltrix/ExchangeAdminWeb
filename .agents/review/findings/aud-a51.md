@@ -169,6 +169,117 @@ Files:
 - `README.md`
 - this record
 
+## Fix
+
+- `Services/JsonlFileAppender.cs`:
+  - `Lock(path, wait, accessRefusalGrace)` opens `File.OpenHandle(lockPath, OpenOrCreate, ReadWrite, FileShare.None)`, with
+    no `DeleteOnClose`, and returns a private `HeldLock`.
+  - `HeldLock.Dispose` closes the handle and calls `RemoveIfFree(lockPath)`. That moves the file to
+    `<lock>.<Guid "N">` and deletes the moved file, each in its own try; a failed move ends it, and a failed delete is
+    ignored.
+  - The retry:
+    - A sharing or lock violation clears the refusal run and, once the wait has passed, throws `JsonlLockTimeoutException`
+      with the last violation inside, its text unchanged.
+    - An `UnauthorizedAccessException` starts a refusal run, or continues it. Once the run is
+      `accessRefusalGrace` old, it throws new `JsonlLockRefusedException`.
+    - Any other `IOException` throws `JsonlLockRefusedException` at once.
+    - Anything else propagates.
+  - New `DefaultAccessRefusalGrace` (100 ms).
+  - New `internal sealed class JsonlLockRefusedException : IOException`, carrying `LockPath`, with the refusal inside. Its
+    message is "The log folder refused the lock file <path>: <the refusal's message> The record was not written. The
+    account this instance runs as must be able to create files in the log folder and to read and write the files there".
+    The plan's last clause ("it does not need to delete them") was dropped: rotation does need delete, and the sentence
+    read as though nothing did.
+  - `Append` takes `accessRefusalGrace` after `lockWait` and hands it to `Lock`.
+- `Services/JsonlLogService.cs`: new `internal TimeSpan AccessRefusalGrace` (default the appender's), passed to `Append`.
+- `Services/ExtendedLogService.cs` `AppendLine`: passes `JsonlFileAppender.DefaultAccessRefusalGrace`.
+- `README.md`, "Shared log root":
+  - The lock is the open handle, removed after the write where the folder allows it and left otherwise.
+  - A contended write is still the 2-second drop, and a lock file the folder refuses is dropped at once, the error saying
+    so.
+  - The folder rights each instance's account needs, with delete needed for rotation and not for the lock; the scripts'
+    Modify covers them.
+  - Both instances on the same build, since the first build with the lock needs delete to open a lock file already
+    there.
+
+Tests:
+- `ExchangeAdminWeb.Tests/JsonlWriterLockTests.cs` +4:
+  - `AFolderThatLetsAWriterWriteButNotDelete_StillTakesTheLock_AndWritesEveryRow` (audit, trace)
+  - `ALockFileTheFolderRefuses_DropsTheRowAtOnce_AndSaysTheFolderRefusedIt`
+  - `AnAccessRefusalThatClearsWithinTheGrace_IsRetried_AndTheRowIsWritten`
+  - Helpers:
+    - `HoldTheLock` takes the lock through `JsonlFileAppender.Lock`, and `HeldFiles` holds any `IDisposable`.
+    - `LockPaths` gives this minute's and the next minute's lock files.
+    - `internal static DenyDeleting(folder)` adds a deny ACE for the process's own account (`Delete` and
+      `DeleteSubdirectoriesAndFiles`, container and object inherit) and removes it on dispose.
+- `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs` +1: `TheConsumer_InAFolderThatLetsItWriteButNotDelete_WritesEveryEntry`.
+  `HoldTodaysLock` takes the lock through `JsonlFileAppender.Lock`; new `TodaysLockPaths`; `HeldFiles` holds any
+  `IDisposable`.
+
+Caller-visible changes, by design:
+- A lock file that already exists opens without delete rights, so a folder that grants create, read and write keeps
+  every audit, trace and extended row.
+- A lock file the folder refuses costs a write 100 ms, not 2 s. The drop's report carries `JsonlLockRefusedException`,
+  whose message says the log folder refused the lock file and names the rights, in place of "Another writer held the
+  lock".
+- A missing log folder or a device error at the lock is reported the same way, wrapped, instead of as the raw exception.
+- A lock file stays beside its log file where the folder will not let it be deleted.
+- Contention is unchanged: the wait, the drop, and `JsonlLockTimeoutException` with its text.
+
 ## Guard proof
 
-Pending.
+Reproduction:
+- M1 is the lock open as merged at `132d6e97`, `DeleteOnClose` back in. Against a lock file already there in a folder that
+  denies delete, it was refused every time, and every row was dropped: `FileWriteFailed` for all three rows of each
+  stream, and `[]` where the consumer wrote `["first", "second"]`.
+- M2 is the merged retry's handling of that refusal. It waited out the whole bound, 5.02 s against the test's 5 s, and
+  reported a `JsonlLockTimeoutException`.
+
+Session-local driver (session scratchpad `mutate/mutate.ps1`, spec `mutate/round-a51.json`, log `mutate/a51-mutations.log`,
+messages from the TRX files by `mutate/trx-messages.ps1`):
+- For each mutant: the file's exact bytes saved and its MD5 taken, and one literal replacement that must match exactly
+  once.
+- A Release build of the solution with 0 errors required, then the filter run with a TRX logger.
+- The exact bytes are restored in a `finally`, the mtime advanced so MSBuild rebuilds, and the MD5 re-checked.
+- The filter (192 tests) is aud-a47's:
+  `FullyQualifiedName~JsonlWriterLockTests|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~AuditExtraChannelTests|FullyQualifiedName~AuditCategoryFilingTests|FullyQualifiedName~EventLog`
+- Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the restored
+  bytes and the filter: 192/192 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 `DeleteOnClose` again in the lock open | `JsonlFileAppender.cs`, `DAA28E10B524854EF664C0B53297C84D` | `48BD4096848B29B477BAA01F2103D0AE` | 3 of 192: `AFolderThatLetsAWriterWriteButNotDelete_...` audit and trace - all three rows `FileWriteFailed` where `Written`; `TheConsumer_InAFolderThatLetsItWriteButNotDelete_...` - `[]` where `["first", "second"]` |
+| M2 the access-failure branch folded back into the retry (an `UnauthorizedAccessException` waited for to the bound, then `JsonlLockTimeoutException`) | `JsonlFileAppender.cs`, `DAA28E10B524854EF664C0B53297C84D` | `C8A0C0C3871569AA4DDE19CC65D0BB1A` | 1 of 192: `ALockFileTheFolderRefuses_...` - 00:00:05.022 where at most 2 s |
+| extra E1 no grace (an access refusal reported at the first) | `JsonlFileAppender.cs`, `DAA28E10B524854EF664C0B53297C84D` | `871D7A1C019176E0281039B7DE5C7B73` | 1 of 192: `AnAccessRefusalThatClearsWithinTheGrace_...` - "the writer gave up at the first refusal" |
+
+E1 failed nothing else. Under it `TwoWritersOnSeveralThreads_WithInterleavedFailures_...` stayed green: six threads
+contending, with any access refusal reported at once and its row dropped. So in that run the move-then-delete release left
+no refusal for a contender to meet, as the probe measured. One run, not a proof.
+
+Unchanged through the round:
+- `JsonlLogService.cs` `1B0D9E1F006E6B43131A60C3FA4EEA90`
+- `ExtendedLogService.cs` `7123153E13E841B7C5619887C4F93098`
+- `JsonlWriterLockTests.cs` `F9C2E00B152B93757FC9FD399F899ABA`
+- `ExtendedLogServiceTests.cs` `4B7B5AB12D39289F4E4C887E045985CE`
+
+The code comments are written after all three rounds, in their own commit, so the MD5s above are this commit's bytes.
+
+Not run, by design: two app pools on a real IIS host under accounts that differ, and a folder whose ACL was set by
+`icacls`. The tests' deny ACE is the same kind of entry an ACL drift leaves, on a temp folder, for the test's own
+account.
+
+## Known gaps
+
+- *Assumption, not probed*: a log root on an SMB share, as aud-a47's record says.
+- An instance still on the aud-a47 build opens the lock with `DeleteOnClose`. In a folder without delete rights it cannot
+  open a lock file this build leaves there, so its writes time out as before until it runs this build. Both instances
+  on the same build, as the README says.
+- An access refusal is retried for 100 ms before it is reported. A refusal that outlasts that while a third party
+  deletes the lock file is reported as the folder's refusal and the row is dropped. The longest such run measured was
+  5.1 ms, an aud-a47-build instance's delete on close, under six contending threads.
+- A refused lock file costs each write 100 ms, on the operator's thread for an audit write, until the folder is fixed.
+  Each write reports it.
+- A writer killed while it holds the lock leaves the lock file in place. The next writer opens it.
+- The release's move can leave `<lock>.<32 hex>` behind if its delete fails. No log name or glob matches it.
+- Rotation still needs delete: in a folder without it, a file that reaches its size limit cannot be rotated, and every
+  write to it fails, reported. That is not this finding's defect; it is listed as a candidate in the hand-back.

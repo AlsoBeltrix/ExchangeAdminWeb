@@ -726,19 +726,29 @@ default both to one root. They then append to the same daily audit, trace and ex
 diagnostic files. That is safe only because every writer serialises across processes:
 
 - Before it touches a log file, each writer takes that file's lock: `<file>.lock` beside it,
-  opened exclusively and deleted when released.
+  opened exclusively. The open handle is the lock, not the file. After the write the file is
+  removed if the folder allows it, and otherwise left in place, empty and harmless.
 - It holds the lock through rotation, the write, and the take-back of a write that fails
   part-way.
-- A write that cannot take the lock within 2 seconds is dropped and logged as a failed audit
-  write: its trace step says the row was not written. It is never written over the other
-  instance's row.
+- A write that cannot take the lock within 2 seconds, because the other instance holds it, is
+  dropped and logged as a failed audit write: its trace step says the row was not written. It
+  is never written over the other instance's row.
+- A lock file the folder refuses - this instance's account may not create it, or may not read
+  and write the one already there - is not a wait. The write is dropped at once and logged as a
+  failed audit write, and the error says the log folder refused the lock file.
 - The lock is the file system's, so it holds whichever account each app pool runs as.
 - Readers never take it, and a `.lock` file is not a log.
 
 What you need to do:
 
-- Both instances must run a build that takes the lock. An older build writes without it, and
-  while one does, the two can still overwrite each other's rows.
+- Give each instance's account these rights on `<LogRoot>\ExchangeAdminWeb`: create files,
+  and read and write the files there - the other instance's too, its log files and lock files
+  alike. The lock does not need delete, but rotation does: without it, a file that reaches its
+  size limit cannot be rotated and the writes to it fail. `deploy.ps1` and the installer grant
+  each instance Modify on the folder, which covers all of it.
+- Both instances must run the same build. A build older than the lock writes without it, and
+  while one does, the two can still overwrite each other's rows. The first build with the lock
+  also needs delete rights to open a lock file that is already there.
 - To avoid the question altogether, give each instance its own `Audit:LogRoot`. That is a
   deploy-config change: `-LogRoot` on `deploy.ps1` and `tools/deploy-pipeline.ps1`, or the
   installer's prompt.

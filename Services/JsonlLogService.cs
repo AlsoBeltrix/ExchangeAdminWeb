@@ -128,6 +128,8 @@ public class JsonlLogService
     /// <summary>Test seam (aud-a47): how long a write waits for another writer's lock on its file before it drops.</summary>
     internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
+    internal TimeSpan AccessRefusalGrace { get; set; } = JsonlFileAppender.DefaultAccessRefusalGrace;
+
     // aud-a28z part 3 and aud-a47: one record, one line or none, under the file's lock - see JsonlFileAppender. The two
     // reports are this writer's, word for word as they were before the append moved there.
     private void AppendLine(string logPath, string json, LogStream stream) =>
@@ -135,6 +137,7 @@ public class JsonlLogService
             logPath,
             json,
             LockWait,
+            AccessRefusalGrace,
             rotateIfFull: () => RotateIfFull(logPath),
             writeLineBytes: WriteLineBytes,
             repaired: () => ReportSafely(logger => logger.LogWarning(

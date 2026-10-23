@@ -334,6 +334,7 @@ public class ExtendedLogService : IDisposable
             logPath,
             entry.Json,
             LockWait,
+            JsonlFileAppender.DefaultAccessRefusalGrace,
             rotateIfFull: () => RotateIfFull(entry.LogDate, logPath),
             writeLineBytes: WriteLineBytes,
             repaired: () => ReportSafely(logger => logger.LogWarning(

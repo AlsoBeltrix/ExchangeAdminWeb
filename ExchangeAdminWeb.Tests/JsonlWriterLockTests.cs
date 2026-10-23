@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
@@ -147,6 +149,90 @@ public sealed class JsonlWriterLockTests : IDisposable
         Assert.Equal(["Next"], Read(audit: true).Rows);
     }
 
+    [Theory]
+    [InlineData("audit")]
+    [InlineData("trace")]
+    public void AFolderThatLetsAWriterWriteButNotDelete_StillTakesTheLock_AndWritesEveryRow(string stream)
+    {
+        // aud-a51. The lock was opened DeleteOnClose, which asks for delete: in a folder that grants create, read and
+        // write but not delete, a lock file already there refused every open, and every row waited out the bound and was
+        // dropped as if another writer held it.
+        var audit = stream == "audit";
+        var folder = Path.Combine(_root, "ExchangeAdminWeb");
+        using (DenyDeleting(folder))
+        {
+            foreach (var lockPath in LockPaths(audit))
+                File.WriteAllBytes(lockPath, []);
+
+            var clock = Stopwatch.StartNew();
+            var outcomes = new[] { "First", "Second", "Third" }.Select(action => Write(_a, audit, action)).ToList();
+            clock.Stop();
+
+            Assert.All(outcomes, outcome => Assert.Equal(JsonlWriteOutcome.Written, outcome));
+            Assert.Empty(_logA.Errors);
+            Assert.InRange(clock.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(10));
+            Assert.True(File.Exists(JsonlFileAppender.LockPathFor(ActiveFile(audit))), "the folder let the lock file be deleted");
+        }
+
+        var (rows, unparsed) = Read(audit);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["First", "Second", "Third"], rows);
+    }
+
+    [Fact]
+    public void ALockFileTheFolderRefuses_DropsTheRowAtOnce_AndSaysTheFolderRefusedIt()
+    {
+        // aud-a51. A refusal that does not clear was retried for the whole bound and reported as another writer's lock.
+        // A directory where the lock file belongs is refused to every open, as a folder's ACL refuses one.
+        _a.LockWait = TimeSpan.FromSeconds(5);
+        var lockPaths = LockPaths(audit: true);
+        foreach (var lockPath in lockPaths)
+            Directory.CreateDirectory(lockPath);
+
+        var clock = Stopwatch.StartNew();
+        var outcome = Write(_a, audit: true, "Refused");
+        clock.Stop();
+
+        Assert.Equal(JsonlWriteOutcome.FileWriteFailed, outcome);
+        Assert.InRange(clock.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(2));
+        Assert.Empty(Read(audit: true).Rows);
+        var report = Assert.Single(_logA.Errors);
+        Assert.Equal("Refused", report.Value("Action"));
+        var refused = Assert.IsType<JsonlLockRefusedException>(report.Exception);
+        Assert.Equal(JsonlFileAppender.LockPathFor(ActiveFile(audit: true)), refused.LockPath);
+        Assert.IsType<UnauthorizedAccessException>(refused.InnerException);
+        Assert.Contains("refused the lock file " + refused.LockPath, refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Another writer", refused.Message, StringComparison.Ordinal);
+
+        foreach (var lockPath in lockPaths)
+            Directory.Delete(lockPath);
+        Assert.Equal(JsonlWriteOutcome.Written, Write(_a, audit: true, "Next"));
+        Assert.Equal(["Next"], Read(audit: true).Rows);
+    }
+
+    [Fact]
+    public async Task AnAccessRefusalThatClearsWithinTheGrace_IsRetried_AndTheRowIsWritten()
+    {
+        // aud-a51. A writer opening the lock file while another deletes it - an instance on the aud-a47 build deletes it on
+        // close - is refused access for a moment. That is not the folder refusing it, and the row must not be dropped.
+        var cancel = TestContext.Current.CancellationToken;
+        _a.AccessRefusalGrace = TimeSpan.FromSeconds(30);
+        var lockPaths = LockPaths(audit: true);
+        foreach (var lockPath in lockPaths)
+            Directory.CreateDirectory(lockPath);
+
+        var writer = Task.Run(() => Write(_a, audit: true, "AfterTheRefusal"), cancel);
+        await Task.Delay(TimeSpan.FromMilliseconds(300), cancel);
+        Assert.False(writer.IsCompleted, "the writer gave up at the first refusal");
+        foreach (var lockPath in lockPaths)
+            Directory.Delete(lockPath);
+
+        Assert.True(await Finishes(writer), "the writer never finished");
+        Assert.Equal(JsonlWriteOutcome.Written, await writer);
+        Assert.Empty(_logA.Errors);
+        Assert.Equal(["AfterTheRefusal"], Read(audit: true).Rows);
+    }
+
     [Fact]
     public void TheLockIsNeitherNeededToReadNorReadAsALog()
     {
@@ -245,12 +331,52 @@ public sealed class JsonlWriterLockTests : IDisposable
     private IDisposable HoldTheLock(bool audit)
     {
         var now = DateTime.Now;
-        var handles = new[] { now, now.AddMinutes(1) }
+        var held = new[] { now, now.AddMinutes(1) }
             .Select(date => (audit ? _a.GetAuditLogPaths(date) : _a.GetTraceLogPaths(date)).Last())
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => new FileStream(JsonlFileAppender.LockPathFor(path), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .Select(path => JsonlFileAppender.Lock(path, TimeSpan.FromSeconds(10), JsonlFileAppender.DefaultAccessRefusalGrace))
             .ToList();
-        return new HeldFiles(handles);
+        return new HeldFiles(held);
+    }
+
+    /// <summary>The stream's lock files for this minute's file and the next minute's, as <see cref="HoldTheLock"/> takes them.</summary>
+    private List<string> LockPaths(bool audit)
+    {
+        var now = DateTime.Now;
+        return new[] { now, now.AddMinutes(1) }
+            .Select(date => JsonlFileAppender.LockPathFor((audit ? _a.GetAuditLogPaths(date) : _a.GetTraceLogPaths(date)).Last()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Denies this process's own account the right to delete <paramref name="folder"/> or anything in it, until disposed:
+    /// a log folder that lets its writers create, read and write files but not delete them.
+    /// </summary>
+    internal static IDisposable DenyDeleting(string folder)
+    {
+        var account = WindowsIdentity.GetCurrent().User!;
+        var rule = new FileSystemAccessRule(
+            account,
+            FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None,
+            AccessControlType.Deny);
+        var directory = new DirectoryInfo(folder);
+        var acl = directory.GetAccessControl();
+        acl.AddAccessRule(rule);
+        directory.SetAccessControl(acl);
+        return new Restore(() =>
+        {
+            var restored = directory.GetAccessControl();
+            restored.RemoveAccessRule(rule);
+            directory.SetAccessControl(restored);
+        });
+    }
+
+    private sealed class Restore(Action restore) : IDisposable
+    {
+        public void Dispose() => restore();
     }
 
     /// <summary>A row appended the way the other instance's writer appends one: a whole line at the end.</summary>
@@ -302,12 +428,12 @@ public sealed class JsonlWriterLockTests : IDisposable
         return (rows, unparsed);
     }
 
-    private sealed class HeldFiles(List<FileStream> streams) : IDisposable
+    private sealed class HeldFiles(List<IDisposable> held) : IDisposable
     {
         public void Dispose()
         {
-            foreach (var stream in streams)
-                stream.Dispose();
+            foreach (var item in held)
+                item.Dispose();
         }
     }
 

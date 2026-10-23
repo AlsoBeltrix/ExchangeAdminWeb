@@ -444,6 +444,33 @@ public class ExtendedLogServiceTests
     }
 
     [Fact]
+    public void TheConsumer_InAFolderThatLetsItWriteButNotDelete_WritesEveryEntry()
+    {
+        // aud-a51. The shared appender opened its lock DeleteOnClose: where the folder grants create, read and write but
+        // not delete, a lock file already there refused every open, and every entry waited out the bound and was dropped.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+
+        using (JsonlWriterLockTests.DenyDeleting(Path.Combine(temp.Path, "ExchangeAdminWeb")))
+        {
+            foreach (var lockPath in TodaysLockPaths(temp.Path))
+                File.WriteAllBytes(lockPath, []);
+
+            service.Write(LogEventLevel.Error, "first", "Test");
+            service.Write(LogEventLevel.Error, "second", "Test");
+            service.Dispose();
+        }
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["first", "second"], messages);
+        Assert.Equal(0, service.DroppedEntryCount);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
     public void GetEntries_WhenAFileCannotBeRead_SaysWhichAndWhy_AndKeepsTheLinesItCouldRead()
     {
         // A bare catch emptied the whole answer, so the event log showed "no diagnostics" for "could not be read".
@@ -542,9 +569,20 @@ public class ExtendedLogServiceTests
         var held = new[] { now, now.AddMinutes(1) }
             .Select(date => Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl"))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => new FileStream(JsonlFileAppender.LockPathFor(path), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .Select(path => JsonlFileAppender.Lock(path, TimeSpan.FromSeconds(10), JsonlFileAppender.DefaultAccessRefusalGrace))
             .ToList();
         return new HeldFiles(held);
+    }
+
+    /// <summary>Today's extended log lock files - and the next minute's, across midnight.</summary>
+    private static List<string> TodaysLockPaths(string logRoot)
+    {
+        var now = DateTime.Now;
+        return new[] { now, now.AddMinutes(1) }
+            .Select(date => JsonlFileAppender.LockPathFor(
+                Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl")))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>Holds today's extended log file - and the next minute's, across midnight - open with no sharing.</summary>
@@ -560,12 +598,12 @@ public class ExtendedLogServiceTests
         return new HeldFiles(held);
     }
 
-    private sealed class HeldFiles(List<FileStream> streams) : IDisposable
+    private sealed class HeldFiles(IEnumerable<IDisposable> held) : IDisposable
     {
         public void Dispose()
         {
-            foreach (var stream in streams)
-                stream.Dispose();
+            foreach (var item in held)
+                item.Dispose();
         }
     }
 
