@@ -8,9 +8,9 @@ the write failed..." with `Success=false` and records a Failed row beside the su
 credential (aud-a60). (3) `Components/Pages/AdminSettings.razor` 282 and 289 (the credential's placeholder
 and hint: "Required when groups or OUs are configured" / "Read-only AD credential for group membership and
 OU checks") should say it is also needed for Mailbox and Calendar Permissions grants to groups.
-**Status**: In progress - released by the owner's 2026-10-23 evening ruling (everything open is fixed before any deploy); implemented one sub-item per commit
+**Status**: Verified on branch; awaiting merge and codex review
 **Branch**: `fix/a70` (from master `eb017102`)
-**Commit**: -
+**Commit**: (1) `13909c2f`; (4) `83311a2b`; (5) `9b0aa71b` and its count-pin repair `dc3abcd7`; (9) `fe99aff4`; (17) `d0ed01eb`; (12), (14) `7576cea7`; (15) `0ef2ac77`; (7) `32d548ec`; (11), (8) `f374e13a`; (2), (3) `a4155f5c`; module versions and this record's close: the branch head
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidates 2-4 and its follow-up)
 
 ## Evidence
@@ -148,6 +148,19 @@ UPN alone - and what it costs when configured (one fetch per check, once per bul
 `Components/Pages/AdminSettings.razor` 282 (the credential's placeholder) and 289 (its hint) named the protected-principal
 rules only; they now say Mailbox and Calendar Permissions need it to grant to a group or to a grantee only the on-premises
 directory holds, and that such a grant is refused without it. In place (1,436 lines). Neither text names an environment.
+
+Not implemented, each with its reason:
+- (6) An owner call (the record says so): whether to refuse every grant while the directory-read credential cannot be had.
+  Nothing changed beyond fail-closed as it stands: without the credential, a grantee Exchange names is still looked up as
+  the session (aud-a69's refusal-only evidence). Recommendation in the hand-back.
+- (10) Disputed - see Coder dispute.
+- (13) An owner call (the record says so): whether Undetermined counts as neither success nor failure in usage telemetry
+  and the audit's trace operation. `IsSuccessfulAuditResult` (`Services/AuditService.cs` 590-591) is unchanged.
+  Recommendation in the hand-back.
+- (16) Kept by design: aud-a76's Plan (item 2) chose not to rest "nothing was written" on the pool's reading of the
+  pre-flight error, so a Calendar removal retried after it, whose retry cannot connect, stays Undetermined - conservative,
+  the operator rechecks. `PermissionWriteSubmission`'s remarks and `CalendarPermissionService` 88-89 say so already; nothing
+  to change.
 
 ## Guard proof
 
@@ -318,6 +331,84 @@ Filter `FullyQualifiedName~SelfGrantDocumentation|FullyQualifiedName~SettingsSto
 
 M2, M3 and E3 are the texts as they stood at `eb017102`. The full suite before this commit found the placeholder is also how
 `SettingsNoOpAndUnreadableSecretTests` finds the credential's input (2 tests); its locator constant follows the new text.
+
+## Files changed
+
+Production: `Components/Pages/MailboxPermissions.razor`, `Components/Pages/CalendarPermissions.razor` (both in place, 808 and
+762 lines, no registry entry moved); `Components/Pages/AdminSettings.razor` (in place); `README.md`;
+`Models/PermissionResult.cs`; `Services/SelfGrantRefusalRecord.cs`; `Services/PermissionChangeFailure.cs`;
+`Services/PermissionChangeNotifier.cs`; `Services/ExchangeServiceBase.cs`; `Services/MailboxPermissionOutcome.cs`;
+`Services/MailboxPermissionService.cs`; `Services/CalendarPermissionService.cs`; `Services/MigrationService.cs` (its two copies
+carry the new field only); `Services/PermissionValidator.cs`; `Services/SelfGrantDirectory.cs`; `Services/ExchangeGroupMembers.cs`;
+`Modules/ModuleCatalog.cs` (Mailbox Permissions 1.4.1 -> 1.5.0, Calendar Permissions 1.3.2 -> 1.4.0). Tests:
+`PermissionPagesSelfGrantTests.cs`, `PermissionResultCopyTests.cs` (new), `ExchangeServiceBaseOnPremReadTests.cs`,
+`ValidatedWriteCallSiteTests.cs`, `ExchangeWriteHarness.cs`, `PermissionWriteSubmissionTests.cs`,
+`MailboxPermissionOutcomeTests.cs`, `PermissionValidatorSelfGrantTests.cs`, `ExchangeGroupMembersTests.cs`,
+`SettingsNoOpAndUnreadableSecretTests.cs` (its locator), `SelfGrantDocumentationTests.cs` (new). This record. App-wide: yes (shared services and the model); the base app version is
+not bumped here - the supervisor's.
+
+## Coder dispute
+
+(10) Not implemented. Acquiring the credential lazily for a person Exchange names means looking that grantee up under the
+app pool's identity whenever the credential IS configured. For such a grantee the lookup's one job is to see objects the
+typed name also names in the on-premises directory - a group Exchange Online does not hold, say - and the ones the app pool
+cannot see are exactly the ones a session lookup misses. That is aud-a69's residual, (6), today confined to deployments
+without the credential; a lazy acquisition would extend it to every deployment and rest the check's safety on the app
+pool's visibility (Architectural Invariant 7; Known Failure Class 3). The code cannot know it does not need credentialed
+visibility without having it. The cost stands as aud-a69 recorded it: one secret-store call per check, once per bulk file.
+Caching the secret across checks would remove it, and is a credential change that needs a plan of its own (Constitution,
+Planning Rules). Recommendation: decline (10), or route it with (6) to the owner.
+
+## Known gaps
+
+- Owner calls (6) and (13), not implemented; (16) kept by design (above).
+- (14)'s reading of a failed command rests on the pool's own signals: an Exchange refusal whose words name a session or a
+  connection is read as the session's (Undetermined - the conservative side); a session failure whose words name neither
+  and is not a remoting transport failure is read as Exchange's answer (Failed, as before this fix). Labelled assumption, not
+  probed: an on-premises session that breaks mid-command reaches Invoke-Command's error stream as a
+  `PSRemotingTransportException` (the harness models it so).
+- (14) on the bulk paths: the row's audit record is Undetermined and its message says not confirmed, but its CSV entry keeps
+  the status FAILED and counts among the run's failures - the report's statuses are unchanged.
+- (15): no user or owner notification for an unconfirmed change (they say access changed). After (12) and (14) no failure the
+  services let out reaches `ExecuteOnPrem`'s catch at the write step, so its Undetermined notification is kept for the shape
+  and unproven by any test; `SubmitSingle`'s is proven (the Calendar removal whose retry cannot connect).
+- (4): the servicer note rides the same dictionary as the identity written, which the tests pin; no serviced fixture drives
+  a protected target through the on-premises catch.
+- (7), (11): labelled assumptions as their sources record them - aud-a60's (the directory-read credential sees every account),
+  and Microsoft's documentation for dynamic groups (read, not probed).
+- (8): documentation only - the app does not evaluate a dynamic group's filter.
+- Rows already written stay as written. Nothing ran against Exchange, a directory, Graph or a secret store: the harness's
+  pools and stand-ins, its on-premises session through the services' own seams, `SelfGrantDirectoryStandIn` and a stand-in
+  secret fetch.
+
+## Gates - 2026-10-23 (branch head: the twelve commits above)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors ("error CS" 0 times); 19 warnings - the
+  baseline - none in a touched file (AccountLockoutRemediationService, Comms10kApprovedSetTests, GroupManagement,
+  HeaderAnalysisService, MessageTrace, MigrationReportExportProcessor, RiskyUsers, SelfServiceGroups).
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: exit 0, 6,758 passed / 0 skipped / 0 failed, 6,758 total, 6m23s (Debug, as the gate is written).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `git add -A` then `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines; Admin
+  Settings 1,436.
+- The full suite on each commit: (1) 6,701 and (4) 6,705, run just after each landed, green; (5) `9b0aa71b` red - 2 of
+  6,713, a count pin - repaired by `dc3abcd7` (6,713/6,713; see (5)'s guard proof); from there each commit ran it before it
+  landed, green, its count in its message.
+
+No Exchange, Active Directory, Graph, DHCP, IIS or secret-store call: Exchange is the harness's pools over stand-in cmdlets,
+on-premises Exchange its stand-in session through the services' own seams, the directory `SelfGrantDirectoryStandIn`, the
+secret store a stand-in fetch. No coder self-review verdict is claimed.
+
+Versions: Mailbox Permissions 1.4.1 -> 1.5.0 and Calendar Permissions 1.3.2 -> 1.4.0 (`Modules/ModuleCatalog.cs`), one
+minor step each. App-wide: yes - `ExchangeServiceBase`, `PermissionResult`, `PermissionChangeFailure`,
+`PermissionChangeNotifier`, `SelfGrantRefusalRecord`, `PermissionValidator`, `SelfGrantDirectory`, `ExchangeGroupMembers`,
+`MailboxPermissionOutcome` are shared; the base app version is not bumped here (the supervisor's).
+
+## Closeout
+
+Fixed on branch `fix/a70`, not merged, not pushed - released by the owner's 2026-10-23 evening ruling (everything open is
+fixed before any deploy). Owner calls (6) and (13) not implemented; (10) disputed; (16) kept by design. Pending: codex review
+of the branch, then merge and branch deletion by the supervisor; the owner's calls on (6) and (13), and on (10)'s dispute.
+`.agents/review/index.md`'s row is the supervisor's to move.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 

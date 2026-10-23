@@ -163,7 +163,9 @@ public sealed class ModuleCatalog
             // owner of the rights that actually applied; the gate was overall success (aud-a23).
             // 1.4.0: every applied row of a BULK run notifies the trustee and the mailbox
             // owner; before, only the operator's administrators were told (aud-a24).
-            Version = "1.4.1",
+            // 1.5.0: aud-a70 - every row of a change in a guard of its own, a row not written said; refusals before the
+            // write recorded; a right whose session failed once sent filed Undetermined and its administrators told so.
+            Version = "1.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -200,7 +202,9 @@ public sealed class ModuleCatalog
             // owner; before, only the operator's administrators were told (aud-a24).
             // 1.3.1: a bulk calendar notice names the ACCESS, not the operator word for the
             // row - a removal said "Permission: Remove" (review of aud-a24).
-            Version = "1.3.2",
+            // 1.4.0: aud-a70 - as Mailbox Permissions 1.5.0, and an on-premises write Exchange refused is a failed result,
+            // no longer "could not be confirmed".
+            Version = "1.4.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
