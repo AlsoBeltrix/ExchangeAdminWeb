@@ -86,18 +86,34 @@ public class PermissionValidator
         if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
         {
             _logger.LogError("The self-grant setting cannot be read - self-grants are refused until it can be. {Store}",
-                SettingsStoreText.ModuleConfig("MailboxPermissions"));
+                SettingsStoreText.ServiceModuleConfig("MailboxPermissions"));
             return true;
         }
 
         var val = values.GetValueOrDefault("PreventSelfGrant");
         if (string.IsNullOrWhiteSpace(val))
-            return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+            return PreventSelfGrantFromAppsettings();
 
         if (bool.TryParse(val, out var result))
             return result;
 
         _logger.LogWarning("The self-grant setting holds '{Value}', which is neither true nor false - self-grants are refused until it is corrected", val);
+        return true;
+    }
+
+    // aud-a28y. The upgrade fallback for a module config that holds no value. Absent or blank is the default, on; a value that
+    // is neither true nor false refuses self-grants, as a stored one does (aud-a28t), and is named - it used to throw from
+    // bool.Parse on every check, sync and async.
+    private bool PreventSelfGrantFromAppsettings()
+    {
+        var fallback = _config["Security:PreventSelfGrant"];
+        if (string.IsNullOrWhiteSpace(fallback))
+            return true;
+
+        if (bool.TryParse(fallback, out var result))
+            return result;
+
+        _logger.LogWarning("The appsettings value Security:PreventSelfGrant is '{Value}', which is neither true nor false - self-grants are refused until it is corrected", fallback);
         return true;
     }
 
@@ -591,30 +607,40 @@ public class PermissionValidator
             return "Access denied: You cannot grant permissions to yourself.";
         }
 
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-            if (resolver != null)
-            {
-                var currentId = await resolver.ResolveToObjectIdAsync(currentUser);
-                var affectedId = await resolver.ResolveToObjectIdAsync(affectedUser);
+        // aud-a28y. The string match cannot see an alias of the operator's own mailbox, so Exchange is asked who each side
+        // is. That lookup used to answer a failure as "no recipient", and the comparison was skipped: the grant was allowed
+        // exactly while Exchange could not answer - unreachable, not configured, its config unreadable. A lookup that could
+        // not run now refuses, naming who could not be resolved. Exchange's own "no such recipient" is an answer, not a
+        // failure: there is nothing to compare and the string match is the whole answer, as for the excluded-user check.
+        var (actorAnswered, actor) = await LookUpRecipientAsync(currentUser, "the self-grant check");
+        if (!actorAnswered)
+            return SelfGrantCheckIncomplete(currentUser);
 
-                if (currentId != null && affectedId != null &&
-                    string.Equals(currentId, affectedId, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) - resolved via ObjectId", currentUser, affectedUser);
-                    return "Access denied: You cannot grant permissions to yourself.";
-                }
-            }
-        }
-        catch (Exception ex)
+        var (granteeAnswered, grantee) = await LookUpRecipientAsync(affectedUser, "the self-grant check");
+        if (!granteeAnswered)
+            return SelfGrantCheckIncomplete(affectedUser);
+
+        if (actor is not null && grantee is not null && SameRecipient(actor, grantee))
         {
-            _logger.LogWarning(ex, "Identity resolution failed for self-grant check, falling back to string matching");
+            _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) - Exchange Online names both {Recipient}", currentUser, affectedUser, actor.PrimarySmtpAddress);
+            return "Access denied: You cannot grant permissions to yourself.";
         }
 
         return null;
     }
+
+    /// <summary>The refusal when the self-grant check could not put <paramref name="identity"/> to Exchange (aud-a28y).</summary>
+    internal static string SelfGrantCheckIncomplete(string identity) =>
+        $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{identity}'; nothing was written. Contact your administrator.";
+
+    /// <summary>
+    /// One recipient: a shared directory object id, or the same primary SMTP address - Exchange's own name for the
+    /// recipient, unique in the tenant, which answers when an object id is missing. Two blank ids are no id, not a shared one.
+    /// </summary>
+    private static bool SameRecipient(ResolvedRecipient a, ResolvedRecipient b) =>
+        (!string.IsNullOrWhiteSpace(a.ExternalDirectoryObjectId)
+            && string.Equals(a.ExternalDirectoryObjectId, b.ExternalDirectoryObjectId, StringComparison.OrdinalIgnoreCase))
+        || string.Equals(a.PrimarySmtpAddress, b.PrimarySmtpAddress, StringComparison.OrdinalIgnoreCase);
 
     public static bool IdentitiesMatch(string identity1, string identity2)
     {
@@ -669,9 +695,10 @@ public class PermissionValidator
                 _initialized = true;
                 _lastRefresh = UtcNow();
                 _loadedToken = token;
-                // There is no file to fix: the rows and their fix, as the admin pages name them (aud-a26q).
+                // There is no file to fix: the rows and their fix, in the admin pages' words without their reload clause - no
+                // page is involved in a service's log line (aud-a26q, aud-a26t).
                 _logger.LogError("The protected-user list cannot be loaded - every protected-target operation is refused; the load is retried after {Retry}. {Store}",
-                    FailedLoadRetry, SettingsStoreText.ModuleConfig("MailboxPermissions"));
+                    FailedLoadRetry, SettingsStoreText.ServiceModuleConfig("MailboxPermissions"));
                 return;
             }
 

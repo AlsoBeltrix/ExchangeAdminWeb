@@ -7,44 +7,27 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
 {
     // Exchange reports an unknown recipient as a terminating error, not an empty result set.
     // Matching on this fragment is how the repo already separates "no such recipient" from a
-    // real failure (PermissionValidator.TryExpandGroupAsync, Services/PermissionValidator.cs:366).
+    // real failure (PermissionValidator.TryExpandGroupAsync).
     private const string NotFoundFragment = "couldn't be found";
 
     public ExchangeIdentityResolver(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<ExchangeIdentityResolver> logger, IConfiguration config)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "") { }
 
-    public async Task<string?> ResolveToObjectIdAsync(string identity)
-    {
-        try
-        {
-            // Read-only: safe to retry on a dead pooled session.
-            return await RunPooledQueryAsync((ps, tracker) =>
-            {
-                ps.AddCommand("Get-Recipient")
-                  .AddParameter("Identity", identity)
-                  .AddParameter("ErrorAction", "Stop");
-
-                var results = Invoke(ps, tracker);
-                var recipient = results.FirstOrDefault();
-                return recipient?.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
-            }, allowRetry: true);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to resolve identity for {Identity}", identity);
-            return null;
-        }
-    }
-
     /// <inheritdoc />
     public async Task<ResolvedRecipient?> ResolveRecipientAsync(string identity)
     {
-        // Deliberately NOT wrapped in a catch-all. Unlike ResolveToObjectIdAsync above, this
-        // method's null return is consumed as evidence that the recipient does not exist, and a
-        // caller may allow an operation on that basis. Collapsing a failure into null here would
-        // let an EXO outage present as an affirmative absence and un-protect a principal. Only a
-        // confirmed "not found" returns null; everything else propagates.
-        if (!_exoPool.IsConfigured)
+        // Deliberately NOT wrapped in a catch-all. This method's null return is consumed as
+        // evidence that the recipient does not exist, and a caller may allow an operation on that
+        // basis. Collapsing a failure into null here would let an EXO outage present as an
+        // affirmative absence and un-protect a principal - or, as the object-id lookup that used to
+        // sit here did, clear a self-grant (aud-a28y). Only a confirmed "not found" returns null;
+        // everything else propagates.
+        //
+        // aud-a28x. A config or an enablement that cannot be read is said to be unreadable, not "not
+        // configured": the fix is the store, not the Exchange Online Config page.
+        if (!_exoPool.TryGetIsConfigured(out var configured))
+            throw new InvalidOperationException("Exchange Online's module enablement or its module_config rows could not be read - cannot resolve recipient.");
+        if (!configured)
             throw new InvalidOperationException("Exchange Online is not configured - cannot resolve recipient.");
 
         return await RunPooledQueryAsync<ResolvedRecipient?>((ps, tracker) =>

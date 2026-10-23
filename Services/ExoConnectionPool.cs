@@ -79,6 +79,14 @@ internal enum PoolFailurePolicy { Return, Discard }
 /// </summary>
 internal readonly record struct ExoConnectionConfig(string AppId, string Organization, string CertificateSubject);
 
+/// <summary>
+/// The Exchange Online module config could not be read (aud-a28x). A read that failed is not config that is absent, so
+/// appsettings is not read in its place and nothing is connected; the message names the rows and their fix.
+/// </summary>
+public sealed class ExoConfigUnreadableException(string message) : InvalidOperationException(message)
+{
+}
+
 public sealed class ExoConnectionPool : IDisposable
 {
     public const string ConfigModuleKey = "ExchangeOnline";
@@ -150,16 +158,12 @@ public sealed class ExoConnectionPool : IDisposable
     /// <summary>How many disconnects have failed over this pool's lifetime (aud-a6c).</summary>
     internal long FailedDisconnects => Interlocked.Read(ref _failedDisconnects);
 
-    public bool IsConfigured
-    {
-        get
-        {
-            if (!_enablement.IsModuleEnabled("ExchangeOnline"))
-                return false;
-            var (appId, org, _) = GetExoConfig();
-            return !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(org);
-        }
-    }
+    /// <summary>
+    /// Whether Exchange Online is enabled and has an AppId and an Organization, for a caller that can show no more than
+    /// that: false as well when the enablement or the rows cannot be read, and never a throw (aud-a28x). A caller that can
+    /// say which asks <see cref="TryGetIsConfigured"/>.
+    /// </summary>
+    public bool IsConfigured => TryGetIsConfigured(out var configured) && configured;
 
     /// <summary>
     /// <see cref="IsConfigured"/> for a caller that must not take a store it cannot read for an Exchange Online that is
@@ -170,7 +174,8 @@ public sealed class ExoConnectionPool : IDisposable
     /// IsConfigured reads both fail-open - the enablement as disabled, each value as absent and so from appsettings - and
     /// its false let the permission validator keep a protected group as a bare name, its members unprotected, while the
     /// resolver's own read of the same config answered. The appsettings fallback here is for a key the module config does
-    /// not hold, as in GetExoConfig, never for a read that failed. IsConfigured stays as it is for its other callers.
+    /// not hold, never for a read that failed, and both now read through TryReadExoConfig: IsConfigured is this, read as a
+    /// bool (aud-a28x).
     /// </remarks>
     public bool TryGetIsConfigured(out bool configured)
     {
@@ -179,32 +184,48 @@ public sealed class ExoConnectionPool : IDisposable
             return false;
         if (!enabled)
             return true;
-        if (!_moduleConfig.TryGetModuleConfig(ConfigModuleKey, out var values))
+        if (!TryReadExoConfig(out var exo))
             return false;
 
-        var appId = values.GetValueOrDefault(ConfigAppIdKey) ?? _config["ExchangeOnline:AppId"];
-        var organization = values.GetValueOrDefault(ConfigOrganizationKey) ?? _config["ExchangeOnline:Organization"];
-        configured = !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(organization);
+        configured = !string.IsNullOrWhiteSpace(exo.AppId) && !string.IsNullOrWhiteSpace(exo.Organization);
         return true;
     }
 
-    private ExoConnectionConfig GetExoConfig()
+    /// <summary>
+    /// The connection settings from one read of the ExchangeOnline rows, or false when the rows cannot be read (aud-a28x).
+    /// Each key goes through <see cref="ExoConfigFallback.Resolve"/>, the one owner of the fallback rule (aud-a26s): a row as
+    /// stored, a key with no row from appsettings. A failed read never reaches it - the Constitution allows the fallback
+    /// only when the module config is absent, and rows that cannot be read are not absent.
+    /// </summary>
+    private bool TryReadExoConfig(out ExoConnectionConfig config)
     {
-        var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey);
-        var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey);
-        var certSubject = _moduleConfig.GetValue(ConfigModuleKey, ConfigCertSubjectKey);
-
-        if (_moduleConfig.HasModuleConfigFile(ConfigModuleKey) && _moduleConfig.IsModuleCorrupt(ConfigModuleKey))
+        if (!_moduleConfig.TryGetModuleConfig(ConfigModuleKey, out var values))
         {
-            _logger.LogError("ExchangeOnline module config is corrupt - refusing to fall back to appsettings");
-            return new ExoConnectionConfig("", "", "");
+            config = default;
+            return false;
         }
 
-        appId ??= _config["ExchangeOnline:AppId"] ?? "";
-        organization ??= _config["ExchangeOnline:Organization"] ?? "";
-        certSubject ??= _config["ExchangeOnline:CertificateSubject"]
-            ?? "CN=EXO-Automation";
-        return new ExoConnectionConfig(appId, organization, certSubject);
+        config = new ExoConnectionConfig(
+            ExoConfigFallback.Resolve(_config, ConfigAppIdKey, values.GetValueOrDefault(ConfigAppIdKey)).Value,
+            ExoConfigFallback.Resolve(_config, ConfigOrganizationKey, values.GetValueOrDefault(ConfigOrganizationKey)).Value,
+            ExoConfigFallback.Resolve(_config, ConfigCertSubjectKey, values.GetValueOrDefault(ConfigCertSubjectKey)).Value);
+        return true;
+    }
+
+    // The rows and their fix, for the refusal and its log line: a service's text, with no page to reload (aud-a26t).
+    private static string UnreadableRows => SettingsStoreText.ServiceModuleConfig(ConfigModuleKey);
+
+    // aud-a28x. Three fail-open value reads used to be followed by a presence read and a probe, so a value read that failed
+    // while those answered was taken for absent and given the appsettings value: a borrow could connect under another
+    // tenant, app id or certificate than the module config's. One read now; a read that fails throws, before a borrow
+    // asks for a slot and before a drain retires anything.
+    private ExoConnectionConfig GetExoConfig()
+    {
+        if (TryReadExoConfig(out var config))
+            return config;
+
+        _logger.LogError("Exchange Online settings could not be read, and appsettings is not read in their place. {Store}", UnreadableRows);
+        throw new ExoConfigUnreadableException("Exchange Online settings could not be read: " + UnreadableRows);
     }
 
     public Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
@@ -230,7 +251,8 @@ public sealed class ExoConnectionPool : IDisposable
 
         // Read fresh on every borrow (ModuleConfigService has no cache; this is the shared
         // database). The same values decide the not-configured refusal below, the stale-pool
-        // check inside the slot, and what a new runspace connects under.
+        // check inside the slot, and what a new runspace connects under. A read that fails throws
+        // here, before a slot is asked for, and nothing is connected under appsettings (aud-a28x).
         var current = GetExoConfig();
         var org = current.Organization;
         if (string.IsNullOrWhiteSpace(current.AppId) || string.IsNullOrWhiteSpace(org))
@@ -503,7 +525,10 @@ public sealed class ExoConnectionPool : IDisposable
     {
         // The caller saved first, so what the store holds now is what the next runspace will
         // connect under; recording it keeps the next borrow from draining a second time. Read
-        // before the lock so the store is not touched while holding it.
+        // before the lock so the store is not touched while holding it. A store that cannot be read
+        // throws here, before anything is retired, and the Exchange Online Config page reports the
+        // drain as failed; the next borrow that reads the rows retires whatever was connected under
+        // other values (aud-a28x, scdi-1).
         var now = GetExoConfig();
 
         // Retiring and publishing are one transition here too. Review of aud-a6: this path used

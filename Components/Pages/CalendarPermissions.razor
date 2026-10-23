@@ -406,14 +406,14 @@
                 var selfGrantError = await Validator.ValidateSelfGrantAsync(currentUser, user);
                 if (selfGrantError is not null)
                 {
-                    // Log self-grant attempt to audit log
+                    // The record carries the validator's own refusal: a check that could not be completed is not a self-grant (aud-a28y).
                     var ipAddress = clientIpAddress;
                     try
                     {
                         Audit.LogCalendarPermission(
                             currentUser, ipAddress, "SetCalendar_SelfGrantAttempt", target, user,
                             access.ToString(), false, ticket,
-                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                            errorDetail: selfGrantError);
                     }
                     catch (Exception ex)
                     {

@@ -492,12 +492,11 @@ internal sealed class ExchangeWriteHarness : IDisposable
 
     /// <summary>
     /// An Exchange resolver that knows <paramref name="typed"/> as <paramref name="mailbox"/> and
-    /// nobody else, and never matches self-grant object ids (unstubbed, both would be "" and match).
+    /// nobody else: every other identity, the self-grant check's included, is "no such recipient".
     /// </summary>
     public static IIdentityResolver ExchangeKnows(string typed, string primary, Guid mailbox)
     {
         var resolver = Substitute.For<IIdentityResolver>();
-        resolver.ResolveToObjectIdAsync(Arg.Any<string>()).Returns((string?)null);
         resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns((ResolvedRecipient?)null);
         resolver.ResolveRecipientAsync(typed).Returns(
             new ResolvedRecipient(primary, "ext-" + primary, "UserMailbox", ExistsOnPrem: false, ExchangeGuid: mailbox));

@@ -30,10 +30,13 @@ public sealed record ResolvedRecipient(
     bool ExistsOnPrem,
     Guid? ExchangeGuid = null);
 
+/// <remarks>
+/// There is deliberately no object-id-only lookup. <c>ResolveToObjectIdAsync</c> answered a lookup that could not run as
+/// null, and the self-grant check took that null for "no such recipient" and cleared the grant (aud-a28y). Every caller asks
+/// <see cref="ResolveRecipientAsync"/>, which throws instead.
+/// </remarks>
 public interface IIdentityResolver
 {
-    Task<string?> ResolveToObjectIdAsync(string identity);
-
     /// <summary>
     /// Resolves an identity through Exchange Online.
     /// </summary>

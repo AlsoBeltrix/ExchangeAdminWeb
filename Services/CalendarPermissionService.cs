@@ -162,11 +162,11 @@ public class CalendarPermissionService : ExchangeServiceBase
                     var selfGrantError = await validator.ValidateSelfGrantAsync(currentUser, row.User);
                     if (selfGrantError is not null)
                     {
-                        // Log self-grant attempt to audit log
+                        // The record carries the validator's own refusal: a check that could not be completed is not a self-grant (aud-a28y).
                         audit.LogCalendarPermission(
                             currentUser, ipAddress, "BulkSetCalendar_SelfGrantAttempt",
                             row.Target, row.User, row.AccessRight, false, ticketNumber,
-                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                            errorDetail: selfGrantError);
 
                         errors.Add($"{row.Target}/{row.User}: {selfGrantError}");
                         entries.Add(new BulkOperationEntry

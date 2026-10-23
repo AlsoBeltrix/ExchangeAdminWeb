@@ -14,8 +14,8 @@ namespace ExchangeAdminWeb.Tests;
 /// page calls it, and these cases hold it to what the pool connects under.
 /// </summary>
 /// <remarks>
-/// The pool is not changed by this finding (another agent owns the file; the record names the follow-up), so it still applies
-/// its own copy of the rule, and the first theory is what keeps that copy and the function in step. The pool is observed
+/// The pool calls the function since aud-a28x (the follow-up this finding's record named), behind its fail-closed read, and
+/// the first theory holds what it connects under to the rule for every key and source. The pool is observed
 /// through <see cref="ExoConnectionPool.BorrowAsync(CancellationToken)"/> and <see cref="ExoConnectionPool.IsConfigured"/>, its
 /// connect step replaced through its own test seam: an unopened runspace over an empty session state and no connection id, so
 /// nothing is opened, invoked or connected. The page is the compiled page through <see cref="SettingsPageHarness"/>.

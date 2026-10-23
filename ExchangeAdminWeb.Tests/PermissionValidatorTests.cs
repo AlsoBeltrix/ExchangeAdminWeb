@@ -1,6 +1,7 @@
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -8,8 +9,43 @@ using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
-public class PermissionValidatorTests
+public sealed class PermissionValidatorTests : IDisposable
 {
+    // aud-a26t. Every directory a helper makes, and what it built over one that holds a task or a timer, so Dispose can
+    // leave nothing behind in the temp directory: these directories used to be made by every validator and kept forever.
+    private readonly List<string> _dirs = [];
+    private readonly List<IDisposable> _owned = [];
+
+    public void Dispose()
+    {
+        foreach (var owned in _owned)
+            owned.Dispose();
+        _owned.Clear();
+
+        foreach (var dir in _dirs)
+        {
+            // The pooled connection would otherwise keep the database file open (the AttributeEditorHarness shape).
+            SqliteConnection.ClearPool(new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(dir, "exchangeadmin.db"),
+                Mode = SqliteOpenMode.ReadWriteCreate,
+            }.ToString()));
+            try { Directory.Delete(dir, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        _dirs.Clear();
+    }
+
+    /// <summary>A directory of this test's own under the temp directory, deleted by <see cref="Dispose"/>.</summary>
+    private string NewTestDir(string prefix)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        _dirs.Add(dir);
+        return dir;
+    }
+
     /// <summary>
     /// An Exchange resolver that answers "no such recipient" for every identity - the legacy
     /// list's entries then stay literals, which is what the tests written before aud-a2b relied
@@ -40,22 +76,22 @@ public class PermissionValidatorTests
         return resolver;
     }
 
-    private static PermissionValidator CreateValidator(
+    private PermissionValidator CreateValidator(
         string[]? excludedUsers = null,
         bool preventSelfGrant = true,
         string[]? appsettingsExcludedUsers = null,
         ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null,
         IIdentityResolver? resolver = null)
     {
-        // One database per validator, every store on it, so nothing one test seeds reaches another (aud-a26q).
-        var testDir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(testDir);
+        // One database per validator, every store on it, so nothing one test seeds reaches another (aud-a26q); the logs
+        // under the same directory rather than one every validator and every run shared, all of it deleted (aud-a26t).
+        var testDir = NewTestDir("eaw-test-");
 
         var configData = new Dictionary<string, string?>
         {
             ["Security:PreventSelfGrant"] = preventSelfGrant.ToString(),
             ["Delinea:SecretServerUrl"] = "https://fake.local",
-            ["Audit:LogRoot"] = Path.Combine(Path.GetTempPath(), "eaw-test-logs")
+            ["Audit:LogRoot"] = Path.Combine(testDir, "logs")
         };
 
         // Retired appsettings source: seeded only by the guard test that proves a value
@@ -102,6 +138,7 @@ public class PermissionValidatorTests
         var delineaLogger = Substitute.For<ILogger<DelineaService>>();
         var extLogLogger = Substitute.For<ILogger<ExtendedLogService>>();
         var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(testDir), extLogLogger);
+        _owned.Add(extLog);
         var jsonlLogger = Substitute.For<ILogger<JsonlLogService>>();
         var jsonlLog = new JsonlLogService(config, jsonlLogger);
         var operationTrace = new OperationTraceService(config, jsonlLog);
@@ -114,6 +151,7 @@ public class PermissionValidatorTests
 
         var exoPoolLogger = Substitute.For<ILogger<ExoConnectionPool>>();
         var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, exoPoolLogger, operationTrace);
+        _owned.Add(exoPool);
 
         // Real servicer over a store with no ProtectedServicer row, so it denies - these existing
         // assertions are about the PROTECTION decision and must keep passing unchanged.
@@ -127,11 +165,25 @@ public class PermissionValidatorTests
 
     // --- Shared config database: cross-process cache freshness (SharedConfigDb-Plan AC4) ---
 
-    private static ExchangeAdminWeb.Services.Storage.IConfigStore NewStore()
+    private ExchangeAdminWeb.Services.Storage.IConfigStore NewStore() => TestConfigStore.Create(NewTestDir("eaw-test-"));
+
+    [Fact]
+    public void TheHelpers_KeepEveryDirectoryAndTheLogsTheirOwn_AndDisposeDeletesThem()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        return TestConfigStore.Create(dir);
+        // aud-a26t. A validator's logs went to one directory under the temp directory that every validator and every run
+        // shared, and no directory these helpers made was ever deleted.
+        CreateValidator();
+        _ = NewStore();
+        CreateValidatorWithScriptedResolution();
+        var dirs = _dirs.ToList();
+
+        Assert.Equal(3, dirs.Count);
+        Assert.True(Directory.Exists(Path.Combine(dirs[0], "logs", "ExchangeAdminWeb")), "the validator's logs are not under its own directory");
+        Assert.True(Directory.Exists(Path.Combine(dirs[2], "ExchangeAdminWeb")), "the scripted validator's logs are not under its own directory");
+
+        Dispose();
+
+        Assert.All(dirs, dir => Assert.False(Directory.Exists(dir), $"{dir} was left behind"));
     }
 
     private static void SaveExclusionsAsOtherInstance(ExchangeAdminWeb.Services.Storage.IConfigStore store, params string[] users)
@@ -597,13 +649,13 @@ public class PermissionValidatorTests
     /// <param name="excludedUsers">aud-a2d: a legacy list to run beside the central check.</param>
     /// <param name="resolver">aud-a2d: what Exchange answers the legacy list, when it asks.</param>
     /// <param name="servicerSid">aud-a2d: a Mailbox Permissions servicer group, so the serviced allow is reachable.</param>
-    private static (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution(
+    private (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution(
         bool addressOnlyConfig = false,
         string[]? excludedUsers = null,
         IIdentityResolver? resolver = null,
         string? servicerSid = null)
     {
-        var testDir = Path.Combine(Path.GetTempPath(), "eaw-res-" + Guid.NewGuid().ToString("N"));
+        var testDir = NewTestDir("eaw-res-");
         Directory.CreateDirectory(Path.Combine(testDir, "config"));
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -645,6 +697,7 @@ public class PermissionValidatorTests
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
         var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(testDir), Substitute.For<ILogger<ExtendedLogService>>());
+        _owned.Add(extLog);
         var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
         var trace = new OperationTraceService(config, jsonlLog);
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
@@ -653,6 +706,7 @@ public class PermissionValidatorTests
 
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig, TestConfigStore.CreateModuleEnablement(testDir), config, Substitute.For<ILogger<ModuleEnablementService>>());
         var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, Substitute.For<ILogger<ExoConnectionPool>>(), trace);
+        _owned.Add(exoPool);
 
         var scopeFactory = Substitute.For<IServiceScopeFactory>();
         var scope = Substitute.For<IServiceScope>();

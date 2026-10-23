@@ -310,6 +310,8 @@ public sealed record ResolvedRecipient(
     bool ExistsOnPrem);             // true when Get-Recipient reports an on-prem-backed object
 ```
 
+Removed since, 2026-10-22: `ResolveToObjectIdAsync` (aud-a28y); the self-grant check asks `ResolveRecipientAsync`.
+
 `ExistsOnPrem` is derived from the recipient's `RecipientTypeDetails` / `IsDirSynced`
 properties as returned by `Get-Recipient`. The implementer must confirm which property is
 authoritative against a live EXO session before relying on it, and must treat "cannot

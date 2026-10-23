@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -31,6 +32,7 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     private const string ModuleId = "MailboxPermissions";
     private const string Self = @"CONTOSO\jdoe";
     private const string SelfAddress = "jdoe@contoso.test";
+    private const string SelfAlias = "john.doe@contoso.test";
     private static readonly Guid MemberMailbox = Guid.Parse("0e0e0e0e-1111-4222-8333-555555555555");
 
     private const string ListUnavailable = "Access denied: Protected-user list is unavailable. Contact your administrator.";
@@ -85,9 +87,11 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     /// <summary>
     /// A real validator whose module config - its own reads and its pool's - goes through
     /// <paramref name="moduleConfigStore"/>, and whose pool reads enablement through <paramref name="enablementStore"/>.
+    /// Exchange answers through <paramref name="resolverFor"/>, given that pool, or a stand-in that knows the member.
     /// </summary>
     private PermissionValidator ValidatorOver(IConfigStore moduleConfigStore, IConfigStore? enablementStore = null,
-        string? preventSelfGrant = null)
+        string? preventSelfGrant = null, Func<ExoConnectionPool, IConfiguration, IIdentityResolver>? resolverFor = null,
+        ILogger<PermissionValidator>? logger = null)
     {
         var config = ConfigWith(preventSelfGrant);
         var moduleConfig = new ModuleConfigService(
@@ -112,7 +116,7 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
                 new SectionAccessRepository(TestConfigStore.Create(_h.Dir))),
             NullLogger<ProtectedPrincipalServicerService>.Instance);
 
-        var resolver = ExchangeWriteHarness.ExchangeKnows(Member, Member, MemberMailbox);
+        var resolver = resolverFor?.Invoke(pool, config) ?? ExchangeWriteHarness.ExchangeKnows(Member, Member, MemberMailbox);
         var scopeFactory = Substitute.For<IServiceScopeFactory>();
         var scope = Substitute.For<IServiceScope>();
         var provider = Substitute.For<IServiceProvider>();
@@ -121,7 +125,7 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
         return new PermissionValidator(config, moduleConfig, pool, protection, servicers,
-            NullLogger<PermissionValidator>.Instance, scopeFactory);
+            logger ?? NullLogger<PermissionValidator>.Instance, scopeFactory);
     }
 
     [Theory]
@@ -205,12 +209,16 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     [InlineData("false", null, false)]
     [InlineData("true", "false", true)]
     [InlineData("yes", "false", true)]
+    [InlineData(null, "yes", true)]
+    [InlineData("", "yes", true)]
+    [InlineData(null, " ", true)]
     public async Task TheSelfGrantSetting_FallsBackToAppsettings_OnlyWhenTheModuleConfigHoldsNoValue(
         string? stored, string? appsettings, bool refused)
     {
         // Over a readable store: no value (absent or blank) is appsettings' to answer, default on; a stored value wins
         // over appsettings either way; a stored value that is neither true nor false is present, so it is not
-        // appsettings' to answer, and it refuses.
+        // appsettings' to answer, and it refuses. aud-a28y: an appsettings value that is neither refuses too, where it
+        // used to throw from every check.
         if (stored is not null)
             SeedMailboxPermissions("PreventSelfGrant", stored);
         var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: appsettings);
@@ -218,6 +226,51 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         var expected = refused ? SelfGrantRefusal : null;
         Assert.Equal(expected, validator.ValidateSelfGrant(Self, SelfAddress));
         Assert.Equal(expected, await validator.ValidateSelfGrantAsync(Self, SelfAddress));
+    }
+
+    [Fact]
+    public void AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload()
+    {
+        // aud-a26t. The unreadable self-grant setting's log line (aud-a28t) names the rows and their fix as the admin
+        // pages do, without their reload clause: it is a service's log line, and no page is involved.
+        var logger = new CapturingLogger();
+        var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 0), logger: logger);
+
+        Assert.Equal(SelfGrantRefusal, validator.ValidateSelfGrant(Self, SelfAddress));
+
+        var error = Assert.Single(logger.Errors);
+        Assert.Contains(SettingsStoreText.ServiceModuleConfig(ModuleId), error, StringComparison.Ordinal);
+        Assert.DoesNotContain("reload this page", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedInTheLog()
+    {
+        var logger = new CapturingLogger();
+        var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: "yes", logger: logger);
+
+        Assert.Equal(SelfGrantRefusal, validator.ValidateSelfGrant(Self, SelfAddress));
+
+        var warning = Assert.Single(logger.Warnings, w => w.Contains("Security:PreventSelfGrant", StringComparison.Ordinal));
+        Assert.Contains("'yes'", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExchangeOnlineRowsThatCannotBeRead_RefuseASelfGrant_AsACheckThatCouldNotBeCompleted()
+    {
+        // aud-a28y. The store answers the self-grant setting's read and fails every later one: the Exchange Online rows
+        // the real resolver's pool reads to put the two names to Exchange. The lookup cannot run, so the comparison the
+        // string match leaves to it cannot be made, and the grant is refused rather than cleared. Nothing is connected.
+        var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 1),
+            resolverFor: (pool, config) =>
+                new ExchangeIdentityResolver(pool, _delinea, NullLogger<ExchangeIdentityResolver>.Instance, config));
+
+        var result = await validator.ValidateSelfGrantAsync(Self, SelfAlias);
+
+        Assert.Equal(
+            $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{Self}'; nothing was written. Contact your administrator.",
+            result);
+        Assert.Equal(0, Connects);
     }
 
     /// <summary>
@@ -242,6 +295,33 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => inner.Write(write);
 
         public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
+    }
+
+    /// <summary>Keeps the text of every warning and error the validator logs.</summary>
+    private sealed class CapturingLogger : ILogger<PermissionValidator>
+    {
+        public List<string> Warnings { get; } = [];
+        public List<string> Errors { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var list = logLevel switch
+            {
+                LogLevel.Warning => Warnings,
+                LogLevel.Error => Errors,
+                _ => null,
+            };
+            if (list is null)
+                return;
+
+            lock (list)
+                list.Add(formatter(state, exception));
+        }
     }
 
     private sealed class NoNetwork : HttpMessageHandler

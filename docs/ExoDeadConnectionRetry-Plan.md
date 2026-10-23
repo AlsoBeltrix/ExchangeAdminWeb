@@ -123,6 +123,8 @@ ELIGIBLE for auto-retry (read-only or single-write):
   `MessageTraceService.StartHistoricalSearchAsync`, and the single-cmdlet
   `MigrationService` actions (Complete/Stop/Start/Resume/Remove batch & user).
 
+Removed since, 2026-10-22: `ResolveToObjectIdAsync` (aud-a28y); the self-grant check asks `ResolveRecipientAsync`.
+
 NOT eligible — keep today's behavior (the 7 multi-write delegates):
 - `MailboxPermissionService.AddMailboxPermissionsAsync` (`Add-MailboxPermission` +
   `Add-RecipientPermission`) — re-add throws "already exists".
