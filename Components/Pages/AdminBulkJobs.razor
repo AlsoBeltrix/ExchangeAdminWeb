@@ -322,14 +322,18 @@
         // kd-26. Audited with what the cancel did. The row said Success after any cancel, so a job that had finished a
         // moment before was recorded as cancelled: BulkJobService.CancelJob says whether it took effect (kd-5) - a queued job
         // finished as Cancelled, or a running job's cancellation requested. A throw from the store is audited as failed, in
-        // the finally, and still thrown.
+        // the finally, and still thrown. kd-32: a cancel that took no effect is a refusal by the job's state - its row says
+        // so, and that nothing was changed; a throw keeps no such field, the store having perhaps been reached.
         var cancelled = false;
         string? error = "The job was not cancelled: it had already finished, or it no longer exists.";
+        string? refusedAt = null;
         try
         {
             cancelled = BulkJobs.CancelJob(job.Id);
             if (cancelled)
                 error = null;
+            else
+                refusedAt = "JobState";
         }
         catch (Exception ex)
         {
@@ -338,7 +342,7 @@
         }
         finally
         {
-            WriteAudit("AdminBulkJobs_CancelJob", job, cancelled, error);
+            WriteAudit("AdminBulkJobs_CancelJob", job, cancelled, error, refusedAt);
         }
 
         actionMessage = cancelled

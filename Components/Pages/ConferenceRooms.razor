@@ -834,7 +834,7 @@
         }
     }
     // kd-5: Cancel audited as Remove is, from the RENDERED row; kd-27: both re-check access first, the denial audited. One line each, so no line-keyed entry moves.
-    private async Task CancelJob(ExchangeAdminWeb.Services.Jobs.BulkJob job) { if (!await JobControlAllowedAsync("ConferenceRooms_CancelBulkJob", job)) return; var cancelled = false; string? error = "The job was not cancelled: it had already finished, or it no longer exists."; try { cancelled = BulkJobs.CancelJob(job.Id); if (cancelled) error = null; } catch (Exception ex) { error = ex.Message; throw; } finally { AuditJobControl("ConferenceRooms_CancelBulkJob", job, cancelled, error); } }
+    private async Task CancelJob(ExchangeAdminWeb.Services.Jobs.BulkJob job) { if (!await JobControlAllowedAsync("ConferenceRooms_CancelBulkJob", job)) return; var cancelled = false; string? error = "The job was not cancelled: it had already finished, or it no longer exists."; string? refusedAt = null; try { cancelled = BulkJobs.CancelJob(job.Id); if (cancelled) error = null; else refusedAt = "JobState"; } catch (Exception ex) { error = ex.Message; throw; } finally { AuditJobControl("ConferenceRooms_CancelBulkJob", job, cancelled, error, refusedAt); } }
     private async Task<bool> JobControlAllowedAsync(string action, ExchangeAdminWeb.Services.Jobs.BulkJob job) { if (await ReauthorizeAsync()) return true; AuditJobControl(action, job, success: false, "Authorization denied.", refusedAt: "Authorization"); return false; }
     // One expanded row at a time; clicking the open one closes it.
     private string? detailsJobId;

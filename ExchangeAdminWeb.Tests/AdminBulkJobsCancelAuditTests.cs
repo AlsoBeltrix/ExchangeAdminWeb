@@ -56,6 +56,7 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
 
         var row = TheRow(job, success: true, error: null);
         Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
         Assert.Equal($"Cancellation requested for {Module} job T.", GetField(page, "actionMessage"));
         if (state == "queued")
             Assert.Equal(BulkJobStatus.Cancelled, store.Get(job.Id)!.Status);
@@ -79,7 +80,9 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
         await Cancel(page, job);
 
         var row = TheRow(job, success: false, error: NotCancelled);
-        Assert.False(row.TryGetProperty("refusedAt", out _));
+        // kd-32. A refusal by the job's state, not a failed write: nothing was changed.
+        Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
         Assert.Equal($"{Module} job T was not cancelled - it had already finished, or it no longer exists.", GetField(page, "actionMessage"));
         if (state == "finished")
             Assert.Equal(BulkJobStatus.Completed, store.Get(job.Id)!.Status);
@@ -115,6 +118,7 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
 
         var row = TheRow(job, success: false, error: thrown.Message);
         Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
     }
 
     // ---- the row -------------------------------------------------------------------------------

@@ -181,7 +181,10 @@ public sealed class ConferenceRoomPageTests : IDisposable
 
         await Cancel(page, job);
 
-        AssertTheRow(Assert.Single(CancelRows()), job, success: true, error: null);
+        var row = Assert.Single(CancelRows());
+        AssertTheRow(row, job, success: true, error: null);
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
         var after = store.Get(job.Id)!;
         if (state == "queued")
             Assert.Equal(BulkJobStatus.Cancelled, after.Status);
@@ -204,7 +207,11 @@ public sealed class ConferenceRoomPageTests : IDisposable
 
         await Cancel(page, job);
 
-        AssertTheRow(Assert.Single(CancelRows()), job, success: false, error: NothingCancelled);
+        var row = Assert.Single(CancelRows());
+        AssertTheRow(row, job, success: false, error: NothingCancelled);
+        // kd-32. A refusal by the job's state, not a failed write: nothing was changed.
+        Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
         if (state == "finished")
             Assert.Equal(BulkJobStatus.Completed, store.Get(job.Id)!.Status);
         else
@@ -220,7 +227,11 @@ public sealed class ConferenceRoomPageTests : IDisposable
 
         var thrown = await Assert.ThrowsAnyAsync<Exception>(() => Cancel(page, job));
 
-        AssertTheRow(Assert.Single(CancelRows()), job, success: false, error: thrown.Message);
+        var row = Assert.Single(CancelRows());
+        AssertTheRow(row, job, success: false, error: thrown.Message);
+        // kd-32. A throw keeps no refusal fields: the store may have been reached.
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
     }
 
     // ---- kd-27: the job controls re-check access at the click -------------------------------------
