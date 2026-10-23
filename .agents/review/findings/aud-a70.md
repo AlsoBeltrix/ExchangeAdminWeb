@@ -51,6 +51,19 @@ beside `outcome` above the try (`onPremExtra`, Mailbox 676, Calendar 630), set r
 names it), and handed to the catch's row as its `extra`. A throw before the re-check leaves it null: that row names no
 identity, there being none validated yet.
 
+(5) `SubmitSingle`'s refusals once the target is validated return with no row: `Components/Pages/MailboxPermissions.razor`
+461 (the location read failing), 464 (the location "Unknown"), 474 (on-premises, the operator not permitted); Calendar 431,
+434, 444. Each now goes through a local `Refused(refusal)` declared on the step's own line (Mailbox 458, Calendar 428): the
+change's own row - its action (`Add<rights>` / `Remove<rights>`, `SetCalendar` / `RemoveCalendar`), Failed, the refusal as
+its error, the identity it was bound to and the servicer note - through `SelfGrantRefusalRecord.Banner`, so a row not
+written is said, as the catch records a throw before the write. `ExecuteOnPrem`'s own authorization refusal (Mailbox 684,
+Calendar 638) is the same refusal on the on-premises write and returned the same way; it is recorded too, under the
+handler's `OnPrem_` action (no identity: it comes before the re-check). Every one of these texts now ends "Nothing was
+written." (the two page texts gain it; `ExchangeServiceBase.LocationReadFailure`, used by these two pages alone, said
+"Nothing was changed." and now says the same as the rest). Not in this sub-item: the ticket and re-authorization refusals
+above the validation (candidates in the hand-back). `ExchangeServiceBaseOnPremReadTests`' line pin follows the new call
+shape (`PermissionResult.Fail(Refused(...))`).
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -90,6 +103,21 @@ tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `4673304C9F
 
 M4 and M4c are the catch rows as they stood at `eb017102`. `AnOnPremChangeThatFailsBeforeItsReCheck_IsRecordedWithNoIdentity`
 pins the other side: a throw before the re-check names nothing.
+
+### (5) - commit `fix(aud-a70): (5) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ExchangeServiceBaseOnPremRead`
+(493 tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `33C8FCA760B856876DCDF51A3E905C3E`,
+`Components/Pages/CalendarPermissions.razor` `A0F05BE65F6856332283EA647F1454DD`. Every restore matched; reruns 493/493.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M5 | Mailbox: the location read's refusal not recorded (`Refused(` removed at 461) | `79B70D84C97C63B7A0AB41951E254D08` | 2 of 493: `ARefusalBeforeTheWrite_IsRecordedAsFailed_NothingWasWritten(page: "Mailbox Permissions", refusal: "the location cannot be read")` (no row), `ExchangeServiceBaseOnPremReadTests.APermissionsPage_RefusesALocationReadThatFailed_BeforeAnyWrite(page: "MailboxPermissions.razor", ...)` (the line pin) |
+| M5c | Calendar: the "Unknown" location's refusal not recorded (434) | `EB1BEFCF943C61654DEE5BB132F12DDE` | 1 of 493: `ARefusalBeforeTheWrite_...(page: "Calendar Permissions", refusal: "no mailbox anywhere")` |
+| E5 | extra, Mailbox: the on-premises "not permitted" refusal not recorded (474) | `D46BBDF8FB00FD36E2F2E498023904B0` | 1 of 493: `ARefusalBeforeTheWrite_...(page: "Mailbox Permissions", refusal: "on-premises not permitted")` |
+| E5b | extra, Mailbox: `ExecuteOnPrem`'s authorization refusal not recorded (684) | `446CCB5A34F558B6CC1C729D672E4806` | 1 of 493: `TheOnPremWrite_WhenNotAuthorized_IsRecordedAsFailed_NothingWasWritten(page: "Mailbox Permissions")` |
+
+Each mutant is its refusal as it stood at `eb017102` but for the "Nothing was written." its text now ends with.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 

@@ -44,6 +44,15 @@ internal static class SelfGrantRefusalRecord
     /// </summary>
     internal const string FailedSingleChangeRecord = "the failed permission change";
 
+    /// <summary>
+    /// aud-a70 (5). The record of a change refused before its write: <c>SubmitSingle</c>'s refusals once the target is validated
+    /// (the location unreadable or nowhere, on-premises not permitted) and <c>ExecuteOnPrem</c>'s authorization refusal.
+    /// </summary>
+    internal const string RefusedChangeRecord = "the refused permission change";
+
+    /// <summary>aud-a70 (5). <c>ExecuteOnPrem</c>'s refusal when the operator may not change on-premises permissions.</summary>
+    internal const string OnPremNotAuthorized = "Authorization denied for on-prem operations. Nothing was written.";
+
     /// <summary>aud-a70 (1). A single change's own record (<c>SubmitSingle</c>), in the words its guard has always logged.</summary>
     internal const string SingleChangeRecord = "the permission change";
 

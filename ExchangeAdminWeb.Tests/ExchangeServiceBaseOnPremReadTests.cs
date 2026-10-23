@@ -297,14 +297,15 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     }
 
     [Fact]
-    public void ALocationReadThatFailed_IsRefusedSayingNothingWasChanged() =>
+    public void ALocationReadThatFailed_IsRefusedSayingNothingWasWritten() =>
         Assert.Equal(
-            "Could not determine mailbox location for shared@contoso.test: Exchange Online could not be asked: the directory is busy. Nothing was changed.",
+            "Could not determine mailbox location for shared@contoso.test: Exchange Online could not be asked: the directory is busy. Nothing was written.",
             ExchangeServiceBase.LocationReadFailure("shared@contoso.test", new InvalidOperationException("Exchange Online could not be asked: the directory is busy.")));
 
-    // Neither permissions page has a handler harness, so the guard is pinned on the line, as ValidatedWriteCallSiteTests pins
-    // the same call: a failed location read is refused there, before any write, through LocationReadFailure. It reached
-    // each page's catch, "Operation may have succeeded but audit logging failed: ...".
+    // Pinned on the line, as ValidatedWriteCallSiteTests pins the same call: a failed location read is refused there, before
+    // any write, through LocationReadFailure. It reached each page's catch, "Operation may have succeeded but audit logging
+    // failed: ...". aud-a70 (5): the refusal goes through the page's Refused, which records it -
+    // PermissionPagesSelfGrantTests.ARefusalBeforeTheWrite_IsRecordedAsFailed_NothingWasWritten drives it end to end.
     [Theory]
     [InlineData("CalendarPermissions.razor", "CalendarService")]
     [InlineData("MailboxPermissions.razor", "MailboxService")]
@@ -314,7 +315,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
 
         Assert.Matches(new Regex(
             $@"string location; try \{{ location = await {service}\.GetMailboxLocationAsync\(validation\.Mailbox\); \}} "
-            + @"catch \(Exception locationEx\) \{ result = PermissionResult\.Fail\(ExchangeServiceBase\.LocationReadFailure\(target, locationEx\)\); return; \}"),
+            + @"catch \(Exception locationEx\) \{ result = PermissionResult\.Fail\(Refused\(ExchangeServiceBase\.LocationReadFailure\(target, locationEx\)\)\); return; \}"),
             source);
         Assert.DoesNotMatch(new Regex(@"var location = await"), source);
     }

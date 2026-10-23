@@ -737,9 +737,9 @@ public abstract class ExchangeServiceBase
 
     // aud-a23o. What a page refuses with when the location read fails, before any write. On the two permissions pages it
     // reached the handler's catch, "Operation may have succeeded but audit logging failed", which says of a read that a write
-    // may have happened.
+    // may have happened. aud-a70 (5): the pages record it, and it ends as their other refusals before a write end.
     internal static string LocationReadFailure(string target, Exception ex) =>
-        $"Could not determine mailbox location for {target}: {ResolveFailure(ex).primary.TrimEnd('.')}. Nothing was changed.";
+        $"Could not determine mailbox location for {target}: {ResolveFailure(ex).primary.TrimEnd('.')}. Nothing was written.";
 
     /// <summary>
     /// Where the validated mailbox lives, asked by its GUID so the location decides the path for

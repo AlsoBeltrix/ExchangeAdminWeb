@@ -425,13 +425,13 @@
                     return;
                 }
             }
-            var step = PermissionChangeFailure.BeforeTheWrite; // aud-a53: the stage a throw in the try below came from
+            var step = PermissionChangeFailure.BeforeTheWrite; string Refused(string refusal) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : null, false, ticket, errorDetail: refusal, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.RefusedChangeRecord); // aud-a53: the stage a throw in the try below came from; aud-a70 (5): a refusal before the write is recorded, as a throw before it is
             try
             {
-                string location; try { location = await CalendarService.GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result = PermissionResult.Fail(ExchangeServiceBase.LocationReadFailure(target, locationEx)); return; } // aud-a23o: a failed location read is refused as such, before any write; it reached the catch below, "Operation may have succeeded but audit logging failed"
+                string location; try { location = await CalendarService.GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result = PermissionResult.Fail(Refused(ExchangeServiceBase.LocationReadFailure(target, locationEx))); return; } // aud-a23o: a failed location read is refused as such, before any write; it reached the catch below, "Operation may have succeeded but audit logging failed"; aud-a70 (5): and recorded
                 if (location == "Unknown")
                 {
-                    result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
+                    result = PermissionResult.Fail(Refused($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found. Nothing was written."));
                     return;
                 }
 
@@ -441,7 +441,7 @@
                         (await AuthStateProvider.GetAuthenticationStateAsync()).User, "CalendarPermissionsOnPrem");
                     if (!onPremAuth.Succeeded)
                     {
-                        result = PermissionResult.Fail($"{target} is an on-premises mailbox. Please escalate this ticket to the Exchange team.");
+                        result = PermissionResult.Fail(Refused($"{target} is an on-premises mailbox. Please escalate this ticket to the Exchange team. Nothing was written."));
                         return;
                     }
 
@@ -635,7 +635,7 @@
                 (await AuthStateProvider.GetAuthenticationStateAsync()).User, "CalendarPermissionsOnPrem");
             if (!authCheck.Succeeded)
             {
-                result = outcome = PermissionResult.Fail("Authorization denied for on-prem operations.");
+                result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.OnPremNotAuthorized, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, action, target, user, level, false, ticket, errorDetail: SelfGrantRefusalRecord.OnPremNotAuthorized), Logger, target, SelfGrantRefusalRecord.RefusedChangeRecord)); // aud-a70 (5): recorded, as SubmitSingle's refusals before the write are
                 return;
             }
 

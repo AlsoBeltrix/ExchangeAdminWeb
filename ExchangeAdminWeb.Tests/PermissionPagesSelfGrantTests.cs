@@ -259,7 +259,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// a test gives, else the harness's (aud-a73); its connect throwing the exception a test gives (aud-a75).
     /// </summary>
     private sealed class OnPremMailboxService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null,
-        Exception? connectFailure = null)
+        Exception? connectFailure = null, string? onPremScript = null)
         : MailboxPermissionService(pool ?? h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
@@ -270,12 +270,13 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             if (connectFailure is not null)
                 throw connectFailure;
             h.DefineOnPremSession(ps);
+            DefineOnPrem(ps, onPremScript);
         }
     }
 
     /// <summary>The on-premises Calendar Permissions write, as <see cref="OnPremMailboxService"/>.</summary>
     private sealed class OnPremCalendarService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null,
-        Exception? connectFailure = null)
+        Exception? connectFailure = null, string? onPremScript = null)
         : CalendarPermissionService(pool ?? h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
@@ -286,7 +287,20 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             if (connectFailure is not null)
                 throw connectFailure;
             h.DefineOnPremSession(ps);
+            DefineOnPrem(ps, onPremScript);
         }
+    }
+
+    /// <summary>aud-a70 (5). A test's own stand-ins, defined in an on-premises session after the harness's, so they take their place.</summary>
+    private static void DefineOnPrem(PowerShell ps, string? script)
+    {
+        if (script is null)
+            return;
+        using var define = PowerShell.Create();
+        define.Runspace = ps.Runspace;
+        define.AddScript(script).Invoke();
+        if (define.HadErrors)
+            throw new InvalidOperationException("the test's on-premises stand-ins could not be defined");
     }
 
     /// <summary>The grant <c>SubmitSingle</c> stages before the operator's confirmation: the target, the grantee and the ticket.</summary>
@@ -305,7 +319,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
         string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
-        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null)
+        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null, bool onPremDenied = false)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -329,12 +343,15 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             warnings = () => logger.Warnings;
         }
         Stage(component, grantee, target);
-        if (onPremAuthorization is not null)
+        if (onPremAuthorization is not null || onPremDenied)
         {
+            // aud-a70 (5): or the operator is not permitted to change on-premises permissions.
             var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
             authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
                     page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
-                .Returns(Task.FromException<AuthorizationResult>(onPremAuthorization));
+                .Returns(onPremAuthorization is not null
+                    ? Task.FromException<AuthorizationResult>(onPremAuthorization)
+                    : Task.FromResult(AuthorizationResult.Failed()));
         }
 
         await Call(component, "ExecuteOnPrem");
@@ -1284,6 +1301,141 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal("Failed", Text(record, "result"));
         Assert.False(record.TryGetProperty(ValidatedMailbox.AuditKey, out _));
+    }
+
+    // ---- aud-a70 (5): a refusal before the write is recorded, as a throw before it is ---------------------------------------
+
+    public static TheoryData<string, string> PagesAndRefusalsBeforeTheWrite => new()
+    {
+        { MailboxPage, "the location cannot be read" }, { MailboxPage, "no mailbox anywhere" }, { MailboxPage, "on-premises not permitted" },
+        { CalendarPage, "the location cannot be read" }, { CalendarPage, "no mailbox anywhere" }, { CalendarPage, "on-premises not permitted" },
+    };
+
+    /// <summary>On-premises Exchange answering, as Exchange does, that it holds no such mailbox and no such remote mailbox.</summary>
+    private const string OnPremHoldsNothing = """
+        function global:Get-Mailbox {
+            [CmdletBinding()] param([Parameter(Position = 0)] $Identity)
+            Write-StandInCall 'Get-Mailbox' $PSBoundParameters
+            Write-Error -Message "The operation couldn't be performed because object '$Identity' couldn't be found." -Category ObjectNotFound
+        }
+        function global:Get-RemoteMailbox {
+            [CmdletBinding()] param([Parameter(Position = 0)] $Identity)
+            Write-StandInCall 'Get-RemoteMailbox' $PSBoundParameters
+            Write-Error -Message "The operation couldn't be performed because object '$Identity' couldn't be found." -Category ObjectNotFound
+        }
+        """;
+
+    /// <summary>
+    /// <paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to someone else, refused before its write
+    /// as <paramref name="refusal"/> says: Exchange Online's location read failing; neither Exchange Online nor on-premises
+    /// Exchange holding the mailbox; or on-premises Exchange holding it and the operator not permitted to change it there. The
+    /// result, the page's warnings, the refusal's words and whether anything was staged for confirmation.
+    /// </summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings, string Refusal, bool Staged)> RefuseBeforeTheWrite(
+        string page, string refusal)
+    {
+        ExoConnectionPool? pool = null;
+        string? onPremScript = null;
+        string expected;
+        switch (refusal)
+        {
+            case "the location cannot be read":
+                _h.Failures["Get-Mailbox"] = "the directory is busy";
+                expected = $"Could not determine mailbox location for {Target}: Exchange Online could not be asked: the directory is busy. Nothing was written.";
+                break;
+            case "no mailbox anywhere":
+                pool = PoolWhereExchangeOnlineHoldsNoMailbox();
+                onPremScript = OnPremHoldsNothing;
+                expected = $"Could not determine mailbox location for {Target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found. Nothing was written.";
+                break;
+            default:
+                pool = PoolWhereExchangeOnlineHoldsNoMailbox();
+                expected = $"{Target} is an on-premises mailbox. Please escalate this ticket to the Exchange team. Nothing was written.";
+                break;
+        }
+
+        try
+        {
+            ComponentBase component;
+            Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
+            if (page == MailboxPage)
+            {
+                var logger = new CapturingLogger<MailboxPermissions>();
+                component = new MailboxPermissions();
+                Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+                Set(component, "MailboxService", new OnPremMailboxService(_h, pool, WithAnOnPremServer(), onPremScript: onPremScript));
+                SetField(component, "grantFullAccess", true);
+                SetField(component, "grantSendAs", false);
+                warnings = () => logger.Warnings;
+            }
+            else
+            {
+                var logger = new CapturingLogger<CalendarPermissions>();
+                component = new CalendarPermissions();
+                Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+                Set(component, "CalendarService", new OnPremCalendarService(_h, pool, WithAnOnPremServer(), onPremScript: onPremScript));
+                SetField(component, "accessRight", CalendarAccessRight.Reviewer);
+                warnings = () => logger.Warnings;
+            }
+            SetField(component, "affectedUser", Other);
+            if (refusal == "on-premises not permitted")
+            {
+                var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
+                authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
+                        page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
+                    .Returns(Task.FromResult(AuthorizationResult.Failed()));
+            }
+
+            await Call(component, "SubmitSingle");
+
+            Assert.False(GetField<bool>(component, "isLoading"));
+            return (Assert.IsType<PermissionResult>(GetField<PermissionResult>(component, "result")), warnings(), expected,
+                GetField<bool>(component, "onPremConfirmPending"));
+        }
+        finally
+        {
+            pool?.Dispose();
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesAndRefusalsBeforeTheWrite))]
+    public async Task ARefusalBeforeTheWrite_IsRecordedAsFailed_NothingWasWritten(string page, string refusal)
+    {
+        // SubmitSingle's refusals once the target was validated returned with no audit row - a refused change the event log
+        // never saw. Each is now the change's own row, Failed, its error the refusal, with the identity it was bound to.
+        var (result, warnings, expected, staged) = await RefuseBeforeTheWrite(page, refusal);
+
+        Assert.False(result.Success);
+        Assert.Equal(expected, result.Message);
+        Assert.False(staged);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
+        Assert.Equal(page == MailboxPage ? "FullAccess" : "Reviewer", Text(record, page == MailboxPage ? "permissionType" : "accessRight"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(expected, Text(record, "error"));
+        Assert.Equal(Other, Text(record, "affectedUser"));
+        Assert.Equal(TargetMailbox.ToString("D"), Text(record, ValidatedMailbox.AuditKey));
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheOnPremWrite_WhenNotAuthorized_IsRecordedAsFailed_NothingWasWritten(string page)
+    {
+        // ExecuteOnPrem's own authorization refusal, the twin of SubmitSingle's on-premises refusal, returned with no row too.
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremDenied: true);
+
+        Assert.False(result.Success);
+        Assert.Equal("Authorization denied for on-prem operations. Nothing was written.", result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(result.Message, Text(record, "error"));
+        Assert.Empty(warnings);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+        Assert.Empty(_h.Writes);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
