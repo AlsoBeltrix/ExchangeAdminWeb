@@ -1,3 +1,4 @@
+using System.Management.Automation;
 using ExchangeAdminWeb.Models;
 using static ExchangeAdminWeb.Tests.MigrationStubExchange;
 
@@ -7,7 +8,8 @@ namespace ExchangeAdminWeb.Tests;
 /// Audit finding aud-a68, Recipient Lookup's own failure texts. (2) The mailbox statistics warning was built from
 /// <c>ex.Message</c>, so it carried PowerShell's "The running command stopped because the preference variable ..." prefix
 /// (the aud-a23l class); its catch took a cancellation too; and a statistics read that answered no row showed "N/A" for
-/// every figure with nothing said.
+/// every figure with nothing said. (3) The lookup's own error was <c>ex.Message</c> as well: a missing recipient read in
+/// that prefix, and the lookup's "Recipient '&lt;x&gt;' not found." was reached only by an empty answer.
 /// </summary>
 /// <remarks>
 /// The real <see cref="ExchangeAdminWeb.Services.RecipientLookupService"/> over <see cref="MigrationStubExchange"/>'s
@@ -29,6 +31,13 @@ public sealed class RecipientLookupFailureTests : IDisposable
     }
 
     private Task<RecipientInfoResult> LookedUp() => _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+
+    private static Func<string, ErrorRecord> NotFoundIn(string shape) => shape switch
+    {
+        "category" => NotFoundByCategory,
+        "type" => NotFoundByType,
+        _ => NotFoundByIdentifier,
+    };
 
     // ---- part 2: the mailbox statistics read -----------------------------------------------------
 
@@ -86,5 +95,35 @@ public sealed class RecipientLookupFailureTests : IDisposable
         Assert.Null(result.Error);
         Assert.Equal(1.5, result.MailboxSizeGB);
         Assert.Empty(result.Warnings);
+    }
+
+    // ---- part 3: the lookup's own error ----------------------------------------------------------
+
+    // The finding. An error Get-Recipient writes under Stop: before, "The running command stopped because the preference
+    // variable ... is set to Stop: the directory is busy".
+    [Fact]
+    public async Task ARecipientReadThatFails_IsTheErrorInTheCmdletsOwnWords()
+    {
+        _exchange.Failures[$"Get-Recipient {Address}"] = Refused("the directory is busy");
+
+        var result = await LookedUp();
+
+        Assert.Equal("the directory is busy", result.Error);
+    }
+
+    // Exchange's own "no such object", in each shape it is read from: the lookup's own words, which before only an empty
+    // answer reached, and nothing more is read.
+    [Theory]
+    [InlineData("category")]
+    [InlineData("type")]
+    [InlineData("identifier")]
+    public async Task ARecipientThatDoesNotExist_IsNotFound(string shape)
+    {
+        _exchange.NotFound = NotFoundIn(shape);
+
+        var result = await LookedUp();
+
+        Assert.Equal($"Recipient '{Address}' not found.", result.Error);
+        Assert.Equal([$"Get-Recipient {Address}"], _exchange.CallList());
     }
 }

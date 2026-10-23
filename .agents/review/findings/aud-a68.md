@@ -64,6 +64,29 @@ module bumps are in their own commit; `ExchangeAdminWeb.csproj` is not edited.
    mailbox statistics: Exchange returned no mailbox statistics." (the marker the Exchange Online size reader gives the same
    answer) where every figure read "N/A" with nothing said. Tests: `ExchangeAdminWeb.Tests/RecipientLookupFailureTests.cs`.
    Mutation: raw `ex.Message` again (the record's); extras: the cancellation filter dropped; the no-row warning dropped.
+3. **The lookup's own error** (`Services/RecipientLookupService.cs` 134-138; the friendly words at 26-30): the block's
+   catch sets `r.Error` to "Recipient '<x>' not found." when Exchange said there is no such recipient (`IsNotFound`, read
+   from the error's structure - the words only an empty answer reached), else to `ResolveFailure(ex).primary`, the
+   cmdlet's own words without the Stop prefix. Every later read in the block takes its own not-found (Get-Mailbox through
+   `ReadUnlessNotFound`, the archive read's `IsNotFound` catch, the statistics catch), so Get-Recipient's is the only one
+   that reaches this catch. ASSUMPTION, unverified (aud-a23h's, no live call): Exchange Online reports a missing recipient
+   from Get-Recipient in a shape `IsNotFound` reads; if not, the error reads in Exchange's own words - visible, never a
+   guess. Mutation: raw `ex.Message` again (the record's); extra: the not-found reading dropped.
+4. **A lookup that throws** (`Components/Pages/RecipientLookup.razor` `RunLookup`, 208-232): only the service call (220)
+   is wrapped; a throw becomes the lookup's result with `Error` = `ExchangeServiceBase.ResolveFailure(ex).primary` (226,
+   the third raw wording), and then, on every path, the activity completes with the outcome (221) and the audit row is
+   written (222) - Success, or Failed with that error. The activity still opens before the call and completes after it,
+   as `ProgressRegistry`'s `RunLookup` entry requires. The audit write has its own try: a throw from it is logged and
+   cannot turn a lookup that was made into a failed one (the Constitution's audit rule; before, the shared catch would
+   have shown it as the lookup's error). The page is not line-keyed (`ClickGateRegistry.NotYetConverted`, tier 4).
+   Test stand-in: `MigrationStubExchange.RecipientLookup(bool connects = true)` - false, the Exchange Online connection
+   cannot be opened, so the service call throws before any cmdlet. Mutation: the thrown path's audit row dropped (the
+   record's); extras: its activity left to end "This did not finish."; raw `ex.Message` again.
+6. **The ReportedTime tests' stand-in** (`ExchangeAdminWeb.Tests/RecipientLookupReportedTimeTests.cs` 104 and 149;
+   test-only, no module behaviour): the stand-in's archive read writes Exchange's own not-found (category
+   ObjectNotFound) where it answered no row - since aud-a54 no row is "could not be read", so the mailbox those tests
+   render had an archive warning a mailbox without an archive never shows; and `LookedUp` asserts `Warnings` empty beside
+   `Error` null, so every page-render test there now checks it. Proof: the stand-in's old answer back.
 
 ## Guard proof
 
@@ -103,6 +126,19 @@ fails; no statistics warning); `StatisticsThatRead_GiveTheirFigures_AndNoWarning
 | M2 (the record's): raw `ex.Message` again | `2032c29d...` / `76046751...` | 1: `AStatisticsReadThatFails...` | md5 equal; 81/0 |
 | M2b: the catch takes a cancellation again | `2032c29d...` / `633b8917...` | 1: `ACancelledStatisticsRead...` | md5 equal; 81/0 |
 | M2c: a no-row answer says nothing again | `2032c29d...` / `184657aa...` | 1: `AStatisticsReadWithNoRow...` | md5 equal; 81/0 |
+
+On the part-2 commit's tree (`1963cb79`): full suite 6706 passed / 0 failed / 0 skipped.
+
+**Part 3** - `RecipientLookupFailureTests`' part-3 tests: `ARecipientReadThatFails_IsTheErrorInTheCmdletsOwnWords` (an error
+Get-Recipient writes under Stop: `Error` exactly "the directory is busy"); `ARecipientThatDoesNotExist_IsNotFound`
+(Exchange's not-found by category, type, identifier: exactly "Recipient 'alice@contoso.test' not found.", and nothing but
+Get-Recipient asked). Same filter, 85 tests.
+
+| Round | md5 before / mutated | Failed (of 85) | Restored |
+| --- | --- | --- | --- |
+| The fix reverted (the service back to part 2's) | `0172a003...` / `2032c29d...` | 4: every part-3 case | md5 equal; 85/0 |
+| M3 (the record's): raw `ex.Message` again | `0172a003...` / `7694e901...` | 1: `ARecipientReadThatFails...` | md5 equal; 85/0 |
+| M3b: the not-found reading dropped | `0172a003...` / `f32e1788...` | 3: the three not-found shapes | md5 equal; 85/0 |
 
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 

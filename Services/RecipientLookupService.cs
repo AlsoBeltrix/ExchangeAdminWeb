@@ -141,7 +141,11 @@ public class RecipientLookupService : ExchangeServiceBase
             }
             catch (Exception ex)
             {
-                r.Error = ex.Message;
+                // aud-a68. Exchange's own "no such recipient", read from the error's structure, is the lookup's own words, which
+                // only an empty answer reached; anything else is the cmdlet's own words (aud-a23i's helper), not PowerShell's
+                // "The running command stopped because ..." prefix. Every later read here takes its own not-found, so the one
+                // that gets this far is Get-Recipient's.
+                r.Error = IsNotFound(ex) ? $"Recipient '{emailAddress}' not found." : ResolveFailure(ex).primary;
                 _logger.LogError(ex, "Error getting recipient info for {Email}", emailAddress);
             }
 
