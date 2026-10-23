@@ -6,7 +6,7 @@ With rotation failing for days (a SIEM tailer holding the file without delete sh
 delete) there is no ceiling and no second warning until a rotation succeeds, so the active audit or trace
 file grows until the log volume fills, after which writes fail as ordinary file-write failures and
 visibility degrades anyway.
-**Status**: Merged `a4fc0e29`; closed on guard proof; codex review pending
+**Status**: Complete; merged `a4fc0e29`; codex attr-batch-17 clean
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
 **Commit**: `bdf013cf` (fix, tests, README, record); record and plan `3c306bcc`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-16, 2026-10-23)
