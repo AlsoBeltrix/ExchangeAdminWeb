@@ -411,6 +411,88 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         Assert.Equal(1, logger.WarningCount);
     }
 
+    private const string SwitchReadFails = "the switch read fails";
+    private const string SwitchMalformed = "the switch is malformed";
+    private const string SwitchUnreadable = "the switch is unreadable";
+    private const string SwitchThrows = "the switch itself throws";
+    private const string InsertFails = "the insert fails";
+
+    /// <summary>
+    /// aud-a48, the aud-a28q tripwire's throwing-logger theory for this service: its reports went to its logger unguarded,
+    /// so a provider that threw took its exception out of Enabled - into the Home page's render - and out of every Record
+    /// method, and faulted the insert's task.
+    /// </summary>
+    [Theory]
+    [InlineData(SwitchReadFails)]
+    [InlineData(SwitchMalformed)]
+    [InlineData(SwitchUnreadable)]
+    [InlineData(SwitchThrows)]
+    [InlineData(InsertFails)]
+    public void TheTelemetry_GivenALoggerThatThrows_NeverThrows(string cause)
+    {
+        var logger = new ThrowingLogger<UsageTelemetryService>();
+        switch (cause)
+        {
+            case SwitchReadFails:
+                Assert.False(Answer(ServiceWhoseSwitchReadFails(logger).Enabled));
+                Assert.Equal(1, logger.Attempts);
+                break;
+
+            case SwitchMalformed:
+                Assert.False(Answer(new UsageTelemetryService(Repo(), Config("flase"), new ModuleCatalog(), logger).Enabled));
+                Assert.Equal(1, logger.Attempts);
+                break;
+
+            case SwitchUnreadable:
+                // Two reports: the change watcher's, of the token it cannot read, and the switch's own.
+                Assert.False(Answer(new UsageTelemetryService(Repo(), Config(corrupt: true), new ModuleCatalog(), logger).Enabled));
+                Assert.Equal(2, logger.Attempts);
+                break;
+
+            case SwitchThrows:
+                var throwing = new ThrowingSwitchTelemetry(Repo(), Config(), new ModuleCatalog(), logger);
+                Assert.Null(Record.Exception(() => throwing.RecordSessionStart("s")));
+                Assert.Null(Record.Exception(() => throwing.RecordOpen("s", "GroupManagement", "group-management")));
+                Assert.Null(Record.Exception(() => throwing.RecordTheme("s", "midnight")));
+                Assert.Null(Record.Exception(() => throwing.RecordAction("GroupManagement", "AddMember", success: true)));
+                Assert.Equal(4, logger.Attempts);
+                break;
+
+            case InsertFails:
+                // mustExist over a file that is not there: the insert throws on open. The body the enqueue task runs.
+                var broken = new UsageEventRepository(
+                    new SqliteConnectionFactory(Path.Combine(_dir, "absent", "usage.db"), mustExist: true));
+                var service = new UsageTelemetryService(broken, Config(), new ModuleCatalog(), logger);
+                Assert.Null(Record.Exception(() =>
+                    service.InsertQueued(new UsageEvent(DateTime.UtcNow, "s", "open", "GroupManagement", null, "group-management", null))));
+                Assert.Equal(1, logger.Attempts);
+                break;
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(cause), cause, null);
+        }
+    }
+
+    /// <summary>
+    /// aud-a48: the audit call's last statement is the telemetry hook, after the row was written and the operation closed.
+    /// A provider that threw in the service took its exception out of the audit call, so an operation that had completed
+    /// appeared to have failed.
+    /// </summary>
+    [Fact]
+    public void AnAuditCall_GivenATelemetryServiceWhoseLoggerThrows_StillReturns_AndTheRowIsWritten()
+    {
+        var config = AuditConfig();
+        var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
+        var logger = new ThrowingLogger<UsageTelemetryService>();
+        var audit = new AuditService(log, new OperationTraceService(config, log), ServiceWhoseSwitchReadFails(logger));
+
+        Assert.Null(Record.Exception(() => audit.LogModuleAction("u", "1.1.1.1", "Do", "GroupManagement", "t", true)));
+
+        Assert.Equal(1, logger.Attempts);
+        var row = Assert.Single(File.ReadAllLines(log.GetAuditLogPaths(DateTime.Now).Last()), line => !string.IsNullOrWhiteSpace(line));
+        Assert.Contains("\"action\":\"Do\"", row, StringComparison.Ordinal);
+    }
+
     // --- AC5: every public audit method feeds telemetry --------------------
 
     [Fact]
@@ -545,6 +627,86 @@ public sealed class UsageTelemetryServiceTests : IDisposable
     }
 
     // --- helpers -----------------------------------------------------------
+
+    /// <summary>
+    /// A telemetry service whose switch read fails after its corruption probe passed - the store's second read fails, as
+    /// a busy shared database's can - with the config service's logger and its own both throwing: one provider behind
+    /// both, as in production.
+    /// </summary>
+    private UsageTelemetryService ServiceWhoseSwitchReadFails(ILogger<UsageTelemetryService> logger)
+    {
+        var store = new ReadsFailAfterStore(TestConfigStore.Create(_dir));
+        var env = Substitute.For<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_dir);
+        var moduleConfig = new ModuleConfigService(
+            new ModuleCatalog(), env, new ModuleConfigRepository(store), new ThrowingLogger<ModuleConfigService>());
+        var service = new UsageTelemetryService(Repo(), moduleConfig, new ModuleCatalog(), logger);
+        store.AllowReads(1);
+        return service;
+    }
+
+    /// <summary>The call's answer, asserting it returned one rather than throwing.</summary>
+    private static T Answer<T>(Func<T> call)
+    {
+        T answer = default!;
+        Assert.Null(Record.Exception(() => answer = call()));
+        return answer;
+    }
+
+    /// <summary>A switch that cannot be read at all: Enabled throws, for a reason that is not a logger's.</summary>
+    private sealed class ThrowingSwitchTelemetry(
+        UsageEventRepository repository,
+        ModuleConfigService moduleConfig,
+        ModuleCatalog catalog,
+        ILogger<UsageTelemetryService> logger)
+        : UsageTelemetryService(repository, moduleConfig, catalog, logger)
+    {
+        public override bool Enabled() => throw new InvalidOperationException("the switch could not be read");
+
+        internal override void Enqueue(UsageEvent e)
+        {
+        }
+    }
+
+    /// <summary>A real store whose reads fail, once the test has allowed a number of them; the token and writes pass.</summary>
+    private sealed class ReadsFailAfterStore(IConfigStore inner) : IConfigStore
+    {
+        private int _allowed = int.MaxValue;
+
+        public void AllowReads(int count) => Volatile.Write(ref _allowed, count);
+
+        public long GetChangeToken() => inner.GetChangeToken();
+
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) =>
+            Interlocked.Decrement(ref _allowed) >= 0
+                ? inner.Read(read)
+                : throw new Microsoft.Data.Sqlite.SqliteException("database is locked", 5);
+
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) =>
+            inner.Write(write);
+
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) =>
+            inner.Write(write);
+    }
+
+    /// <summary>Counts every report and throws once it has, as a failing provider can (aud-a28u).</summary>
+    private sealed class ThrowingLogger<T> : ILogger<T>
+    {
+        private int _attempts;
+
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Interlocked.Increment(ref _attempts);
+            throw new InvalidOperationException("the logging provider failed");
+        }
+    }
 
     /// <summary>Captures events at the write seam so assertions do not race the insert task.</summary>
     private sealed class CapturingTelemetry : UsageTelemetryService

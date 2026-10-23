@@ -211,17 +211,19 @@ public class UsageTelemetryService
     /// </summary>
     internal virtual void Enqueue(UsageEvent e)
     {
-        _ = Task.Run(() =>
+        _ = Task.Run(() => InsertQueued(e));
+    }
+
+    internal void InsertQueued(UsageEvent e)
+    {
+        try
         {
-            try
-            {
-                _repository.Insert(e);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to record a usage event of kind {Kind}; telemetry only", e.Kind);
-            }
-        });
+            _repository.Insert(e);
+        }
+        catch (Exception ex)
+        {
+            ReportSafely(logger => logger.LogWarning(ex, "Failed to record a usage event of kind {Kind}; telemetry only", e.Kind));
+        }
     }
 
     /// <summary>
@@ -239,7 +241,7 @@ public class UsageTelemetryService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to queue a usage event of kind {Kind}; telemetry only", kind);
+            ReportSafely(logger => logger.LogWarning(ex, "Failed to queue a usage event of kind {Kind}; telemetry only", kind));
         }
     }
 
@@ -254,22 +256,33 @@ public class UsageTelemetryService
         {
             if (malformed is null)
             {
-                _logger.LogWarning(
+                ReportSafely(logger => logger.LogWarning(
                     ex,
                     "Could not read the {Key} switch on {Module}; usage telemetry is treated as disabled",
                     ConfigKey,
-                    ConfigModuleId);
+                    ConfigModuleId));
             }
             else
             {
-                _logger.LogWarning(
+                ReportSafely(logger => logger.LogWarning(
                     ex,
                     "The {Key} switch on {Module} holds {Value}, which is not a Boolean; usage telemetry is treated as disabled",
                     ConfigKey,
                     ConfigModuleId,
-                    malformed);
+                    malformed));
             }
         }
         return false;
+    }
+
+    private void ReportSafely(Action<ILogger> report)
+    {
+        try
+        {
+            report(_logger);
+        }
+        catch (Exception)
+        {
+        }
     }
 }

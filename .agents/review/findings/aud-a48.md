@@ -103,6 +103,81 @@ Files:
 - `ExchangeAdminWeb.Tests/UsageTelemetryServiceTests.cs`
 - this record
 
+## Fix
+
+- `Services/UsageTelemetryService.cs`:
+  - New private `ReportSafely(Action<ILogger>)`: the report in a try whose catch takes any exception and does nothing.
+  - The four logger calls go through it, their text and arguments unchanged:
+    - `LogSwitchUnreadableOnce`'s two (the unreadable switch, the malformed one);
+    - `Record`'s catch;
+    - the insert's catch.
+  - New `internal void InsertQueued(UsageEvent e)`: the insert, its failure reported through `ReportSafely`. It is the
+    enqueue task's old body.
+  - `Enqueue` is `_ = Task.Run(() => InsertQueued(e));`, still `internal virtual`.
+
+Tests: `ExchangeAdminWeb.Tests/UsageTelemetryServiceTests.cs` +6.
+- `TheTelemetry_GivenALoggerThatThrows_NeverThrows`, five causes:
+  - The switch read fails: `Enabled()` false, one report attempted.
+  - The switch is malformed: false, one attempted.
+  - The switch is unreadable: false, two attempted - the change watcher's report of the token, and the switch's.
+  - The switch itself throws: the four `Record` methods return, four attempted.
+  - The insert fails: `InsertQueued` returns, one attempted.
+- `AnAuditCall_GivenATelemetryServiceWhoseLoggerThrows_StillReturns_AndTheRowIsWritten`: `LogModuleAction` returns, the
+  switch's one report attempted, and the row in the audit file.
+- Helpers:
+  - `ServiceWhoseSwitchReadFails`: a real store whose second read fails, under a module-config service and a telemetry
+    service whose loggers both throw.
+  - `Answer`, `ThrowingSwitchTelemetry` (an `Enabled()` that throws), `ReadsFailAfterStore` and `ThrowingLogger<T>`.
+
+Caller-visible change, by design: a logging provider that throws no longer takes its exception out of the service:
+- `Enabled()` answers - off when the switch cannot be read, as with a provider that works - so the Home page renders.
+- `RecordSessionStart`, `RecordOpen`, `RecordTheme` and `RecordAction` return, so an audit call whose row was written
+  returns too.
+- The insert's task completes.
+- Nothing else changes: the reports' text, the once-per-process switch warning, and what is recorded.
+
 ## Guard proof
 
-Pending.
+Reproduction: E3 below puts all three of the file's reports back as they were at `132d6e97`, keeping only the
+`InsertQueued` seam the test calls. It fails exactly the four cases that reach a report that throws:
+- The audit call throws "the logging provider failed" after its row was written - the Constitution's "Audit failure must
+  not make an already-completed operation appear to have failed".
+- So do `Enabled()` and the `Record` methods, and the insert's task body.
+
+Same driver as aud-a51's (session scratchpad `mutate/mutate.ps1`, specs `mutate/round-a48.json` and
+`mutate/round-a48-e3.json`, logs `mutate/a48-mutations.log` and `mutate/a48-e3-mutations.log`). E3 is three literal
+replacements at once, each required to match exactly once. The filter (160 tests) is this service's, its wiring's and
+repository's, the change watcher's, and the audit writer's and service's:
+`FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~UsageTrackerWiringTests|FullyQualifiedName~UsageEventRepositoryTests|FullyQualifiedName~ConfigChangeWatcherTests|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests`
+
+Every mutant built with 0 errors, and each restore matched its original MD5. After each round, a rebuild on the restored
+bytes and the filter: 160/160 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 `LogSwitchUnreadableOnce`'s read-failure report unguarded again (the bare `_logger.LogWarning(...)`) | `UsageTelemetryService.cs`, `2DB82918757112613B597AF2F4E73AED` | `EC5ACF0CA9E1C9D270611BC8CEBE0AE1` | 2 of 160: `TheTelemetry_GivenALoggerThatThrows_NeverThrows` "the switch read fails" - "the logging provider failed" thrown out of `Enabled()`; `AnAuditCall_...` - 2 reports where 1, `Enabled()` having thrown into `Record`'s catch, which made its own |
+| extra E1 `Record`'s catch report unguarded again | `UsageTelemetryService.cs`, `2DB82918757112613B597AF2F4E73AED` | `16491833B36E9EC989C3FD68CD8C8E41` | 1 of 160: the theory's "the switch itself throws" - the provider's exception out of `RecordSessionStart` |
+| extra E2 the insert's catch report unguarded again | `UsageTelemetryService.cs`, `2DB82918757112613B597AF2F4E73AED` | `9EA8C148F0557DFD4D8CD0CE2E90C851` | 1 of 160: the theory's "the insert fails" - the provider's exception out of the task's body |
+| extra E3 all three unguarded at once, as at `132d6e97` | `UsageTelemetryService.cs`, `2DB82918757112613B597AF2F4E73AED` | `82F4B68CAB94C66622656CFD7476E786` | 4 of 160: `AnAuditCall_...` - the provider's exception out of `LogModuleAction`; the theory's "the switch read fails", "the switch itself throws" and "the insert fails" |
+
+The theory's malformed and unreadable causes pass under every mutant. A report that throws from inside `ReadSwitch`'s try
+is caught by its own catch, whose second call finds the once-flag set - the accident the Plan's evidence 2 describes.
+They are kept as the rule's other two answers.
+
+Unchanged through the rounds: `UsageTelemetryServiceTests.cs` `E368B7F8E701834C6D6E17C176B96242`. The code comments are
+written after all three findings' rounds, in their own commit, so the MD5s above are this commit's bytes.
+
+Not run, by design: the Home page in a browser. `Home.razor` calls `Usage.Enabled()` (43), and the theory shows that call
+answering whatever the provider does.
+
+## Known gaps
+
+- `ModuleConfigService.ReadModuleConfig` (281-293) reports a failed read through its own logger, unguarded (290). With a
+  provider that throws, `GetValue` then throws into every caller. This service now absorbs it, but the other callers do
+  not. It is another agent's file and another finding's defect, listed as a candidate in the hand-back.
+- With a provider that works, the same race - `IsModuleCorrupt`'s read passes, `GetValue`'s fails - reads the switch as
+  never configured, so ON (`ReadSwitch` 136-141, `ReadModuleConfig` failing open). That is a privacy switch failing
+  permissive for up to the cache's 30 s. It is not a logging failure and not this finding's; it is listed as a candidate
+  in the hand-back.
+- `InsertQueued` is internal so a test can run the task's body. The task itself is still not observed: a fault it could
+  still meet, other than a report's, would go unobserved as before. The body's catch takes every exception.
