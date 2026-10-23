@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
@@ -504,6 +506,64 @@ public class ExtendedLogServiceTests
     }
 
     [Fact]
+    public void TheConsumer_GivenAFullFileItCannotRotate_ReportsItAgainAsItGrows_AndShowsTheStreak()
+    {
+        // aud-a65. One warning at the first failed write, then nothing while the file grew past its limit, until the volume
+        // filled; and the streak was shown nowhere. The clock stands still here, so only the file's growth re-reports.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, new Dictionary<string, string?> { ["ExtendedLog:MaxFileBytes"] = "1024" }, logger: logger);
+        var since = new DateTimeOffset(2026, 10, 23, 9, 0, 0, TimeSpan.Zero);
+        service.Clock = new FixedClock(since);
+        service.SetLevel("Error");
+        var logPath = GetTodayLogPath(temp.Path);
+        var fillers = Enumerable.Range(1, 12).Select(i => $"filler {i:00}").ToList();
+        File.WriteAllLines(logPath, fillers.Select(message => JsonSerializer.Serialize(new { message, pad = new string('x', 90) })));
+        Assert.Null(service.RotationFailure);
+
+        var held = Enumerable.Range(1, 30).Select(i => $"held {i:00} " + new string('y', 100)).ToList();
+        LogRotationFailure? failure;
+        using (new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            foreach (var message in held)
+                service.Write(LogEventLevel.Error, message, "Test");
+
+            Assert.True(
+                SpinWait.SpinUntil(() => ReadAsTheEventLogDoes(service).Messages.Count == fillers.Count + held.Count, TimeSpan.FromSeconds(10)),
+                "the consumer did not write every held entry");
+            failure = service.RotationFailure;
+        }
+
+        // Reported at the first failure, then at the first entry that found the file grown by another limit since the last
+        // report: never sooner, and never later than one entry past it.
+        var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).ToList();
+        Assert.True(warnings.Count >= 3, $"{warnings.Count} warning(s) for a file that grew by more than three limits");
+        var sizes = warnings.Select(w => long.Parse(Regex.Match(w.Text, @"it is (\d+) bytes").Groups[1].Value, CultureInfo.InvariantCulture)).ToList();
+        for (var i = 1; i < sizes.Count; i++)
+        {
+            Assert.InRange(sizes[i] - sizes[i - 1], 1024, 1024 + 400);
+            Assert.Contains("still cannot be rotated", warnings[i].Text, StringComparison.Ordinal);
+        }
+
+        // Shown while it lasts: the log, the file, since when, its size and how far past its limit.
+        Assert.NotNull(failure);
+        Assert.Equal("extended", failure.Log);
+        Assert.Equal(logPath, failure.Path);
+        Assert.Equal(since.UtcDateTime, failure.SinceUtc);
+        Assert.Equal(1024, failure.LimitBytes);
+        Assert.Equal(failure.SizeBytes - 1024, failure.OverBytes);
+        Assert.True(failure.SizeBytes >= sizes[^1], "the streak's size is older than its last report");
+
+        // Gone once an entry finds the file free and rotates it; and nothing was dropped.
+        service.Write(LogEventLevel.Error, "after the hold", "Test");
+        service.Dispose();
+        Assert.True(File.Exists(GetTodayRotatedLogPath(temp.Path, 1)), "the rotation did not succeed once the file was free");
+        Assert.Null(service.RotationFailure);
+        Assert.Equal(0, service.DroppedEntryCount);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
     public void TheConsumer_GivenItsFolderRemoved_CreatesItAgain_AndWritesTheNextEntry()
     {
         // aud-a56. The appender creates the folder before every write now, for both writers; the consumer created it
@@ -766,6 +826,12 @@ public class ExtendedLogServiceTests
             foreach (var item in held)
                 item.Dispose();
         }
+    }
+
+    /// <summary>A clock that stands still (aud-a65): the consumer's rotation streak reads it.</summary>
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed record LogEntry(LogLevel Level, string Text, Exception? Exception = null);

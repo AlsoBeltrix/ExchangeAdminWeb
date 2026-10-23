@@ -649,6 +649,17 @@ under it or under `wwwroot`). There is no baked-in default: **the app will not s
 `Audit:LogRoot` is unset or blank, so audit logs are never silently misplaced. Each
 environment sets its own value.
 
+**Number settings and the trace switch:** `Audit:MaxFileMB` (default 50), `Audit:MaxFileBytes`
+(not set), `Audit:MaxFilesPerPeriod` (5), `ExtendedLog:MaxFileMB` (10), `ExtendedLog:MaxFileBytes`
+(not set), `ExtendedLog:MaxFilesPerDay` (5), `Email:SmtpPort` (25), `BulkJobs:StaleHeartbeatMinutes`
+(5), `BulkJobs:RecentJobLimit` (25) and `BulkJobs:RetentionDays` (30) take a number, and
+`OperationTrace:Enabled` (`true`) takes `true` or `false`. Left out or blank, each is its default.
+A value that cannot be read - `50MB`, `five`, `yes` - is logged once as a warning naming the
+setting and the value, and is read as the default until it is corrected; a `MaxFileBytes` that
+cannot be read is not set, so its `MaxFileMB` applies. Before, such a value stopped the audit and
+trace writer, the trace, the extended log, the mail service or the bulk job runner from being
+built: every page that needs one failed, and for the job runner the app did not start.
+
 ### 4. Deploy to IIS
 
 **Generic / new environments — use the standalone product installer** in **elevated
@@ -974,10 +985,15 @@ Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`,
 - A file that reaches its size limit is rotated before the next write. A rotation that fails -
   the folder does not let this instance's account delete, or another program holds the file
   open without delete sharing - does not lose the write: it goes to the full file, past its
-  limit, and every later write tries the rotation again. The failure is logged once as a
-  warning naming the file and the reason, and not again until a write finds the file rotated
-  or under its limit. A retried rotation deletes nothing a completed one would have kept. The
-  same holds for the extended diagnostic log.
+  limit, and every later write tries the rotation again. The failure is logged as a warning
+  naming the file, the reason, its size and how far past its limit it is. While the rotation
+  keeps failing it is logged again each time the file has grown by another limit, or once an
+  hour, whichever comes first, until a write finds the file rotated or under its limit. The
+  Admin Event Log shows each file this instance cannot rotate, since when, its size and how far
+  over it is, with diagnostics on or off. A retried rotation deletes nothing a completed one
+  would have kept. The same holds for the extended diagnostic log. Nothing bounds the file
+  while its rotation fails: release whatever holds it open, or let this instance's account
+  delete in the log folder.
 - The log folder is created before every write, so a `<LogRoot>\ExchangeAdminWeb` deleted
   while the app runs is created again by the next write. A folder that cannot be created is
   reported the way a lock file the folder refuses is (see Shared log root).

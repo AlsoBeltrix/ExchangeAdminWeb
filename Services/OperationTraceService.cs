@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -9,10 +10,16 @@ public class OperationTraceService
     private readonly JsonlLogService _log;
     private readonly bool _enabled;
 
-    public OperationTraceService(IConfiguration config, JsonlLogService log)
+    // aud-a62. The logger names a mistyped switch. Optional, so the tests build the service as they always have; the
+    // container injects it.
+    public OperationTraceService(IConfiguration config, JsonlLogService log, ILogger<OperationTraceService>? logger = null)
     {
         _log = log;
-        _enabled = config.GetValue<bool?>("OperationTrace:Enabled") ?? true;
+        // aud-a62. GetValue<bool?> threw on a value that is neither true nor false, and this singleton - and with it the
+        // audit service and every traced service - could not be built. Such a value is read as the documented default, on:
+        // the trace is diagnostic, and a typo keeps the record rather than hiding it.
+        _enabled = ConfigBoolean.Read(config, "OperationTrace:Enabled", whenBlank: true, whenNotBoolean: true,
+            logger ?? NullLogger<OperationTraceService>.Instance);
     }
 
     public string? CurrentOperationId => Current.Value?.OperationId;

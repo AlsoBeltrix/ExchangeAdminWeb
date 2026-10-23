@@ -150,6 +150,46 @@ public class ModuleConfigServiceTests
         Assert.Equal(1, logger.Attempts);
     }
 
+    /// <summary>
+    /// aud-a63: a committed write was reported through the service's logger with no guard, inside the lock and before
+    /// ConfigSaved, so a provider that threw made a saved change look failed to its caller, and this instance's ConfigSaved
+    /// subscribers never heard of it.
+    /// </summary>
+    [Theory]
+    [InlineData("SaveModuleConfig")]
+    [InlineData("UpdateModuleValues")]
+    [InlineData("SaveChangedValues")]
+    public void ACommittedWrite_WithALoggerThatThrows_IsReportedSaved_AndRaisesConfigSaved(string writer)
+    {
+        using var temp = new TempDir();
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(temp.Path);
+        var logger = new ThrowingLogger();
+        var service = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(temp.Path), logger);
+        var raised = new List<string>();
+        service.ConfigSaved += raised.Add;
+        var values = new Dictionary<string, string> { ["OnPremTargetDatabases"] = "db-a" };
+
+        ModuleConfigUpdate? update = null;
+        ModuleConfigSaveOutcome? outcome = null;
+        var thrown = writer switch
+        {
+            "SaveModuleConfig" => Record.Exception(() => service.SaveModuleConfig("Migration", values)),
+            "UpdateModuleValues" => Record.Exception(() => update = service.UpdateModuleValues("Migration", values)),
+            "SaveChangedValues" => Record.Exception(() => outcome = service.SaveChangedValues("Migration", new Dictionary<string, string>(), values)),
+            _ => throw new ArgumentOutOfRangeException(nameof(writer), writer, null),
+        };
+
+        Assert.Null(thrown);
+        if (writer == "UpdateModuleValues")
+            Assert.Equal("db-a", update!.After["OnPremTargetDatabases"]);
+        if (writer == "SaveChangedValues")
+            Assert.Equal(ModuleConfigSaveStatus.Saved, outcome!.Status);
+        Assert.Equal(["Migration"], raised);
+        Assert.Equal("db-a", service.GetValue("Migration", "OnPremTargetDatabases"));
+        Assert.Equal(1, logger.Attempts);
+    }
+
     [Fact]
     public void Construction_ImportsPerModuleLegacyFile_ThenArchives()
     {

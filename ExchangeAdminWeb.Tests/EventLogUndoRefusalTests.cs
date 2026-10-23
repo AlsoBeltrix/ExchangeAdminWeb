@@ -73,10 +73,14 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         _h.Dispose();
     }
 
-    /// <summary>The page with the undo panel open on <paramref name="edit"/> and a ticket typed.</summary>
-    private Page PageConfirming(Dictionary<string, object?> edit, UndoRegistry? registry = null)
+    /// <summary>
+    /// The page with the undo panel open on <paramref name="edit"/> and a ticket typed; its logger and its progress channel
+    /// <paramref name="logger"/>'s and <paramref name="progress"/>'s when given (aud-a63).
+    /// </summary>
+    private Page PageConfirming(
+        Dictionary<string, object?> edit, UndoRegistry? registry = null, ILogger<Page>? logger = null, IActivityProgress? progress = null)
     {
-        var page = Unattached(registry ?? new UndoRegistry([_h.CreateUndoService()]));
+        var page = Unattached(registry ?? new UndoRegistry([_h.CreateUndoService()]), logger, progress);
         SetField(page, "undoTargetEvent", Entry(edit));
         SetField(page, "undoPreview", PreviewOf(edit));
         SetField(page, "undoTicket", Ticket);
@@ -93,7 +97,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         return page;
     }
 
-    private Page Unattached(UndoRegistry registry)
+    private Page Unattached(UndoRegistry registry, ILogger<Page>? logger = null, IActivityProgress? progress = null)
     {
         var page = new QuietEventLog();
         SetProperty(page, "UndoRegistry", registry);
@@ -103,8 +107,8 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         SetProperty(page, "AuthStateProvider", authState);
         SetProperty(page, "AuthorizationService", _authorization);
         SetProperty(page, "ClientInfo", new ClientInfoService { IpAddress = Ip });
-        SetProperty(page, "Progress", _progress);
-        SetProperty(page, "Logger", NullLogger<Page>.Instance);
+        SetProperty(page, "Progress", progress ?? _progress);
+        SetProperty(page, "Logger", logger ?? NullLogger<Page>.Instance);
         return page;
     }
 
@@ -291,6 +295,43 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.Empty(_h.Ad.Sets);
         Assert.Empty(_h.Notices);
         AssertNotReversed(page);
+    }
+
+    // ---- aud-a63: a logging provider that throws decides nothing about the undo's outcome ---------------------------
+
+    [Theory]
+    [InlineData("EventLog")]
+    [InlineData("ADAttributeEditorLevel3")]
+    public async Task AnUndoThatThrowsBeforeItsModuleIsCalled_WithALoggerThatThrows_IsRecordedAndFailed_AndNothingEscapes(string faulted)
+    {
+        // The defect: the catch reported the exception first, with no guard. A provider that threw left undoError unset,
+        // so no record was written, the finally completed the activity as a success, and the exception reached the
+        // circuit.
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var logger = new ThrowingLogger<Page>();
+        var progress = new RecordingProgress();
+        var page = PageConfirming(
+            AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"), logger: logger, progress: progress);
+        Hold(faulted).SetException(new InvalidOperationException(StoreUnreadable));
+
+        var escaped = await Record.ExceptionAsync(() => ExecuteUndo(page));
+
+        // The defect's three halves, each reported on its own when it is back.
+        var shown = Field<string?>(page, "undoError");
+        var records = _h.AuditEvents();
+        var completed = progress.Completed;
+        Assert.Multiple(
+            () => Assert.Null(escaped),
+            () => Assert.Single(records),
+            () => Assert.Equal<(string Label, bool Success, string? Message)>([("Undoing the selected action", false, shown)], completed));
+
+        Assert.Contains(StoreUnreadable, shown, StringComparison.Ordinal);
+        Assert.Null(Field<string?>(page, "undoSuccess"));
+        Assert.False(Field<bool>(page, "undoExecuting"));
+        AssertEventLogRecord(records[0], shown!, alex);
+        Assert.False(records[0].TryGetProperty("refusedAt", out _));
+        AssertNotReversed(page);
+        Assert.Equal(1, logger.Attempts);
     }
 
     [Fact]
@@ -624,6 +665,93 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         public void LogUndoRefused(
             Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, string refusedAt, string reason)
         {
+        }
+    }
+
+    /// <summary>Counts every report and throws once it has, as a failing provider can (aud-a28u).</summary>
+    private sealed class ThrowingLogger<T> : ILogger<T>
+    {
+        private int _attempts;
+
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Interlocked.Increment(ref _attempts);
+            throw new InvalidOperationException("the logging provider failed");
+        }
+    }
+
+    /// <summary>
+    /// A progress channel that keeps how each activity ended (aud-a63). The real one drops the outcome, because its frame is
+    /// live only, so an activity completed as a success where it failed could not be seen through it.
+    /// </summary>
+    private sealed class RecordingProgress : IActivityProgress
+    {
+        private readonly List<(string Label, bool Success, string? Message)> _completed = [];
+
+        public IReadOnlyList<(string Label, bool Success, string? Message)> Completed
+        {
+            get { lock (_completed) return _completed.ToList(); }
+        }
+
+        public IReadOnlyList<ProgressActivity> Active => [];
+
+        public bool HasActive => false;
+
+        public event Action? Changed
+        {
+            add { }
+            remove { }
+        }
+
+        public IActivityHandle Begin(string moduleId, string label, ActivitySize size) => new Handle(this, label);
+
+        public void Cancel(string id)
+        {
+        }
+
+        public void CancelAll()
+        {
+        }
+
+        private void Add(string label, bool success, string? message)
+        {
+            lock (_completed)
+                _completed.Add((label, success, message));
+        }
+
+        private sealed class Handle(RecordingProgress owner, string label) : IActivityHandle
+        {
+            private int _ended;
+
+            public string Id { get; } = Guid.NewGuid().ToString("N");
+
+            public CancellationToken CancellationToken => CancellationToken.None;
+
+            public void Report(int done, string? detail = null)
+            {
+            }
+
+            public void Step(string detail)
+            {
+            }
+
+            // The first call wins, as the real handle's does.
+            public void Complete(bool success, string? message = null)
+            {
+                if (Interlocked.Exchange(ref _ended, 1) == 0)
+                    owner.Add(label, success, message);
+            }
+
+            public IProgress<ActivityUpdate> AsProgress() => new Progress<ActivityUpdate>();
+
+            public void Dispose() => Complete(false, "This did not finish.");
         }
     }
 

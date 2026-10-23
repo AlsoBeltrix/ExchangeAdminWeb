@@ -37,9 +37,10 @@ public class ExtendedLogService : IDisposable
     // closed queue refused - and since aud-a46 an entry the full queue discarded. Incremented before the drop is
     // reported, so it holds when the report itself fails.
     private long _droppedEntries;
-    // aud-a56. Whether a failed rotation has been reported, until an entry's write finds no rotation to do or makes one:
-    // one report per failure streak. Only the one consumer reads or writes it.
-    private bool _rotationFailureReported;
+    // aud-a65 (aud-a56's flag before it). The extended file's failed-rotation streak while one lasts: it ends when an
+    // entry's write finds no rotation to do or makes one. Only the one consumer writes it; volatile, because the Admin
+    // Event Log reads it from another thread.
+    private volatile RotationFailureStreak? _rotationFailure;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -53,8 +54,10 @@ public class ExtendedLogService : IDisposable
         var logRoot = AuditLogRoot.Require(config);
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _legacyConfigFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
-        _maxFileBytes = GetMaxFileBytes(config);
-        _maxFilesPerDay = Math.Clamp(config.GetValue<int?>("ExtendedLog:MaxFilesPerDay") ?? DefaultMaxFilesPerDay, 2, 50);
+        // aud-a62. The limits are read without a throw: GetValue<int?> and GetValue<long?> threw on a value that is not a
+        // number, and this singleton could not be built. Such a value is the default, named once.
+        _maxFileBytes = GetMaxFileBytes(config, logger);
+        _maxFilesPerDay = Math.Clamp(ConfigValue.ReadInt(config, "ExtendedLog:MaxFilesPerDay", DefaultMaxFilesPerDay, logger), 2, 50);
         // aud-a46. A full queue discards its oldest entry when writes outpace the disk, and nothing counted it. The
         // callback runs on the writer's thread, after the channel's own lock is released; it counts and never logs - a
         // discard is a burst, and a report per discarded entry would be a flood of its own.
@@ -83,6 +86,15 @@ public class ExtendedLogService : IDisposable
     /// queue's discards (aud-a46), and the Admin Event Log shows it with the diagnostics.
     /// </summary>
     public long DroppedEntryCount => Interlocked.Read(ref _droppedEntries);
+
+    /// <summary>
+    /// The extended file this instance cannot rotate right now, if any (aud-a65). It still takes every entry (aud-a56), so
+    /// it grows past its limit until its rotation succeeds. The Admin Event Log shows it, as it shows the drop count.
+    /// </summary>
+    public LogRotationFailure? RotationFailure => _rotationFailure?.State;
+
+    /// <summary>Test seam (aud-a65): the clock a failed rotation's streak and its report schedule read.</summary>
+    internal TimeProvider Clock { get; set; } = TimeProvider.System;
 
     /// <summary>Test seam: the watcher consulted before every read of the level.</summary>
     internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
@@ -339,13 +351,14 @@ public class ExtendedLogService : IDisposable
         }
     }
 
-    private static long GetMaxFileBytes(IConfiguration config)
+    // aud-a62. A byte limit that cannot be read is not set, so the megabyte limit decides, as when it is left out.
+    private static long GetMaxFileBytes(IConfiguration config, ILogger logger)
     {
-        var explicitBytes = config.GetValue<long?>("ExtendedLog:MaxFileBytes");
+        var explicitBytes = ConfigValue.ReadLong(config, "ExtendedLog:MaxFileBytes", whenBlank: null, logger);
         if (explicitBytes.HasValue)
             return Math.Max(1024, explicitBytes.Value);
 
-        var maxFileMB = Math.Max(1, config.GetValue<int?>("ExtendedLog:MaxFileMB") ?? DefaultMaxFileMB);
+        var maxFileMB = Math.Max(1, ConfigValue.ReadInt(config, "ExtendedLog:MaxFileMB", DefaultMaxFileMB, logger));
         return maxFileMB * 1024L * 1024L;
     }
 
@@ -359,8 +372,8 @@ public class ExtendedLogService : IDisposable
     internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
     // One entry, one line or none, under the file's lock (aud-a28z part 3, aud-a47, shared since aud-a46). The reports
-    // are this service's own, guarded as all its reports are. aud-a56: a rotation that fails is reported once per failure
-    // streak, and the entry is still written.
+    // are this service's own, guarded as all its reports are. aud-a56: a rotation that fails does not cost the entry.
+    // aud-a65: its streak is reported on a schedule, and shown.
     private void AppendLine(string logPath, PendingLogEntry entry) =>
         JsonlFileAppender.Append(
             logPath,
@@ -370,18 +383,9 @@ public class ExtendedLogService : IDisposable
             rotateIfFull: () =>
             {
                 RotateIfFull(entry.LogDate, logPath);
-                _rotationFailureReported = false;
+                _rotationFailure = null;
             },
-            rotationFailed: ex =>
-            {
-                if (_rotationFailureReported)
-                    return;
-
-                _rotationFailureReported = true;
-                ReportSafely(logger => logger.LogWarning(ex,
-                    "Could not rotate the extended log file {Path}, which has reached its size limit: {Reason} The entry was written to it, past the limit. Each entry tries the rotation again; this is not reported again until an entry finds the file rotated or under its limit",
-                    logPath, ex.Message));
-            },
+            rotationFailed: ex => RotationFailed(logPath, ex),
             writeLineBytes: WriteLineBytes,
             repaired: () => ReportSafely(logger => logger.LogWarning(
                 "The extended log file {Path} ended in a partial line, left by a write that did not finish; this entry was started on a new line",
@@ -389,6 +393,45 @@ public class ExtendedLogService : IDisposable
             truncationFailed: ex => ReportSafely(logger => logger.LogWarning(ex,
                 "Could not remove the partial extended log line a failed write left in {Path}; the next entry will start on a new line",
                 logPath)));
+
+    // aud-a65. A rotation that failed, on the consumer, under the file's lock and before the entry is appended: reported at
+    // its first failure, then each time the file has grown by another limit or an hour has passed (RotationFailureStreak),
+    // as the JSONL writer reports its own. This runs in the appender's catch, so nothing here may throw: a throw would
+    // leave Append and cost the entry.
+    private void RotationFailed(string logPath, Exception ex)
+    {
+        try
+        {
+            var now = Clock.GetUtcNow().UtcDateTime;
+            var streak = _rotationFailure;
+            if (streak is null || streak.State.Path != logPath)
+            {
+                streak = new RotationFailureStreak("extended", logPath, _maxFileBytes, now);
+                _rotationFailure = streak;
+            }
+
+            if (!streak.Failed(RotationFailureStreak.SizeOf(logPath), now))
+                return;
+
+            var state = streak.State;
+            if (streak.Reports == 1)
+            {
+                ReportSafely(logger => logger.LogWarning(ex,
+                    "Could not rotate the extended log file {Path}, which has reached its size limit: {Reason} The entry was written to it, past the limit: it is {Size} bytes, {Over} over its limit of {Limit}. Each entry tries the rotation again; while it fails, this is reported again each time the file has grown by another limit, or once an hour, until an entry finds the file rotated or under its limit",
+                    logPath, ex.Message, state.SizeBytes, state.OverBytes, state.LimitBytes));
+            }
+            else
+            {
+                ReportSafely(logger => logger.LogWarning(ex,
+                    "The extended log file {Path} still cannot be rotated: it is {Size} bytes, {Over} over its limit of {Limit}, and its rotation has failed since {Since:o}: {Reason} Every entry is still written to it, so it grows until the rotation succeeds. Whatever holds it open without delete sharing must let go of it, or this instance's account must be allowed to delete in the log folder",
+                    logPath, state.SizeBytes, state.OverBytes, state.LimitBytes, state.SinceUtc, ex.Message));
+            }
+        }
+        catch (Exception)
+        {
+            // The entry matters more than its report: whatever failed here, the appender writes it.
+        }
+    }
 
     // The entry's file, by its date: a name only, so it is chosen before the lock; the size check and the rotation read
     // and change the file system, so RotateIfFull runs under it.
