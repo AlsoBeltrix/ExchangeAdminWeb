@@ -8,8 +8,8 @@ dropped, and the logged exception is `JsonlLockTimeoutException` "Another writer
 writer is contending and the real cause is permissions. `AuditService.WriteAuditEvent` calls the writer
 synchronously on the circuit path, so each affected row also stalls the operator for 2 s before it is lost.
 The test lock holders do not use `DeleteOnClose`, so the edge is uncovered.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a48/a49 agent's scope
-**Branch**: -
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a48/a49 agent's scope; in progress (plan below)
+**Branch**: `worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-14, 2026-10-22)
 
@@ -35,6 +35,139 @@ lock holders).
   (no bound wait); a sharing violation still waits and times out with the contention text; the stand-in lock
   holder matches the appender's open mode. Mutations at the call site: `DeleteOnClose` again; the
   access-failure branch folded back into the retry.
+
+*Amended 2026-10-22 by the implementing agent, from measurements taken before any code (Plan, evidence 2 and 6):*
+- "Reported at once" means after a 100 ms grace, never after the 2 s contention bound. An instance still on the aud-a47
+  build deletes the lock file on close, and a writer that opens it in that moment is refused access for a few
+  milliseconds. Treating that refusal as permanent would drop a row under contention and blame the folder.
+- "Delete best-effort after release" is a move to a unique name and a delete of that, not a plain delete. A plain delete
+  leaves the lock's name delete-pending for a moment, and a writer that opens it then is refused access - the very
+  refusal this finding stops treating as contention. A move is refused with a sharing violation while another writer
+  holds the file, so it never removes a held lock.
+
+## Plan (approved by the owner's EVERYTHING go)
+
+Owner go 2026-10-21 ("fix all the bugs ... EVERYTHING"). Admitted from codex attr-batch-14 (`132d6e97`) and folded into this
+agent's scope by the coordinator. One commit `fix(audit-log): ... (aud-a51)`, first of three on branch
+`worktree-agent-ac1038e1d7ece4ae5` (from `132d6e97`), before aud-a48 and aud-a49. It changes the appender that every audit,
+trace and extended-log write ends in, so the base app version is due; the supervisor owns the bump.
+
+Evidence, re-read at `132d6e97`:
+1. `Services/JsonlFileAppender.cs`:
+   - `Lock` (91-122) opens `File.OpenHandle(lockPath, OpenOrCreate, ReadWrite, FileShare.None, FileOptions.DeleteOnClose)`
+     (101). `DeleteOnClose` asks for delete access to the lock file.
+   - Its retry (103-112) treats a sharing or lock violation and an `UnauthorizedAccessException` alike. Both are retried
+     until the wait (2 s) has passed. Then comes `JsonlLockTimeoutException` (116-117), whose text is "Another writer held
+     the lock ..." (154).
+   - `Append` (47-84) takes the lock first. Both writers append only through it: `JsonlLogService.AppendLine` (133-145)
+     and `ExtendedLogService.AppendLine` (332-344).
+2. Measured on this host (session scratchpad `lockprobe/AclProbe2.ps1`), with a deny-Delete ACE for the probe's own
+   account on a folder and on what is created in it:
+   - A new lock file opened with `DeleteOnClose` is created, and the close deletes it: the creator is granted the access
+     it asks for.
+   - A lock file that already exists and is not held refuses that open with `UnauthorizedAccessException`, every time. A
+     plain `FileShare.None` open without `DeleteOnClose` opens it.
+   - A held lock file refuses a `DeleteOnClose` contender with `UnauthorizedAccessException` too, not with a sharing
+     violation: the access check comes before the share check. A plain contender gets the sharing violation.
+   - So in such a folder an existing lock file stalls every audit, trace and extended write for the 2 s bound and drops
+     it, reported as another writer's lock. The file can be left by a copy or restore of the folder, by a tool, or by a
+     writer that may not delete it. The retry cannot tell, because in such a folder contention is refused the same way.
+3. `Services/AuditService.cs` `WriteAuditEvent` (466-520) calls `_log.Write(evt)` (491) on the caller's thread, so the 2 s
+   is the operator's.
+4. The test holders, `JsonlWriterLockTests.HoldTheLock` (245-254) and `ExtendedLogServiceTests.HoldTodaysLock` (538-548),
+   open a `FileStream` with `FileShare.None` and no `DeleteOnClose`. No test met the appender's own open against an
+   existing file.
+5. `deploy.ps1` 401 and the installer 907 grant each instance Modify `(OI)(CI)`, which allows delete. The edge is an ACL
+   that drifts from that, or a folder set up by hand.
+6. Measured for the release (session scratchpad `lockprobe/LockProbe2.ps1`): six threads contended for one lock file for
+   3 s, each counting what its opens met.
+   - `DeleteOnClose`, as merged: 143 access refusals, the longest unbroken run 5.1 ms.
+   - Close, then `File.Delete`: 576 refusals, the longest run 40.7 ms. A delete leaves the name delete-pending for a
+     moment, and an open in that moment is refused access.
+   - Close, then a move of the file to a unique name and a delete of that: 0 refusals. A move of a held file is refused
+     with a sharing violation, and a move never leaves the lock's name pending.
+   - Close and no delete: 0 refusals.
+
+**Rule.** The lock is the open handle, not the file. Taking it needs create, read and write in the log folder, never
+delete. Contention - another writer's handle - is waited for up to the bound and reported as contention. A refusal - the
+folder will not let this account create, read or write the lock file - is reported as the folder's refusal. It comes
+after a 100 ms grace for a third party's delete in flight, never after the 2 s bound and never as contention.
+
+1. `Services/JsonlFileAppender.cs`:
+   - The lock open is `File.OpenHandle(lockPath, OpenOrCreate, ReadWrite, FileShare.None)`, with no `DeleteOnClose`.
+   - The held lock is a private `HeldLock : IDisposable`. Its `Dispose` closes the handle, then removes the file best
+     effort: a move to `<lock>.<32 hex>`, then a delete of that.
+     - Any failure is ignored. Either another writer holds the file by then, or the folder does not allow deleting.
+     - The file then stays, empty and harmless, and the next writer opens it.
+   - The retry:
+     - A sharing or lock violation is retried as now, until the bound, then `JsonlLockTimeoutException`, its text
+       unchanged.
+     - An `UnauthorizedAccessException` is retried only until `DefaultAccessRefusalGrace` (100 ms) has passed since the
+       first refusal of an unbroken run; a sharing violation ends the run. Then comes new `JsonlLockRefusedException`.
+     - Any other `IOException` (a missing folder, a device error) is a `JsonlLockRefusedException` at once.
+     - Anything else propagates, as now.
+   - New `internal sealed class JsonlLockRefusedException : IOException`. It carries `LockPath`, with the refusal as its
+     inner exception. Its message: "The log folder refused the lock file <path>: <reason> The record was not written.
+     The account this instance runs as must be able to create files in the log folder and to read and write the files
+     there; it does not need to delete them."
+   - `Append` takes the grace as a parameter after `lockWait`.
+2. `Services/JsonlLogService.cs`: new test seam `internal TimeSpan AccessRefusalGrace` (default
+   `JsonlFileAppender.DefaultAccessRefusalGrace`), passed to `Append`. Its catch, the aud-a28z recovery path, is unchanged:
+   a refused lock is `FileWriteFailed`, reported with the exception attached.
+3. `Services/ExtendedLogService.cs` `AppendLine` passes `JsonlFileAppender.DefaultAccessRefusalGrace`. Its consumer's catch
+   is unchanged: dropped, counted, reported.
+4. `README.md`, "Shared log root":
+   - The lock is the open handle. The file is removed after a write where the folder allows it, and left in place where
+     it does not.
+   - A lock file the folder refuses is not a wait. The write is dropped at once, and its report says the folder refused
+     the lock file.
+   - The rights each instance's account needs on `<LogRoot>\ExchangeAdminWeb`: create files, and read and write the files
+     there, the other instance's included. The lock does not need delete, but rotation does. The scripts' Modify covers
+     all of it.
+   - Both instances run this build.
+5. Comments after the mutation round, checked code-identical.
+6. No file another agent owns needs a change. `AuditService.WriteAuditEvent`'s synchronous write (491) now costs a refused
+   lock file the 100 ms grace instead of the 2 s bound. A live contender still costs up to the bound, aud-a47's known gap,
+   unchanged.
+
+Tests:
+- `ExchangeAdminWeb.Tests/JsonlWriterLockTests.cs`:
+  - `AFolderThatLetsAWriterWriteButNotDelete_StillTakesTheLock_AndWritesEveryRow` (audit, trace).
+    - The test denies its own account Delete on the log folder and on what is created in it, with an inheritable deny
+      ACE removed at the end. It leaves an unheld lock file in place.
+    - Three rows: all `Written`, no error, well within the bound, and the lock file still there.
+  - `ALockFileTheFolderRefuses_DropsTheRowAtOnce_AndSaysTheFolderRefusedIt`.
+    - A directory stands where the lock file belongs, so every open of it is refused access, as an ACL refuses one. The
+      bound is 5 s.
+    - The write returns `FileWriteFailed` in under 2 s, and no line is written.
+    - One error: its exception a `JsonlLockRefusedException` naming the lock file, with an `UnauthorizedAccessException`
+      inside, and not the contention text.
+    - With the directory gone, the next row is written.
+  - `AnAccessRefusalThatClearsWithinTheGrace_IsRetried_AndTheRowIsWritten`.
+    - The grace is set to 30 s, and the directory is in place. The write is still waiting at 300 ms.
+    - Once the directory is removed, the row is `Written`, with no error.
+  - `HoldTheLock` takes the lock through `JsonlFileAppender.Lock`, so the stand-in for the other instance opens and
+    releases it as the writers do.
+  - Unchanged: `AWriterThatCannotTakeTheLockInItsBound_...` (a held lock still costs the bound and names the contention),
+    and the rest.
+- `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`:
+  - `TheConsumer_InAFolderThatLetsItWriteButNotDelete_WritesEveryEntry`, through the shared deny helper.
+  - `HoldTodaysLock` through `JsonlFileAppender.Lock`.
+
+Mutations at the call site (md5 before and after, the named failing test, restored, touched, rebuilt, md5 matched, green):
+- M1 `DeleteOnClose` again in the lock open.
+- M2 the access-failure branch folded back into the retry: an `UnauthorizedAccessException` waited for to the bound and
+  reported as `JsonlLockTimeoutException`.
+- Extra E1 no grace: an access refusal reported at the first.
+
+Files:
+- `Services/JsonlFileAppender.cs`
+- `Services/JsonlLogService.cs`
+- `Services/ExtendedLogService.cs`
+- `ExchangeAdminWeb.Tests/JsonlWriterLockTests.cs`
+- `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`
+- `README.md`
+- this record
 
 ## Guard proof
 
