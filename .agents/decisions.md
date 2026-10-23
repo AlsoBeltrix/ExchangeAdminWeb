@@ -5,6 +5,18 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-23 - The fix-everything loop has a stopping rule
+
+Owner ruling 2026-10-23 ("fine, continue", accepting the supervisor's recommendation after
+noting the loop had run for several days and a new module is waiting): the standing
+2026-10-21 "EVERYTHING" go is bounded. The five agents in flight at `a78590e5` land and are
+codex-reviewed; of what codex raises on them, only HIGH and MEDIUM candidates are fixed
+(each with its own codex review, the same rule applied); LOW candidates are admitted and
+recorded for after the first dev deploy, not dispatched. Then the closing work (version
+bumps, state refresh, token log) and the hand-over of a deployable master. Hand-back
+"candidate defects" from the in-flight agents follow the same rule. Supersedes nothing;
+narrows the 2026-10-21 go's scope by time.
+
 ### 2026-10-22 - Isolated module authors cannot require host changes
 
 Owner ruling, verbatim: external module developers "do not and will not have access to this
