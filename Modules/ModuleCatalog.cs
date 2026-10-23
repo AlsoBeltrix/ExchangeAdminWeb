@@ -627,7 +627,6 @@ public sealed class ModuleCatalog
             // 2.13.0: a group search refused for want of the module's AD credential says why -
             // the secret ID unset, Delinea returning none for the ID that is set, or the module's
             // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
-            Version = "2.13.0",
             // 2.14.0: the four membership writes refuse a blank ticket themselves, before
             // ServiceNow, which passes one while it is dormant (kd-18).
             // 2.15.0: presence is the shared TicketPresence rule, which also refuses a ticket made
