@@ -6,9 +6,9 @@ could not be confirmed..." but is written with `success: false`, so `AuditServic
 `LogCalendarPermission` file it as `result: "Failed"`; the Admin Event Log's Undetermined filter (aud-a28z
 part 5) does not find it, and a reviewer reconciling Exchange may treat a possibly-applied change as a
 failed one.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); in progress
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on its branch, not merged
 **Branch**: `worktree-agent-a22f2baf02d6abcdd` (from master `066ea1a2`)
-**Commit**: -
+**Commit**: plan `f224dd22`; fix `75355a7b`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-8, 2026-10-23, candidate 1)
 
 ## Evidence
@@ -185,3 +185,28 @@ the line-end comment above it is the fix's), so each failure is also the finding
   cannot.
 - Nothing ran against Exchange: the stand-in cmdlets behind the harness's pool or a test pool, the harness's on-premises
   stand-in through the services' own seam, the harness's validator, a substitute progress service.
+
+## Comments after the round
+
+None: the comments were written with the fix (`75355a7b`), and every mutant ran with them in place, so there is no
+comments-only commit to check.
+
+## Gates - 2026-10-23 (branch tip `75355a7b`: the plan and the fix)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline - none in
+  a touched file (they are in GroupManagement, MessageTrace, RiskyUsers and SelfServiceGroups, Comms10kApprovedSetTests,
+  AccountLockoutRemediationService, HeaderAnalysisService and MigrationReportExportProcessor).
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,644
+  passed / 0 skipped / 0 failed, 6,644 total, 3m54s; nothing hung (the blame collector wrote no Sequence file).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0. `git add -A`
+  then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines (`wc -l`).
+
+No AD, Exchange Online, Graph, DHCP or IIS call: Exchange is the harness's pool or a test pool over the harness's stand-in
+cmdlets, on-premises Exchange the harness's stand-in defined in the services' own runspace, the directory
+`SelfGrantDirectoryStandIn`, the secret store a stand-in fetch. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a22f2baf02d6abcdd`, not merged, not pushed. Due at merge: the base app version - the shared
+`AuditService` (the two permission methods' `filedAs`), the new `AuditResult` and `PermissionChangeFailure.AuditResultOf` -
+and the Mailbox Permissions and Calendar Permissions module versions: what a single change's failure row is filed as.
