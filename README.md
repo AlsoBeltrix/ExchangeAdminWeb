@@ -722,8 +722,8 @@ A new instance that should join an existing shared database is installed with
 #### Shared log root (dev and prod on one server)
 
 Two instances on one server may write under the same `Audit:LogRoot`; the ADI deploy scripts
-default both to one root. They then append to the same daily audit and trace files. That is
-safe only because the writer serialises across processes:
+default both to one root. They then append to the same daily audit, trace and extended
+diagnostic files. That is safe only because every writer serialises across processes:
 
 - Before it touches a log file, each writer takes that file's lock: `<file>.lock` beside it,
   opened exclusively and deleted when released.
@@ -959,7 +959,7 @@ Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`,
 - `monthly`: New file each month
 - `Audit:MaxFileMB` and `Audit:MaxFilesPerPeriod` cap both audit and trace file growth
 
-**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Keep Admin Event Log access tightly scoped.
+**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Every entry it drops is counted - one it could not write, or one the full queue discarded - and with **Show diagnostics** on, the Admin Event Log shows that count and names any extended log file it could not read. Keep Admin Event Log access tightly scoped.
 
 ### Delinea Secret Server
 

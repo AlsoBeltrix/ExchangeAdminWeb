@@ -56,7 +56,7 @@ public class ExtendedLogService : IDisposable
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = false
-        });
+        }, _ => Interlocked.Increment(ref _droppedEntries));
         _writerTask = Task.Run(ProcessQueueAsync);
         Directory.CreateDirectory(_logFolder);
         ImportLegacyLevelIfPresent();
@@ -176,26 +176,27 @@ public class ExtendedLogService : IDisposable
         }
     }
 
-    public List<string> GetEntries(DateTime date, int maxLines = DefaultMaxLines)
+    public ExtendedLogRead GetEntries(DateTime date, int maxLines = DefaultMaxLines)
         => GetEntries(date, date, maxLines);
 
-    public List<string> GetEntries(DateTime startDate, DateTime endDate, int maxLines = DefaultMaxLines)
+    public ExtendedLogRead GetEntries(DateTime startDate, DateTime endDate, int maxLines = DefaultMaxLines)
     {
         if (maxLines <= 0)
-            return new();
+            return new ExtendedLogRead([], []);
 
         if (endDate.Date < startDate.Date)
             (startDate, endDate) = (endDate, startDate);
 
         var queue = new Queue<string>(maxLines);
-        try
+        var unreadable = new List<string>();
+        for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
         {
-            for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+            foreach (var logPath in GetLogPathsForDate(date))
             {
-                foreach (var logPath in GetLogPathsForDate(date))
-                {
-                    if (!File.Exists(logPath)) continue;
+                if (!File.Exists(logPath)) continue;
 
+                try
+                {
                     using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     using var reader = new StreamReader(stream);
 
@@ -209,14 +210,15 @@ public class ExtendedLogService : IDisposable
                         queue.Enqueue(line);
                     }
                 }
+                catch (Exception ex)
+                {
+                    unreadable.Add($"{Path.GetFileName(logPath)}: {ex.Message}");
+                    ReportSafely(logger => logger.LogWarning(ex, "Could not read the extended log file {Path}", logPath));
+                }
             }
+        }
 
-            return queue.ToList();
-        }
-        catch
-        {
-            return new();
-        }
+        return new ExtendedLogRead(queue.ToList(), unreadable);
     }
 
     public bool HasExtendedLogs(DateTime date)
@@ -256,11 +258,9 @@ public class ExtendedLogService : IDisposable
         {
             try
             {
-                var logPath = GetWritableLogPath(entry.LogDate);
+                var logPath = ActivePath(entry.LogDate);
                 Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
-                await using var stream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
-                await using var writer = new StreamWriter(stream);
-                await writer.WriteLineAsync(entry.Json);
+                AppendLine(logPath, entry);
             }
             catch (Exception ex)
             {
@@ -298,14 +298,32 @@ public class ExtendedLogService : IDisposable
         return maxFileMB * 1024L * 1024L;
     }
 
-    private string GetWritableLogPath(DateTime logDate)
+    internal Action<Stream, byte[]> WriteLineBytes { get; set; } = static (file, line) => file.Write(line);
+
+    internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
+
+    private void AppendLine(string logPath, PendingLogEntry entry) =>
+        JsonlFileAppender.Append(
+            logPath,
+            entry.Json,
+            LockWait,
+            rotateIfFull: () => RotateIfFull(entry.LogDate, logPath),
+            writeLineBytes: WriteLineBytes,
+            repaired: () => ReportSafely(logger => logger.LogWarning(
+                "The extended log file {Path} ended in a partial line, left by a write that did not finish; this entry was started on a new line",
+                logPath)),
+            truncationFailed: ex => ReportSafely(logger => logger.LogWarning(ex,
+                "Could not remove the partial extended log line a failed write left in {Path}; the next entry will start on a new line",
+                logPath)));
+
+    private string ActivePath(DateTime logDate) => Path.Combine(_logFolder, GetLogFilename(logDate));
+
+    private void RotateIfFull(DateTime logDate, string activePath)
     {
-        var activePath = Path.Combine(_logFolder, GetLogFilename(logDate));
         if (!File.Exists(activePath) || new FileInfo(activePath).Length < _maxFileBytes)
-            return activePath;
+            return;
 
         RotateLogFiles(logDate, activePath);
-        return activePath;
     }
 
     private void RotateLogFiles(DateTime logDate, string activePath)
@@ -379,3 +397,5 @@ public class ExtendedLogService : IDisposable
 
     private sealed record PendingLogEntry(DateTime LogDate, string Json);
 }
+
+public sealed record ExtendedLogRead(IReadOnlyList<string> Entries, IReadOnlyList<string> Unreadable);

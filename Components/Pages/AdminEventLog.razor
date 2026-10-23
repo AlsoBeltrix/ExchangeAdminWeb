@@ -195,6 +195,14 @@
     {
         <div class="alert alert-info py-2">@loadWarning</div>
     }
+    @if (diagnosticsWarning != null)
+    {
+        <div class="alert alert-warning py-2">@diagnosticsWarning</div>
+    }
+    @if (extendedLogDropped > 0)
+    {
+        <p class="text-muted small mb-2">@DroppedEntriesText</p>
+    }
     @if (loadError != null)
     {
         <div class="alert alert-danger">@loadError</div>
@@ -448,6 +456,11 @@
     private string? loadError;
     private string? loadWarning;
     private string? emptyResultMessage;
+    private string? diagnosticsWarning;
+    private long extendedLogDropped;
+    private string DroppedEntriesText =>
+        $"This instance's extended log has dropped {extendedLogDropped:N0} entr{(extendedLogDropped == 1 ? "y" : "ies")} since it started: "
+        + "ones it could not write, and ones its queue discarded when they came faster than the disk took them.";
     private int currentPage = 1;
     private int expandedRow = -1;
     private const int PageSize = 50;
@@ -528,6 +541,8 @@
         loadError = null;
         loadWarning = null;
         emptyResultMessage = null;
+        diagnosticsWarning = null;
+        extendedLogDropped = 0;
         allEvents = new List<MergedLogEntry>();
         expandedRow = -1;
         currentPage = 1;
@@ -557,6 +572,7 @@
         var rangeStartUtc = effectiveStart.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var rangeEndUtc = effectiveEnd.AddDays(1).ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var totalParsed = 0;
+        var unreadableDiagnostics = new List<string>();
 
         for (var d = effectiveStart; d <= effectiveEnd; d = d.AddDays(1))
         {
@@ -627,8 +643,9 @@
                 }
 
                 // --- Extended diagnostic files ---
-                var extEntries = ExtendedLog.GetEntries(date, date, MaxTotalEvents);
-                foreach (var line in extEntries)
+                var extRead = ExtendedLog.GetEntries(date, date, MaxTotalEvents);
+                unreadableDiagnostics.AddRange(extRead.Unreadable);
+                foreach (var line in extRead.Entries)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     var entry = ParseExtendedLine(line, rangeStartUtc, rangeEndUtc);
@@ -644,6 +661,14 @@
 
             if (!foundFileForDate)
                 filesNotFound++;
+        }
+
+        if (showDiagnostics)
+        {
+            if (unreadableDiagnostics.Count > 0)
+                diagnosticsWarning = "Some of the extended diagnostic log could not be read, so diagnostic entries may be missing: "
+                    + string.Join("; ", unreadableDiagnostics);
+            extendedLogDropped = ExtendedLog.DroppedEntryCount;
         }
 
         var anyFileFound = filesFound > 0;
