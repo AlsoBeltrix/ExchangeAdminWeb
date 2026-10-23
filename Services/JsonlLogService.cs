@@ -78,6 +78,8 @@ public class JsonlLogService
     // aud-a28z (codex attr-batch-12, parts 3 and 4). "Never half a line" held for a record that could not be serialised,
     // not for one whose write failed part-way: that left a tail with no newline, the next record was appended onto it
     // and reported Written, and the event log, parsing line by line, dropped both. AppendLine takes such a line back out.
+    // aud-a47. The lock below is this instance's only; the file's own lock, taken inside AppendLine, is every writer's -
+    // the other instance under a shared log root included. A lock not taken in time is a FileWriteFailed like any other.
     private JsonlWriteOutcome WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
         var logPath = "(unresolved)";
@@ -123,8 +125,11 @@ public class JsonlLogService
     /// </summary>
     internal Action<Stream, byte[]> WriteLineBytes { get; set; } = static (file, line) => file.Write(line);
 
+    /// <summary>Test seam (aud-a47): how long a write waits for another writer's lock on its file before it drops.</summary>
     internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
+    // aud-a28z part 3 and aud-a47: one record, one line or none, under the file's lock - see JsonlFileAppender. The two
+    // reports are this writer's, word for word as they were before the append moved there.
     private void AppendLine(string logPath, string json, LogStream stream) =>
         JsonlFileAppender.Append(
             logPath,
@@ -160,8 +165,11 @@ public class JsonlLogService
     private static string? TextField(Dictionary<string, object?>? evt, string key) =>
         evt is not null && evt.TryGetValue(key, out var value) ? value as string : null;
 
+    // The record's file, by date and stream: a name only, read from nothing on disk, so it is chosen before the lock.
     private string ActivePath(LogStream stream) => Path.Combine(_logFolder, GetLogFilename(DateTime.Now, stream));
 
+    // Reads and changes the file system, so it runs under the file's lock (aud-a47): two writers that both found the file
+    // full would otherwise both rotate it.
     private void RotateIfFull(string activePath)
     {
         if (!File.Exists(activePath) || new FileInfo(activePath).Length < _maxFileBytes)

@@ -34,7 +34,8 @@ public class ExtendedLogService : IDisposable
     private readonly ConfigChangeWatcher _changeWatcher;
     private long _loadedToken = ConfigChangeWatcher.Unknown;
     // aud-a28z. Entries that passed the level and were not written: a write the consumer could not make, an entry a
-    // closed queue refused. Incremented before the drop is reported, so it holds when the report itself fails.
+    // closed queue refused - and since aud-a46 an entry the full queue discarded. Incremented before the drop is
+    // reported, so it holds when the report itself fails.
     private long _droppedEntries;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -51,6 +52,9 @@ public class ExtendedLogService : IDisposable
         _legacyConfigFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
         _maxFileBytes = GetMaxFileBytes(config);
         _maxFilesPerDay = Math.Clamp(config.GetValue<int?>("ExtendedLog:MaxFilesPerDay") ?? DefaultMaxFilesPerDay, 2, 50);
+        // aud-a46. A full queue discards its oldest entry when writes outpace the disk, and nothing counted it. The
+        // callback runs on the writer's thread, after the channel's own lock is released; it counts and never logs - a
+        // discard is a burst, and a report per discarded entry would be a flood of its own.
         _writeQueue = Channel.CreateBounded<PendingLogEntry>(new BoundedChannelOptions(MaxQueuedWrites)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -71,7 +75,8 @@ public class ExtendedLogService : IDisposable
 
     /// <summary>
     /// How many entries passed the level but were not written since the service started (aud-a28z): the one count a
-    /// health surface, or a later line, can show when the logging provider could not say so itself.
+    /// health surface, or a later line, can show when the logging provider could not say so itself. It includes the full
+    /// queue's discards (aud-a46), and the Admin Event Log shows it with the diagnostics.
     /// </summary>
     public long DroppedEntryCount => Interlocked.Read(ref _droppedEntries);
 
@@ -179,6 +184,17 @@ public class ExtendedLogService : IDisposable
     public ExtendedLogRead GetEntries(DateTime date, int maxLines = DefaultMaxLines)
         => GetEntries(date, date, maxLines);
 
+    /// <summary>
+    /// The newest <paramref name="maxLines"/> lines of the extended log over the dates, oldest first, and each file that
+    /// could not be read, by name and reason (aud-a46). The readers never take the files' lock: they open with full
+    /// sharing and repair nothing.
+    /// </summary>
+    /// <remarks>
+    /// One bare catch around the whole read emptied the answer for one file it could not open, so the Admin Event Log
+    /// showed "no diagnostics" where they could not be read, and every other file's lines went with it. Each file is now
+    /// read on its own; one that fails is named and reported, and the read goes on. The lines it had read stay: they are
+    /// whole lines.
+    /// </remarks>
     public ExtendedLogRead GetEntries(DateTime startDate, DateTime endDate, int maxLines = DefaultMaxLines)
     {
         if (maxLines <= 0)
@@ -258,6 +274,10 @@ public class ExtendedLogService : IDisposable
         {
             try
             {
+                // aud-a46. A StreamWriter over an append stream wrote here: a write that failed part-way left a cut line
+                // the next entry was appended onto, which the event log dropped with it; and under a shared log root it
+                // took no lock against the other instance (aud-a47). The JSONL writer's one-line append, under the file's
+                // lock, writes each entry now. The folder is created before the lock, whose file lives in it.
                 var logPath = ActivePath(entry.LogDate);
                 Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
                 AppendLine(logPath, entry);
@@ -298,10 +318,17 @@ public class ExtendedLogService : IDisposable
         return maxFileMB * 1024L * 1024L;
     }
 
+    /// <summary>
+    /// Test seam (aud-a46): how an entry's bytes reach its file, so a test can fail a write part-way or hold the consumer.
+    /// Production writes them in one call.
+    /// </summary>
     internal Action<Stream, byte[]> WriteLineBytes { get; set; } = static (file, line) => file.Write(line);
 
+    /// <summary>Test seam (aud-a46): how long the consumer waits for another writer's lock on its file before it drops.</summary>
     internal TimeSpan LockWait { get; set; } = JsonlFileAppender.DefaultLockWait;
 
+    // One entry, one line or none, under the file's lock (aud-a28z part 3, aud-a47, shared since aud-a46). The two reports
+    // are this service's own, guarded as all its reports are.
     private void AppendLine(string logPath, PendingLogEntry entry) =>
         JsonlFileAppender.Append(
             logPath,
@@ -316,6 +343,8 @@ public class ExtendedLogService : IDisposable
                 "Could not remove the partial extended log line a failed write left in {Path}; the next entry will start on a new line",
                 logPath)));
 
+    // The entry's file, by its date: a name only, so it is chosen before the lock; the size check and the rotation read
+    // and change the file system, so RotateIfFull runs under it.
     private string ActivePath(DateTime logDate) => Path.Combine(_logFolder, GetLogFilename(logDate));
 
     private void RotateIfFull(DateTime logDate, string activePath)
@@ -398,4 +427,8 @@ public class ExtendedLogService : IDisposable
     private sealed record PendingLogEntry(DateTime LogDate, string Json);
 }
 
+/// <summary>
+/// What a read of the extended log found (aud-a46): its lines, oldest first, and each file it could not read, as
+/// "&lt;file name&gt;: &lt;reason&gt;". An empty <see cref="Unreadable"/> means every file there was, was read.
+/// </summary>
 public sealed record ExtendedLogRead(IReadOnlyList<string> Entries, IReadOnlyList<string> Unreadable);

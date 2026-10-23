@@ -195,6 +195,7 @@
     {
         <div class="alert alert-info py-2">@loadWarning</div>
     }
+    @* aud-a46. With diagnostics on: the extended log files that could not be read, and the entries this instance dropped. *@
     @if (diagnosticsWarning != null)
     {
         <div class="alert alert-warning py-2">@diagnosticsWarning</div>
@@ -456,6 +457,10 @@
     private string? loadError;
     private string? loadWarning;
     private string? emptyResultMessage;
+    // aud-a46. A failed read of the extended log came back empty, so this page said there were no diagnostics where they
+    // could not be read, and the extended log's count of the entries it dropped was shown nowhere. Both are set only with
+    // diagnostics on, and shown above the table so the empty-result branch shows them too. The count is this instance's
+    // since it started: the other instance's drops are on its own page.
     private string? diagnosticsWarning;
     private long extendedLogDropped;
     private string DroppedEntriesText =>
@@ -663,6 +668,8 @@
                 filesNotFound++;
         }
 
+        // aud-a46. Every date's unreadable files in one warning, and the count read once per load - in memory, no disk
+        // call, inside the activity like the readers above.
         if (showDiagnostics)
         {
             if (unreadableDiagnostics.Count > 0)
