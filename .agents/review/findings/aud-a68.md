@@ -12,7 +12,7 @@ catch writes no audit row when the lookup throws, and the activity ends as "This
 page says all lookups are logged. (5) `Migration.razor` labels every `ExecuteBulkBatchAction` activity
 "Removing completed batches" and hard-codes the busy reason "clearing", though the executor runs Delete,
 Complete, Schedule, Stop, Remove Completed and Resume (line-keyed page; edit in place).
-**Status**: Merged to master `44fb74aa`; codex defect review mig-batch-10 in flight
+**Status**: Merged to master `44fb74aa`; codex mig-batch-10 raised kd-17 (MEDIUM) against part (7), clean on parts 1-6; closes when kd-17 lands
 **Branch**: `fix/a68-kd2` (forked at `eb017102`; worktree `D:\source\ExchangeAdminWeb-wt\a68-kd2`)
 **Commit**: part 1 `3ba9dfa4`, 2 `1963cb79`, 3 `28256d97`, 4 `37a2696b`, 6 `6f0d6dfd`, 5 `ffe2d99b`, 7 `39a878cd`; the module bumps and this record's close: the commit that completes this record (`git log -1 -- .agents/review/findings/aud-a68.md`)
 **Reviewer**: implementer (surfaced by the aud-a55/a54 agent, 2026-10-23, candidates 1-5 of its hand-back)
@@ -322,3 +322,7 @@ Pending: the codex defect review of the merged group (the supervisor dispatches 
 
 Fixed on branch `fix/a68-kd2`; not merged, not pushed. Pending step: the supervisor's merge into master, then the codex
 review; at merge take this branch's copy of this record.
+
+## Reviewer comments (supervisor, mig-batch-10)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base eb017102 head 86953582 (merged 44fb74aa); 2026-10-23 evening; capability proof: AGENTS.md read and git show --stat 86953582 both succeeded. One candidate, admitted as kd-17 (bulk denial rows name the action as target). Codex found nothing else across archive states, not-found classification, the no-row statistics warning, lookup failure audit and activity handling, cancellation outside the admitted kd-14 paths, bulk action labels, kd-2 selection clearing, the ClickGate re-anchoring and the named test harness shapes. Artefacts: `.agents/review/mig-batch-10.result.txt`, `.stream.log`, `prompt-mig-batch-10.md`.

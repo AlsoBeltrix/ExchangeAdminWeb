@@ -1,7 +1,7 @@
 # kd-2: Migration - a tick from batch A survives into batch B as "Actions (1)" with no ticked row
 
 **Severity**: LOW - confusing, not destructive. `Components/Pages/Migration.razor` `AdoptSelectionAsOpenBatch` (about 1840) never clears `selectedMailboxes`; `MigrationUserActionPlanner.PruneSelection` runs only through `TicksInThisBatch()` (about 2774).
-**Status**: Merged to master `44fb74aa`; codex defect review mig-batch-10 in flight
+**Status**: Merged to master `44fb74aa`; codex mig-batch-10 clean on this finding; Complete once the branch is deleted
 **Branch**: `fix/a68-kd2` (forked at `eb017102`; worktree `D:\source\ExchangeAdminWeb-wt\a68-kd2`), shared with aud-a68
 **Commit**: `14bf6a4f` (fix, tests, record); the Migration module bump (1.23.3 -> 1.24.0, shared with aud-a68 parts 5 and 7) and this record's close: the commit that completes this record (`git log -1 -- .agents/review/findings/kd-2.md`)
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
@@ -96,3 +96,7 @@ Pending: the codex defect review of the merged group (the supervisor dispatches 
 
 Fixed on branch `fix/a68-kd2`; not merged, not pushed. Pending step: the supervisor's merge into master, then the codex
 review; at merge take this branch's copy of this record.
+
+## Reviewer comments (supervisor, mig-batch-10)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base eb017102 head 86953582 (merged 44fb74aa); 2026-10-23 evening; capability proof: AGENTS.md read and git show --stat 86953582 both succeeded. One candidate, admitted as kd-17 (bulk denial rows name the action as target). Codex found nothing else across archive states, not-found classification, the no-row statistics warning, lookup failure audit and activity handling, cancellation outside the admitted kd-14 paths, bulk action labels, kd-2 selection clearing, the ClickGate re-anchoring and the named test harness shapes. Artefacts: `.agents/review/mig-batch-10.result.txt`, `.stream.log`, `prompt-mig-batch-10.md`.
