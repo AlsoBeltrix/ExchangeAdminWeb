@@ -189,6 +189,11 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
+    /// <param name="filedAs">
+    /// kd-33. As <see cref="LogMailboxPermission"/>'s (aud-a73): Undetermined for a Migration write that threw after its
+    /// command may have been sent, Failed for one the service says was never sent. Null, the default, files Success or
+    /// Failed from <paramref name="success"/>, as every row was.
+    /// </param>
     public void LogMigrationAction(
         string performedBy,
         string ipAddress,
@@ -197,8 +202,10 @@ public class AuditService
         bool success,
         string ticketNumber = "",
         string? errorDetail = null,
-        Dictionary<string, object?>? extra = null)
+        Dictionary<string, object?>? extra = null,
+        AuditResult? filedAs = null)
     {
+        var result = ResultText(success, filedAs);
         var evt = new Dictionary<string, object?>
         {
             ["ts"] = DateTime.UtcNow.ToString("O"),
@@ -206,10 +213,10 @@ public class AuditService
             ["ip"] = ipAddress,
             ["action"] = action,
             ["category"] = "MigrationAction",
-            ["result"] = success ? "Success" : "Failed",
+            ["result"] = result,
             ["target"] = target,
             ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
-            ["error"] = success ? null : errorDetail
+            ["error"] = result == "Success" ? null : errorDetail
         };
 
         MergeExtra(evt, extra);
@@ -590,8 +597,8 @@ public class AuditService
     private static bool IsSuccessfulAuditResult(string? result)
         => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);
 
-    // aud-a73. A permission row's result: the caller's explicit one when it gives one, else Success or Failed from its bool,
-    // as every row was filed before. A value outside the enum is no explicit result.
+    // aud-a73. A permission row's result - kd-33: and a Migration action's - the caller's explicit one when it gives one, else
+    // Success or Failed from its bool, as every row was filed before. A value outside the enum is no explicit result.
     private static string ResultText(bool success, AuditResult? filedAs) => filedAs switch
     {
         AuditResult.Success => "Success",

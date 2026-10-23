@@ -3316,7 +3316,7 @@
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            var result = await action();
+            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // kd-33: a throw is audited too
             batchActionResult = result;
             actionFailure = result.Success ? null : result.Message;
             try
@@ -3380,7 +3380,7 @@
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            var result = await action();
+            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // kd-33: a throw is audited too
             batchActionResult = result;
             actionFailure = result.Success ? null : result.Message;
             try
@@ -3417,6 +3417,37 @@
         {
             actionInProgress = null;
             activity.Complete(actionFailure is null, actionFailure);
+        }
+    }
+
+    // kd-33. A write whose action throws is audited too. Each executor wrote its row once the action returned, so a sign-in
+    // that failed during a write - the Stop exception the pool's borrow rethrows - or any other throw out of the action left
+    // no trace of an attempted mutation (the Constitution: every failed mutation writes an audit event). Filed as aud-a73
+    // files a permission write that threw: Failed when the service says the command was never sent (aud-a76's
+    // PermissionWriteNotSubmittedException), Undetermined otherwise, since it may have been. The cause in its own words
+    // (aud-a23i's helper), looked for inside the not-sent wrapper. The throw then goes on to the executor's catch, as before.
+    private async Task<PermissionResult> AuditedIfItThrows(Func<Task<PermissionResult>> write, string auditAction, string target, string ticket)
+    {
+        try
+        {
+            return await write();
+        }
+        catch (Exception ex)
+        {
+            var neverSent = ex is PermissionWriteNotSubmittedException;
+            var cause = ExchangeServiceBase.ResolveFailure(ex is PermissionWriteNotSubmittedException { InnerException: { } wrapped } ? wrapped : ex).primary.Trim().TrimEnd('.');
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, false, ticket,
+                    neverSent ? $"Nothing was written: the connection to Exchange failed: {cause}." : $"Whether the change was made could not be confirmed: {cause}.",
+                    filedAs: neverSent ? AuditResult.Failed : AuditResult.Undetermined);
+            }
+            catch (Exception auditEx)
+            {
+                Logger.LogError(auditEx, "Audit failed for {Action} on {Target}, whose write threw", auditAction, target);
+            }
+
+            throw;
         }
     }
 
@@ -3575,7 +3606,7 @@
             var auditWarnings = new List<string>();
             foreach (var batchName in batchNames)
             {
-                var result = await action(batchName);
+                var result = await AuditedIfItThrows(() => action(batchName), auditAction, batchName, ticket); // kd-33: the same, for the batch in flight
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, batchName,
@@ -3724,7 +3755,7 @@
 
             foreach (var email in plan.Eligible)
             {
-                var result = await action(email);
+                var result = await AuditedIfItThrows(() => action(email), auditAction, email, ticket); // kd-33: the same, for the mailbox in flight
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, email,

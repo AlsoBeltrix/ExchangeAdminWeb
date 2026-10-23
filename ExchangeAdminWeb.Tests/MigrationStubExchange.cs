@@ -269,13 +269,21 @@ internal sealed class MigrationStubExchange : IDisposable
     /// </summary>
     public Exception? ConnectFailure { get; set; }
 
+    /// <summary>
+    /// kd-33. How many connections open before every later one fails as <see cref="ConnectFailure"/> says; unset, all do. One:
+    /// a write whose first attempt reaches its command and whose retry then cannot sign in.
+    /// </summary>
+    public int? ConnectsAllowed { get; set; }
+
+    private int _connects;
+
     /// <param name="connects">False: opening the connection throws, before any cmdlet runs.</param>
     public ExoConnectionPool Pool(bool connects = true)
     {
         var pool = new ExoConnectionPool(_config, _moduleConfig, _enablement,
             NullLogger<ExoConnectionPool>.Instance, _trace, (_, generation, _) =>
             {
-                if (!connects)
+                if (!connects || Interlocked.Increment(ref _connects) > (ConnectsAllowed ?? int.MaxValue))
                     throw ConnectFailure ?? new InvalidOperationException("the Exchange Online sign-in could not be completed");
                 return StandIn(generation);
             });
