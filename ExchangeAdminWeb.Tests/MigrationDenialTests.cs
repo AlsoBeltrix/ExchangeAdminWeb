@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Services;
 using static ExchangeAdminWeb.Tests.MigrationStubExchange;
 
 namespace ExchangeAdminWeb.Tests;
@@ -8,7 +9,8 @@ namespace ExchangeAdminWeb.Tests;
 /// Audit finding aud-a23q. A failed authorization on a single batch or mailbox action, or on either create, returned with
 /// nothing shown and no audit row - the bulk executors audit a "_Denied" row - and its activity ended "Nothing was done." /
 /// "Nothing was created."; a create's guard return showed nothing either. The Constitution: every denied mutating attempt is
-/// audited, and UI hiding is not security, so a direct event invocation must be refused visibly.
+/// audited, and UI hiding is not security, so a direct event invocation must be refused visibly. aud-a55: the two bulk
+/// executors' "no list loaded" guard returns showed nothing either.
 /// </summary>
 /// <remarks>
 /// The page's own handlers over <see cref="MigrationStubExchange"/>, its authorization stand-in denying one policy, its
@@ -204,6 +206,40 @@ public sealed class MigrationDenialTests : IDisposable
         Assert.Empty(_exchange.AuditEvents());
         Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("New-MigrationBatch", StringComparison.Ordinal));
         Assert.Equal((false, expected), Outcome());
+    }
+
+    // ---- aud-a55: a bulk executor with no list loaded says so -------------------------------------
+
+    // Not a denial and nothing attempted, so nothing is audited - but the operator is told why nothing happened and the
+    // activity ends with that, where both executors returned with no banner and an activity that read "Nothing was done.".
+    [Theory]
+    [InlineData("ExecuteBulkBatchAction", "No migration batch list is loaded; nothing was done.")]
+    [InlineData("ExecuteBulkMailboxAction", "No mailbox list is loaded; nothing was done.")]
+    public async Task ABulkExecutorWithNoListLoaded_SaysSo_AndNothingRuns(string handler, string expected)
+    {
+        var page = Page(deny: null);
+        var ran = false;
+        Func<string, Task<PermissionResult>> action = _ => { ran = true; return Task.FromResult(PermissionResult.Ok()); };
+
+        if (handler == "ExecuteBulkBatchAction")
+        {
+            await Call(page, handler, (IReadOnlyList<string>)[Batch], (IReadOnlyList<MigrationBatchSkip>)[], action,
+                "StopMigrationBatch", "Migration_StopSelected", "Queued to stop", Ticket);
+        }
+        else
+        {
+            await Call(page, handler, new MigrationUserActionPlan([Address], []), action,
+                "StopMigrationUser", "Migration_PauseSelected", "Queued pause of", Ticket);
+        }
+
+        var shown = Assert.IsType<PermissionResult>(Field("batchActionResult").GetValue(page));
+        Assert.Equal((false, expected), (shown.Success, shown.Message));
+        Assert.False(ran);
+        Assert.Empty(_exchange.AuditEvents());
+        Assert.Equal((false, expected), Outcome());
+
+        Field("tabIndex").SetValue(page, 2);
+        Assert.Contains(expected, page.RenderText(), StringComparison.Ordinal);
     }
 
     private static MigrationBatchResult OneEligibleRow() => new()

@@ -47,11 +47,24 @@ public class RecipientLookupService : ExchangeServiceBase
                     }
                 }
 
+                // aud-a54. Under Stop, through ReadUnlessNotFound - the base's own location read's shape. Exchange's not-found,
+                // by structure, is still "not a mailbox"; any other failure is a warning naming the read, and both markers are
+                // set so the page shows what could not be read as such. Under -ErrorAction Ignore every failure, a throw
+                // included, came back as no rows: "not a mailbox", Forwarding "None", Archive "Disabled", and nothing said. A
+                // cancellation is not taken (aud-a23g's rule).
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "Ignore");
-                var mbxResults = InvokeOptional(ps, tracker);
-                var mbx = mbxResults.FirstOrDefault();
+                  .AddParameter("ErrorAction", "Stop");
+                PSObject? mbx = null;
+                try
+                {
+                    mbx = ReadUnlessNotFound(ps, tracker).FirstOrDefault();
+                }
+                catch (Exception ex) when (!IsCancellation(ex))
+                {
+                    r.MailboxUnreadable = r.ArchiveUnreadable = $"Get-Mailbox failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+                    r.Warnings.Add($"The Exchange Online mailbox could not be read: {r.MailboxUnreadable}.");
+                }
 
                 if (mbx != null)
                 {
@@ -79,6 +92,11 @@ public class RecipientLookupService : ExchangeServiceBase
                         r.Warnings.Add($"Could not retrieve mailbox statistics: {ex.Message}");
                     }
 
+                    // aud-a54. Exchange's own not-found for the archive, by structure (IsNotFound), is no archive; any other
+                    // failure, or an answer with no row, is why the archive could not be read - the marker both size readers give
+                    // that answer - and a warning. A bare catch made every failure no archive. ASSUMPTION, unverified (no live
+                    // call): Exchange Online reports a mailbox with no archive in a shape IsNotFound reads (aud-a23k's, the same
+                    // read); if not, such a mailbox reads "Could not be read" with Exchange's own words - visible, never a guess.
                     try
                     {
                         ps.AddCommand("Get-MailboxStatistics")
@@ -87,7 +105,11 @@ public class RecipientLookupService : ExchangeServiceBase
                           .AddParameter("ErrorAction", "Stop");
                         var archiveStats = Invoke(ps, tracker);
                         var archiveStat = archiveStats.FirstOrDefault();
-                        if (archiveStat != null)
+                        if (archiveStat == null)
+                        {
+                            r.ArchiveUnreadable = "Exchange returned no archive statistics";
+                        }
+                        else
                         {
                             r.ArchiveEnabled = true;
                             r.ArchiveItemCount = ParseLong(archiveStat.Properties["ItemCount"]?.Value);
@@ -96,9 +118,17 @@ public class RecipientLookupService : ExchangeServiceBase
                             r.ArchiveDeletedItemSizeGB = ParseSizeToGB(archiveStat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
                     }
-                    catch
+                    catch (Exception ex) when (IsNotFound(ex))
                     {
+                        _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
                     }
+                    catch (Exception ex) when (!IsCancellation(ex))
+                    {
+                        r.ArchiveUnreadable = $"Get-MailboxStatistics -Archive failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+                    }
+
+                    if (r.ArchiveUnreadable is { } archiveUnreadable)
+                        r.Warnings.Add($"The Exchange Online archive could not be read: {archiveUnreadable}.");
                 }
             }
             catch (Exception ex)

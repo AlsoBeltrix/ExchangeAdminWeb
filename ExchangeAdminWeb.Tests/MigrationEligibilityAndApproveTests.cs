@@ -53,6 +53,7 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
         :
         [
             $"Get-MigrationBatch {Address}",
+            $"Get-MigrationUser {Address}",
             $"Set-MigrationUser -ApproveSkippedItems {Address}",
             $"Set-MigrationUser -CompleteAfter {Address}",
             $"Set-MoveRequest -SkippedItemApprovalTime {Address}",
@@ -367,10 +368,13 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
     }
 
     // A mailbox in a batch of many has no batch named for it: the batch steps do not apply, so none runs - before, each
-    // failed unseen under Ignore - and the result says no batch was completed.
+    // failed unseen under Ignore - and the result says no batch was completed. aud-a55: its own status is read first, and
+    // this one is awaiting approval.
     [Fact]
     public async Task AMailboxNotInABatchOfItsOwn_IsApprovedWithoutTouchingABatch_AndSaysSo()
     {
+        _exchange.MigrationUsers[Address] = Row(("Identity", Address), ("Status", "NeedsApproval"));
+
         var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
 
         Assert.True(result.Success, result.Message);

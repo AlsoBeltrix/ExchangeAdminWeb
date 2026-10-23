@@ -12,7 +12,8 @@ namespace ExchangeAdminWeb.Tests;
 /// retrieving report: ..."): the page stored it, showed it as the report and completed its activity as succeeded, and the
 /// bulk export stored it as the mailbox's report on a row marked Succeeded. (2) For a move back on-premises the cloud
 /// mailbox size read gave 0 for a size it could not read - the main read failing, no row, a size that did not parse, or any
-/// failure of the archive read - so the page showed an empty mailbox, or no size at all.
+/// failure of the archive read - so the page showed an empty mailbox, or no size at all. aud-a55: an archive read that
+/// answered with no row and no error still read as no archive.
 /// </summary>
 /// <remarks>
 /// The real service over <see cref="MigrationStubExchange"/>, the page's own handler and compiled render tree, and the real
@@ -226,6 +227,41 @@ public sealed class MigrationReportAndSizeReadTests : IDisposable
         Assert.Null(result.ArchiveSizeUnreadable);
         Assert.Equal(0, result.ArchiveSizeGB);
         Assert.Equal(1.5, result.MailboxSizeGB);
+    }
+
+    // aud-a55. In each shape Exchange's not-found is read from - its structure, never its text.
+    [Theory]
+    [InlineData("category")]
+    [InlineData("type")]
+    [InlineData("identifier")]
+    public async Task NoArchive_IsNoArchive_ByEachNotFoundShape(string shape)
+    {
+        _exchange.NotFound = shape switch { "category" => NotFoundByCategory, "type" => NotFoundByType, _ => NotFoundByIdentifier };
+        _exchange.Behaviour["NoArchive"] = true;
+
+        var result = await CheckToOnPrem();
+
+        Assert.Null(result.ArchiveSizeUnreadable);
+        Assert.Equal(0, result.ArchiveSizeGB);
+    }
+
+    // aud-a55, the finding's third part. An archive read that answers with no row and no error is not Exchange saying
+    // there is no archive, so it is not no archive: it is the marker, and the page says it could not be read. Before, the
+    // read's not-found and an empty answer came back alike, and both were no archive.
+    [Fact]
+    public async Task AnArchiveReadWithNoRowAndNoError_IsMarked_NotNoArchive()
+    {
+        _exchange.Behaviour["ArchiveSize"] = null;
+
+        var result = await CheckToOnPrem();
+
+        Assert.Equal("Exchange returned no archive statistics", result.ArchiveSizeUnreadable);
+        Assert.Null(result.MailboxSizeUnreadable);
+        Assert.Equal(1.5, result.MailboxSizeGB);
+
+        var page = Page();
+        Field("singleResult").SetValue(page, result);
+        Assert.Contains("could not be read (Exchange returned no archive statistics)", page.RenderText(), StringComparison.Ordinal);
     }
 
     // A size read that throws as a whole - here a cancellation, which neither read's own catch takes (the aud-a23g rule)

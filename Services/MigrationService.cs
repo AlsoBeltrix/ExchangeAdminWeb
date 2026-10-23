@@ -1013,6 +1013,15 @@ https://admin.exchange.microsoft.com/#/migration";
         return refusal is not null;
     }
 
+    // aud-a55. Why a bulk executor stopped before its first row: the list it acts on is not loaded. It returned with nothing
+    // shown and an activity that read "Nothing was done.". Not audited - nothing was attempted (the executors' own "nothing to
+    // do" rule). The aud-a23q refusal helpers' shape, so each page line stays one statement.
+    internal static bool RefusesWithNoListLoaded([NotNullWhen(false)] object? loaded, string list, [NotNullWhen(true)] out string? refusal)
+    {
+        refusal = loaded is null ? $"No {list} list is loaded; nothing was done." : null;
+        return refusal is not null;
+    }
+
     public async Task<MigrationBatchList> GetMigrationBatchesAsync()
     {
         return await RunPooledQueryAsync((ps, tracker) =>
@@ -1346,8 +1355,14 @@ https://admin.exchange.microsoft.com/#/migration";
             // aud-a23n. And the batch's own state, before any write: a batch the approval cannot complete from is refused
             // here, naming its state. It used to pass this read and fail at Complete-MigrationBatch after Set-MigrationUser
             // and Set-MigrationBatch -CompleteAfter had already written.
+            // aud-a55. A mailbox in a batch of many has no batch named for it, so there is no batch state to read, and it
+            // used to be approved with nothing read at all: a stale page or a second operator could run Set-MigrationUser
+            // -CompleteAfter, Set-MoveRequest and Resume-MoveRequest from a state that no longer allows them. Its own status
+            // is read instead, before any write, and judged by the Approve action's rule.
             if (hasOwnBatch)
                 RefuseUnlessApprovable(emailAddress, ownBatch[0].Properties["Status"]?.Value?.ToString());
+            else
+                RefuseUnlessAwaitingApproval(ps, tracker, emailAddress);
 
             var applied = new List<string>();
 
@@ -1458,6 +1473,56 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             throw new InvalidOperationException(
                 $"{emailAddress} was not approved: approving it completes its migration batch {emailAddress}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.");
+        }
+    }
+
+    // aud-a55. Throws, before the first write, unless Exchange reports the migration user at a status the Approve action
+    // approves a mailbox from: MigrationUserActionPlanner.Applies(Approve, ...), the rule's one owner (NeedsApproval) and the
+    // call the page's Approve button and mailbox bar make - called here, not copied. The status is read as the page's mailbox
+    // list reads it (Get-MigrationUser's Status). A read that fails, no migration user (Exchange's not-found, by structure),
+    // several, or no status are each refused in their own words; RunAsync makes the refusal the row's failure, so "Nothing
+    // was changed." is true. ASSUMPTION, unverified (no live call): Get-MigrationUser -Identity reports the Status the list
+    // reads through -BatchId; if not, an approval the page offers is refused naming what Exchange said - visible and fail
+    // closed, never a write from a state nobody checked.
+    private static void RefuseUnlessAwaitingApproval(PowerShell ps, ConnectionErrorTracker tracker, string emailAddress)
+    {
+        ps.AddCommand("Get-MigrationUser")
+          .AddParameter("Identity", emailAddress)
+          .AddParameter("ErrorAction", "Stop");
+        Collection<PSObject> users;
+        try
+        {
+            users = ReadUnlessNotFound(ps, tracker);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Could not read the migration status of {emailAddress}: {ResolveFailure(ex).primary.TrimEnd('.')}. Nothing was changed.", ex);
+        }
+
+        if (users.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: Exchange has no migration user {emailAddress}, so there is nothing to approve. Nothing was changed.");
+        }
+
+        if (users.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"Exchange returned {users.Count} migration users for {emailAddress}. Nothing was changed.");
+        }
+
+        var status = users[0].Properties["Status"]?.Value?.ToString()?.Trim();
+        if (string.IsNullOrEmpty(status))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration user reports no status, so whether it is awaiting approval is not known. Nothing was changed.");
+        }
+
+        if (!MigrationUserActionPlanner.Applies(MigrationUserAction.Approve, status))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration status is {status} - not a status the Approve action approves a mailbox from. Nothing was changed.");
         }
     }
 
@@ -1602,9 +1667,14 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("Archive")
                   .AddParameter("ErrorAction", "Stop");
-                var archive = ReadUnlessNotFound(ps, tracker);
-                if (archive.Count > 0)
-                    (archiveGB, archiveUnreadable) = ReadSize(archive, "Exchange returned no archive statistics");
+                // aud-a55. Only Exchange's own not-found, by structure, is no archive (the IsNotFound catch below). An answer
+                // with no row and no error is ReadSize's marker: through ReadUnlessNotFound both came back as no rows, and
+                // both were no archive.
+                (archiveGB, archiveUnreadable) = ReadSize(InvokeOptional(ps, tracker), "Exchange returned no archive statistics");
+            }
+            catch (Exception ex) when (IsNotFound(ex))
+            {
+                _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
             }
             catch (Exception ex) when (!IsCancellation(ex))
             {
