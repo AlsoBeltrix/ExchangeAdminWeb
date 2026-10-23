@@ -1201,3 +1201,105 @@ Describe 'aud-a38d: the promotion refuses to run where it cannot see the app poo
         }
     }
 }
+
+Describe 'cdt-46: one folder however the filesystem spells it - an 8.3 short name, a junction' {
+
+    # ConvertTo-ComparablePhysicalPath normalises a spelling; it cannot know that a short name and a
+    # long one, or a junction and its target, are one folder. Test-SamePhysicalFolder and
+    # Assert-AppPoolServesPath also compare the final path the filesystem resolves both to, when both
+    # exist; a spelling that does not resolve is still not taken as the same folder. Real folders and
+    # junctions under the temp folder; nothing in IIS.
+
+    BeforeAll {
+        $script:Cdt46Root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt46_' + [guid]::NewGuid().ToString('N'))
+        $script:Cdt46Folder = Join-Path $script:Cdt46Root 'Publish Folder With A Long Name'
+        $script:Cdt46Sibling = Join-Path $script:Cdt46Root 'Publish Folder With A Long Name Too'
+        $script:Cdt46Outside = Join-Path $script:Cdt46Root 'Reports Kept Elsewhere'
+        New-Item -ItemType Directory -Path $script:Cdt46Folder, $script:Cdt46Sibling, $script:Cdt46Outside, (Join-Path $script:Cdt46Folder 'reports') -Force | Out-Null
+        # Junctions: one to the folder; one inside the folder that leads out of it; one elsewhere that
+        # leads into the folder's reports.
+        $script:Cdt46Link = Join-Path $script:Cdt46Root 'link'
+        $script:Cdt46OutLink = Join-Path $script:Cdt46Folder 'outlink'
+        $script:Cdt46InLink = Join-Path $script:Cdt46Root 'inlink'
+        foreach ($pair in @(@($script:Cdt46Link, $script:Cdt46Folder), @($script:Cdt46OutLink, $script:Cdt46Outside), @($script:Cdt46InLink, (Join-Path $script:Cdt46Folder 'reports')))) {
+            $null = cmd /c "mklink /J `"$($pair[0])`" `"$($pair[1])`""
+            if (-not (Test-Path -LiteralPath $pair[0])) { throw "could not create the junction fixture $($pair[0])" }
+        }
+        # An 8.3 spelling of a folder that exists: the fixture's own when its volume generates short
+        # names, else Program Files', which most Windows hosts have.
+        $shortOf = { param([string]$Path) (cmd /c "for %I in (`"$Path`") do @echo %~sI").Trim() }
+        $script:Cdt46Long = $script:Cdt46Folder
+        $script:Cdt46Short = & $shortOf $script:Cdt46Folder
+        if ($script:Cdt46Short -eq $script:Cdt46Long) {
+            $script:Cdt46Long = $env:ProgramFiles
+            $script:Cdt46Short = & $shortOf $env:ProgramFiles
+        }
+        $script:Cdt46HasShortName = ($script:Cdt46Short -ne $script:Cdt46Long)
+
+        function Get-IisEntry {
+            param([string]$Location, [string]$ApplicationPool, [string]$PhysicalPath)
+            [pscustomobject]@{ Location = $Location; ApplicationPool = $ApplicationPool; PhysicalPath = $PhysicalPath }
+        }
+    }
+
+    AfterAll {
+        # The junctions first, on their own, so nothing follows them into their targets.
+        foreach ($junction in @($script:Cdt46OutLink, $script:Cdt46InLink, $script:Cdt46Link)) {
+            if (Test-Path -LiteralPath $junction) { [System.IO.Directory]::Delete($junction) }
+        }
+        Remove-Item -LiteralPath $script:Cdt46Root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'takes an 8.3 short spelling for the folder it names' {
+        if (-not $script:Cdt46HasShortName) {
+            Set-ItResult -Skipped -Because "neither the fixture's volume nor '$env:ProgramFiles' has an 8.3 short name to test with"
+            return
+        }
+        # [System.IO.Path]::GetFullPath already expands the short name of a folder that exists, under
+        # .NET Framework and .NET alike (probed for cdt-46), so this pins that the comparison keeps
+        # taking it - whichever half of it does the work - rather than proving the final path.
+        Test-SamePhysicalFolder -Path $script:Cdt46Short -Other $script:Cdt46Long | Should -BeTrue -Because "'$($script:Cdt46Short)' is '$($script:Cdt46Long)'"
+        Test-SamePhysicalFolder -Path $script:Cdt46Long -Other $script:Cdt46Short | Should -BeTrue
+        $served = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Long -NestedNodes Refuse -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Short
+            })
+        $served.Count | Should -Be 1 -Because 'a node IIS spells with the short name serves the folder'
+    }
+
+    It 'takes a junction for the folder it points at, but not a sibling, and not a spelling that does not exist' {
+        Test-SamePhysicalFolder -Path $script:Cdt46Link -Other $script:Cdt46Folder | Should -BeTrue -Because 'a junction and its target are one folder'
+        Test-SamePhysicalFolder -Path "$($script:Cdt46Link)\" -Other $script:Cdt46Folder.ToUpperInvariant() | Should -BeTrue -Because 'whatever the separators and the case'
+        Test-SamePhysicalFolder -Path $script:Cdt46Link -Other $script:Cdt46Sibling | Should -BeFalse -Because 'a sibling whose name starts with the folder''s is another folder'
+        Test-SamePhysicalFolder -Path (Join-Path $script:Cdt46Root 'missing') -Other $script:Cdt46Folder | Should -BeFalse -Because 'a spelling that does not resolve is not taken as the same folder'
+        Test-SamePhysicalFolder -Path 'Z:\cdt46\missing\' -Other 'z:/CDT46/missing' | Should -BeTrue -Because 'two spellings that do not exist still compare lexically, as before'
+    }
+
+    It 'holds a node IIS spells through a junction to the named pool (Assert-AppPoolServesPath)' {
+        $served = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Folder -NestedNodes Refuse -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Link
+            })
+        $served.Count | Should -Be 1 -Because 'the node at the junction serves the folder'
+        {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Folder -NestedNodes Refuse -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Folder
+                Get-IisEntry -Location 'Other/Copy' -ApplicationPool 'OtherPool' -PhysicalPath $script:Cdt46Link
+            }
+        } | Should -Throw -ExpectedMessage "*served by an app pool other than 'ProdPool': Other/Copy runs under 'OtherPool'*" -Because 'a node serving the folder''s files through a junction under another pool would keep serving them while they are replaced'
+    }
+
+    It 'keeps a node rooted inside the folder nested though its junction leads out, and counts one whose files reach in through a junction' {
+        # The union of the two forms: inside by its lexical path stays inside; inside by its final path is inside too.
+        {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Folder -NestedNodes Refuse -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Folder
+                Get-IisEntry -Location 'Web/App/out' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46OutLink
+            }
+        } | Should -Throw -ExpectedMessage '*IIS serves content from inside*Web/App/out*' -Because 'the node is rooted inside the folder the mirror replaces, wherever its junction leads'
+        {
+            Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Folder -NestedNodes Refuse -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Folder
+                Get-IisEntry -Location 'Other/Reports' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46InLink
+            }
+        } | Should -Throw -ExpectedMessage '*IIS serves content from inside*Other/Reports*' -Because 'its files are the folder''s reports, which the mirror replaces'
+    }
+}

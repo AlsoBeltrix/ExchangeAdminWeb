@@ -35,7 +35,8 @@ param(
     # cdt-36: -Force and -ConfirmFreshInstall take the fresh-install path, which points an EXISTING
     # IIS application at this run's -PublishPath and -AppPoolName. A run whose folder or pool differs
     # from the ones IIS serves the application from is refused before anything is configured; this
-    # switch is the explicit way to move it. An upgrade never re-points the application.
+    # switch is the explicit way to move it. An upgrade never re-points the application, and refuses a
+    # pool or folder that does not serve it with or without this switch (cdt-42).
     [switch]$AllowRepoint,
     [switch]$NonInteractive
 )
@@ -199,6 +200,10 @@ function Write-AppSettingsFile {
 # pass. The installer makes the same check (cdt-15); here -AllowRepoint is the explicit way to move
 # the application. Folders compare as Assert-AppPoolServesPath compares them, through the module's
 # ConvertTo-ComparablePhysicalPath: by equality, case-insensitively, never by prefix.
+# cdt-42. An upgrade never moves the application, but it configures the pool -AppPoolName names and
+# grants ACLs under -PublishPath before its own binding check, so a pool or folder that does not serve
+# the application was changed and only then refused. On an upgrade (-Upgrade) a difference therefore
+# always refuses: -AllowRepoint cannot make an upgrade right, since nothing on that path re-points.
 function Assert-ApplicationTargetUnchanged {
     param(
         [string]$Location,
@@ -207,7 +212,8 @@ function Assert-ApplicationTargetUnchanged {
         [string]$ExistingPhysicalPath,
         [string]$AppPoolName,
         [string]$PublishPath,
-        [switch]$AllowRepoint
+        [switch]$AllowRepoint,
+        [switch]$Upgrade
     )
 
     if (-not $Exists) {
@@ -220,21 +226,35 @@ function Assert-ApplicationTargetUnchanged {
         $differences += "app pool '$ExistingPool' (this run: -AppPoolName '$AppPoolName')"
     }
     $existingFolder = ConvertTo-ComparablePhysicalPath $ExistingPhysicalPath
-    $runFolder = ConvertTo-ComparablePhysicalPath $PublishPath
-    # A folder IIS does not report counts as different: the run cannot show it deploys in place.
-    if ([string]::IsNullOrWhiteSpace($existingFolder) -or -not [string]::Equals($existingFolder, $runFolder, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # A folder IIS does not report counts as different: the run cannot show it deploys in place. The
+    # module's Test-SamePhysicalFolder is the one comparison, shared with the serving-folder choice
+    # after this check (cdt-44).
+    # cdt-46: it also takes one folder under two spellings - an 8.3 short name, a junction - when both
+    # exist on disk. A spelling that does not exist cannot be matched that way, so a refusal names it.
+    $spellingNote = ''
+    if (-not (Test-SamePhysicalFolder -Path $ExistingPhysicalPath -Other $PublishPath)) {
         $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
+        $missing = @(foreach ($spelling in @($ExistingPhysicalPath, $PublishPath)) {
+                $comparable = ConvertTo-ComparablePhysicalPath $spelling
+                if ($comparable -and -not [System.IO.Directory]::Exists($comparable)) { "'$spelling'" }
+            })
+        if ($missing.Count -gt 0) { $spellingNote = " A spelling that cannot be resolved on disk is not taken as the same folder: $($missing -join ', ')." }
     }
 
     if ($differences.Count -eq 0) {
         Write-Success "IIS application $Location runs under app pool '$ExistingPool' with its files at '$ExistingPhysicalPath': the pool and folder this run names, so it is deployed in place"
         return
     }
+    if ($Upgrade) {
+        $switchNote = ''
+        if ($AllowRepoint) { $switchNote = ' -AllowRepoint does not apply: only a -Force or -ConfirmFreshInstall run re-points an application.' }
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote An upgrade configures the app pool and the folders it names before it deploys, and never moves the application, so this run would change a pool or folder that does not serve it. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder', or move the application in IIS first.$switchNote Nothing was deployed."
+    }
     if ($AllowRepoint) {
         Write-Warn "IIS application $Location exists, with $($differences -join ' and '). -AllowRepoint: this run MOVES it to app pool '$AppPoolName' with its files at '$PublishPath'. The old pool and folder are left as they are, no longer serving it."
         return
     }
-    Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). -Force and -ConfirmFreshInstall point an existing application at this run's -AppPoolName and -PublishPath, so this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
+    Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote -Force and -ConfirmFreshInstall point an existing application at this run's -AppPoolName and -PublishPath, so this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
 }
 
 $ProjectRoot = $PSScriptRoot
@@ -255,20 +275,6 @@ $PublishPath = $PublishPath.TrimEnd('\', '/')
 $configPath = Join-Path $PublishPath "appsettings.json"
 $isUpgrade = (Test-Path $configPath) -and (-not $Force)
 
-$BackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"
-if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null }
-
-# -Force over an existing deployment regenerates appsettings.json, so keep a copy of it first. The
-# config database is NOT copied here: a raw copy of a live WAL database can be torn and nothing would
-# verify it, and a shared database is not under config\ at all. The verified online backup runs in the
-# fresh-install branch below, after the publish (it needs the db tool from staging) and before the pool
-# stops or anything is mirrored (cdt-9).
-if ($Force -and (Test-Path $configPath)) {
-    $backupName = "appsettings.${timestamp}.pre-force.bak"
-    Copy-Item $configPath (Join-Path $BackupDir $backupName)
-    Write-Warn "Existing config backed up to $BackupDir\$backupName"
-}
-
 $mode = if ($isUpgrade) { "UPGRADE" } else { "INSTALL" }
 
 # A fresh install must be deliberate: an unexpected INSTALL usually means the
@@ -285,23 +291,77 @@ Write-Host "  Publish : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray
 Write-Host ""
 
-# --- The IIS application a fresh install or -Force would re-point (cdt-36) ---
+# --- The IIS application this run deploys to (cdt-36, cdt-42) ---
 
-# Read before anything below touches IIS, an ACL or the publish folder: the fresh-install branch sets
-# an existing application's folder and pool to this run's -PublishPath and -AppPoolName, so a run that
-# would move it is refused here, unless -AllowRepoint says the move is intended. Read-only, and it
-# prints what it compared, so a plan mode could run it as it is (this script has none). A lookup that
-# fails refuses: the run cannot show that it does not move the application. An upgrade never
-# re-points it, and its own checks before the stop refuse a pool or folder that does not serve it.
-if (-not $isUpgrade) {
-    Write-Step "Checking IIS application $ParentSite/$AppAlias"
-    $existingApplication = $null
-    try {
-        $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
-    } catch {
-        Write-Fail "Cannot read IIS application $ParentSite/$AppAlias ($($_.Exception.Message)), so it cannot be confirmed that this run does not move it to another folder or app pool. Nothing was deployed."
+# Read on every run, before anything below writes - the backup folder and the pre-force copy included
+# (cdt-45) - or touches IIS, an ACL or the publish folder. The
+# fresh-install branch (-Force, -ConfirmFreshInstall) points an existing application at this run's
+# -PublishPath and -AppPoolName, so a run that would move it is refused here unless -AllowRepoint says
+# the move is intended (cdt-36). An upgrade never moves it, but the pool step and the ACL grants below
+# act on the pool and folder it names before the upgrade branch asks IIS which pool serves the
+# application, so an upgrade whose pool or folder does not serve it is refused here, before they run,
+# whatever the switches (cdt-42). Read-only, and it prints what it compared, so a plan mode could run
+# it as it is (this script has none). A lookup that fails refuses: the run cannot show that the pool
+# and folder it names are the ones serving the application.
+Write-Step "Checking IIS application $ParentSite/$AppAlias"
+$existingApplication = $null
+try {
+    $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
+} catch {
+    Write-Fail "Cannot read IIS application $ParentSite/$AppAlias ($($_.Exception.Message)), so it cannot be confirmed that the app pool and folder this run names are the ones serving it. Nothing was deployed."
+}
+Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath -AllowRepoint:$AllowRepoint -Upgrade:$isUpgrade
+
+# --- The configuration the application runs on now (cdt-44) ---
+
+# Normally the run's own folder. When -AllowRepoint moves an existing application to another folder,
+# the configuration it runs on - its appsettings.json, and the config database that names - is in the
+# folder IIS serves it from now, and -PublishPath is only where it is going. So that folder is what is
+# backed up below and what the regenerated appsettings.json carries ConfigStore:Path over from. A move
+# that would leave a database kept inside the old folder behind is refused here, before anything is
+# written.
+$servingFolder = $PublishPath
+$movesFolder = $false
+if (-not $isUpgrade -and $AllowRepoint -and $null -ne $existingApplication) {
+    $reportedFolder = ConvertTo-ComparablePhysicalPath "$($existingApplication.PhysicalPath)"
+    if ($reportedFolder -and -not (Test-SamePhysicalFolder -Path $reportedFolder -Other $PublishPath)) {
+        $servingFolder = $reportedFolder
+        $movesFolder = $true
     }
-    Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath -AllowRepoint:$AllowRepoint
+}
+$servingConfigPath = Join-Path $servingFolder "appsettings.json"
+if ($movesFolder -and (Test-Path -LiteralPath $servingConfigPath)) {
+    $servingDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
+    if (-not (Get-ConfigStorePathSetting -PublishPath $servingFolder) -and (Test-IsSqliteConfigDbPresent -DbPath $servingDbPath)) {
+        Write-Fail "IIS application $ParentSite/$AppAlias keeps its config database inside the folder it is being moved from ('$servingDbPath'): its appsettings.json names no ConfigStore:Path, so after the move it would open a new, empty database under '$PublishPath\config' and leave that one behind. Move the database to a shared path first (tools\Move-ConfigDbToShared.ps1), so that appsettings.json names it, or move the application in IIS by hand. Nothing was deployed."
+    }
+    Write-Warn "-AllowRepoint: the configuration is backed up from '$servingFolder', the folder IIS serves the application from now, and its ConfigStore:Path is carried into the appsettings.json generated in '$PublishPath'."
+}
+
+# --- Backups taken before anything is configured ---
+
+# Written only once the check above has passed, so a run it refuses leaves no backup folder and no
+# copy behind (cdt-45); still before anything below configures IIS, an ACL or a folder.
+$BackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"
+if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null }
+
+# -Force over an existing deployment regenerates appsettings.json, so keep a copy of it first. The
+# config database is NOT copied here: a raw copy of a live WAL database can be torn and nothing would
+# verify it, and a shared database is not under config\ at all. The verified online backup runs in the
+# fresh-install branch below, after the publish (it needs the db tool from staging) and before the pool
+# stops or anything is mirrored (cdt-9).
+if ($Force -and (Test-Path $configPath)) {
+    $backupName = "appsettings.${timestamp}.pre-force.bak"
+    Copy-Item $configPath (Join-Path $BackupDir $backupName)
+    Write-Warn "Existing config backed up to $BackupDir\$backupName"
+}
+
+# cdt-44: a move also keeps the appsettings.json the application runs on now, in the folder it leaves;
+# the copy above is of the file this run regenerates.
+if ($movesFolder -and (Test-Path -LiteralPath $servingConfigPath)) {
+    $servingBackupName = "appsettings.${timestamp}.pre-move.bak"
+    Copy-Item -LiteralPath $servingConfigPath -Destination (Join-Path $BackupDir $servingBackupName)
+    Write-Warn "The appsettings.json the application runs on now ($servingConfigPath) backed up to $BackupDir\$servingBackupName"
 }
 
 # --- Collect & validate config (fresh install only) ---
@@ -567,8 +627,10 @@ try {
 
     # Both paths hand this to the active-job check before the pool stops. It used to be set only
     # inside the upgrade branch, so a fresh install (or -Force) passed $null to a mandatory string
-    # parameter and the deploy died on a binding error after IIS was already configured (cdt-5).
-    $runtimeConfigDir = Join-Path $PublishPath "config"
+    # parameter and the deploy died on a binding error after IIS was already configured (cdt-5). It is
+    # the live configuration directory: the serving folder's, which is -PublishPath's except when
+    # -AllowRepoint moves the application to another folder (cdt-44).
+    $runtimeConfigDir = Join-Path $servingFolder "config"
 
     # The files both config backup copies leave out (cdt-10). The config database is backed up
     # separately, by the verified online backup. The jobs and usage databases are per-instance
@@ -889,17 +951,19 @@ try {
         # regenerates appsettings.json below, which must carry this key (cdt-8). A fresh install has no
         # appsettings.json, so this is $null and nothing is carried. A file that does not parse stops the
         # run here (ConvertFrom-Json raises a terminating error and "Stop" makes it fatal), which is the
-        # fail-closed answer: overwriting a file this script cannot read could drop the key.
-        $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
+        # fail-closed answer: overwriting a file this script cannot read could drop the key. Both reads
+        # are of the serving folder - the configuration the application runs on now - which is
+        # -PublishPath except when -AllowRepoint moves the application to another folder (cdt-44).
+        $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $servingFolder
 
         # The database the instance opens: ConfigStore:Path when set (the shared file, outside config\),
         # else config\exchangeadmin.db. A configured file that is missing stops the run here, as on an
         # upgrade, before anything is stopped or mirrored: the regenerated appsettings.json would point
         # the app at it and the app never creates a configured database (cdt-9). A fresh install has no
         # key, so this cannot fire there.
-        $configDbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
+        $configDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
         if ($configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
-            Write-Fail "ConfigStore:Path in $configPath names '$configDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1 to create the shared database. Nothing was deployed."
+            Write-Fail "ConfigStore:Path in $servingConfigPath names '$configDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1 to create the shared database. Nothing was deployed."
         }
         if ($configStorePathSetting) {
             Write-Success "ConfigStore:Path in the existing appsettings.json is kept: $configStorePathSetting"
@@ -912,8 +976,11 @@ try {
         # of config\, taken before the publish and verified by nothing, that could be torn and never
         # touched a shared database (cdt-9). It sits after the publish because the tool is the build in
         # staging, and before the IIS changes, the job check, the pool stop and the mirror. A real fresh
-        # install (no appsettings.json) has nothing to back up.
-        if ($Force -and (Test-Path $configPath)) {
+        # install (no appsettings.json) has nothing to back up. The gate is the serving folder's
+        # appsettings.json (cdt-44): outside a move that is the old gate - a -ConfirmFreshInstall run
+        # has none there, or it would be an upgrade - and a -AllowRepoint move, -Force or not, backs up
+        # the configuration it is moving the application off.
+        if (Test-Path -LiteralPath $servingConfigPath) {
             Write-Step "Backing up the existing runtime configuration"
             $configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
             New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null

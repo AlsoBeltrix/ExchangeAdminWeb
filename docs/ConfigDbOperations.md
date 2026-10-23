@@ -45,8 +45,9 @@ Three consequences, all of which have bitten:
 2. **The file lives outside both publish folders**, so a deploy never touches it — `config\`
    is excluded from robocopy mirroring.
 3. **The app never creates a configured database.** If `ConfigStore:Path` names a file that
-   does not exist, the app refuses to start and `deploy.ps1` fails before mirroring anything
-   (`deploy.ps1:447`). **Deleting the database is not a recovery step.** See *Recover from
+   does not exist, the app refuses to start and `deploy.ps1` fails before mirroring anything,
+   with "ConfigStore:Path in ... names '...' but no database exists there" (the upgrade and
+   the `-Force` path alike). **Deleting the database is not a recovery step.** See *Recover from
    corruption*.
 
 ### Databases that are NOT this one
