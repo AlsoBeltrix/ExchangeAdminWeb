@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -69,8 +71,247 @@ public sealed class ClickGateSource
     /// view already treats them (review finding prog-4b). Every input is read as a component, so a
     /// markup fixture with no @code block is all markup.
     /// </para>
+    /// <para>
+    /// kd-21. The bodies of the markup's control-flow constructs ("@if", "@foreach" and the rest) are
+    /// code with markup in them, and their C# comments are blanked too; see
+    /// <see cref="BlankControlFlowComments"/>.
+    /// </para>
     /// </remarks>
-    public static string BlankComments(string source) => RazorSyntax.ComponentCommentsBlanked(source);
+    public static string BlankComments(string source) =>
+        BlankControlFlowComments(source, RazorSyntax.ComponentCommentsBlanked(source));
+
+    /// <summary>
+    /// kd-21. <paramref name="blanked"/> - <paramref name="source"/> as kd-12's component view left it -
+    /// with the C# comments of the markup's control-flow bodies blanked too: the bodies of
+    /// "@if", "@foreach", "@for", "@while", "@switch", "@lock", "@using", "@do" and "@try" between the
+    /// tags, and of their "else", "else if", "catch", "finally" and "while" continuations.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A body like that is code with markup elements in it, so neither the Roslyn region view (which
+    /// covers @code only) nor a regex reads it. Each body is walked from its brace: a markup element
+    /// at code level - a start tag through its matching end tag, or a self-closing or void one -
+    /// and a "@:" line are skipped as markup; a C# literal is skipped as one Roslyn token, so a "//"
+    /// inside a string is not a comment; a "//" or "/*" at code level is a comment and is blanked;
+    /// and the braces at code level are counted, so a brace inside a comment, a literal or an
+    /// element neither opens nor closes the body. A construct nested inside an element is found by
+    /// the same scan and walked on its own.
+    /// </para>
+    /// <para>
+    /// Not <see cref="ExtractMarkupBlock"/>: that balances raw braces over the markup view, which is
+    /// right for an assertion's block and wrong here, because the comments being looked for are the
+    /// text that can hold a stray brace.
+    /// </para>
+    /// </remarks>
+    private static string BlankControlFlowComments(string source, string blanked)
+    {
+        var buffer = blanked.ToCharArray();
+        var parsed = RazorSyntax.Parse(source);
+        var regions = parsed.IsRazor ? parsed.Regions.Select(r => r.Raw).ToList() : [];
+        var values = AttributeValueSpans(blanked);
+
+        foreach (Match construct in ControlFlowConstruct.Matches(source))
+        {
+            var at = construct.Index;
+            if ((at > 0 && source[at - 1] == '@') || blanked[at] != '@'
+                || regions.Any(r => r.Contains(at)) || values.Any(v => at >= v.Start && at < v.End))
+            {
+                continue;
+            }
+
+            var pos = SkipParenthesised(source, at + construct.Length);
+            while (true)
+            {
+                pos = SkipWhitespace(source, pos);
+                if (pos >= source.Length || source[pos] != '{')
+                    break;
+
+                pos = WalkCodeBody(source, blanked, buffer, pos);
+                if (pos < 0)
+                    break;
+
+                var next = SkipWhitespace(source, pos);
+                var continuation = ControlFlowContinuation.Match(source, next);
+                if (!continuation.Success || continuation.Index != next)
+                    break;
+
+                pos = SkipParenthesised(source, next + continuation.Length);
+            }
+        }
+
+        return new string(buffer);
+    }
+
+    private static readonly Regex ControlFlowConstruct =
+        new(@"@(?:if|foreach|for|while|switch|lock|using|do|try)\b", RegexOptions.Compiled);
+
+    private static readonly Regex ControlFlowContinuation =
+        new(@"\G(?:else\s+if|else|catch|finally|while)\b", RegexOptions.Compiled);
+
+    private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+    };
+
+    /// <summary>
+    /// Walks one body from its opening brace, blanking its code-level comments into
+    /// <paramref name="buffer"/>; returns the index after its closing brace, or -1 if it never closes.
+    /// </summary>
+    private static int WalkCodeBody(string source, string blanked, char[] buffer, int open)
+    {
+        var depth = 1;
+        var i = open + 1;
+        while (i < source.Length)
+        {
+            var c = source[i];
+            if (blanked[i] != c || char.IsWhiteSpace(c))
+            {
+                // Already blanked (a Razor comment, kd-12's comments) or whitespace.
+                i++;
+                continue;
+            }
+
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+            if (c == '/' && next == '/')
+            {
+                var end = source.IndexOf('\n', i);
+                end = end < 0 ? source.Length : end;
+                BlankSpan(buffer, i, end);
+                i = end;
+            }
+            else if (c == '/' && next == '*')
+            {
+                var end = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                end = end < 0 ? source.Length : end + 2;
+                BlankSpan(buffer, i, end);
+                i = end;
+            }
+            else if (c == '@' && next == ':')
+            {
+                var end = source.IndexOf('\n', i);
+                i = end < 0 ? source.Length : end;
+            }
+            else if (c == '<' && (char.IsLetter(next) || next == '/'))
+            {
+                i = EndOfElement(blanked, i);
+            }
+            else if (c is '"' or '\'' || (c is '@' or '$' && next is '"' or '$' or '@'))
+            {
+                var literal = SyntaxFactory.ParseToken(source, i);
+                i += Math.Max(1, literal.Span.Length);
+            }
+            else if (c == '{')
+            {
+                depth++;
+                i++;
+            }
+            else if (c == '}')
+            {
+                i++;
+                if (--depth == 0)
+                    return i;
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The index after the markup element whose tag opens at <paramref name="start"/>: after its
+    /// matching end tag, or after the tag itself when it is an end tag, self-closing or void.
+    /// </summary>
+    private static int EndOfElement(string source, int start)
+    {
+        var nameStart = source[start + 1] == '/' ? start + 2 : start + 1;
+        var nameEnd = nameStart;
+        while (nameEnd < source.Length && (char.IsLetterOrDigit(source[nameEnd]) || source[nameEnd] is '-' or '.' or ':' or '_'))
+            nameEnd++;
+
+        var tagEnd = IndexOfTagEnd(source, nameEnd);
+        if (tagEnd < 0)
+            return source.Length;
+
+        var name = source[nameStart..nameEnd];
+        if (nameStart == start + 2 || source[tagEnd - 1] == '/' || VoidElements.Contains(name))
+            return tagEnd + 1;
+
+        var depth = 1;
+        for (var at = source.IndexOf('<', tagEnd + 1); at >= 0; at = source.IndexOf('<', at + 1))
+        {
+            var closing = at + 1 < source.Length && source[at + 1] == '/';
+            var candidate = closing ? at + 2 : at + 1;
+            if (string.Compare(source, candidate, name, 0, name.Length, StringComparison.OrdinalIgnoreCase) != 0)
+                continue;
+
+            var after = candidate + name.Length;
+            if (after < source.Length && (char.IsLetterOrDigit(source[after]) || source[after] is '-' or '.' or ':' or '_'))
+                continue;
+
+            var end = IndexOfTagEnd(source, after);
+            if (end < 0)
+                return source.Length;
+
+            if (closing && --depth == 0)
+                return end + 1;
+
+            if (!closing && source[end - 1] != '/')
+                depth++;
+
+            at = end;
+        }
+
+        return source.Length;
+    }
+
+    /// <summary>After any whitespace, then a parenthesised header's matching ")" if one opens there.</summary>
+    private static int SkipParenthesised(string source, int from)
+    {
+        var at = SkipWhitespace(source, from);
+        if (at >= source.Length || source[at] != '(')
+            return at;
+
+        var depth = 0;
+        foreach (var token in SyntaxFactory.ParseTokens(source, offset: at, initialTokenPosition: at))
+        {
+            if (token.IsKind(SyntaxKind.OpenParenToken))
+                depth++;
+            else if ((token.IsKind(SyntaxKind.CloseParenToken) && --depth == 0) || token.IsKind(SyntaxKind.EndOfFileToken))
+                return token.Span.End;
+        }
+
+        return source.Length;
+    }
+
+    private static int SkipWhitespace(string source, int from)
+    {
+        var at = from;
+        while (at < source.Length && char.IsWhiteSpace(source[at]))
+            at++;
+        return at;
+    }
+
+    /// <summary>Every quoted attribute value of every tag in <paramref name="text"/>, as WalkTag records them.</summary>
+    private static List<(int Start, int End)> AttributeValueSpans(string text)
+    {
+        var spans = new List<(int Start, int End)>();
+        for (var at = text.IndexOf('<'); at >= 0; at = text.IndexOf('<', at + 1))
+        {
+            if (at + 1 >= text.Length || !char.IsLetter(text[at + 1]))
+                continue;
+
+            var end = WalkTag(text, at + 1, spans);
+            if (end < 0)
+                continue;
+
+            at = end;
+        }
+
+        return spans;
+    }
 
     /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
     public static string WholeWord(string identifier) =>

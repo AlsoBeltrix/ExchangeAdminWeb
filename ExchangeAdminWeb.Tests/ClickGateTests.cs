@@ -1321,6 +1321,62 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void BlankCommentsBlanksTheCommentsOfMarkupControlFlowBodies()
+    {
+        // kd-21. kd-12's view lexes @code and markup "@{ }" blocks, but the body of an "@if" or an
+        // "@foreach" in the markup is code with markup in it, and its comments were read as text. The
+        // comments below each name isBusy = true; the markup, the literals and the code must stay.
+        var page = string.Join("\n",
+            "<div>",
+            "@if (canManage)",
+            "{",
+            "    // an if body's comment: isBusy = true;",
+            "    <button title=\"// not a comment\" disabled=\"@IsBusy\">Go</button>",
+            "    <p>// markup text, not a comment</p>",
+            "    <br />",
+            "}",
+            "else if (other)",
+            "{",
+            "    /* an else-if body's comment: isBusy = true; */",
+            "}",
+            "else",
+            "{",
+            "    @: a markup line // not a comment either",
+            "    <span>no</span> // an else body's comment: isBusy = true;",
+            "}",
+            "@foreach (var row in Rows(\"a)b\"))",
+            "{",
+            "    var label = \"// a string, not a comment\"; // a loop body's comment } with a brace",
+            "    var hole = $\"{row.Name} // inside an interpolated string\";",
+            "    // a second loop comment: isBusy = true;",
+            "    <tr><td>@label</td></tr>",
+            "    @if (row.Open)",
+            "    {",
+            "        <td>open</td>",
+            "    }",
+            "}",
+            "<p>after</p>",
+            "</div>",
+            "@code {",
+            "    private bool isBusy;",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("body's comment", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("second loop comment", text, StringComparison.Ordinal);
+        Assert.Contains("title=\"// not a comment\"", text, StringComparison.Ordinal);
+        Assert.Contains("<p>// markup text, not a comment</p>", text, StringComparison.Ordinal);
+        Assert.Contains("@: a markup line // not a comment either", text, StringComparison.Ordinal);
+        Assert.Contains("\"// a string, not a comment\";", text, StringComparison.Ordinal);
+        Assert.Contains("$\"{row.Name} // inside an interpolated string\";", text, StringComparison.Ordinal);
+        Assert.Contains("<tr><td>@label</td></tr>", text, StringComparison.Ordinal);
+        Assert.Contains("<p>after</p>", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because
