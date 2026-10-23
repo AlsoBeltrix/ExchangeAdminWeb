@@ -57,6 +57,8 @@ public class PageRequestRevalidationTests
     private const string DomainSid = "S-1-5-21-1000-2000-3000";
     private const string OperatorSid = DomainSid + "-1105";
     private const string OperatorName = @"CONTOSO\operator";
+    private const string ColleagueSid = DomainSid + "-1106";
+    private const string ColleagueName = @"CONTOSO\colleague";
     private const string DomainUsersSid = DomainSid + "-513";
     private const string SectionGroupSid = DomainSid + "-5001";
     private const string LaterGrantedGroupSid = DomainSid + "-5005";
@@ -457,6 +459,42 @@ public class PageRequestRevalidationTests
         _ = h.Directory.Received(2).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
     }
 
+    [Fact]
+    public async Task AnExpiredAnswer_IsSweptOutWhenAnotherAccountsAnswerIsRecorded()
+    {
+        // aud-a29j. An operator who never comes back must not be held for the app pool's life.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+        Assert.Equal(new[] { OperatorSid }, h.Revalidator.RecordedAccountSids);
+
+        // One interval after the operator's read started, a colleague's read is recorded.
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Colleague(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+
+        Assert.Equal(new[] { ColleagueSid }, h.Revalidator.RecordedAccountSids);
+    }
+
+    [Fact]
+    public async Task AnAnswerStillInsideTheInterval_SurvivesTheSweep()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+        h.Clock.Advance(h.Options.Interval - TimeSpan.FromSeconds(1));
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Colleague(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+
+        Assert.Equal(new[] { OperatorSid, ColleagueSid }, h.Revalidator.RecordedAccountSids.Order(StringComparer.Ordinal));
+
+        // And it still confirms the operator's next page without a read.
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+        _ = h.Directory.Received(2).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
     // ------------------------------------------------------------------ wording and wiring
 
     [Fact]
@@ -511,11 +549,15 @@ public class PageRequestRevalidationTests
 
     private static CancellationToken AnyToken => Arg.Any<CancellationToken>();
 
-    private static ClaimsPrincipal Operator(params string[] groupSids)
+    private static ClaimsPrincipal Operator(params string[] groupSids) => Principal(OperatorSid, OperatorName, groupSids);
+
+    private static ClaimsPrincipal Colleague(params string[] groupSids) => Principal(ColleagueSid, ColleagueName, groupSids);
+
+    private static ClaimsPrincipal Principal(string accountSid, string name, string[] groupSids)
     {
         var identity = new ClaimsIdentity("Negotiate", ClaimTypes.Name, ClaimTypes.Role);
-        identity.AddClaim(new Claim(ClaimTypes.Name, OperatorName));
-        identity.AddClaim(new Claim(ClaimTypes.PrimarySid, OperatorSid));
+        identity.AddClaim(new Claim(ClaimTypes.Name, name));
+        identity.AddClaim(new Claim(ClaimTypes.PrimarySid, accountSid));
         foreach (var sid in groupSids)
             identity.AddClaim(new Claim(ClaimTypes.GroupSid, sid));
         return new ClaimsPrincipal(identity);

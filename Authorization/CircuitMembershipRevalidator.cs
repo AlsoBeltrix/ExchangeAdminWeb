@@ -72,7 +72,8 @@ public sealed record MembershipRevalidationResult(
 /// and a page request may be confirmed by a recorded answer whose read started less than
 /// <see cref="CircuitRevalidationOptions.Interval"/> ago - the window an open circuit already has -
 /// but never refused by one: an answer that would refuse is read again. A read that fails forgets the
-/// account's answer. The circuit's own checks never use a recorded answer; they read every time.
+/// account's answer, and every recorded answer sweeps out the ones that have expired (aud-a29j). The
+/// circuit's own checks never use a recorded answer; they read every time.
 /// </para>
 /// <para>
 /// Throws only <see cref="OperationCanceledException"/>, and only for the caller's own token (the
@@ -89,7 +90,9 @@ public sealed class CircuitMembershipRevalidator
 
     // The directory's latest answer per account SID, and when its read started (aud-a29g). Facts about
     // the account, never verdicts: a page request still recomputes its verdict from the settings as they
-    // are now and from its own token. One entry per operator, replaced by every later read.
+    // are now and from its own token. One entry per operator, replaced by every later read; one that has
+    // expired is swept out whenever any answer is recorded (aud-a29j), so an operator who never comes
+    // back is not kept for the app pool's life.
     private readonly ConcurrentDictionary<string, RecordedAnswer> _answers = new(StringComparer.OrdinalIgnoreCase);
 
     public CircuitMembershipRevalidator(
@@ -311,7 +314,20 @@ public sealed class CircuitMembershipRevalidator
     {
         var answer = new RecordedAnswer(membership, started);
         _answers.AddOrUpdate(userSid, answer, (_, existing) => existing.Started > started ? existing : answer);
+
+        // The sweep (aud-a29j). Here, where the dictionary grows and only after a directory read, so
+        // one pass over the operators costs nothing beside the read; the page-request path, which reads
+        // the dictionary on every page, stays a single lookup. Instance-guarded, like every removal
+        // here: an expired answer replaced by a newer one in the meantime is left alone.
+        foreach (var entry in _answers)
+        {
+            if (Clock.GetElapsedTime(entry.Value.Started) >= _options.Interval)
+                _answers.TryRemove(entry);
+        }
     }
+
+    /// <summary>The account SIDs with an answer held right now, for a test to see what is kept.</summary>
+    internal IReadOnlyCollection<string> RecordedAccountSids => _answers.Keys.ToArray();
 
     private void Forget(string userSid, long started)
     {
