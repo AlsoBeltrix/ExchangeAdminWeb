@@ -701,7 +701,7 @@
                     false, ticket, errorDetail: onPremValidation.Error);
                 return;
             }
-            if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(selfGrantError, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
+            if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttemptAtWrite", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             var onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
 
             var opResult = isAdd

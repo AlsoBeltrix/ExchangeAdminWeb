@@ -130,6 +130,9 @@ public class CalendarPermissionService : ExchangeServiceBase
         var entries = new List<BulkOperationEntry>();
         var successCount = 0;
 
+        // aud-a61. One run of the self-grant check for the whole file, as the Mailbox Permissions loop has.
+        var selfGrantRun = new SelfGrantRun();
+
         foreach (var row in records)
         {
             try
@@ -182,7 +185,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                 if (isSet)
                 {
                     // aud-a43: the signed-in principal, never currentUser - the logon name is the record's actor only.
-                    var selfGrantError = await validator.ValidateSelfGrantAsync(actingUser, row.User);
+                    var selfGrantError = await validator.ValidateSelfGrantAsync(actingUser, row.User, selfGrantRun);
                     if (selfGrantError is not null)
                     {
                         // The record carries the validator's own refusal: a check that could not be completed is not a self-grant (aud-a28y).

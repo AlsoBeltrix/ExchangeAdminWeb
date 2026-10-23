@@ -7,9 +7,9 @@ Unlimited`; a 200-row upload granting one large cloud group does 200 full traver
 groups that does not contain the operator is refused as incomplete. (3) The aud-a50 write-time re-check
 refusal shows the generic refusal and records the same `*_SelfGrantAttempt` action as the pre-confirmation
 check, so the operator cannot tell that the first check passed and the state changed in between.
-**Status**: In progress; plan below, approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
-**Commit**: -
+**Commit**: plan `fa1ed15c`; fix - the commit that carries this text (after aud-a60's `e06c1c2d`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-6, 2026-10-22, candidates 3, 4 and 5)
 
 ## Evidence
@@ -98,6 +98,73 @@ refusing every such row alike. A cloud group nesting up to 250 cloud groups is c
 the bound. The on-premises write's re-check refusal says the earlier check had passed and is audited as
 `*_SelfGrantAttemptAtWrite`.
 
+## Fix
+
+- New `Services/SelfGrantRun.cs`: `ExchangeMembersAsync(operator, group, read)`, `DirectoryMembershipAsync(operatorDn, groups,
+  evaluate)` and `DirectoryReadCredentialAsync(acquire)`, each kept per key as a `Lazy` task, so a result or a failure is had
+  once per run and handed to every later caller alike.
+- `Services/PermissionValidator.cs`: the public `ValidateSelfGrantAsync(principal, grantee)` is a fresh run of new internal
+  `ValidateSelfGrantAsync(principal, grantee, run)`, which hands the run down: `CompareInExchangeGroupAsync` reads Exchange's
+  members through `run.ExchangeMembersAsync(exchangeIdentity, <the group's canonical address>, ...)`; `CompareInDirectoryAsync`
+  has the credential through `run.DirectoryReadCredentialAsync` and the evaluation through `run.DirectoryMembershipAsync`. A
+  read that ran past the bound (`ExchangeGroupNestingBoundException`) refuses "the group '<x>' holds more than 250 nested
+  groups, more than the check reads"; any other failure keeps aud-a52's text.
+- `Services/ExchangeGroupMembers.cs`: `MaxGroupsRead = 50` (the root counted) is `MaxNestedGroups = 250` (nested cloud groups
+  found, each once); the read throws `ExchangeGroupNestingBoundException(group, bound)` - "'<group>' holds more than 250 nested
+  groups" - when it finds one more, before reading it.
+- `Services/MailboxPermissionService.cs`, `Services/CalendarPermissionService.cs`: one `SelfGrantRun` before the rows, handed to
+  every row's check.
+- `Services/SelfGrantRefusalRecord.cs`: `RefusedAtWrite` and `AtWrite(refusal)`.
+- `Components/Pages/MailboxPermissions.razor` 704 and `Components/Pages/CalendarPermissions.razor` 658, in place (808 and 762
+  lines): the banner is `SelfGrantRefusalRecord.AtWrite(selfGrantError)` through `Banner`, the record's action
+  `Add{permType}_SelfGrantAttemptAtWrite` / `SetCalendar_SelfGrantAttemptAtWrite`, its `errorDetail` `selfGrantError`.
+
+Tests: `PermissionValidatorSelfGrantTests` +8 - `OneRun_ReadsACloudGroupsMembersOnce_ForEveryCheckThatNamesIt_AndANewRunReadsAgain`,
+`OneRun_KeepsAReadThatFailed_AndRefusesEveryCheckAlike`, `OneRun_EvaluatesADirectoryGroupOnce_AndHasItsCredentialOnce`,
+`BothBulkLoops_ReadAGroupTheirRowsShare_Once` (both loops, the read answering and failing: three rows, one read; a failure
+refuses all three with one text, each recorded), `ACloudGroupNestingPastTheBound_IsRefused_SayingSo`; updated, not weakened:
+`EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal` counts both actions and pins one write-time action per page, and
+`TheStringOnlySelfGrantCheck_IsGone_AndTheCheckTakesThePrincipal` pins the two overloads (the public one exactly principal and
+grantee, the run overload principal, grantee and run). `ExchangeGroupMembersTests`: `ANestingPastTheBound_Throws_NamingTheBound`
+(251 nested groups: the exception, its group, bound and text; 251 reads, the 251st nested group found and not read),
+`AsManyNestedGroupsAsTheBound_AreReadWhole` (250), `AHundredNestedGroups_PastTheOldBound_AreReadWhole`; the theory's
+"more groups than the bound" row moved to them. `PermissionPagesSelfGrantTests`: aud-a50's three write-time cases take the
+banner with the write-time sentence and the `*AtWrite` actions (both pages).
+
 ## Guard proof
 
-Pending.
+The aud-a60 driver and protocol (that record's Guard proof; log `a61-mutations.log`). Filter
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~BulkPermission|FullyQualifiedName~AuditWriterThrowFree`
+(747 tests). Fixed-file MD5s: `Services/PermissionValidator.cs` `79AADDB714D6C9EC8CF7A5A530CFE40C`,
+`Services/ExchangeGroupMembers.cs` `3EB46F04FC2026BD7203DDCFA0931395`, `Services/MailboxPermissionService.cs`
+`FAD030E0E813D5F1D30704B4FACA151A`, `Services/CalendarPermissionService.cs` `6006CF56404A0E1D50A1F585BC5817BF`,
+`Components/Pages/MailboxPermissions.razor` `61124954514D9E7426442A6E693C034B`, `Components/Pages/CalendarPermissions.razor`
+`8FA41FEA6EE1CA6FE59038D997B8C275`. Every mutant built with 0 errors and every restore matched; each page mutant kept its
+page's line count, so ClickGate and ProgressRegistry ran under it and passed. After the round, the restored tree rebuilt and
+the filter: 747/747 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | the cache bypassed: the Mailbox Permissions loop handing each row a fresh run | `MailboxPermissionService.cs` `03D921912F8B9A09DF8CF2AB02DCA5CD` | 2 of 747: both `BothBulkLoops_ReadAGroupTheirRowsShare_Once(calendar: False, ...)` rows - three reads |
+| M1c | the same in the Calendar Permissions loop | `CalendarPermissionService.cs` `0732B907AB9467DBF47D49AFF7F95A74` | 2 of 747: the same test's `calendar: True` rows |
+| M2 | the generic bound text again: the validator's catch of the bound removed | `PermissionValidator.cs` `620664878F1FC7A799913F60A1DC37D8` | 1 of 747: `ACloudGroupNestingPastTheBound_IsRefused_SayingSo` - "could not be read" |
+| M3 | the shared action again, `MailboxPermissions.razor` 704 | `1D18DD6CC98283F9F3F54005992F362F` | 2 of 747: `TheOnPremWrite_ReChecksTheGrantee_RightBeforeItWrites_AndRefusesASelfGrant(page: "Mailbox Permissions")`, `EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(... MailboxPermissions.razor ...)` |
+| M3c | the same, `CalendarPermissions.razor` 658 | `059697406441A01CA9BD67F94C04CEC0` | 2 of 747: the same two tests' Calendar Permissions rows |
+| E1 | extra: the run not consulted for Exchange's members (a fresh run per call) | `PermissionValidator.cs` `BDF2EB8683DE26CF3CCB29DFBE162121` | 6 of 747: all four `BothBulkLoops_...` rows, `OneRun_ReadsACloudGroupsMembersOnce_...`, `OneRun_KeepsAReadThatFailed_...` |
+| E2 | extra: the bound back at 50 | `ExchangeGroupMembers.cs` `148B2F5116F4636E639F59DDB2F09E36` | 1 of 747: `AHundredNestedGroups_PastTheOldBound_AreReadWhole` |
+| E3 | extra: the write-time sentence dropped from the banner (Mailbox Permissions 704) | `MailboxPermissions.razor` `C60087031F5EA01BFF0BDEA799A80320` | 3 of 747: the three write-time cases' Mailbox Permissions rows - `TheOnPremWrite_ReChecksTheGrantee_...`, `TheOnPremRefusal_WhoseRecordCannotBeWritten_...`, `TheOnPremBanner_WhenTheWriterDropsTheRefusalsRow_...` |
+
+No separate pre-fix reproduction: M1 and M3 are the code as it stood at each call site (a run per row is the old per-row
+read), and M2 the refusal as it stood.
+
+## Known gaps
+
+- A run keeps what it read for its whole length: a membership that changes while a bulk file is being worked through is
+  answered for every later row as the first row found it. A bulk run has no write-time re-check of its own; each row's check
+  is made just before that row's write, as before, and only the membership reads are shared.
+- A failure is kept the same way: a transient Exchange or directory failure refuses every row of that run naming the group.
+  The operator re-runs the file; a new run reads again.
+- The bound is the check's own choice, documented in `ExchangeGroupMembers.MaxNestedGroups`; a deeper tree of cloud groups is
+  refused as incomplete, naming it. Not measured against a tenant.
+- What is per row stays per row: the operator's and the grantee's lookups (two Exchange reads) and the directory session (a
+  runspace and the ActiveDirectory module) - the cost aud-a43 records.

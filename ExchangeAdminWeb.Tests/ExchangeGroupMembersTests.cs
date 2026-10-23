@@ -237,10 +237,11 @@ public sealed class ExchangeGroupMembersTests : IDisposable
         Assert.DoesNotContain(Calls, call => call.Contains("synced@contoso.test", StringComparison.Ordinal));
     }
 
+    // aud-a61: a nesting past the bound is its own case below, with its own exception and text.
     public static TheoryData<string> Failures =>
     [
         "not found", "no kind", "a dynamic group", "a nested group without an address", "a nested group without a sync state",
-        "a member read that fails", "more groups than the bound",
+        "a member read that fails",
     ];
 
     [Theory]
@@ -266,35 +267,61 @@ public sealed class ExchangeGroupMembersTests : IDisposable
                 Group(Root, Dl, Nested("inner@contoso.test", Security, synced: null));
                 Group("inner@contoso.test", Security, User("a@contoso.test"));
                 break;
-            case "a member read that fails":
+            default:
                 Group(Root, Dl, User("a@contoso.test"));
                 _failures[Root] = "The operation couldn't be performed because the server is busy.";
-                break;
-            default:
-                for (var i = 0; i <= ExchangeGroupMembers.MaxGroupsRead; i++)
-                {
-                    var address = i == 0 ? Root : $"group{i}@contoso.test";
-                    Group(address, Dl, Nested($"group{i + 1}@contoso.test", Dl, synced: false));
-                }
-                Group($"group{ExchangeGroupMembers.MaxGroupsRead + 1}@contoso.test", Dl, User("a@contoso.test"));
                 break;
         }
 
         Assert.ThrowsAny<Exception>(() => Read(Root));
     }
 
-    [Fact]
-    public void AsManyGroupsAsTheBound_AreRead()
+    /// <summary>A chain of <paramref name="nested"/> cloud groups below group0, the last holding a@contoso.test.</summary>
+    private void Chain(int nested)
     {
-        // The control for the bound: the root and the groups nested under it, fifty reads in all.
-        for (var i = 0; i < ExchangeGroupMembers.MaxGroupsRead - 1; i++)
+        for (var i = 0; i < nested; i++)
             Group($"group{i}@contoso.test", Dl, Nested($"group{i + 1}@contoso.test", Dl, synced: false));
-        Group($"group{ExchangeGroupMembers.MaxGroupsRead - 1}@contoso.test", Dl, User("a@contoso.test"));
+        Group($"group{nested}@contoso.test", Dl, User("a@contoso.test"));
+    }
+
+    [Fact]
+    public void ANestingPastTheBound_Throws_NamingTheBound()
+    {
+        // aud-a61. One more nested group than the bound: the read stops when it finds it, unread, and says why - the
+        // self-grant check refuses on it as a check it could not complete, never as "not a member".
+        Chain(ExchangeGroupMembers.MaxNestedGroups + 1);
+
+        var thrown = Assert.Throws<ExchangeGroupNestingBoundException>(() => Read("group0@contoso.test"));
+
+        Assert.Equal(ExchangeGroupMembers.MaxNestedGroups, thrown.Bound);
+        Assert.Equal("group0@contoso.test", thrown.Group);
+        Assert.Equal($"'group0@contoso.test' holds more than {ExchangeGroupMembers.MaxNestedGroups} nested groups", thrown.Message);
+        Assert.Equal(ExchangeGroupMembers.MaxNestedGroups + 1,
+            Calls.Count(call => call.StartsWith("Get-DistributionGroupMember ", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void AsManyNestedGroupsAsTheBound_AreReadWhole()
+    {
+        // The control for the bound: the group and every group nested under it, one read each.
+        Chain(ExchangeGroupMembers.MaxNestedGroups);
 
         var members = Read("group0@contoso.test");
 
         Assert.Contains(members, member => member.PrimarySmtpAddress == "a@contoso.test");
-        Assert.Equal(ExchangeGroupMembers.MaxGroupsRead, Calls.Count(call => call.StartsWith("Get-DistributionGroupMember ", StringComparison.Ordinal)));
+        Assert.Equal(ExchangeGroupMembers.MaxNestedGroups + 1,
+            Calls.Count(call => call.StartsWith("Get-DistributionGroupMember ", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void AHundredNestedGroups_PastTheOldBound_AreReadWhole()
+    {
+        // aud-a52's bound refused anything nesting 50 groups; a membership of a hundred cloud groups is read and answered.
+        Chain(100);
+
+        var members = Read("group0@contoso.test");
+
+        Assert.Contains(members, member => member.PrimarySmtpAddress == "a@contoso.test");
     }
 
     // ---- the resolver ------------------------------------------------------------------------------

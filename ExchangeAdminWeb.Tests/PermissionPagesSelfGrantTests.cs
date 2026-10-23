@@ -295,16 +295,25 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         return (Assert.IsType<PermissionResult>(GetField<PermissionResult>(component, "result")), warnings());
     }
 
+    /// <summary>
+    /// aud-a61. The write-time re-check's refusal, as its banner shows it: the validator's refusal, and that the same check had
+    /// passed before the confirmation - the operator could not tell the two apart.
+    /// </summary>
+    private static readonly string RefusedAtWrite =
+        SelfGrantRefusal + " The same check had passed before you confirmed; made again right before the write, it refused.";
+
     [Theory]
     [MemberData(nameof(Pages))]
     public async Task TheOnPremWrite_ReChecksTheGrantee_RightBeforeItWrites_AndRefusesASelfGrant(string page)
     {
         var (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
 
+        // aud-a61: the banner says the earlier check had passed, and the record is the write-time action, not SubmitSingle's;
+        // the record's error is the validator's own refusal still.
         Assert.False(result.Success);
-        Assert.Equal(SelfGrantRefusal, result.Message);
+        Assert.Equal(RefusedAtWrite, result.Message);
         var record = Assert.Single(_h.AuditRows());
-        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttempt" : "SetCalendar_SelfGrantAttempt", Text(record, "action"));
+        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttemptAtWrite" : "SetCalendar_SelfGrantAttemptAtWrite", Text(record, "action"));
         Assert.Equal(SelfGrantRefusal, Text(record, "error"));
         Assert.Equal(CloudAlias, Text(record, "affectedUser"));
         Assert.Equal("Failed", Text(record, "result"));
@@ -335,7 +344,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     {
         var (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter());
 
-        AssertTheBanner(result, SelfGrantRefusal, warnings);
+        AssertTheBanner(result, RefusedAtWrite, warnings);
         Assert.Empty(_h.CallsTo("Invoke-Command"));
     }
 
@@ -434,7 +443,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
 
         Assert.False(result.Success);
-        Assert.Equal(SelfGrantRefusal + " The audit row could not be written.", result.Message);
+        Assert.Equal(RefusedAtWrite + " The audit row could not be written.", result.Message);
         Assert.Empty(warnings);
         Assert.Empty(_h.AuditRows());
         Assert.Empty(_h.CallsTo("Invoke-Command"));

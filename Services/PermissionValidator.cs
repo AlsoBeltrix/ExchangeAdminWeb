@@ -629,10 +629,20 @@ public class PermissionValidator
     /// objects, and one that is the operator, or a group holding them, is refused. A read that cannot be made refuses - a
     /// check that could not be completed is never a cleared grant (aud-a28y). aud-a52: a group holds the operator by any
     /// nesting the protected-group evaluator reads, or through their primary group; a group only Exchange Online holds is
-    /// asked of Exchange. aud-a50: the on-premises write runs this again right before it writes.
+    /// asked of Exchange. aud-a50: the on-premises write runs this again right before it writes. aud-a61: each call is its
+    /// own run of the check (<see cref="SelfGrantRun"/>), so it reads afresh.
     /// </remarks>
-    public async Task<string?> ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser)
+    public Task<string?> ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser) =>
+        ValidateSelfGrantAsync(actingUser, affectedUser, new SelfGrantRun());
+
+    /// <summary>
+    /// <see cref="ValidateSelfGrantAsync(ClaimsPrincipal, string)"/> within <paramref name="run"/> (aud-a61): a bulk file's
+    /// rows share one run, so a group several of them name is read once - and a read that failed is that failure for each.
+    /// </summary>
+    internal async Task<string?> ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser, SelfGrantRun run)
     {
+        ArgumentNullException.ThrowIfNull(run);
+
         if (!GetPreventSelfGrant())
             return null;
 
@@ -688,7 +698,7 @@ public class PermissionValidator
 
             // The directory, on every path: on-premises Exchange resolves the grantee against it, and Exchange Online's
             // comparison cannot see a grantee it holds no recipient for.
-            return await CompareInDirectoryAsync(directory, account, actor, exchangeIdentity!, affectedUser, grantee);
+            return await CompareInDirectoryAsync(directory, account, actor, exchangeIdentity!, affectedUser, grantee, run);
         }
     }
 
@@ -769,7 +779,7 @@ public class PermissionValidator
     /// (Constitution, Protected Principals).
     /// </remarks>
     private async Task<string?> CompareInDirectoryAsync(SelfGrantDirectory directory, SelfGrantDirectoryObject? account, ResolvedRecipient? actor,
-        string exchangeIdentity, string affectedUser, ResolvedRecipient? grantee)
+        string exchangeIdentity, string affectedUser, ResolvedRecipient? grantee, SelfGrantRun run)
     {
         IReadOnlyList<SelfGrantDirectoryObject> named;
         try
@@ -804,7 +814,7 @@ public class PermissionValidator
             }
 
             // Cloud-only (aud-a52): Exchange holds its membership; the synced groups nested in it are the directory's to read.
-            var (refusal, synced) = await CompareInExchangeGroupAsync(directory, account, actor, exchangeIdentity, affectedUser, grantee);
+            var (refusal, synced) = await CompareInExchangeGroupAsync(directory, account, actor, exchangeIdentity, affectedUser, grantee, run);
             if (refusal is not null)
                 return refusal;
             groups.AddRange(synced);
@@ -816,7 +826,7 @@ public class PermissionValidator
         // aud-a60. Read under the protected-principal directory-read credential, never the session's identity: a link that
         // identity cannot see reads as no row, and no row is the evaluator's evidence. Without the credential there is no
         // answer to give.
-        var (credential, credentialProblem) = await DirectoryReadCredentialAsync();
+        var (credential, credentialProblem) = await run.DirectoryReadCredentialAsync(DirectoryReadCredentialAsync);
         if (credential is null)
         {
             _logger.LogWarning("The self-grant check cannot read whether {User} is a member of a group {Affected} names: {Problem} - failing closed", exchangeIdentity, affectedUser, credentialProblem);
@@ -824,12 +834,14 @@ public class PermissionValidator
         }
 
         // One evaluation for every group concerned: the operator and their primary group are read once, and an answer the
-        // evaluator could not complete refuses unless a group already matched (aud-a52).
+        // evaluator could not complete refuses unless a group already matched (aud-a52). Once per run for this operator and
+        // these groups (aud-a61): later rows of a bulk file take its answer, or its failure.
         ProtectedGroupMembership.Result membership;
         try
         {
             var entries = groups.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            membership = await Task.Run(() => ProtectedGroupMembership.Evaluate(entries, account.DistinguishedName, directory.GroupsUnder(credential), _logger));
+            membership = await run.DirectoryMembershipAsync(account.DistinguishedName, entries,
+                () => Task.Run(() => ProtectedGroupMembership.Evaluate(entries, account.DistinguishedName, directory.GroupsUnder(credential), _logger)));
         }
         catch (Exception ex)
         {
@@ -866,7 +878,8 @@ public class PermissionValidator
     /// one the directory does not hold refuses. A check that could not be completed is never a cleared grant (aud-a28y).
     /// </remarks>
     private async Task<(string? Refusal, IReadOnlyList<string> SyncedGroups)> CompareInExchangeGroupAsync(SelfGrantDirectory directory,
-        SelfGrantDirectoryObject? account, ResolvedRecipient? actor, string exchangeIdentity, string affectedUser, ResolvedRecipient group)
+        SelfGrantDirectoryObject? account, ResolvedRecipient? actor, string exchangeIdentity, string affectedUser, ResolvedRecipient group,
+        SelfGrantRun run)
     {
         var unread = SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
         if (actor is null)
@@ -875,13 +888,24 @@ public class PermissionValidator
             return (SelfGrantCheckIncompleteBecause($"Exchange Online holds no recipient for you, so whether you are a member of the group '{affectedUser}' could not be checked"), []);
         }
 
+        // Once per run for this operator and this group (aud-a61): later rows of a bulk file take the members read, or the
+        // failure, the first row got.
         IReadOnlyList<ExchangeGroupMember>? members;
         try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>()
-                ?? throw new InvalidOperationException("no identity resolver is registered");
-            members = await resolver.ReadGroupMembersAsync(group.PrimarySmtpAddress);
+            members = await run.ExchangeMembersAsync(exchangeIdentity, group.PrimarySmtpAddress, async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var resolver = scope.ServiceProvider.GetService<IIdentityResolver>()
+                    ?? throw new InvalidOperationException("no identity resolver is registered");
+                return await resolver.ReadGroupMembersAsync(group.PrimarySmtpAddress);
+            });
+        }
+        catch (ExchangeGroupNestingBoundException ex)
+        {
+            // A read cut off at the bound is no answer; the refusal names the bound, so it is not read as an outage (aud-a61).
+            _logger.LogWarning(ex, "The self-grant check stopped reading the members of {Affected}: more than {Bound} nested groups - failing closed", affectedUser, ex.Bound);
+            return (SelfGrantCheckIncompleteBecause($"the group '{affectedUser}' holds more than {ex.Bound} nested groups, more than the check reads"), []);
         }
         catch (Exception ex)
         {

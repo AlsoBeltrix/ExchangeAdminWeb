@@ -16,6 +16,16 @@ internal static class SelfGrantRefusalRecord
     internal const string AuditRowNotWritten = "The audit row could not be written.";
 
     /// <summary>
+    /// aud-a61. What the on-premises write's re-check adds to its refusal: the same check passed before the operator
+    /// confirmed, so what it reads changed - or could no longer be read - in the pause.
+    /// </summary>
+    internal const string RefusedAtWrite =
+        "The same check had passed before you confirmed; made again right before the write, it refused.";
+
+    /// <summary>The write-time re-check's refusal (aud-a61): the validator's own, then <see cref="RefusedAtWrite"/>.</summary>
+    internal static string AtWrite(string refusal) => refusal + " " + RefusedAtWrite;
+
+    /// <summary>
     /// Writes the refusal's record through <paramref name="write"/> and returns the banner: the refusal, and
     /// <see cref="AuditRowNotWritten"/> after it when the writer dropped the row or the write threw - a throw logged against
     /// <paramref name="target"/>, as <c>SubmitSingle</c>'s catch logs it.

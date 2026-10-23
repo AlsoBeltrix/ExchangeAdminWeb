@@ -742,6 +742,107 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         public void Write(Action<SqliteConnection, SqliteTransaction> write) => inner.Write(write);
     }
 
+    // ---- aud-a61: one run reads each group once; the nesting bound named ---------------------------------------
+
+    [Fact]
+    public async Task OneRun_ReadsACloudGroupsMembersOnce_ForEveryCheckThatNamesIt_AndANewRunReadsAgain()
+    {
+        // A bulk file's rows naming one large group each read its whole membership: 200 rows, 200 traversals.
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"));
+        var validator = _h.NothingProtectedValidator(resolver);
+        var run = new SelfGrantRun();
+
+        for (var row = 0; row < 3; row++)
+            Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup, run));
+
+        await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup));
+        await resolver.Received(2).ReadGroupMembersAsync(CloudGroup);
+    }
+
+    [Fact]
+    public async Task OneRun_KeepsAReadThatFailed_AndRefusesEveryCheckAlike()
+    {
+        // The failure is kept with the run, not retried row by row: every row naming the group is told the same.
+        var resolver = ExchangeHoldsTheCloudGroup();
+        resolver.ReadGroupMembersAsync(CloudGroup).Returns(
+            Task.FromException<IReadOnlyList<ExchangeGroupMember>>(new InvalidOperationException("Exchange Online is unreachable")));
+        var validator = _h.NothingProtectedValidator(resolver);
+        var run = new SelfGrantRun();
+
+        for (var row = 0; row < 3; row++)
+            Assert.Equal(IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read"),
+                await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup, run));
+
+        await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
+    }
+
+    [Fact]
+    public async Task OneRun_EvaluatesADirectoryGroupOnce_AndHasItsCredentialOnce()
+    {
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var validator = _h.NothingProtectedValidator(resolver);
+        var run = new SelfGrantRun();
+
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Delegates, run));
+        var oneEvaluation = _h.Forest.MembershipReads.Count;
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Delegates, run));
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Delegates, run));
+
+        Assert.True(oneEvaluation > 0);
+        Assert.Equal(oneEvaluation, _h.Forest.MembershipReads.Count);
+        Assert.Equal(1, _h.DirectoryReadFetches);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task BothBulkLoops_ReadAGroupTheirRowsShare_Once(bool calendar, bool readFails)
+    {
+        // The loop is one run: three rows granting one cloud group read its members once - and, when that read fails, fail
+        // all three alike, each recorded with the validator's refusal.
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"));
+        if (readFails)
+            resolver.ReadGroupMembersAsync(CloudGroup).Returns(
+                Task.FromException<IReadOnlyList<ExchangeGroupMember>>(new InvalidOperationException("Exchange Online is unreachable")));
+        var rows = string.Concat(Enumerable.Repeat(Row(calendar, CloudGroup), 3));
+
+        var bulk = await RunBulk(calendar, grant: true, rows, resolver);
+
+        await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
+        if (readFails)
+        {
+            Assert.Equal(3, bulk.FailedCount);
+            var refusal = IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read");
+            Assert.All(bulk.Entries, entry => Assert.Equal(refusal, entry.Message));
+            Assert.Equal(3, _h.AuditRows().Count(row => Text(row, "action").EndsWith("_SelfGrantAttempt", StringComparison.Ordinal)
+                && Text(row, "error") == refusal));
+        }
+        else
+        {
+            Assert.Equal(3, bulk.SuccessCount);
+        }
+    }
+
+    [Fact]
+    public async Task ACloudGroupNestingPastTheBound_IsRefused_SayingSo()
+    {
+        // A traversal cut off at the bound is no answer: refused as incomplete, and the refusal names the bound rather than
+        // reading as a membership that could not be read for any reason.
+        var resolver = ExchangeHoldsTheCloudGroup();
+        resolver.ReadGroupMembersAsync(CloudGroup).Returns(Task.FromException<IReadOnlyList<ExchangeGroupMember>>(
+            new ExchangeGroupNestingBoundException(CloudGroup, ExchangeGroupMembers.MaxNestedGroups)));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(IncompleteBecause(
+            $"the group '{CloudGroup}' holds more than {ExchangeGroupMembers.MaxNestedGroups} nested groups, more than the check reads"), result);
+    }
+
     // ---- Exchange Online (aud-a28y) ----------------------------------------------------------------
 
     [Theory]
@@ -978,21 +1079,23 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     // ---- the source ------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("Components/Pages/MailboxPermissions.razor", 2)]
-    [InlineData("Components/Pages/CalendarPermissions.razor", 2)]
-    [InlineData("Services/MailboxPermissionService.cs", 1)]
-    [InlineData("Services/CalendarPermissionService.cs", 1)]
-    public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath, int sites)
+    [InlineData("Components/Pages/MailboxPermissions.razor", 2, 1)]
+    [InlineData("Components/Pages/CalendarPermissions.razor", 2, 1)]
+    [InlineData("Services/MailboxPermissionService.cs", 1, 0)]
+    [InlineData("Services/CalendarPermissionService.cs", 1, 0)]
+    public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath, int sites, int atWrite)
     {
         // The two bulk loops are driven above and the two pages in PermissionPagesSelfGrantTests; this reads every record
         // from the source, comments blanked. Each records the refusal it was handed, as their protected-target denials
         // already do, rather than a fixed sentence that says every refusal was a self-grant. aud-a50: each page records
-        // the refusal in SubmitSingle and again in ExecuteOnPrem, which checks the grantee right before the on-prem write.
+        // the refusal in SubmitSingle and again in ExecuteOnPrem, which checks the grantee right before the on-prem write;
+        // aud-a61: that one under its own action, *_SelfGrantAttemptAtWrite.
         var path = AuditCategoryFilingTests.FindRepoFile(relativePath.Split('/'));
         var code = RazorSyntax.CommentsBlanked(File.ReadAllText(path));
 
-        var records = Regex.Matches(code, @"_SelfGrantAttempt""").ToList();
+        var records = Regex.Matches(code, @"_SelfGrantAttempt(?:AtWrite)?""").ToList();
         Assert.Equal(sites, records.Count);
+        Assert.Equal(atWrite, Regex.Matches(code, @"_SelfGrantAttemptAtWrite""").Count);
         foreach (var record in records)
         {
             var detail = Regex.Match(code[record.Index..], @"errorDetail:\s*([^,)]+)");
@@ -1026,8 +1129,15 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         const BindingFlags Every = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
         Assert.DoesNotContain(typeof(PermissionValidator).GetMethods(Every), method => method.Name == "ValidateSelfGrant");
-        var check = Assert.Single(typeof(PermissionValidator).GetMethods(Every),
-            method => method.Name == nameof(PermissionValidator.ValidateSelfGrantAsync));
+        // The check every page calls, and aud-a61's overload the bulk loops call within one run: each takes the principal
+        // and the grantee first.
+        var checks = typeof(PermissionValidator).GetMethods(Every)
+            .Where(method => method.Name == nameof(PermissionValidator.ValidateSelfGrantAsync)).ToList();
+        Assert.Equal(2, checks.Count);
+        var check = Assert.Single(checks, method => method.IsPublic);
         Assert.Equal(new[] { typeof(ClaimsPrincipal), typeof(string) }, check.GetParameters().Select(p => p.ParameterType));
+        var withinARun = Assert.Single(checks, method => !method.IsPublic);
+        Assert.Equal(new[] { typeof(ClaimsPrincipal), typeof(string), typeof(SelfGrantRun) },
+            withinARun.GetParameters().Select(p => p.ParameterType));
     }
 }
