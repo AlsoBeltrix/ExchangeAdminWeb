@@ -674,11 +674,17 @@ public class ExtendedLogServiceTests
     {
         // aud-a49. Dispose waited a fixed 5 s, and a full queue needs about 11 s at the append cost aud-a46 measured: the
         // rest was neither written nor counted.
+        //
+        // kd-16. The bound for the 100 queued is 100 s - far above any drain a loaded host has shown (about 28 s, at 280 ms
+        // an entry; at a 100 ms allowance that run dropped 64). Dispose returns the moment the writer is done, so a healthy
+        // run pays nothing for it. The 20 ms sleep below keeps the drain at least 2 s - Thread.Sleep never returns early -
+        // so it outlasts the floor (a fixed wait) and one entry's allowance (a wait that ignores the queue's length), and
+        // both of those still fail this test however loaded the host is.
         using var temp = new TempDirectory();
         var service = CreateService(temp.Path);
         service.SetLevel("Error");
         service.DisposeFloor = TimeSpan.FromMilliseconds(100);
-        service.DisposeAllowancePerEntry = TimeSpan.FromMilliseconds(100);
+        service.DisposeAllowancePerEntry = TimeSpan.FromSeconds(1);
         using var entered = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         service.WriteLineBytes = (file, line) =>
@@ -690,14 +696,16 @@ public class ExtendedLogServiceTests
             }
             else
             {
-                Thread.Sleep(5);
+                Thread.Sleep(20);
             }
 
             file.Write(line);
         };
 
         service.Write(LogEventLevel.Error, "held", "Test");
-        Assert.True(entered.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "the consumer never took the first entry");
+
+        // A signal, not a timing: the wait only bounds a consumer that never starts, so it is far above a stall too (kd-16).
+        Assert.True(entered.Wait(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken), "the consumer never took the first entry");
         for (var i = 0; i < 100; i++)
             service.Write(LogEventLevel.Error, $"queued {i}", "Test");
 
