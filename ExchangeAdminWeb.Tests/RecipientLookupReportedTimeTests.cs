@@ -28,6 +28,9 @@ namespace ExchangeAdminWeb.Tests;
 /// hands out an in-process runspace carrying stub <c>Get-Recipient</c>, <c>Get-Mailbox</c> and
 /// <c>Get-MailboxStatistics</c> functions that report what each test sets, and the page's compiled render
 /// tree with the result. The mailbox is a cloud one, so nothing on-premises is asked. No Exchange.
+/// aud-a68: it has no archive, which its archive read answers as Exchange does - with its not-found, not with no row,
+/// which since aud-a54 is an archive that could not be read - so the lookup has nothing to warn of, and every test here
+/// checks that it warns of nothing.
 /// </remarks>
 public sealed class RecipientLookupReportedTimeTests : IDisposable
 {
@@ -101,7 +104,7 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
                 state.Commands.Add(new SessionStateFunctionEntry("Get-MailboxStatistics", """
                     [CmdletBinding()]
                     param([string] $Identity, [switch] $Archive)
-                    if ($Archive) { return }
+                    if ($Archive) { $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.InvalidOperationException]::new("The mailbox $Identity has no archive."), 'StubNoArchive', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity)); return }
                     [pscustomobject]@{ ItemCount = 10; DeletedItemCount = 1; LastLogonTime = $Read['LastLogonTime']; TotalItemSize = '1 GB (1,073,741,824 bytes)'; TotalDeletedItemSize = '0 B (0 bytes)' }
                     """));
                 var runspace = RunspaceFactory.CreateRunspace(state);
@@ -147,6 +150,7 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
     {
         var result = await CreateService().GetRecipientInfoAsync(Mailbox);
         Assert.Null(result.Error);
+        Assert.Empty(result.Warnings);
 
         typeof(Page).GetField("result", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, result);
         var culture = CultureInfo.CurrentCulture;

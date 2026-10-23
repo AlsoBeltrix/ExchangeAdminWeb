@@ -86,10 +86,18 @@ public class RecipientLookupService : ExchangeServiceBase
                             r.MailboxSizeGB = ParseSizeToGB(stat.Properties["TotalItemSize"]?.Value?.ToString());
                             r.DeletedItemSizeGB = ParseSizeToGB(stat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
+                        else
+                        {
+                            // aud-a68. An answer with no row is not statistics: every figure read "N/A" and nothing said why.
+                            r.Warnings.Add("Could not retrieve mailbox statistics: Exchange returned no mailbox statistics.");
+                        }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (!IsCancellation(ex))
                     {
-                        r.Warnings.Add($"Could not retrieve mailbox statistics: {ex.Message}");
+                        // aud-a68. The cmdlet's own words (aud-a23i's helper), not PowerShell's "The running command stopped
+                        // because ..." prefix. A cancellation is not a read that failed (aud-a23g's rule): it goes to the lookup's
+                        // own catch, as the archive read's does.
+                        r.Warnings.Add($"Could not retrieve mailbox statistics: {ResolveFailure(ex).primary.TrimEnd('.')}.");
                     }
 
                     // aud-a54. Exchange's own not-found for the archive, by structure (IsNotFound), is no archive; any other
@@ -133,7 +141,11 @@ public class RecipientLookupService : ExchangeServiceBase
             }
             catch (Exception ex)
             {
-                r.Error = ex.Message;
+                // aud-a68. Exchange's own "no such recipient", read from the error's structure, is the lookup's own words, which
+                // only an empty answer reached; anything else is the cmdlet's own words (aud-a23i's helper), not PowerShell's
+                // "The running command stopped because ..." prefix. Every later read here takes its own not-found, so the one
+                // that gets this far is Get-Recipient's.
+                r.Error = IsNotFound(ex) ? $"Recipient '{emailAddress}' not found." : ResolveFailure(ex).primary;
                 _logger.LogError(ex, "Error getting recipient info for {Email}", emailAddress);
             }
 
@@ -168,13 +180,20 @@ public class RecipientLookupService : ExchangeServiceBase
                 var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
                 if (onPremSize.MailboxUnreadable is null)
                     result.MailboxSizeGB = onPremSize.MailboxGB;
-                if (onPremSize.ArchiveUnreadable is null)
+                // aud-a68. An on-premises mailbox's archive is the on-premises read's to say: found, it is shown with its size;
+                // not read, "Could not be read". ArchiveEnabled was set by the Exchange Online read alone, so every on-premises
+                // archive showed "Archive: Disabled" with its rows hidden, and one that could not be read "Disabled" beside its
+                // warning.
+                result.ArchiveEnabled = onPremSize.ArchiveFound;
+                result.ArchiveUnreadable = onPremSize.ArchiveUnreadable;
+                if (onPremSize.ArchiveFound && onPremSize.ArchiveUnreadable is null)
                     result.ArchiveSizeGB = onPremSize.ArchiveGB;
                 if (onPremSize.UnreadableReason("on-premises") is { } unreadable)
                     result.Warnings.Add($"{char.ToUpperInvariant(unreadable[0])}{unreadable[1..]}.");
             }
             catch (Exception ex)
             {
+                result.ArchiveUnreadable = ResolveFailure(ex).primary.TrimEnd('.'); // aud-a68: the archive was not read either, so it is not "Disabled"
                 result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ex.Message}");
             }
         }

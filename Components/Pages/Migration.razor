@@ -471,7 +471,7 @@
                         @* spinner removed: the batch-list load reports to
                            the status bar, with its elapsed time.
                            Owner ruling 2026-10-02. *@
-                        <p class="mt-2 text-muted">@(actionInProgress == "clearing" ? "Removing completed batches and reloading..." : "Loading migration batches...")</p>
+                        <p class="mt-2 text-muted">@(bulkBatchActivity != null ? $"{bulkBatchActivity} and reloading..." : "Loading migration batches...")</p>
                     </div>
                 }
                 else if (!batchesLoaded)
@@ -1632,7 +1632,7 @@
     private List<MigrationUserInfo>? batchUsers;
     private bool mailboxLoadFailed; private string? mailboxLoadFailure; // aud-a23p: why the last load failed, for the pane; shown only while mailboxLoadFailed is set
     private string? loadingBatchUsers;
-    private string? actionInProgress;
+    private string? actionInProgress; private string? bulkBatchActivity; // aud-a68: the bulk batch run under way, as its activity names it, for the busy text over the batch list; null when none is
     private string? loadingReport;
     private string? reportUser;
     private string? userReport; private string? reportFailure; // aud-a23k: why the last fetch has no report; null when it has one, and cleared wherever userReport is
@@ -1844,7 +1844,7 @@
             return;
 
         expandedBatch = open;
-        batchUsersGeneration++;
+        batchUsersGeneration++; selectedMailboxes.Clear(); // kd-2: a different batch is a different list - a new generation and no tick carried over, as the filter and the page below are not; kept, batch A's tick drew "Actions (1)" over batch B with no row ticked
         batchUsers = null;
         InvalidateStoredReports(open);
 
@@ -1912,7 +1912,7 @@
             return;
 
         expandedBatch = requested;
-        batchUsersGeneration++;
+        batchUsersGeneration++; selectedMailboxes.Clear(); // kd-2: the same for a batch opened from the address (Back, a pasted link, a reconnect)
         batchUsers = null;
         InvalidateStoredReports(requested);
 
@@ -2752,17 +2752,17 @@
     // hidden by the filter (R11; PinnedMailboxes exists for that), so narrowing it again by the
     // filter would act on fewer mailboxes than the pinned block is showing.
     //
-    // THE SELECTION IS PRUNED TO THE LOADED BATCH FIRST (review finding rc-2). Nothing on this
-    // page clears selectedMailboxes when the open batch changes - AdoptSelectionAsOpenBatch nulls
-    // batchUsers, blanks the filter and resets the page, and leaves the ticks - so an address
-    // ticked in batch A is still in the set while batch B is open, with no row showing a tick.
-    // Unpruned, that stale address would take this control down the "something is ticked" branch
-    // in a batch where the operator has ticked nothing, and Remove completed (0) would render
-    // disabled over a batch full of completed mailboxes. PruneSelection is the planner's own
-    // helper for exactly this and its remarks say it belongs after every reload; it keeps a
-    // ticked mailbox the FILTER hides, because it reads batchUsers rather than the filtered rows,
-    // which is what R11 requires. The wider stale-selection condition is pre-existing and is
-    // recorded in .agents/state.md; this is the part that would make the new control lie.
+    // THE SELECTION IS PRUNED TO THE LOADED BATCH FIRST (review finding rc-2). When rc-2 was
+    // found nothing on this page cleared selectedMailboxes when the open batch changed, so an
+    // address ticked in batch A was still in the set while batch B was open, with no row showing
+    // a tick; both adoptions now clear it (kd-2), and the prune stays as the guard that does not
+    // depend on that. Unpruned, a stale address would take this control down the "something is
+    // ticked" branch in a batch where the operator has ticked nothing, and Remove completed (0)
+    // would render disabled over a batch full of completed mailboxes. PruneSelection is the
+    // planner's own helper for exactly this; it keeps a ticked mailbox the FILTER hides, because
+    // it reads batchUsers rather than the filtered rows, which is what R11 requires. A tick that
+    // outlived its batch made the Actions bar count a selection no row showed; that was kd-2,
+    // fixed at the adoption rather than here, where this control would otherwise lie.
     private IReadOnlyList<string> RemoveCompletedCandidates() =>
         MigrationUserActionPlanner.NarrowToSelection(FilteredSortedMailboxes(), TicksInThisBatch());
 
@@ -3517,30 +3517,19 @@
     {
         // Set before the first await - see CreateSingleMigrationBatch for why. The guards moved
         // inside the try so the existing finally clears both flags on every early return.
-        actionInProgress = "clearing";
+        var running = $"{auditAction} on {batchNames.Count} batch(es)"; actionInProgress = bulkBatchActivity = running; // aud-a68: named from its action, as a single action's activity is; the busy reason was "clearing" and the label "Removing completed batches" whichever of the six ran
         isLoadingStatus = true;
         batchActionResult = null;
 
         using var activity = Progress.Begin(
-            "Exchange Migration", "Removing completed batches", ActivitySize.Unknown);
+            "Exchange Migration", running, ActivitySize.Unknown);
         string? bulkFailure = "Nothing was done."; // aud-a23m: the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-            {
-                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
-                try
-                {
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
-                }
-                return;
-            }
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, notificationAction, ticket, "MigrationManage")); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied."
 
             if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 
@@ -3661,7 +3650,7 @@
         }
         finally
         {
-            actionInProgress = null;
+            bulkBatchActivity = null; actionInProgress = null;
             activity.Complete(bulkFailure is null, bulkFailure);
             isLoadingStatus = false;
         }
@@ -3695,20 +3684,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-            {
-                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
-                try
-                {
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied",
-                        notificationAction, false, ticket,
-                        errorDetail: "MigrationManage authorization denied");
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
-                }
-                return;
-            }
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", notificationAction, ticket, "MigrationManage")); return; } // aud-a68: the same, for the mailbox run
 
             if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 

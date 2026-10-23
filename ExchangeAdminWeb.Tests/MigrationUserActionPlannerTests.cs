@@ -267,10 +267,10 @@ public class MigrationUserActionPlannerTests
     [Fact]
     public void ASelectionLeftOverFromAnotherBatchDoesNotNarrowThisOne()
     {
-        // Review finding rc-2. Nothing on the Migration page clears selectedMailboxes when the
-        // open batch changes, so an address ticked in batch A is still in the set while batch B
-        // is open and no row in B shows a tick. Unpruned, that address takes the narrowing branch
-        // in a batch where the operator ticked nothing.
+        // Review finding rc-2. An address ticked in batch A, still in the set while batch B is
+        // open and no row in B shows a tick - the page clears the set when the open batch changes
+        // since kd-2, and this prune is the guard that does not depend on it. Unpruned, that
+        // address takes the narrowing branch in a batch where the operator ticked nothing.
         var batchB = Loaded(("b1@x.com", "Completed"), ("b2@x.com", "Completed"));
         string[] tickedInBatchA = ["a1@x.com"];
 

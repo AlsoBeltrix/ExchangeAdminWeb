@@ -211,19 +211,40 @@
 
         isLoading = true;
         result = null;
+        var target = emailAddress.Trim();
 
         try
         {
             using var activity = Progress.Begin(
-                "Recipient Lookup", $"Looking up {emailAddress.Trim()}", ActivitySize.Unknown);
+                "Recipient Lookup", $"Looking up {target}", ActivitySize.Unknown);
 
-            result = await LookupService.GetRecipientInfoAsync(emailAddress.Trim());
-            activity.Complete(result.Error == null, result.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", emailAddress.Trim(), result.Error == null, result.Error);
-        }
-        catch (Exception ex)
-        {
-            result = new RecipientInfoResult { EmailAddress = emailAddress, Error = ex.Message };
+            // aud-a68. Only the lookup is caught here. One that throws - the connection could not be opened, the pool could not
+            // lend a session - is a lookup that failed: shown in the cmdlet's own words (aud-a23i's helper, not PowerShell's "The
+            // running command stopped ..." prefix), its activity ends with them, and it is audited as Failed like any other. The
+            // shared catch did none of that: no audit row, though this page says all lookups are logged, and an activity that
+            // ended "This did not finish.".
+            RecipientInfoResult lookup;
+            try
+            {
+                lookup = await LookupService.GetRecipientInfoAsync(target);
+            }
+            catch (Exception ex)
+            {
+                lookup = new RecipientInfoResult { EmailAddress = target, Error = ExchangeServiceBase.ResolveFailure(ex).primary };
+            }
+
+            result = lookup;
+            activity.Complete(lookup.Error == null, lookup.Error);
+
+            // An audit write that throws is logged, and never shown as the lookup's failure: the lookup was made.
+            try
+            {
+                Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", target, lookup.Error == null, lookup.Error);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write the audit row for the recipient lookup of {Target}", target);
+            }
         }
         finally
         {

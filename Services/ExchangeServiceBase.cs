@@ -581,6 +581,12 @@ public abstract class ExchangeServiceBase
         // aud-a23o. Neither size could be read, for one reason: a read that could not be made at all.
         internal static MailboxSizes Unreadable(string reason) => new(0, reason, 0, reason);
 
+        // aud-a68. The archive read answered with a row: there is an archive, its size read or not. Exchange's not-found and
+        // an empty archive are both 0 GB with no marker, so the size cannot say it. Set by the on-premises read, for Recipient
+        // Lookup; false when Exchange said there is none, when that read failed or answered nothing, and from the Exchange
+        // Online size read (MigrationService), which does not set it - nothing that reads its result asks.
+        internal bool ArchiveFound { get; init; }
+
         // aud-a23o. What could not be read and why, as one clause ("the on-premises mailbox size could not be read: ..."), or
         // null when both were read; one reason for both sizes is said once.
         internal string? UnreadableReason(string where) => (MailboxUnreadable, ArchiveUnreadable) switch
@@ -665,10 +671,13 @@ public abstract class ExchangeServiceBase
 
                 double archiveGB = 0;
                 string? archiveUnreadable = null;
+                var archiveFound = false;
                 try
                 {
                     AddOnPremRead(ps, session, "Get-MailboxStatistics -Identity $Identity -Archive -ErrorAction Stop | Select-Object TotalItemSize", emailAddress);
-                    (archiveGB, archiveUnreadable) = ReadSize(Invoke(ps), "on-premises Exchange returned no archive statistics");
+                    var archiveStats = Invoke(ps);
+                    archiveFound = archiveStats.FirstOrDefault() is not null;
+                    (archiveGB, archiveUnreadable) = ReadSize(archiveStats, "on-premises Exchange returned no archive statistics");
                     _logger.LogInformation("On-prem archive size for {Email}: {Size}", emailAddress, archiveUnreadable ?? $"{archiveGB} GB");
                 }
                 catch (Exception ex) when (IsNotFound(ex))
@@ -680,7 +689,7 @@ public abstract class ExchangeServiceBase
                     archiveUnreadable = $"Get-MailboxStatistics -Archive failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
                 }
 
-                return new MailboxSizes(mailboxGB, mailboxUnreadable, archiveGB, archiveUnreadable);
+                return new MailboxSizes(mailboxGB, mailboxUnreadable, archiveGB, archiveUnreadable) { ArchiveFound = archiveFound };
             }
             catch (Exception ex) when (!IsCancellation(ex))
             {

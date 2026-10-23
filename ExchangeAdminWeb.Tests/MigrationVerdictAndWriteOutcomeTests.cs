@@ -203,7 +203,7 @@ public sealed class MigrationVerdictAndWriteOutcomeTests : IDisposable
             Func<string, Task<PermissionResult>> stop = name => service.StopMigrationBatchAsync(name);
             await Call(page, handler, (IReadOnlyList<string>)[], (IReadOnlyList<MigrationBatchSkip>)[new(BatchName, "Completed")],
                 stop, "StopMigrationBatch", "Migration_StopSelected", "Queued to stop", "INC0001");
-            label = "Removing completed batches";
+            label = "StopMigrationBatch on 0 batch(es)"; // aud-a68: the run's own name; it was "Removing completed batches" whatever ran
         }
         else
         {
@@ -252,7 +252,7 @@ public sealed class MigrationVerdictAndWriteOutcomeTests : IDisposable
                     Func<string, Task<PermissionResult>> stop = name => service.StopMigrationBatchAsync(name);
                     await Call(page, handler, (IReadOnlyList<string>)[BatchName], (IReadOnlyList<MigrationBatchSkip>)[], stop,
                         "StopMigrationBatch", "Migration_StopSelected", "Queued to stop", "INC0001");
-                    return ("Removing completed batches", Shown(page, "batchActionResult"));
+                    return ("StopMigrationBatch on 1 batch(es)", Shown(page, "batchActionResult")); // aud-a68: the run's own name
                 }
             case "ExecuteBulkMailboxAction":
                 {
