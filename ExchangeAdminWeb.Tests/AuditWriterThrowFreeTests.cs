@@ -302,6 +302,40 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
     }
 
     [Theory]
+    [InlineData("mailbox", "written")]
+    [InlineData("mailbox", CannotSerialise)]
+    [InlineData("mailbox", FileHeld)]
+    [InlineData("calendar", "written")]
+    [InlineData("calendar", CannotSerialise)]
+    [InlineData("calendar", FileHeld)]
+    public void ThePermissionRecords_HandBackWhetherTheirRowWasWritten(string record, string cause)
+    {
+        // aud-a50, part 4. The Mailbox Permissions and Calendar Permissions pages could tell that a refusal's row was not
+        // written only from a throw, which the writer no longer does (aud-a28q); the two methods they audit through hand back
+        // what the writer said.
+        var extra = cause == CannotSerialise ? new Dictionary<string, object?> { ["unwritable"] = Unwritable("a cycle") } : null;
+
+        JsonlWriteOutcome outcome;
+        using (cause == FileHeld ? HoldTheFile(audit: true) : null)
+        {
+            outcome = record == "mailbox"
+                ? _audit.LogMailboxPermission("operator", "10.0.0.5", "AddFullAccess_SelfGrantAttempt", "shared@contoso.test",
+                    "jdoe@contoso.test", "FullAccess", false, "INC100", errorDetail: "refused", extra: extra)
+                : _audit.LogCalendarPermission("operator", "10.0.0.5", "SetCalendar_SelfGrantAttempt", "shared@contoso.test",
+                    "jdoe@contoso.test", "Reviewer", false, "INC100", errorDetail: "refused", extra: extra);
+        }
+
+        var expected = cause switch
+        {
+            "written" => JsonlWriteOutcome.Written,
+            CannotSerialise => JsonlWriteOutcome.NotSerializable,
+            _ => JsonlWriteOutcome.FileWriteFailed,
+        };
+        Assert.Equal(expected, outcome);
+        Assert.Equal(cause == "written" ? 1 : 0, Lines(audit: true).Count);
+    }
+
+    [Theory]
     [InlineData("audit", CannotSerialise)]
     [InlineData("audit", FileHeld)]
     [InlineData("trace", CannotSerialise)]

@@ -44,7 +44,7 @@ public class AuditService
             evt[kvp.Key] = kvp.Value;
     }
 
-    public void LogMailboxPermission(
+    public JsonlWriteOutcome LogMailboxPermission(
         string performedBy,
         string ipAddress,
         string action,
@@ -74,10 +74,11 @@ public class AuditService
         };
 
         MergeExtra(evt, extra);
-        WriteAuditEvent(evt);
+        WriteAuditEvent(evt, out var outcome);
+        return outcome;
     }
 
-    public void LogCalendarPermission(
+    public JsonlWriteOutcome LogCalendarPermission(
         string performedBy,
         string ipAddress,
         string action,
@@ -105,7 +106,8 @@ public class AuditService
         };
 
         MergeExtra(evt, extra);
-        WriteAuditEvent(evt);
+        WriteAuditEvent(evt, out var outcome);
+        return outcome;
     }
 
     public void LogMigrationCheck(
@@ -463,7 +465,7 @@ public class AuditService
     private const string SettingsChangeCategory = "AdminSettings";
     private const string ConnectionPoolDrainAction = "DrainConnectionPool";
 
-    private void WriteAuditEvent(Dictionary<string, object?> evt)
+    private void WriteAuditEvent(Dictionary<string, object?> evt, out JsonlWriteOutcome outcome)
     {
         OperationTraceService.OperationScope? implicitScope = null;
         if (!_operationTrace.HasCurrentOperation)
@@ -478,7 +480,6 @@ public class AuditService
                 details: new Dictionary<string, object?> { ["source"] = "AuditService" });
         }
 
-        JsonlWriteOutcome outcome;
         try
         {
             evt["eventType"] = "audit";
@@ -518,6 +519,8 @@ public class AuditService
                 GetString(evt, "action") ?? string.Empty,
                 IsSuccessfulAuditResult(GetString(evt, "result")));
     }
+
+    private void WriteAuditEvent(Dictionary<string, object?> evt) => WriteAuditEvent(evt, out _);
 
     // The "AuditWritten" step's details (aud-a28u): the audit's category, action and result, as before, and - when the row
     // was not written - why, in words, the writer's outcome being a category rather than a message.

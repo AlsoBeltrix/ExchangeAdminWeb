@@ -190,6 +190,38 @@ was audited as `*_SelfGrantAttempt`, and a revocation row went to the target che
 Caller-visible change, by design: a stored `PreventSelfGrant` that is neither true nor false is named in the log once per
 process for each value, not once per self-grant check (per bulk row); self-grants stay refused.
 
+### Part 4 - the pages learn whether the refusal's row was written
+
+aud-a52 landed between part 2 and this part (`f7921ce8`, its own record).
+
+- `Services/AuditService.cs`: the shared writer is `private void WriteAuditEvent(Dictionary<string, object?> evt, out
+  JsonlWriteOutcome outcome)` - its body as it was, the local `outcome` now the out parameter, so the telemetry call is
+  still its last statement and `UsageTelemetryServiceTests.AuditService_HookIsLastInWriteAuditEvent` (another agent's
+  file, not edited) holds - and `private void WriteAuditEvent(Dictionary<string, object?> evt) => WriteAuditEvent(evt, out _);`
+  after it, which every other method still calls, unchanged. `LogMailboxPermission` and `LogCalendarPermission` return
+  `JsonlWriteOutcome` (`WriteAuditEvent(evt, out var outcome); return outcome;`); every other caller ignores it as before.
+- `Components/Pages/MailboxPermissions.razor` 443-451 and `Components/Pages/CalendarPermissions.razor` 413-421, in place
+  (808 and 762 lines): `SubmitSingle`'s self-grant record is `if (Audit.Log...(...) != JsonlWriteOutcome.Written)
+  selfGrantError += " " + SelfGrantRefusalRecord.AuditRowNotWritten;` inside the existing try, and the catch's sentence is
+  that constant too, so the two sites and the helper say one sentence.
+- `Services/SelfGrantRefusalRecord.cs`: `Banner` takes `Func<JsonlWriteOutcome>`; the refusal alone when the outcome is
+  `Written`, the sentence added otherwise (the writer has logged its own error), the catch as before. `ExecuteOnPrem`'s
+  lines (part 1) are unchanged: their lambdas now return the outcome.
+- `ExchangeAdminWeb.Tests/AuditExtraChannelTests.cs`: its source readers take a `JsonlWriteOutcome` return as well as
+  `void`, and the write as `WriteAuditEvent(evt` - so they still find, and check, the two methods.
+- Tests: `AuditWriterThrowFreeTests.ThePermissionRecords_HandBackWhetherTheirRowWasWritten` (6: both methods x written,
+  an unserialisable value in `extra`, the file held); `PermissionPagesSelfGrantTests` +6 -
+  `TheSubmitSingleBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten` and
+  `TheOnPremBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten` for each page (the audit file held, so the
+  writer drops the row and nothing throws: the refusal and the sentence, no page warning, no row, nothing written) and
+  `TheRefusalsBanner_WhenTheWriterDropsItsRecord_SaysTheRowCouldNotBeWritten` (2); the helper's written case returns
+  `Written`.
+
+Caller-visible change, by design: when the writer drops the self-grant refusal's audit row - it no longer throws - the
+Mailbox Permissions and Calendar Permissions banner, single or on-premises, is the refusal followed by "The audit row could
+not be written.", as it already was when the record threw. `AuditService.LogMailboxPermission` and `LogCalendarPermission`
+return the writer's outcome.
+
 ## Guard proof
 
 Protocol (session-local driver `mutate.ps1`, session scratchpad `a50`, log `a50-mutations.log`): the fix staged; per
@@ -235,3 +267,18 @@ Filter `FullyQualifiedName~PermissionValidator` (144 tests). Fixed-file MD5: `Se
 | # | Mutation (call site) | Mutant MD5 | Named tests failing |
 |---|---|---|---|
 | M2 | `GetPreventSelfGrant`: the once-guard removed - the warning on every check, as it stood (the unused set left) | `2831442629024F24B566E369185BB699` | 1 of 144: `PermissionValidatorConfigReadTests.AStoredValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation` |
+
+### Part 4
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~AuditWriterThrowFree|FullyQualifiedName~AuditExtraChannel|FullyQualifiedName~AuditService|FullyQualifiedName~UsageTelemetryService|FullyQualifiedName~PermissionValidatorSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~AuditCategoryFiling|FullyQualifiedName~RefusalAudit`
+(644 tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `1030EE8C8462E8EDBD6FDB796E1AE9EB`,
+`Components/Pages/CalendarPermissions.razor` `821DBD99BEB92F2238D691142DA872C5`, `Services/SelfGrantRefusalRecord.cs`
+`D0DBE61EFF35F08464886B0D03743342`, `Services/AuditService.cs` `70533F198EDE2E764C988367AA45D2D2`. After the round, the
+restored tree rebuilt and the filter: 644/644 green; the pages 808 and 762 lines throughout.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M4 | the outcome ignored on one page: Mailbox Permissions `SubmitSingle`'s record back to the bare call | `764888FF58D4D218A53C5F8F5CEED9F8` | 1 of 644: `TheSubmitSingleBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten(page: "Mailbox Permissions")` - the refusal alone |
+| M4c | extra: the same on Calendar Permissions | `DE2A5765AF8E23B25CCD10F4D6066C42` | 1 of 644: the same test's `(page: "Calendar Permissions")` row |
+| E4 | extra: `SelfGrantRefusalRecord.Banner` ignoring the outcome | `C926C52E3238A0438658AE762961A677` | 4 of 644: both `TheOnPremBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten` rows and both `TheRefusalsBanner_WhenTheWriterDropsItsRecord_SaysTheRowCouldNotBeWritten` rows |
+| E4b | extra: `AuditService.LogMailboxPermission` handing back `Written` whatever the writer said | `7AFA6DC1CFB0DC54FFD53CF9792987ED` | 4 of 644: the two dropped `ThePermissionRecords_HandBackWhetherTheirRowWasWritten(record: "mailbox", ...)` rows and both pages-tests' Mailbox Permissions rows (`SubmitSingle`, `ExecuteOnPrem`) |

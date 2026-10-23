@@ -33,9 +33,10 @@ public class AuditExtraChannelTests
         {
             var body = MethodBody(source, method);
 
-            // The merge must precede the write, or the field never reaches the event.
+            // The merge must precede the write, or the field never reaches the event. aud-a50: a method that hands the
+            // writer's outcome back writes through WriteAuditEvent(evt, out var outcome).
             var merge = body.IndexOf("MergeExtra(evt, extra);", StringComparison.Ordinal);
-            var write = body.IndexOf("WriteAuditEvent(evt);", StringComparison.Ordinal);
+            var write = body.IndexOf("WriteAuditEvent(evt", StringComparison.Ordinal);
 
             if (merge < 0 || write < 0 || merge > write)
                 offenders.Add(method);
@@ -164,8 +165,9 @@ public class AuditExtraChannelTests
     private static IEnumerable<string> MethodsAcceptingExtra(string source)
     {
         // Reflection would only see the signature, not whether the body honours it, so the
-        // discard test must read source. Both tests use the same list for consistency.
-        foreach (Match m in Regex.Matches(source, @"public (?:virtual )?void (Log\w+)\("))
+        // discard test must read source. Both tests use the same list for consistency. aud-a50: the two permission
+        // methods return the writer's outcome.
+        foreach (Match m in Regex.Matches(source, @"public (?:virtual )?(?:void|JsonlWriteOutcome) (Log\w+)\("))
         {
             var name = m.Groups[1].Value;
             var body = MethodBody(source, name);
@@ -176,7 +178,7 @@ public class AuditExtraChannelTests
 
     private static string MethodBody(string source, string methodName)
     {
-        var signature = Regex.Match(source, $@"public (?:virtual )?void {Regex.Escape(methodName)}\(");
+        var signature = Regex.Match(source, $@"public (?:virtual )?(?:void|JsonlWriteOutcome) {Regex.Escape(methodName)}\(");
         Assert.True(signature.Success, $"audit method '{methodName}' not found");
 
         var start = signature.Index;

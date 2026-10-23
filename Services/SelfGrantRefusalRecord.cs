@@ -4,12 +4,11 @@ internal static class SelfGrantRefusalRecord
 {
     internal const string AuditRowNotWritten = "The audit row could not be written.";
 
-    internal static string Banner(string refusal, Action write, ILogger logger, string target)
+    internal static string Banner(string refusal, Func<JsonlWriteOutcome> write, ILogger logger, string target)
     {
         try
         {
-            write();
-            return refusal;
+            return write() == JsonlWriteOutcome.Written ? refusal : refusal + " " + AuditRowNotWritten;
         }
         catch (Exception ex)
         {
