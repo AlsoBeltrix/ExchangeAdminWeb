@@ -41,3 +41,11 @@ pages line-keyed by `ClickGateRegistry` (808 and 762 lines), edit in place only.
 ## Guard proof
 
 Pending.
+
+## Folded in: a malformed appsettings Security:PreventSelfGrant warns on every validation (codex, perm-batch-4, 2026-10-22) - LOW
+
+`Services/PermissionValidator.cs` around line 116: when the stored value is absent or blank and appsettings
+holds an unparseable value ("yes"), aud-a28y's warning is emitted on every self-grant validation - one per
+row of a bulk upload - for a static typo. Keep the fail-closed `true`; warn once per process per observed
+invalid value (a static set of values already warned). Test: two validations, one warning. Mutation at the
+call site: the once-guard removed.

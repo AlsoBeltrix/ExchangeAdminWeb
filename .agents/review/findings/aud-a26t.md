@@ -5,7 +5,7 @@ in `PermissionValidator`'s corrupt-branch log, where no page is involved. (2) `C
 `Audit:LogRoot` is still one shared directory under the temp directory, and the per-validator test
 directories aud-a26q introduced are never deleted (pre-existing shape; not a database, so the
 aud-a26q tripwire does not cover it).
-**Status**: Merged `448b02c8`; closed on guard proof; codex review pending
+**Status**: Complete; merged `448b02c8`; codex perm-batch-4 clean (one LOW folded into aud-a43)
 **Branch**: `worktree-agent-a4c579a99f70ca768`
 **Commit**: `7c7c1d59` (fix, tests, record; its Fix section first landed in `da615264`, see the record note); plan `7e65ce6a`; comments `5c32669e`
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidates 4 and 5 of its hand-back)

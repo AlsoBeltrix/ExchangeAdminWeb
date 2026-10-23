@@ -7,7 +7,7 @@ is skipped and the grant is ALLOWED. A self-grant through an alias the string ma
 exactly while Exchange cannot answer. (2) An appsettings `Security:PreventSelfGrant` that is not a boolean
 makes `GetPreventSelfGrant` throw from `bool.Parse` on every self-grant check instead of refusing with a
 reason (pre-existing; aud-a28t fixed the stored value's parse, not the appsettings one).
-**Status**: Merged `448b02c8`; closed on guard proof; codex review pending
+**Status**: Complete; merged `448b02c8`; codex perm-batch-4 clean (one LOW folded into aud-a43)
 **Branch**: `worktree-agent-a4c579a99f70ca768`
 **Commit**: `b5ab1859` (fix, tests, record); plan `7e65ce6a`; comments `5c32669e`
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidates 2 and 3 of its hand-back)
