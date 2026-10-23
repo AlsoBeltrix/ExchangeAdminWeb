@@ -3,7 +3,7 @@
 **Severity**: LOW - operator guidance. All four directory credential refusals in `ConferenceRoomService`
 carry the same text, so when the secret ID is configured and the lookup itself failed (an incomplete
 secret, an HTTP error) the operator is sent to set an ID that is already set.
-**Status**: Merged `9293b77a`; closed on guard proof; codex review pending
+**Status**: Complete; merged `9293b77a`; codex cr-batch-6 clean (its one LOW is the version bump, deferred by design to the consolidated closing bump)
 **Branch**: `worktree-agent-a56481d2c0a45a8cb`
 **Commit**: `295c4d19` (fix, tests, record); plan `ee4c8c5d`; comments `4e0f61a1` (shared with psl-8, aud-a2w)
 **Reviewer**: implementer (surfaced by the aud-a2v agent, 2026-10-22, candidate 2 of its hand-back)
