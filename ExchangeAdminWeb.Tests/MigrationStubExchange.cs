@@ -113,8 +113,28 @@ internal sealed class MigrationStubExchange : IDisposable
     /// </summary>
     public Hashtable DirectoryUsers { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>aud-a23j. Get-ADGroup -Identity answers these: an identity to the group's DN; any other is not found.</summary>
+    /// <summary>
+    /// aud-a23j. Get-ADGroup -Identity answers these: an identity to the group's DN, or to several DNs (aud-a23r: one per
+    /// domain that holds a group by that identity). A domain is asked only for the DNs it holds; any other is not found.
+    /// </summary>
     public Hashtable DirectoryGroups { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a23r. The forest's domains as Get-ADForest reports them, the host's own first: a directory call that names no
+    /// server is answered from it, as a domain controller of the host's domain answers one.
+    /// </summary>
+    public ArrayList ForestDomains { get; } = ArrayList.Synchronized(new ArrayList { "contoso.test" });
+
+    /// <summary>aud-a23r. The forest's global catalogs as Get-ADForest reports them; none, and the forest reports none.</summary>
+    public ArrayList ForestCatalogs { get; } = ArrayList.Synchronized(new ArrayList { "gc1.contoso.test" });
+
+    /// <summary>
+    /// aud-a23r. Every user and group lookup with the server it named: "Get-ADUser -Server &lt;server&gt; &lt;identity or
+    /// filter&gt;", "Get-ADGroup -Server &lt;server&gt; &lt;identity&gt;".
+    /// </summary>
+    public ArrayList DirectoryCalls { get; } = ArrayList.Synchronized(new ArrayList());
+
+    public string[] DirectoryCallList() => DirectoryCalls.Cast<string>().ToArray();
 
     /// <summary>aud-a23j. Saves the Migration module's excluded groups, as the comma-separated setting holds them.</summary>
     public void ExcludeGroups(params string[] groups) =>
@@ -145,10 +165,16 @@ internal sealed class MigrationStubExchange : IDisposable
     public sealed class ManagementObjectNotFoundException(string message) : Exception(message);
 
     /// <summary>aud-a23j. The Active Directory module's "no such object", as Get-ADGroup -Identity writes it.</summary>
-    public static ErrorRecord DirectoryNotFound(string identity) =>
-        new(new InvalidOperationException($"Cannot find an object with identity: '{identity}' under: 'DC=contoso,DC=test'."),
+    public static ErrorRecord DirectoryNotFound(string identity) => DirectoryNotFoundIn(identity, "contoso.test");
+
+    /// <summary>aud-a23r. The same, from a domain controller of <paramref name="domain"/>.</summary>
+    public static ErrorRecord DirectoryNotFoundIn(string identity, string domain) =>
+        new(new InvalidOperationException($"Cannot find an object with identity: '{identity}' under: '{DomainDn(domain)}'."),
             "ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException,Microsoft.ActiveDirectory.Management.Commands.GetADGroup",
             ErrorCategory.ObjectNotFound, identity);
+
+    /// <summary>aud-a23r. "contoso.test" as "DC=contoso,DC=test".</summary>
+    public static string DomainDn(string domain) => string.Join(",", domain.Split('.').Select(label => "DC=" + label));
 
     // ---- rows ------------------------------------------------------------------------------------
 
@@ -162,9 +188,17 @@ internal sealed class MigrationStubExchange : IDisposable
 
     public static PSObject CloudMailbox(string address) => Row(("PrimarySmtpAddress", address), ("RecipientTypeDetails", "UserMailbox"));
 
-    /// <summary>aud-a23j. A directory user and the DNs its memberOf reports.</summary>
+    /// <summary>aud-a23j. A directory user and the DNs its memberOf reports. aud-a23r: in the host's domain, contoso.test.</summary>
     public static PSObject DirectoryUser(string userPrincipalName, params string[] memberOf) =>
-        Row(("UserPrincipalName", userPrincipalName), ("memberOf", memberOf));
+        DirectoryUserIn("contoso.test", userPrincipalName, memberOf);
+
+    /// <summary>aud-a23r. A directory user of <paramref name="domain"/>, its DN under that domain's DN.</summary>
+    public static PSObject DirectoryUserIn(string domain, string userPrincipalName, params string[] memberOf) =>
+        Row(("UserPrincipalName", userPrincipalName), ("DistinguishedName", UserDn(domain, userPrincipalName)), ("memberOf", memberOf));
+
+    /// <summary>aud-a23r. The DN <see cref="DirectoryUserIn"/> gives a user.</summary>
+    public static string UserDn(string domain, string userPrincipalName) =>
+        $"CN={userPrincipalName.Split('@')[0]},OU=Users,{DomainDn(domain)}";
 
     /// <summary>aud-a23j. The rows Get-ADUser answers for one UPN, for <see cref="DirectoryUsers"/>.</summary>
     public static List<object> Users(params PSObject[] rows) => [.. rows];
@@ -282,19 +316,50 @@ internal sealed class MigrationStubExchange : IDisposable
         }
     }
 
+    // aud-a23r. A forest: Get-ADForest reports ForestCatalogs and ForestDomains. A user search on a catalog (a server on port
+    // 3268) answers every domain's users as the catalog's partial copy - no memberOf - and one on a domain answers that
+    // domain's only; a read by DN answers on the DN's own domain only. Get-ADGroup answers, on a domain, the groups that
+    // domain holds under the identity, else the AD module's not-found; Failures["Get-ADGroup <identity> @<domain>"] fails one
+    // domain's. A call that names no server is the host's domain's, the first of ForestDomains.
     private static readonly (string Name, string Parameters, string Answer)[] DirectoryStubs =
     [
         ("Import-Module", "[string] $Name", ""),
-        ("Get-ADUser", "[string] $Filter, [object] $Properties", """
+        ("Get-ADForest", "", """
+            [pscustomobject]@{ GlobalCatalogs = @($ForestCatalogs); Domains = @($ForestDomains) }
+            """),
+        ("Get-ADUser", "[string] $Filter, [object] $Properties, [string] $Server, [string] $Identity", """
+            $null = $DirectoryCalls.Add("Get-ADUser -Server $Server $(if ($Identity) { $Identity } else { $Filter })")
+            if ($Identity) {
+                foreach ($rows in $DirectoryUsers.Values) { foreach ($row in $rows) {
+                    if ([string]$row.DistinguishedName -ieq $Identity -and (Get-StandInDomain ([string]$row.DistinguishedName)) -ieq $Server) { return $row }
+                } }
+                $PSCmdlet.WriteError($DirectoryNotFoundIn.Invoke($Identity, $Server)); return
+            }
             $upn = $null
             if ($Filter -match '^UserPrincipalName -eq ''(.*)''$') { $upn = $Matches[1] -replace "''", "'" }
-            if ($null -ne $upn -and $DirectoryUsers.ContainsKey($upn)) { foreach ($row in $DirectoryUsers[$upn]) { $row } }
+            if ($null -eq $upn -or -not $DirectoryUsers.ContainsKey($upn)) { return }
+            $scope = if ($Server) { $Server } else { [string]$ForestDomains[0] }
+            foreach ($row in $DirectoryUsers[$upn]) {
+                if ($Server -like '*:3268') { [pscustomobject]@{ UserPrincipalName = $row.UserPrincipalName; DistinguishedName = $row.DistinguishedName } }
+                elseif ((Get-StandInDomain ([string]$row.DistinguishedName)) -ieq $scope) { $row }
+            }
             """),
-        ("Get-ADGroup", "[string] $Identity", """
-            if ($DirectoryGroups.ContainsKey($Identity)) { return [pscustomobject]@{ DistinguishedName = $DirectoryGroups[$Identity] } }
-            $PSCmdlet.WriteError($DirectoryNotFound.Invoke([string]$Identity))
+        ("Get-ADGroup", "[string] $Identity, [string] $Server", """
+            $null = $DirectoryCalls.Add("Get-ADGroup -Server $Server $Identity")
+            $scope = if ($Server) { $Server } else { [string]$ForestDomains[0] }
+            $refusal = $Failures["Get-ADGroup $Identity @$scope"]
+            if ($null -ne $refusal) { if ($refusal -is [string]) { throw $refusal }; $PSCmdlet.WriteError($refusal.Invoke([string]$Identity)); return }
+            $found = @(if ($DirectoryGroups.ContainsKey($Identity)) { foreach ($dn in @($DirectoryGroups[$Identity])) { if ((Get-StandInDomain ([string]$dn)) -ieq $scope) { [pscustomobject]@{ DistinguishedName = $dn } } } })
+            if ($found.Count -gt 0) { return $found }
+            $PSCmdlet.WriteError($DirectoryNotFoundIn.Invoke([string]$Identity, $scope))
             """),
     ];
+
+    // aud-a23r. The domain a DN names, from its DC= labels.
+    private const string StandInDomain = """
+        param([string] $DistinguishedName)
+        @($DistinguishedName -split ',' | Where-Object { $_ -match '^\s*DC=' } | ForEach-Object { ($_ -replace '^\s*DC=', '').Trim() }) -join '.'
+        """;
 
     private Runspace DirectoryStandIn()
     {
@@ -303,7 +368,11 @@ internal sealed class MigrationStubExchange : IDisposable
         state.Variables.Add(new SessionStateVariableEntry("Calls", Calls, null));
         state.Variables.Add(new SessionStateVariableEntry("DirectoryUsers", DirectoryUsers, null));
         state.Variables.Add(new SessionStateVariableEntry("DirectoryGroups", DirectoryGroups, null));
-        state.Variables.Add(new SessionStateVariableEntry("DirectoryNotFound", (Func<string, ErrorRecord>)DirectoryNotFound, null));
+        state.Variables.Add(new SessionStateVariableEntry("ForestDomains", ForestDomains, null));
+        state.Variables.Add(new SessionStateVariableEntry("ForestCatalogs", ForestCatalogs, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryCalls", DirectoryCalls, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryNotFoundIn", (Func<string, string, ErrorRecord>)DirectoryNotFoundIn, null));
+        state.Commands.Add(new SessionStateFunctionEntry("Get-StandInDomain", StandInDomain));
         foreach (var (name, parameters, answer) in DirectoryStubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, Stub(name, parameters, answer)));
         return RunspaceFactory.CreateRunspace(state);
@@ -400,7 +469,7 @@ internal sealed class MigrationStubExchange : IDisposable
     private static string Stub(string name, string parameters, string answer) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails' } | ForEach-Object { " -$_" }) -join ''
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]

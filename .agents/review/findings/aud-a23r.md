@@ -11,7 +11,7 @@ SyncedWithErrors run every step. (2) aud-a23j's `Get-ADUser -Filter` runs with n
 forest/GC search, so a ToCloud user whose AD object is in another domain of the forest reads "no directory
 user has the user principal name ..." and is Undetermined - fail-closed, but a functional false block for a
 valid mailbox whenever excluded groups are configured.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a23o/p/q agent's scope
+**Status**: Fixed on branch; closed on guard proof; not merged (admitted and approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a23o/p/q agent's scope)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (mig-batch-7, 2026-10-22, candidates 1 and 2)
@@ -114,4 +114,99 @@ R2d no per-run cache.
 
 ## Guard proof
 
-Pending.
+Built as the Plan. Line numbers are at the fix commit's bytes, which carry no new code comments (they come in their own
+commit after the last finding's round); the aud-a23n comment that described the removed list went with it.
+
+- `Services/MigrationService.cs`:
+  - Part 1: `RefuseUnlessApprovable` (1388-): no status, and Completed, refused in aud-a23n's words as before; then
+    `!MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status)` (1403) refuses before the first write:
+    "<address> was not approved: approving it completes its migration batch <address>, which is <Status> - not a status the
+    batch Complete action completes a batch from. Nothing was changed." `ApprovalRefusedBatchStatuses` is gone. It is called
+    where it was (a batch of its own, before `Set-MigrationUser`); a mailbox in a batch of many is unchanged.
+  - Part 2: `CheckMigrationEligibilityAsync` (67) makes a `DirectoryLookupRun` for its one check and calls
+    `CheckEligibilityAsync` (70), the old body; `CheckBulkMigrationEligibilityAsync` makes one for the whole file (492).
+    `CheckExcludedGroups` (284-): after `Import-Module`, the catalog from the run (`ForestGlobalCatalog`, 340:
+    `(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1` as "host:3268"; none - "the forest reported no
+    global catalog"); the user searched on it (`-Server catalog`, 300), exactly one in the forest; the domain its DN names
+    (`GroupManagementService.ServerFromDn`); the user read there by DN with memberOf (317); each configured group from the
+    run, else `ResolveExcludedGroup` (360): the forest's domains from the run (`ForestDomains`, 349), `Get-ADGroup -Identity
+    <value> -Server <domain>` in each (369), a not-found by structure (`IsNotFound`) "not in that domain", exactly one group
+    across the forest. `DirectoryLookupRun` (405) and `DirectoryRead<T>` (414) keep what was read, or why not, for the run.
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: the AD stand-in gains `Get-ADForest` (`ForestDomains`,
+  `ForestCatalogs`), a catalog search answering every domain's users as the catalog's copy (UPN and DN, no memberOf), a read
+  by DN answered on the DN's own domain only, `Get-ADGroup` answered per domain (`DirectoryGroups` may hold several DNs;
+  `Failures["Get-ADGroup <identity> @<domain>"]` fails one domain's), `DirectoryNotFoundIn` (the not-found naming the domain
+  asked), `DirectoryUserIn` / `UserDn`, and `DirectoryCalls` (each lookup with its server). `-Server` joins the parameters a
+  stub's logged step leaves out, so a failure keyed "Get-ADUser" still fails the search.
+- `ExchangeAdminWeb.Tests/MigrationExcludedGroupTests.cs`: four expectations take the forest wording; the "no memberOf" row
+  gains a DN, by which the read in its own domain finds it.
+
+`ExchangeAdminWeb.Tests/MigrationApproveConfirmationTests.cs`, part 1 (3 tests changed, 1 new):
+
+| Test | Pins |
+| --- | --- |
+| `ABatchInAStateAnApprovalCannotCompleteFrom_IsRefusedBeforeAnyWrite` (11: Failed, Removing, Stopped, Stopping, Completing, CompletedWithErrors, " stopped ", and now Syncing, SyncedWithErrors, Corrupted, AStatusNothingHereNames) | **the finding**: each asserted first to be a status the planner's Complete does not accept; refused naming it, "Nothing was changed.", the existence read the only call. Before: the last four ran every write |
+| `TheApproval_CompletesItsBatchExactlyWhenTheCompleteActionWould` (14 statuses) | one owner: every step when `MigrationBatchActionPlanner.Applies(Complete, ...)` is true (Synced), the refusal and only the read otherwise |
+| `ABatchTheCompleteActionCompletes_RunsEveryStep` (Synced, " synced ", "SYNCED"; was `ABatchInAnyOtherState_RunsEveryStep` with Synced, Syncing, SyncedWithErrors) | inverted: only a status the planner accepts runs every step |
+| `ARefusalThroughThePage_IsOneFailedAuditRow_NamingTheState` | the page's audit row carries the new refusal |
+
+New `ExchangeAdminWeb.Tests/MigrationForestLookupTests.cs`, part 2, 13 tests (15 cases), a forest of contoso.test (the
+host's) and fabrikam.test:
+
+| Test | Pins |
+| --- | --- |
+| `AUserOfAnotherDomain_IsFoundInTheForest_AndReadInItsOwnDomain` | **the finding**: a member of the group in the second domain - Ineligible; the calls: the catalog search, the read on fabrikam.test, the group asked of each domain. Before: "no directory user has the user principal name", Undetermined |
+| `AUserOfAnotherDomain_InNoExcludedGroup_PassesTheCheck` | the same user, no group: the check passes (the size step's reason alone) |
+| `AUserFoundNowhereInTheForest_CannotBeChecked` | fail closed: "no directory user in the forest has ...", Undetermined |
+| `AUserWhoseDnNamesNoDomain_CannotBeChecked` | "has no distinguished name that names its domain (CN=bob,OU=Users)" |
+| `AReadInTheUsersOwnDomainThatFails_CannotBeChecked` (thrown, written) | "reading <DN> in its own domain fabrikam.test failed: ..." |
+| `AForestThatReportsNoGlobalCatalog_CannotBeChecked` | "the forest reported no global catalog"; no user lookup |
+| `AForestThatCannotBeRead_CannotBeChecked` (thrown, written) | "the forest's global catalog could not be found: ..." |
+| `AGroupOfAnotherDomain_IsResolvedThere` | a group only fabrikam.test holds is resolved there and matched |
+| `ANameTwoDomainsHold_CannotBeChecked` | "resolved to 2 groups across the forest (contoso.test, fabrikam.test)" - never the first found |
+| `AGroupNoDomainHolds_NamesEachDomainsAnswer` | "could not be resolved in any domain of the forest (contoso.test: ...; fabrikam.test: ...)", each in AD's words |
+| `ADomainThatCannotBeAsked_LeavesTheGroupUnresolved` | a group found in one domain, another that fails: "could not be resolved in fabrikam.test: ..." |
+| `ABulkRun_ResolvesEachGroupOnce_AndTheNextRunAsksAgain` | two rows: Get-ADForest twice (catalog, domains), each domain asked for the group once; a second run asks again |
+| `AForestThatCannotBeReadInARun_IsTheSameAnswerForEveryRow` | a failure is kept for the run: every row the same reason, Get-ADForest asked once |
+
+**Against the unfixed code: not runnable as a whole** - the stand-in's forest and the forest wording are new, so each
+behaviour was put back at its own call site instead, and each revert fails the tests that pin it.
+
+Mutations at the call site, each by exact-text replacement asserted to match once (session scratchpad `work/mutate.ps1`,
+`work/round-a23r.ps1`): the fix staged; md5 recorded; `dotnet build ExchangeAdminWeb.slnx -c Release`; the 1888 tests of
+`Migration*|ClickGate*|ProgressRegistry*|ExchangeServiceBase*|AuditService*|GlobalProgressWiring*|BlockedSender*|RecipientLookup*|CalendarPermission*|MailboxPermission*|OutOfOffice*|ConferenceRoom*|ValidatedWriteCallSite*|RazorParseGate*|LookupValidation*|DelegationReport*|MessageTrace*`
+run with a TRX logger (failures read from it); the file restored from git's index, its mtime advanced so MSBuild rebuilds,
+md5 re-checked equal, rebuilt, the 1888 re-run green - after every mutation. Service bytes (LF) before every mutation and
+after every restore: `c0633594e3fc7bb591236fc4a493daf4`.
+
+| Mutation | md5 mutated | Failed (of 1888) | Restored, rerun |
+| --- | --- | --- | --- |
+| R1 (the record's): the refuse list again (aud-a23n's six states) | `2627003bcc6604b294f3f53b8eff3cd1` | 11: `ABatchInAStateAnApprovalCannotCompleteFrom...` (Syncing, SyncedWithErrors, Corrupted, AStatusNothingHereNames), `TheApproval_CompletesItsBatchExactly...` (Syncing, SyncedWithErrors, Corrupted, Starting, Created, Waiting, IncrementalSyncing) - the writes ran | equal; 1888/0 |
+| R2 (the record's): the user search without the forest's catalog (the host's domain answers, as aud-a23j's did) | `caf089596da4b2ef1834ef13ddfc2974` | 10: every `MigrationForestLookupTests` case with a user of the second domain - "no directory user in the forest" | equal; 1888/0 |
+| R1b: Completed in the generic words | `dd346ee611d568c378bd91011f57ff9e` | 1: `AnAlreadyCompletedBatch_IsItsOwnOutcome...` | equal; 1888/0 |
+| R2b: memberOf read from the catalog's copy, no read in the user's own domain | `4391edc089923fadf0a886fc81456e6b` | 15: every test that finds a user (`MigrationExcludedGroupTests` 8, `MigrationForestLookupTests` 7) - "reported no memberOf" | equal; 1888/0 |
+| R2c: each group resolved only in the host's domain | `1f5316af616503ee394f84252305bc7a` | 6: `AUserOfAnotherDomain_IsFound...`, `AGroupOfAnotherDomain...`, `ANameTwoDomainsHold...`, `AGroupNoDomainHolds...`, `ADomainThatCannotBeAsked...`, `ABulkRun...` | equal; 1888/0 |
+| R2d: no per-run cache for the groups | `2ed1e4bc56fe8785409ed6bfb58614ba` | 1: `ABulkRun_ResolvesEachGroupOnce...` | equal; 1888/0 |
+
+md5s (LF) of the other files at the fix commit: `MigrationStubExchange.cs` `e338aab1b45451f8d23c73f988004990`,
+`MigrationForestLookupTests.cs` `a7fa358852fd1fb272ed1a6602ae2bf6`, `MigrationApproveConfirmationTests.cs`
+`7a1e51cb0a94700fcaee924bc61e2203`, `MigrationExcludedGroupTests.cs` `96e049d858d3dfc3bdd6dc5e1067972a`.
+
+On the fix commit's tree: `dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors, 59 warnings (the baseline; none in a
+touched file); the 1888 focused tests 1888/0; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0;
+`git diff --cached --check` exit 0; `tools/Test-AsciiOnly.ps1` exit 0. No directory was asked anything: every AD session
+was the stand-in. The full suite runs at the branch tip.
+
+## Known gaps
+
+- **Labelled consequence (part 1):** a single-user batch whose mailbox needs approval and whose batch reports anything but
+  Synced (unverified - no live call shows what Exchange reports then) is refused, naming the status; if the owner wants such
+  a mailbox approved without its batch completing, that is a split this record argues against and he decides.
+- **Assumptions, labelled (no live call, part 2):** a `-Filter` search on the catalog port spans the forest's domains (the
+  repo measured `-LDAPFilter` doing so); the app-pool identity can read the catalog and a domain controller of each domain;
+  `Get-ADGroup -Identity`'s "not in this domain" is ADIdentityNotFoundException under ObjectNotFound. Any wrong: the check is
+  Undetermined, visible and blocking, one dev check settles it.
+- Membership is still direct `memberOf` read in the user's own domain: a group in another domain holding the user (a
+  domain-local or universal group there) is not in the user's domain's memberOf unless that domain controller holds its
+  links, and a nested membership is not seen - as before. A configured name two domains hold must be given as the group's
+  SID or objectGUID.

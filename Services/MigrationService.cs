@@ -64,7 +64,10 @@ public class MigrationService : ExchangeServiceBase
             .ToArray();
     }
 
-    public async Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction)
+    public Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction) =>
+        CheckEligibilityAsync(emailAddress, direction, new DirectoryLookupRun());
+
+    private async Task<MigrationEligibilityResult> CheckEligibilityAsync(string emailAddress, MigrationDirection direction, DirectoryLookupRun directoryRun)
     {
         var result = await RunPooledQueryAsync((ps, tracker) =>
         {
@@ -171,7 +174,7 @@ public class MigrationService : ExchangeServiceBase
         {
             try
             {
-                CheckExcludedGroups(result, _excludedADGroups);
+                CheckExcludedGroups(result, _excludedADGroups, directoryRun);
             }
             catch (Exception ex)
             {
@@ -278,7 +281,7 @@ public class MigrationService : ExchangeServiceBase
     // completing - the module, the lookup, no user or several, no memberOf, a group that does not resolve to one - throws
     // to the caller, which makes the verdict Undetermined. Membership is direct (memberOf), as before. The user is found by
     // UPN in the host's own domain, as before: one it does not find there cannot be checked, which is never Eligible.
-    private void CheckExcludedGroups(MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups)
+    private void CheckExcludedGroups(MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups, DirectoryLookupRun run)
     {
         using var runspace = CreateDirectoryRunspace();
         runspace.Open();
@@ -290,38 +293,137 @@ public class MigrationService : ExchangeServiceBase
           .AddParameter("ErrorAction", "Stop");
         DirectoryStep(ps, "the ActiveDirectory module could not be loaded");
 
+        var catalog = (run.Catalog ??= DirectoryRead<string>.Of(() => ForestGlobalCatalog(ps))).Get();
+
         ps.AddCommand("Get-ADUser")
           .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress.Replace("'", "''")}'")
-          .AddParameter("Properties", "memberOf")
+          .AddParameter("Server", catalog)
           .AddParameter("ErrorAction", "Stop");
         var users = DirectoryStep(ps, "Get-ADUser failed");
         if (users.Count != 1)
         {
             throw new InvalidOperationException(users.Count == 0
-                ? $"no directory user has the user principal name {result.EmailAddress}"
-                : $"{users.Count} directory users have the user principal name {result.EmailAddress}");
+                ? $"no directory user in the forest has the user principal name {result.EmailAddress}"
+                : $"{users.Count} directory users in the forest have the user principal name {result.EmailAddress}");
         }
 
-        var memberOf = MemberOfDistinguishedNames(users[0], result.EmailAddress);
+        var userDn = users[0].Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
+        var userDomain = GroupManagementService.ServerFromDn(userDn)
+            ?? throw new InvalidOperationException(
+                $"the directory user found for {result.EmailAddress} has no distinguished name that names its domain ({(string.IsNullOrEmpty(userDn) ? "none" : userDn)})");
+
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", userDn)
+          .AddParameter("Server", userDomain)
+          .AddParameter("Properties", "memberOf")
+          .AddParameter("ErrorAction", "Stop");
+        var inDomain = DirectoryStep(ps, $"reading {userDn} in its own domain {userDomain} failed");
+        if (inDomain.Count != 1)
+            throw new InvalidOperationException($"reading {userDn} in its own domain {userDomain} returned {inDomain.Count} users");
+
+        var memberOf = MemberOfDistinguishedNames(inDomain[0], result.EmailAddress);
 
         foreach (var configured in excludedGroups)
         {
-            ps.AddCommand("Get-ADGroup")
-              .AddParameter("Identity", configured)
-              .AddParameter("ErrorAction", "Stop");
-            var groups = DirectoryStep(ps, $"the excluded group '{configured}' could not be resolved");
-            if (groups.Count != 1)
-                throw new InvalidOperationException($"the excluded group '{configured}' resolved to {groups.Count} groups");
+            if (!run.Groups.TryGetValue(configured, out var group))
+                run.Groups[configured] = group = DirectoryRead<string>.Of(() => ResolveExcludedGroup(ps, configured, run));
 
-            var groupDn = groups[0].Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
-            if (string.IsNullOrEmpty(groupDn))
-                throw new InvalidOperationException($"the excluded group '{configured}' was returned with no distinguished name");
-
-            if (memberOf.Contains(groupDn))
+            if (memberOf.Contains(group.Get()))
             {
                 result.Status = MigrationStatus.Ineligible;
                 result.IneligibilityReasons.Add($"Member of excluded group: {configured}");
                 _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", result.EmailAddress, configured);
+            }
+        }
+    }
+
+    private static string ForestGlobalCatalog(PowerShell ps)
+    {
+        ps.AddScript("(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1");
+        var host = DirectoryStep(ps, "the forest's global catalog could not be found").FirstOrDefault(o => o is not null)?.ToString()?.Trim();
+        return string.IsNullOrEmpty(host)
+            ? throw new InvalidOperationException("the forest reported no global catalog")
+            : $"{host}:3268";
+    }
+
+    private static IReadOnlyList<string> ForestDomains(PowerShell ps)
+    {
+        ps.AddScript("(Get-ADForest -ErrorAction Stop).Domains");
+        var domains = DirectoryStep(ps, "the forest's domains could not be read")
+            .Select(o => o?.ToString()?.Trim())
+            .Where(d => !string.IsNullOrEmpty(d))
+            .Select(d => d!)
+            .ToList();
+        return domains.Count > 0 ? domains : throw new InvalidOperationException("the forest reported no domains");
+    }
+
+    private static string ResolveExcludedGroup(PowerShell ps, string configured, DirectoryLookupRun run)
+    {
+        var domains = (run.Domains ??= DirectoryRead<IReadOnlyList<string>>.Of(() => ForestDomains(ps))).Get();
+        var found = new List<(string Domain, string? Dn)>();
+        var absent = new List<string>();
+        foreach (var domain in domains)
+        {
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("Identity", configured)
+              .AddParameter("Server", domain)
+              .AddParameter("ErrorAction", "Stop");
+            Collection<PSObject> groups;
+            try
+            {
+                groups = Invoke(ps);
+            }
+            catch (Exception ex) when (IsNotFound(ex))
+            {
+                absent.Add($"{domain}: {ResolveFailure(ex).primary.TrimEnd('.')}");
+                continue;
+            }
+            catch (Exception ex) when (!IsCancellation(ex))
+            {
+                throw new InvalidOperationException(
+                    $"the excluded group '{configured}' could not be resolved in {domain}: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
+            }
+
+            if (groups.Count == 0)
+                absent.Add($"{domain}: no group was returned");
+            found.AddRange(groups.Select(group => (domain, group.Properties["DistinguishedName"]?.Value?.ToString()?.Trim())));
+        }
+
+        if (found.Count == 0)
+            throw new InvalidOperationException($"the excluded group '{configured}' could not be resolved in any domain of the forest ({string.Join("; ", absent)})");
+        if (found.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"the excluded group '{configured}' resolved to {found.Count} groups across the forest ({string.Join(", ", found.Select(f => f.Domain).Distinct(StringComparer.OrdinalIgnoreCase))})");
+        }
+
+        return string.IsNullOrEmpty(found[0].Dn)
+            ? throw new InvalidOperationException($"the excluded group '{configured}' was returned with no distinguished name")
+            : found[0].Dn!;
+    }
+
+    private sealed class DirectoryLookupRun
+    {
+        public DirectoryRead<string>? Catalog { get; set; }
+
+        public DirectoryRead<IReadOnlyList<string>>? Domains { get; set; }
+
+        public Dictionary<string, DirectoryRead<string>> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed record DirectoryRead<T>(T? Value, string? Failure) where T : class
+    {
+        public T Get() => Value ?? throw new InvalidOperationException(Failure);
+
+        public static DirectoryRead<T> Of(Func<T> read)
+        {
+            try
+            {
+                return new(read(), null);
+            }
+            catch (Exception ex) when (!IsCancellation(ex))
+            {
+                return new(null, ex.Message);
             }
         }
     }
@@ -387,10 +489,11 @@ public class MigrationService : ExchangeServiceBase
         await foreach (var row in csv.GetRecordsAsync<MigrationCsvRow>())
             records.Add(row);
         var results = new List<MigrationEligibilityResult>();
+        var directoryRun = new DirectoryLookupRun();
 
         foreach (var row in records)
         {
-            var eligibility = await CheckMigrationEligibilityAsync(row.EmailAddress, direction);
+            var eligibility = await CheckEligibilityAsync(row.EmailAddress, direction, directoryRun);
             results.Add(eligibility);
         }
 
@@ -1279,15 +1382,6 @@ https://admin.exchange.microsoft.com/#/migration";
         applied.Add(step);
     }
 
-    // aud-a23n. The batch states an approval refuses before writing, because it does not complete a batch from them: Failed,
-    // Removing and Stopped, the finding's own; Completing and Stopping, their in-flight forms (the batch planner groups
-    // "finishing now" and "being torn down" the same way); and CompletedWithErrors, which the owner ruled on 2026-09-25 has
-    // nothing to finalise until remediated (MigrationBatchActionPlanner). Completed is refused too, in its own words below.
-    // ASSUMPTION, unverified (no live call): these are the names Get-MigrationBatch reports. An unlisted status proceeds,
-    // and a step Exchange then refuses is reported naming the step and what was applied (aud-a23h).
-    private static readonly string[] ApprovalRefusedBatchStatuses =
-        ["CompletedWithErrors", "Completing", "Failed", "Removing", "Stopped", "Stopping"];
-
     // aud-a23n. Throws, before the first write, for a batch that reports no status - which state it is in is not known - or
     // one in a state above; RunAsync makes that the row's failure, and "Nothing was changed." is true. Completed is its own
     // outcome: the migration has finished, which is not a fault, so it is said as such rather than as a refused state.
@@ -1306,10 +1400,10 @@ https://admin.exchange.microsoft.com/#/migration";
                 $"{emailAddress} was not approved: its migration batch {emailAddress} is already {status}, so its migration has finished and there is nothing left to approve. Nothing was changed.");
         }
 
-        if (ApprovalRefusedBatchStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
+        if (!MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status))
         {
             throw new InvalidOperationException(
-                $"{emailAddress} was not approved: its migration batch {emailAddress} is {status}, a state an approval does not complete a batch from. Nothing was changed.");
+                $"{emailAddress} was not approved: approving it completes its migration batch {emailAddress}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.");
         }
     }
 

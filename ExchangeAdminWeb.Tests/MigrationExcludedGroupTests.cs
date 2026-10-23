@@ -78,14 +78,14 @@ public sealed class MigrationExcludedGroupTests : IDisposable
             case "the group does not resolve":
                 _exchange.DirectoryUsers[Address] = Users(DirectoryUser(Address, SalesDn));
                 _exchange.DirectoryGroups.Remove("Sales");
-                return "the excluded group 'Sales' could not be resolved: Cannot find an object with identity: 'Sales' under: 'DC=contoso,DC=test'";
+                return "the excluded group 'Sales' could not be resolved in any domain of the forest (contoso.test: Cannot find an object with identity: 'Sales' under: 'DC=contoso,DC=test')";
             case "no directory user":
-                return $"no directory user has the user principal name {Address}";
+                return $"no directory user in the forest has the user principal name {Address}";
             case "two directory users":
                 _exchange.DirectoryUsers[Address] = Users(DirectoryUser(Address, StaffDn), DirectoryUser(Address, StaffDn));
-                return $"2 directory users have the user principal name {Address}";
+                return $"2 directory users in the forest have the user principal name {Address}";
             case "no memberOf":
-                _exchange.DirectoryUsers[Address] = Users(Row(("UserPrincipalName", Address)));
+                _exchange.DirectoryUsers[Address] = Users(Row(("UserPrincipalName", Address), ("DistinguishedName", UserDn("contoso.test", Address))));
                 return $"the directory reported no memberOf for {Address}";
             default:
                 throw new ArgumentOutOfRangeException(nameof(how), how, null);
@@ -171,7 +171,7 @@ public sealed class MigrationExcludedGroupTests : IDisposable
 
         Assert.Equal(MigrationStatus.Undetermined, result.Status);
         Assert.Equal(
-            [Incomplete + "the excluded group 'CN=Sales' could not be resolved: Cannot find an object with identity: 'CN=Sales' under: 'DC=contoso,DC=test'"],
+            [Incomplete + "the excluded group 'CN=Sales' could not be resolved in any domain of the forest (contoso.test: Cannot find an object with identity: 'CN=Sales' under: 'DC=contoso,DC=test')"],
             result.IneligibilityReasons);
     }
 }

@@ -1,4 +1,5 @@
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Services;
 using static ExchangeAdminWeb.Tests.MigrationStubExchange;
 
 namespace ExchangeAdminWeb.Tests;
@@ -89,8 +90,13 @@ public sealed class MigrationApproveConfirmationTests : IDisposable
 
     // ---- part 2: the batch's state is read before any write ----------------------------------------
 
-    // The finding. A batch named for the mailbox, in a state the approval cannot complete it from: refused, naming the
-    // state, with the read the only call. Before, the writes ran and the approval failed at a later step.
+    private static string NotCompletable(string status) =>
+        $"{Address} was not approved: approving it completes its migration batch {Address}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.";
+
+    // The finding (aud-a23n), and aud-a23r's: a batch named for the mailbox, in a state the batch Complete action does not
+    // complete a batch from, is refused naming the state, with the read the only call. aud-a23n refused a list of six, so
+    // Syncing, SyncedWithErrors, Corrupted and any state nobody listed ran Set-MigrationUser, Set-MigrationBatch
+    // -CompleteAfter, Set-MoveRequest and Resume-MoveRequest before Complete-MigrationBatch refused.
     [Theory]
     [InlineData("Failed")]
     [InlineData("Removing")]
@@ -99,17 +105,56 @@ public sealed class MigrationApproveConfirmationTests : IDisposable
     [InlineData("Completing")]
     [InlineData("CompletedWithErrors")]
     [InlineData(" stopped ")]
+    [InlineData("Syncing")]
+    [InlineData("SyncedWithErrors")]
+    [InlineData("Corrupted")]
+    [InlineData("AStatusNothingHereNames")]
     public async Task ABatchInAStateAnApprovalCannotCompleteFrom_IsRefusedBeforeAnyWrite(string status)
     {
+        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status));
         _exchange.Batches[Address] = Batch(Address, status: status);
 
         var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
 
         Assert.False(result.Success);
-        Assert.Equal(
-            $"{Address} was not approved: its migration batch {Address} is {status.Trim()}, a state an approval does not complete a batch from. Nothing was changed.",
-            result.Message);
+        Assert.Equal(NotCompletable(status.Trim()), result.Message);
         Assert.Equal([$"Get-MigrationBatch {Address}"], _exchange.CallList());
+    }
+
+    // aud-a23r. One owner: over every status this suite can name, the approval runs its batch steps exactly when the batch
+    // Complete action would complete that batch, and otherwise writes nothing. A copy of the rule would drift from it.
+    [Theory]
+    [InlineData("Synced")]
+    [InlineData("Syncing")]
+    [InlineData("SyncedWithErrors")]
+    [InlineData("Starting")]
+    [InlineData("Created")]
+    [InlineData("Waiting")]
+    [InlineData("IncrementalSyncing")]
+    [InlineData("Corrupted")]
+    [InlineData("Failed")]
+    [InlineData("Stopped")]
+    [InlineData("Stopping")]
+    [InlineData("Removing")]
+    [InlineData("Completing")]
+    [InlineData("CompletedWithErrors")]
+    public async Task TheApproval_CompletesItsBatchExactlyWhenTheCompleteActionWould(string status)
+    {
+        _exchange.Batches[Address] = Batch(Address, status: status);
+
+        var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
+
+        if (MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status))
+        {
+            Assert.True(result.Success, result.Message);
+            Assert.Equal(EveryStep, _exchange.CallList());
+        }
+        else
+        {
+            Assert.False(result.Success);
+            Assert.Equal(NotCompletable(status), result.Message);
+            Assert.Equal([$"Get-MigrationBatch {Address}"], _exchange.CallList());
+        }
     }
 
     // Already completed is its own outcome: the migration has finished, which is not a fault, and nothing is written.
@@ -145,13 +190,15 @@ public sealed class MigrationApproveConfirmationTests : IDisposable
         Assert.Equal([$"Get-MigrationBatch {Address}"], _exchange.CallList());
     }
 
-    // The control: a batch in a state the approval completes from runs every step, as before.
+    // The control: a batch the Complete action completes runs every step, as before - and only such a batch (aud-a23r:
+    // this theory let Syncing and SyncedWithErrors run every step).
     [Theory]
     [InlineData("Synced")]
-    [InlineData("Syncing")]
-    [InlineData("SyncedWithErrors")]
-    public async Task ABatchInAnyOtherState_RunsEveryStep(string status)
+    [InlineData(" synced ")]
+    [InlineData("SYNCED")]
+    public async Task ABatchTheCompleteActionCompletes_RunsEveryStep(string status)
     {
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status));
         _exchange.Batches[Address] = Batch(Address, status: status);
 
         var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
@@ -175,9 +222,7 @@ public sealed class MigrationApproveConfirmationTests : IDisposable
         Assert.False(result.Success);
         var audited = Assert.Single(_exchange.AuditEvents(), e => e.GetProperty("action").GetString() == "ApproveMigrationUser");
         Assert.Equal("Failed", audited.GetProperty("result").GetString());
-        Assert.Equal(
-            $"{Address} was not approved: its migration batch {Address} is Stopped, a state an approval does not complete a batch from. Nothing was changed.",
-            audited.GetProperty("error").GetString());
+        Assert.Equal(NotCompletable("Stopped"), audited.GetProperty("error").GetString());
         Assert.Equal([$"Get-MigrationBatch {Address}"], _exchange.CallList());
     }
 }
