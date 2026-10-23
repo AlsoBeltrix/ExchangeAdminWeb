@@ -968,13 +968,19 @@ https://admin.exchange.microsoft.com/#/migration";
             ServicedNote = result.ServicedNote,
         };
 
+    // kd-36. How many of a denied run's names its row carries. A denial can cover the page's largest selection - thousands of
+    // mailboxes after a section-access change - and the row carried every name, one JSONL line that the Admin Event Log joins
+    // into one detail string. The row keeps the first of them, the run's own count and whether more were left out.
+    internal const int DeniedTargetsRecorded = 50;
+
     // aud-a23q. A failed authorization on a single action or a create: the bulk executors' "_Denied" row - action, target,
     // Failed, ticket, "<policy> authorization denied" - with mutationAttempted false (the aud-a28 refusal convention), and the
     // text the page shows and ends the activity with. It returned in silence: no banner, no row, an activity that read
     // "Nothing was done.". A failed audit write is logged and swallowed, as the bulk executors' is, so it cannot take the
     // denial's place. Static, with the page's services passed in, so each page line stays one statement (the page is
     // line-keyed by ClickGateRegistry). kd-17: a bulk run's denial passes the names it would have acted on as targets, and
-    // the row carries them - its target being the run's scope ("2 batch(es)"), which names none of them.
+    // the row carries them - its target being the run's scope ("2 batch(es)"), which names none of them. kd-36: the first
+    // DeniedTargetsRecorded of them, with targetCount and targetsTruncated.
     internal static string RecordDenial(AuditService audit, ILogger logger, string actor, string ipAddress,
         string auditAction, string description, string target, string ticket, string policy, IReadOnlyList<string>? targets = null)
     {
@@ -982,7 +988,11 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             var extra = new Dictionary<string, object?> { ["mutationAttempted"] = false };
             if (targets is not null)
-                extra["targets"] = targets.ToArray();
+            {
+                extra["targetCount"] = targets.Count;
+                extra["targets"] = targets.Take(DeniedTargetsRecorded).ToArray();
+                extra["targetsTruncated"] = targets.Count > DeniedTargetsRecorded;
+            }
             audit.LogMigrationAction(actor, ipAddress, $"{auditAction}_Denied", target, false, ticket,
                 errorDetail: $"{policy} authorization denied",
                 extra: extra);
