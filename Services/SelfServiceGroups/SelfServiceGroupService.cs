@@ -90,9 +90,7 @@ public class SelfServiceGroupService
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
@@ -106,13 +104,7 @@ public class SelfServiceGroupService
             // No ResultSetSize cap: this is already bounded to the groups ONE user owns, and a silent
             // truncation would read as a complete list (Known Failure Class #2). Get-ADGroup pages
             // internally (ResultPageSize) and returns all matches.
-            ps.AddCommand("Get-ADGroup")
-              .AddParameter("LDAPFilter", filter)
-              .AddParameter("Properties", GroupProperties)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var groups = ps.Invoke();
-            ps.Commands.Clear();
+            var groups = ReadGroups(ps, credential, filter);
 
             // Cache owner-DN -> display-name across groups so shared owners resolve once.
             var ownerDisplayCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -168,9 +160,7 @@ public class SelfServiceGroupService
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            using var runspace = CreateDirectoryRunspace();
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
@@ -181,13 +171,7 @@ public class SelfServiceGroupService
             var callerDn = ResolveCallerDn(ps, credential, callerSid);
 
             var filter = AdOwnershipFilter.BuildGroupByNameFilter(groupName.Trim());
-            ps.AddCommand("Get-ADGroup")
-              .AddParameter("LDAPFilter", filter)
-              .AddParameter("Properties", GroupProperties)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var found = ps.Invoke();
-            ps.Commands.Clear();
+            var found = ReadGroups(ps, credential, filter);
 
             // Not-found and not-manageable return the SAME outcome (contact IT Support Desk): the
             // search must not double as a directory-enumeration oracle. An ambiguous match (>1 group
@@ -1294,23 +1278,81 @@ public class SelfServiceGroupService
     internal static void PrepareAdRunspace(PowerShell ps) => ActiveDirectoryModuleImport.Import(ps);
 
     /// <summary>
+    /// The session the owned-groups list and the single-group search open (psl-10).
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, GroupManagementService's and EmergencyDisableService's shape: a test hands back a
+    /// session whose Import-Module and directory cmdlets are local functions, so the two paths run for real with no
+    /// directory. Production builds exactly the session both built inline. The other paths still build theirs.
+    /// </remarks>
+    internal virtual Runspace CreateDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
+    /// <summary>
     /// Resolves the caller ONCE to their DN via the immutable SID (bound -Identity, no interpolation).
     /// This resolved DN is the sole ownership key used downstream (codex F11). Throws when the caller
     /// cannot be resolved, so the surface shows a clear error rather than an empty result.
     /// </summary>
-    private static string ResolveCallerDn(PowerShell ps, PSCredential credential, string callerSid)
+    /// <remarks>
+    /// psl-10. The read leaves nothing in the stream for the reads after it: it cleared only its commands, so a record it
+    /// wrote past -ErrorAction Stop stayed, and the first group's <see cref="CallerCanManageMembers"/> check - true while any
+    /// record remains (psl-2) - took it for that group's DACL read: the group was left out of the owned-groups list, and the
+    /// single-group search answered that it was not found. The read is judged by what it returns, as before. Its two callers
+    /// read the groups straight after it, and that read clears too, so the caller read's own clear is what keeps any later
+    /// check - not only that one - from taking its record. Internal for the tests.
+    /// </remarks>
+    internal static string ResolveCallerDn(PowerShell ps, PSCredential credential, string callerSid)
     {
         ps.AddCommand("Get-ADUser")
           .AddParameter("Identity", callerSid)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var callerResults = ps.Invoke();
-        ps.Commands.Clear();
+        Collection<PSObject> callerResults;
+        try
+        {
+            callerResults = ps.Invoke();
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
 
         var callerDn = callerResults.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
         if (string.IsNullOrWhiteSpace(callerDn))
             throw new InvalidOperationException("Could not resolve the signed-in user in Active Directory.");
         return callerDn;
+    }
+
+    /// <summary>
+    /// The group read of the owned-groups list and the single-group search: Get-ADGroup by a bound -LDAPFilter, with the
+    /// properties both project, its failure the one it throws (psl-10).
+    /// </summary>
+    /// <remarks>
+    /// Clears the commands and the error stream after itself, as <see cref="ResolveCallerDn"/> does and for the same
+    /// reason: a record the read left past -ErrorAction Stop was taken by the first group's DACL check. The groups are the
+    /// ones it returned.
+    /// </remarks>
+    private static Collection<PSObject> ReadGroups(PowerShell ps, PSCredential credential, string ldapFilter)
+    {
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("LDAPFilter", ldapFilter)
+          .AddParameter("Properties", GroupProperties)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        try
+        {
+            return ps.Invoke();
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
     }
 
     /// <summary>

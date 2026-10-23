@@ -153,3 +153,33 @@ re-read and `Set-ADUser` sent in order; the reset OK, its `Set-ADAccountPassword
 | # | Mutation | md5 fixed = restored | md5 mutated | Failing (of 111) | Restored |
 | --- | --- | --- | --- | --- | --- |
 | 1 | the fix reverted - `EmergencyDisableService.cs` as at `18e601f8` (the brief's "one finally clear dropped", here the only one) | `ec74fed1c01f7e0d10925b3c4dfec4c6` | `cdf3eb0201ff06f0c8f6d76a7a155fe5` | 3: the disable and the reset `FAILED` with "A record the bound-object re-read wrote past the callers ErrorAction." as their detail, their write sent; the move `Failed` | PASS 111 |
+
+**(2) Self-Service Groups' caller and group reads** - in `DirectoryModuleImportTests`, on a stand-in session through the
+two new seams' overrides (the session; the credential lookup answering a credential):
+- `SelfService_ARecordTheCallerOrGroupReadLeaves_DoesNotHideTheFirstOwnedGroup` (the caller read, the group read, each
+  leaving a record without throwing): `GetOwnedGroupsAsync` lists both of the caller's groups, in order, both manageable;
+  the import, the caller read, the group read and the two DACL reads the calls.
+- `SelfService_ARecordTheCallerOrGroupReadLeaves_DoesNotHideTheSearchedGroup` (the same two): `SearchManageableGroupAsync`
+  answers the group, manageable, with no message.
+- `SelfService_TheCallerRead_LeavesNoRecordForTheNextRead`: `ResolveCallerDn` (internal for this test) on a noisy caller
+  read answers the caller's DN and leaves the stream and the commands empty; the group's re-read by objectGUID, which checks
+  `HadErrors`, then answers.
+
+The approach named the two clears; the first round showed the end-to-end cases cannot tell them apart - the group read
+runs straight after the caller read on both paths and its clear removes the caller read's record too, so dropping the
+caller read's clear alone (M1) left every case green. The third test was added to pin that clear on its own, and
+`ResolveCallerDn` made internal for it (psl-8 did the same for `ResolveGroupByGuid`); M1 was re-run. No whole-file revert
+row: the tests override `CreateDirectoryRunspace`, which the file as at `c4374938` lacks; M3 is the revert's substance.
+Filter `DirectoryModuleImportTests`; md5 fixed = restored `acca43b7f2f79d3cc07aa3722e167654` (first round, before the third
+test and the `internal`: `71d19cac3fd08cc5c6d14d3766411a76`).
+
+| # | Mutation (call site) | md5 mutated | Failing | Restored |
+| --- | --- | --- | --- | --- |
+| M1 (first round) | `ResolveCallerDn`'s finally clearing the commands only | `69d97e10ca9af8282be59b2deb3b191d` | none of 33 - survived, as above | PASS 33 |
+| M2 (first round) | `ReadGroups`' finally clearing the commands only | `549f6d16c1e72f8e0a093f0dab01f739` | 2 of 33: both group-read cases | PASS 33 |
+| M1b | `ResolveCallerDn`'s finally clearing the commands only | `c117451e6ffbba80b4a688469b66dd19` | 1 of 34: `SelfService_TheCallerRead_LeavesNoRecordForTheNextRead`, "Assert.Empty() Failure ... [A record the read wrote past the callers ErrorAction.]" | PASS 34 |
+| M2b | `ReadGroups`' finally clearing the commands only | `97f3228def795b9e4ae1ca63a1a3d4df` | 2 of 34: both group-read cases - the owned list starting at "CN=Travel Approvers,...", the search answering "That group was not found, or you do not have permission ..." | PASS 34 |
+| M3 | both - the reads as they were | `02d5d173918b3618d383eaf3fc2d2996` | 5 of 34: all four end-to-end cases and the pin | PASS 34 |
+
+On the fix, before the round: `DirectoryModuleImportTests`, `SelfService*`, `GroupMember*`, `ResourceDomainDenies*`,
+`GroupCredentialRefusal*`, `ProtectedGroupWriteTarget*`, `GroupBulk*` 450 of 450 (before the third test).

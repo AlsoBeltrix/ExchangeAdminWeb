@@ -787,6 +787,9 @@ public sealed class ModuleCatalog
             // 1.12.0: every refusal for want of the module's AD credential says why - the secret
             // ID unset, Delinea returning none for the ID that is set, or the module's
             // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
+            // An error record the caller's or the groups' read leaves without throwing no longer
+            // hides the first owned group, or the searched one, as if the caller could not manage it
+            // (psl-10).
             Version = "1.12.0",
             MainPermission = new(
                 "Access",
