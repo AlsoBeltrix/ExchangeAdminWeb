@@ -527,41 +527,46 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     // ---- the source ------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("Components/Pages/MailboxPermissions.razor")]
-    [InlineData("Components/Pages/CalendarPermissions.razor")]
-    [InlineData("Services/MailboxPermissionService.cs")]
-    [InlineData("Services/CalendarPermissionService.cs")]
-    public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath)
+    [InlineData("Components/Pages/MailboxPermissions.razor", 2)]
+    [InlineData("Components/Pages/CalendarPermissions.razor", 2)]
+    [InlineData("Services/MailboxPermissionService.cs", 1)]
+    [InlineData("Services/CalendarPermissionService.cs", 1)]
+    public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath, int sites)
     {
         // The two bulk loops are driven above and the two pages in PermissionPagesSelfGrantTests; this reads every record
         // from the source, comments blanked. Each records the refusal it was handed, as their protected-target denials
-        // already do, rather than a fixed sentence that says every refusal was a self-grant.
+        // already do, rather than a fixed sentence that says every refusal was a self-grant. aud-a50: each page records
+        // the refusal in SubmitSingle and again in ExecuteOnPrem, which checks the grantee right before the on-prem write.
         var path = AuditCategoryFilingTests.FindRepoFile(relativePath.Split('/'));
         var code = RazorSyntax.CommentsBlanked(File.ReadAllText(path));
 
         var records = Regex.Matches(code, @"_SelfGrantAttempt""").ToList();
-        var record = Assert.Single(records);
-        var detail = Regex.Match(code[record.Index..], @"errorDetail:\s*([^,)]+)");
+        Assert.Equal(sites, records.Count);
+        foreach (var record in records)
+        {
+            var detail = Regex.Match(code[record.Index..], @"errorDetail:\s*([^,)]+)");
 
-        Assert.True(detail.Success, $"{relativePath}: the self-grant record names no errorDetail.");
-        Assert.Equal("selfGrantError", detail.Groups[1].Value.Trim());
+            Assert.True(detail.Success, $"{relativePath}: a self-grant record names no errorDetail.");
+            Assert.Equal("selfGrantError", detail.Groups[1].Value.Trim());
+        }
     }
 
     [Theory]
-    [InlineData("Components/Pages/MailboxPermissions.razor", "validationAuthState.User")]
-    [InlineData("Components/Pages/CalendarPermissions.razor", "validationAuthState.User")]
-    [InlineData("Services/MailboxPermissionService.cs", "actingUser")]
-    [InlineData("Services/CalendarPermissionService.cs", "actingUser")]
-    public void EverySelfGrantCheck_IsHandedTheSignedInPrincipal_NeverTheLogonName(string relativePath, string principal)
+    [InlineData("Components/Pages/MailboxPermissions.razor", new[] { "validationAuthState.User", "onPremAuthState.User" })]
+    [InlineData("Components/Pages/CalendarPermissions.razor", new[] { "validationAuthState.User", "onPremAuthState.User" })]
+    [InlineData("Services/MailboxPermissionService.cs", new[] { "actingUser" })]
+    [InlineData("Services/CalendarPermissionService.cs", new[] { "actingUser" })]
+    public void EverySelfGrantCheck_IsHandedTheSignedInPrincipal_NeverTheLogonName(string relativePath, string[] principals)
     {
-        // The pages hand over the token the protected-target check was decided against; the bulk loops the principal they
-        // already hold for it. The logon name (currentUser) stays the audit's actor and nothing more.
+        // The pages hand over the token the protected-target check was decided against - SubmitSingle's, and ExecuteOnPrem's
+        // own re-check's (aud-a50); the bulk loops the principal they already hold for it. The logon name (currentUser)
+        // stays the audit's actor and nothing more.
         var path = AuditCategoryFilingTests.FindRepoFile(relativePath.Split('/'));
         var code = RazorSyntax.CommentsBlanked(File.ReadAllText(path));
 
-        var call = Assert.Single(Regex.Matches(code, @"ValidateSelfGrantAsync\(\s*([^,]+?)\s*,").ToList());
+        var calls = Regex.Matches(code, @"ValidateSelfGrantAsync\(\s*([^,]+?)\s*,").Select(call => call.Groups[1].Value).ToArray();
 
-        Assert.Equal(principal, call.Groups[1].Value);
+        Assert.Equal(principals, calls);
     }
 
     [Fact]

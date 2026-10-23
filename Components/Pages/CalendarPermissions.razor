@@ -655,7 +655,7 @@
                     false, ticket, errorDetail: onPremValidation.Error);
                 return;
             }
-
+            if (isSet && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(selfGrantError, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, "SetCalendar_SelfGrantAttempt", target, user, level, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             PermissionResult opResult;
             if (isSet)
                 opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, access.ToString());

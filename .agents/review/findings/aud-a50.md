@@ -132,6 +132,56 @@ Files: `Components/Pages/MailboxPermissions.razor` and `Components/Pages/Calenda
 `Services/CalendarPermissionService.cs`, `Services/AuditService.cs` (the two methods and `WriteAuditEvent` only),
 `Services/SettingsStoreText.cs`, `Services/ExoConnectionPool.cs`, the tests named, this record.
 
+## Fix
+
+### Part 1 - the on-premises write re-checks the grantee right before it writes
+
+- `Components/Pages/MailboxPermissions.razor` 704 and `Components/Pages/CalendarPermissions.razor` 658, each a blank line
+  before (808 and 762 lines kept, no registry entry moved): `if (isAdd && await Validator.ValidateSelfGrantAsync(
+  onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(
+  selfGrantError, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttempt", target,
+  user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }`, and its Calendar twin on
+  `isSet` with `"SetCalendar_SelfGrantAttempt"` and `level` (the access right `SubmitSingle` records). After the target
+  re-check and before the write; the handler's finally still lowers `isLoading`, completes the activity from `outcome`
+  and clears the staged target.
+- New `Services/SelfGrantRefusalRecord.cs`: `Banner(refusal, write, logger, target)` writes the record; a write that
+  throws is logged as `SubmitSingle`'s catch logs it, and the banner is the refusal and `AuditRowNotWritten`, "The audit
+  row could not be written.".
+- Tests: `PermissionPagesSelfGrantTests` +8 - `TheOnPremWrite_ReChecksTheGrantee_RightBeforeItWrites_AndRefusesASelfGrant`,
+  `TheOnPremWrite_ToSomeoneElse_StillWrites` and `TheOnPremRefusal_WhoseRecordCannotBeWritten_IsTheValidatorsRefusal_AndSaysSo`
+  for each page (`ExecuteOnPrem` driven by reflection over the staged grant, the harness's on-premises stand-ins behind a
+  service whose credential and session are the harness's), and `TheRefusalsBanner_IsTheRefusal_WhenItsRecordIsWritten`,
+  `TheRefusalsBanner_WhenItsRecordThrows_SaysTheRowCouldNotBeWritten_AndLogsTheException`. `PermissionValidatorSelfGrantTests`'
+  `EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal` and `EverySelfGrantCheck_IsHandedTheSignedInPrincipal_NeverTheLogonName`
+  read every site, not a single one: two per page, each record's `errorDetail` `selfGrantError`, the checks handed
+  `validationAuthState.User` and then `onPremAuthState.User`.
+
+Caller-visible change, by design: a staged on-premises Mailbox Permissions or Calendar Permissions grant that the
+self-grant check refuses when the operator presses Continue - say they joined the granted group during the pause - is
+refused then with the validator's refusal, recorded as `SubmitSingle` records it, and nothing is written on-premises.
+Every on-premises grant pays one more self-grant check (a directory session and the Exchange lookups) just before it writes.
+
 ## Guard proof
 
-Pending.
+Protocol (session-local driver `mutate.ps1`, session scratchpad `a50`, log `a50-mutations.log`): the fix staged; per
+mutant: the MD5 of each file it touches, one exact-text replacement that must match exactly once, the MD5 again, a Debug
+build of the test project with 0 errors required, `dotnet test --no-build` filtered as each part names, the failing names
+taken from the run, then each file restored from the git index (`git checkout --`), its write time advanced so MSBuild
+rebuilds it, and its MD5 checked equal to the one before. Every mutant below built with 0 errors and every restore
+matched. No separate pre-fix reproduction where a mutant is the code as it stood at `132d6e97`: it is that code at its
+call site, and its MD5 shows it.
+
+### Part 1
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~PermissionValidatorSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry`
+(422 tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `9A9D9BB401D5B555940BAEDC658937F7`,
+`Components/Pages/CalendarPermissions.razor` `B8EE0434FCF41E8123712EB2D6069EEC`, `Services/SelfGrantRefusalRecord.cs`
+`0BA2B0792BF57E331294CBC5FB88FD67`. After the round, the restored tree rebuilt and the filter: 422/422 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | Mailbox Permissions `ExecuteOnPrem`: line 704 blank again - the page as it stood | `7B2C771C3B9ACD5E398F18F7B20E4060` (aud-a44's recorded MD5 of the page at `132d6e97`) | 4 of 422: `TheOnPremWrite_ReChecksTheGrantee_RightBeforeItWrites_AndRefusesASelfGrant(page: "Mailbox Permissions")` and `TheOnPremRefusal_WhoseRecordCannotBeWritten_IsTheValidatorsRefusal_AndSaysSo(page: "Mailbox Permissions")` (the staged self-grant written on-premises), and both source checks' Mailbox Permissions rows |
+| M1c | Calendar Permissions `ExecuteOnPrem`: line 658 blank again - the page as it stood | `1F953D7A79E5775A508B8B4C506140B9` (aud-a44's recorded MD5 of the page at `132d6e97`) | 4 of 422: the same two page tests' `(page: "Calendar Permissions")` rows and both source checks' Calendar Permissions rows |
+| E1 | extra, `SelfGrantRefusalRecord.Banner` without its catch | `D0232B6656BAB02CFEEAA03C2A45E0BB` | 3 of 422: both `TheOnPremRefusal_WhoseRecordCannotBeWritten_IsTheValidatorsRefusal_AndSaysSo` rows and `TheRefusalsBanner_WhenItsRecordThrows_SaysTheRowCouldNotBeWritten_AndLogsTheException` |
+
+Each page mutant kept its page's line count, so the ClickGate and ProgressRegistry suites ran under it and passed.
