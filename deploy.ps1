@@ -32,6 +32,11 @@ param(
 
     [switch]$Force,
     [switch]$ConfirmFreshInstall,
+    # cdt-36: -Force and -ConfirmFreshInstall take the fresh-install path, which points an EXISTING
+    # IIS application at this run's -PublishPath and -AppPoolName. A run whose folder or pool differs
+    # from the ones IIS serves the application from is refused before anything is configured; this
+    # switch is the explicit way to move it. An upgrade never re-points the application.
+    [switch]$AllowRepoint,
     [switch]$NonInteractive
 )
 
@@ -183,6 +188,55 @@ function Write-AppSettingsFile {
     $Settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
+# cdt-36. -Force over an existing deployment, and -ConfirmFreshInstall, take the fresh-install branch,
+# whose "Configuring web application" step sets an EXISTING application's physicalPath and
+# applicationPool to this run's -PublishPath and -AppPoolName. Nothing compared them with what IIS
+# serves, so a mistyped or defaulted value moved the live application and the run still ended "Deploy
+# complete": to another folder, whose generated appsettings.json has no ConfigStore:Path (it is read
+# from that folder's own file), so the app opened a new, empty config database there (the cdt-8
+# outcome); and/or into another pool, which the stop before the mirror then stops - another
+# instance's, if the name is one. The checks before that stop ask IIS after the re-point, so they
+# pass. The installer makes the same check (cdt-15); here -AllowRepoint is the explicit way to move
+# the application. Folders compare as Assert-AppPoolServesPath compares them, through the module's
+# ConvertTo-ComparablePhysicalPath: by equality, case-insensitively, never by prefix.
+function Assert-ApplicationTargetUnchanged {
+    param(
+        [string]$Location,
+        [bool]$Exists,
+        [string]$ExistingPool,
+        [string]$ExistingPhysicalPath,
+        [string]$AppPoolName,
+        [string]$PublishPath,
+        [switch]$AllowRepoint
+    )
+
+    if (-not $Exists) {
+        Write-Host "       No IIS application $Location yet: this run creates it, with its files at '$PublishPath' under app pool '$AppPoolName'." -ForegroundColor DarkGray
+        return
+    }
+
+    $differences = @()
+    if (-not [string]::Equals($ExistingPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $differences += "app pool '$ExistingPool' (this run: -AppPoolName '$AppPoolName')"
+    }
+    $existingFolder = ConvertTo-ComparablePhysicalPath $ExistingPhysicalPath
+    $runFolder = ConvertTo-ComparablePhysicalPath $PublishPath
+    # A folder IIS does not report counts as different: the run cannot show it deploys in place.
+    if ([string]::IsNullOrWhiteSpace($existingFolder) -or -not [string]::Equals($existingFolder, $runFolder, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
+    }
+
+    if ($differences.Count -eq 0) {
+        Write-Success "IIS application $Location runs under app pool '$ExistingPool' with its files at '$ExistingPhysicalPath': the pool and folder this run names, so it is deployed in place"
+        return
+    }
+    if ($AllowRepoint) {
+        Write-Warn "IIS application $Location exists, with $($differences -join ' and '). -AllowRepoint: this run MOVES it to app pool '$AppPoolName' with its files at '$PublishPath'. The old pool and folder are left as they are, no longer serving it."
+        return
+    }
+    Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). -Force and -ConfirmFreshInstall point an existing application at this run's -AppPoolName and -PublishPath, so this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
+}
+
 $ProjectRoot = $PSScriptRoot
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 
@@ -230,6 +284,25 @@ Write-Host "  Source  : $ProjectRoot" -ForegroundColor DarkGray
 Write-Host "  Publish : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray
 Write-Host ""
+
+# --- The IIS application a fresh install or -Force would re-point (cdt-36) ---
+
+# Read before anything below touches IIS, an ACL or the publish folder: the fresh-install branch sets
+# an existing application's folder and pool to this run's -PublishPath and -AppPoolName, so a run that
+# would move it is refused here, unless -AllowRepoint says the move is intended. Read-only, and it
+# prints what it compared, so a plan mode could run it as it is (this script has none). A lookup that
+# fails refuses: the run cannot show that it does not move the application. An upgrade never
+# re-points it, and its own checks before the stop refuse a pool or folder that does not serve it.
+if (-not $isUpgrade) {
+    Write-Step "Checking IIS application $ParentSite/$AppAlias"
+    $existingApplication = $null
+    try {
+        $existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop
+    } catch {
+        Write-Fail "Cannot read IIS application $ParentSite/$AppAlias ($($_.Exception.Message)), so it cannot be confirmed that this run does not move it to another folder or app pool. Nothing was deployed."
+    }
+    Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath -AllowRepoint:$AllowRepoint
+}
 
 # --- Collect & validate config (fresh install only) ---
 
