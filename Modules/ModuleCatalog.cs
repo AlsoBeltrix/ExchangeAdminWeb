@@ -132,7 +132,7 @@ public sealed class ModuleCatalog
             IsConfigOnly = true,
             // 1.0.3: the connection save reports to the status frame, including the pooled
             // runspace drain (docs/ProgressCoverage-Plan.md S2).
-            Version = "1.0.3",
+            Version = "1.0.4",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",
@@ -163,7 +163,7 @@ public sealed class ModuleCatalog
             // owner of the rights that actually applied; the gate was overall success (aud-a23).
             // 1.4.0: every applied row of a BULK run notifies the trustee and the mailbox
             // owner; before, only the operator's administrators were told (aud-a24).
-            Version = "1.4.0",
+            Version = "1.4.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -200,7 +200,7 @@ public sealed class ModuleCatalog
             // owner; before, only the operator's administrators were told (aud-a24).
             // 1.3.1: a bulk calendar notice names the ACCESS, not the operator word for the
             // row - a removal said "Permission: Remove" (review of aud-a24).
-            Version = "1.3.1",
+            Version = "1.3.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -410,7 +410,7 @@ public sealed class ModuleCatalog
             // is open can never widen what it removes - the count in the label is a bound, which
             // is what makes this different from the standalone sweep the owner removed on
             // 2026-08-10 (docs/MigrationRemoveCompleted-Plan.md).
-            Version = "1.23.2",
+            Version = "1.23.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -516,7 +516,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.0.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -540,7 +540,7 @@ public sealed class ModuleCatalog
             // chain - the protected-principal resolve, the authorization re-check, the read of the
             // current state, the live mailbox write and both notification emails - ran with the
             // bar reading Idle, on a page whose Check Status tab reported correctly.
-            Version = "1.1.2",
+            Version = "1.1.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -620,7 +620,7 @@ public sealed class ModuleCatalog
             // the circuit down if the operator closed the panel or picked another group mid-load.
             // 2.12.0: a membership change now emails the group's managedBy manager a
             // summary - one message per operation, never one per member (aud-a25).
-            Version = "2.12.0",
+            Version = "2.12.1",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -720,7 +720,7 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.18",
+            Version = "1.4.19",
             MainPermission = new(
                 "Access",
                 "Comms10k",
@@ -781,7 +781,7 @@ public sealed class ModuleCatalog
             // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
             // down), and the bulk-add paste was parsed after a yield from a box still accepting
             // keystrokes.
-            Version = "1.11.2",
+            Version = "1.11.3",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -862,7 +862,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.1",
+            Version = "1.3.2",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",
@@ -902,7 +902,7 @@ public sealed class ModuleCatalog
             // 2.6.7: the bulk-jobs panel reports the unbounded reads it has to do. The three
             // store reads were split into a silent LoadJobsFromStore so the per-row JobChanged
             // path cannot strobe the frame (docs/ProgressCoverage-Plan.md S5).
-            Version = "2.6.7",
+            Version = "2.6.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -972,7 +972,7 @@ public sealed class ModuleCatalog
             // docs/EmergencyDisableLockdownOU-Plan.md.
             // 1.3.2: the lookup reports the directory resolve and the protection check instead
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.5.0",
+            Version = "1.5.1",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1082,7 +1082,7 @@ public sealed class ModuleCatalog
             // 1.4.0: every control on the page is gated on one in-flight predicate, and both write
             // handlers snapshot their inputs and their result so a mid-flight dismiss can no longer
             // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
-            Version = "1.4.2",
+            Version = "1.4.3",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
@@ -1321,7 +1321,7 @@ public sealed class ModuleCatalog
             // 1.1.3: the preview reports the Delinea fetch, the two-minute AD throttle wait and
             // the per-row directory resolve instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.1.4",
+            Version = "1.1.5",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1353,7 +1353,7 @@ public sealed class ModuleCatalog
             // UI appears at all.
             // 1.7.1: an exception during undo now writes the undo audit record and
             // notifies administrators; it did neither (review of aud-a26).
-            Version = "1.7.1",
+            Version = "1.7.2",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
@@ -1405,7 +1405,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.3.1",
+            Version = "1.3.2",
             MainPermission = new(
                 "Access",
                 "EventLog",
