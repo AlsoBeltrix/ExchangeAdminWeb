@@ -620,7 +620,10 @@ public sealed class ModuleCatalog
             // the circuit down if the operator closed the panel or picked another group mid-load.
             // 2.12.0: a membership change now emails the group's managedBy manager a
             // summary - one message per operation, never one per member (aud-a25).
-            Version = "2.12.1",
+            // 2.13.0: a group search refused for want of the module's AD credential says why -
+            // the secret ID unset, Delinea returning none for the ID that is set, or the module's
+            // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
+            Version = "2.13.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -781,7 +784,10 @@ public sealed class ModuleCatalog
             // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
             // down), and the bulk-add paste was parsed after a yield from a box still accepting
             // keystrokes.
-            Version = "1.11.3",
+            // 1.12.0: every refusal for want of the module's AD credential says why - the secret
+            // ID unset, Delinea returning none for the ID that is set, or the module's
+            // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
+            Version = "1.12.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

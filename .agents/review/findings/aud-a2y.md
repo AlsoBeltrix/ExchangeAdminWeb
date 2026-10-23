@@ -43,6 +43,49 @@ and notify as before; neither writes a log line, and the pool rethrows without o
 through the same `Service` seam and `CapturingLogger`. Mutation: the catch removed (the fix reverted). Conference Rooms
 2.7.0 -> 2.8.0, the module's one minor step for this branch (kd-5 and item (3) land under it).
 
+**(2) The seven credential refusals.** Each site asked `ModuleCredentialService.GetCredentialsAsync`, which returns null
+alike for an unreadable module config, no secret ID and a configured ID Delinea answered with nothing, and refused with
+"AD credentials unavailable. Check the DelineaSecretId configuration for <module>." whatever the reason:
+`Services/SelfServiceGroups/SelfServiceGroupService.cs` 86-88 (the owned-groups list, a throw), 163-165 (the single-group
+search, a throw), 240-242 (the member listing, a throw), 466-468 (the typed membership change, `PermissionResult.Fail`),
+736-738 (the listed-member removal, `PermissionResult.Fail`), 789-791 (the bulk resolution, every line `NotAttempted`,
+through the `GetCredentialsAsync` test seam at 835-836); `Services/GroupManagementService.cs` 105-107 (the group search, a
+throw). The change, aud-a2x's shape:
+- `GroupManagementService.CredentialUnavailableRefusal(moduleId, failure)`, new, internal static, pure: `SecretIdNotSet`
+  (and `None`, which no lookup returns beside no credential) today's text to the byte; `NotReturned` "AD credentials
+  unavailable. The DelineaSecretId for <module> is set, but Delinea returned no credential for it (the application log has
+  its reason)."; `ConfigUnreadable` "AD credentials unavailable. The <module> module configuration could not be read, so
+  neither could its DelineaSecretId (the application log records it)." Each keeps "AD credentials unavailable." first, as
+  callers and tests read it. In Group Management's file because Self-Service Groups already takes that service's statics
+  (`NotAttempted`, `ServerFromDn`); not in `ModuleCredentialService`, which every module shares.
+- `GroupManagementService.LookupCredentialsAsync(purpose)`, new, internal virtual beside `GetCredentialsAsync` (which stays
+  for the six other paths and the four test fixtures that override it): the credential service's `LookupCredentialsAsync`.
+  The search takes its credential from it and refuses with the helper's text.
+- `SelfServiceGroupService`: the seam `GetCredentialsAsync(purpose)` becomes `LookupCredentialsAsync(purpose)` (internal
+  virtual, the credential service's lookup), and all six sites take their credential through it - five asked the
+  credential service directly - each refusing, in its own shape, with the helper's text for "SelfServiceGroups". The
+  pinned call texts (`creds.Value` passed on) are unchanged. `SelfServiceBulkResolveTests`' fixture overrides the renamed
+  seam (no credential reads as no secret ID set, as before).
+- Tests, new `ExchangeAdminWeb.Tests/GroupCredentialRefusalTests.cs`: the seven sites x (no secret ID; an ID Delinea returns
+  none for; an unreadable module configuration), each through a real `ModuleCredentialService` (aud-a2x's
+  `OfflineCredentials`: no bootstrap credential, any request counted and failed) - refused in the site's shape, in that
+  reason's words, "Check the DelineaSecretId configuration" only for no ID, no request sent; and the helper's four answers.
+  Mutations at the call sites: each site's refusal built from `SecretIdNotSet` instead of its lookup's failure, in turn
+  ("one site's single text again"); the helper answering today's text whatever the failure.
+- Self-Service Groups 1.11.3 -> 1.12.0, Group Management 2.12.1 -> 2.13.0.
+
+**(3) The two refusals outside the service.** Both refuse a type that does not parse before the service is called, so
+nothing is written:
+- `Services/Jobs/ConferenceRoomBulkProcessor.cs` 208, `ApplyTypeRowAsync`: `Message = $"Invalid type: {row.Type}"` becomes
+  `$"Invalid type: {row.Type}. Nothing was written."`. The row's audit and its row message carry it, as before.
+- `Components/Pages/ConferenceRooms.razor` 1400, `SetSingleRoomType`: `Message = $"Invalid room type: {typeName}"` becomes
+  `$"Invalid room type: {typeName}. Nothing was written."` - the one line edited in place, so the page keeps its 1758 lines and
+  no `ClickGateRegistry` or `ProgressRegistry` entry moves.
+- Tests: `ConferenceRoomBulkProcessorTests` - a Type row whose type does not parse is refused, failed, with that message in
+  its outcome and its audit row, and the service never called; a new `ConferenceRoomPageTests` drives the real page's
+  `SetSingleRoomType` (its services set through reflection, the `ConferenceRoomDirectoryAuditTests` idiom) with a type that
+  does not parse: the banner's message, nothing sent to Exchange. Mutation: each suffix dropped in turn.
+
 ## Guard proof
 
 Each row: the file's md5 with the fix, the mutation applied (the fix reverted to the commit before it, or one exact
@@ -58,3 +101,33 @@ equal to "Room Type apply for <room>: reading the room failed; nothing was writt
 | # | Mutation | md5 fixed = restored | md5 mutated | Filter `ConferenceRoomWriteIdentityTests` (101) | Restored |
 | --- | --- | --- | --- | --- | --- |
 | 1 | the fix reverted - the read in no try, as at `3e43b35b` (the brief's "the catch removed") | `e79e2bf881012163891c3274223095d6` | `3ab67aa6b221ae3c912a8427adf6a422` | FAIL, 2 of 101: both cases, "Assert.Single() Failure: The collection did not contain any matching items" - no log entry carries the message; the throw and its message as before | PASS, 101 of 101 |
+
+**(2) The seven credential refusals** - `GroupCredentialRefusalTests` (new):
+`ARefusalForWantOfTheCredential_SaysWhyThereIsNone` (the seven paths x no secret ID, an ID Delinea returns none for, an
+unreadable module configuration - 21 cases, each through a real `ModuleCredentialService` over a real module config store):
+refused in the path's own shape (the three reads throw; the two membership writes fail with no change; the bulk resolution
+marks every line not attempted, one reason), the refusal that reason's words exactly, "AD credentials unavailable." first,
+"Check the DelineaSecretId configuration" in it only for no secret ID, no request sent to Delinea;
+`TheSharedRefusal_ChoosesItsWordsFromTheFailure` (4): the helper's answer for each failure, `None` read as no secret ID.
+`SelfServiceBulkResolveTests` (its fixture on the renamed seam) unchanged in every assertion. No whole-file revert row: the
+tests name members this item adds (`CredentialUnavailableRefusal`, the `LookupCredentialsAsync` seams), so the files as at
+`3f641ce4` do not compile against them; the rows below are that revert's parts, each at its call site. Filter
+`GroupCredentialRefusalTests|SelfServiceBulkResolveTests` (34 cases); md5 fixed = restored: `Services/GroupManagementService.cs`
+`1cb895e73202900a048e349fe0628899`, `Services/SelfServiceGroups/SelfServiceGroupService.cs` `db8f6dedde8dbe03de0e1b491aeff63d`.
+
+| # | Mutation (call site) | md5 mutated | Failing (of 34) | Restored |
+| --- | --- | --- | --- | --- |
+| M1 | the shared helper answering today's text whatever the failure | `e461873ed5d2ba0dc42ef66c6ad18151` | 16: every path's ID-set and unreadable cases (14), the helper's `NotReturned` and `ConfigUnreadable` (2); no secret ID passes, its words being today's | PASS 34 |
+| M2a | the owned-groups list's refusal built from `SecretIdNotSet`, not its lookup's failure (the brief's "one site's single text again") | `c169c9e98c02a4302d1df6a0b51e6293` | 2: that path, ID set and unreadable | PASS 34 |
+| M2b | the same, the single-group search | `cf67e23221e06910127d84a388bdba3e` | 2: that path's two | PASS 34 |
+| M2c | the same, the member listing | `0f3bdec7652d528f169ca4b6adf82691` | 2: that path's two | PASS 34 |
+| M2d | the same, the typed membership change | `5686c5d21d2cbf26d5d21ecdf4b661d7` | 2: that path's two | PASS 34 |
+| M2e | the same, the listed-member removal | `07258d9e2c92a7f1af144f1793663e14` | 2: that path's two | PASS 34 |
+| M2f | the same, the bulk member resolution | `6ff5e4871b44fd3f376dbda68a05faa7` | 2: that path's two | PASS 34 |
+| M2g | the same, Group Management's group search | `b36aeeba6417fa293a35c2e936f79b73` | 2: that path's two | PASS 34 |
+| M3a | Self-Service Groups' seam dropping the reason on the way - the old lookup's credential, read as no secret ID | `23808f6b64b547a7aac40b2b3408f5b4` | 12: the six Self-Service paths' ID-set and unreadable cases | PASS 34 |
+| M3b | the same, Group Management's seam | `69a323bdfec9bc4ed448c3790f6cc046` | 2: the group search's two | PASS 34 |
+
+Before the round, on the fix: the related suites (`GroupCredentialRefusalTests`, `SelfService*`, `GroupManagement*`,
+`GroupMember*`, `GroupBulk*`, `DirectoryModuleImportTests`, `ModuleCredential*`, `ResourceDomainDenies*`,
+`ProtectedGroupWriteTarget*`, `GroupSearchForestScope*`, `ModuleCatalog*`, `AttributeEditor*`) 768 of 768.

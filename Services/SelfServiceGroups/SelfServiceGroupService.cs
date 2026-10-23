@@ -14,7 +14,7 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 /// co-manager. This is a bounded per-user server-side query, never a tenant scan.
 ///
 /// Credential isolation (Spec): reads use THIS module's own credential
-/// (<c>ModuleCredentialService.GetCredentialsAsync("SelfServiceGroups", ...)</c>), not another
+/// (<c>ModuleCredentialService.LookupCredentialsAsync("SelfServiceGroups", ...)</c>), not another
 /// module's. Injection safety (codex F11): the caller identity is a bound -Identity parameter (never
 /// interpolated), and the ownership filter is built by <see cref="AdOwnershipFilter"/> with RFC 4515
 /// escaping and passed as a bound -LDAPFilter value.
@@ -83,9 +83,10 @@ public class SelfServiceGroupService
                 "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
                 nameof(callerSid));
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD ownership reverse-lookup");
+        var lookup = await LookupCredentialsAsync("on-prem AD ownership reverse-lookup");
+        var creds = lookup.Credentials;
         if (creds is null)
-            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+            throw new InvalidOperationException(CredentialRefusal(lookup.Failure));
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
@@ -160,9 +161,10 @@ public class SelfServiceGroupService
         if (string.IsNullOrWhiteSpace(groupName))
             throw new ArgumentException("Group name is required.", nameof(groupName));
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD single-group search");
+        var lookup = await LookupCredentialsAsync("on-prem AD single-group search");
+        var creds = lookup.Credentials;
         if (creds is null)
-            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+            throw new InvalidOperationException(CredentialRefusal(lookup.Failure));
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
@@ -237,9 +239,10 @@ public class SelfServiceGroupService
         if (string.IsNullOrWhiteSpace(groupObjectGuid))
             throw new ArgumentException("Group objectGUID is required.", nameof(groupObjectGuid));
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD group member listing");
+        var lookup = await LookupCredentialsAsync("on-prem AD group member listing");
+        var creds = lookup.Credentials;
         if (creds is null)
-            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+            throw new InvalidOperationException(CredentialRefusal(lookup.Failure));
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
@@ -463,9 +466,10 @@ public class SelfServiceGroupService
         // Fetch THIS module's credential first: it is used both to resolve the affected member and to
         // perform the write, so the resolution the protection check runs on and the write target are the
         // same directory object seen through the same credential.
-        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD self-service membership change");
+        var lookup = await LookupCredentialsAsync("on-prem AD self-service membership change");
+        var creds = lookup.Credentials;
         if (creds is null)
-            return MembershipChangeResult.From(PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups."));
+            return MembershipChangeResult.From(PermissionResult.Fail(CredentialRefusal(lookup.Failure)));
 
         // Resolve the affected member ONCE, USER-ONLY, to an immutable principal (codex F7, F11), using
         // THIS module's credential. This single resolution feeds BOTH the protected-principal gate below
@@ -733,9 +737,10 @@ public class SelfServiceGroupService
             return MembershipChangeResult.From(PermissionResult.Fail(
                 "Your identity could not be read, so group permissions cannot be evaluated. Reload the page and try again."));
 
-        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD self-service membership change");
+        var lookup = await LookupCredentialsAsync("on-prem AD self-service membership change");
+        var creds = lookup.Credentials;
         if (creds is null)
-            return MembershipChangeResult.From(PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups."));
+            return MembershipChangeResult.From(PermissionResult.Fail(CredentialRefusal(lookup.Failure)));
 
         // Resolve the affected member ONCE by its immutable objectGUID, using THIS module's
         // credential; the single resolution feeds both the protection gate and the write target,
@@ -786,9 +791,10 @@ public class SelfServiceGroupService
         if (kept.Count == 0)
             return Array.Empty<BulkIdentityList.Resolution>();
 
-        var creds = await GetCredentialsAsync("on-prem AD self-service bulk member resolution");
+        var lookup = await LookupCredentialsAsync("on-prem AD self-service bulk member resolution");
+        var creds = lookup.Credentials;
         if (creds is null)
-            return GroupManagementService.NotAttempted(kept, "AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+            return GroupManagementService.NotAttempted(kept, CredentialRefusal(lookup.Failure));
 
         IReadOnlyList<BulkIdentityList.Candidate> candidates;
         try
@@ -826,14 +832,23 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// Credential fetch for the batch resolution. Internal virtual as a TEST SEAM (this project
-    /// exposes internals to the test assembly), like GroupManagementService.GetCredentialsAsync:
-    /// without it no test can drive the batch past the credential step. The existing write and
-    /// read paths keep their direct <see cref="_moduleCredentials"/> calls - this seam serves the
-    /// new method only.
+    /// This module's credential lookup, saying why it returned none - every path here takes its credential through it.
+    /// Internal virtual as a TEST SEAM (this project exposes internals to the test assembly), like
+    /// GroupManagementService.GetCredentialsAsync: without it no test can drive a path past the credential step.
     /// </summary>
-    internal virtual Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
-        => _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", purpose);
+    /// <remarks>
+    /// aud-a2y. It was GetCredentialsAsync, serving the batch resolution only, while the other five paths asked the
+    /// credential service directly; all six refused "Check the DelineaSecretId configuration" whatever the lookup's reason.
+    /// Each now refuses with <see cref="CredentialRefusal"/>, from this lookup's own answer - not from a second read of
+    /// the config that an edit in between could contradict. The same credential and the same log lines as before:
+    /// ModuleCredentialService.GetCredentialsAsync is this lookup's credential.
+    /// </remarks>
+    internal virtual Task<ModuleCredentialLookup> LookupCredentialsAsync(string purpose)
+        => _moduleCredentials.LookupCredentialsAsync("SelfServiceGroups", purpose);
+
+    /// <summary>The refusal for no credential, in the words for why (aud-a2y; Group Management's shared text).</summary>
+    private static string CredentialRefusal(ModuleCredentialFailure failure) =>
+        GroupManagementService.CredentialUnavailableRefusal("SelfServiceGroups", failure);
 
     /// <summary>
     /// The query half of the batch resolution: one Get-ADUser -LDAPFilter per chunk of at most
