@@ -450,6 +450,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// The validated room read back by its GUID, and refused unless it is a room mailbox. Returns
     /// the room's details for the operation (its primary address included), or the refusal.
     /// </summary>
+    /// <remarks>
+    /// aud-a2w. The refusal says nothing of what was written, and is logged nowhere here: each caller - the Finder row and
+    /// the Type path - logs it where it refuses and appends " Nothing was written.", the shape ConfirmDirectoryObject has
+    /// had since aud-a2r. A line here as well would log every such refusal twice.
+    /// </remarks>
     private async Task<(RoomInfo? info, string? error)> ValidateRoomRecipientAsync(ValidatedMailbox room, string roomEmail)
     {
         var info = await GetRoomInfoAsync(room);
@@ -480,6 +485,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // at Warning, where the row refuses, naming the room as typed and the refusal. They reached only the result and the
         // audit. Nothing is written before any of them - the room's read is the only call - so the line says so. Here, not in
         // ValidateRoomRecipientAsync, which SetRoomTypeAsync shares.
+        // aud-a2w. And each message says so at its end, as both preflights' do since aud-a2v - one rule for the module: the
+        // time-zone and recipient refusals are built without " Nothing was written.", logged so, and returned with it. Not the
+        // validated-mailbox refusal, which already says "so nothing was written" in its own words and is shared with other
+        // modules.
         if (room is null)
         {
             result.Success = false;
@@ -503,6 +512,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         // Not a room mailbox, or - defensively, as GetRoomInfoAsync(ValidatedMailbox) returns a room or throws - not found:
         // one line for either.
+        // aud-a2w. The read throws when Exchange returns another mailbox or none (ReadValidatedMailbox) or a cmdlet fails, and
+        // nothing logged that: the pool rethrows it, and the page's catch, like the bulk row's, audits and notifies but writes
+        // no log line. So the throw is logged here - once, at Warning, as the row's refusals are, the row failing closed
+        // before any write - and rethrown as it was, so the outcome and the callers' audit and notification are unchanged.
         (RoomInfo? info, string? error) recipient;
         try
         {
@@ -889,6 +902,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     {
         var result = new RoomOperationResult { Email = roomEmail };
 
+        // aud-a2w. The four refusals before any write - no validated room, an invalid time zone, the recipient refused, the
+        // module's groups unconfigured - are logged as the Finder row's are (aud-a2v): once, at Warning, where the path
+        // refuses, naming the room as typed and the refusal. They reached only the result and the audit. And each message
+        // but the validated-mailbox one, which says so already, ends " Nothing was written." - the module's one rule for a
+        // refusal decided before any write.
         if (room is null)
         {
             result.Success = false;
@@ -1532,6 +1550,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return runspace;
     }
 
+    // aud-a2x. The module's AD credential for one of the four directory paths, and why there is none when there is none.
+    // The base's GetModuleCredentialsAsync returns only the credential, so every path refused a lookup that returned none
+    // with "not configured (set the AD Delinea Secret ID)" - also when the ID was set and the module's config could not be
+    // read, or Delinea returned nothing for it. The credential service now says which, and the refusal says it. With no
+    // credential service (a host that registered none, which the base allows) there is nothing to say why: the base's
+    // lookup logs that and returns none, refused as not configured, as this file always did. Virtual, as the base's lookup
+    // is, for the tests.
     protected virtual async Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
     {
         if (_moduleCredentials is not null)
@@ -1542,6 +1567,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             credentials, credentials is null ? ModuleCredentialFailure.SecretIdNotSet : ModuleCredentialFailure.None);
     }
 
+    // aud-a2x. The clause each path's credential refusal opens with, for why the lookup returned none; each path adds its
+    // own tail, and the preflights " Nothing was written.". The operator is sent to set the AD Delinea Secret ID only when
+    // none is set - those words, and so each path's refusal then, are as before to the byte. Otherwise the clause names the
+    // category, and points to the application log, where DelineaService (every null return of its secret lookup) or the
+    // credential service (an unreadable module config) has written the precise reason; no secret or response body is in
+    // either clause.
     internal static string DirectoryCredentialRefusal(ModuleCredentialFailure failure) => failure switch
     {
         ModuleCredentialFailure.NotReturned =>
@@ -1567,7 +1598,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // same - values in place this row is not known to have written (aud-a2q); and (the failure
     // message for the row, null, null) otherwise - the object is reported only by a write known to
     // have happened (aud-a2g). It writes through the server the preflight below proved (aud-a2q).
-    // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
+    // Runs in its own AD runspace, as the Comms-10k service's directory reads do, not through
     // the EXO pool.
     //
     // aud-a2d. The object is the one the protection gate PROVED owns the room's mailbox - the
@@ -1630,7 +1661,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // aud-a2v. A lookup that returns none - no secret ID, a corrupt module config, a PAM provider failing or holding an
         // incomplete secret - is logged by the credential services, whose lines name the module or the secret, and the
         // purpose only for a missing secret ID: none named the room. So this path's line names the room beside the purpose it
-        // asked with, which ties it to theirs. The refusal keeps its words.
+        // asked with, which ties it to theirs.
+        // aud-a2x. And the refusal opens with why there is none (DirectoryCredentialRefusal), so an ID that is set is not
+        // asked for again; for no ID its words are as before. The three paths below take the same clause.
         var purpose = $"Set-ADUser preflight for {roomEmail}";
         var lookup = await LookupDirectoryCredentialAsync(purpose);
         var creds = lookup.Credentials;
@@ -1654,6 +1687,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
+                // psl-8. The shared import (ActiveDirectoryModuleImport), which this file used to keep a private copy of
+                // (aud-a2r's): its throw is the step's error, named by the step, and it leaves no record in the stream for
+                // the object read's own HadErrors check (ConfirmDirectoryObject) to take. The other three paths import so too.
                 step = "importing the ActiveDirectory module";
                 ActiveDirectoryModuleImport.Import(ps);
 
@@ -1930,7 +1966,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
 
         // aud-a2v. As the City/State/Country preflight's: the line names the room, the list and the purpose asked with. The
-        // refusal is built without its " Nothing was written.", as the three above, and the message is unchanged.
+        // refusal is built without its " Nothing was written.", as the three above, and the message is unchanged - but for
+        // its opening clause, which since aud-a2x says why the lookup returned none, as the City/State/Country preflight's.
         var purpose = $"on-prem room-list membership preflight for {roomEmail}";
         var lookup = await LookupDirectoryCredentialAsync(purpose);
         var creds = lookup.Credentials;

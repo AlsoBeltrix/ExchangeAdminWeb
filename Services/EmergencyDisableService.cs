@@ -463,6 +463,18 @@ public class EmergencyDisableService
         return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
+    /// <summary>
+    /// The session each of the four directory steps below opens (psl-8): the pre-state read, the disable, the lockdown
+    /// move and the password reset.
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, GroupManagementService's shape (psl-7): a test hands back a session whose
+    /// Import-Module and directory cmdlets are local functions, and calls the four steps - internal for that reason -
+    /// directly. Production builds exactly the session each step used to build inline. Each step imports the module through
+    /// ActiveDirectoryModuleImport: they cleared only the commands, so a record the import wrote past -ErrorAction Stop stayed
+    /// in the stream and the step's own check took it - the pre-state read threw it as its error, the lockdown move refused
+    /// as if its OU could not be read, and the disable and the reset reported FAILED after their write had been made.
+    /// </remarks>
     internal virtual Runspace CreateDirectoryRunspace()
     {
         var iss = InitialSessionState.CreateDefault();
