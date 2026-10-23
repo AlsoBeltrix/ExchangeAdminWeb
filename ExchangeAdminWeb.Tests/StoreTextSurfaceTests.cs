@@ -26,4 +26,29 @@ public sealed class StoreTextSurfaceTests
         Assert.Equal(Fix + ".", SettingsStoreText.ServiceDatabaseRemedy);
         Assert.Equal(Rows + Fix + ".", SettingsStoreText.ServiceModuleConfig("MailboxPermissions"));
     }
+
+    // aud-a50, part 5: the enablement store's text in a service's words, beside the module config's.
+
+    private const string EnablementTable =
+        "The module_enablement table in the config database cannot be read, so every module reads as disabled. ";
+
+    private const string EnablementLegacy =
+        "The legacy file config\\modules-enabled.json could not be imported into the config database and is left in place, so every module reads as disabled until it imports. "
+        + "Correct or remove the file, then recycle the application pool so the import runs again at start.";
+
+    [Fact]
+    public void TheEnablementPageText_IsAsItWas()
+    {
+        Assert.Equal(EnablementTable + Fix + ", then reload this page.", SettingsStoreText.Enablement(legacyImportFailed: false));
+        Assert.Equal(EnablementLegacy, SettingsStoreText.Enablement(legacyImportFailed: true));
+    }
+
+    [Fact]
+    public void TheServiceEnablementText_IsThePageTextWithoutItsReloadClause_AndTheLegacyTextIsOneText()
+    {
+        // The legacy file's text names no page to reload, so a service says it as the page does.
+        Assert.Equal(EnablementTable + Fix + ".", SettingsStoreText.ServiceEnablement(legacyImportFailed: false));
+        Assert.Equal(EnablementLegacy, SettingsStoreText.ServiceEnablement(legacyImportFailed: true));
+        Assert.DoesNotContain("reload this page", SettingsStoreText.ServiceEnablement(legacyImportFailed: false), StringComparison.Ordinal);
+    }
 }

@@ -222,6 +222,24 @@ Mailbox Permissions and Calendar Permissions banner, single or on-premises, is t
 not be written.", as it already was when the record threw. `AuditService.LogMailboxPermission` and `LogCalendarPermission`
 return the writer's outcome.
 
+### Part 5 - the service wording for an unreadable enablement store
+
+- `Services/SettingsStoreText.cs`: the legacy-file sentence and the table sentence are private constants
+  (`EnablementLegacyUnimported`, `EnablementTableUnreadable`); `Enablement(bool)` is built on them, its text byte for byte
+  as it was; new `ServiceEnablement(bool legacyImportFailed)` beside `ServiceModuleConfig` - the legacy text as it is (it
+  names no page), else the table sentence and `ServiceDatabaseRemedy`.
+- `Services/ExoConnectionPool.cs`: `UnreadableEnablement => SettingsStoreText.ServiceEnablement(_enablement.LegacyImportFailed)`;
+  the refusal and its log line say what they said.
+- Tests: `StoreTextSurfaceTests` +2 - `TheEnablementPageText_IsAsItWas` and
+  `TheServiceEnablementText_IsThePageTextWithoutItsReloadClause_AndTheLegacyTextIsOneText`;
+  `ExoConnectionPoolConfigReadTests`: `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled`
+  (both rows) also requires exactly the prefix and `ServiceEnablement(legacyFile)`, and new
+  `TheUnreadableEnablement_IsTheStoreTextsServiceWording_NotThePageTextRewritten` (code view: the pool calls
+  `ServiceEnablement`, and names neither `Enablement(` nor `DatabaseRemedy`).
+
+Caller-visible change: none in text. The service wording now comes from the store text, where a change to the page text
+can no longer leave the page's reload clause in a service's refusal.
+
 ## Guard proof
 
 Protocol (session-local driver `mutate.ps1`, session scratchpad `a50`, log `a50-mutations.log`): the fix staged; per
@@ -282,3 +300,15 @@ restored tree rebuilt and the filter: 644/644 green; the pages 808 and 762 lines
 | M4c | extra: the same on Calendar Permissions | `DE2A5765AF8E23B25CCD10F4D6066C42` | 1 of 644: the same test's `(page: "Calendar Permissions")` row |
 | E4 | extra: `SelfGrantRefusalRecord.Banner` ignoring the outcome | `C926C52E3238A0438658AE762961A677` | 4 of 644: both `TheOnPremBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten` rows and both `TheRefusalsBanner_WhenTheWriterDropsItsRecord_SaysTheRowCouldNotBeWritten` rows |
 | E4b | extra: `AuditService.LogMailboxPermission` handing back `Written` whatever the writer said | `7AFA6DC1CFB0DC54FFD53CF9792987ED` | 4 of 644: the two dropped `ThePermissionRecords_HandBackWhetherTheirRowWasWritten(record: "mailbox", ...)` rows and both pages-tests' Mailbox Permissions rows (`SubmitSingle`, `ExecuteOnPrem`) |
+
+### Part 5
+
+Filter `FullyQualifiedName~StoreTextSurface|FullyQualifiedName~ExoConnectionPool|FullyQualifiedName~ExoConnection|FullyQualifiedName~ModuleEnablement|FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~Settings`
+(480 tests). Fixed-file MD5s: `Services/ExoConnectionPool.cs` `C36F10D0332C53ECC9A38B9D36696C4F`,
+`Services/SettingsStoreText.cs` `ACD8B9295C4A8078B0BD1A4A43F7ECE1`. After the round, the restored tree rebuilt and the
+filter: 480/480 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M5 | the pool's replace again: `UnreadableEnablement` rebuilt from the page text, as it stood | `905BACF98F5C2BD4843FD5A06653153E` (the file at `132d6e97`, byte for byte) | 1 of 480: `ExoConnectionPoolConfigReadTests.TheUnreadableEnablement_IsTheStoreTextsServiceWording_NotThePageTextRewritten` - the replace says the same words today, so only the code-view guard can see it, as the plan says |
+| E5 | extra: `ServiceEnablement(false)` on the page remedy | `B7564C5AB62012F50D997961A6DF3F03` | 2 of 480: `StoreTextSurfaceTests.TheServiceEnablementText_IsThePageTextWithoutItsReloadClause_AndTheLegacyTextIsOneText` and `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled(legacyFile: False)` |

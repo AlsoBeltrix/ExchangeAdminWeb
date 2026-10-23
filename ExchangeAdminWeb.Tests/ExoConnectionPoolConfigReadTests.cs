@@ -161,6 +161,8 @@ public sealed class ExoConnectionPoolConfigReadTests : IDisposable
             Assert.Contains("The module_enablement table in the config database cannot be read", refused.Message, StringComparison.Ordinal);
             Assert.EndsWith(SettingsStoreText.ServiceDatabaseRemedy, refused.Message, StringComparison.Ordinal);
         }
+        // aud-a50, part 5: the store text's own service wording, exactly.
+        Assert.Equal(Prefix + SettingsStoreText.ServiceEnablement(legacyFile), refused.Message);
         Assert.DoesNotContain("reload this page", refused.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("not enabled", refused.Message, StringComparison.Ordinal);
         Assert.Empty(_connectedWith);
@@ -268,6 +270,19 @@ public sealed class ExoConnectionPoolConfigReadTests : IDisposable
         Assert.DoesNotContain("\"ExchangeOnline:", code, StringComparison.Ordinal);
         Assert.DoesNotContain("CN=EXO-Automation", code, StringComparison.Ordinal);
         Assert.Equal(3, code.Split("ExoConfigFallback.Resolve(").Length - 1);
+    }
+
+    [Fact]
+    public void TheUnreadableEnablement_IsTheStoreTextsServiceWording_NotThePageTextRewritten()
+    {
+        // aud-a50, part 5. The pool built its wording by replacing the page's reload clause inside the page text: the same
+        // words today, and the page's clause in a service's refusal the day the page text no longer ends in it. The store
+        // text holds both forms now; the pool asks for the service's. Comments blanked.
+        var code = RazorSyntax.CommentsBlanked(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ExoConnectionPool.cs")));
+
+        Assert.Contains("SettingsStoreText.ServiceEnablement(_enablement.LegacyImportFailed)", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("SettingsStoreText.Enablement(", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("SettingsStoreText.DatabaseRemedy", code, StringComparison.Ordinal);
     }
 
     [Fact]

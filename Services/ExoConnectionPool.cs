@@ -220,10 +220,7 @@ public sealed class ExoConnectionPool : IDisposable
     // legacy file when its import failed - that text has no page clause - else the table, with the service's remedy in place
     // of the page's reload clause. SettingsStoreText (another agent's file) has no service form of Enablement yet; the
     // follow-up is recorded in aud-a44.
-    private string UnreadableEnablement => _enablement.LegacyImportFailed
-        ? SettingsStoreText.Enablement(legacyImportFailed: true)
-        : SettingsStoreText.Enablement(legacyImportFailed: false)
-            .Replace(SettingsStoreText.DatabaseRemedy, SettingsStoreText.ServiceDatabaseRemedy, StringComparison.Ordinal);
+    private string UnreadableEnablement => SettingsStoreText.ServiceEnablement(_enablement.LegacyImportFailed);
 
     // aud-a28x. Three fail-open value reads used to be followed by a presence read and a probe, so a value read that failed
     // while those answered was taken for absent and given the appsettings value: a borrow could connect under another
