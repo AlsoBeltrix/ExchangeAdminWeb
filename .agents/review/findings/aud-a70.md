@@ -60,3 +60,17 @@ any result but "Failed" as a success, so an Undetermined permission row (aud-a73
 telemetry and completes the audit's trace operation as succeeded (the aud-a28z part-5 rule kept for
 eligibility checks; `docs/UsageTelemetry-Plan.md` 343 specified `result == "Success"`) - an owner call whether
 Undetermined counts as neither.
+
+## Also held (aud-a76 agent, 2026-10-23) - LOW
+
+(14) A right whose command was sent and whose session then failed mid-command is filed Failed through the
+`TryRight`/`TryRightOnPrem` results (Mailbox) and the `RunAsync` result (Calendar cloud) though its outcome is
+unknown; only Calendar on-premises files it Undetermined. The agent graded it MEDIUM by aud-a73's measure;
+the supervisor holds it LOW: the trigger is a session drop in the middle of one cmdlet, Failed is the
+conservative reading that sends the operator to recheck, and the audit text still carries the cause. Fix
+shape: the per-right results carry a "sent" flag the pages file as Undetermined. (15) An Undetermined
+(possibly applied) single change sends no administrator, user or owner notification; the Constitution asks
+for an administrator notification on every mutating action. (16) A Calendar removal retried after a
+pre-flight error, whose retry cannot connect, is filed Undetermined though the pool treats that error as proof
+nothing ran (conservative, by design). (17) The pool's "stopped" refusal message contains a line break, so
+the banner and the audit row do too.

@@ -8,7 +8,7 @@ connect failing) or the on-premises `ConnectOnPrem` failing before any `Invoke-C
 nothing could have applied. The Admin Event Log then hides a definite no-write failure from the Failed
 filter and sends the operator into needless reconciliation. The aud-a75 test even asserts no
 `Invoke-Command` while expecting Undetermined.
-**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM)
+**Status**: Merged `03261f7c`; closed on guard proof; codex review pending
 **Branch**: `aud-a76-agent-a02bf3417cec8f3d3` (from master `a1eb8a3a`)
 **Commit**: plan `537ccd2c`; fix `7ef600eb`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-9, 2026-10-23)
