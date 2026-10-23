@@ -371,25 +371,53 @@ public sealed class ClickGateSource
     /// <see cref="Tags"/> was quote-aware and this was not - so an assertion scoped to the block read
     /// the wrong code. The text returned is the source's own, literals and comments included,
     /// because the code view keeps every offset. C# only: the code view blanks a component's markup,
-    /// so an opener in markup is not found.
+    /// so an opener in markup is not found - <see cref="ExtractMarkupBlock"/> reads that.
     /// </remarks>
     public static string ExtractBlock(string source, string opener)
     {
         var code = RazorSyntax.CodeView(source);
 
-        var start = IndexOfCode(source, code, opener);
+        return BalancedBlock(source, code, opener);
+    }
+
+    /// <summary>
+    /// The brace-balanced block a Razor construct in a component's MARKUP opens - an
+    /// "@if (...)" or "@foreach (...)" between the tags - which <see cref="ExtractBlock"/> cannot
+    /// read, because its code view blanks markup. Returns an empty string when the opener is absent.
+    /// </summary>
+    /// <remarks>
+    /// kd-11. Balanced over a markup view that is quote-aware the way <see cref="Tags"/> is: every
+    /// quoted attribute value of every tag (a quote directly after its "=") is blanked, so a brace in
+    /// a title, a placeholder or a lambda handler neither opens nor closes the block; comments are
+    /// blanked as <see cref="BlankComments"/> blanks them; and the component's @code regions are
+    /// blanked whole. Like the code view it keeps every offset, so the text returned is the
+    /// source's own. Honest limit, as <see cref="IndexOfTagEnd"/> has one: a brace inside a C#
+    /// string literal in a Razor expression in text content - @("}") - is still counted, and seeing
+    /// it would take Razor's own parser.
+    /// </remarks>
+    public static string ExtractMarkupBlock(string source, string opener) =>
+        BalancedBlock(source, MarkupView(source), opener);
+
+    /// <summary>
+    /// The block <paramref name="opener"/> introduces, found and balanced in <paramref name="view"/> -
+    /// the same source with what is not to be read blanked to the same length - and returned as the
+    /// source's own text.
+    /// </summary>
+    private static string BalancedBlock(string source, string view, string opener)
+    {
+        var start = IndexOfUnblanked(source, view, opener);
         if (start < 0)
             return "";
 
-        var open = code.IndexOf('{', start + opener.Length);
+        var open = view.IndexOf('{', start + opener.Length);
         if (open < 0)
             return "";
 
         var depth = 0;
-        for (var i = open; i < code.Length; i++)
+        for (var i = open; i < view.Length; i++)
         {
-            if (code[i] == '{') depth++;
-            else if (code[i] == '}' && --depth == 0)
+            if (view[i] == '{') depth++;
+            else if (view[i] == '}' && --depth == 0)
                 return source[open..(i + 1)];
         }
 
@@ -397,18 +425,63 @@ public sealed class ClickGateSource
     }
 
     /// <summary>
-    /// The first occurrence of <paramref name="text"/> in <paramref name="source"/> that starts in
-    /// code: its first non-blank character survives in <paramref name="code"/>, the code view of
-    /// the same source, rather than having been blanked as part of a literal or a comment.
+    /// kd-11. The markup view <see cref="ExtractMarkupBlock"/> balances over: comments, quoted
+    /// attribute values and the component's @code regions blanked, newlines kept.
     /// </summary>
-    private static int IndexOfCode(string source, string code, string text)
+    private static string MarkupView(string source)
+    {
+        var blanked = BlankComments(source);
+        var buffer = blanked.ToCharArray();
+
+        for (var at = blanked.IndexOf('<'); at >= 0; at = blanked.IndexOf('<', at + 1))
+        {
+            if (at + 1 >= blanked.Length || !char.IsLetter(blanked[at + 1]))
+                continue;
+
+            var values = new List<(int Start, int End)>();
+            var end = WalkTag(blanked, at + 1, values);
+            if (end < 0)
+                continue;
+
+            foreach (var (valueStart, valueEnd) in values)
+                BlankSpan(buffer, valueStart, valueEnd);
+
+            at = end;
+        }
+
+        var parsed = RazorSyntax.Parse(source);
+        if (parsed.IsRazor)
+        {
+            foreach (var region in parsed.Regions)
+                BlankSpan(buffer, region.Raw.Start, region.Raw.End);
+        }
+
+        return new string(buffer);
+    }
+
+    private static void BlankSpan(char[] buffer, int from, int to)
+    {
+        for (var i = Math.Max(0, from); i < Math.Min(buffer.Length, to); i++)
+        {
+            if (buffer[i] != '\n')
+                buffer[i] = ' ';
+        }
+    }
+
+    /// <summary>
+    /// The first occurrence of <paramref name="text"/> in <paramref name="source"/> that starts in
+    /// what <paramref name="view"/> keeps: its first non-blank character survives in the view of
+    /// the same source, rather than having been blanked as part of a literal, a comment or an
+    /// attribute value.
+    /// </summary>
+    private static int IndexOfUnblanked(string source, string view, string text)
     {
         var lead = text.Length - text.TrimStart().Length;
         for (var at = source.IndexOf(text, StringComparison.Ordinal); at >= 0;
              at = source.IndexOf(text, at + 1, StringComparison.Ordinal))
         {
             var first = at + lead;
-            if (first >= source.Length || code[first] == source[first])
+            if (first >= source.Length || view[first] == source[first])
                 return at;
         }
 

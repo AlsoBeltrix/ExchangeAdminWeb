@@ -2574,24 +2574,20 @@ public class MigrationStatusPageTests
     /// The brace-balanced block introduced by <paramref name="opener"/>, so an assertion can be
     /// scoped to a loop or conditional rather than the whole method.
     /// </summary>
+    /// <remarks>
+    /// kd-11: read by the shared lexers, no longer by a private copy of the raw brace count kd-3
+    /// replaced in ClickGateSource. A Razor construct in the page's markup ("@if", "@foreach") goes
+    /// to ClickGateSource.ExtractMarkupBlock; C# - a method body, or a member of the page's @code -
+    /// to ClickGateSource.ExtractBlock. Still fails loudly, as the copy did, when the opener is not
+    /// found or its block does not balance.
+    /// </remarks>
     private static string ExtractBlock(string source, string opener)
     {
-        var start = source.IndexOf(opener, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"block '{opener}' not found");
-
-        var open = source.IndexOf('{', start + opener.Length);
-        Assert.True(open > 0, $"no opening brace after '{opener}'");
-
-        var depth = 0;
-        for (var i = open; i < source.Length; i++)
-        {
-            if (source[i] == '{') depth++;
-            else if (source[i] == '}' && --depth == 0)
-                return source[open..(i + 1)];
-        }
-
-        Assert.Fail($"unbalanced braces after '{opener}'");
-        return "";
+        var block = opener.StartsWith('@')
+            ? ClickGateSource.ExtractMarkupBlock(source, opener)
+            : ClickGateSource.ExtractBlock(source, opener);
+        Assert.True(block.Length > 0, $"block '{opener}' not found, or its braces do not balance");
+        return block;
     }
 
     /// <summary>

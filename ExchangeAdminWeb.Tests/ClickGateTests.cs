@@ -1242,6 +1242,44 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void ExtractMarkupBlockBalancesTheBracesOfMarkupNotOfAttributeValuesOrComments()
+    {
+        // kd-11. MigrationStatusPageTests kept a private copy of the raw brace count for the blocks it
+        // scopes its markup assertions to - "@if (canManage && ...)" around an action bar - which
+        // ExtractBlock's code view cannot read, because it blanks markup. Each marked line below
+        // breaks the raw count on its own: the opener's text inside an attribute value starts it in
+        // the wrong place, a "}" in a value closes it early, and a "{" in a value runs it long.
+        var page = string.Join("\n",
+            "<div>",
+            "    <span title=\"@if (canManage) { decoy }\">x</span>",                      // the opener in a value
+            "    @if (canManage)",
+            "    {",
+            "        <button title=\"closes } early\" @onclick=\"() => { Go(); }\">Go</button>",
+            "        <input placeholder=\"{\" />",                                         // an unbalanced value
+            "        @* a } in a Razor comment *@",
+            "        <span>inside</span>",
+            "    }",
+            "    <p>after</p>",
+            "</div>",
+            "@code {",
+            "    private bool canManage;",
+            "}");
+
+        var block = ClickGateSource.ExtractMarkupBlock(page, "@if (canManage)");
+
+        Assert.StartsWith("{", block, StringComparison.Ordinal);
+        Assert.EndsWith("}", block, StringComparison.Ordinal);
+        Assert.Contains("<span>inside</span>", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("<p>after</p>", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("decoy", block, StringComparison.Ordinal);
+        // The source's own text comes back; only the reading skipped the values.
+        Assert.Contains("title=\"closes } early\"", block, StringComparison.Ordinal);
+
+        // C# openers are still ExtractBlock's: the markup view blanks the @code region.
+        Assert.Equal("", ClickGateSource.ExtractMarkupBlock(page, "private bool canManage"));
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because
