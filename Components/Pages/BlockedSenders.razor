@@ -448,13 +448,26 @@
         }
 
         PermissionResult opResult;
+        // kd-6: true when the service stopped waiting after the unblock was sent, so whether it applied is
+        // not known; the row below is then filed Undetermined.
+        var outcomeUnknown = false;
         try
         {
             activity.Step("unblocking the sender in Exchange Online");
             OperationTrace.Step("Reauthorized");
             OperationTrace.Step("BackendWrite", backend: "ExchangeOnline", command: "Remove-BlockedSenderAddress", target: address);
-            opResult = await BlockedSenderSvc.UnblockSenderAsync(address, unblockReason);
+            // kd-6: bounded by the service (BlockedSenderService.UnblockTimeout) and handed this activity's
+            // token, so the navigation guard's OK - or the circuit closing - stops the wait as well.
+            opResult = await BlockedSenderSvc.UnblockSenderAsync(address, unblockReason, activity.CancellationToken);
             scope.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
+        }
+        catch (BlockedSenderUnblockUnconfirmedException ex)
+        {
+            OperationTrace.Step("BackendWrite", "Failed", backend: "ExchangeOnline", exception: ex);
+            scope.Complete(false, "Unblock not confirmed", ex);
+            // The service's own sentence: "Unblock failed" would tell the operator it did not happen.
+            opResult = PermissionResult.Fail(ex.Message);
+            outcomeUnknown = true;
         }
         catch (Exception ex)
         {
@@ -478,9 +491,15 @@
             // operation is silently discarded - which is exactly what happened in the first cut of
             // this feature. Review caught it. A serviced unblock succeeds, so the record would
             // have been lost in the one case it exists for.
-            var serviced = opResult.Success && !string.IsNullOrWhiteSpace(gate.AuditDetail)
+            //
+            // kd-6: an unblock whose outcome is unknown may have applied, so it keeps the note as well
+            // (pgwt-7: the note must reach the audit whatever the outcome), and its row is filed
+            // Undetermined rather than Failed (the aud-a73 rule).
+            var serviced = (opResult.Success || outcomeUnknown) && !string.IsNullOrWhiteSpace(gate.AuditDetail)
                 ? new Dictionary<string, object?> { ["protectedPrincipalServiced"] = gate.AuditDetail }
                 : null;
+            if (outcomeUnknown)
+                serviced = FiledUndetermined(serviced);
 
             Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender",
                 "BlockedSenders", address, opResult.Success, ticketNumber: ticket,
@@ -531,5 +550,18 @@
             reason = string.Empty;
             await LoadBlockedSenders();
         }
+    }
+
+    /// <summary>
+    /// kd-6. The row of an unblock whose outcome is unknown, filed Undetermined. LogModuleAction files
+    /// Success or Failed from its bool and, unlike the two permission methods aud-a73 extended, takes
+    /// no explicit result; AuditService.MergeExtra is merged last so that a caller can set a computed
+    /// field deliberately, so the result is set here. The row keeps its error detail.
+    /// </summary>
+    private static Dictionary<string, object?> FiledUndetermined(Dictionary<string, object?>? extra)
+    {
+        var filed = extra is null ? new Dictionary<string, object?>() : new Dictionary<string, object?>(extra);
+        filed["result"] = nameof(AuditResult.Undetermined);
+        return filed;
     }
 }

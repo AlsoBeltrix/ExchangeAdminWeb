@@ -31,7 +31,7 @@ public sealed class ExchangeServiceBaseRunFailureTests : IDisposable
     {
         _exchange.Failures["Remove-BlockedSenderAddress"] = Refused("the sender is not on the blocked-senders list");
 
-        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001");
+        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001", TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal("the sender is not on the blocked-senders list", result.Message);
@@ -43,7 +43,7 @@ public sealed class ExchangeServiceBaseRunFailureTests : IDisposable
     {
         _exchange.Failures["Remove-BlockedSenderAddress"] = "the request was throttled";
 
-        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001");
+        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001", TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal("the request was throttled", result.Message);
@@ -55,7 +55,7 @@ public sealed class ExchangeServiceBaseRunFailureTests : IDisposable
     {
         _exchange.Behaviour["NestedSuppressedError"] = true;
 
-        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001");
+        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001", TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal(ExchangeServiceBase.ErrorNotSurfaced, result.Message);
@@ -77,7 +77,7 @@ public sealed class ExchangeServiceBaseRunFailureTests : IDisposable
     [Fact]
     public async Task ACleanWrite_StillSucceeds()
     {
-        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001");
+        var result = await BlockedSenders().UnblockSenderAsync(Sender, "INC0001", TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal($"Unblocked sender {Sender}.", result.Message);
