@@ -15,9 +15,10 @@ namespace ExchangeAdminWeb.Tests;
 
 public class ExtendedLogServiceTests
 {
-    // kd-16, kd-22. How long a test here waits for the consumer - another thread - to do something it will do: take an
-    // entry, count one, write them. Far above any stall a loaded host has shown (about 10 s), so only a consumer that never
-    // does it fails the wait; a healthy run returns the moment it has.
+    // kd-16, kd-22, kd-25. How long one side of a test here waits for the other: the test for the consumer - another
+    // thread - to do something it will do (take an entry, count one, write them, drain), and a consumer the test holds
+    // for the test to release it. Far above any stall a loaded host has shown (about 10 s; a full drain took 33 s), so only
+    // a side that never does its part fails the wait; a healthy run returns the moment it has.
     private static readonly TimeSpan ConsumerWait = TimeSpan.FromMinutes(2);
 
     [Fact]
@@ -642,7 +643,7 @@ public class ExtendedLogServiceTests
             if (!entered.IsSet)
             {
                 entered.Set();
-                release.Wait(TimeSpan.FromSeconds(60));
+                release.Wait(ConsumerWait);
             }
 
             file.Write(line);
@@ -655,8 +656,11 @@ public class ExtendedLogServiceTests
 
         Assert.Equal(5, service.DroppedEntryCount);
         release.Set();
+
+        // A deadline, not a count of sleeps (kd-25): each round also reads the entries back, which a count would add on top.
+        var deadline = DateTime.UtcNow + ConsumerWait;
         var drained = false;
-        for (var poll = 0; poll < 600 && !drained; poll++)
+        while (!drained && DateTime.UtcNow < deadline)
         {
             drained = service.GetEntries(DateTime.Today, maxLines: 5000).Entries.Count == 1025;
             if (!drained)
@@ -697,7 +701,7 @@ public class ExtendedLogServiceTests
             if (!entered.IsSet)
             {
                 entered.Set();
-                release.Wait(TimeSpan.FromSeconds(60));
+                release.Wait(ConsumerWait);
             }
             else
             {
@@ -740,7 +744,7 @@ public class ExtendedLogServiceTests
             if (!entered.IsSet)
             {
                 entered.Set();
-                release.Wait(TimeSpan.FromSeconds(60));
+                release.Wait(ConsumerWait);
             }
 
             file.Write(line);
