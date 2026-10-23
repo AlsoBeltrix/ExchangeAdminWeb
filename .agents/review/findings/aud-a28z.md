@@ -247,6 +247,40 @@ Files: `Services/AuditService.cs`, `Components/Pages/AdminEventLog.razor`,
 base app version this record already makes due) and the filter is the Admin Event Log's (its module version, due from
 aud-a26u).
 
+## Part 5 - fix and guard proof
+
+- `Services/AuditService.cs` `LogMigrationCheck`: `["result"] = status switch { "Eligible" => "Success", "Ineligible" =>
+  "Ineligible", _ => "Undetermined" }`.
+- `Components/Pages/AdminEventLog.razor`: `<option value="Undetermined">Undetermined</option>` after Ineligible
+  (1,604 lines -> 1,605; NotYetConverted, no key moves).
+- `ExchangeAdminWeb.Tests/EventLogSectionsTargetTests.cs` +3:
+  `AnEligibilityCheckThatDidNotDecide_IsFiledUndetermined_AndTheResultFilterFindsItThere` ("Undetermined", "Error") and
+  `TheResultFilter_OffersUndetermined`; helper `ShownUnderResult`.
+
+Caller-visible change, by design: a migration eligibility check that could not decide, or that threw, is filed with
+result "Undetermined" (its `status` still the caller's word) instead of "Ineligible", shown with the warning badge as
+before, and the Admin Event Log's Result filter offers Undetermined. Eligible and Ineligible checks read as before.
+
+Same driver (session scratchpad `mutate/round-a28z5.ps1`, log `mutate/a28z5-mutations.log`), the filter
+`FullyQualifiedName~EventLog|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~AuditCategoryFilingTests|FullyQualifiedName~Migration`
+(717 tests). Both mutants built with 0 errors; each restore matched its original MD5; after the round, 717/717 green.
+Each mutant is byte-identical to its file before this part (M5 to `AuditService.cs` at `1756aeb4`, E6 to
+`AdminEventLog.razor` at `2904ec9b`), so each failure is also the part's reproduction.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M5 the two-way ternary again (`status == "Eligible" ? "Success" : "Ineligible"`) | `AuditService.cs`, `C887255FCD235FE71BB3C2F039F6E6C5` | `28DE23A4840ECB241DEBA386E928001C` | 2 of 717: `AnEligibilityCheckThatDidNotDecide_IsFiledUndetermined_AndTheResultFilterFindsItThere`, both statuses - filed "Ineligible" |
+| extra E6 the Undetermined option removed | `AdminEventLog.razor`, `BFFA1A8F58E108547BCAD80871218075` | `2FA498D8922B42348E0097157BB83C1A` | 1 of 717: `TheResultFilter_OffersUndetermined` |
+
+Unchanged through the round: `EventLogSectionsTargetTests.cs` `BF44A5227A58A74E42A6C77A4EFAD9C5`.
+
+Gates, 2026-10-22, this part's commit's tree (cdt-41 below it): `dotnet build ExchangeAdminWeb.slnx -c Release
+--no-incremental` 0 errors, 21 warnings (cdt-41's baseline), none in a touched file; `dotnet test ExchangeAdminWeb.slnx
+--blame-hang --blame-hang-timeout 10m` (Debug) exit 0, 5,865 passed / 3 skipped (the three known AD skips) / 0 failed,
+5,868 total, 6m09s, nothing hung - cdt-41's tree plus these three cases; `ClickGate*` 316/316 and
+`ProgressRegistryTests` 35/35 alone (Release); `dotnet format ... --verify-no-changes --no-restore`, `git diff --check
+HEAD` and `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
 ## Known gaps
 
 - `DroppedEntryCount` is shown on no page yet: it is the counter a health surface or a later line reads, and the page
@@ -271,6 +305,10 @@ aud-a26u).
   extended log) share read, write and delete.
 - The marker text names the value's type, not its value; the audit row itself carries what System.Text.Json writes for
   the value (its public properties - for a type with none, `{}`).
+- Part 5: rows already written stay as written - an undetermined check logged before this build still reads
+  "Ineligible", its `status` field ("Undetermined", "Error") the way to tell it apart. And the Migration page's catch
+  still passes "Error" as the check's status (`Components/Pages/Migration.razor` 2007-2008, another agent's file); it is
+  now filed Undetermined, as the result its page shows.
 
 ## Codex review
 

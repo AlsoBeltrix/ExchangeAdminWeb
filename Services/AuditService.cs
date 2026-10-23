@@ -124,7 +124,7 @@ public class AuditService
             ["ip"] = ipAddress,
             ["action"] = "CheckMigrationEligibility",
             ["category"] = "MigrationCheck",
-            ["result"] = status == "Eligible" ? "Success" : "Ineligible",
+            ["result"] = status switch { "Eligible" => "Success", "Ineligible" => "Ineligible", _ => "Undetermined" },
             ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
             ["target"] = emailAddress,
             ["status"] = status,
