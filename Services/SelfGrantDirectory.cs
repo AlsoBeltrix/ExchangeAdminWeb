@@ -7,6 +7,9 @@ using System.Security.Principal;
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>One directory object as the self-grant check reads it (aud-a43).</summary>
+/// <param name="PrimarySmtpAddress">The address on the uppercase <c>SMTP:</c> proxy, else <c>mail</c>; null when neither.</param>
+/// <param name="SmtpAddresses">Every <c>smtp:</c> proxy address and <c>mail</c>: what the object can be addressed as.</param>
+/// <param name="Sid">The canonical objectSid, or null when the object has none (a contact).</param>
 internal sealed record SelfGrantDirectoryObject(
     string DistinguishedName,
     Guid ObjectGuid,
@@ -27,6 +30,18 @@ internal sealed record SelfGrantDirectoryObject(
 /// The Active Directory reads of one self-grant check (aud-a43): the signed-in operator, the objects a grantee can name,
 /// and whether a group holds the operator.
 /// </summary>
+/// <remarks>
+/// One session per check: a fresh runspace, the ActiveDirectory module (<see cref="ActiveDirectoryModuleImport"/>) and the
+/// host forest's global catalog, discovered from <c>Get-ADForest</c> at runtime - the
+/// <c>PowerShellProtectedGroupDirectory.GlobalCatalog</c> idiom. Nothing is named, defaulted or configured (Architectural
+/// Invariant 7). The reads run under the app pool's identity, as the other read-only lookups of the signed-in operator do
+/// (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>); the protected-principal directory-read secret stays
+/// with the protected-principal check.
+///
+/// Every read is <c>Get-ADObject</c> under <c>-ErrorAction Stop</c>, and a cmdlet that wrote to its error stream is a failed
+/// read; so is a row without a DN, an objectGUID or a class. The validator reads "no rows" as an answer, so nothing here
+/// may report one for a read that did not complete.
+/// </remarks>
 internal sealed class SelfGrantDirectory : IDisposable
 {
     private static readonly string[] Properties =
@@ -43,6 +58,7 @@ internal sealed class SelfGrantDirectory : IDisposable
         _globalCatalog = globalCatalog;
     }
 
+    /// <summary>The production session, built as every directory path here builds it; not yet opened.</summary>
     internal static Runspace DefaultRunspace()
     {
         var iss = InitialSessionState.CreateDefault();
@@ -50,6 +66,10 @@ internal sealed class SelfGrantDirectory : IDisposable
         return RunspaceFactory.CreateRunspace(iss);
     }
 
+    /// <summary>
+    /// Opens one check's session. Throws when the runspace, the module or the forest's catalog cannot be had; nothing is
+    /// left open then.
+    /// </summary>
     internal static SelfGrantDirectory Open(Func<Runspace> createRunspace)
     {
         var runspace = createRunspace();
@@ -76,15 +96,27 @@ internal sealed class SelfGrantDirectory : IDisposable
         _runspace.Dispose();
     }
 
+    /// <summary>Every object in the forest whose objectSid is <paramref name="sid"/>.</summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindBySid(string sid) =>
         Search(ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, sid), _globalCatalog);
 
+    /// <summary>Every object in the forest whose userPrincipalName is <paramref name="userPrincipalName"/>.</summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindByUserPrincipalName(string userPrincipalName) =>
         Search($"(userPrincipalName={Escape(userPrincipalName.Trim())})", _globalCatalog);
 
+    /// <summary>Every object in the forest a grantee identity can name (<see cref="GranteeFilter"/>).</summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindNamedBy(string identity, string? canonicalAddress) =>
         Search(GranteeFilter(identity, canonicalAddress), _globalCatalog);
 
+    /// <summary>
+    /// Whether <paramref name="member"/> is a direct member of <paramref name="group"/>, asked in the group's own domain.
+    /// </summary>
+    /// <remarks>
+    /// The group's own domain holds every one of its member links, whatever its scope; the catalog holds a universal
+    /// group's only, and the member's domain none of another domain's groups. The domain is the DNS name the DN's DC
+    /// components give (<c>GroupManagementService.ServerFromDn</c>). The group is read there first: a domain that does not
+    /// answer for it cannot say it holds nobody.
+    /// </remarks>
     internal bool HasDirectMember(SelfGrantDirectoryObject group, SelfGrantDirectoryObject member)
     {
         var server = GroupManagementService.ServerFromDn(group.DistinguishedName)
@@ -98,6 +130,16 @@ internal sealed class SelfGrantDirectory : IDisposable
         return Search(DirectMemberFilter(group.DistinguishedName, member.DistinguishedName), server).Count > 0;
     }
 
+    /// <summary>
+    /// Every object a grantee identity can name: the identities Exchange accepts for a grantee that the directory holds -
+    /// userPrincipalName, mail, any SMTP proxy address, the alias (mailNickname), sAMAccountName (also the name half of
+    /// <c>DOMAIN\name</c>), the name, and a DN - and Exchange's canonical address for it when it named one.
+    /// </summary>
+    /// <remarks>
+    /// A backslash before any '=' is a <c>DOMAIN\</c> prefix; a DN carries '=' before any backslash (ProtectedGroupEntry.Parse's
+    /// discriminator). Every value is escaped (RFC 4515), so a typed '*' cannot turn an equality into a wildcard. A blank
+    /// identity throws: there is nothing to search for, and the check refuses.
+    /// </remarks>
     internal static string GranteeFilter(string identity, string? canonicalAddress)
     {
         var value = identity?.Trim();
@@ -133,11 +175,15 @@ internal sealed class SelfGrantDirectory : IDisposable
         return "(|" + string.Concat(clauses) + ")";
     }
 
+    /// <summary>The group at <paramref name="groupDn"/>, only when <paramref name="memberDn"/> is on its member attribute.</summary>
     internal static string DirectMemberFilter(string groupDn, string memberDn) =>
         $"(&{ProtectedGroupMembership.ExactDnFilter(groupDn)}(member={Escape(memberDn)}))";
 
     private static string Escape(string value) => ProtectedPrincipalService.EscapeLdapFilter(value);
 
+    // The forest's global catalog, "host:3268", from the host's own forest. AddScript, not AddCommand and a property read:
+    // GlobalCatalogs read off the returned object is empty in these runspaces (ADDirectorySearchService.ResolveGlobalCatalog).
+    // Never a bare port - the AD cmdlets accept ":3268" and quietly serve the local domain.
     private static string GlobalCatalog(PowerShell ps)
     {
         ps.Commands.Clear();
@@ -184,6 +230,11 @@ internal sealed class SelfGrantDirectory : IDisposable
         }
     }
 
+    /// <summary>
+    /// One row, strictly: a DN, an objectGUID and a class, or the read failed - a row dropped would turn "one match" into
+    /// "none". The primary address is the uppercase <c>SMTP:</c> proxy, else <c>mail</c>; every <c>smtp:</c> proxy and
+    /// <c>mail</c> are kept.
+    /// </summary>
     internal static SelfGrantDirectoryObject ToObject(PSObject? row)
     {
         if (row is null)
@@ -239,6 +290,7 @@ internal sealed class SelfGrantDirectory : IDisposable
         return items;
     }
 
+    // Get-ADObject reports the most specific class; read as the multi-valued attribute, the last value is that class.
     private static string? ObjectClassOf(object? value)
     {
         value = Unwrap(value);

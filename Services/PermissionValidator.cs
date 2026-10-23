@@ -31,8 +31,15 @@ public class PermissionValidator
     internal Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
 
     /// <summary>Test seam (aud-a43): the session the self-grant check's directory reads run in.</summary>
+    /// <remarks>
+    /// The ADOrganizationalUnitService shape: a test hands back a runspace of stand-in cmdlets, so the reads run for real with
+    /// no directory. Production builds the session every directory path builds (<see cref="SelfGrantDirectory.DefaultRunspace"/>).
+    /// </remarks>
     internal Func<Runspace> SelfGrantDirectoryRunspace { get; set; } = SelfGrantDirectory.DefaultRunspace;
 
+    // aud-a43, folded in (codex perm-batch-4). The appsettings values of Security:PreventSelfGrant already named in the log.
+    // A typo there is static and was named on every self-grant check - one warning per row of a bulk upload. Named once per
+    // process for each value; every check still refuses on it.
     private static readonly ConcurrentDictionary<string, byte> AppsettingsValuesNamed = new(StringComparer.Ordinal);
     private bool _initialized = false;
     private bool _initFailed = false;
@@ -122,6 +129,7 @@ public class PermissionValidator
         if (bool.TryParse(fallback, out var result))
             return result;
 
+        // Named once per process for each value (AppsettingsValuesNamed, aud-a43); refused every time.
         if (AppsettingsValuesNamed.TryAdd(fallback, 0))
             _logger.LogWarning("The appsettings value Security:PreventSelfGrant is '{Value}', which is neither true nor false - self-grants are refused until it is corrected", fallback);
         return true;
@@ -592,8 +600,22 @@ public class PermissionValidator
         return ProtectedPrincipalServicing.NoteFor(_servicers, actingUser, moduleId, matchedRules);
     }
 
+    /// <summary>The refusal of a grant to the operator themselves.</summary>
     internal const string SelfGrantRefusal = "Access denied: You cannot grant permissions to yourself.";
 
+    /// <summary>
+    /// Null when the grant is to someone other than <paramref name="actingUser"/>; otherwise the refusal - a self-grant, or
+    /// a check that could not be completed.
+    /// </summary>
+    /// <remarks>
+    /// aud-a43. The pages used to hand over the Windows logon name, and the check put it to Exchange, which need not
+    /// resolve DOMAIN\user: when it reported no such recipient, the comparison never ran for any operator and the string
+    /// match was the whole check. The check now takes the signed-in principal, establishes who it is in the directory and
+    /// asks Exchange about that account's UPN. The page asks before it knows whether Exchange Online or on-premises
+    /// Exchange will write the grant, so the directory is read every time as well: the grantee is resolved to directory
+    /// objects, and one that is the operator, or a group holding them, is refused. A read that cannot be made refuses - a
+    /// check that could not be completed is never a cleared grant (aud-a28y).
+    /// </remarks>
     public async Task<string?> ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser)
     {
         if (!GetPreventSelfGrant())
@@ -605,6 +627,7 @@ public class PermissionValidator
             return SelfGrantCheckIncompleteBecause("the signed-in operator could not be identified");
         }
 
+        // Refusal-only and before any read: a grantee the logon name matches as a string is refused outright.
         var logonName = actingUser.Identity.Name;
         if (!string.IsNullOrWhiteSpace(logonName) && IdentitiesMatch(logonName, affectedUser))
         {
@@ -612,6 +635,8 @@ public class PermissionValidator
             return SelfGrantRefusal;
         }
 
+        // One directory session for the check - a runspace, the ActiveDirectory module and the forest's global catalog -
+        // opened and read off the caller's thread: the directory calls block.
         SelfGrantDirectory directory;
         try
         {
@@ -629,6 +654,9 @@ public class PermissionValidator
             if (problem is not null)
                 return SelfGrantCheckIncompleteBecause(problem);
 
+            // aud-a28y. Exchange is asked who each side is - about the operator's UPN, never the logon name. A lookup that
+            // could not run refuses, naming who could not be resolved; Exchange's own "no such recipient" is an answer,
+            // and leaves the directory below to compare.
             var (actorAnswered, actor) = await LookUpRecipientAsync(exchangeIdentity!, "the self-grant check");
             if (!actorAnswered)
                 return SelfGrantCheckIncomplete(exchangeIdentity!);
@@ -643,10 +671,23 @@ public class PermissionValidator
                 return SelfGrantRefusal;
             }
 
+            // The directory, on every path: on-premises Exchange resolves the grantee against it, and Exchange Online's
+            // comparison cannot see a grantee it holds no recipient for.
             return await Task.Run(() => CompareInDirectory(directory, account, actor, exchangeIdentity!, affectedUser, grantee));
         }
     }
 
+    /// <summary>
+    /// The operator's directory account (null for a UPN-claim sign-in the forest holds none for), the identity Exchange is
+    /// asked about, or why they could not be established.
+    /// </summary>
+    /// <remarks>
+    /// The SID is the key: immutable and domain-qualified, never a name (OperatorEmailResolver's reasoning), searched across
+    /// the forest through its catalog so an operator from any of its domains is found. Exactly one object is the operator;
+    /// none or several is a question the check cannot answer, and refuses. The UPN claim, when a sign-in carries one, is the
+    /// identity put to Exchange; otherwise the account's userPrincipalName - a Negotiate token carries no UPN claim, so today
+    /// it is always the account's. A read that throws refuses.
+    /// </remarks>
     private (SelfGrantDirectoryObject? account, string? exchangeIdentity, string? problem) EstablishOperator(
         SelfGrantDirectory directory, ClaimsPrincipal actingUser)
     {
@@ -693,6 +734,19 @@ public class PermissionValidator
         }
     }
 
+    /// <summary>
+    /// The directory's half of the check: null when no object the grantee names is the operator or a group holding them;
+    /// otherwise the refusal.
+    /// </summary>
+    /// <remarks>
+    /// The grantee is searched under the identities Exchange accepts for one and under Exchange's canonical address for it,
+    /// so what the typed string and Exchange's answer each name is compared. An object is the operator by objectGUID, or by
+    /// primary address: the object that address belongs to is the mailbox the grant would land on. A grantee Exchange names
+    /// as a group must be a group the directory holds - its membership is read nowhere else. An operator with no directory
+    /// account cannot be a member of an on-premises group (Constitution, Protected Principals). Membership is direct, a
+    /// member link, or the primary group, which no member link records; a group holding the operator only through another
+    /// group is not detected.
+    /// </remarks>
     private string? CompareInDirectory(SelfGrantDirectory directory, SelfGrantDirectoryObject? account, ResolvedRecipient? actor,
         string exchangeIdentity, string affectedUser, ResolvedRecipient? grantee)
     {
@@ -749,6 +803,9 @@ public class PermissionValidator
         return null;
     }
 
+    /// <summary>
+    /// The operator's own account, or an object carrying the primary address of their account or of their Exchange recipient.
+    /// </summary>
     private static bool IsTheOperator(SelfGrantDirectoryObject candidate, SelfGrantDirectoryObject? account, ResolvedRecipient? actor)
     {
         if (account is not null && candidate.ObjectGuid == account.ObjectGuid)
@@ -762,6 +819,10 @@ public class PermissionValidator
             || (actor is not null && string.Equals(address, actor.PrimarySmtpAddress, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Whether <paramref name="group"/> is the account's primary group - the account's domain SID with its primaryGroupID,
+    /// against the group's objectSid. Throws when that cannot be derived: an account always has one.
+    /// </summary>
     private static bool IsPrimaryGroupOf(SelfGrantDirectoryObject group, SelfGrantDirectoryObject account)
     {
         var primary = account.Sid is not null && account.PrimaryGroupId is int rid
@@ -773,15 +834,19 @@ public class PermissionValidator
         return group.Sid is not null && string.Equals(group.Sid, primary, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Every kind of group Exchange reports carries "Group" in its RecipientType - the test TryExpandGroupAsync applies to
+    // RecipientTypeDetails.
     private static bool IsGroupRecipient(ResolvedRecipient recipient) =>
         recipient.RecipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true;
 
+    // A claim's value, trimmed; null when the principal carries none or a blank one.
     private static string? ClaimValue(ClaimsPrincipal principal, string type)
     {
         var value = principal.FindFirst(type)?.Value?.Trim();
         return string.IsNullOrEmpty(value) ? null : value;
     }
 
+    // "no account", or how many, for a refusal's reason.
     private static string Accounts(int count) => count == 0 ? "no account" : $"{count} accounts";
 
     /// <summary>The refusal when the self-grant check could not put <paramref name="identity"/> to Exchange (aud-a28y).</summary>

@@ -186,6 +186,8 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// principal. Bulk is where a servicer grant is MOST useful and it was the path that could not
     /// use it - the single-target form serviced a protected mailbox while the same mailbox in a CSV
     /// was refused (pps-1). Null refuses, so any caller without a principal is safe.
+    /// aud-a43: the self-grant check is handed it too, and finds the operator in the directory by it;
+    /// null refuses every grant row there as a check that could not be completed.
     /// </param>
     public async Task<BulkOperationResult> ProcessMailboxPermissionsCsvAsync(Stream csvStream, bool isAdd, PermissionValidator validator, string currentUser, AuditService audit, EmailService email, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
     {
@@ -271,6 +273,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (isAdd)
                 {
+                    // aud-a43: the signed-in principal, never currentUser - the logon name is the record's actor only.
                     var selfGrantError = await validator.ValidateSelfGrantAsync(actingUser, row.User);
                     if (selfGrantError is not null)
                     {

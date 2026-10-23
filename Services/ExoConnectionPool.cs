@@ -82,6 +82,7 @@ internal readonly record struct ExoConnectionConfig(string AppId, string Organiz
 /// <summary>
 /// The Exchange Online module config could not be read (aud-a28x). A read that failed is not config that is absent, so
 /// appsettings is not read in its place and nothing is connected; the message names the rows and their fix.
+/// A borrow throws it too when the module's enablement cannot be read (aud-a44), naming that store and its fix.
 /// </summary>
 public sealed class ExoConfigUnreadableException(string message) : InvalidOperationException(message)
 {
@@ -215,6 +216,10 @@ public sealed class ExoConnectionPool : IDisposable
     // The rows and their fix, for the refusal and its log line: a service's text, with no page to reload (aud-a26t).
     private static string UnreadableRows => SettingsStoreText.ServiceModuleConfig(ConfigModuleKey);
 
+    // The enablement store and its fix, for the refusal and its log line, in a service's words (aud-a44, aud-a26t): the
+    // legacy file when its import failed - that text has no page clause - else the table, with the service's remedy in place
+    // of the page's reload clause. SettingsStoreText (another agent's file) has no service form of Enablement yet; the
+    // follow-up is recorded in aud-a44.
     private string UnreadableEnablement => _enablement.LegacyImportFailed
         ? SettingsStoreText.Enablement(legacyImportFailed: true)
         : SettingsStoreText.Enablement(legacyImportFailed: false)
@@ -251,6 +256,9 @@ public sealed class ExoConnectionPool : IDisposable
         // the pool.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
 
+        // aud-a44. The enablement read that tells a store it cannot read from a module that is off (aud-a28t). IsModuleEnabled
+        // takes the first for every module disabled: closed, but the refusal sent an administrator to Admin Settings to
+        // enable a module that was enabled. Named in the aud-a28x shape, before the rows are read and a slot is asked for.
         if (!_enablement.TryGetModuleEnabled(ConfigModuleKey, out var enabled))
         {
             _logger.LogError("The Exchange Online enablement could not be read, so no connection is opened. {Store}", UnreadableEnablement);
