@@ -5,7 +5,7 @@ A protected-principals save whose Secret ID did not change meets a busy store at
 reaches the generic catch; the other settings saves' catches do the same: Admin Settings (two saves),
 Exchange Online Config (two), Module Config (three). The operator sees a provider error code instead of
 "the store was busy; nothing was written; try again".
-**Status**: Complete on the branch (not merged); gates below; review pending; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Merged `86df002a`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a885c578973c1cad3`
 **Commit**: `00ab79a9` (plan `6db3a417`; comments `f219f2e8`)
 **Reviewer**: implementer (surfaced by the aud-a28v/a26s/a28w agent, 2026-10-22, candidate 1 of its hand-back)

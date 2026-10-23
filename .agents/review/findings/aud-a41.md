@@ -7,7 +7,7 @@ aud-a28v agent: 35.2 s) before it throws SQLITE_BUSY. The factory's doc comment 
 say 5 seconds. The settings handlers call the store synchronously after `await Task.Yield()`, so the
 Blazor circuit is blocked for the whole wait. The aud-a28v test holds a real lock and therefore adds about
 35 seconds to the suite.
-**Status**: Complete on the branch (not merged); gates below; review pending; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Merged `86df002a`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a885c578973c1cad3`
 **Commit**: `bcef5fec` (plan `6db3a417`; comments `f219f2e8`)
 **Reviewer**: implementer (surfaced by the aud-a28v/a26s/a28w agent, 2026-10-22, candidate 2 of its hand-back)
