@@ -86,11 +86,36 @@ module bumps are in their own commit; `ExchangeAdminWeb.csproj` is not edited.
    as PowerShell's ActionPreferenceStopException, "The running command stopped because ..." - the third wording, and the
    one the service's own catch never sees. Mutation: the audit row dropped (the record's); extras: the activity left to
    end "This did not finish."; raw `ex.Message` again.
+5. **The bulk batch run's name** (`Components/Pages/Migration.razor` `ExecuteBulkBatchAction` 3509-3668 - the busy
+   reason at 3520, the activity label at 3525, the clear at 3664 - the busy text at 474, the field at 1635): the run is
+   named from its action as a single action's activity is ("<action> on <target>", 3295-3296):
+   "<auditAction> on N batch(es)", N the batches it will run. That name is the busy reason (`actionInProgress`), the
+   activity's label, and - through a new `bulkBatchActivity` field, declared on `actionInProgress`'s line and cleared
+   beside it in the finally - the busy text over the batch list ("<name> and reloading...", where it read "Removing
+   completed batches and reloading..." whatever ran). A field, not a test of `actionInProgress`'s value, because a single
+   batch action sets that to its batch's name through its own reload. All in place: the page keeps 4377 lines and no
+   registered line moves (474 is text, not a control). The two `MigrationVerdictAndWriteOutcomeTests` that pinned
+   "Removing completed batches" for a Stop run pin the run's own name. Tests: new
+   `ExchangeAdminWeb.Tests/MigrationBulkBatchActivityTests.cs`. Mutation: the fixed label again (the record's); extra:
+   the busy text fixed again.
 6. **The ReportedTime tests' stand-in** (`ExchangeAdminWeb.Tests/RecipientLookupReportedTimeTests.cs` 104 and 149;
    test-only, no module behaviour): the stand-in's archive read writes Exchange's own not-found (category
    ObjectNotFound) where it answered no row - since aud-a54 no row is "could not be read", so the mailbox those tests
    render had an archive warning a mailbox without an archive never shows; and `LookedUp` asserts `Warnings` empty beside
    `Error` null, so every page-render test there now checks it. Proof: the stand-in's old answer back.
+7. **The bulk denials** (`Components/Pages/Migration.razor` 3531-3543 in `ExecuteBulkBatchAction` and 3697-3711 in
+   `ExecuteBulkMailboxAction`; `Services/MigrationService.cs` `RecordDenial` 977-992, called, not changed): each denial
+   returns through `MigrationService.RecordDenial`, in the single actions' one-line shape (3301-3302). The row is the
+   same `<auditAction>_Denied` - its target the run's notification action, as before; the ticket; "MigrationManage
+   authorization denied" - now with `mutationAttempted: false`; a failed audit write is still logged and swallowed
+   (inside `RecordDenial`). The banner and the activity say "Not authorized to <the run>; nothing was done." (the batch
+   run's name from part 5; the mailbox run's "<auditAction> on N mailbox(es)"), where they said "Authorization denied.".
+   The page shrinks 24 lines, all below the last line-keyed entry (1540): re-anchored per
+   `.agents/playbooks/clickgate-reanchor.md` - the diff's only hunks start below 1540, so every registered line maps to
+   itself - and `ExpectedLineCount` 4377 -> 4353. `MigrationStatusPageTests.TheBulkExecutorReChecksAuthorizationAndAuditsADenial`
+   looked for the literal "_Denied" in the batch executor's body; it now requires the `MigrationService.RecordDenial(`
+   call, comments stripped. Tests: `MigrationDenialTests`, the two denied-authorization cases. Mutation: each executor's
+   denial back to its old inline row, one at a time - a row without `mutationAttempted` again.
 
 ## Guard proof
 
@@ -160,6 +185,19 @@ result). Filter `RecipientLookup|ExchangeServiceBaseOnPremRead|ProgressRegistry`
 | M4 (the record's): the audit row dropped | `3e9ecada...` / `1e64502f...` | 4: both thrown cases, both controls | md5 equal; 125/0 |
 | M4b: the activity not completed ("This did not finish.") | `3e9ecada...` / `e2390964...` | 5: every part-4 case | md5 equal; 125/0 |
 | M4c: raw `ex.Message` again | `3e9ecada...` / `3d2ecd65...` | 1: `ALookupThatThrowsUnderStop...` | md5 equal; 125/0 |
+
+On the part-4 commit's tree (`37a2696b`): full suite 6714 passed / 1 failed / 0 skipped - the one failure
+`SettingsStoreBusyTests.AdminSettings_ASecretIdCompareThatFindsTheStoreBusy_IsRefused_SaysSo_WritesNothing_AndARetrySaves`,
+its wall-clock bound ("the save waited 11.26 s for the busy store"; the bound is twice the busy timeout less a second)
+missed while three to five other agents' test hosts ran on this machine; Admin Settings is untouched here, and that
+class alone passed 19/19 straight after on the same tree.
+
+**Part 6** - test-only. `RecipientLookupReportedTimeTests`, its 14 cases through `LookedUp`; filter `RecipientLookup`,
+52 tests.
+
+| Round | md5 before / mutated | Failed (of 52) | Restored |
+| --- | --- | --- | --- |
+| The stand-in's old answer back (no row for the archive) | `19306aa3...` / `fe4a8ab8...` | 14: every test through `LookedUp`, on the new `Warnings` assertion (the archive warning the no-row answer raises) | md5 equal; 52/0 |
 
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 
