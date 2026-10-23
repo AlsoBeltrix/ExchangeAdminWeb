@@ -266,20 +266,6 @@ $PublishPath = $PublishPath.TrimEnd('\', '/')
 $configPath = Join-Path $PublishPath "appsettings.json"
 $isUpgrade = (Test-Path $configPath) -and (-not $Force)
 
-$BackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"
-if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null }
-
-# -Force over an existing deployment regenerates appsettings.json, so keep a copy of it first. The
-# config database is NOT copied here: a raw copy of a live WAL database can be torn and nothing would
-# verify it, and a shared database is not under config\ at all. The verified online backup runs in the
-# fresh-install branch below, after the publish (it needs the db tool from staging) and before the pool
-# stops or anything is mirrored (cdt-9).
-if ($Force -and (Test-Path $configPath)) {
-    $backupName = "appsettings.${timestamp}.pre-force.bak"
-    Copy-Item $configPath (Join-Path $BackupDir $backupName)
-    Write-Warn "Existing config backed up to $BackupDir\$backupName"
-}
-
 $mode = if ($isUpgrade) { "UPGRADE" } else { "INSTALL" }
 
 # A fresh install must be deliberate: an unexpected INSTALL usually means the
@@ -298,7 +284,8 @@ Write-Host ""
 
 # --- The IIS application this run deploys to (cdt-36, cdt-42) ---
 
-# Read on every run, before anything below touches IIS, an ACL or the publish folder. The
+# Read on every run, before anything below writes - the backup folder and the pre-force copy included
+# (cdt-45) - or touches IIS, an ACL or the publish folder. The
 # fresh-install branch (-Force, -ConfirmFreshInstall) points an existing application at this run's
 # -PublishPath and -AppPoolName, so a run that would move it is refused here unless -AllowRepoint says
 # the move is intended (cdt-36). An upgrade never moves it, but the pool step and the ACL grants below
@@ -315,6 +302,24 @@ try {
     Write-Fail "Cannot read IIS application $ParentSite/$AppAlias ($($_.Exception.Message)), so it cannot be confirmed that the app pool and folder this run names are the ones serving it. Nothing was deployed."
 }
 Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath -AllowRepoint:$AllowRepoint -Upgrade:$isUpgrade
+
+# --- Backups taken before anything is configured ---
+
+# Written only once the check above has passed, so a run it refuses leaves no backup folder and no
+# copy behind (cdt-45); still before anything below configures IIS, an ACL or a folder.
+$BackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"
+if (-not (Test-Path $BackupDir)) { New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null }
+
+# -Force over an existing deployment regenerates appsettings.json, so keep a copy of it first. The
+# config database is NOT copied here: a raw copy of a live WAL database can be torn and nothing would
+# verify it, and a shared database is not under config\ at all. The verified online backup runs in the
+# fresh-install branch below, after the publish (it needs the db tool from staging) and before the pool
+# stops or anything is mirrored (cdt-9).
+if ($Force -and (Test-Path $configPath)) {
+    $backupName = "appsettings.${timestamp}.pre-force.bak"
+    Copy-Item $configPath (Join-Path $BackupDir $backupName)
+    Write-Warn "Existing config backed up to $BackupDir\$backupName"
+}
 
 # --- Collect & validate config (fresh install only) ---
 

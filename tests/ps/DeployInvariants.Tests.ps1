@@ -949,6 +949,25 @@ Describe 'deploy.ps1' {
         $assertAt[0] | Should -BeLessThan $changes[0] -Because 'it refuses before IIS, an ACL or the publish folder is touched - on an upgrade too (cdt-42)'
         $assertAt[0] | Should -BeLessThan $modeTry[0]
 
+        # cdt-45: and before the run writes anything at all. The backup folder and the pre-force copy
+        # used to come before the consent check; they follow the check now, and nothing above the
+        # check's step line runs a command that writes.
+        $backupFolder = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Clauses[0].Item1.Extent.Text -eq '-not (Test-Path $BackupDir)' })
+        $preForceCopy = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-force.bak"')) })
+        $backupFolder.Count | Should -Be 1 -Because 'the backup folder is created by one script-level statement'
+        $preForceCopy.Count | Should -Be 1 -Because 'the pre-force copy is one script-level statement'
+        $assertAt[0] | Should -BeLessThan $backupFolder[0] -Because 'a refused run creates no backup folder (cdt-45)'
+        $assertAt[0] | Should -BeLessThan $preForceCopy[0] -Because 'a refused run copies no appsettings.json (cdt-45)'
+        $writers = @('New-Item', 'Copy-Item', 'Move-Item', 'Remove-Item', 'Set-Content', 'Add-Content', 'Out-File', 'Set-ItemProperty', 'New-WebAppPool', 'New-WebApplication', 'Set-WebConfigurationProperty', 'Remove-WebConfigurationProperty', 'Set-AclChecked', 'icacls', 'robocopy', 'dotnet', 'Backup-SqliteConfigDb', 'Write-AppSettingsFile')
+        $earlyWrites = @(for ($i = 0; $i -lt $check[0]; $i++) {
+                $st = $statements[$i]
+                if ($st -is [System.Management.Automation.Language.FunctionDefinitionAst]) { continue }
+                foreach ($command in @($st.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+                    if ($command.GetCommandName() -in $writers) { "line $($command.Extent.StartLineNumber): $($command.Extent.Text)" }
+                }
+            })
+        $earlyWrites | Should -BeNullOrEmpty -Because 'nothing may be written before the check has read the application (cdt-45)'
+
         $switch = @($s.Ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AllowRepoint' })
         $switch.Count | Should -Be 1
         $switch[0].StaticType | Should -Be ([System.Management.Automation.SwitchParameter]) -Because 'a move is opted into by name, never defaulted'
@@ -1092,6 +1111,75 @@ Describe 'deploy.ps1' {
             $absent.Thrown | Should -BeNullOrEmpty -Because 'an upgrade whose application is missing still goes on to create it, as before'
             $absent.Calls[0] | Should -BeExactly $read
             $absent.Calls | Should -Contain 'set(IIS:\AppPools\ExamplePool|startMode)'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'runs a -Force run''s real steps from the check through the pre-force copy: a run the check refuses creates no backup folder and copies nothing (cdt-45)' {
+        # The backup folder was created, and appsettings.json copied into it, before the check that
+        # then refused the run. The real statements run here in order, from the one after the banner
+        # through the pre-force copy, with IIS, the folders and the copy stubbed, each call recorded.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-force.bak"'))) { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1 -Because 'one script-level statement takes the pre-force copy'
+        $to[0] | Should -BeGreaterThan $from[0]
+        $region = ($statements[($from[0] + 1)..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt45Printed.Add("$Object") }
+            ${function:Get-WebApplication} = {
+                param($Name, $Site, $ErrorAction)
+                $null = $ErrorAction
+                $script:cdt45Calls.Add("lookup($Site/$Name)")
+                $pool, $folder = $script:cdt45Iis -split '\|', 2
+                [pscustomobject]@{ applicationPool = $pool; PhysicalPath = $folder }
+            }
+            # The backup folder does not exist yet; the run's appsettings.json does.
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $script:cdt45Calls.Add("exists($Path)"); $Path -like '*appsettings.json' }
+            ${function:New-Item} = { param($ItemType, $Path, [switch]$Force) $null = $ItemType, $Force; $script:cdt45Calls.Add("New-Item($Path)") }
+            ${function:Copy-Item} = { param([Parameter(Position = 0)]$Path, [Parameter(Position = 1)]$Destination) $script:cdt45Calls.Add("Copy-Item($Path|$Destination)") }
+
+            $run = {
+                param([string]$Iis)
+                $script:cdt45Iis = $Iis
+                $script:cdt45Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt45Printed = New-Object System.Collections.Generic.List[string]
+                # Read only by the lifted statements: -Force over an existing deployment.
+                Set-Variable -Name isUpgrade -Value $false
+                Set-Variable -Name Force -Value ([switch]$true)
+                Set-Variable -Name ConfirmFreshInstall -Value ([switch]$false)
+                Set-Variable -Name AllowRepoint -Value ([switch]$false)
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                Set-Variable -Name configPath -Value 'D:\example\publish\appsettings.json'
+                Set-Variable -Name LogRoot -Value 'D:\example\logs'
+                Set-Variable -Name timestamp -Value '20261023000000'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt45Calls -join ','); Printed = ($script:cdt45Printed -join "`n") }
+            }
+            $read = 'lookup(Example Site/ExampleApp)'
+
+            foreach ($iis in 'OtherPool|D:\example\publish', 'ExamplePool|D:\example\other') {
+                $refused = & $run $iis
+                $refused.Thrown | Should -BeLike 'IIS application Example Site/ExampleApp already exists, with *Nothing was deployed.' -Because "the check refuses this -Force run ($iis)"
+                $refused.Calls | Should -BeExactly $read -Because "a refused run creates no backup folder and copies nothing ($iis)"
+            }
+
+            $same = & $run 'ExamplePool|D:\example\publish'
+            $same.Thrown | Should -BeNullOrEmpty
+            $same.Calls | Should -BeExactly ($read + ',exists(D:\example\logs\ExchangeAdminWeb\ConfigBackups),New-Item(D:\example\logs\ExchangeAdminWeb\ConfigBackups),exists(D:\example\publish\appsettings.json),Copy-Item(D:\example\publish\appsettings.json|D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak)') -Because 'a run the check passes creates the backup folder and takes the copy, after the read'
+            $same.Printed | Should -BeLike '*Existing config backed up to D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak*'
         } finally {
             Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
         }
