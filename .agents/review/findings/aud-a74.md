@@ -8,9 +8,9 @@ at `579c0875` (`ModuleConfigServiceTests.ACommittedWrite_WithALoggerThatThrows_I
 failed; the class passes alone). Callers: `ConfigBooleanTests` 42, `ConfigChangeWatcherTests` 240,
 `ConfigDbCliTests` 178 and 228, `ConfigValueTests` 34, `EventLogDiagnosticsTests` 57. The per-database
 `ClearPool(connection)` the other classes use is safe.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
+**Status**: Merged `fc14800f`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ad56ea6ad87844ffa` (from `944b8c72`)
-**Commit**: the branch's fix commit (plan `7e4c042e`)
+**Commit**: `c414a8c2` (fix, tests, record); plan `7e4c042e`; merged `fc14800f`
 **Reviewer**: supervisor (observed on the merged-tree gate, 2026-10-23)
 
 ## Evidence
