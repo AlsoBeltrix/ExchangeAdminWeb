@@ -27,7 +27,16 @@ public static class LegacyConfigImport
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "Failed to archive imported legacy config file {Path}", path);
+            // aud-a64. Never throws, its report included: every store's legacy import calls this, most of them from a
+            // constructor, and a provider that threw here took its exception out of the import.
+            try
+            {
+                logger?.LogWarning(ex, "Failed to archive imported legacy config file {Path}", path);
+            }
+            catch (Exception)
+            {
+                // Nowhere left to say so.
+            }
         }
     }
 }
