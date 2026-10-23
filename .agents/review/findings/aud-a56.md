@@ -254,6 +254,21 @@ Not run, by design:
 - a folder whose ACL was set by `icacls` - the deny ACE is aud-a51's, for the test's own account, on a temp folder;
 - a log root on an SMB share.
 
+## Comments after the round
+
+The fix's comments were written before the round and are in the bytes measured above. After all three rounds, one comment
+the fix made untrue was corrected in its own commit: `JsonlWriteOutcome.FileWriteFailed`'s summary in
+`Services/JsonlLogService.cs` named "rotated" among the causes of a drop. It now names the folder and the lock, and says
+that a rotation that fails does not drop the record.
+
+Checked by `check-comment-only.ps1` (session scratchpad `mutate/`):
+- A file's code lines are every line that is neither blank nor a comment (`//`, `///`, a one-line Razor `@* *@`). They
+  must be identical, in order, between the fix commit and the comments commit.
+- `JsonlLogService.cs` `162259BFE9B0D338E9A6EBBB2531FF83` -> `9998476073D515F780865B3B59328CC5`. It has 169 code lines on
+  both sides, their MD5 `734B236DC600D707E0551B77504352A3`. 4 lines in, 1 out.
+- Negative control: the fix commit itself (`c3960fe9` -> `0ccdc758`) fails the check on the same file, 167 code lines
+  against 169.
+
 ## Known gaps
 
 - The first attempt of a rotation that fails at its last move has already deleted the oldest rotated file and moved the

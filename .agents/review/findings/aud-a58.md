@@ -223,6 +223,11 @@ Not run, by design:
 - The Home page in a browser - its own render tree is driven twice with the setting the record names.
 - A real SMTP relay or ServiceNow instance - the readings are asserted on the built services, and nothing is sent.
 
+## Comments after the round
+
+None were needed. This record's comments were written before its round and are in the bytes measured above. The branch's
+one comments-only commit touches `Services/JsonlLogService.cs` only (aud-a56's record).
+
 ## Known gaps
 
 - The two pages under "Left for a follow-up" still throw during render on a value of

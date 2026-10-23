@@ -197,6 +197,11 @@ They are run alone again at the branch tip.
 Not run, by design: the Admin Event Log in a browser with a logging provider that throws. The page's own `LoadEvents`
 and render tree are driven as the aud-a46 and aud-a49 tests drive them.
 
+## Comments after the round
+
+None were needed. This record's comments were written before its round and are in the bytes measured above. The branch's
+one comments-only commit touches `Services/JsonlLogService.cs` only (aud-a56's record).
+
 ## Known gaps
 
 - The unreadable-switch warning is still at most once per process (`LogSwitchUnreadableOnce`'s flag is never reset), as

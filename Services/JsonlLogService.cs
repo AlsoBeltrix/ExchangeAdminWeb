@@ -259,6 +259,9 @@ public enum JsonlWriteOutcome
     /// <summary>Dropped before any file was touched: the record could not be serialised.</summary>
     NotSerializable,
 
-    /// <summary>Dropped: the record serialised, but its log file could not be chosen, rotated, opened or written.</summary>
+    /// <summary>
+    /// Dropped: the record serialised, but its log file could not be chosen, its folder created, its lock taken, or the file
+    /// opened or written. A rotation that fails does not drop it (aud-a56): the record goes to the full file.
+    /// </summary>
     FileWriteFailed
 }
