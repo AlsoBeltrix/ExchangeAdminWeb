@@ -783,7 +783,9 @@ public sealed class ModuleCatalog
             // keystrokes.
             // 1.12.0: an operation that finishes after the operator has opened another group no
             // longer puts its banner or outcome table into that group's view (kd-8).
-            Version = "1.12.0",
+            // 1.13.0: Manage members refuses while the open group is still loading or changing,
+            // and a member load publishes only while its group is still the one shown (kd-19).
+            Version = "1.13.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
