@@ -67,6 +67,7 @@ public sealed class MigrationDenialTests : IDisposable
         Assert.False(ran);
         var row = OneDeniedRow(auditAction);
         Assert.Equal(target, row.GetProperty("target").GetString());
+        Assert.False(row.TryGetProperty("targets", out _)); // kd-17: a single action's target is the one it names; no list
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Equal("MigrationManage authorization denied", row.GetProperty("error").GetString());
         Assert.Equal((false, expected), Outcome());
@@ -128,6 +129,7 @@ public sealed class MigrationDenialTests : IDisposable
         Assert.Equal((false, expected), (shown.Success, shown.Message));
         var row = OneDeniedRow($"CreateMigrationBatch_{direction}");
         Assert.Equal(Address, row.GetProperty("target").GetString());
+        Assert.False(row.TryGetProperty("targets", out _)); // kd-17: unchanged for a create
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Equal("MigrationCreate authorization denied", row.GetProperty("error").GetString());
         Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("New-MigrationBatch", StringComparison.Ordinal));
@@ -246,11 +248,13 @@ public sealed class MigrationDenialTests : IDisposable
     // ---- aud-a68 (7): a bulk executor's denial, through RecordDenial -------------------------------
 
     // Before: the "_Denied" row had no mutationAttempted - the single actions' and the creates' denials, through
-    // RecordDenial, carry false - and the banner and the activity said only "Authorization denied.".
+    // RecordDenial, carry false - and the banner and the activity said only "Authorization denied.". kd-17: and its target
+    // was the run's notification action ("Migration_StopSelected"), so the row could not say what was denied; it is the
+    // run's scope in the confirm bar's words, with the names it would have acted on in targets.
     [Theory]
-    [InlineData("ExecuteBulkBatchAction", "StopMigrationBatch", "Migration_StopSelected", "StopMigrationBatch on 1 batch(es)")]
-    [InlineData("ExecuteBulkMailboxAction", "StopMigrationUser", "Migration_PauseMailboxes", "StopMigrationUser on 1 mailbox(es)")]
-    public async Task ADeniedBulkAction_IsShown_AuditedAsNotAttempted_AndNothingRuns(string handler, string auditAction, string notificationAction, string described)
+    [InlineData("ExecuteBulkBatchAction", "StopMigrationBatch", "Migration_StopSelected", "StopMigrationBatch on 1 batch(es)", "1 batch(es)", Batch)]
+    [InlineData("ExecuteBulkMailboxAction", "StopMigrationUser", "Migration_PauseMailboxes", "StopMigrationUser on 1 mailbox(es)", "1 mailbox(es)", Address)]
+    public async Task ADeniedBulkAction_IsShown_AuditedAsNotAttempted_AndNothingRuns(string handler, string auditAction, string notificationAction, string described, string target, string attempted)
     {
         var page = Page(deny: "MigrationManage");
         var ran = false;
@@ -266,7 +270,10 @@ public sealed class MigrationDenialTests : IDisposable
         Assert.Equal((false, expected), (shown.Success, shown.Message));
         Assert.False(ran);
         var row = OneDeniedRow(auditAction);
-        Assert.Equal(notificationAction, row.GetProperty("target").GetString());
+        var deniedTarget = row.GetProperty("target").GetString();
+        Assert.DoesNotMatch(@"^Migration_", deniedTarget ?? "");
+        Assert.Equal(target, deniedTarget);
+        Assert.Equal([attempted], row.GetProperty("targets").EnumerateArray().Select(name => name.GetString()));
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Equal("MigrationManage authorization denied", row.GetProperty("error").GetString());
         Assert.Equal((false, expected), Outcome());

@@ -3529,7 +3529,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, notificationAction, ticket, "MigrationManage")); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied."
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, $"{batchNames.Count} batch(es)", ticket, "MigrationManage", batchNames)); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied." kd-17: its target is what the run would have acted on, the confirm bar's "N batch(es)" with the names in targets, where it was the notification action
 
             if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 
@@ -3684,7 +3684,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", notificationAction, ticket, "MigrationManage")); return; } // aud-a68: the same, for the mailbox run
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", $"{plan.Eligible.Count} mailbox(es)", ticket, "MigrationManage", plan.Eligible)); return; } // aud-a68: the same, for the mailbox run; kd-17: and the same target, "N mailbox(es)" with the addresses in targets
 
             if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 
