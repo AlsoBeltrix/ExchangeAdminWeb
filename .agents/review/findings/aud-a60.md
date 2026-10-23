@@ -11,7 +11,7 @@ credential; where that identity can discover the catalog and resolve the grantee
 `ProtectedGroupMembership.Evaluate` answers no match with `Incomplete=false`, and the grant is allowed
 though the data was unavailable. The safety then rests on the deployment's read visibility, which
 Architectural Invariant 7 forbids.
-**Status**: Merged `c89f639c`; closed on guard proof; codex review pending
+**Status**: Complete; merged `c89f639c`; codex perm-batch-7 raised one HIGH and one MEDIUM, admitted as aud-a71 and aud-a72
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
 **Commit**: plan `fa1ed15c`; fix `e06c1c2d`; comments `1c982906`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-6, 2026-10-22, candidates 1 and 2)

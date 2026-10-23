@@ -7,7 +7,7 @@ write outcome and a throw is only logged, so the banner never says the row was n
 action name (the aud-a50 part-3 class for the Target column). (4) Test hygiene: `ExchangeWriteHarness.ExchangeKnows`
 leaves `ReadGroupMembersAsync` to NSubstitute's default empty list, so a future cloud-only group test that
 forgets to set up members passes as allowed.
-**Status**: Merged `c89f639c`; closed on guard proof; codex review pending
+**Status**: Complete; merged `c89f639c`; codex perm-batch-7 raised one HIGH and one MEDIUM, admitted as aud-a71 and aud-a72
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
 **Commit**: plan `fa1ed15c`; fix `7328135e` (after aud-a53's `4580c404`)
 **Reviewer**: implementer (surfaced by the aud-a50/a52 agent, 2026-10-22, candidates 1, 3, 4 and 5 of its hand-back)

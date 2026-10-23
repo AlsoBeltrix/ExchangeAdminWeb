@@ -5,7 +5,7 @@ defect on the permission pages. In `MailboxPermissions.razor` and `CalendarPermi
 `SubmitSingle` catch reports every throw in its try as "Operation may have succeeded but audit logging
 failed"; the admin notifications inside that try are not guarded on their own, so a throw there would
 replace a successful write's result with that text.
-**Status**: Merged `c89f639c`; closed on guard proof; codex review pending
+**Status**: Complete; merged `c89f639c`; codex perm-batch-7 raised one HIGH and one MEDIUM, admitted as aud-a71 and aud-a72
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
 **Commit**: plan `fa1ed15c`; fix `4580c404` (after aud-a61's `d945d8c7`)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidate 1 of its hand-back)
