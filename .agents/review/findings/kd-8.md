@@ -1,7 +1,7 @@
 # kd-8: Self-Service Groups - a previous group's operation can publish its banner into another group's view
 
 **Severity**: LOW - misleading UI. In `Components/Pages/SelfServiceGroups.razor` an operation started on group A completes after the operator has opened group B and sets the page banner, so B shows A's result. Not re-verified at the last state pass; the agent verifies before writing.
-**Status**: Verified on branch; awaiting merge and codex review (released by the owner's 2026-10-23 evening ruling; approved under the 2026-10-21 go)
+**Status**: Merged to master `881b8d5b`; codex defect review ticket-batch-1 in flight
 **Branch**: `fix/kd7-kd8` (worktree `D:\source\ExchangeAdminWeb-wt\kd7-kd8`, from master `3e43b35b`)
 **Commit**: the kd-8 commit on `fix/kd7-kd8`, after `f0ce2431`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects")
