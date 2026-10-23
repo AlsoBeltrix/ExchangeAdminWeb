@@ -1229,10 +1229,13 @@ public static class ProgressRegistry
             new("OnInitializedAsync",
                 AuthPreambleOnly + ", plus the section-access group read, then the job panel",
                 "RefreshJobs"),
-            new("CancelJob", "a single local job-store row update"),
+            new("CancelJob",
+                "a single local job-store row update, after the per-click access re-check (kd-27), "
+                + "which reads the token's groups and a cached section-access read and makes no "
+                + "remote hop"),
             new("RemoveJob",
-                "a single local job-store delete; the view refresh it triggers is registered on "
-                + "RefreshJobs"),
+                "a single local job-store delete, after the same local access re-check (kd-27); the "
+                + "view refresh it triggers is registered on RefreshJobs"),
             new("DownloadFinderSampleCsv", SampleCsv),
             new("DownloadTypeSampleCsv", SampleCsv),
         ],

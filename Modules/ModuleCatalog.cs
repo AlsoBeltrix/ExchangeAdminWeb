@@ -922,7 +922,9 @@ public sealed class ModuleCatalog
             // refused or failed - as removing one does (kd-5).
             // 2.10.0 (2.9.0 is master's, from the merge of the batch above): a room type is read by
             // its name only - "4", "9" or "Video,Restricted" in a CSV or a request is refused, where
-            // Enum.TryParse applied CEO, an undefined type or Exception (kd-28).
+            // Enum.TryParse applied CEO, an undefined type or Exception (kd-28). Cancelling or removing
+            // a bulk job re-checks the operator's access at the click, as the writes do; a refusal
+            // leaves the job alone and is audited (kd-27).
             Version = "2.10.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
