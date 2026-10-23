@@ -160,7 +160,11 @@ public sealed class PermissionValidatorTests : IDisposable
                 new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(testDir))),
             Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
 
-        return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, servicers, logger, scopeFactory);
+        // aud-a43: the self-grant check reads the directory; an empty stand-in forest unless a test gives one.
+        return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, servicers, logger, scopeFactory)
+        {
+            SelfGrantDirectoryRunspace = new SelfGrantDirectoryStandIn().Open,
+        };
     }
 
     // --- Shared config database: cross-process cache freshness (SharedConfigDb-Plan AC4) ---
@@ -229,37 +233,50 @@ public sealed class PermissionValidatorTests : IDisposable
     }
 
     // --- Self-grant validation ---
+    // aud-a43: the synchronous, string-only check is gone. Its cases are the async check's logon-name string match, which
+    // refuses before anything is looked up; the signed-in operator is a principal now, the logon name its Name claim.
+
+    private static System.Security.Claims.ClaimsPrincipal SignedIn(string logonName) =>
+        SelfGrantDirectoryStandIn.Principal(logonName, SelfGrantDirectoryStandIn.DomainSid + "-1104");
 
     [Fact]
-    public void ValidateSelfGrant_SameUser_ReturnsError()
+    public async Task ValidateSelfGrant_SameUser_ReturnsError()
     {
         var validator = CreateValidator();
-        var result = validator.ValidateSelfGrant(@"DOMAIN\jdoe", "jdoe@company.com");
+        var result = await validator.ValidateSelfGrantAsync(SignedIn(@"DOMAIN\jdoe"), "jdoe@company.com");
         Assert.NotNull(result);
         Assert.Contains("cannot grant permissions to yourself", result);
     }
 
     [Fact]
-    public void ValidateSelfGrant_SameUser_ExactMatch_ReturnsError()
+    public async Task ValidateSelfGrant_SameUser_ExactMatch_ReturnsError()
     {
         var validator = CreateValidator();
-        var result = validator.ValidateSelfGrant("jdoe", "jdoe");
+        var result = await validator.ValidateSelfGrantAsync(SignedIn("jdoe"), "jdoe");
         Assert.NotNull(result);
     }
 
     [Fact]
-    public void ValidateSelfGrant_DifferentUser_ReturnsNull()
+    public async Task ValidateSelfGrant_DifferentUser_ReturnsNull()
     {
-        var validator = CreateValidator();
-        var result = validator.ValidateSelfGrant(@"DOMAIN\admin", "jdoe@company.com");
+        // Past the string match the check finds the operator in the directory and asks Exchange: here the directory holds
+        // the operator and nobody named jdoe, and Exchange knows nobody, so the grant is to someone else.
+        var forest = new SelfGrantDirectoryStandIn();
+        var admin = forest.AddUser("admin", upn: "admin@company.com");
+        var validator = CreateValidator(resolver: ExchangeKnowsNobody());
+        validator.SelfGrantDirectoryRunspace = forest.Open;
+
+        var result = await validator.ValidateSelfGrantAsync(
+            SelfGrantDirectoryStandIn.Principal(@"DOMAIN\admin", admin.Sid), "jdoe@company.com");
+
         Assert.Null(result);
     }
 
     [Fact]
-    public void ValidateSelfGrant_Disabled_AllowsSelfGrant()
+    public async Task ValidateSelfGrant_Disabled_AllowsSelfGrant()
     {
         var validator = CreateValidator(preventSelfGrant: false);
-        var result = validator.ValidateSelfGrant("jdoe", "jdoe");
+        var result = await validator.ValidateSelfGrantAsync(SignedIn("jdoe"), "jdoe");
         Assert.Null(result);
     }
 
@@ -268,18 +285,18 @@ public sealed class PermissionValidatorTests : IDisposable
     [InlineData("jdoe@company.com", @"DOMAIN\jdoe")]
     [InlineData("jdoe", "jdoe@company.com")]
     [InlineData("jdoe@company.com", "jdoe")]
-    public void ValidateSelfGrant_ExtractsUsername_AcrossFormats(string current, string affected)
+    public async Task ValidateSelfGrant_ExtractsUsername_AcrossFormats(string current, string affected)
     {
         var validator = CreateValidator();
-        var result = validator.ValidateSelfGrant(current, affected);
+        var result = await validator.ValidateSelfGrantAsync(SignedIn(current), affected);
         Assert.NotNull(result);
     }
 
     [Fact]
-    public void ValidateSelfGrant_CaseInsensitive()
+    public async Task ValidateSelfGrant_CaseInsensitive()
     {
         var validator = CreateValidator();
-        var result = validator.ValidateSelfGrant("JDoe", "jdoe");
+        var result = await validator.ValidateSelfGrantAsync(SignedIn("JDoe"), "jdoe");
         Assert.NotNull(result);
     }
 

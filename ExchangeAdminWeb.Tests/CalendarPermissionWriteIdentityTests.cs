@@ -169,9 +169,10 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         var csv = "Target,User,AccessRight\n"
             + $"{Typed},{Trustee},Reviewer\n"
             + $"ghost@contoso.test,{Trustee},Reviewer\n";
+        // aud-a43: run as the harness's signed-in operator - the self-grant check refuses a row it cannot say who granted.
         var bulk = await Service().ProcessCalendarPermissionsCsvAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes(csv)), isSet: true, _h.NothingProtectedValidator(resolver), @"CONTOSO\operator",
-            _h.Audit, email, "10.0.0.5", "INC100", actingUser: null);
+            new MemoryStream(Encoding.UTF8.GetBytes(csv)), isSet: true, _h.NothingProtectedValidator(resolver), ExchangeWriteHarness.OperatorLogonName,
+            _h.Audit, email, "10.0.0.5", "INC100", actingUser: _h.Operator);
 
         Assert.Equal(1, bulk.SuccessCount);
         Assert.Equal(1, bulk.FailedCount);

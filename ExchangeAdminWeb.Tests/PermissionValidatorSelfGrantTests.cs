@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -10,44 +12,66 @@ using NSubstitute;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// aud-a28y: after its string match, the self-grant check compared the acting user and the grantee by object id through a
-/// lookup that answered a failure as "no recipient". The comparison was skipped and the grant allowed exactly while Exchange
-/// could not answer - so a grant to an alias of the operator's own mailbox, which the string match misses, went through
-/// whenever Exchange was unreachable or its config could not be read.
+/// The self-grant check. aud-a28y: after its string match it compared the acting user and the grantee through a lookup
+/// that answered a failure as "no recipient", so the grant was allowed exactly while Exchange could not answer. aud-a43:
+/// the operator was put to Exchange as the Windows logon name, which Exchange need not resolve; a grantee Exchange Online
+/// has no recipient for was compared by string only, though on the on-premises path it is not Exchange Online that
+/// resolves it; and a grant to a group the operator belongs to was not seen at all.
 /// </summary>
 /// <remarks>
 /// The validator over <see cref="ExchangeWriteHarness"/> with nothing protected, Exchange answering through a stand-in
-/// resolver; the bulk loops write through the harness's pool and stand-in cmdlets. Nothing here reaches Exchange or a
-/// directory. <see cref="PermissionValidatorConfigReadTests"/> holds the case where the real resolver cannot read the
-/// Exchange Online config.
+/// resolver and the directory through <see cref="SelfGrantDirectoryStandIn"/>; the bulk loops write through the harness's
+/// pool and stand-in cmdlets. Nothing here reaches Exchange or a directory. <see cref="PermissionValidatorConfigReadTests"/>
+/// holds the case where the real resolver cannot read the Exchange Online config, and
+/// <see cref="PermissionPagesSelfGrantTests"/> the two pages.
 /// </remarks>
 public sealed class PermissionValidatorSelfGrantTests : IDisposable
 {
-    private const string Operator = @"CONTOSO\jdoe";
-    private const string OperatorMailbox = "jdoe@contoso.test";
+    private const string Logon = @"CONTOSO\jdoe";
+    private const string Upn = "jdoe@contoso.test";
 
-    // The operator's own mailbox by another name: "jdoe" and "john.doe" do not match as strings, so only Exchange can say so.
-    private const string OperatorAlias = "john.doe@contoso.test";
+    // The operator's own mailbox by other names. "jdoe" and these do not match as strings.
+    private const string CloudAlias = "jdoe.cloud@contoso.test";
+    private const string OnPremAlias = "jd.legacy@contoso.test";
+    private const string Nickname = "johnd";
+
     private const string Other = "other@contoso.test";
     private const string Target = "shared@contoso.test";
+    private const string Delegates = "delegates@contoso.test";
     private static readonly Guid TargetMailbox = Guid.Parse("0f0f0f0f-2222-4333-8444-666666666666");
 
     private const string SelfGrantRefusal = "Access denied: You cannot grant permissions to yourself.";
 
     private readonly ExchangeWriteHarness _h = new();
+    private readonly SelfGrantDirectoryStandIn.Entry _jdoe;
+    private readonly SelfGrantDirectoryStandIn.Entry _other;
 
-    public PermissionValidatorSelfGrantTests() => _h.AddMailbox(Target, TargetMailbox);
+    public PermissionValidatorSelfGrantTests()
+    {
+        _h.AddMailbox(Target, TargetMailbox);
+        _jdoe = _h.Forest.AddUser("jdoe", upn: Upn, mail: Upn, nickname: Nickname,
+            proxies: [$"SMTP:{Upn}", $"smtp:{OnPremAlias}"]);
+        _other = _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
+    }
 
     public void Dispose() => _h.Dispose();
 
+    private ClaimsPrincipal Jdoe => SelfGrantDirectoryStandIn.Principal(Logon, _jdoe.Sid);
+
     private static string Incomplete(string identity) =>
         $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{identity}'; nothing was written. Contact your administrator.";
+
+    private static string IncompleteBecause(string reason) =>
+        $"Access denied: The self-grant check could not be completed: {reason}; nothing was written. Contact your administrator.";
 
     private static string Text(JsonElement record, string property) =>
         record.TryGetProperty(property, out var value) ? value.GetString() ?? "" : "";
 
     private static ResolvedRecipient Recipient(string primary, string? objectId) =>
-        new(primary, objectId, "UserMailbox", ExistsOnPrem: false, ExchangeGuid: Guid.NewGuid());
+        new(primary, objectId, "UserMailbox", ExistsOnPrem: true, ExchangeGuid: Guid.NewGuid());
+
+    private static ResolvedRecipient GroupRecipient(string primary) =>
+        new(primary, "ext-" + primary, "MailUniversalSecurityGroup", ExistsOnPrem: true);
 
     /// <summary>Exchange knows the bulk loops' target mailbox; every other identity is "no such recipient" until stubbed.</summary>
     private static IIdentityResolver ExchangeKnowsTheTarget() =>
@@ -60,20 +84,308 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
     private EmailService Email() => Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>());
 
+    // ---- who the operator is ---------------------------------------------------------------------
+
+    [Fact]
+    public async Task TheOperatorIsPutToExchange_AsTheDirectorysUserPrincipalNameForTheirSid_NotTheLogonName()
+    {
+        // Exchange knows the operator by their UPN and by an alias only it carries, and not by the logon name; it names
+        // their mailbox by an address the directory does not carry either. The string match misses the alias and the
+        // directory holds neither address, so only Exchange - asked about the right name - can say the two are one mailbox.
+        var resolver = ExchangeKnowsTheTarget();
+        var own = Recipient("jdoe.mailbox@contoso.test", "ext-jdoe");
+        resolver.ResolveRecipientAsync(Upn).Returns(own);
+        resolver.ResolveRecipientAsync(CloudAlias).Returns(own);
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudAlias);
+
+        Assert.Equal(SelfGrantRefusal, result);
+        await resolver.Received().ResolveRecipientAsync(Upn);
+        await resolver.DidNotReceive().ResolveRecipientAsync(Logon);
+        Assert.Contains(_h.Forest.Searches, search => search.Contains($"(objectSid={_jdoe.Sid})", StringComparison.Ordinal)
+            && search.StartsWith($"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} ", StringComparison.Ordinal));
+        Assert.Empty(_h.Forest.Errors);
+    }
+
     [Theory]
-    [InlineData(Operator)]
-    [InlineData(OperatorAlias)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AUserPrincipalNameClaim_IsPutToExchangeAsGiven(bool withSid)
+    {
+        // A sign-in that carries a UPN claim names the operator itself; the directory is then asked by the SID when there
+        // is one, else by that UPN - which this forest holds no account for, so nothing on-premises can be the operator.
+        const string claimed = "jdoe.claim@contoso.test";
+        var resolver = ExchangeKnowsTheTarget();
+        var own = Recipient(claimed, "ext-jdoe");
+        resolver.ResolveRecipientAsync(claimed).Returns(own);
+        resolver.ResolveRecipientAsync(CloudAlias).Returns(own);
+        var principal = SelfGrantDirectoryStandIn.Principal(Logon, withSid ? _jdoe.Sid : null, upn: claimed);
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(principal, CloudAlias);
+
+        Assert.Equal(SelfGrantRefusal, result);
+        await resolver.DidNotReceive().ResolveRecipientAsync(Upn);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    public static TheoryData<string> UnestablishedOperators =>
+    [
+        "no principal", "not signed in", "neither claim", "malformed SID", "SID unknown", "SID twice", "no UPN",
+        "runspace", "module", "forest", "no catalog", "read fails",
+    ];
+
+    [Theory]
+    [MemberData(nameof(UnestablishedOperators))]
+    public async Task AnOperatorTheDirectoryCannotEstablish_IsRefused_AndExchangeIsNotAsked(string shape)
+    {
+        // Who is granting has to be established before anything can be compared with them. Every way it cannot be is a
+        // check that could not be completed - never a grant cleared by the string match alone.
+        var resolver = ExchangeKnowsTheTarget();
+        ClaimsPrincipal? principal = Jdoe;
+        var unreadable = "the on-premises directory could not be read";
+        string reason;
+        switch (shape)
+        {
+            case "no principal":
+                principal = null;
+                reason = "the signed-in operator could not be identified";
+                break;
+            case "not signed in":
+                principal = SelfGrantDirectoryStandIn.Principal(Logon, _jdoe.Sid, authenticated: false);
+                reason = "the signed-in operator could not be identified";
+                break;
+            case "neither claim":
+                principal = SelfGrantDirectoryStandIn.Principal(Logon);
+                reason = $"the signed-in operator '{Logon}' carries neither a user principal name nor a security identifier";
+                break;
+            case "malformed SID":
+                principal = SelfGrantDirectoryStandIn.Principal(Logon, "BA");
+                reason = $"the signed-in operator '{Logon}' carries a malformed security identifier";
+                break;
+            case "SID unknown":
+                principal = SelfGrantDirectoryStandIn.Principal(Logon, SelfGrantDirectoryStandIn.DomainSid + "-9999");
+                reason = $"the on-premises directory holds no account for the signed-in operator '{Logon}'";
+                break;
+            case "SID twice":
+                _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
+                {
+                    Dn = $"CN=jdoe-copy,OU=Staff,{SelfGrantDirectoryStandIn.OtherDomainDn}",
+                    Class = "user",
+                    Sid = _jdoe.Sid,
+                    Upn = "jdoe-copy@contoso.test",
+                });
+                reason = $"the on-premises directory holds 2 accounts for the signed-in operator '{Logon}'";
+                break;
+            case "no UPN":
+                var noUpn = _h.Forest.AddUser("noupn");
+                principal = SelfGrantDirectoryStandIn.Principal(@"CONTOSO\noupn", noUpn.Sid);
+                reason = @"the signed-in operator 'CONTOSO\noupn' has no user principal name in the on-premises directory";
+                break;
+            case "runspace":
+                _h.Forest.RunspaceFailure = "the session could not be created";
+                reason = unreadable;
+                break;
+            case "module":
+                _h.Forest.Failures["Import-Module"] = "The specified module 'ActiveDirectory' was not loaded because no valid module file was found.";
+                reason = unreadable;
+                break;
+            case "forest":
+                _h.Forest.Failures["Get-ADForest"] = "Unable to find a default server with Active Directory Web Services running.";
+                reason = unreadable;
+                break;
+            case "no catalog":
+                _h.Forest.GlobalCatalogs = [];
+                reason = unreadable;
+                break;
+            default:
+                _h.Forest.Failures["Get-ADObject (objectSid="] = "The server has returned the following error: invalid enumeration context.";
+                reason = unreadable;
+                break;
+        }
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(principal, Other);
+
+        Assert.Equal(IncompleteBecause(reason), result);
+        await resolver.DidNotReceive().ResolveRecipientAsync(Arg.Any<string>());
+        Assert.Equal(0, _h.Connects);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    // ---- the directory, every time ---------------------------------------------------------------
+
+    [Theory]
+    [InlineData(OnPremAlias)]
+    [InlineData(Nickname)]
+    [InlineData("the account's DN")]
+    public async Task AGranteeOnlyTheDirectoryNames_IsComparedAsADirectoryObject_AndTheOperatorIsRefused(string grantee)
+    {
+        // Exchange has no recipient for any of these, so its comparison cannot see them - and on the on-premises path it is
+        // not Exchange Online that resolves the grantee. The directory names each as the operator's own account.
+        if (grantee == "the account's DN")
+            grantee = _jdoe.Dn;
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, grantee);
+
+        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AnotherDirectoryObjectCarryingTheOperatorsPrimaryAddress_IsTheOperator()
+    {
+        // Not their account, but the object their primary address belongs to - the mailbox Exchange would grant on.
+        _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
+        {
+            Dn = $"CN=jdoe-linked,OU=Resources,{SelfGrantDirectoryStandIn.DomainDn}",
+            Class = "user",
+            Sam = "jdoe-linked",
+            Proxies = [$"SMTP:{Upn}"],
+        });
+        var resolver = ExchangeKnowsTheTarget();
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, "jdoe-linked");
+
+        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task ADirectoryObjectThatIsNotTheOperator_IsAllowed()
+    {
+        // The control: both directories name someone else.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Other);
+
+        Assert.Null(result);
+        Assert.Contains(_h.Forest.Searches, search => search ==
+            $"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} {SelfGrantDirectory.GranteeFilter(Other, Other)}");
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AGranteeTheDirectoryCannotBeAskedAbout_IsRefused_AsIncomplete()
+    {
+        _h.Forest.Failures["Get-ADObject (mailNickname="] = "The server is not operational.";
+        var resolver = ExchangeKnowsTheTarget();
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Other);
+
+        Assert.Equal(IncompleteBecause($"the on-premises directory could not resolve '{Other}'"), result);
+    }
+
+    // ---- groups ----------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AGroupTheOperatorIsADirectMemberOf_IsRefused(bool otherDomain, bool universal)
+    {
+        // Their own domain's group; a group of another domain - only that domain holds a domain-local group's links, and
+        // it is asked there; and a universal one.
+        var domain = otherDomain ? SelfGrantDirectoryStandIn.OtherDomainDn : SelfGrantDirectoryStandIn.DomainDn;
+        var group = _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, domainDn: domain,
+            domainSid: otherDomain ? SelfGrantDirectoryStandIn.OtherDomainSid : SelfGrantDirectoryStandIn.DomainSid,
+            universal: universal, members: [_other, _jdoe]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Contains(_h.Forest.Searches, search => search ==
+            $"Get-ADObject {SelfGrantDirectoryStandIn.DomainName(domain)} {SelfGrantDirectory.DirectMemberFilter(group.Dn, _jdoe.Dn)}");
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task TheOperatorsPrimaryGroup_IsAGroupTheyAreAMemberOf()
+    {
+        // No member link holds an account in its primary group; primaryGroupID does.
+        _h.Forest.AddGroup("Domain Users", rid: SelfGrantDirectoryStandIn.DomainUsersRid);
+        var resolver = ExchangeKnowsTheTarget();
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, "Domain Users");
+
+        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AGroupWithoutTheOperator_IsAllowed_AndItsMembershipIsAskedInItsOwnDomain()
+    {
+        var group = _h.Forest.AddGroup("Shared Readers", mail: Delegates, domainDn: SelfGrantDirectoryStandIn.OtherDomainDn,
+            domainSid: SelfGrantDirectoryStandIn.OtherDomainSid, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Null(result);
+        var server = SelfGrantDirectoryStandIn.DomainName(SelfGrantDirectoryStandIn.OtherDomainDn);
+        Assert.Contains(_h.Forest.Searches, search => search == $"Get-ADObject {server} {ProtectedGroupMembership.ExactDnFilter(group.Dn)}");
+        Assert.Contains(_h.Forest.Searches, search => search == $"Get-ADObject {server} {SelfGrantDirectory.DirectMemberFilter(group.Dn, _jdoe.Dn)}");
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [InlineData("the member read fails")]
+    [InlineData("the group's domain cannot be reached")]
+    [InlineData("the group's domain does not answer for it")]
+    public async Task AMembershipThatCannotBeRead_IsRefused_AsIncomplete(string shape)
+    {
+        // The operator is not a member here: the refusal is the unanswered question, not the answer.
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, domainDn: SelfGrantDirectoryStandIn.OtherDomainDn,
+            domainSid: SelfGrantDirectoryStandIn.OtherDomainSid, catalogOnly: shape == "the group's domain does not answer for it",
+            members: [_other]);
+        if (shape == "the member read fails")
+            _h.Forest.Failures["Get-ADObject member"] = "The server has returned the following error: invalid enumeration context.";
+        if (shape == "the group's domain cannot be reached")
+            _h.Forest.Failures["Get-ADObject fabrikam.test"] = SelfGrantDirectoryStandIn.UnreachableServer;
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{Delegates}' could not be read"), result);
+    }
+
+    [Fact]
+    public async Task AGroupExchangeNamesThatTheDirectoryDoesNotHold_IsRefused_AsIncomplete()
+    {
+        // A cloud-only group: its membership is nowhere this check can read it.
+        const string cloudGroup = "cloud-team@contoso.test";
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(cloudGroup).Returns(GroupRecipient(cloudGroup) with { ExistsOnPrem = false });
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, cloudGroup);
+
+        Assert.Equal(IncompleteBecause(
+            $"'{cloudGroup}' is a group the on-premises directory does not hold, so whether you are a member could not be checked"), result);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    // ---- Exchange Online (aud-a28y) ----------------------------------------------------------------
+
+    [Theory]
+    [InlineData(Upn)]
+    [InlineData(CloudAlias)]
     public async Task ACheckExchangeCannotAnswer_IsRefused_NamingWhoCouldNotBeResolved(string unreachable)
     {
         // The other side is what Exchange would name as the operator's own mailbox, so the comparison - had it been
         // made - refuses. Clearing the grant on the string match alone because one lookup could not run was the defect.
         var resolver = ExchangeKnowsTheTarget();
-        var own = Recipient(OperatorMailbox, "ext-jdoe");
-        resolver.ResolveRecipientAsync(Operator).Returns(own);
-        resolver.ResolveRecipientAsync(OperatorAlias).Returns(own);
+        var own = Recipient(Upn, "ext-jdoe");
+        resolver.ResolveRecipientAsync(Upn).Returns(own);
+        resolver.ResolveRecipientAsync(CloudAlias).Returns(own);
         Unreachable(resolver, unreachable);
 
-        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Operator, OperatorAlias);
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudAlias);
 
         Assert.Equal(Incomplete(unreachable), result);
         Assert.Equal(0, _h.Connects);
@@ -82,9 +394,9 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [Fact]
     public async Task NoIdentityResolver_RefusesTheGrant_AsACheckThatCouldNotBeCompleted()
     {
-        var result = await _h.NothingProtectedValidator(null!).ValidateSelfGrantAsync(Operator, Other);
+        var result = await _h.NothingProtectedValidator(null!).ValidateSelfGrantAsync(Jdoe, Other);
 
-        Assert.Equal(Incomplete(Operator), result);
+        Assert.Equal(Incomplete(Upn), result);
     }
 
     [Theory]
@@ -96,10 +408,10 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         // One recipient, by its object id and its address; then by the address alone, when Exchange reports no object id
         // (absent or blank) - the primary address is Exchange's own name for the recipient, compared regardless of case.
         var resolver = ExchangeKnowsTheTarget();
-        resolver.ResolveRecipientAsync(Operator).Returns(Recipient(OperatorMailbox, operatorId));
-        resolver.ResolveRecipientAsync(OperatorAlias).Returns(Recipient(OperatorMailbox.ToUpperInvariant(), aliasId));
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, operatorId));
+        resolver.ResolveRecipientAsync(CloudAlias).Returns(Recipient(Upn.ToUpperInvariant(), aliasId));
 
-        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Operator, OperatorAlias);
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudAlias);
 
         Assert.Equal(SelfGrantRefusal, result);
     }
@@ -112,10 +424,10 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     {
         // The control. Two blank object ids are no object id, not one shared id: they no longer make two recipients one.
         var resolver = ExchangeKnowsTheTarget();
-        resolver.ResolveRecipientAsync(Operator).Returns(Recipient(OperatorMailbox, operatorId));
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, operatorId));
         resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, otherId));
 
-        Assert.Null(await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Operator, Other));
+        Assert.Null(await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Other));
     }
 
     [Theory]
@@ -124,33 +436,36 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [InlineData(false, false)]
     public async Task ExchangeReportingNoSuchRecipient_IsAnAnswer_AndTheStringMatchStands(bool operatorKnown, bool otherKnown)
     {
-        // A lookup that ran and found no recipient leaves nothing to compare: the string match is the whole answer, as the
-        // excluded-user check reads the same null (aud-a2b). It still refuses on its own.
+        // A lookup that ran and found no recipient leaves Exchange nothing to compare, as the excluded-user check reads the
+        // same null (aud-a2b); the directory still names the grantee. The string match still refuses on its own.
         var resolver = ExchangeKnowsTheTarget();
         if (operatorKnown)
-            resolver.ResolveRecipientAsync(Operator).Returns(Recipient(OperatorMailbox, "ext-jdoe"));
+            resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
         if (otherKnown)
             resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
         var validator = _h.NothingProtectedValidator(resolver);
 
-        Assert.Null(await validator.ValidateSelfGrantAsync(Operator, Other));
-        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(Operator, OperatorMailbox));
+        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(Jdoe, Upn));
     }
+
+    // ---- the bulk loops --------------------------------------------------------------------------
 
     [Theory]
     [InlineData("unreachable")]
     [InlineData("alias")]
+    [InlineData("no operator")]
     public async Task TheMailboxPermissionsBulkLoop_RefusesTheRow_AndRecordsTheValidatorsReason(string shape)
     {
         // The row passes the protected-target check, so the self-grant check is what refuses it - and the record carries
         // its reason: a check that could not be completed is not recorded as an operator granting themselves access.
-        var (resolver, grantee, expected) = Shape(shape);
+        var (resolver, grantee, expected, actingUser) = Shape(shape);
         var csv = "Target,User,FullAccess,SendAs,AutoMapping\n" + $"{Target},{grantee},True,False,False\n";
 
         var bulk = await new MailboxPermissionService(_h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace)
             .ProcessMailboxPermissionsCsvAsync(
-                new MemoryStream(Encoding.UTF8.GetBytes(csv)), isAdd: true, _h.NothingProtectedValidator(resolver), Operator,
-                _h.Audit, Email(), "10.0.0.5", "INC100", actingUser: null);
+                new MemoryStream(Encoding.UTF8.GetBytes(csv)), isAdd: true, _h.NothingProtectedValidator(resolver), Logon,
+                _h.Audit, Email(), "10.0.0.5", "INC100", actingUser);
 
         Assert.Equal(0, bulk.SuccessCount);
         Assert.Equal(1, bulk.FailedCount);
@@ -165,15 +480,16 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [Theory]
     [InlineData("unreachable")]
     [InlineData("alias")]
+    [InlineData("no operator")]
     public async Task TheCalendarPermissionsBulkLoop_RefusesTheRow_AndRecordsTheValidatorsReason(string shape)
     {
-        var (resolver, grantee, expected) = Shape(shape);
+        var (resolver, grantee, expected, actingUser) = Shape(shape);
         var csv = "Target,User,AccessRight\n" + $"{Target},{grantee},Reviewer\n";
 
         var bulk = await new CalendarPermissionService(_h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace)
             .ProcessCalendarPermissionsCsvAsync(
-                new MemoryStream(Encoding.UTF8.GetBytes(csv)), isSet: true, _h.NothingProtectedValidator(resolver), Operator,
-                _h.Audit, Email(), "10.0.0.5", "INC100", actingUser: null);
+                new MemoryStream(Encoding.UTF8.GetBytes(csv)), isSet: true, _h.NothingProtectedValidator(resolver), Logon,
+                _h.Audit, Email(), "10.0.0.5", "INC100", actingUser);
 
         Assert.Equal(0, bulk.SuccessCount);
         Assert.Equal(1, bulk.FailedCount);
@@ -187,22 +503,28 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
     /// <summary>
     /// "unreachable": Exchange cannot answer for the operator, so the check cannot be completed. "alias": Exchange names
-    /// the grantee as the operator's own mailbox, a self-grant the string match misses.
+    /// the grantee as the operator's own mailbox, a self-grant the string match misses. "no operator": the loop was handed
+    /// no principal, so who is granting cannot be established.
     /// </summary>
-    private static (IIdentityResolver resolver, string grantee, string expected) Shape(string shape)
+    private (IIdentityResolver resolver, string grantee, string expected, ClaimsPrincipal? actingUser) Shape(string shape)
     {
         var resolver = ExchangeKnowsTheTarget();
-        if (shape == "unreachable")
+        switch (shape)
         {
-            Unreachable(resolver, Operator);
-            return (resolver, Other, Incomplete(Operator));
+            case "unreachable":
+                Unreachable(resolver, Upn);
+                return (resolver, Other, Incomplete(Upn), Jdoe);
+            case "no operator":
+                return (resolver, Other, IncompleteBecause("the signed-in operator could not be identified"), null);
+            default:
+                var own = Recipient(Upn, "ext-jdoe");
+                resolver.ResolveRecipientAsync(Upn).Returns(own);
+                resolver.ResolveRecipientAsync(CloudAlias).Returns(own);
+                return (resolver, CloudAlias, SelfGrantRefusal, Jdoe);
         }
-
-        var own = Recipient(OperatorMailbox, "ext-jdoe");
-        resolver.ResolveRecipientAsync(Operator).Returns(own);
-        resolver.ResolveRecipientAsync(OperatorAlias).Returns(own);
-        return (resolver, OperatorAlias, SelfGrantRefusal);
     }
+
+    // ---- the source ------------------------------------------------------------------------------
 
     [Theory]
     [InlineData("Components/Pages/MailboxPermissions.razor")]
@@ -211,9 +533,9 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [InlineData("Services/CalendarPermissionService.cs")]
     public void EverySelfGrantRecord_CarriesTheValidatorsOwnRefusal(string relativePath)
     {
-        // The two pages' single-grant handlers have no seam to drive here, so their record is read from the source,
-        // comments blanked; the two bulk loops are driven above as well. Each records the refusal it was handed, as their
-        // protected-target denials already do, rather than a fixed sentence that says every refusal was a self-grant.
+        // The two bulk loops are driven above and the two pages in PermissionPagesSelfGrantTests; this reads every record
+        // from the source, comments blanked. Each records the refusal it was handed, as their protected-target denials
+        // already do, rather than a fixed sentence that says every refusal was a self-grant.
         var path = AuditCategoryFilingTests.FindRepoFile(relativePath.Split('/'));
         var code = RazorSyntax.CommentsBlanked(File.ReadAllText(path));
 
@@ -223,5 +545,33 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         Assert.True(detail.Success, $"{relativePath}: the self-grant record names no errorDetail.");
         Assert.Equal("selfGrantError", detail.Groups[1].Value.Trim());
+    }
+
+    [Theory]
+    [InlineData("Components/Pages/MailboxPermissions.razor", "validationAuthState.User")]
+    [InlineData("Components/Pages/CalendarPermissions.razor", "validationAuthState.User")]
+    [InlineData("Services/MailboxPermissionService.cs", "actingUser")]
+    [InlineData("Services/CalendarPermissionService.cs", "actingUser")]
+    public void EverySelfGrantCheck_IsHandedTheSignedInPrincipal_NeverTheLogonName(string relativePath, string principal)
+    {
+        // The pages hand over the token the protected-target check was decided against; the bulk loops the principal they
+        // already hold for it. The logon name (currentUser) stays the audit's actor and nothing more.
+        var path = AuditCategoryFilingTests.FindRepoFile(relativePath.Split('/'));
+        var code = RazorSyntax.CommentsBlanked(File.ReadAllText(path));
+
+        var call = Assert.Single(Regex.Matches(code, @"ValidateSelfGrantAsync\(\s*([^,]+?)\s*,").ToList());
+
+        Assert.Equal(principal, call.Groups[1].Value);
+    }
+
+    [Fact]
+    public void TheStringOnlySelfGrantCheck_IsGone_AndTheCheckTakesThePrincipal()
+    {
+        const BindingFlags Every = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+
+        Assert.DoesNotContain(typeof(PermissionValidator).GetMethods(Every), method => method.Name == "ValidateSelfGrant");
+        var check = Assert.Single(typeof(PermissionValidator).GetMethods(Every),
+            method => method.Name == nameof(PermissionValidator.ValidateSelfGrantAsync));
+        Assert.Equal(new[] { typeof(ClaimsPrincipal), typeof(string) }, check.GetParameters().Select(p => p.ParameterType));
     }
 }

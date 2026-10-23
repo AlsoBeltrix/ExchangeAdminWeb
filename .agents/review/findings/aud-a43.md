@@ -9,9 +9,9 @@ address comparison never runs for ANY operator and the string match is the whole
 is compared by string only. (3) A grant to a group the operator is a member of is not detected; there is no
 group expansion in the self-grant check. (4) The synchronous `ValidateSelfGrant` is string-match only and
 has no production caller; a future caller reopens what aud-a28y closed.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
-**Commit**: -
+**Status**: Fixed on branch, not merged; closed on guard proof below; review pending
+**Branch**: `worktree-agent-ac928f0732402c4c5`
+**Commit**: fix (this record's commit; SHA in the branch's records commit); plan `1272a8cf`
 **Reviewer**: implementer (surfaced by the aud-a28y/a28x/a26t agent, 2026-10-22, candidates 1-4 of its hand-back)
 
 ## Evidence
@@ -144,9 +144,145 @@ Files: `Services/PermissionValidator.cs`, `Services/SelfGrantDirectory.cs` (new)
 `Services/CalendarPermissionService.cs`, `Components/Pages/MailboxPermissions.razor` (431),
 `Components/Pages/CalendarPermissions.razor` (406), the tests above, this record.
 
+## Fix
+
+`Services/PermissionValidator.cs`:
+- `ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser)`. The setting first, as before; no authenticated
+  principal refuses ("the signed-in operator could not be identified"); the logon-name string match (`IdentitiesMatch`)
+  stays, refusal-only and before any I/O. Then one `SelfGrantDirectory` session (opened through `Task.Run`; a session that
+  cannot be opened refuses: "the on-premises directory could not be read").
+- `EstablishOperator`: by the `PrimarySid` claim (a canonical SID, `SelfServiceGroupService.IsSecurityIdentifier`, else
+  refused as malformed) through the catalog; exactly one object, or refused ("the on-premises directory holds no account /
+  N accounts for the signed-in operator '<name>'"); the identity put to Exchange is the UPN claim (`ClaimTypes.Upn`, then
+  `preferred_username`) when present, else that object's `userPrincipalName`, blank refused. No SID: the UPN claim, its
+  object when the forest holds one (several refused, none: no directory object). Neither claim refused. A read that throws
+  refused.
+- Exchange Online as aud-a28y left it, asked about that identity; then `CompareInDirectory`: `FindNamedBy(affectedUser,
+  <Exchange's canonical address for it>)` (a failed search refuses: "the on-premises directory could not resolve '<x>'");
+  any object found that is the operator (`IsTheOperator`: the account's `objectGUID`, or the account's or Exchange
+  recipient's primary address) refuses as a self-grant; a grantee Exchange names as a group (`RecipientType` contains
+  "Group") with no group found under its address refuses as incomplete; no directory account ends the check; for each
+  group found, the primary group (`ProtectedGroupMembership.PrimaryGroupSid` against the group's `objectSid`) or a direct
+  `member` link (`SelfGrantDirectory.HasDirectMember`) refuses as a self-grant, and a read that fails as incomplete
+  ("whether you are a member of the group '<x>' could not be read").
+- The refusals share `SelfGrantCheckIncompleteBecause(reason)`; `SelfGrantCheckIncomplete(identity)` is its Exchange
+  Online case, text unchanged. `ValidateSelfGrant` (synchronous) removed. `SelfGrantDirectoryRunspace` the test seam.
+- Folded in: `PreventSelfGrantFromAppsettings` warns through a static `ConcurrentDictionary` of the values already named,
+  so once per process per value; the refusal is unchanged.
+
+`Services/SelfGrantDirectory.cs` (new): `SelfGrantDirectory.Open(createRunspace)` - runspace, `ActiveDirectoryModuleImport.
+Import`, `(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1` -> `host:3268`, no host refused; reads
+`Get-ADObject -LDAPFilter -Server -Properties -ErrorAction Stop`, `HadErrors` a failure, each row parsed strictly
+(`ToObject`: DN, `objectGUID`, class required; the primary address from the `SMTP:` proxy, else `mail`; every `smtp:` proxy
+and `mail` kept). `FindBySid` (`ProtectedGroupMembership.GroupLookupFilter`), `FindByUserPrincipalName`, `FindNamedBy`
+(`GranteeFilter`), `HasDirectMember` (the group's own domain by `GroupManagementService.ServerFromDn`; the group read there
+by `ExactDnFilter` must return exactly it, then `DirectMemberFilter`). Ambient identity, nothing named.
+`SelfGrantDirectoryObject` the row.
+
+Callers: `MailboxPermissions.razor` 431 and `CalendarPermissions.razor` 406 pass `validationAuthState.User` (same line;
+808 and 762 lines kept); `MailboxPermissionService` 274 and `CalendarPermissionService` 162 pass `actingUser`.
+
+Tests: new `ExchangeAdminWeb.Tests/SelfGrantDirectoryStandIn.cs` (the forest, its stub runspace and an LDAP filter reader
+that refuses what it does not evaluate); `ExchangeWriteHarness` gains `Forest`, `Operator`, `OperatorLogonName`,
+`OperatorUpn` and sets the seam on `NothingProtectedValidator`. `PermissionValidatorSelfGrantTests` rewritten: 57 cases -
+the operator's Exchange identity (3), the operator not established (12), the directory comparison (6), groups (9), aud-a28y's
+Exchange cases (12), the bulk loops (6), the source and the shape (9: the records, the principal at every call site, the
+sync check gone). New `PermissionPagesSelfGrantTests` (2): both pages' `SubmitSingle` driven by reflection, an alias of the
+operator's own mailbox refused through the principal and recorded with the validator's text. `PermissionValidatorTests`:
+the six synchronous tests moved to the async check (9 rows), `CreateValidator` defaulting to an empty stand-in forest.
+`PermissionValidatorConfigReadTests`: the self-grant rows ask the async check over a principal; the aud-a28y case expects
+the operator's UPN; the log case uses a value of its own; new
+`AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation` (the fold-in).
+`MailboxPermissionWriteIdentityTests` / `CalendarPermissionWriteIdentityTests`: the bulk-write case runs as the harness's
+operator. `ProgressRegistry`: the two pages' SubmitSingle reasons name the directory read.
+
+No test reaches the production runspace: the whole suite was run once with `SelfGrantDirectory.DefaultRunspace` made to
+throw and log each call to a scratch file - 6,071 passed / 3 skipped / 0 failed and no call logged - then the file was
+restored byte for byte (MD5 `6D0DD0DA1F0039BCB10D7E85CB0D0405`) and touched.
+
+Caller-visible change, by design: a Mailbox Permissions or Calendar Permissions grant, single or bulk, is now also refused
+(1) as a self-grant when the directory names the grantee as the operator's own account or address, or as a group holding
+the operator directly or as their primary group; (2) as a check that could not be completed when the operator cannot be
+established in the directory (no principal, no SID or UPN claim, a SID the forest holds no single account for, an account
+without a UPN), when the directory cannot be read, when the grantee or a group's membership cannot be read, or when
+Exchange names the grantee a group the directory does not hold (a cloud-only group). Exchange Online is asked about the
+operator's UPN, never the logon name, so the refusal for an Exchange that cannot answer names the UPN. A bulk loop handed no
+principal refuses its grant rows. Each check opens a directory session (a runspace and the ActiveDirectory module): one per
+single grant and one per bulk row, the cost the protected-target check's AD resolution already pays per row. An
+unparseable appsettings `Security:PreventSelfGrant` is named once per process, not on every check.
+
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: every new test calls the check with a principal, a signature the old validator does not
+have. M1 (the logon name put to Exchange) and E0 (no directory step after Exchange) are the old control flow at its call
+site; between them they are the check as it stood.
+
+Session-local driver (`mutate.ps1`, session scratchpad `a43`, log `a43-mutations.log`): the fix staged; per mutant: MD5,
+one exact-text replacement that must match exactly once, MD5, a Debug build of the test project with 0 errors required,
+`dotnet test --no-build` filtered to
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~WriteIdentityTests|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~BulkPermission|FullyQualifiedName~BulkAndOnPrem|FullyQualifiedName~OutOfOffice|FullyQualifiedName~ProtectedPrincipalExclusionsReadTests|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry`
+(705 tests), the failing names taken from the run, then the file restored from the git index (`git checkout --`), its
+write time advanced so MSBuild rebuilds it, and its MD5 re-checked. Fixed-file MD5s: `Services/PermissionValidator.cs`
+`3A05F11B4D2A8D36FC76AEB3E39DBB48`, `Services/SelfGrantDirectory.cs` `6D0DD0DA1F0039BCB10D7E85CB0D0405`. Every mutant built
+with 0 errors and its file was restored to that MD5 each time. After the round, the restored tree rebuilt and the same
+filter: 705/705 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | `ValidateSelfGrantAsync`: the logon name put to Exchange, and named in its refusal, again in place of the directory's UPN | `8ADB158091AFE57573431139C98A5E45` | 10: `TheOperatorIsPutToExchange_AsTheDirectorysUserPrincipalNameForTheirSid_NotTheLogonName`, both `AUserPrincipalNameClaim_IsPutToExchangeAsGiven` rows, `ACheckExchangeCannotAnswer_IsRefused_NamingWhoCouldNotBeResolved(unreachable: "jdoe@contoso.test")`, `NoIdentityResolver_RefusesTheGrant_AsACheckThatCouldNotBeCompleted`, both bulk loops' `(shape: "unreachable")`, `PermissionValidatorConfigReadTests.ExchangeOnlineRowsThatCannotBeRead_RefuseASelfGrant_AsACheckThatCouldNotBeCompleted`, and both pages' `PermissionPagesSelfGrantTests` cases (the alias grant went through to the stand-in write) |
+| M2 | `CompareInDirectory`: the objects the directory names never compared with the operator (`foreach (var candidate in Array.Empty<SelfGrantDirectoryObject>())`) - the on-prem branch skipping the comparison | `70E8C0051ED82846CF1982322F5FE967` | 4: the three `AGranteeOnlyTheDirectoryNames_IsComparedAsADirectoryObject_AndTheOperatorIsRefused` rows, `AnotherDirectoryObjectCarryingTheOperatorsPrimaryAddress_IsTheOperator` |
+| M3 | `CompareInDirectory`: the group branch removed (`foreach (var group in Array.Empty<SelfGrantDirectoryObject>())`) | `9CC84E6F0623EDD30E02FC153BCE6601` | 8: the three `AGroupTheOperatorIsADirectMemberOf_IsRefused` rows, `TheOperatorsPrimaryGroup_IsAGroupTheyAreAMemberOf`, `AGroupWithoutTheOperator_IsAllowed_AndItsMembershipIsAskedInItsOwnDomain`, the three `AMembershipThatCannotBeRead_IsRefused_AsIncomplete` rows |
+| F1 | fold-in, `PreventSelfGrantFromAppsettings`: the once-guard removed | `D75DD67CDC126871094BDC9119A7EA4D` | `PermissionValidatorConfigReadTests.AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation` |
+| E0 | extra: the whole directory step skipped after Exchange (`return null;`) - the old flow | `9B7D6EEFD904A2930A59C83EC665895E` | 15: every directory and group case above, `AGranteeTheDirectoryCannotBeAskedAbout_IsRefused_AsIncomplete`, `AGroupExchangeNamesThatTheDirectoryDoesNotHold_IsRefused_AsIncomplete` and `ADirectoryObjectThatIsNotTheOperator_IsAllowed` (no search made) |
+| E1 | extra, `EstablishOperator`: a SID the forest holds no object for taken as an operator with no directory object, the logon name put to Exchange | `CA06E1A2ACD3B8EBA9B92D0EC6F61449` | `AnOperatorTheDirectoryCannotEstablish_IsRefused_AndExchangeIsNotAsked(shape: "SID unknown")` |
+| E2 | extra: a group Exchange names that the directory does not hold allowed when Exchange calls it cloud-only (`&& grantee.ExistsOnPrem`) | `E34680FC72832713961987B2B0EC8B39` | `AGroupExchangeNamesThatTheDirectoryDoesNotHold_IsRefused_AsIncomplete` |
+| E3 | extra: a membership read that failed taken as "not a member" (`continue;`) | `70A1606D9AF8F7B76B095BF7EF0AFB35` | the three `AMembershipThatCannotBeRead_IsRefused_AsIncomplete` rows |
+| E4 | extra: the primary-group check removed | `9E383B00B671A81B262F158B5812B29C` | `TheOperatorsPrimaryGroup_IsAGroupTheyAreAMemberOf` |
+| E5 | extra, `SelfGrantDirectory.HasDirectMember`: the membership asked of the global catalog instead of the group's own domain | `BA00BD295F31EA8E90BCD0F7FE4FE5A6` | 6: the three `AGroupTheOperatorIsADirectMemberOf_IsRefused` rows (the catalog holds no global or domain-local group's links; the universal row names the wrong server), `AGroupWithoutTheOperator_IsAllowed_AndItsMembershipIsAskedInItsOwnDomain`, `AMembershipThatCannotBeRead_IsRefused_AsIncomplete` for the unreachable domain and the domain that does not answer |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 59 warnings, the baseline, none in a touched
+  file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,071
+  passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0
+  failed, 6,074 total, 5m54s; nothing hung, no Sequence file. Forty cases are this commit's (57 for 20 in
+  `PermissionValidatorSelfGrantTests`, 2 in `PermissionPagesSelfGrantTests`, 1 in `PermissionValidatorConfigReadTests`).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange a stand-in resolver
+or the real resolver over a pool whose connect seam throws, and the whole suite was run once with the production runspace
+made to throw (above). No coder self-review verdict is claimed.
+
+## Known gaps
+
+- Labelled assumption: the app signs in with Negotiate only and its principal carries `Name` (`DOMAIN\user`) and
+  `PrimarySid` and no UPN claim (`Program.cs` 44-45; no `IClaimsTransformation` in the code base;
+  `OperatorEmailResolver`'s remarks). So the UPN-claim branch does not run today; the operator's Exchange identity is the
+  `userPrincipalName` of the object the forest's catalog holds under their SID. Not verified against a live token.
+- Labelled assumption: the directory reads run under the app pool's identity, as the other operator-identity reads do, and
+  rest on that identity reading every object and member link the writing directory would resolve the grantee to - the
+  condition decisions 2026-07-31 records for this deployment. Where a deployment hides an object or a group's membership
+  from it, the read finds nobody or no member and the check falls back on Exchange's answer and the string match. The
+  owner has not ruled on this identity for this check specifically.
+- Labelled assumption: a search sent to `<catalog>:3268` with no search base covers the forest - what every forest search
+  here rests on (`PowerShellProtectedGroupDirectory`, `GroupManagementService`, `ADDirectorySearchService`). Not probed.
+- Membership is direct (a `member` link) or the primary group, as briefed; a group that holds the operator only through
+  another group is not detected. `ProtectedGroupMembership.Evaluate` (transitive, forest-wide, fail-closed) is the shape
+  that would close it.
+- The grantee is searched by `userPrincipalName`, `mail`, `proxyAddresses`, `mailNickname`, `sAMAccountName`, `name` and,
+  for a DN, `distinguishedName`; Exchange also accepts a canonical name, a `legacyExchangeDN` or a GUID, which this search
+  does not cover (Exchange's own comparison still runs).
+- A grantee Exchange names as a cloud-only group is refused as incomplete: its membership is not in the directory. An
+  Exchange-side membership read would let such a grant through; not in scope.
+- Each check opens a directory session (a runspace and the ActiveDirectory module): once per single grant, once per bulk
+  row (at most `BulkCsvRowLimit.MaxRows`, 200).
+- `ExecuteOnPrem` (both pages) re-runs the target check before the on-premises write but not the self-grant check, which
+  ran in `SubmitSingle` before the confirmation pause; the pages are line-keyed, so not changed here (hand-back candidate).
+- The stand-ins stand in for the directory and Exchange; nothing ran against a forest or a tenant.
 
 ## Folded in: a malformed appsettings Security:PreventSelfGrant warns on every validation (codex, perm-batch-4, 2026-10-22) - LOW
 

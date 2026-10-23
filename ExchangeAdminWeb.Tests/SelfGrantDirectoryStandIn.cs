@@ -1,0 +1,360 @@
+using System.Collections;
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
+using System.Security.Claims;
+using System.Security.Principal;
+using System.Text;
+
+namespace ExchangeAdminWeb.Tests;
+
+/// <summary>
+/// aud-a43. A stand-in Active Directory forest for the self-grant check's directory reads
+/// (<c>Services/SelfGrantDirectory.cs</c>): objects, their member links and two domains, behind a runspace whose
+/// <c>Import-Module</c>, <c>Get-ADForest</c> and <c>Get-ADObject</c> are advanced functions. No directory is reached.
+/// </summary>
+/// <remarks>
+/// Each stub records the step it was asked to run in <see cref="Calls"/> ("Get-ADObject &lt;server&gt; &lt;filter&gt;"),
+/// then fails as <see cref="Failures"/> says - its message written as the cmdlet's error, so the caller's
+/// <c>-ErrorAction Stop</c> throws it - or answers. <c>Get-ADObject</c> evaluates the LDAP filter the code sends over the
+/// objects its <c>-Server</c> reaches: the catalog endpoint reaches every domain, a domain's DNS name that domain, anything
+/// else nothing ("Unable to contact the server"). As on a real global catalog, the catalog holds no member link of a group
+/// that is not universal, so a membership asked of the catalog rather than the group's own domain reads as no member. A
+/// filter naming an attribute the stand-in does not hold, or a construct it does not read, is an error, so no test can
+/// pass through a filter it did not evaluate.
+/// </remarks>
+internal sealed class SelfGrantDirectoryStandIn
+{
+    public const string GlobalCatalogHost = "gc01.contoso.test";
+    public const string GlobalCatalogEndpoint = GlobalCatalogHost + ":3268";
+    public const string DomainDn = "DC=contoso,DC=test";
+    public const string OtherDomainDn = "DC=fabrikam,DC=test";
+    public const string DomainSid = "S-1-5-21-1111111111-2222222222-3333333333";
+    public const string OtherDomainSid = "S-1-5-21-4444444444-5555555555-6666666666";
+    public const int DomainUsersRid = 513;
+    public const string UnreachableServer = "Unable to contact the server. This may be because this server does not exist, it is currently down, or it does not have the Active Directory Web Services running.";
+
+    private readonly List<Entry> _objects = [];
+    private int _nextRid = 2000;
+
+    /// <summary>Every step a stub was asked to run, in order.</summary>
+    public IList Calls { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>
+    /// How a step fails instead of answering: "Import-Module", "Get-ADForest", "Get-ADObject" (every search),
+    /// "Get-ADObject &lt;server&gt;" (every search sent there), "Get-ADObject member" (a membership read), or
+    /// "Get-ADObject &lt;fragment&gt;" for a search whose filter contains the fragment.
+    /// </summary>
+    public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The hosts Get-ADForest reports as the forest's global catalogs.</summary>
+    public string[] GlobalCatalogs { get; set; } = [GlobalCatalogHost];
+
+    /// <summary>Opening the runspace throws this, when set.</summary>
+    public string? RunspaceFailure { get; set; }
+
+    public IReadOnlyList<string> Searches =>
+        Calls.Cast<string>().Where(call => call.StartsWith("Get-ADObject ", StringComparison.Ordinal)).ToList();
+
+    public sealed class Entry
+    {
+        public required string Dn { get; init; }
+        public required string Class { get; init; }
+        public Guid Guid { get; init; } = Guid.NewGuid();
+        public string? Upn { get; init; }
+        public string? Mail { get; init; }
+        public string? Sam { get; init; }
+        public string? Nickname { get; init; }
+        public string? Sid { get; init; }
+        public int? PrimaryGroupId { get; init; }
+        public List<string> Proxies { get; init; } = [];
+        public List<string> Members { get; init; } = [];
+
+        /// <summary>A universal group: the catalog holds its member links as well as its own domain does.</summary>
+        public bool Universal { get; init; }
+
+        /// <summary>Held by the catalog and not by its own domain - a domain that cannot answer for it.</summary>
+        public bool CatalogOnly { get; init; }
+
+        public string Name => Dn[3..Dn.IndexOf(',')];
+    }
+
+    public static string DomainName(string domainDn) =>
+        string.Join('.', domainDn.Split(',').Select(part => part.Trim()[3..]));
+
+    /// <summary>A user account: a SID in <paramref name="domainSid"/>, Domain Users as its primary group unless told otherwise.</summary>
+    public Entry AddUser(string sam, string? upn = null, string? mail = null, string domainDn = DomainDn,
+        string domainSid = DomainSid, int primaryGroupRid = DomainUsersRid, string? nickname = null, params string[] proxies)
+    {
+        var entry = new Entry
+        {
+            Dn = $"CN={sam},OU=Staff,{domainDn}",
+            Class = "user",
+            Upn = upn,
+            Mail = mail,
+            Sam = sam,
+            Nickname = nickname,
+            Sid = $"{domainSid}-{Interlocked.Increment(ref _nextRid)}",
+            PrimaryGroupId = primaryGroupRid,
+            Proxies = [.. proxies],
+        };
+        _objects.Add(entry);
+        return entry;
+    }
+
+    /// <summary>A security group of <paramref name="domainDn"/> holding <paramref name="members"/> as direct members.</summary>
+    public Entry AddGroup(string name, string? mail = null, string domainDn = DomainDn, string domainSid = DomainSid,
+        int? rid = null, bool universal = false, bool catalogOnly = false, params Entry[] members)
+    {
+        var entry = new Entry
+        {
+            Dn = $"CN={name},OU=Groups,{domainDn}",
+            Class = "group",
+            Mail = mail,
+            Sam = name,
+            Sid = $"{domainSid}-{rid ?? Interlocked.Increment(ref _nextRid)}",
+            Proxies = mail is null ? [] : [$"SMTP:{mail}"],
+            Members = [.. members.Select(member => member.Dn)],
+            Universal = universal,
+            CatalogOnly = catalogOnly,
+        };
+        _objects.Add(entry);
+        return entry;
+    }
+
+    /// <summary>Any other directory object, as given.</summary>
+    public Entry Add(Entry entry)
+    {
+        _objects.Add(entry);
+        return entry;
+    }
+
+    /// <summary>
+    /// A signed-in principal as the Negotiate scheme gives one: the logon name and the account SID; a UPN claim only when
+    /// given. Not signed in when <paramref name="authenticated"/> is false.
+    /// </summary>
+    public static ClaimsPrincipal Principal(string? logonName, string? sid = null, string? upn = null, bool authenticated = true)
+    {
+        var claims = new List<Claim>();
+        if (logonName is not null) claims.Add(new Claim(ClaimTypes.Name, logonName));
+        if (sid is not null) claims.Add(new Claim(ClaimTypes.PrimarySid, sid));
+        if (upn is not null) claims.Add(new Claim(ClaimTypes.Upn, upn));
+        return new ClaimsPrincipal(new ClaimsIdentity(claims, authenticated ? "Negotiate" : null));
+    }
+
+    private static readonly (string Name, string Body)[] Stubs =
+    [
+        ("Import-Module", """
+            [CmdletBinding()] param([string] $Name)
+            [void]$SelfGrantCalls.Add("Import-Module $Name")
+            $problem = $SelfGrantProblem.Invoke('Import-Module', '', '')
+            if ($problem) { Write-Error $problem }
+            """),
+        ("Get-ADForest", """
+            [CmdletBinding()] param()
+            [void]$SelfGrantCalls.Add('Get-ADForest')
+            $problem = $SelfGrantProblem.Invoke('Get-ADForest', '', '')
+            if ($problem) { Write-Error $problem; return }
+            [pscustomobject]@{ GlobalCatalogs = [string[]]$SelfGrantCatalogs.Invoke() }
+            """),
+        ("Get-ADObject", """
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties)
+            [void]$SelfGrantCalls.Add("Get-ADObject $Server $LDAPFilter")
+            $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, $LDAPFilter)
+            if ($problem) { Write-Error $problem; return }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server)) { $row }
+            """),
+    ];
+
+    /// <summary>A filter or a search the stand-in could not evaluate: a test expecting an answer fails on it.</summary>
+    public IList Errors { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>What the self-grant check's runspace seam returns: the stubs over this forest, not yet opened.</summary>
+    public Runspace Open()
+    {
+        if (RunspaceFailure is { } failure)
+            throw new InvalidOperationException(failure);
+
+        var state = InitialSessionState.CreateDefault2();
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantCalls", Calls, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantProblem", (Func<string, string, string, string?>)Problem, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantCatalogs", (Func<string[]>)(() => GlobalCatalogs), null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch", (Func<string, string, object[]>)Search, null));
+        foreach (var (name, body) in Stubs)
+            state.Commands.Add(new SessionStateFunctionEntry(name, body));
+        return RunspaceFactory.CreateRunspace(state);
+    }
+
+    private string? Problem(string command, string server, string filter)
+    {
+        if (Failures[command] is string all)
+            return all;
+        if (command != "Get-ADObject")
+            return null;
+        if (Failures[$"Get-ADObject {server}"] is string here)
+            return here;
+        if (filter.Contains("(member=", StringComparison.OrdinalIgnoreCase) && Failures["Get-ADObject member"] is string member)
+            return member;
+        foreach (var key in Failures.Keys.Cast<string>())
+        {
+            if (key.StartsWith("Get-ADObject (", StringComparison.Ordinal) && filter.Contains(key["Get-ADObject ".Length..], StringComparison.OrdinalIgnoreCase))
+                return (string)Failures[key]!;
+        }
+        return Reach(server) is null ? UnreachableServer : null;
+    }
+
+    /// <summary>"forest" for the catalog endpoint, a domain's DN for its DNS name, null for anything else.</summary>
+    private string? Reach(string server)
+    {
+        if (GlobalCatalogs.Any(host => string.Equals(server, $"{host}:3268", StringComparison.OrdinalIgnoreCase)))
+            return "forest";
+        foreach (var domain in new[] { DomainDn, OtherDomainDn })
+        {
+            if (string.Equals(server, DomainName(domain), StringComparison.OrdinalIgnoreCase))
+                return domain;
+        }
+        return null;
+    }
+
+    private object[] Search(string filter, string server)
+    {
+        try
+        {
+            var reach = Reach(server) ?? throw new InvalidOperationException(UnreachableServer);
+            var atCatalog = reach == "forest";
+            var match = LdapFilter.Parse(filter);
+            return _objects
+                .Where(entry => atCatalog
+                    || (!entry.CatalogOnly && entry.Dn.EndsWith("," + reach, StringComparison.OrdinalIgnoreCase)))
+                .Where(entry => match(attribute => Values(entry, attribute, atCatalog)))
+                .Select(Row)
+                .Cast<object>()
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            Errors.Add($"{server} {filter}: {ex.Message}");
+            throw;
+        }
+    }
+
+    private static IEnumerable<string> Values(Entry entry, string attribute, bool atCatalog) => attribute.ToLowerInvariant() switch
+    {
+        "objectsid" => One(entry.Sid),
+        "userprincipalname" => One(entry.Upn),
+        "mail" => One(entry.Mail),
+        "proxyaddresses" => entry.Proxies,
+        "mailnickname" => One(entry.Nickname),
+        "samaccountname" => One(entry.Sam),
+        "name" or "cn" => One(entry.Name),
+        "distinguishedname" => One(entry.Dn),
+        "objectclass" => One(entry.Class),
+        "member" => atCatalog && !entry.Universal ? [] : entry.Members,
+        _ => throw new InvalidOperationException($"stand-in: the filter names '{attribute}', which it does not hold"),
+    };
+
+    private static IEnumerable<string> One(string? value) => value is null ? [] : [value];
+
+    private static PSObject Row(Entry entry)
+    {
+        var row = new PSObject();
+        row.Properties.Add(new PSNoteProperty("DistinguishedName", entry.Dn));
+        row.Properties.Add(new PSNoteProperty("ObjectGUID", entry.Guid));
+        row.Properties.Add(new PSNoteProperty("ObjectClass", entry.Class));
+        row.Properties.Add(new PSNoteProperty("Name", entry.Name));
+        row.Properties.Add(new PSNoteProperty("userPrincipalName", entry.Upn));
+        row.Properties.Add(new PSNoteProperty("mail", entry.Mail));
+        row.Properties.Add(new PSNoteProperty("proxyAddresses", entry.Proxies.ToArray()));
+        row.Properties.Add(new PSNoteProperty("objectSid", entry.Sid is null ? null : new SecurityIdentifier(entry.Sid)));
+        row.Properties.Add(new PSNoteProperty("primaryGroupID", entry.PrimaryGroupId));
+        return row;
+    }
+
+    /// <summary>The LDAP filters the self-grant directory sends: and, or, not, and attribute equality with RFC 4515 escapes.</summary>
+    private static class LdapFilter
+    {
+        public static Func<Func<string, IEnumerable<string>>, bool> Parse(string filter)
+        {
+            var at = 0;
+            var parsed = Filter(filter, ref at);
+            if (at != filter.Length)
+                throw new InvalidOperationException($"stand-in: cannot read the filter '{filter}'");
+            return parsed;
+        }
+
+        private static Func<Func<string, IEnumerable<string>>, bool> Filter(string s, ref int at)
+        {
+            Expect(s, ref at, '(');
+            Func<Func<string, IEnumerable<string>>, bool> result;
+            switch (s[at])
+            {
+                case '&':
+                    at++;
+                    var all = List(s, ref at);
+                    result = values => all.All(f => f(values));
+                    break;
+                case '|':
+                    at++;
+                    var any = List(s, ref at);
+                    result = values => any.Any(f => f(values));
+                    break;
+                case '!':
+                    at++;
+                    var not = Filter(s, ref at);
+                    result = values => !not(values);
+                    break;
+                default:
+                    result = Item(s, ref at);
+                    break;
+            }
+            Expect(s, ref at, ')');
+            return result;
+        }
+
+        private static List<Func<Func<string, IEnumerable<string>>, bool>> List(string s, ref int at)
+        {
+            var filters = new List<Func<Func<string, IEnumerable<string>>, bool>>();
+            while (at < s.Length && s[at] == '(')
+                filters.Add(Filter(s, ref at));
+            if (filters.Count == 0)
+                throw new InvalidOperationException($"stand-in: an empty set in '{s}'");
+            return filters;
+        }
+
+        private static Func<Func<string, IEnumerable<string>>, bool> Item(string s, ref int at)
+        {
+            var equals = s.IndexOf('=', at);
+            if (equals < 0)
+                throw new InvalidOperationException($"stand-in: cannot read the filter '{s}'");
+            var attribute = s[at..equals];
+            if (attribute.Contains(':') || attribute.EndsWith('~') || attribute.EndsWith('>') || attribute.EndsWith('<'))
+                throw new InvalidOperationException($"stand-in: does not evaluate '{attribute}=' in '{s}'");
+            at = equals + 1;
+
+            var value = new StringBuilder();
+            while (at < s.Length && s[at] != ')')
+            {
+                if (s[at] == '*')
+                    throw new InvalidOperationException($"stand-in: does not evaluate a wildcard in '{s}'");
+                if (s[at] == '\\')
+                {
+                    value.Append((char)Convert.ToInt32(s.Substring(at + 1, 2), 16));
+                    at += 3;
+                }
+                else
+                {
+                    value.Append(s[at++]);
+                }
+            }
+
+            var wanted = value.ToString();
+            return values => values(attribute).Any(v => string.Equals(v, wanted, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void Expect(string s, ref int at, char c)
+        {
+            if (at >= s.Length || s[at] != c)
+                throw new InvalidOperationException($"stand-in: expected '{c}' at {at} in '{s}'");
+            at++;
+        }
+    }
+}

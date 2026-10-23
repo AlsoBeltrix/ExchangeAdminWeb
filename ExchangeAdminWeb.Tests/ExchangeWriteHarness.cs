@@ -398,6 +398,21 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>How many Exchange connections the pool opened - zero proves nothing was borrowed.</summary>
     public int Connects => Volatile.Read(ref _connects);
 
+    /// <summary>aud-a43. The logon name of <see cref="Operator"/>, the signed-in operator the bulk loops are run as.</summary>
+    public const string OperatorLogonName = @"CONTOSO\operator";
+
+    /// <summary>aud-a43. <see cref="Operator"/>'s user principal name in <see cref="Forest"/>.</summary>
+    public const string OperatorUpn = "operator@contoso.test";
+
+    /// <summary>
+    /// aud-a43. The directory the self-grant check reads, set on every <see cref="NothingProtectedValidator"/>: it holds
+    /// <see cref="Operator"/>'s account, so a check that runs through finds who the operator is.
+    /// </summary>
+    public SelfGrantDirectoryStandIn Forest { get; } = new();
+
+    /// <summary>aud-a43. The signed-in operator as the Negotiate scheme gives one: the logon name and the account SID.</summary>
+    public System.Security.Claims.ClaimsPrincipal Operator { get; }
+
     public ExchangeWriteHarness()
     {
         Directory.CreateDirectory(Dir);
@@ -430,6 +445,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 Interlocked.Increment(ref _connects);
                 return StandIn(generation);
             });
+
+        var account = Forest.AddUser("operator", upn: OperatorUpn, mail: OperatorUpn, proxies: ["SMTP:" + OperatorUpn]);
+        Operator = SelfGrantDirectoryStandIn.Principal(OperatorLogonName, account.Sid);
     }
 
     public void Dispose()
@@ -487,7 +505,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
         scope.ServiceProvider.Returns(provider);
         provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
         return new PermissionValidator(Config, ModuleConfig, Pool, protectedPrincipals, servicers,
-            NullLogger<PermissionValidator>.Instance, scopeFactory);
+            NullLogger<PermissionValidator>.Instance, scopeFactory)
+        {
+            SelfGrantDirectoryRunspace = Forest.Open,
+        };
     }
 
     /// <summary>

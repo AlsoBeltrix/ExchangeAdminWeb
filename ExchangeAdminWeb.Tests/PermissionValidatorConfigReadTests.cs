@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
@@ -43,12 +44,17 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     private readonly ExtendedLogService _extendedLog;
     private readonly DelineaService _delinea;
     private readonly List<ExoConnectionPool> _pools = [];
+    private readonly ClaimsPrincipal _self;
     private int _connects;
 
     public PermissionValidatorConfigReadTests()
     {
         _env.ContentRootPath.Returns(_h.Dir);
         _h.AddMailbox(Member, MemberMailbox);
+
+        // aud-a43: the self-grant check is handed the signed-in principal and finds the operator in the directory.
+        var account = _h.Forest.AddUser("jdoe", upn: SelfAddress, mail: SelfAddress, proxies: [$"SMTP:{SelfAddress}"]);
+        _self = SelfGrantDirectoryStandIn.Principal(Self, account.Sid);
 
         var http = Substitute.For<IHttpClientFactory>();
         http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(new NoNetwork()));
@@ -125,7 +131,10 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
 
         return new PermissionValidator(config, moduleConfig, pool, protection, servicers,
-            logger ?? NullLogger<PermissionValidator>.Instance, scopeFactory);
+            logger ?? NullLogger<PermissionValidator>.Instance, scopeFactory)
+        {
+            SelfGrantDirectoryRunspace = _h.Forest.Open,
+        };
     }
 
     [Theory]
@@ -198,8 +207,7 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 0),
             preventSelfGrant: "false");
 
-        Assert.Equal(SelfGrantRefusal, validator.ValidateSelfGrant(Self, SelfAddress));
-        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(Self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
     }
 
     [Theory]
@@ -224,19 +232,18 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: appsettings);
 
         var expected = refused ? SelfGrantRefusal : null;
-        Assert.Equal(expected, validator.ValidateSelfGrant(Self, SelfAddress));
-        Assert.Equal(expected, await validator.ValidateSelfGrantAsync(Self, SelfAddress));
+        Assert.Equal(expected, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
     }
 
     [Fact]
-    public void AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload()
+    public async Task AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload()
     {
         // aud-a26t. The unreadable self-grant setting's log line (aud-a28t) names the rows and their fix as the admin
         // pages do, without their reload clause: it is a service's log line, and no page is involved.
         var logger = new CapturingLogger();
         var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 0), logger: logger);
 
-        Assert.Equal(SelfGrantRefusal, validator.ValidateSelfGrant(Self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
 
         var error = Assert.Single(logger.Errors);
         Assert.Contains(SettingsStoreText.ServiceModuleConfig(ModuleId), error, StringComparison.Ordinal);
@@ -244,15 +251,38 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     }
 
     [Fact]
-    public void AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedInTheLog()
+    public async Task AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedInTheLog()
     {
+        // A value of this test's own: the warning is written once per process for each value (aud-a43), and the table
+        // above refuses on "yes" in the same process.
+        var value = "yes-" + Guid.NewGuid().ToString("N");
         var logger = new CapturingLogger();
-        var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: "yes", logger: logger);
+        var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: value, logger: logger);
 
-        Assert.Equal(SelfGrantRefusal, validator.ValidateSelfGrant(Self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
 
         var warning = Assert.Single(logger.Warnings, w => w.Contains("Security:PreventSelfGrant", StringComparison.Ordinal));
-        Assert.Contains("'yes'", warning, StringComparison.Ordinal);
+        Assert.Contains($"'{value}'", warning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation()
+    {
+        // aud-a43, folded in (codex perm-batch-4). A typo in appsettings is static: it was named on every self-grant check,
+        // one warning per row of a bulk upload. It still refuses every time, and is named once per process - so a second
+        // validator over the same value says nothing either.
+        var value = "maybe-" + Guid.NewGuid().ToString("N");
+        var first = new CapturingLogger();
+        var second = new CapturingLogger();
+        var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: value, logger: first);
+        var another = ValidatorOver(TestConfigStore.Create(_h.Dir), preventSelfGrant: value, logger: second);
+
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await another.ValidateSelfGrantAsync(_self, SelfAddress));
+
+        Assert.Single(first.Warnings, w => w.Contains("Security:PreventSelfGrant", StringComparison.Ordinal));
+        Assert.DoesNotContain(second.Warnings, w => w.Contains("Security:PreventSelfGrant", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -261,14 +291,15 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         // aud-a28y. The store answers the self-grant setting's read and fails every later one: the Exchange Online rows
         // the real resolver's pool reads to put the two names to Exchange. The lookup cannot run, so the comparison the
         // string match leaves to it cannot be made, and the grant is refused rather than cleared. Nothing is connected.
+        // aud-a43: the operator is put to Exchange as the directory's UPN for their SID, so that is the name refused on.
         var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 1),
             resolverFor: (pool, config) =>
                 new ExchangeIdentityResolver(pool, _delinea, NullLogger<ExchangeIdentityResolver>.Instance, config));
 
-        var result = await validator.ValidateSelfGrantAsync(Self, SelfAlias);
+        var result = await validator.ValidateSelfGrantAsync(_self, SelfAlias);
 
         Assert.Equal(
-            $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{Self}'; nothing was written. Contact your administrator.",
+            $"Access denied: The self-grant check could not be completed: Exchange Online could not resolve '{SelfAddress}'; nothing was written. Contact your administrator.",
             result);
         Assert.Equal(0, Connects);
     }

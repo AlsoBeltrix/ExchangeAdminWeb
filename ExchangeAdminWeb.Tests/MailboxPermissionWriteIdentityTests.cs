@@ -176,9 +176,10 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
         var csv = "Target,User,FullAccess,SendAs,AutoMapping\n"
             + $"{Typed},{Trustee},True,False,False\n"
             + $"ghost@contoso.test,{Trustee},True,False,False\n";
+        // aud-a43: run as the harness's signed-in operator - the self-grant check refuses a row it cannot say who granted.
         var bulk = await Service().ProcessMailboxPermissionsCsvAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes(csv)), isAdd: true, _h.NothingProtectedValidator(resolver), @"CONTOSO\operator",
-            _h.Audit, email, "10.0.0.5", "INC100", actingUser: null);
+            new MemoryStream(Encoding.UTF8.GetBytes(csv)), isAdd: true, _h.NothingProtectedValidator(resolver), ExchangeWriteHarness.OperatorLogonName,
+            _h.Audit, email, "10.0.0.5", "INC100", actingUser: _h.Operator);
 
         Assert.Equal(1, bulk.SuccessCount);
         Assert.Equal(1, bulk.FailedCount);

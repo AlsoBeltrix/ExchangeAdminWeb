@@ -159,7 +159,7 @@ public class CalendarPermissionService : ExchangeServiceBase
 
                 if (isSet)
                 {
-                    var selfGrantError = await validator.ValidateSelfGrantAsync(currentUser, row.User);
+                    var selfGrantError = await validator.ValidateSelfGrantAsync(actingUser, row.User);
                     if (selfGrantError is not null)
                     {
                         // The record carries the validator's own refusal: a check that could not be completed is not a self-grant (aud-a28y).
