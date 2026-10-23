@@ -1013,6 +1013,12 @@ https://admin.exchange.microsoft.com/#/migration";
         return refusal is not null;
     }
 
+    internal static bool RefusesWithNoListLoaded([NotNullWhen(false)] object? loaded, string list, [NotNullWhen(true)] out string? refusal)
+    {
+        refusal = loaded is null ? $"No {list} list is loaded; nothing was done." : null;
+        return refusal is not null;
+    }
+
     public async Task<MigrationBatchList> GetMigrationBatchesAsync()
     {
         return await RunPooledQueryAsync((ps, tracker) =>
@@ -1348,6 +1354,8 @@ https://admin.exchange.microsoft.com/#/migration";
             // and Set-MigrationBatch -CompleteAfter had already written.
             if (hasOwnBatch)
                 RefuseUnlessApprovable(emailAddress, ownBatch[0].Properties["Status"]?.Value?.ToString());
+            else
+                RefuseUnlessAwaitingApproval(ps, tracker, emailAddress);
 
             var applied = new List<string>();
 
@@ -1458,6 +1466,48 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             throw new InvalidOperationException(
                 $"{emailAddress} was not approved: approving it completes its migration batch {emailAddress}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.");
+        }
+    }
+
+    private static void RefuseUnlessAwaitingApproval(PowerShell ps, ConnectionErrorTracker tracker, string emailAddress)
+    {
+        ps.AddCommand("Get-MigrationUser")
+          .AddParameter("Identity", emailAddress)
+          .AddParameter("ErrorAction", "Stop");
+        Collection<PSObject> users;
+        try
+        {
+            users = ReadUnlessNotFound(ps, tracker);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Could not read the migration status of {emailAddress}: {ResolveFailure(ex).primary.TrimEnd('.')}. Nothing was changed.", ex);
+        }
+
+        if (users.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: Exchange has no migration user {emailAddress}, so there is nothing to approve. Nothing was changed.");
+        }
+
+        if (users.Count > 1)
+        {
+            throw new InvalidOperationException(
+                $"Exchange returned {users.Count} migration users for {emailAddress}. Nothing was changed.");
+        }
+
+        var status = users[0].Properties["Status"]?.Value?.ToString()?.Trim();
+        if (string.IsNullOrEmpty(status))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration user reports no status, so whether it is awaiting approval is not known. Nothing was changed.");
+        }
+
+        if (!MigrationUserActionPlanner.Applies(MigrationUserAction.Approve, status))
+        {
+            throw new InvalidOperationException(
+                $"{emailAddress} was not approved: its migration status is {status} - not a status the Approve action approves a mailbox from. Nothing was changed.");
         }
     }
 
@@ -1602,9 +1652,11 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("Archive")
                   .AddParameter("ErrorAction", "Stop");
-                var archive = ReadUnlessNotFound(ps, tracker);
-                if (archive.Count > 0)
-                    (archiveGB, archiveUnreadable) = ReadSize(archive, "Exchange returned no archive statistics");
+                (archiveGB, archiveUnreadable) = ReadSize(InvokeOptional(ps, tracker), "Exchange returned no archive statistics");
+            }
+            catch (Exception ex) when (IsNotFound(ex))
+            {
+                _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
             }
             catch (Exception ex) when (!IsCancellation(ex))
             {

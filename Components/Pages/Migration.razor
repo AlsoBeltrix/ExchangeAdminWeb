@@ -3542,7 +3542,7 @@
                 return;
             }
 
-            if (migrationBatches == null) return;
+            if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; }
 
             // The skipped rows are annotated before the early return, so "nothing to do" still
             // explains itself on the rows rather than in the banner.
@@ -3710,7 +3710,7 @@
                 return;
             }
 
-            if (batchUsers == null) return;
+            if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; }
 
             foreach (var earlySkip in plan.Skipped)
                 actionOutcomes[earlySkip.EmailAddress] = $"Skipped ({earlySkip.Status})";

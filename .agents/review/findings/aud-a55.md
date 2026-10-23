@@ -7,9 +7,9 @@ offered on NeedsApproval) gates it, so a stale page or a second operator can app
 no longer allows it (the aud-a23r class for the many-user case). (2) `Migration.razor`'s bulk executors
 return silently on "no list loaded" guards. (3) `MigrationService.GetCloudMailboxSizeAsync` reads an archive
 read that returns no rows and no error as no archive (minor: no decision reads the cloud size).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
-**Commit**: -
+**Status**: Fixed on branch; closed on guard proof; not merged
+**Branch**: `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`)
+**Commit**: the `fix(migration): ... (aud-a55)` commit after plan `3113f6f0` (SHAs in the closeout)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidates 3, 4 and 5 of its hand-back)
 
 ## Evidence
@@ -127,4 +127,92 @@ own commit.
 
 ## Guard proof
 
-Pending.
+Built as the Plan. Line numbers are at the fix commit's bytes, which carry no new code comments (they come in their own
+commit after the last finding's round). `Components/Pages/Migration.razor` is 4377 lines before and after: `git diff
+--numstat` 2/2, each changed line replaced in place (3545, 3713); neither is registered (the registered lines run to 1540),
+no registered snippet changed, no handler, lifecycle method or `Complete(` added.
+
+- `Services/MigrationService.cs`:
+  - Part 1: `ApproveMigrationUserAsync` (1314-): a mailbox with no batch of its own goes through new
+    `RefuseUnlessAwaitingApproval` (called at 1358, defined at 1472) before the first `Set-MigrationUser`:
+    `Get-MigrationUser -Identity <address> -ErrorAction Stop` through `ReadUnlessNotFound`; a read that fails, none,
+    several, no status, and a status `MigrationUserActionPlanner.Applies(MigrationUserAction.Approve, status)` (1507) does
+    not accept each throw their refusal, ending "Nothing was changed.". A mailbox in a batch of its own is unchanged
+    (`RefuseUnlessApprovable`, aud-a23r; no user read added there).
+  - Part 2: `RefusesWithNoListLoaded` (1016): "No <list> list is loaded; nothing was done.", a `bool` with the text as an
+    `out`, `NotNullWhen` both ways (the aud-a23q helpers' shape).
+  - Part 3: `GetCloudMailboxSizeAsync` (1629-): the archive read is `ReadSize(InvokeOptional(ps, tracker), "Exchange returned
+    no archive statistics")` (1655); Exchange's not-found, by structure, caught first (1657, `IsNotFound`) is no archive,
+    logged; any other failure as before. `ReadUnlessNotFound` gave no rows for both, and `if (archive.Count > 0)` made both
+    no archive.
+- `Components/Pages/Migration.razor` 3545 (`ExecuteBulkBatchAction`) and 3713 (`ExecuteBulkMailboxAction`): `if
+  (MigrationService.RefusesWithNoListLoaded(<list>, "<name>", out var <refusal>)) { batchActionResult =
+  PermissionResult.Fail(bulkFailure = <refusal>); return; }` - the banner and aud-a23m's local, which the existing `finally`
+  hands to the activity. Not audited.
+
+`ExchangeAdminWeb.Tests/MigrationApproveConfirmationTests.cs`, part 1 - 8 new tests, 36 cases:
+
+| Test | Pins |
+| --- | --- |
+| `AMailboxInABatchOfMany_WhoseStatusMovedOn_IsRefusedBeforeAnyWrite` (Synced, Completed, Completing, Failed, Stopped, " stopped ") | **the finding**: each asserted first to be a status the Approve action does not accept; refused naming it, "Nothing was changed.", the two reads the only calls. Before: `Set-MigrationUser` twice, `Set-MoveRequest` and `Resume-MoveRequest` ran |
+| `AMailboxInABatchOfMany_IsApprovedExactlyWhenTheApproveActionWould` (19 statuses) | one owner: the mailbox steps exactly when `MigrationUserActionPlanner.Applies(Approve, ...)` is true (NeedsApproval, " needsapproval ", "NEEDSAPPROVAL"), the refusal and the two reads otherwise |
+| `AMigrationUserThatReportsNoStatus_IsRefused_AndNothingIsWritten` (absent, empty, blank) | "its migration user reports no status, so whether it is awaiting approval is not known" |
+| `AStatusReadThatFails_ChangesNothing` (thrown, written) | "Could not read the migration status of <address>: <reason>. Nothing was changed." - the cmdlet's own words |
+| `NoMigrationUser_IsRefused_AndNothingIsWritten` (category, type, identifier) | Exchange's not-found by structure: "Exchange has no migration user <address>, so there is nothing to approve" |
+| `SeveralMigrationUsers_AreRefused_AndNothingIsWritten` | "Exchange returned 2 migration users for <address>" |
+| `ARefusalThroughExecuteUserAction_IsOneFailedAuditRow` | the page's single action: one `ApproveMigrationUser` row, Failed, the refusal as its error |
+| `AStaleBulkApproval_IsRefusedOnItsRow_AndAuditedFailed` | the stale page through the mailbox bar: planned from a list that says NeedsApproval while Exchange says Synced - the refusal on the row, one Failed row, the banner "1 refused", only the two reads |
+
+`MigrationEligibilityAndApproveTests.AMailboxNotInABatchOfItsOwn_IsApprovedWithoutTouchingABatch_AndSaysSo` (aud-a23h,
+changed): a migration user at NeedsApproval, and the call list gains `Get-MigrationUser <address>` after the existence read.
+The own-batch call lists, and their tests, are unchanged.
+
+`MigrationDenialTests.ABulkExecutorWithNoListLoaded_SaysSo_AndNothingRuns` (part 2, new; ExecuteBulkBatchAction,
+ExecuteBulkMailboxAction): the banner's text, rendered on the status tab; the activity (false, the text); no audit row; the
+action never called. Before: no banner, the activity "Nothing was done.".
+
+`MigrationReportAndSizeReadTests`, part 3 - 2 new tests, 4 cases: `AnArchiveReadWithNoRowAndNoError_IsMarked_NotNoArchive`
+(the marker "Exchange returned no archive statistics", the mailbox read as 1.5, the page "could not be read (Exchange
+returned no archive statistics)"; before: no archive, no marker) and `NoArchive_IsNoArchive_ByEachNotFoundShape`
+(category, type, identifier: no marker, 0).
+
+**Against the unfixed code**: A1, A2, A2b and A3 below put back exactly the unfixed behaviour at each call site (no status
+read; each guard's silent return; no rows read as no archive), and each fails the tests that pin it.
+
+Mutations at the call site, each by exact-text replacement asserted to match once (session scratchpad `work/mutate.sh`,
+`work/round-a55.sh`, the texts in `work/muts/`): the fix staged; md5 recorded; `dotnet build ExchangeAdminWeb.slnx -c
+Release`; the 1934 tests of `ExchangeAdminWeb.Tests.Migration*|ClickGate*|ProgressRegistry*|ExchangeServiceBase*|AuditService*|GlobalProgressWiring*|BlockedSender*|RecipientLookup*|CalendarPermission*|MailboxPermission*|OutOfOffice*|ConferenceRoom*|ValidatedWriteCallSite*|RazorParseGate*|LookupValidation*|DelegationReport*|MessageTrace*`
+run with a TRX logger (failures read from it); the file restored from git's index, touched so MSBuild rebuilds, md5
+re-checked equal, rebuilt, the 1934 re-run green - after every mutation. Bytes (LF) before every mutation and after every
+restore: service `0e427c3a117fc50c49f0d17774d82cee`, page `9183c6a5862d5b0b99cf97670aef19b3`.
+
+| Mutation | File | md5 mutated | Failed (of 1934) | Restored, rerun |
+| --- | --- | --- | --- | --- |
+| A1 (the record's): the status read removed - the many-user path writes with no `RefuseUnlessAwaitingApproval` | service | `416e8e50975f478838ca87c2ba8d8c49` | 37: all 36 aud-a55 cases of `MigrationApproveConfirmationTests` (the refused rows ran the writes; the approved rows lack the read) and `AMailboxNotInABatchOfItsOwn...` | equal; 1934/0 |
+| A2 (the record's): `ExecuteBulkMailboxAction`'s guard silent again (3713) | page | `4649c33e423028bac35454bac8c10b90` | 1: `ABulkExecutorWithNoListLoaded...` (ExecuteBulkMailboxAction) | equal; 1934/0 |
+| A3 (the record's): no rows as no archive again | service | `7dcd2227ea9a7dd444a4cd019e9eb389` | 1: `AnArchiveReadWithNoRowAndNoError...` | equal; 1934/0 |
+| A1b: the planner's rule copied as a refuse list (Completed, Failed, Stopped) | service | `edccef45476266b8592b362e1338b299` | 17: the one-owner theory for the 13 statuses the list does not name, `...WhoseStatusMovedOn...` (Synced, Completing), `ARefusalThroughExecuteUserAction...`, `AStaleBulkApproval...` | equal; 1934/0 |
+| A1c: a status read that fails let through to the writes | service | `75122f5aed6e39ce23e4c3b1f1cdf5a7` | 2: `AStatusReadThatFails...` (thrown, written) | equal; 1934/0 |
+| A2b: `ExecuteBulkBatchAction`'s guard silent again (3545) | page | `d3aa1861c34dbfae4975f35d8b8a07e3` | 1: `ABulkExecutorWithNoListLoaded...` (ExecuteBulkBatchAction) | equal; 1934/0 |
+
+md5s (LF) of the tests at the fix commit: `MigrationApproveConfirmationTests.cs` `b66d827cda6991fa859f21db168608aa`,
+`MigrationDenialTests.cs` `b61e17a8585f6f114f21265934bcdfae`, `MigrationEligibilityAndApproveTests.cs`
+`8a85290073d68a964a058fa8afc418e0`, `MigrationReportAndSizeReadTests.cs` `c55cdec08db2296d4ea68a0d69e97f24`.
+
+On the fix commit's tree: `dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors, no warning outside the baseline's 19
+(none in a touched file); the 1934 focused tests 1934/0 (`ClickGate*` and `ProgressRegistry*` among them); `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; `git diff --cached --check` exit 0; `tools/Test-AsciiOnly.ps1`
+exit 0; `wc -l Components/Pages/Migration.razor` 4377. No Exchange was asked anything: every cmdlet was a stub in an
+in-process runspace. The full suite runs at the branch tip.
+
+## Known gaps
+
+- **Assumptions, labelled (no live call):** `Get-MigrationUser -Identity` reports the Status value the batch's mailbox list
+  reads through `-BatchId`; Exchange Online's not-found for `Get-MigrationUser -Identity` is one of the shapes `IsNotFound`
+  reads (aud-a23h's). If either is wrong, an approval the page offers is refused, naming what Exchange said - visible and
+  fail closed; one dev approval settles both.
+- A mailbox in a batch of its own still reads only its batch's status (aud-a23r's allow list, Synced), not its own: an
+  approval there completes a Synced batch, which is what an approval asks for. Outside this finding, which is the
+  many-user case.
+- No decision reads the cloud size (aud-a23k): part 3 changes what the page shows, nothing it allows.
+- No circuit or browser ran: the page's handlers and compiled render tree were driven directly.
