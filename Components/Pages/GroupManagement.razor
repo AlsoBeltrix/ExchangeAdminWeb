@@ -570,7 +570,7 @@
             "AD Group Management", $"Updating membership of {group?.Name}", ActivitySize.Unknown);
         try
         {
-            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
@@ -699,7 +699,7 @@
             "AD Group Management", $"Updating membership of {group?.Name}", ActivitySize.Unknown);
         try
         {
-            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
@@ -904,24 +904,14 @@
         try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "GroupManagement", group.Name, success, ticket, errorDetail, extra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
     }
 
-    /// <summary>kd-18. The step a ticket refusal's audit row records as <c>refusedAt</c>.</summary>
+    /// <summary>
+    /// kd-18. The step a ticket refusal's audit row records as <c>refusedAt</c>. The four writes ask
+    /// ServiceNow only about a ticket the shared TicketPresence rule (kd-24) calls present, because
+    /// ServiceNow passes every ticket - a blank one included - while it is dormant, and the buttons'
+    /// emptiness clauses were otherwise the only thing requiring one.
+    /// </summary>
     private const string TicketRefusalStep = "TicketValidation";
 
-    /// <summary>
-    /// kd-18. The refusal a blank ticket gets, or null when one was given; the four writes ask
-    /// ServiceNow only about a ticket that is present.
-    /// </summary>
-    /// <remarks>
-    /// ServiceNowService passes every ticket - a blank one included - while the integration is
-    /// dormant, so asking it alone did not make a ticket required, and the buttons' emptiness
-    /// clauses were the only enforcement: a stale render, a second dispatch or a programmatic click
-    /// reached the write with no ticket. The message is the one that service gives a blank ticket
-    /// when it is enabled, so the operator reads the same refusal either way.
-    /// </remarks>
-    private static TicketValidationResult? MissingTicket(string ticket) =>
-        string.IsNullOrWhiteSpace(ticket)
-            ? new TicketValidationResult { IsValid = false, Message = "Ticket number is required" }
-            : null;
 
     /// <summary>
     /// Removes every ticked member, one at a time, in list order, through RemoveOneAsync -
@@ -959,7 +949,7 @@
         var notAttempted = rows.Select(r => $"{r.DisplayName}: Not attempted").ToList();
         try
         {
-            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
@@ -1104,7 +1094,7 @@
         var notAttempted = rows.Select(r => $"{r.Line.Text}: Not attempted").ToList();
         try
         {
-            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");

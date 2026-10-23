@@ -72,6 +72,7 @@ public sealed class ConferenceRoomTicketPresenceTests : IDisposable
         {
             data.Add(write, "");
             data.Add(write, "   ");
+            data.Add(write, "\u0001"); // kd-24: a control-only ticket is no ticket either
         }
 
         return data;
@@ -129,6 +130,8 @@ public sealed class ConferenceRoomTicketPresenceTests : IDisposable
         Assert.False(ConferenceRoomService.RequireTicket(null)!.IsValid);
         Assert.False(ConferenceRoomService.RequireTicket("")!.IsValid);
         Assert.False(ConferenceRoomService.RequireTicket(" \t ")!.IsValid);
+        Assert.False(ConferenceRoomService.RequireTicket("\u0000")!.IsValid); // kd-24
+        Assert.False(ConferenceRoomService.RequireTicket("\u0001")!.IsValid);
         Assert.Null(ConferenceRoomService.RequireTicket(Ticket));
     }
 

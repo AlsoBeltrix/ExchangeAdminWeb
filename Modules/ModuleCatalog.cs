@@ -622,7 +622,9 @@ public sealed class ModuleCatalog
             // summary - one message per operation, never one per member (aud-a25).
             // 2.13.0: the four membership writes refuse a blank ticket themselves, before
             // ServiceNow, which passes one while it is dormant (kd-18).
-            Version = "2.13.0",
+            // 2.14.0: presence is the shared TicketPresence rule, which also refuses a ticket made
+            // only of control characters (kd-24).
+            Version = "2.14.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -647,7 +649,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.7.0",
+            // 1.8.0: a ticket made only of control characters is no ticket - the shared
+            // TicketPresence rule (kd-24).
+            Version = "1.8.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -818,7 +822,9 @@ public sealed class ModuleCatalog
             // (docs/ProgressCoverage-Plan.md S5).
             // 1.3.0: a reset refuses a blank ticket itself, before ServiceNow, which passes one
             // while it is dormant (kd-18).
-            Version = "1.3.0",
+            // 1.4.0: presence is the shared TicketPresence rule, which also refuses a ticket made
+            // only of control characters (kd-24).
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -918,7 +924,9 @@ public sealed class ModuleCatalog
             // authorization re-check; the dormant ServiceNow client passed one (kd-7).
             // 2.9.0: the bulk processor refuses each row of a job with no ticket, before the
             // authorization re-check and any write, audited (kd-23).
-            Version = "2.9.0",
+            // 2.10.0: the page and the bulk processor judge presence by the shared TicketPresence
+            // rule, which also refuses a ticket made only of control characters (kd-24).
+            Version = "2.10.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -956,7 +964,9 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.4.0",
+            // 1.5.0: a ticket made only of control characters is no ticket - the shared
+            // TicketPresence rule (kd-24).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1100,7 +1110,9 @@ public sealed class ModuleCatalog
             // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
             // 1.5.0: authorizing a server refuses a blank ticket itself, before ServiceNow, which
             // passes one while it is dormant; deauthorizing already did (kd-18).
-            Version = "1.5.0",
+            // 1.6.0: both paths judge presence by the shared TicketPresence rule, which also refuses
+            // a ticket made only of control characters (kd-24).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",

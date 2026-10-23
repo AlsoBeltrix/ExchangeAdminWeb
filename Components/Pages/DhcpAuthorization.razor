@@ -299,7 +299,9 @@
 
         try
         {
-            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            // kd-18, kd-24: ServiceNow passes every ticket while it is dormant, so presence is the
+            // shared rule's to answer first.
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
@@ -382,7 +384,7 @@
 
         try
         {
-            if (string.IsNullOrWhiteSpace(ticket))
+            if (!TicketPresence.IsPresent(ticket))
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = "A ticket number is required for deauthorization. Enter one in the Authorize form." };
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, "", "Ticket number not provided"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize missing ticket"); }
@@ -449,19 +451,4 @@
             isOperating = false;
         }
     }
-
-    /// <summary>
-    /// kd-18. The refusal a blank ticket gets on the authorize path, or null when one was given;
-    /// ServiceNow is asked only about a ticket that is present.
-    /// </summary>
-    /// <remarks>
-    /// ServiceNowService passes every ticket - a blank one included - while the integration is
-    /// dormant, so AuthorizeServer's ServiceNow check alone did not make a ticket required, and the
-    /// Authorize button's emptiness clause was the only enforcement. RemoveServer already checks
-    /// presence itself. The message is the one that service gives a blank ticket when it is enabled.
-    /// </remarks>
-    private static TicketValidationResult? MissingTicket(string ticket) =>
-        string.IsNullOrWhiteSpace(ticket)
-            ? new TicketValidationResult { IsValid = false, Message = "Ticket number is required" }
-            : null;
 }

@@ -63,6 +63,7 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
+    [InlineData("\u0001")] // kd-24: a control-only ticket is no ticket either
     public async Task AnAuthorizeWithNoTicket_IsRefusedAndAudited_BeforeAnythingElseRuns(string ticket)
     {
         // ServiceNow is dormant here - the deployment today - and the dormant client passes a blank
@@ -100,6 +101,27 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         var shown = Shown(page);
         Assert.False(shown.Success);
         Assert.Equal("Authorization denied.", shown.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("\u0001")]
+    public async Task ADeauthorizeWithNoTicket_IsRefusedBeforeAnythingElseRuns(string ticket)
+    {
+        // RemoveServer always checked presence itself; since kd-24 by the shared rule, so a
+        // control-only ticket - which IsNullOrWhiteSpace let through to the dormant client - is
+        // refused there as well.
+        var page = PageFor(ticket, DormantServiceNow());
+
+        await (Task)typeof(Page).GetMethod("RemoveServer", PrivateInstance)!.Invoke(
+            page, [new DhcpServerEntry { DnsName = Server, IpAddress = Address }])!;
+
+        Assert.Empty(_authorization.ReceivedCalls());
+        var row = Assert.Single(AuditRows());
+        Assert.Equal("DHCP_Deauthorize", row.GetProperty("action").GetString());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("Ticket number not provided", row.GetProperty("error").GetString());
+        Assert.False(Shown(page).Success);
     }
 
     // ---- assertions ---------------------------------------------------------------------------

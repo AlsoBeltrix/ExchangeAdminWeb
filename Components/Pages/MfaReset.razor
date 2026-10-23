@@ -322,7 +322,9 @@
 
         try
         {
-            var ticketValidation = MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            // kd-18, kd-24: ServiceNow passes every ticket while it is dormant, so presence is the
+            // shared rule's to answer first.
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = new MfaResetResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
@@ -519,19 +521,4 @@
             activity.Complete(completedOk, completedOk ? null : completed?.Message);
         }
     }
-
-    /// <summary>
-    /// kd-18. The refusal a blank ticket gets, or null when one was given; the reset asks ServiceNow
-    /// only about a ticket that is present.
-    /// </summary>
-    /// <remarks>
-    /// ServiceNowService passes every ticket - a blank one included - while the integration is
-    /// dormant, so the reset's ServiceNow check alone did not make a ticket required, and the Reset
-    /// button's emptiness clause was the only enforcement. The message is the one that service gives
-    /// a blank ticket when it is enabled, so the operator reads the same refusal either way.
-    /// </remarks>
-    private static TicketValidationResult? MissingTicket(string ticket) =>
-        string.IsNullOrWhiteSpace(ticket)
-            ? new TicketValidationResult { IsValid = false, Message = "Ticket number is required" }
-            : null;
 }

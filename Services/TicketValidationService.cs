@@ -74,8 +74,9 @@ public sealed class TicketValidationService : ITicketValidator
                 "Ask an administrator to check this module's config.");
         }
 
-        // Presence is never waived, in either mode.
-        if (string.IsNullOrWhiteSpace(ticketNumber))
+        // Presence is never waived, in either mode - judged by the one rule every presence gate
+        // shares (kd-24), which also refuses a ticket carrying a control character.
+        if (!TicketPresence.IsPresent(ticketNumber))
         {
             return new(TicketGateOutcome.Rejected, "A ticket number is required.");
         }

@@ -479,7 +479,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DhcpAuthorization => new()
     {
         Page = "DhcpAuthorization.razor",
-        ExpectedLineCount = 467,
+        ExpectedLineCount = 454,
 
         Predicates =
         [
@@ -2346,8 +2346,9 @@ public static class ClickGateRegistry
         Page = "GroupManagement.razor",
         // A25 added the manager-notification helper and four call sites, all inside @code
         // well below every registered control (the lowest is 315), so no line key moved -
-        // only the count. Verified by running the ClickGate suite after the edit. kd-18 the same.
-        ExpectedLineCount = 1168,
+        // only the count. Verified by running the ClickGate suite after the edit. kd-18 and kd-24
+        // the same.
+        ExpectedLineCount = 1158,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces

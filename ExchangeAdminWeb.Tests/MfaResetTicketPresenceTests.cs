@@ -62,6 +62,7 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
+    [InlineData("\u0001")] // kd-24: a control-only ticket is no ticket either
     public async Task AResetWithNoTicket_IsRefusedAndAudited_BeforeAnythingElseRuns(string ticket)
     {
         // ServiceNow is dormant here - the deployment today - and the dormant client passes a blank

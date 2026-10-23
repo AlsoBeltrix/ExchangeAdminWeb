@@ -40,6 +40,7 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
             data.Add(finder, null);
             data.Add(finder, "");
             data.Add(finder, "   ");
+            data.Add(finder, "\u0001"); // kd-24: a control-only ticket is no ticket either
         }
 
         return data;
@@ -78,7 +79,13 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
             Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
             Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
             Assert.Equal("jdoe", row.GetProperty("user").GetString());
-            Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
+
+            // A blank ticket is recorded as none; a control-only one as it was captured, which is
+            // what a reader of the row needs to see.
+            if (string.IsNullOrWhiteSpace(ticket))
+                Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
+            else
+                Assert.Equal(ticket, row.GetProperty("ticket").GetString());
         }
     }
 
