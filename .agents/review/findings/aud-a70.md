@@ -8,7 +8,7 @@ the write failed..." with `Success=false` and records a Failed row beside the su
 credential (aud-a60). (3) `Components/Pages/AdminSettings.razor` 282 and 289 (the credential's placeholder
 and hint: "Required when groups or OUs are configured" / "Read-only AD credential for group membership and
 OU checks") should say it is also needed for Mailbox and Calendar Permissions grants to groups.
-**Status**: Verified on branch; awaiting merge and codex review
+**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex defect review perm-batch-11 in flight. (6) and (13) are owner calls, held; (10) is a coder dispute awaiting owner adjudication; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
 **Branch**: `fix/a70` (from master `eb017102`)
 **Commit**: (1) `13909c2f`; (4) `83311a2b`; (5) `9b0aa71b` and its count-pin repair `dc3abcd7`; (9) `fe99aff4`; (17) `d0ed01eb`; (12), (14) `7576cea7`; (15) `0ef2ac77`; (7) `32d548ec`; (11), (8) `f374e13a`; (2), (3) `a4155f5c`; module versions and this record's close: the branch head
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidates 2-4 and its follow-up)
