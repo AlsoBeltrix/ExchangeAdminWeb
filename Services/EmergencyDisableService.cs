@@ -1253,6 +1253,13 @@ public class EmergencyDisableService
             : line;
     }
 
+    /// <remarks>
+    /// psl-10. The re-read leaves nothing in the stream for the step's next check: it cleared only its commands, so a record
+    /// it wrote past -ErrorAction Stop stayed, and that check - true while any record remains (psl-2) - took it: the
+    /// disable and the password reset reported FAILED after their write had been made, and the lockdown move refused as if
+    /// its OU could not be read. The re-read is judged by what it returns, as before: no object, or another GUID, refuses;
+    /// its failure is the one it throws, which the step's catch reports.
+    /// </remarks>
     private static string? VerifyBoundObject(PowerShell ps, ResolvedDirectoryPrincipal target, PSCredential credential)
     {
         ps.AddCommand("Get-ADUser")
@@ -1260,8 +1267,16 @@ public class EmergencyDisableService
           .AddParameter("Properties", new[] { "ObjectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var reRead = ps.Invoke();
-        ps.Commands.Clear();
+        System.Collections.ObjectModel.Collection<PSObject> reRead;
+        try
+        {
+            reRead = ps.Invoke();
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
 
         if (reRead.Count == 0)
             return "Target object no longer exists at the recorded DN.";

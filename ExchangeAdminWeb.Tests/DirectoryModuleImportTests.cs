@@ -524,6 +524,61 @@ public sealed class DirectoryModuleImportTests : IDisposable
         return Failed(Assert.Single(move.Steps), "LockdownMove");
     }
 
+    // ---- Emergency Disable's bound-object re-read (psl-10) ------------------------------------------------
+    // VerifyBoundObject re-reads the target by its DN before each write, and cleared only its commands, so a record the re-read
+    // wrote past Stop was the next check's: the disable and the password reset reported FAILED after their write had been
+    // made, and the lockdown move refused as if its OU could not be read.
+
+    private const string ReReadNoise = "A record the bound-object re-read wrote past the callers ErrorAction.";
+
+    // DisableDirectory with one difference: Get-ADUser, when it is the bound-object re-read - the one read that asks for
+    // ObjectGUID - leaves a record without throwing, and answers the bound object as before.
+    private static readonly (string Name, string Body)[] DisableDirectoryWithReReadNoise =
+    [
+        .. DisableDirectory.Where(r => r.Name != "Get-ADUser"),
+        ("Get-ADUser", $$"""
+            [CmdletBinding()] param($Identity, $Properties, $Credential)
+            $global:DirectoryCalls.Add("Get-ADUser|$Identity")
+            if ($Properties -contains 'ObjectGUID') { Write-Error -Message '{{ReReadNoise}}' -ErrorAction Continue }
+            [pscustomobject]@{ DistinguishedName = '{{TargetDn}}'; ObjectGUID = [guid]'{{TargetGuid}}'; Enabled = $true; info = $null }
+            """),
+    ];
+
+    [Theory]
+    [InlineData("the disable")]
+    [InlineData("the lockdown move")]
+    [InlineData("the password reset")]
+    public async Task EmergencyDisable_ARecordTheBoundObjectReReadLeaves_IsNotTakenForTheStepsError(string step)
+    {
+        // The re-read answers the bound object and leaves a record: the object is verified, so the step goes on, and its own
+        // check reads only its own call - the write made and OK, the move made and stamped.
+        var calls = new List<string>();
+        var service = EmergencyDisable(() => StandIn(Import.Loads, calls, DisableDirectoryWithReReadNoise));
+
+        switch (step)
+        {
+            case "the disable":
+                Assert.Equal(new DisableStepResult("DisableAD", "OK", null), await service.ExecuteDisableAD(Target, Creds, adSlotHeld: true));
+                Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{TargetDn}", $"Set-ADUser|{TargetDn}"], calls);
+                break;
+            case "the lockdown move":
+                var (steps, outcome, stamp) = await service.ExecuteMoveToLockdownOu(Target, Creds, LockdownOu, adSlotHeld: true);
+                Assert.Equal(LockdownOutcome.Moved, outcome);
+                Assert.Equal(LockdownStampOutcome.Stamped, stamp);
+                Assert.Equal(["LockdownMove", "LockdownStamp"], steps.Select(s => s.Step));
+                Assert.All(steps, s => Assert.Equal("OK", s.Status));
+                Assert.Equal([
+                    "Import-Module|ActiveDirectory", $"Get-ADUser|{TargetDn}", $"Get-ADOrganizationalUnit|{LockdownOu}",
+                    $"Move-ADObject|{TargetDn}|{LockdownOu}", $"Get-ADUser|{TargetGuid}", $"Set-ADUser|{TargetGuid}",
+                ], calls);
+                break;
+            default:
+                Assert.Equal(new DisableStepResult("ResetPassword", "OK", null), await service.ExecuteResetPassword(Target, Creds, adSlotHeld: true));
+                Assert.Equal(["Import-Module|ActiveDirectory", $"Get-ADUser|{TargetDn}", $"Set-ADAccountPassword|{TargetDn}"], calls);
+                break;
+        }
+    }
+
     // ---- Self-Service Groups (psl-8) --------------------------------------------------------------------
     // PrepareAdRunspace imported the module clearing only the commands. The member listing and the membership change
     // re-read the group by objectGUID straight after it, and the re-read's HadErrors check took the import's record:

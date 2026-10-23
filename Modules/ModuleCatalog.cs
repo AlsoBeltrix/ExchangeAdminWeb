@@ -987,7 +987,9 @@ public sealed class ModuleCatalog
             // docs/EmergencyDisableLockdownOU-Plan.md.
             // 1.3.2: the lookup reports the directory resolve and the protection check instead
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.5.1",
+            // 1.6.0: an error record the bound-object re-read leaves without throwing is no longer
+            // taken for the disable's, the lockdown move's or the password reset's own error (psl-10).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",

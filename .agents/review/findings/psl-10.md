@@ -34,6 +34,122 @@ At `9293b77a`: `Services/EmergencyDisableService.cs` 1256 (`VerifyBoundObject`),
   trait so the default gate makes no live call (owner decision recorded when taken).
 - Mutations at the call site: one `finally` clear dropped; the stand-in bypassed.
 
+### As written before each item's code (branch `fix/psl10-a2y`, forked from master `3e43b35b`)
+
+Line numbers are the base's. One item per commit, after aud-a2y and kd-5 on the same branch (item (2) builds on aud-a2y
+(2)'s credential seam).
+
+**The SDK facts the items rest on**, measured in this session (pwsh 7.6.6, `[powershell]::Create()` in-process, local
+functions only - no module, directory, network or remote session; scratchpad `psl10/probe-stream.ps1`): a record left in the
+stream makes the next clean invocation's `HadErrors` true (psl-2); `Streams.Error.Clear()` does not reset the flag already
+set, the next clean invocation does (psl-6); `$Error.Clear()` in the same script leaves the record in the stream and
+`HadErrors` true; `2>$null` on the command that writes it drops the record (stream empty, `HadErrors` false) while a bare
+`Write-Error` under `-ErrorAction Stop` still throws through it; and in a second runspace standing for the remote session,
+with its error records re-emitted by the caller, the same three hold (`$Error.Clear()` leaves the change "failed",
+`2>$null` leaves it clean).
+
+**(1) Emergency Disable's bound-object re-read.** `Services/EmergencyDisableService.cs` `VerifyBoundObject` (1256): its
+`Get-ADUser` (1258-1263) is followed by `ps.Commands.Clear()` alone (1264), so a record the re-read leaves past Stop stays,
+and the next check on that PowerShell takes it: the disable's `if (ps.HadErrors)` after `Set-ADUser -Enabled $false` (690) -
+FAILED after the write was made; the lockdown move's OU read `ps.HadErrors || ouLookup.Count == 0` (757) - "Configured
+lockdown OU could not be read: <the re-read's record> The account was NOT moved."; the reset's `if (ps.HadErrors)` after
+`Set-ADAccountPassword -Reset` (926) - FAILED after the reset was made. The fix: the re-read's `Invoke` in a try whose finally
+clears the commands and the error stream (`ActiveDirectoryModuleImport`'s shape). The re-read is still judged by what it
+returned - no object, or another GUID, refuses as before; a throw is the step's failure as before. Tests in
+`ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs` (its Emergency Disable stand-ins): a re-read that answers the bound
+object and leaves a record without throwing - the disable OK with its `Set-ADUser` sent, the move Moved and Stamped with its
+`Move-ADObject` sent, the reset OK with its `Set-ADAccountPassword` sent. Mutation: the fix reverted. Emergency Disable
+1.5.1 -> 1.6.0 (`EmergencyDisableServiceTests` pins the version).
+
+**(2) Self-Service Groups' caller and group reads.** `Services/SelfServiceGroups/SelfServiceGroupService.cs`:
+`ResolveCallerDn` (1286-1299) and the group reads of the owned-groups list (108-114) and the single-group search (182-188)
+each clear only the commands, so a record any of them leaves past Stop is taken by the first group's
+`CallerCanManageMembers` check, `if (ps.HadErrors)` (1408) - that group excluded from the list, or the searched group
+answered "not found, or you do not have permission" (psl-5 cleared the check's own records, not the reads' before it). The
+fix: `ResolveCallerDn`'s read, and the two group reads through one new helper `ReadGroups(ps, credential, ldapFilter)`, clear
+the commands and the error stream in a finally; each is still judged by what it returned (no caller DN throws; the list is
+the groups returned). Seam for the tests: `internal virtual Runspace CreateDirectoryRunspace()` - GroupManagementService's
+and EmergencyDisableService's shape - for those two paths, building the session they built inline; with aud-a2y (2)'s
+`LookupCredentialsAsync` seam, the two paths run for real on a stand-in session. Tests in `DirectoryModuleImportTests`: the
+owned-groups list and the search, with the caller read, then the group read, leaving a record without throwing - both groups
+listed, the searched group found manageable. Mutations: each clear dropped in turn. Self-Service Groups already takes its one
+minor step in aud-a2y (2) (1.12.0) on this branch.
+
+**(3) The DHCP remote script.** `Services/DhcpAuthorizationService.cs` 101 and 165: `"param($DnsName, $IPAddress)
+Import-Module DhcpServer -ErrorAction Stop; Add-DhcpServerInDC ..."` (and `Remove-...`) in one `Invoke-Command`, whose
+records come back in the one stream the change's `HadErrors` (111, 175) reads. The record's first option - `$Error.Clear()`
+between the import and the change - is measured above not to work: the record has already been written to the stream, and
+`$Error` is a session variable apart from it. The second - the import as its own invocation - would take a persistent remote
+session (`New-PSSession`, two `Invoke-Command -Session` calls, cleanup on every path) against a module this host does not
+have. The fix: the import's own error stream redirected, `Import-Module DhcpServer -ErrorAction Stop 2>$null;` - the remote
+twin of `ActiveDirectoryModuleImport`: the import's error is the one it throws (Stop still throws, and the script stops
+before the change), and a record it writes past Stop never reaches the stream. ASCII. Tests in
+`ExchangeAdminWeb.Tests/DhcpAuthorizationPowerShellLifecycleTests.cs`: a stand-in `Invoke-Command` that runs the script
+block in a second runspace standing for the remote session - its `Import-Module` and `Add-/Remove-DhcpServerInDC` local
+functions - and writes that session's error records into its own stream, a terminating error as a record (*assumption,
+documented remoting behaviour, not probed*: `Invoke-Command -ComputerName` without `-ErrorAction Stop` reports a remote
+terminating error as an error record). A remote import that leaves a record, then a clean change: success. A remote import
+that fails: failed with its error, the change not run. The change's own error: failed, as psl-3's control. Mutation: the fix
+reverted. *Assumption, not probed*: the DhcpServer module's import writes no error past Stop - the fix changes nothing where
+it writes none. DHCP Authorization 1.4.3 -> 1.5.0.
+
+**(4) The validate-exists search theory.** `ExchangeAdminWeb.Tests/ADDirectoryValidateExistsTests.cs` 238-244,
+`Search_AllObjectKindsIncludingOu_DoNotThrow` (User, Group, OU, Any), searches "test search term" through `CreateService()`,
+the production probe: on a host with RSAT it imports the real module (which connects for its AD: drive) and searches the live
+directory. It takes psl-8's stand-in - `ADDirectorySearchServiceTests.CreateService`, made internal - whose probe session
+fails the import as the real cmdlet does for a module it cannot find, and which checks the directory unavailable and the
+stand-in's one import before handing the service over; each kind's search then answers nothing, asserted. No test left in the
+class reaches a live directory (the blank-input and short-term tests return before the probe), so it leaves
+`LiveDirectoryCollection`, whose rule is that such a class must not join; its remarks and `ADDirectorySearchServiceTests`'
+say so. Mutation: the stand-in's session replaced by an empty one that cannot load anything (psl-8's P3 shape) - the pin on
+the stand-in's import fails. Not run, by design: the theory back on the production probe (the live call itself).
+
+**(5) The two deliberately live classes - an owner call, not changed.** See "Owner call" below.
+
+## Owner call (item 5) - not implemented; what the opt-in would be
+
+`ExchangeAdminWeb.Tests/ADDirectoryLiveTests.cs` (5 cases) and `ExchangeAdminWeb.Tests/AdDirectoryForestSearchLiveTests.cs`
+(3 cases) exist to exercise the real directory: each builds the production `ADDirectorySearchService`, whose availability
+probe imports the real ActiveDirectory module, and where that succeeds it searches the live forest; where it does not they
+skip loudly (`Assert.SkipWhen` / `Assert.SkipUnless`). So the mandated gate, `dotnet test ExchangeAdminWeb.slnx`, probes the
+directory on every run on a host with RSAT - this one included - while agents are told never to probe it without a go. On CI
+(`windows-latest`, no RSAT) all eight skip. This branch leaves both classes exactly as they are. The opt-in, were the owner
+to take it:
+
+- **Trait.** `[Trait("Category", "LiveDirectory")]` on both classes, beside their `[Collection(LiveDirectoryCollection.Name)]`
+  (which stays: it serialises them when they do run). The trait name and value are new; no test in the repo uses `[Trait]`
+  today.
+- **How `dotnet test` filters it.** The suite runs on VSTest (`Microsoft.NET.Test.Sdk` + `xunit.runner.visualstudio`),
+  whose `--filter` reads an xUnit trait as a property of its name. The default gate becomes
+  `dotnet test ExchangeAdminWeb.slnx --filter "Category!=LiveDirectory"` - in `.agents/repo-guidance.md` (Commands,
+  Verification) and in CI's `build-test` step - and runs none of the eight. The opt-in is
+  `dotnet test ExchangeAdminWeb.slnx --filter "Category=LiveDirectory"`, run by hand on a domain-joined host with RSAT and the
+  owner's go. (A `.runsettings` `TestCaseFilter` referenced from the test project would make the bare command exclude them
+  too; how it combines with a command-line `--filter` was not checked here, so the explicit filter is the recommendation.)
+- **What CI would run.** `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --filter "Category!=LiveDirectory" ...`:
+  the eight cases leave its count (they skip there today, so nothing CI proves changes); CI never runs the opt-in, having no
+  directory.
+- **What it costs.** The real-cmdlet property-name checks these classes exist for (`ADDirectoryLiveTests`' remarks: a typo
+  in a mapped property name compiles, passes every stand-in test and yields empty strings live) would run only when someone
+  runs the opt-in, so the owner would own when that is.
+
+Until then, this branch's own suite runs exclude the two classes by `--filter "FullyQualifiedName!~ADDirectoryLiveTests&
+FullyQualifiedName!~AdDirectoryForestSearchLiveTests"`, under the standing no-probe instruction, and say so.
+
 ## Guard proof
 
-Pending.
+Each row: the file's md5 with the fix, the mutation (the fix reverted to the commit before it, or one exact replacement at
+the call site), rebuilt, the filter run, the failures read from the TRX; the fixed bytes copied back with a fresh mtime, md5
+checked equal, rebuilt, run again. Stand-in sessions only - every Import-Module and directory or DHCP cmdlet a local
+function, autoloading off where a session is built for the test; no module, directory, DHCP server or network.
+
+**(1) Emergency Disable's bound-object re-read** - `DirectoryModuleImportTests.EmergencyDisable_ARecordTheBoundObjectReReadLeaves_IsNotTakenForTheStepsError`
+(the disable, the lockdown move, the password reset), on psl-8's stand-ins with one difference - the re-read, the one
+`Get-ADUser` that asks for ObjectGUID, leaves a record without throwing and answers the bound object: the disable OK, its
+`Set-ADUser` sent; the move Moved and Stamped, both steps OK, `Get-ADOrganizationalUnit`, `Move-ADObject`, the stamp's
+re-read and `Set-ADUser` sent in order; the reset OK, its `Set-ADAccountPassword` sent. Filter
+`DirectoryModuleImportTests|EmergencyDisable` (111).
+
+| # | Mutation | md5 fixed = restored | md5 mutated | Failing (of 111) | Restored |
+| --- | --- | --- | --- | --- | --- |
+| 1 | the fix reverted - `EmergencyDisableService.cs` as at `18e601f8` (the brief's "one finally clear dropped", here the only one) | `ec74fed1c01f7e0d10925b3c4dfec4c6` | `cdf3eb0201ff06f0c8f6d76a7a155fe5` | 3: the disable and the reset `FAILED` with "A record the bound-object re-read wrote past the callers ErrorAction." as their detail, their write sent; the move `Failed` | PASS 111 |
