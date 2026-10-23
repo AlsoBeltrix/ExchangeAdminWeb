@@ -156,8 +156,10 @@ public class GroupGrantValidationTests
 
         Assert.True(iConfirm >= 0, "The module-admin save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");
-        Assert.Contains("var added = snapshot.Except(moduleAdminGroupsBaseline,", body, StringComparison.Ordinal);
-        Assert.Contains("var removed = moduleAdminGroupsBaseline.Except(snapshot,", body, StringComparison.Ordinal);
+        // aud-a66: against the loaded baseline as the save took it, with the snapshot, before its first await.
+        Assert.Contains("var baseline = moduleAdminGroupsBaseline.ToArray();", body, StringComparison.Ordinal);
+        Assert.Contains("var added = snapshot.Except(baseline,", body, StringComparison.Ordinal);
+        Assert.Contains("var removed = baseline.Except(snapshot,", body, StringComparison.Ordinal);
         Assert.DoesNotContain("SetModuleAdmins(module.Id, moduleAdminGroups", body, StringComparison.Ordinal);
         Assert.DoesNotContain("moduleAdminGroups.Except(", body, StringComparison.Ordinal);
     }

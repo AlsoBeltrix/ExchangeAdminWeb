@@ -8,9 +8,9 @@ module). `SaveModuleAdminsAsync` reads `module.Id` and `moduleAdminGroupsBaselin
 `ApplyAdminChanges(module.Id, ...)`. `SaveSectionAccessAsync` has the same window. aud-a41's in-flight
 save wait closes the Save-button path as a side effect, but the directory-lookup window is not closed and
 no test pins it (the harness has no directory stand-in). Read from the code, not run.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (HIGH; the folded-in item MEDIUM); in progress
+**Status**: Fixed on branch, with the folded-in MEDIUM; closed on guard proof; not merged; codex review pending (approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule)
 **Branch**: `worktree-agent-a047027df146de3ac`
-**Commit**: -
+**Commit**: the branch's fix commit (plan `a8647062`)
 **Reviewer**: implementer (surfaced by the aud-a41/a40/a42 agent, 2026-10-23, candidate 1 of its hand-back)
 
 ## Evidence
@@ -127,7 +127,145 @@ single field) - test 2; (E2) the wait not looked at again after a save finishes 
 refusal removed - test 5; (E4) SaveModuleAdminsAsync's baseline reset with no load check - test 7; (E5) the next module
 assigned before the load's await again - test 8; (E6) `LoadState` no longer clears `saving` - test 6.
 
+## Executed reproduction - 2026-10-23
+
+The fix's seam, harness stand-in and tests in place, and `Components/Pages/ModuleConfig.razor` as it was at `ae112c83`
+swapped in (`git show`, MD5 `FCAED5839DBD656C6A389FE2176E7A66`) with one line changed - its `@inject` taking the new seam,
+which the harness's stand-in needs (MD5 `50DD3DCAF4ABF037C6497E806217A3CA`; a diff against the base shows that line only);
+build 0 errors. Of the four cases that need neither the bound nor the new refusal, three failed and one passed:
+
+- `ASecondSaveThatFinishesFirst_DoesNotLetAnotherModuleLoadUnderTheFirst`: the second module's stored admin groups, sorted,
+  began `S-1-5-21-1000-2000-3000-6001` - the first module's loaded group - where only `...-6003`, the second module's own,
+  was expected. The first save's lookup was released after the route change had loaded the second module (the wait had
+  followed only the second save, finished), and it applied the first module's list, diffed against the second module's
+  baseline, to the second module: an authorization write on the wrong module.
+- `ASaveStartedWhileAnotherModuleLoads_SavesTheModuleStillShown_AndNothingReachesTheOther`: the second module's stored
+  groups, sorted, began `...-6002` - the group added on the first module's page - where only `...-6003` was expected.
+- `ASaveStartedWhileAnotherModuleWaitsToLoad_IsWaitedForAsWell`: "the page loaded another module while a save started
+  during its wait still waited for the directory".
+- `AnotherModuleOpenedWhileAnAdminsSaveAsksTheDirectory_LoadsOnlyOnceTheSaveIsDone` passed: aud-a41's wait already covered
+  a single save's lookup, as the evidence says.
+
+During the run the second case's two store assertions were put in this order - the other module first - so its failure
+names where the write went. The cases on the bound and the refusal need fields the base page has not got and were not run
+against it. The fixed page was restored from its copy to its MD5 before the swap, touched and rebuilt.
+
+## Fix
+
+`Components/Pages/ModuleConfig.razor`:
+- Each of the five saves (SaveConfigAsync, SaveModuleEnablementAsync, SaveSectionAccessAsync, SaveModuleAdminsAsync,
+  SaveAllowlistAsync) takes, before its first await, the descriptor shown (`saved`) and its id, the page's load number
+  (`started`), its record section, what it writes and what it diffs against - the changed keys with their loaded and
+  wanted values; the toggle and its baseline; the aliases, snapshot, baseline, picked display names and pending sections;
+  the admins snapshot and baseline; the allowlist's rows, version and count - and the load flags that qualify them. Every
+  later step uses these: `IsModuleAdmin(moduleId, ...)`, `IsModuleCorrupt(moduleId)`, the grants the lookup confirms, the
+  write, and its records (section, pending sections, `MaskIfSecret(saved, ...)`, `IsSecretField(saved, ...)`,
+  `ConfigKeyName(saved, ...)`).
+- Immediately before the write - after the directory confirmation in the access and admins saves - `if (!Shows(moduleId))`
+  refuses with `PageMovedRefusal` and one record (`LogSettingsSaveRefused`, `refusedAt: PageMoved`, `mutationAttempted:
+  false`; the allowlist through `LogAllowlistSaveRefused`); nothing is written.
+- After the write, page state - baselines and counts, `moduleConfigCorrupt`, `enablementStoreCorrupt`,
+  `sectionAccessCorrupt`, `moduleAdminsUnreadable`, the allowlist's version, banner and count, the status save's render and
+  reload, `saving` - changes only `if (Holds(started))`; otherwise the save's message is prefixed with its module's display
+  name (`OnAnotherModule`). Its records are written either way.
+- `SaveCurrentTabAsync` registers each save in `savesInFlight` with its load and module name until it completes (the
+  single `saveInFlight` is gone). `OnParametersSetAsync` waits through `WaitForThisLoadsSavesAsync` for the unfinished
+  saves of the current load, looking again after each one ends, for at most `saveWaitBound`
+  (`SqliteConnectionFactory.BusyTimeout` + 5 s); past it the next module loads and `UnfinishedSaveNotice` names the module
+  of the saves still running.
+- `OnParametersSetAsync` takes the next module into a local and assigns it with `LoadState`; `LoadState` counts the load
+  and clears `saving`.
+- The page injects `IGroupGrantDirectory`; its calls are unchanged.
+
+`Services/IGroupGrantDirectory.cs` (new: `IsAvailable`, `ValidateGroupSid`); `Services/ADDirectorySearchService.cs`
+implements it; `Program.cs` registers it as the `ADDirectorySearchService` singleton.
+
+Tests: new `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs` (13 cases, the plan's ten; test 9 is a theory over the three
+saves). `SettingsPageHarness` gains `GroupDirectory` - a stand-in that answers, records and holds lookups, given to the page
+as its `ADSearch` - and releases its holds when disposed. `GroupGrantValidationTests.TheModuleAdminSave_...` re-anchored to
+the captured baseline (`var baseline = moduleAdminGroupsBaseline.ToArray();`, then `snapshot.Except(baseline,` and
+`baseline.Except(snapshot,`), its intent unchanged.
+
+Departures from the plan, inside its scope:
+
+1. **Test 3 holds the second save at its lookup, not its write.** The first draft held it as its write opened and
+   deadlocked for 30 s: `ModuleAdminService.ApplyAdminChanges` takes the service's `_writeLock` (`Services/ModuleAdminService.cs`
+   164) around the store write, so the held second write kept the first save from writing at all.
+2. **The notice's seconds are formatted with the invariant culture**, so the text does not depend on the host's.
+
+Caller-visible change, by design: on Module Configuration, opening another module while a save runs waits for that save -
+and for every other save started on the module shown, including one started during the wait - for at most 10 seconds; past
+that the other module opens with a notice naming the module whose save had not finished. A save whose page moved before it
+wrote refuses ("Not saved: the page moved to another module while this save waited, so nothing was written. Open the
+module again and save."), recorded as a refusal (`PageMoved`); one that finishes after the page moved changes nothing on the
+page and says which module it was for. The page's Save is offered on the module it opened.
+
 ## Guard proof
+
+Session-local driver `a66-mutate.ps1` in the scratchpad (never committed): the fix staged; the page copied and the copy
+checked equal to the index blob (`git hash-object`); per row, MD5; the mutation by exact text (each edit must match once, and
+the mutant must differ); touch; `dotnet build` of the test project; `dotnet test --no-build` filtered to 22 classes - the new
+one, every settings-page suite, the allowlist suites, and the source scans that read this page (`GroupGrantValidationTests`,
+`AdminPageDirtyStateTests`, `PageAuthorizationRecheckTests`, `ProtectedPrincipalServicerAdminUiTests`, `ProgressRegistryTests`,
+`ClickGateTests`, `ClickGateStuckFlagTests`, `ModuleCatalogTests`): 702 tests; the page restored from the staged copy; touch;
+MD5 re-confirmed; build; the same filter. Every mutant built with 0 errors, the page came back to its MD5 after every row, and
+the restored tree ran 702/702 after each. All rows mutate `Components/Pages/ModuleConfig.razor`, this commit's bytes.
+
+| # | Mutation (call site) | MD5 before | MD5 mutant | MD5 after | Named test failing |
+|---|---|---|---|---|---|
+| 1 | `SaveModuleAdminsAsync`: `module.Id` read after the lookup again (`moduleId = module!.Id;` after `ConfirmNewGroupGrantsAsync`'s refusal, before the moved check) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `47A5DC3759F47658C34FA92B019D32F6` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `AnAdminsSaveWhoseLookupOutlastsTheWait_Refuses_AndWritesToNeitherModule` (the second module's stored admins, sorted, began `...-6002`, the first module's added group; only `...-6003` expected) |
+| 2 | `WaitForThisLoadsSavesAsync` (the route change's wait): the bound removed - the time left a day, not `saveWaitBound` less the time waited | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `290D83901C7E7872B34F079BB004A765` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `ASaveThatNeverFinishes_HoldsTheNextModuleOnlyForTheBound_AndOnlyOnce` (the route change timed out after 10 s); also `AnAdminsWriteThatOutlastsTheWait_...`, `AnAdminsSaveWhoseLookupOutlastsTheWait_...`, `AnAccessSaveWhoseLookupOutlastsTheWait_...` and the three `ASaveWhosePageMovesDuringItsAuthorizationRecheck_...` cases, each waiting for a held save until its own timeout - 7 |
+| E0 | extra, `OnParametersSetAsync`: no wait at all | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `0340245C91B626F6B2308A4EFED5B924` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `AnotherModuleOpenedWhileAnAdminsSaveAsksTheDirectory_...` ("the page loaded another module while a save on this one waited for the directory"), `ASecondSaveThatFinishesFirst_...`, `ASaveStartedWhileAnotherModuleWaitsToLoad_...`, aud-a41's `SettingsSaveOffCircuitTests.ModuleConfig_AnotherModuleOpenedWhileASaveWaits_LoadsOnlyOnceTheSaveIsDone`, and the notice cases `AnAdminsSaveWhoseLookupOutlastsTheWait_...`, `ASaveThatNeverFinishes_...` ("after 0 ms, inside the wait") - 6 |
+| E1 | extra, `SaveCurrentTabAsync`: only the latest save kept (`savesInFlight.Clear()` before the add - aud-a41's single field) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `1C3A37DF8C813F85D4A4CC441712A274` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `ASecondSaveThatFinishesFirst_DoesNotLetAnotherModuleLoadUnderTheFirst` ("the page loaded another module while the first of two saves still waited for the directory"; the store assertions above it held: the moved refusal stopped that save's write) |
+| E2 | extra, `WaitForThisLoadsSavesAsync`: one pass (`if`, not `while`) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `6D62077FCC862B36A9E2DA56268FE89C` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `ASaveStartedWhileAnotherModuleWaitsToLoad_IsWaitedForAsWell` ("... a save started during its wait still waited for the directory"); `AnAdminsSaveWhoseLookupOutlastsTheWait_...` and `ASaveThatNeverFinishes_...` (one pass reports nothing unfinished, so no notice) - 3 |
+| E3 | extra, `SaveSectionAccessAsync`: the moved refusal removed (`if (false)`) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `7EC1AEFCD0A5486AEC7B00B9999116EB` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `AnAccessSaveWhoseLookupOutlastsTheWait_Refuses_AndWritesToNeitherModule` (the first module's alias stored with the added group after the page had moved) |
+| E4 | extra, `SaveModuleAdminsAsync`: the baseline reset with no load check (`if (true)`) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `EB8428D5C4CCD3C0C64812C7BE55B83C` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `AnAdminsWriteThatOutlastsTheWait_LandsOnItsOwnModule_AndLeavesTheNextOnesStateAlone` (the second module's baseline became the first module's snapshot, `...-6001` first; `...-6003` expected) |
+| E5 | extra, `OnParametersSetAsync`: the next module assigned before the load's authorization await again (`module = next;` right after `Catalog.GetById`) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `EF53B5620930CAFD29756B08760EB70A` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `ASaveStartedWhileAnotherModuleLoads_SavesTheModuleStillShown_AndNothingReachesTheOther` (the second module's stored admins, sorted, began `...-6002`, the group added on the first module's page) |
+| E6 | extra, `LoadState`: `saving` no longer cleared | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `FCD06182F3C15E2C4C3377647CA99BF9` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `ASaveThatNeverFinishes_...` ("the next module's Save is still withheld by the unfinished save") |
+| E7 | extra, `SaveConfigAsync`, `SaveModuleEnablementAsync`, `SaveAllowlistAsync`: the moved refusal removed from all three (`if (false)`) | `7C0C74BA6A1B2C5EC6A48007537AEB72` | `7CF490E4D2D73BAE5F0782F7F4128935` | `7C0C74BA6A1B2C5EC6A48007537AEB72` | the three `ASaveWhosePageMovesDuringItsAuthorizationRecheck_Refuses_AndWritesNothing` cases: `Configuration` (`DelineaSecretId` `4242` stored), `Module Status` (`MailboxPermissions` stored `false`), `Editable Attributes` (`["department"]` stored) |
+
+Two rows were run twice. In the first pass E1's edit and E5's edit were built wrongly by the driver - PowerShell joined
+`'a', 'b' + $nl + 'c'` as an array, so E1 replaced the add with `Clear()` and registered no save (the E0 result again, 6
+failures), and E5 replaced its line with itself (mutant MD5 equal to the page's; 702 passed). The edits were parenthesised, the
+driver now refuses a mutant that changes nothing, and both rows were run again; the table holds the second pass. The code
+comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-23 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 19 warnings, all pre-existing, none in a touched
+  file. The first run had a 20th, CS8631 in this commit's new test (a `string?` element in one assertion), fixed before the
+  commit; the page the mutation round read was not touched by it.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,421
+  passed / 0 skipped / 0 failed, 6,421 total, 3m27s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+## Known gaps
+
+- Which windows production can reach: a second save in flight (a double click before the disabled Save renders, or a direct
+  event), a save started while a route change waits, and a save that outlasts the bound - a directory confirmation past 10 s
+  (up to 30 s per new grant on the runspace lock) or a store that does not answer. A save started while a load awaits (test 8)
+  needs an await in the load that yields; today both complete synchronously (the circuit's stored authentication state, and
+  the page's own note that `GroupAuthorizationHandler` is synchronous end to end) - *assumption from reading, not measured*;
+  the harness holds them to drive it.
+- A save that outlasts the bound keeps running - its worker thread and store connection until the store answers; the page
+  cannot cancel it, as the stores take no cancellation. A later route change does not wait for it again.
+- No catalog field is marked `IsSecret` today, so no case drives the config save's masking by its captured descriptor; it is
+  by construction (`MaskIfSecret(saved, ...)`).
+- The access save's concurrent-change message names aliases through `AliasName`, which reads the page's descriptor: after a
+  move it falls back to the alias (wording only; the record's section and aliases are the captured ones).
+- aud-a67 item 1 is unchanged: `dirty` survives a move, so the next module's save bar can show the previous module's counts.
+  aud-a67 item 4 called a second save in flight cosmetic; this record's reproduction shows it let a route change forget the
+  first save, which then wrote to the wrong module. That write is closed here; the re-entrancy guard stays held there.
+- The page ran on the framework's dispatcher through the harness; no browser or live circuit ran. No directory, Exchange
+  Online, Graph, DHCP, IIS, Delinea or SMTP: the directory is the harness's stand-in, and no case names a SID with a stored
+  display name, so no SID is translated.
+
+## Left for a follow-up (file owned by another agent)
+
+None: no change was needed in a file another agent owns.
+
+## Guard proof at admission
 
 Pending.
 

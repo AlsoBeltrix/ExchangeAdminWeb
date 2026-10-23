@@ -278,6 +278,8 @@ try
     // The operator-email resolver reads the same pooled AD runspace through a one-member seam,
     // so it never reaches the wildcard autocomplete search (OperatorEmailResolution-Plan).
     builder.Services.AddSingleton<IOperatorDirectory>(sp => sp.GetRequiredService<ADDirectorySearchService>());
+    // Module Configuration's group-grant confirmation reads the same singleton through a seam of its own (aud-a66).
+    builder.Services.AddSingleton<IGroupGrantDirectory>(sp => sp.GetRequiredService<ADDirectorySearchService>());
     builder.Services.AddSingleton<OperatorEmailResolver>();
     // The section-access SID migration gets its OWN directory service rather than reusing the
     // autocomplete one: it must throw when a lookup fails (a migration that reads an outage as

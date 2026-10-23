@@ -7,7 +7,7 @@
 @inject ModuleAdminService ModuleAdmin
 @inject ModuleEnablementService Enablement
 @inject SectionAccessService SectionAccess
-@inject ExchangeAdminWeb.Services.ADDirectorySearchService ADSearch
+@inject ExchangeAdminWeb.Services.IGroupGrantDirectory ADSearch
 @inject ModuleCatalog Catalog
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
@@ -865,6 +865,8 @@
     /// </summary>
     private async Task SaveCurrentTabAsync()
     {
+        var started = load;
+        var name = module?.DisplayName ?? ModuleId;
         var save = tab switch
         {
             SecStatus => SaveModuleEnablementAsync(),
@@ -874,14 +876,67 @@
             SecAdmins => SaveModuleAdminsAsync(),
             _ => Task.CompletedTask,
         };
-        saveInFlight = save;
-        await save;
+        var entry = (Save: save, Load: started, Module: name);
+        savesInFlight.Add(entry);
+        try
+        {
+            await save;
+        }
+        finally
+        {
+            savesInFlight.Remove(entry);
+        }
     }
 
-    // aud-a41. The save the Save button started, until it completes. The page is reused when its route moves to another module,
+    // aud-a41. The saves the Save button started, until each completes. The page is reused when its route moves to another module,
     // and a save's store write runs off the circuit, so another module can be opened while one waits; the parameter load waits
-    // for this first, so a save's bookkeeping lands on the state of the module it saved and not on the next one's.
-    private Task? saveInFlight;
+    // for these first, so a save's bookkeeping lands on the state of the module it saved and not on the next one's.
+    private readonly List<(Task Save, int Load, string Module)> savesInFlight = new();
+
+    private TimeSpan saveWaitBound = ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory.BusyTimeout + TimeSpan.FromSeconds(5);
+
+    private int load;
+
+    private bool Shows(string moduleId) => string.Equals(module?.Id, moduleId, StringComparison.Ordinal);
+
+    private bool Holds(int started) => module is not null && load == started;
+
+    private const string PageMovedRefusal =
+        "Not saved: the page moved to another module while this save waited, so nothing was written. Open the module again and save.";
+
+    private static string? OnAnotherModule(AdminModuleDescriptor saved, string? message) =>
+        message is null ? null : $"{saved.DisplayName}: {message}";
+
+    private async Task<List<string>?> WaitForThisLoadsSavesAsync()
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        while (savesInFlight.FirstOrDefault(s => s.Load == load && !s.Save.IsCompleted) is { Save: not null } inFlight)
+        {
+            var left = saveWaitBound - waited.Elapsed;
+            if (left <= TimeSpan.Zero)
+            {
+                return savesInFlight
+                    .Where(s => s.Load == load && !s.Save.IsCompleted)
+                    .Select(s => s.Module)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+            }
+
+            using var timer = new CancellationTokenSource();
+            await Task.WhenAny(inFlight.Save, Task.Delay(left, timer.Token));
+            timer.Cancel();
+        }
+
+        return null;
+    }
+
+    private string UnfinishedSaveNotice(List<string> unfinished, AdminModuleDescriptor next)
+    {
+        var modules = string.Join(", ", unfinished);
+        var seconds = saveWaitBound.TotalSeconds.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        return $"A save on {modules} had not finished after {seconds} seconds, so this page opened {next.DisplayName} without waiting for it any longer. "
+            + $"That save can change only {modules}, never {next.DisplayName}: if it had not written yet it refuses, and when it ends its outcome is recorded in the audit log. Open {modules} again to see what is stored.";
+    }
 
     /// <summary>Whether the visible tab's store was read when the page loaded, so Save is offered.</summary>
     /// <remarks>
@@ -949,12 +1004,9 @@
     {
         if (ModuleId == loadedModuleId) return;
 
-        // aud-a41. A save on the module shown finishes before another module is loaded over it (see saveInFlight).
-        if (saveInFlight is { IsCompleted: false } inFlight)
-        {
-            await Task.WhenAny(inFlight);
-            if (ModuleId == loadedModuleId) return;
-        }
+        // aud-a41. A save on the module shown finishes before another module is loaded over it (see savesInFlight).
+        var unfinished = await WaitForThisLoadsSavesAsync();
+        if (ModuleId == loadedModuleId) return;
 
         loadedModuleId = ModuleId;
 
@@ -965,8 +1017,8 @@
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
-        module = Catalog.GetById(ModuleId);
-        if (module == null || module.IsSystemModule)
+        var next = Catalog.GetById(ModuleId);
+        if (next == null || next.IsSystemModule)
         {
             authChecked = true;
             module = null;
@@ -974,9 +1026,9 @@
         }
 
         // Config-only modules have their own dedicated page
-        if (module.IsConfigOnly)
+        if (next.IsConfigOnly)
         {
-            Navigation.NavigateTo(module.Route, replace: true);
+            Navigation.NavigateTo(next.Route, replace: true);
             return;
         }
 
@@ -989,11 +1041,18 @@
             return;
         }
 
+        module = next;
         LoadState();
 
         // After LoadState, because the visible tabs depend on isGlobalAdmin and the loaded module.
         // Opening on a tab this operator cannot see would render an empty page.
         tab = FirstVisibleTab();
+
+        if (unfinished is not null)
+        {
+            statusMessage = UnfinishedSaveNotice(unfinished, next);
+            statusIsError = true;
+        }
 
         authChecked = true;
     }
@@ -1001,6 +1060,9 @@
     private void LoadState()
     {
         if (module == null) return;
+
+        load++;
+        saving = false;
 
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
@@ -1093,9 +1155,9 @@
             .ToList();
 
     /// <summary>A config key as the Configuration tab heads it: its field label, with the key.</summary>
-    private string ConfigKeyName(string key)
+    private static string ConfigKeyName(AdminModuleDescriptor saved, string key)
     {
-        var field = module?.ConfigFields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
+        var field = saved.ConfigFields.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
         return field is null ? key : $"{field.Label} ({key})";
     }
 
@@ -1159,6 +1221,20 @@
     private async Task SaveConfigAsync()
     {
         if (module == null) return;
+
+        // aud-a28n. Only the keys the admin changed, each decided under the write lock against its row and the
+        // value this page loaded. Replacing the whole config from the page's copy wrote back every key changed
+        // elsewhere since the load - keys the page does not show, such as the ExcludedUsers protection list,
+        // included.
+        // aud-a41. Taken before the write, which runs off the circuit - it can wait up to the store's busy timeout for a lock
+        // held elsewhere - and the baseline below takes what was written, so a value typed while it waited stays unsaved.
+        var saved = module;
+        var moduleId = saved.Id;
+        var started = load;
+        var loadedCorrupt = moduleConfigCorrupt;
+        var changed = ChangedConfigKeys();
+        var loadedValues = changed.ToDictionary(k => k, k => configBaseline.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase);
+        var wantedValues = changed.ToDictionary(k => k, k => currentConfigState.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase);
         saving = true;
         statusMessage = null;
         await Task.Yield();
@@ -1167,14 +1243,14 @@
         // success files under, not only a success: a refused or failed attempt on section access or
         // module admins - who can reach and run a module - used to leave no trace. The section and ip
         // are worked out above the try so the catch has them.
-        var section = $"ModuleConfig:{module.Id}";
+        var section = $"ModuleConfig:{moduleId}";
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var user = authState.User;
             var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
-            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module.Id, user))
+            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(moduleId, user))
             {
                 statusMessage = "You are not authorized to configure this module.";
                 statusIsError = true;
@@ -1182,11 +1258,11 @@
                 return;
             }
 
-            if (ModuleConfigSvc.IsModuleCorrupt(module.Id))
+            if (ModuleConfigSvc.IsModuleCorrupt(moduleId))
             {
-                moduleConfigCorrupt = true;
+                if (Holds(started)) moduleConfigCorrupt = true;
                 statusMessage = "Refusing to save: saving would overwrite this module's stored configuration with the rendered fallback values. Nothing was changed. "
-                    + SettingsStoreText.ModuleConfig(module.Id);
+                    + SettingsStoreText.ModuleConfig(moduleId);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -1194,7 +1270,7 @@
 
             // aud-a28j. The check above says the store reads now; this one says the fields came from it. A
             // load that could not read it left blank fields, and the check above passes once it reads again.
-            if (moduleConfigCorrupt)
+            if (loadedCorrupt)
             {
                 statusMessage = "Refusing to save: this page does not hold the module's stored configuration (it could not be read), so saving would overwrite it with the blank fields shown. Nothing was changed. Reload the page.";
                 statusIsError = true;
@@ -1202,22 +1278,20 @@
                 return;
             }
 
-            // aud-a28n. Only the keys the admin changed, each decided under the write lock against its row and the
-            // value this page loaded. Replacing the whole config from the page's copy wrote back every key changed
-            // elsewhere since the load - keys the page does not show, such as the ExcludedUsers protection list,
-            // included.
-            // aud-a41. Taken before the write, which runs off the circuit - it can wait up to the store's busy timeout for a lock
-            // held elsewhere - and the baseline below takes what was written, so a value typed while it waited stays unsaved.
-            var changed = ChangedConfigKeys();
-            var loadedValues = changed.ToDictionary(k => k, k => configBaseline.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase);
-            var wantedValues = changed.ToDictionary(k => k, k => currentConfigState.GetValueOrDefault(k, "") ?? "", StringComparer.OrdinalIgnoreCase);
-            var moduleId = module.Id;
+            if (!Shows(moduleId))
+            {
+                statusMessage = PageMovedRefusal;
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage);
+                return;
+            }
+
             var outcome = await Task.Run(() => ModuleConfigSvc.SaveChangedValues(moduleId, loadedValues, wantedValues));
             if (outcome.Status == ModuleConfigSaveStatus.StoreCorrupt)
             {
-                moduleConfigCorrupt = true;
+                if (Holds(started)) moduleConfigCorrupt = true;
                 statusMessage = "Refusing to save: this module's stored configuration could not be read as the save went to change it. Nothing was changed. "
-                    + SettingsStoreText.ModuleConfig(module.Id);
+                    + SettingsStoreText.ModuleConfig(moduleId);
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage);
                 return;
@@ -1226,7 +1300,7 @@
             if (outcome.Status == ModuleConfigSaveStatus.ConcurrentChange)
             {
                 var one = outcome.ConflictingKeys.Count == 1;
-                statusMessage = $"Refusing to save: the stored value of {string.Join(", ", outcome.ConflictingKeys.Select(ConfigKeyName))} {(one ? "was" : "were")} changed after this page loaded {(one ? "it" : "them")} - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusMessage = $"Refusing to save: the stored value of {string.Join(", ", outcome.ConflictingKeys.Select(k => ConfigKeyName(saved, k)))} {(one ? "was" : "were")} changed after this page loaded {(one ? "it" : "them")} - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage);
                 return;
@@ -1237,8 +1311,8 @@
             {
                 try
                 {
-                    var prevKeys = written.Select(k => $"{k}={MaskIfSecret(k, outcome.Before.GetValueOrDefault(k) ?? "")}").ToArray();
-                    var newKeys = written.Select(k => $"{k}={MaskIfSecret(k, outcome.After.GetValueOrDefault(k) ?? "")}").ToArray();
+                    var prevKeys = written.Select(k => $"{k}={MaskIfSecret(saved, k, outcome.Before.GetValueOrDefault(k) ?? "")}").ToArray();
+                    var newKeys = written.Select(k => $"{k}={MaskIfSecret(saved, k, outcome.After.GetValueOrDefault(k) ?? "")}").ToArray();
                     var extra = new Dictionary<string, object?>();
                     if (outcome.AlreadyApplied.Count > 0)
                         extra["alreadyApplied"] = outcome.AlreadyApplied.ToArray();
@@ -1246,7 +1320,7 @@
                     // cancel in added and removed, so the record showed no change at all: it names the key instead.
                     // Names only - never a value.
                     var changedSecretKeys = written
-                        .Where(k => IsSecretField(k)
+                        .Where(k => IsSecretField(saved, k)
                             && !string.Equals(outcome.Before.GetValueOrDefault(k) ?? "", outcome.After.GetValueOrDefault(k) ?? "", StringComparison.Ordinal))
                         .ToArray();
                     if (changedSecretKeys.Length > 0)
@@ -1258,9 +1332,12 @@
 
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the values just persisted all over again on the next edit.
-            foreach (var (key, value) in wantedValues)
-                configBaseline[key] = value;
-            RecountConfig();
+            if (Holds(started))
+            {
+                foreach (var (key, value) in wantedValues)
+                    configBaseline[key] = value;
+                RecountConfig();
+            }
             statusMessage = changed.Count == 0
                 ? "Configuration is unchanged; there was nothing to save."
                 : written.Count == 0
@@ -1273,17 +1350,33 @@
             statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
             statusIsError = true;
         }
-        finally { saving = false; }
+        finally
+        {
+            if (Holds(started)) saving = false;
+            else statusMessage = OnAnotherModule(saved, statusMessage);
+        }
     }
 
     private async Task SaveModuleEnablementAsync()
     {
         if (module == null) return;
+
+        // aud-a28k. This module only, and only when toggled, decided against its row under the write lock:
+        // the whole-map write it replaces switched back any module changed elsewhere between its read and
+        // its write.
+        // aud-a41. The toggle written, and the baseline after it, are the one this save began with; the write runs off the
+        // circuit, and a toggle switched while it waits stays counted for the reload's guard.
+        var saved = module;
+        var moduleId = saved.Id;
+        var started = load;
+        var loadedCorrupt = enablementStoreCorrupt;
+        var wanted = moduleEnabled;
+        var baseline = moduleEnabledBaseline;
         saving = true;
         statusMessage = null;
         await Task.Yield();
 
-        var section = $"Module:{module.Id}";
+        var section = $"Module:{moduleId}";
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
@@ -1299,7 +1392,7 @@
 
             if (Enablement.IsStoreCorrupt())
             {
-                enablementStoreCorrupt = true;
+                if (Holds(started)) enablementStoreCorrupt = true;
                 statusMessage = "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
                     + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
                 statusIsError = true;
@@ -1308,7 +1401,7 @@
             }
 
             // aud-a28j. The same for the toggle: it is the all-disabled fallback when the load could not read it.
-            if (enablementStoreCorrupt)
+            if (loadedCorrupt)
             {
                 statusMessage = "Refusing to save: this page's toggle is not the stored module enablement state (the store could not be read), so saving it could switch the module off. Nothing was changed. Reload the page.";
                 statusIsError = true;
@@ -1316,19 +1409,21 @@
                 return;
             }
 
-            // aud-a28k. This module only, and only when toggled, decided against its row under the write lock:
-            // the whole-map write it replaces switched back any module changed elsewhere between its read and
-            // its write.
-            // aud-a41. The toggle written, and the baseline after it, are the one this save began with; the write runs off the
-            // circuit, and a toggle switched while it waits stays counted for the reload's guard.
-            var wanted = moduleEnabled;
-            var changes = wanted == moduleEnabledBaseline
+            if (!Shows(moduleId))
+            {
+                statusMessage = PageMovedRefusal;
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage);
+                return;
+            }
+
+            var changes = wanted == baseline
                 ? new Dictionary<string, bool>()
-                : new Dictionary<string, bool> { [module.Id] = wanted };
+                : new Dictionary<string, bool> { [moduleId] = wanted };
             var outcome = await Task.Run(() => Enablement.SetModulesEnabled(changes));
             if (outcome.StoreCorrupt)
             {
-                enablementStoreCorrupt = true;
+                if (Holds(started)) enablementStoreCorrupt = true;
                 statusMessage = "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
                     + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
                 statusIsError = true;
@@ -1347,20 +1442,28 @@
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module status change"); }
             }
 
-            moduleEnabledBaseline = wanted;
-            dirty.SetCount(SecStatus, moduleEnabled == moduleEnabledBaseline ? 0 : 1);
-            statusMessage = "Module status saved. Refreshing...";
-            statusIsError = false;
+            if (Holds(started))
+            {
+                moduleEnabledBaseline = wanted;
+                dirty.SetCount(SecStatus, moduleEnabled == moduleEnabledBaseline ? 0 : 1);
+                statusMessage = "Module status saved. Refreshing...";
+                statusIsError = false;
 
-            // Render BEFORE the reload. Blazor renders an event handler once at its first await
-            // and once when it completes - and this handler never completes, it navigates. So
-            // without this the browser still holds the pre-save "unsaved changes" flag that
-            // UnsavedChangesGuard armed, and the forced reload trips both the in-app confirm and
-            // the browser's "Leave site?" over a change that has already been written. It also
-            // makes the "Refreshing..." message above actually appear during the delay.
-            StateHasChanged();
-            await Task.Delay(500);
-            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+                // Render BEFORE the reload. Blazor renders an event handler once at its first await
+                // and once when it completes - and this handler never completes, it navigates. So
+                // without this the browser still holds the pre-save "unsaved changes" flag that
+                // UnsavedChangesGuard armed, and the forced reload trips both the in-app confirm and
+                // the browser's "Leave site?" over a change that has already been written. It also
+                // makes the "Refreshing..." message above actually appear during the delay.
+                StateHasChanged();
+                await Task.Delay(500);
+                Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+            }
+            else
+            {
+                statusMessage = "Module status saved.";
+                statusIsError = false;
+            }
         }
         catch (Exception ex)
         {
@@ -1369,18 +1472,33 @@
         }
         finally
         {
-            saving = false;
+            if (Holds(started)) saving = false;
+            else statusMessage = OnAnotherModule(saved, statusMessage);
         }
     }
 
     private async Task SaveSectionAccessAsync()
     {
         if (module == null) return;
+
+        // aud-a1b. What is saved is a SNAPSHOT taken here, and every grant in it that was not
+        // loaded is confirmed to be a group in the directory first. The Add buttons stay live
+        // while the lookup runs, so persisting the live lists afterwards would let a row added
+        // mid-lookup ride an unchecked save.
+        var saved = module;
+        var moduleId = saved.Id;
+        var started = load;
+        var section = saved.MainPermission.PolicyAlias;
+        var loadedCorrupt = sectionAccessCorrupt;
+        var aliases = policyAliases.ToList();
+        var snapshot = aliases.ToDictionary(a => a, a => accessState[a].ToArray());
+        var baseline = accessBaseline.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+        var picked = new Dictionary<string, string>(pickedDisplayNames, StringComparer.OrdinalIgnoreCase);
+        var pending = PendingAccessSections();
         saving = true;
         statusMessage = null;
         await Task.Yield();
 
-        var section = module.MainPermission.PolicyAlias;
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
@@ -1390,44 +1508,47 @@
             {
                 statusMessage = "Only global admins can change section access.";
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage, PendingAccessSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Authorization", statusMessage, pending);
                 return;
             }
 
             if (SectionAccess.IsFragmentCorrupt())
             {
-                sectionAccessCorrupt = true;
+                if (Holds(started)) sectionAccessCorrupt = true;
                 statusMessage = "Refusing to save: saving would replace section-access groups this page cannot see. Nothing was changed. "
                     + SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed);
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, pending);
                 return;
             }
 
             // aud-a28j. The lists are this page's load: empty when it could not read the store. Asked before
             // the directory confirmation below, which must not run for a save that cannot happen.
-            if (sectionAccessCorrupt)
+            if (loadedCorrupt)
             {
                 statusMessage = "Refusing to save: this page does not hold the stored section access (it could not be read), so saving would replace the stored groups with the empty lists it has. Nothing was changed. Reload the page.";
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage, PendingAccessSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage, pending);
                 return;
             }
 
-            // aud-a1b. What is saved is a SNAPSHOT taken here, and every grant in it that was not
-            // loaded is confirmed to be a group in the directory first. The Add buttons stay live
-            // while the lookup runs, so persisting the live lists afterwards would let a row added
-            // mid-lookup ride an unchecked save.
-            var snapshot = policyAliases.ToDictionary(a => a, a => accessState[a].ToArray());
             var newGrants = snapshot
-                .SelectMany(kv => kv.Value.Except(accessBaseline.GetValueOrDefault(kv.Key) ?? new List<string>(), StringComparer.OrdinalIgnoreCase))
+                .SelectMany(kv => kv.Value.Except(baseline.GetValueOrDefault(kv.Key) ?? new List<string>(), StringComparer.OrdinalIgnoreCase))
                 .ToList();
             var refused = await ConfirmNewGroupGrantsAsync(newGrants);
             if (refused is not null)
             {
                 statusMessage = refused;
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "GroupGrantCheck", statusMessage, PendingAccessSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "GroupGrantCheck", statusMessage, pending);
+                return;
+            }
+
+            if (!Shows(moduleId))
+            {
+                statusMessage = PageMovedRefusal;
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage, pending);
                 return;
             }
 
@@ -1435,22 +1556,22 @@
             // each compared under the write lock with what this page loaded; one changed elsewhere since
             // refuses the whole save. Overwriting every alias of the module with the page's snapshot lost
             // grants made or revoked elsewhere, edited or not.
-            var edited = policyAliases
-                .Where(a => GroupDelta(snapshot[a].ToList(), accessBaseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
+            var edited = aliases
+                .Where(a => GroupDelta(snapshot[a].ToList(), baseline.GetValueOrDefault(a) ?? new List<string>()) > 0)
                 .ToDictionary(a => a, a => snapshot[a], StringComparer.OrdinalIgnoreCase);
             var loaded = edited.Keys.ToDictionary(
-                a => a, a => (accessBaseline.GetValueOrDefault(a) ?? new List<string>()).ToArray(), StringComparer.OrdinalIgnoreCase);
+                a => a, a => (baseline.GetValueOrDefault(a) ?? new List<string>()).ToArray(), StringComparer.OrdinalIgnoreCase);
 
             // aud-a41. Off the circuit, as every write on this page: it can wait up to the store's busy timeout for a lock held
             // elsewhere. The snapshot above is what it writes.
             var outcome = await Task.Run(() => SectionAccess.SaveEditedAliases(loaded, edited));
             if (outcome.Status == SectionAccessSaveStatus.StoreCorrupt)
             {
-                sectionAccessCorrupt = true;
+                if (Holds(started)) sectionAccessCorrupt = true;
                 statusMessage = "Refusing to save: saving would replace section-access groups this page cannot see. Nothing was changed. "
                     + SettingsStoreText.SectionAccess(SectionAccess.LegacyImportFailed);
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, PendingAccessSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreCorrupt", statusMessage, pending);
                 return;
             }
 
@@ -1458,7 +1579,7 @@
             {
                 statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(AliasName))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage, PendingAccessSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage, pending);
                 return;
             }
 
@@ -1474,7 +1595,7 @@
                 var writtenAliases = edited
                     .Where(kv => !outcome.AlreadyApplied.Contains(kv.Key, StringComparer.OrdinalIgnoreCase))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var names = DisplayNamesToStore(writtenAliases, accessBaseline, pickedDisplayNames);
+                var names = DisplayNamesToStore(writtenAliases, baseline, picked);
                 await Task.Run(() => SectionAccess.SaveGroupDisplayNames(names));
             }
 
@@ -1501,8 +1622,11 @@
 
             // The baseline is what was SAVED, so a row added during the lookup still counts as an
             // unsaved edit rather than vanishing from the dirty count.
-            accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
-            RecountAccess();
+            if (Holds(started))
+            {
+                accessBaseline = snapshot.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+                RecountAccess();
+            }
             statusMessage = outcome.Status != SectionAccessSaveStatus.NothingToSave
                 ? "Section access saved."
                 : outcome.AlreadyApplied.Count > 0
@@ -1512,10 +1636,14 @@
         }
         catch (Exception ex)
         {
-            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}", PendingAccessSections());
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}", pending);
             statusIsError = true;
         }
-        finally { saving = false; }
+        finally
+        {
+            if (Holds(started)) saving = false;
+            else statusMessage = OnAnotherModule(saved, statusMessage);
+        }
     }
 
     // A successful access save records one change per alias it changed, so there is no one section
@@ -1538,11 +1666,20 @@
     private async Task SaveModuleAdminsAsync()
     {
         if (module == null) return;
+
+        // aud-a1b, the same rule as the access save: confirm every grant this save adds, and
+        // persist the snapshot that was confirmed, never the live list.
+        var saved = module;
+        var moduleId = saved.Id;
+        var started = load;
+        var section = $"ModuleAdmins:{moduleId}";
+        var loadedUnreadable = moduleAdminsUnreadable;
+        var snapshot = moduleAdminGroups.ToArray();
+        var baseline = moduleAdminGroupsBaseline.ToArray();
         saving = true;
         statusMessage = null;
         await Task.Yield();
 
-        var section = $"ModuleAdmins:{module.Id}";
         var ip = ClientInfo.GetIpForUser(currentUser);
         try
         {
@@ -1557,7 +1694,7 @@
             }
 
             // aud-a28j. The list is this page's load: empty, not the stored groups, when it could not be read.
-            if (moduleAdminsUnreadable)
+            if (loadedUnreadable)
             {
                 statusMessage = "Refusing to save: the module admin groups could not be read when this page loaded, so the list shown is not the stored groups and saving would replace them with it. Nothing was changed. Reload the page.";
                 statusIsError = true;
@@ -1565,11 +1702,8 @@
                 return;
             }
 
-            // aud-a1b, the same rule as the access save: confirm every grant this save adds, and
-            // persist the snapshot that was confirmed, never the live list.
-            var snapshot = moduleAdminGroups.ToArray();
             var refused = await ConfirmNewGroupGrantsAsync(
-                snapshot.Except(moduleAdminGroupsBaseline, StringComparer.OrdinalIgnoreCase).ToList());
+                snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToList());
             if (refused is not null)
             {
                 statusMessage = refused;
@@ -1578,10 +1712,18 @@
                 return;
             }
 
+            if (!Shows(moduleId))
+            {
+                statusMessage = PageMovedRefusal;
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage);
+                return;
+            }
+
             // aud-a28j. Re-read after the directory confirmation, immediately before the write.
             if (!ModuleAdmin.TryGetAllGrants(out _))
             {
-                moduleAdminsUnreadable = true;
+                if (Holds(started)) moduleAdminsUnreadable = true;
                 statusMessage = "Refusing to save: the module admin groups cannot be read, so this save cannot be checked against them. Nothing was changed. "
                     + SettingsStoreText.ModuleAdmins();
                 statusIsError = true;
@@ -1592,13 +1734,12 @@
             // aud-a28n. Only the groups the admin added and removed - from the confirmed snapshot, never the live
             // list - each decided under the write lock against its row. Replacing the module's whole list from the
             // snapshot dropped a group added elsewhere since the load and restored one removed elsewhere.
-            var added = snapshot.Except(moduleAdminGroupsBaseline, StringComparer.OrdinalIgnoreCase).ToArray();
-            var removed = moduleAdminGroupsBaseline.Except(snapshot, StringComparer.OrdinalIgnoreCase).ToArray();
-            var moduleId = module.Id;
+            var added = snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToArray();
+            var removed = baseline.Except(snapshot, StringComparer.OrdinalIgnoreCase).ToArray();
             var outcome = added.Length + removed.Length == 0 ? null : await Task.Run(() => ModuleAdmin.ApplyAdminChanges(moduleId, added, removed));
             if (outcome is { Readable: false })
             {
-                moduleAdminsUnreadable = true;
+                if (Holds(started)) moduleAdminsUnreadable = true;
                 statusMessage = "Refusing to save: the module admin groups cannot be read, so this save cannot be checked against them. Nothing was changed. "
                     + SettingsStoreText.ModuleAdmins();
                 statusIsError = true;
@@ -1621,8 +1762,11 @@
             // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
             // baseline would count the groups just persisted all over again on the next edit. The
             // baseline is what was SAVED, so a row added during the lookup stays an unsaved edit.
-            moduleAdminGroupsBaseline = new List<string>(snapshot);
-            RecountAdmins();
+            if (Holds(started))
+            {
+                moduleAdminGroupsBaseline = new List<string>(snapshot);
+                RecountAdmins();
+            }
             statusMessage = outcome is null
                 ? "Module admins are unchanged; there was nothing to save."
                 : "Module admins saved.";
@@ -1633,7 +1777,11 @@
             statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
             statusIsError = true;
         }
-        finally { saving = false; }
+        finally
+        {
+            if (Holds(started)) saving = false;
+            else statusMessage = OnAnotherModule(saved, statusMessage);
+        }
     }
 
     /// <summary>
@@ -1674,15 +1822,15 @@
             : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, DisplayNameFor);
     }
 
-    private string MaskIfSecret(string key, string value)
+    private string MaskIfSecret(AdminModuleDescriptor saved, string key, string value)
     {
         if (string.IsNullOrEmpty(value)) return "(empty)";
-        if (IsSecretField(key)) return "***";
+        if (IsSecretField(saved, key)) return "***";
         return value;
     }
 
-    private bool IsSecretField(string key) =>
-        module?.ConfigFields.FirstOrDefault(f => f.Key == key)?.IsSecret == true;
+    private static bool IsSecretField(AdminModuleDescriptor saved, string key) =>
+        saved.ConfigFields.FirstOrDefault(f => f.Key == key)?.IsSecret == true;
 
     /// <remarks>
     /// Only a group SID is accepted here - a group picked from the AD suggestion list, or a group's
@@ -1977,6 +2125,21 @@
 
     private async Task SaveAllowlistAsync()
     {
+        if (module == null) return;
+
+        // Every row, as it is in the table: a row with a blank name or label used to be filtered
+        // out here and vanish without a word. The save refuses it by its position (aud-a26f).
+        // aud-a41. Taken before the write, which runs off the circuit. This section's count is a tally, not a diff, so after
+        // the save it keeps only the edits made while the write waited.
+        var saved = module;
+        var moduleId = saved.Id;
+        var started = load;
+        var rows = allowlistAttributes
+            .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
+            .ToList();
+        var version = allowlistVersion;
+        var performedBy = currentUser;
+        var editsSaved = dirty.SectionCount(SecAttrs);
         saving = true;
         allowlistError = null;
         allowlistSaved = false;
@@ -1993,26 +2156,30 @@
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var user = authState.User;
             var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
-            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module!.Id, user))
+            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(moduleId, user))
             {
-                allowlistError = "You are not authorized to save the attribute allowlist.";
-                AttrEditorService.LogAllowlistSaveRefused(currentUser, ip, "Authorization", allowlistError);
+                const string unauthorized = "You are not authorized to save the attribute allowlist.";
+                if (Holds(started)) allowlistError = unauthorized;
+                else statusMessage = OnAnotherModule(saved, unauthorized);
+                AttrEditorService.LogAllowlistSaveRefused(currentUser, ip, "Authorization", unauthorized);
                 return;
             }
 
-            // Every row, as it is in the table: a row with a blank name or label used to be filtered
-            // out here and vanish without a word. The save refuses it by its position (aud-a26f).
-            var rows = allowlistAttributes
-                .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
-                .ToList();
+            if (!Shows(moduleId))
+            {
+                statusMessage = OnAnotherModule(saved, PageMovedRefusal);
+                statusIsError = true;
+                AttrEditorService.LogAllowlistSaveRefused(currentUser, ip, "PageMoved", PageMovedRefusal);
+                return;
+            }
 
-            // aud-a41. Taken before the write, which runs off the circuit. This section's count is a tally, not a diff, so after
-            // the save it keeps only the edits made while the write waited.
-            var version = allowlistVersion;
-            var performedBy = currentUser;
-            var editsSaved = dirty.SectionCount(SecAttrs);
             var result = await Task.Run(() => AttrEditorService.SaveAllowlistAndAudit(rows, version, performedBy, ip));
-            if (!result.Success)
+            if (!Holds(started))
+            {
+                statusMessage = OnAnotherModule(saved, result.Success ? "The attribute allowlist was saved." : result.Error);
+                statusIsError = !result.Success;
+            }
+            else if (!result.Success)
             {
                 if (result.StoreCorrupt)
                 {
@@ -2022,22 +2189,28 @@
                     allowlistImportRefusal = AttrEditorService.LegacyAllowlistImportRefusal;
                 }
                 allowlistError = result.Error;
-                return;
             }
-
-            // The version the save left is what this page now shows; without it the page's next save
-            // would be refused as someone else's change (aud-a28i).
-            allowlistVersion = result.Version ?? "";
-            dirty.SetCount(SecAttrs, dirty.SectionCount(SecAttrs) - editsSaved);
-            allowlistSaved = true;
+            else
+            {
+                // The version the save left is what this page now shows; without it the page's next save
+                // would be refused as someone else's change (aud-a28i).
+                allowlistVersion = result.Version ?? "";
+                dirty.SetCount(SecAttrs, dirty.SectionCount(SecAttrs) - editsSaved);
+                allowlistSaved = true;
+            }
         }
         catch (Exception ex)
         {
-            allowlistError = $"Failed to save: {ex.Message}";
+            var failure = $"Failed to save: {ex.Message}";
+            if (Holds(started)) allowlistError = failure;
+            else statusMessage = OnAnotherModule(saved, failure);
             Logger.LogError(ex, "Allowlist save failed");
-            AttrEditorService.LogAllowlistSaveFailed(currentUser, ip, allowlistError);
+            AttrEditorService.LogAllowlistSaveFailed(currentUser, ip, failure);
         }
-        finally { saving = false; }
+        finally
+        {
+            if (Holds(started)) saving = false;
+        }
     }
 
     private void UpdateAttrLevel(int idx, ChangeEventArgs e)
