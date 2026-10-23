@@ -1,7 +1,7 @@
 # aud-a29k: two PageRequestRevalidation tests hold a directory read open under a 10 s real-time harness timeout and can fail under load
 
 **Severity**: LOW - flaky test. `ExchangeAdminWeb.Tests/PageRequestRevalidationTests.cs` about 404 (`AnAnswerFromAReadThatStartedEarlier_DoesNotReplaceALaterOne`) and 437 (its sibling) hold a read open while other steps run; the harness lookup timeout (about 697) is 10 s of wall time, so a stall under load turns the early check into `LookupFailed`. Seen once in about 76 runs on a saturated host; no race found in the code.
-**Status**: Merged to master `8f4f4025`; codex defect review auth-batch-3 in flight
+**Status**: Closed - merged to master `8f4f4025`; codex auth-batch-3 clean. Complete once fix/a29g is deleted
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), after `0526dc83` (aud-a29j)
 **Commit**: the `fix(aud-a29k)` commit on `fix/a29g` that carries this record
 **Reviewer**: implementer (aud-a29g agent, candidate; not yet confirmed by the supervisor)
@@ -106,3 +106,7 @@ None.
 ## Closeout
 
 Pending: review, merge to `master` by the supervisor. Test-only: no version bump.
+
+## Reviewer comments (supervisor, auth-batch-3)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard (test-only range); codex-cli 0.163.0; base 0526dc83 head 9762fef0 (merged 8f4f4025); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 9762fef0). Clean. Codex confirmed both page guards still catch their regressions, only the two intended tests use the long timeout, the Dispose test still catches a floor-only or length-blind bound, the 2-minute waits are reachable only on hang paths (worst case three), and the healthy Dispose run takes about 2 s. Artefacts: `.agents/review/auth-batch-3.result.txt`, `.stream.log`, `prompt-auth-batch-3.md`.
