@@ -850,6 +850,62 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Empty(_h.Forest.Errors);
     }
 
+    // ---- aud-a72: a dynamic distribution group's members are read -------------------------------------------------------
+
+    private const string DynamicGroup = "dynamic-team@contoso.test";
+
+    /// <summary>
+    /// Exchange knows the operator's mailbox, and the grantee as a dynamic distribution group only it holds, whose members -
+    /// <paramref name="members"/> - the real resolver reads through the harness's pool and stand-ins: the reader itself, not a
+    /// stub of it.
+    /// </summary>
+    private IIdentityResolver ExchangeHoldsADynamicGroup(params string[] members)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(DynamicGroup).Returns(new ResolvedRecipient(DynamicGroup, "ext-" + DynamicGroup,
+            "DynamicDistributionGroup", ExistsOnPrem: false, RecipientTypeDetails: "DynamicDistributionGroup"));
+        _h.AddMailbox(DynamicGroup, Guid.NewGuid(), recipientTypeDetails: "DynamicDistributionGroup");
+        foreach (var member in members)
+            _h.ListMembers.Add(member);
+        var reader = new ExchangeIdentityResolver(_h.Pool, null!, NullLogger<ExchangeIdentityResolver>.Instance, _h.Config);
+        resolver.ReadGroupMembersAsync(DynamicGroup).Returns(_ => reader.ReadGroupMembersAsync(DynamicGroup));
+        return resolver;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ADynamicDistributionGroup_IsCheckedAgainstTheMembersExchangeCalculated(bool operatorInside)
+    {
+        // A group to the check (aud-a60) that no cmdlet read, so every grant to one was refused as incomplete though
+        // Exchange can say who its members are.
+        var resolver = ExchangeHoldsADynamicGroup(Other, operatorInside ? Upn : "third@contoso.test");
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
+
+        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal("Unlimited",
+            ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember")), "ResultSize")?.ToString());
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [InlineData("the read fails")]
+    [InlineData("no member is reported")]
+    public async Task ADynamicDistributionGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete(string shape)
+    {
+        // A calculated membership that is empty cannot be told from one not yet calculated: no answer, never "not a member".
+        var resolver = shape == "the read fails" ? ExchangeHoldsADynamicGroup(Other) : ExchangeHoldsADynamicGroup();
+        if (shape == "the read fails")
+            _h.Failures["Get-DynamicDistributionGroupMember"] = "The operation couldn't be performed because the server is busy.";
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{DynamicGroup}' could not be read"), result);
+        Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember"));
+    }
+
     /// <summary>The directory-read Secret ID the harness stored, cleared: the credential is not configured.</summary>
     private void ClearTheDirectoryReadSecretId() =>
         _h.ModuleConfig.UpdateModuleValues(ProtectedPrincipalService.ProtectedPrincipalsModuleKey,

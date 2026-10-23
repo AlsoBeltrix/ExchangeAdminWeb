@@ -79,7 +79,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <summary>
     /// The primary addresses the stand-in <c>Get-DistributionGroupMember</c> reports on any list: all of
     /// them to <c>-ResultSize Unlimited</c>, the first N to a number, and none - an error - to a read
-    /// without the parameter (aud-a2h).
+    /// without the parameter (aud-a2h). aud-a72: and <c>Get-DynamicDistributionGroupMember</c> on any
+    /// dynamic distribution group, the same way.
     /// </summary>
     public IList ListMembers { get; } = ArrayList.Synchronized(new ArrayList());
 
@@ -879,6 +880,18 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if (Test-StandInAmbiguousList $Identity) { Write-Error "The operation couldn't be performed because '$Identity' matches multiple entries."; return }
             if (-not $PSBoundParameters.ContainsKey('ResultSize')) {
                 Write-Error "stand-in: Get-DistributionGroupMember without -ResultSize - Exchange Online would answer with its default page only, not the whole list."
+                return
+            }
+            $members = @($global:ListMembers)
+            if ("$ResultSize" -ne 'Unlimited') { $members = @($members | Select-Object -First ([int]"$ResultSize")) }
+            foreach ($member in $members) { [pscustomobject]@{ PrimarySmtpAddress = $member } }
+        }
+        # aud-a72. A dynamic distribution group's calculated members: ListMembers, as Get-DistributionGroupMember reports them.
+        function global:Get-DynamicDistributionGroupMember {
+            [CmdletBinding()] param($Identity, $ResultSize)
+            Write-StandInCall 'Get-DynamicDistributionGroupMember' $PSBoundParameters
+            if (-not $PSBoundParameters.ContainsKey('ResultSize')) {
+                Write-Error "stand-in: Get-DynamicDistributionGroupMember without -ResultSize - Exchange Online would answer with its default page only, not the whole membership."
                 return
             }
             $members = @($global:ListMembers)

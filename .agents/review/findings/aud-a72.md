@@ -6,7 +6,7 @@ no dynamic-group expansion path, so the membership read throws and `PermissionVa
 as incomplete. Exchange Online exposes a dynamic group's current membership through
 `Get-DynamicDistributionGroupMember` (and the filter preview), so the operator's membership can be
 compared without evaluating the filter in the app.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a69 agent's scope; planned
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a69 agent's scope; fixed on the branch below, not merged; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-7, 2026-10-23, candidate 2)
@@ -91,6 +91,53 @@ Caller-visible change, by design: a grant to a dynamic distribution group only E
 one, is checked against the members Exchange calculated for it - refused as a self-grant when they include the operator, allowed
 when they do not, and refused as incomplete when they cannot be read or Exchange reports none.
 
+## Fix
+
+- `Services/ExchangeGroupMembers.cs` `MembersOf`: a `DynamicDistributionGroup` (new `DynamicGroupKind`) is read with
+  `Get-DynamicDistributionGroupMember -Identity <identity> -ResultSize Unlimited -ErrorAction Stop` through the pooled
+  `invoke`; an answer of no row throws ("Exchange Online reports no member of the dynamic distribution group '<x>', so whether
+  its membership was calculated cannot be told"). Its rows go through `Read`'s loop as every group's do. The class remarks name
+  the dynamic read and its empty rule.
+- `Services/IIdentityResolver.cs`: `ReadGroupMembersAsync`'s exception remarks name the empty dynamic membership (comment
+  only).
+
+Tests: `ExchangeGroupMembersTests` +5 - the stub `Get-DynamicDistributionGroupMember`;
+`TheMembersOfADynamicDistributionGroup_AreTheOnesExchangeCalculated` (its members; the two calls, `-ResultSize Unlimited`, no
+other member cmdlet), `ACloudGroupInADynamicGroup_AndADynamicGroupInACloudGroup_AreEachReadInTurn` (both nestings, every call in
+order), `TheResolver_ReadsADynamicGroupsMembers_ThroughThePool` (the harness's pool: its stand-in, `-ResultSize Unlimited`,
+one connection); `AMembershipThatCannotBeReadWhole_Throws` - its "a dynamic group" row (aud-a52's: a kind no cmdlet read)
+is now "a group of a kind no cmdlet reads" (`UniversalSecurityGroup`), with two new rows, "a dynamic group that reports no
+member" and "a dynamic group whose read fails". `ExchangeWriteHarness`: the stand-in `Get-DynamicDistributionGroupMember`
+(`ListMembers`, an error without `-ResultSize`). `PermissionValidatorSelfGrantTests` +4, the group's members read by the
+real `ExchangeIdentityResolver` through the harness's pool (`ExchangeHoldsADynamicGroup`):
+`ADynamicDistributionGroup_IsCheckedAgainstTheMembersExchangeCalculated` (the operator among the members: refused; not: allowed;
+one read, `-ResultSize Unlimited`), `ADynamicDistributionGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete` (the read
+fails; no member reported).
+
 ## Guard proof
 
-Pending.
+The aud-a71 driver and protocol (that record's Guard proof; log `a72-mutations.log`). Filter
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ProtectedGroupMembership|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~BulkPermission|FullyQualifiedName~BulkAndOnPrem|FullyQualifiedName~ExchangeWriteHarness`
+(476 tests). Fixed-file MD5: `Services/ExchangeGroupMembers.cs` `C979F088900D515F674B4F394C5B3C02` (unmutated:
+`Services/IIdentityResolver.cs` `234D2095774F7A9B53CB34A014919476`, `ExchangeAdminWeb.Tests/ExchangeGroupMembersTests.cs`
+`EF76E521ED69DCDE8B5C019DAE9EAAA9`, `ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs` `1CC6709EB13BEBF98D7F7207C669CB6F`,
+`ExchangeAdminWeb.Tests/PermissionValidatorSelfGrantTests.cs` `2985DDD2D010A083A4CAD0F30EF8BE3A`). Every mutant built with 0
+errors and every restore matched. After the round, the restored tree rebuilt and the filter: 476/476 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | the dynamic kind back to the throw (`MembersOf`'s dynamic branch never taken) | `ExchangeGroupMembers.cs` `6337FDA731EEDEBFD345015D01B3BA7D` | 7 of 476: both `ADynamicDistributionGroup_IsCheckedAgainstTheMembersExchangeCalculated` rows (refused as incomplete), both `ADynamicDistributionGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete` rows (no dynamic read made), `TheMembersOfADynamicDistributionGroup_AreTheOnesExchangeCalculated`, `ACloudGroupInADynamicGroup_AndADynamicGroupInACloudGroup_AreEachReadInTurn`, `TheResolver_ReadsADynamicGroupsMembers_ThroughThePool` |
+| E1 | extra: an empty dynamic membership taken as no member | `D306FB3585E9470D13C105334F366914` | 2 of 476: `AMembershipThatCannotBeReadWhole_Throws(shape: "a dynamic group that reports no member")`, `ADynamicDistributionGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete(shape: "no member is reported")` - allowed |
+| E2 | extra: the dynamic read without `-ResultSize Unlimited` | `13E6D4403EB678ECD25C12C0F830286C` | 5 of 476: both `ADynamicDistributionGroup_IsCheckedAgainstTheMembersExchangeCalculated` rows, `TheMembersOfADynamicDistributionGroup_AreTheOnesExchangeCalculated`, `ACloudGroupInADynamicGroup_AndADynamicGroupInACloudGroup_AreEachReadInTurn`, `TheResolver_ReadsADynamicGroupsMembers_ThroughThePool` |
+
+No separate pre-fix reproduction: M1 is the reader as it stood, at its call site.
+
+## Known gaps
+
+- Labelled assumptions, as the plan records them: the cmdlet, its `-ResultSize` and its rows as Exchange Online documents
+  them. Nothing ran against a tenant.
+- The members are the ones Exchange last calculated for the filter. A recipient the filter matches now and Exchange's last
+  calculation did not is not among them until Exchange calculates again; the check does not evaluate the filter (the
+  record's approach). A candidate in the hand-back (LOW).
+- Whether Exchange accepts a dynamic distribution group as the trustee of a mailbox or folder permission at all is not
+  verified here; the check now answers for one instead of refusing it, and the write answers for itself.
