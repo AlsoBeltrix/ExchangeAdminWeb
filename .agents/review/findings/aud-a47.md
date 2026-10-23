@@ -11,7 +11,7 @@ row. The `db` command-line mode exits before logging, so the second writer is an
 aud-a28z record states "one writer per JSONL file" as an unprobed assumption; nothing enforces it.
 **Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a45/a46 agent's scope)
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
-**Commit**: -
+**Commit**: `867957f8` (fix, tests, docs, record); comments `ab666f85`; plan `45a99de1`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-13, 2026-10-22)
 
 ## Evidence
@@ -43,7 +43,8 @@ was rejected for three reasons:
 - Why the lock holds:
   - Access to it is the log folder's own ACL. Only a principal that can write the log can contend for it, and such a
     principal could destroy the log already.
-  - The file system enforces it across processes, accounts, hosts and path spellings.
+  - The file system enforces it across processes, accounts and path spellings. Across hosts over SMB it should hold
+    too, but that is an assumption the Known gaps name.
   - The OS releases it when a dead process's handles close.
 - The extended log's consumer (aud-a46) uses the same helper.
 - Readers never take the lock. The Admin Event Log and the extended log's reader open files by name with full
@@ -79,7 +80,7 @@ Evidence, re-read at `2df48c36`:
 2. The second writer is real:
    - `deploy.ps1` 14 and `tools/deploy-pipeline.ps1` 52 default both instances to `E:\WWWOutput`, and
      `appsettings.json.sample` 17 to the same.
-   - `deploy.ps1` 397-400 grants each instance's service account Modify `(OI)(CI)` on `<LogRoot>\ExchangeAdminWeb`,
+   - `deploy.ps1` 397-401 grants each instance's service account Modify `(OI)(CI)` on `<LogRoot>\ExchangeAdminWeb`,
      and `tools/Install-ExchangeAdminWeb.ps1` 907 grants the pool's own identity the same. So every writer may create,
      write and delete files in the folder, and the identities may differ.
    - `Program.cs` 12-16: the `db` mode exits before any logger exists.
@@ -136,8 +137,8 @@ written at an offset read without the lock. Readers never take the lock.
    - README, "4. Deploy to IIS", a new "#### Shared log root (dev and prod on one server)". Two instances may share one
      `Audit:LogRoot` only because each writer takes a lock file beside the log file before touching it. A write that
      cannot take it within 2 seconds is dropped and logged as a failed audit write, never written over the other
-     instance's row. The lock is held across accounts, hosts and path spellings. An instance on an older build takes
-     no lock, so both instances must run this build. Distinct roots are a deploy-config choice.
+     instance's row. The lock holds whichever account each instance runs as. An instance on an older build takes no
+     lock, so both instances must run this build. Distinct roots are a deploy-config choice.
    - "Audit Logging" points to that subsection.
    - `appsettings.json.sample` gets an `_AuditNote` (the sample's note convention) saying the same in a sentence.
 4. Comments after the mutation round, checked code-identical.
@@ -276,9 +277,72 @@ whichever process asks.
   promotion, prod's writes can still collide with dev's. Both instances must run this build, and the README says so.
 - A principal that may create but not delete files in the log folder cannot open the lock (`DeleteOnClose` needs
   delete). Each of its writes would then wait out its bound and be dropped, reported. Every deploy path grants the
-  pool Modify (`deploy.ps1` 400, the installer 907), which rotation already needs.
+  pool Modify (`deploy.ps1` 401, the installer 907), which rotation already needs.
 - `UnauthorizedAccessException` is retried because a contender meets it while the holder's close deletes the file. A
   folder that refuses the lock for good therefore costs each write its full 2-second bound before the drop, not an
   immediate one.
 - The bound is a fixed 2 seconds, and the writer runs on the operator's thread inside its in-process lock. A
   contending instance costs at most that per write, and a hung one costs exactly that per write until it lets go.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`ab666f85`), with aud-a45's and aud-a46's. Checked by
+`check-comment-only.ps1` (session scratchpad), using aud-a28z's definition: a file's code lines are every line neither
+blank nor a comment (`//`, `///`, a one-line Razor `@* *@`). They must be identical in order between `543f5d5f` and the
+comments, line by line and by the MD5 of the code lines. Its negative controls, the three fix commits, fail on every
+file they change. Its code-line MD5s agree with the ones the aud-a28z and aud-a26u records published for the same
+bytes. This record's files:
+
+- `Services/JsonlFileAppender.cs` `A9CCC3F56780EDA3AE8571D1FF11B28E` -> `2A5D00899AB9C06589BEFF250502CAE5`: 89 code
+  lines, their MD5 `81C2FBADD565DFA1991CE47027DBBE95` on both sides. 54 lines added:
+  - the class's purpose, and why a lock file and not a named mutex;
+  - the bound, and the order under the lock;
+  - aud-a28z's one-line rule, moved with its code;
+  - what the retry tolerates, and what a hung holder costs;
+  - the timeout exception.
+- `Services/JsonlLogService.cs` `A278D0DCDBFED6040E535B01DBBEA42B` -> `D4630DD0B54F69B65C03F5EB74910EA2`: 165 code lines,
+  MD5 `DEB1F4E3025CB9FEE49B67DD005D356C`. 8 lines added:
+  - the in-process lock is this instance's only;
+  - the seam;
+  - the append's pointer to the appender;
+  - why the file's name is chosen before the lock and the rotation runs under it.
+
+## Branch-tip gates - 2026-10-22 (`ab666f85`: the plan, the three fixes and the comments)
+
+These gates are this branch's, shared by aud-a45's and aud-a46's records.
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors, 19 warnings. That is the
+  baseline taken at `2df48c36` before any change (CS8604, CS8602, CS0649, CS0414 in `GroupManagement.razor`,
+  `SelfServiceGroups.razor`, `HeaderAnalysisService.cs`, `AccountLockoutRemediationService.cs`,
+  `MigrationReportExportProcessor.cs`, `RiskyUsers.razor`, `MessageTrace.razor`, `Comms10kApprovedSetTests.cs`). None is
+  in a file this branch touches, and NuGet audit raised nothing.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 6,077 passed / 3 skipped
+  (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 6,080
+  total, 5m47s. Nothing hung, and there was no Sequence file.
+- The same suite on each fix commit's tree:
+  - `867957f8`: 6,064 / 3 / 0 (6,067 total).
+  - `d552bd61`: 6,070 / 3 / 0 (6,073 total).
+- The twenty new cases are this branch's: aud-a47 seven, aud-a45 six, aud-a46 seven. The base was not run separately;
+  6,060 is expected at `2df48c36`.
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, each run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. These were run on each commit's staged bytes before it was made,
+  and again at the branch tip.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell changed.
+
+No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, push or deployment. The stand-ins were real
+writers and a real extended log over temp folders, raw file handles as the other instance, and a real config store
+whose change token a test can make unreadable. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a42d5cbfa41a7a483`, not merged, not pushed. This is shared infrastructure: the writer
+every audit and trace call ends in, and a new appender it and the extended log share. So the base app version is due.
+The bump is the supervisor's, at merge, because `ExchangeAdminWeb.csproj` was outside this brief.
+
+This record came from master's `edbaa138` by checkout, and its Approach was amended here. At merge it meets master's
+copy as a file added on both sides. Take this branch's version: it keeps the admission's title, severity, evidence and
+reviewer lines unchanged.
+
+## Codex review
+
+Pending.

@@ -7,7 +7,7 @@ sites), `PermissionValidator`, `ProtectedPrincipalService`, `UsageTelemetryServi
 `ExtendedLogService`'s own call; one guard in `LogOnce` covers all of them.
 **Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
-**Commit**: -
+**Commit**: `d552bd61` (fix, tests, record); comments `ab666f85`; plan `45a99de1`
 **Reviewer**: implementer (surfaced by the aud-a28z/a26u/cdt-41 agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -142,3 +142,27 @@ attribute editor. Their files are other agents' in this round, and each reaches 
 - `UsageTelemetryService.Record`'s catch (240-243 at `2df48c36`) reports a failure through the same logger, unguarded.
   It is the next call on the audit path with a provider that throws. It is another agent's file and another finding's
   defect - not the watcher's - and is listed as a candidate in the hand-back.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`ab666f85`), and checked as aud-a47's record says. This record's
+file: `Services/Storage/ConfigChangeWatcher.cs` `F911F25F60A389211F70AEB578C3B7B4` -> `E8CF0DCADA65C8125FF0E72715C8069B`.
+It has 76 code lines, their MD5 `C5024022FA67892C200ACEE3003ADCEC` on both sides. 4 lines were added: why the report is
+guarded, whose logger it is, and that the streak's one attempt is spent.
+
+## Branch-tip gates
+
+See aud-a47's record (`ab666f85`) for the branch's gates. On this commit's own tree (`d552bd61`), the full suite was
+6,070 passed / 3 skipped / 0 failed, 6,073 total, 5m58s. The six cases here are among the branch's twenty.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a42d5cbfa41a7a483`, not merged, not pushed. This is shared infrastructure: the watcher
+every caching config reader consults. So the base app version is due, and no module's own behaviour changed. The bump
+is the supervisor's, at merge, because `ExchangeAdminWeb.csproj` was outside this brief. The readers' files
+(`UsageTelemetryService.cs`, `PermissionValidator.cs`, `ProtectedPrincipalService.cs`, `ADAttributeEditorService.cs`)
+were not touched; the fix needed none of them.
+
+## Codex review
+
+Pending.

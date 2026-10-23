@@ -8,7 +8,7 @@ on any read failure, so the event log shows "no diagnostics" instead of "the dia
 overflow is not counted (the channel's itemDropped callback would do it).
 **Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
-**Commit**: -
+**Commit**: `543f5d5f` (fix, tests, README, record); comments `ab666f85`; plan `45a99de1`
 **Reviewer**: implementer (surfaced by the aud-a28z/a26u/cdt-41 agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
 
 ## Evidence
@@ -232,3 +232,38 @@ Not run, by design: the page in a browser - the alert and the line are read from
   remains such a line.
 - The trace files' read failures on the same page (`LoadEvents`' trace catch) are logged and not shown - the same class
   as part 2, for the trace stream. Not this finding's; listed as a candidate in the hand-back.
+
+## Comments after the round
+
+Written after all three rounds, in their own commit (`ab666f85`), and checked as aud-a47's record says. This record's
+files:
+
+- `Services/ExtendedLogService.cs` `C8D9768D05FCE0305EF3018C4C4F5E48` -> `BEFAD1D78A7BB95DF9876B004789E3B9`: 295 code
+  lines, their MD5 `27794546DA5AE6B9E9AADD7C86BD1719` on both sides. 35 lines were added and 2 changed:
+  - the full queue's callback and why it never logs;
+  - the read's typed answer and why each file is read on its own;
+  - the consumer's one-line append under the lock, and why the folder is created before it;
+  - the seams, and `ExtendedLogRead`.
+  - The two changed lines are the drop count's field comment and its summary, which now name the queue's discards.
+- `Components/Pages/AdminEventLog.razor` `4C8BDEDE7AE4ACA30EFA78C07ECEA8AD` -> `114E2E2CCF39796FC6BD8C12B0E5CCCC`: 1,263
+  code lines, MD5 `9E57C56B729582C07A4FCB3A8B8D1697`. 7 lines were added: the two notices and why they sit above the
+  table, and the post-loop block. The page grows from 1,638 lines to 1,645; it is NotYetConverted, so no key moves.
+
+## Branch-tip gates
+
+See aud-a47's record (`ab666f85`) for the branch's gates. This commit's seven cases are among the branch's twenty.
+`ClickGate*` 316/316 and `ProgressRegistryTests` 35/35 were run alone, at the tip.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a42d5cbfa41a7a483`, not merged, not pushed. Two layers changed, so two bumps are due:
+- Shared infrastructure, the extended log: the base app version.
+- The Admin Event Log's behaviour, its diagnostics notices: its module version.
+
+Both bumps are the supervisor's, at merge: `Modules/ModuleCatalog.cs` and the csproj version elements were outside this
+brief. `Components/Pages/AdminSettings.razor` was not touched. The fix needed no file another agent owns, so nothing is
+left for a follow-up under that heading.
+
+## Codex review
+
+Pending.
