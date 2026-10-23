@@ -2,7 +2,7 @@
 
 **Severity**: HIGH - each lets an operation proceed against a mailbox the configuration
 protects.
-**Status**: Merged to master; codex raised aud-a2c (fixed, see its record); aud-a2d (write by immutable id) in progress
+**Status**: Closed - merged to master; codex follow-on aud-a2c complete; aud-a2d merged (its own row). Row closed in the 2026-10-23 evening bookkeeping pass.
 **Branch**: `worktree-agent-acf74809ad7ee3f7d`
 **Commit**: `1ad872f` (merged)
 

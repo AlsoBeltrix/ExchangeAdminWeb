@@ -5,7 +5,7 @@
 application. Narrower here: after `aud-a38b` a mistyped pool name is refused (an absent prod
 pool is an error), so only a correctly spelled name of a different, existing pool gets
 through.
-**Status**: Merged to master; codex services-batch-2 raised a follow-on, admitted as aud-a38f (nested IIS apps inside the mirrored tree) - fix in progress
+**Status**: Closed - merged to master; codex follow-on aud-a38f complete. Row closed 2026-10-23 evening.
 **Branch**: `worktree-agent-a4a7066146993eb49`
 **Commit**: `bafac35` (merged)
 **Reviewer**: implementer (found while fixing `aud-a38b`; the supervisor asked for the check)

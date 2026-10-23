@@ -4,7 +4,7 @@
 messages, schedule and ticket still can. An auto-reply can be written with a body or schedule
 the operator had already moved on from, and the audit row can name a different ticket than the
 one the change was made under.
-**Status**: Merged to master; codex services-batch-2 raised a follow-on, admitted as aud-a7d (user notification says enabled for a Scheduled write) - fix in progress
+**Status**: Closed - merged to master; codex follow-on aud-a7d complete (`9364341c`). Row closed 2026-10-23 evening.
 **Branch**: `worktree-agent-a6325a13692998ce6`
 **Commit**: `419ad2a` (merged)
 

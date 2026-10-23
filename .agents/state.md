@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### Fix-everything work stream, 2026-10-21 to 2026-10-23 - closing
+### Fix-everything work stream, 2026-10-21 to 2026-10-23 - REOPENED 2026-10-23 evening
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
 more you find while doing so", then "ALL the bugs includes ALL the bugs. those too. all of them.
@@ -29,7 +29,17 @@ Each slice's arrangement and cost go in `.agents/token-log.md`.
 `Modules/ModuleCatalog.cs`, which owns which ones. The last gate results are in
 `## Verification`.
 
-**The stream is closed (2026-10-23).** `aud-a76` landed (`03261f7c`, codex perm-batch-10 clean); every
+**REOPENED 2026-10-23 evening.** Owner ruling (`.agents/decisions.md` 2026-10-23 evening, verbatim there): every
+remaining LOW, MEDIUM and HIGH issue is resolved before any dev or prod deploy; the LOW hold and the three
+never-dispatched items are released now. Work in progress: the `.agents/review/index.md` rows whose Status begins
+"Open; released by the 2026-10-23 evening ruling" (the six held LOW records, `aud-a2e`, `cdt-36`, `aud-a29g`, and
+`kd-1`..`kd-9`, promoted from this file's former "Known defects" list and the ClickGateRegistry comment blocker).
+Arrangement unchanged (below). Fourteen stale `[~]` parent rows whose follow-ons were already complete were closed
+as bookkeeping in the same pass. **NEXT ACTION while the stream is open:** the supervising session dispatches,
+merges, codex-reviews and records; the owner deploys nothing until this block says closed again. The paragraph
+that follows is the 2026-10-23 afternoon hand-over, kept for its gate results and checklist pointers.
+
+**The stream was closed (2026-10-23 afternoon).** `aud-a76` landed (`03261f7c`, codex perm-batch-10 clean); every
 merged finding is codex-reviewed (`.agents/review/index.md`). Final gates on master as of `cfccec59`:
 Release build 0 errors / 19 warnings; full suite 6693 passed / 0 failed / 0 skipped; `dotnet format`,
 `git diff --check` and the ASCII lint clean. **NEXT ACTION: the owner's first dev deploy and the checklist
@@ -77,8 +87,8 @@ Labelled live assumptions, each named in its record and proven only in productio
   not-found shapes and `Get-MigrationUser` status values.
 - `aud-a43`: no UPN claim under Negotiate.
 
-**Held LOW backlog, for after the first dev deploy:** the `.agents/review/index.md` rows whose
-Status reads "held by the 2026-10-23 stopping rule".
+**Held LOW backlog:** released 2026-10-23 evening; see the REOPENED paragraph above. No index row reads "held by
+the 2026-10-23 stopping rule" any more.
 
 **Open owner decisions:** whether `-NarrowPublishAcl` becomes the installer default
 (`aud-operational-hardening`), which needs a dev install that exercises the modules. No index row
@@ -163,35 +173,9 @@ and earlier). Each line names its owner; the derivations are in the archive.
 - **Defender S8** (docs, version and the `DeviceNetworkEvents` fallback) is not started. Subnet,
   gateway, DHCP server and MAC vendor need a `DeviceNetworkInfo` join whose column names are
   unverified; `column_ifexists` in a request of its own is the safe way in.
-- **Known defects recorded only in this file, not as index rows, so the fix-everything stream
-  did not take them.** Each needs its own slice and guard; whether the 2026-10-21 go covers them,
-  now bounded by the 2026-10-23 stopping rule, is the owner's call. Re-verified 2026-10-23 as of
-  `d881ea58` unless marked:
-  - Message Trace exports: `Services/MessageTraceExportListing.cs` lists every operator's
-    finished exports (`GetExports`, `:119`), and `TryDownloadAsync` (`:173`) checks the ticket
-    and the export's state but no submitter, so any policy holder can download any operator's
-    detail export.
-  - Migration: `AdoptSelectionAsOpenBatch` (`Components/Pages/Migration.razor:1840`) never clears
-    `selectedMailboxes`, so a tick from batch A survives into batch B as `Actions (1)` with no
-    ticked row; `MigrationUserActionPlanner.PruneSelection` runs only through
-    `TicksInThisBatch()` (`:2774`). Confusing, not destructive.
-  - `ExchangeAdminWeb.Tests/ClickGateSource.cs:364`, `ExtractBlock`, counts braces without being
-    quote-aware, so a brace inside a string ends the block in the wrong place. `Tags()` in the
-    same file is quote-aware.
-  - `Components/Pages/IntuneDevices.razor`: a wipe's typed device-name confirmation is enforced
-    only in the button's disabled expression (`WipeNameConfirmed`, `:404`); the handler never
-    re-reads it.
-  - `Components/Pages/ConferenceRooms.razor:837`, `CancelJob`, cancels a running bulk job and
-    audits nothing, while `RemoveJob` audits.
-  - `Services/BlockedSenderService.cs:48`, `UnblockSenderAsync`, takes no `CancellationToken` and
-    has no timeout.
-  - `M365GroupManagement` validates no ticket; the same shape on `NamedLocations` delete and twice
-    on `ConferenceRooms` (Conference Rooms and Named Locations not re-verified).
-  - `SelfServiceGroups`: a previous group's operation can publish its banner into another group's
-    view (not re-verified).
-  - Not a code defect: a DC intermittently refused large writes with "A required audit event could
-    not be generated for the operation" (three of nine during the Comms-10k work); the owner's to
-    chase.
+- **Former "Known defects recorded only in this file":** promoted to `.agents/review/index.md` as `kd-1`..`kd-9`
+  on 2026-10-23 evening (the DC "required audit event could not be generated" refusal is not a code defect and
+  stays the owner's to chase; it is not a row).
 - **Implementation codereviews recorded as never dispatched:** `docs/ServiceHealth-Plan.md`,
   `docs/GroupBulkActions-Plan.md` and `docs/AlphabeticalModuleOrdering-Plan.md`.
 - **Coverage:** re-measure on green CI and ratchet per `.agents/review/coverage-floor.txt`;
@@ -241,9 +225,7 @@ and earlier). Each line names its owner; the derivations are in the archive.
     `Modules/ModuleCatalog.cs:500` and consulted by no page, handler or policy, while
     `docs/MessageTracePermissionSplit-Plan.md` reads APPROVED and IN PROGRESS with slices 2-4
     unstarted. Re-verified 2026-10-23 as of `d881ea58`.
-  - `ExchangeAdminWeb.Tests/ClickGateRegistry.cs:75` still says tiers 2-4 are "audited, NOT
-    approved for conversion", though the owner approved them 2026-10-12. It is a code file, so
-    correcting it is a code change.
+  - `ExchangeAdminWeb.Tests/ClickGateRegistry.cs:75` stale tiers 2-4 wording: now index row `kd-9`.
 - **SharedConfigDb record flags:** the decision says SQLite `data_version` / next read; the
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but not in the Constitution.

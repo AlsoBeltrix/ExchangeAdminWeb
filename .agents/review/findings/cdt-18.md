@@ -8,7 +8,7 @@ and a start that IIS accepts but that never reaches Started is not noticed at al
 "Install/update complete." with the application down. The same pair of defects cdt-16 fixed in
 the ADI deploy script, plus the unverified start aud-a38 fixed in the promotion script. Found by
 the promote agent in this batch's files; admitted by the supervisor.
-**Status**: Merged to master; codex ops-batch-3 extends it as cdt-31 (a manifest write failure masks a saved pool-start failure) - fix in progress
+**Status**: Closed - merged to master; codex extension cdt-31 closed. Row closed 2026-10-23 evening.
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
 **Commit**: `4fcd9f1` (merged)
 **Reviewer**: implementer (found by the promote agent, admitted by the supervisor)

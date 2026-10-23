@@ -9,7 +9,7 @@ those forms at startup. So `deploy.ps1` (both paths), the promotion script, the 
 the installer can take a VERIFIED backup of an unrelated database, report success, mirror, and
 restart an app that then refuses to start: a misleading rollback snapshot and an outage. From the
 codex review of the cdt-8..10 batch (its finding 2).
-**Status**: Merged to master; codex ops-batch-3 extends it as cdt-30 (forward-slash paths the app accepts are refused) - fix in progress
+**Status**: Closed - merged to master; codex extension cdt-30 closed (and its cdt-37). Row closed 2026-10-23 evening.
 **Branch**: `cdt-11-14-installer-deploy` (worktree `agent-a1b04b356d91eeed2`)
 **Commit**: `dc1ba6e` (merged)
 **Reviewer**: implementer (codex review of the cdt-8..10 batch, admitted by the supervisor)

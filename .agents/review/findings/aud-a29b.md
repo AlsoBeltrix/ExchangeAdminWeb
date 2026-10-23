@@ -3,7 +3,7 @@
 **Severity**: HIGH - an operator removed from an allowed AD group keeps every permission they
 had, on every page, for as long as their browser tab is open. `aud-a29` closed the
 administrative half of this on one page; this is the rest.
-**Status**: Merged to master (`cb3be91`, `702f66f`, `0d30442`); codex findings aud-a29c/d/e fixed and merged (plus aud-a29f found on the way); aud-a29g (prerender gap) recorded for an owner cost decision; live dev check owed
+**Status**: Closed - merged to master (`cb3be91`, `702f66f`, `0d30442`); aud-a29c/d/e closed, aud-a29f fixed on the way; aud-a29g released as its own row by the 2026-10-23 evening ruling. Live dev check owed (manual, after the first deploy).
 **Branch**: `worktree-agent-aede3a8e8d3e038a3`
 **Commit**: `cb3be91` fix, `0d30442` off-switch (merged)
 

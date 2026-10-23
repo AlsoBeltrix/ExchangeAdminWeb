@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM - not a wrong-principal write, but a Conference Rooms partial mutation on a path
 the aud-a2d record says fails closed before any write.
-**Status**: Merged to master; codex batch-5 follow-on aud-a2h fixed and merged (`fdf2923`); dev acceptance owed
+**Status**: Closed - merged to master; aud-a2h complete (`fdf2923`). Dev acceptance owed (manual, after the first deploy). Row closed 2026-10-23 evening.
 **Branch**: `worktree-agent-a0c2a0143143dd6e1`
 **Commit**: `587d7d5`; repair `f07a6ef` (merged)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh over 3562cf08..7ae55b9a, 2026-10-21

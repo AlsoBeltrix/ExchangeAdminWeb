@@ -5,6 +5,27 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-23 - Everything open is fixed before any deploy; the LOW hold is lifted
+
+Owner ruling 2026-10-23 (evening), verbatim: "all remaining low/med/high issues need to be
+resolved before I will push to dev or prod. plan to work all of those over the weekend starting
+now." This supersedes the deferral half of the 2026-10-23 stopping rule: the LOW candidates it
+held "for after the first dev deploy" and the three MEDIUM items recorded as never dispatched
+(`aud-a2e`, `cdt-36`, `aud-a29g`) are released now, before the deploy, not after it. The
+stopping rule's other half stands: everything merged gets a codex defect review, and what codex
+raises is fixed at every severity (not only HIGH and MEDIUM) under this ruling. The 2026-10-21
+"EVERYTHING" go is the authority for scope; this ruling changes only the timing. The defects
+`.agents/state.md` lists under "Known defects recorded only in this file" are read as inside
+"all remaining issues" and are admitted to `.agents/review/index.md` as findings (the earlier
+record said their coverage was the owner's call; "all remaining" settles it). Outside the
+ruling, unchanged: items whose record says "dev acceptance owed" (a manual check on a deployed
+instance, which this ruling makes impossible until the stream closes); the deferred Account
+Lockout findings (`aud-a5b`, `aud-a5c`, owner 2026-10-19); the M365 Group Management
+protection gap the owner excluded; feature plans not yet started (`MessageTraceSearch` slices
+2-4). Arrangement unchanged from the stream: thin Fable supervisor, Opus 5.5 implementation
+agents in their own worktrees, codex review per merged group, `.agents/token-log.md` entry on
+close. Deployment remains the owner's and waits for the stream to close with a green master.
+
 ### 2026-10-23 - The Directory Read Credential is the privileged write secret
 
 Owner ruling 2026-10-23, after the fix-everything hand-over: "reading AD is not restricted here" and "we do
