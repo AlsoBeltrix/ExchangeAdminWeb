@@ -13,9 +13,9 @@ through the production probe wherever AD is reachable; it could use the psl-8 st
 deliberately live classes `ADDirectoryLiveTests` (5) and `AdDirectoryForestSearchLiveTests` (3) query the
 live directory on every full-suite run on this host - the "no live directory calls" rule for agents is not
 met by the mandated gate itself; whether those classes stay in the default run is the owner's call.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; held by the 2026-10-23 stopping rule (LOW) for after the first dev deploy
-**Branch**: -
-**Commit**: -
+**Status**: Verified on branch; awaiting merge and codex review - items (1)-(4); item (5) an owner call, not implemented (below) - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 "EVERYTHING" go
+**Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
+**Commit**: (1) `c4374938`, (2) `370e32f3`, (3) `313775a0`, (4) `91559b4a`; this closeout the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, candidates 2-6 of its hand-back)
 
 ## Evidence
@@ -126,6 +126,10 @@ to take it:
   `dotnet test ExchangeAdminWeb.slnx --filter "Category=LiveDirectory"`, run by hand on a domain-joined host with RSAT and the
   owner's go. (A `.runsettings` `TestCaseFilter` referenced from the test project would make the bare command exclude them
   too; how it combines with a command-line `--filter` was not checked here, so the explicit filter is the recommendation.)
+  Checked on this branch's build, no live test run: `--filter "Category!=LiveDirectory&FullyQualifiedName~ModuleCredentialLookupTests"`
+  is accepted and runs that class's 5 cases (no test carries the trait yet), and `--filter "Category=LiveDirectory"` answers
+  "No test matches the given testcase filter". That the adapter then matches `[Trait("Category", "LiveDirectory")]` is its
+  documented trait filtering, not run here - adding the trait is the owner's call.
 - **What CI would run.** `dotnet test ExchangeAdminWeb.slnx -c Release --no-build --filter "Category!=LiveDirectory" ...`:
   the eight cases leave its count (they skip there today, so nothing CI proves changes); CI never runs the opt-in, having no
   directory.
@@ -216,3 +220,78 @@ answer nothing (it asserted only not-null, which a search answering anything wou
 | P1 | `Search`'s unavailable return answering one result (psl-8's P1 shape) | `Services/ADDirectorySearchService.cs` `4d47d0d45be6dc4d24503ada43165afd` | `812add71d7dc427447748cb54d14c16b` | 7: the theory's four (OU included) and psl-8's three unavailable searches | PASS 101 |
 
 Not run, by design: the theory back on the production probe - the live call this item removes.
+
+## Files changed
+
+Snapshot before repair: `3e43b35b` (the branch's base).
+
+- (1) `Services/EmergencyDisableService.cs` (`VerifyBoundObject`); `ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs` (the
+  Emergency Disable psl-10 section); `ExchangeAdminWeb.Tests/EmergencyDisableServiceTests.cs` (the version pin);
+  `Modules/ModuleCatalog.cs` (Emergency Disable 1.6.0).
+- (2) `Services/SelfServiceGroups/SelfServiceGroupService.cs` (`ResolveCallerDn`, now internal; `ReadGroups`, new;
+  `CreateDirectoryRunspace`, new; the two paths); `ExchangeAdminWeb.Tests/DirectoryModuleImportTests.cs` (the Self-Service
+  psl-10 section); `Modules/ModuleCatalog.cs` (the Self-Service Groups 1.12.0 note, the version moved by aud-a2y on this
+  branch).
+- (3) `Services/DhcpAuthorizationService.cs` (the two remote scripts); `ExchangeAdminWeb.Tests/DhcpAuthorizationPowerShellLifecycleTests.cs`
+  (`RemoteSession` and its three theories); `Modules/ModuleCatalog.cs` (DHCP Authorization 1.5.0).
+- (4) `ExchangeAdminWeb.Tests/ADDirectoryValidateExistsTests.cs`; `ExchangeAdminWeb.Tests/ADDirectorySearchServiceTests.cs`
+  (`CreateService` internal; its remark).
+- (5) none - an owner call.
+- This record.
+
+**Operator-visible changes.** An error record a directory read leaves without throwing no longer fails the step after it:
+an Emergency Disable's disable, lockdown move and password reset (they reported FAILED, or "lockdown OU could not be read",
+after the write had been made); a Self-Service Groups owned-groups list or group search (the first group hidden, or answered
+"not found, or you do not have permission"); a DHCP authorization or deauthorization (reported failed after the change was
+made, when the remote DhcpServer import left such a record). A read or import that throws fails as before, with its own
+error. *Assumption, not probed* (psl-7's and psl-8's): the real cmdlets write no error past `-ErrorAction Stop`, so no
+outcome the real modules are known to produce changes. Nothing else.
+
+## Coder dispute
+
+One correction to the record's approach, item (3): "the script clears `$Error` between the import and the change" would
+not fix it - measured (above): the import's record is already in the stream `HadErrors` reads, and `$Error` is a session
+variable apart from it. The redirection (`2>$null`) does what the approach meant. No other dispute.
+
+## Known gaps
+
+- (1) The four steps are reached directly, not through `DisableAsync`, whose credential, Graph and protection steps are
+  outside this record (psl-8's gap, unchanged).
+- (2) Only the two list paths open their session through the new seam; the member listing, the membership writes and the
+  static helpers still build theirs inline (no check of theirs takes such a record: psl-8's audit). The reads that follow
+  `CallerCanManageMembers` - `ProjectGroup`'s owner lookups, under SilentlyContinue - write no record (psl-5, checked) and
+  were not changed.
+- (3) Emulated, not live: the remote session is a second runspace and its records are re-emitted by the stand-in; that
+  `Invoke-Command -ComputerName` reports a remote terminating error as an error record is documented behaviour, not probed.
+  *Assumption, not probed*: the DhcpServer module's import writes no error past Stop - where it writes none, nothing changes.
+- (4) `ADDirectoryValidateExistsTests`' own `CreateService()` is still the production probe's; its two users return before
+  the probe. A future test there that reaches the directory must take the stand-in or move to `ADDirectoryLiveTests`
+  (the class remarks say so).
+- (5) Not implemented - the owner's call (above). Until it is taken, the mandated gate run in full still probes the live
+  directory on a host with RSAT; this branch's runs excluded the two classes by filter and said so.
+- Source-level and stand-in driven: no directory, DHCP server, Exchange, Graph or network call was made.
+
+## Closeout
+
+Fixed on branch `fix/psl10-a2y`, not merged, not pushed: (1) `c4374938`, (2) `370e32f3`, (3) `313775a0`, (4) `91559b4a`;
+this closeout in the commit that adds it (its SHA in the implementer's hand-back). Module bumps from this record: Emergency
+Disable 1.5.1 -> 1.6.0, DHCP Authorization 1.4.3 -> 1.5.0; Self-Service Groups' change lands under aud-a2y's 1.12.0 on the
+same branch. No shared code changed by this record (the test-only `ADDirectorySearchServiceTests` aside); no base app bump
+from it. Pending: the owner's call on item (5), the merge, and codex review.
+
+## Branch-tip gates - 2026-10-23 (shared by aud-a2y, kd-5 and psl-10 on `fix/psl10-a2y`)
+
+- Every run below excluded `ADDirectoryLiveTests` and `AdDirectoryForestSearchLiveTests` by `--filter` (the standing
+  no-probe instruction; item (5)); runs before item (4) also excluded the theory it moves.
+- Baseline, master `3e43b35b`: 6,720 passed, 0 failed, 0 skipped.
+- Each commit's own tree (exported with `git archive`, Release build, then the suite on it, `-c Release --no-build`,
+  `xUnit.MaxParallelThreads=4`): `3f641ce4` 6,722; `2de45069` 6,747; `d70497d9` 6,749; `18e601f8` 6,760; `c4374938` 6,763;
+  `370e32f3` 6,768; `313775a0` 6,774 - each 0 failed, 0 skipped, its build 0 errors and 19 warnings (the baseline count).
+  `2de45069`'s first run failed one case, `ExtendedLogServiceTests.Dispose_GivesTheQueueTimeInProportionToItsLength` [10 s], a
+  load-proportional timing test in code no commit here touches, run while this branch's mutation builds loaded the host; it
+  passed 3 of 3 in isolation and the tree's re-run passed whole.
+- The final tree (`91559b4a` and this closeout, records only): `dotnet build ExchangeAdminWeb.slnx -c Release` 0 errors, 19
+  warnings; `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` (the two live classes excluded) 6,778 passed, 0
+  failed, 0 skipped - item (4)'s four cases included, now on the stand-in; `dotnet format ExchangeAdminWeb.slnx
+  --verify-no-changes --no-restore` exit 0; `git diff --check HEAD` exit 0; `tools/Test-AsciiOnly.ps1` exit 0.
+- No `.ps1` or `.psm1` changed: no PSScriptAnalyzer or Pester run.
