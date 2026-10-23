@@ -55,6 +55,8 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
     /// <inheritdoc />
     public async Task<IReadOnlyList<ExchangeGroupMember>> ReadGroupMembersAsync(string group)
     {
+        // aud-a52. ResolveRecipientAsync's guards and its pool: an Exchange Online that cannot be read, or is not configured,
+        // throws - never an empty membership - and the read is read-only, so a dead session may be retried once.
         if (!_exoPool.TryGetIsConfigured(out var configured))
             throw new InvalidOperationException("Exchange Online's module enablement or its module_config rows could not be read - cannot read the group's members.");
         if (!configured)

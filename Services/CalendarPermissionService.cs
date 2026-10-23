@@ -134,6 +134,8 @@ public class CalendarPermissionService : ExchangeServiceBase
         {
             try
             {
+                // aud-a50. A row that names no user is an invalid row, refused before any check and recorded as one - the
+                // Mailbox Permissions loop's rule and detail.
                 if (string.IsNullOrWhiteSpace(row.User))
                 {
                     audit.LogCalendarPermission(

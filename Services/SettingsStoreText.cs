@@ -26,6 +26,8 @@ public static class SettingsStoreText
     private const string LegacyRemedy =
         "Correct or remove the file, then recycle the application pool so the import runs again at start.";
 
+    // The enablement store's two sentences, once: the page's text and the service's are built on them, so they cannot
+    // drift apart (aud-a50). The legacy file's names no page to reload, so it is one text in both.
     private const string EnablementLegacyUnimported =
         "The legacy file config\\modules-enabled.json could not be imported into the config database and is left in place, so every module reads as disabled until it imports. " + LegacyRemedy;
 
@@ -48,6 +50,10 @@ public static class SettingsStoreText
     /// <summary><see cref="ModuleConfig"/> for a service's log line or message: the same rows and fix, no page to reload (aud-a26t).</summary>
     public static string ServiceModuleConfig(string moduleId) => ModuleConfigUnreadable(moduleId) + ServiceDatabaseRemedy;
 
+    /// <summary>
+    /// <see cref="Enablement"/> for a service's log line or message: the legacy file as it is, else the table with no page
+    /// to reload (aud-a50, the aud-a26t rule).
+    /// </summary>
     public static string ServiceEnablement(bool legacyImportFailed) => legacyImportFailed
         ? EnablementLegacyUnimported
         : EnablementTableUnreadable + ServiceDatabaseRemedy;

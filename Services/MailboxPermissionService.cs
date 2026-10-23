@@ -18,6 +18,10 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// </summary>
     private const string ServicerModuleId = "MailboxPermissions";
 
+    /// <summary>
+    /// The detail recorded for a bulk row whose User is empty or blank (aud-a50); the Calendar Permissions loop records the
+    /// same.
+    /// </summary>
     internal const string BulkRowNamesNoUser = "No user specified (the User column is empty)";
 
     public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
@@ -221,6 +225,9 @@ public class MailboxPermissionService : ExchangeServiceBase
         {
             try
             {
+                // aud-a50. A row that names no user is an invalid row, refused before any check: the self-grant check put ''
+                // to Exchange and the directory and recorded the row as a self-grant attempt, and a revocation went on to the
+                // write. It is recorded as what it is, and the next row is processed.
                 if (string.IsNullOrWhiteSpace(row.User))
                 {
                     audit.LogMailboxPermission(

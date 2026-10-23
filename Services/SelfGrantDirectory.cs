@@ -41,6 +41,10 @@ internal sealed record SelfGrantDirectoryObject(
 /// Every read is <c>Get-ADObject</c> under <c>-ErrorAction Stop</c>, and a cmdlet that wrote to its error stream is a failed
 /// read; so is a row without a DN, an objectGUID or a class. The validator reads "no rows" as an answer, so nothing here
 /// may report one for a read that did not complete.
+///
+/// aud-a52. Whether a group holds the operator is read through <see cref="Groups"/>: the protected-group evaluator's reads
+/// (<see cref="PowerShellProtectedGroupDirectory"/>, the same failed-read rule) in this session, under its identity and with
+/// its catalog. aud-a43's direct member-link read is gone; the evaluator reads nesting and the primary group.
 /// </remarks>
 internal sealed class SelfGrantDirectory : IDisposable
 {
@@ -59,6 +63,10 @@ internal sealed class SelfGrantDirectory : IDisposable
         Groups = PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, globalCatalog);
     }
 
+    /// <summary>
+    /// The reads <see cref="ProtectedGroupMembership.Evaluate"/> needs, over this session's runspace: no credential, the
+    /// catalog this session found (aud-a52).
+    /// </summary>
     internal IProtectedGroupDirectory Groups { get; }
 
     /// <summary>The production session, built as every directory path here builds it; not yet opened.</summary>

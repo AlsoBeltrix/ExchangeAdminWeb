@@ -217,9 +217,8 @@ public sealed class ExoConnectionPool : IDisposable
     private static string UnreadableRows => SettingsStoreText.ServiceModuleConfig(ConfigModuleKey);
 
     // The enablement store and its fix, for the refusal and its log line, in a service's words (aud-a44, aud-a26t): the
-    // legacy file when its import failed - that text has no page clause - else the table, with the service's remedy in place
-    // of the page's reload clause. SettingsStoreText (another agent's file) has no service form of Enablement yet; the
-    // follow-up is recorded in aud-a44.
+    // legacy file when its import failed, else the table with the service's remedy - the store text's own service form
+    // (aud-a50), where the page text with its reload clause replaced used to stand.
     private string UnreadableEnablement => SettingsStoreText.ServiceEnablement(_enablement.LegacyImportFailed);
 
     // aud-a28x. Three fail-open value reads used to be followed by a presence read and a probe, so a value read that failed
