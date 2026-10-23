@@ -1,7 +1,7 @@
 # aud-a2e: Conference Rooms writes to a room-list group that is never checked against Protected Group Targets
 
 **Severity**: MEDIUM - an authorization gap (Known Failure Class 3). Conference Rooms adds a room mailbox to a room-list distribution group chosen through the Building field (`ConferenceRoomService.AddToRoomListAsync`, on-prem fallback included); that group write is never routed through `ProtectedPrincipalService.CheckWriteTarget`. `docs/ProtectedGroupWriteTarget-Plan.md` scoped the module out as "its write target is a mailbox", which is true of `Set-Place` but not of the room-list membership write. A room list configured as a Protected Group Target can therefore be written by any Conference Rooms operator.
-**Status**: Verified on branch; awaiting merge and codex review - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
+**Status**: Merged to master `3e43b35b` (fix `ebd66b91`); codex defect review cr-batch-7 in flight. Owner calls raised by the agent are in its hand-back notes below and in the supervisor's report; the Constitution:94 vs ProtectedPrincipalEntryValidator:90 conflict (cloud-only principals protectable or not) is an open owner question.
 **Branch**: `fix/a2e` (worktree `D:\source\ExchangeAdminWeb-wt\a2e`, forked from master at `eb017102`)
 **Commit**: the one commit on `fix/a2e` that adds this record (its SHA is in the implementer's hand-back)
 **Reviewer**: implementer (recorded by the supervisor at the 2026-10-23 hand-over)
