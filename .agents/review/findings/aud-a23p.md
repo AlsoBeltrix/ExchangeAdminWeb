@@ -10,7 +10,7 @@ because the setting splits at commas. (3) The mailbox-load banner says "Unable t
 reason; the reason reaches only the activity text.
 **Status**: Fixed on branch; closed on guard proof; not merged (approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
-**Commit**: -
+**Commit**: `2dba5725` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23r, aud-a23o, aud-a23q)
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidates 4, 7 and 8 of its hand-back)
 
 ## Evidence
@@ -159,3 +159,14 @@ tests 2008/0; `dotnet format --verify-no-changes` exit 0; `git diff --cached --c
   names the gate's exclusion, and a filter on it finds both; the row's errorDetail says which.
 - Each banner's list still shows every entry with the gate's own reason, as before; the headline and the closing advice are
   what now tell the kinds apart.
+
+## Comments and branch-tip gates
+
+Shared by the four records of this branch; the canonical copy is in `aud-a23r.md` ("Comments and branch-tip gates"):
+comments `9fa7664d`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings (the
+baseline's), full suite 6086 passed / 3 skipped / 0 failed (6089), format, the whitespace check and the ASCII lint all exit
+0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac3fd1dd1db4f9c1d`; not merged, not pushed.

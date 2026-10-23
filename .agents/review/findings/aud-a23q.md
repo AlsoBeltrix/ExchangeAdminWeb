@@ -6,7 +6,7 @@ message, no audit row, while the bulk executors audit a "_Denied" row. The two c
 (`CreateSingleMigrationBatch`, `CreateMigrationBatch`) show nothing on a denial or on a guard return.
 **Status**: Fixed on branch; closed on guard proof; not merged (approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
-**Commit**: -
+**Commit**: `d58a0bc5` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23r, aud-a23o, aud-a23p)
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidate 5 of its hand-back)
 
 ## Evidence
@@ -136,3 +136,14 @@ the helpers' shape before the round); the 1945 focused tests 1945/0 (`ClickGate*
 - The guard returns of the two bulk executors - "no list loaded" (`if (migrationBatches == null) return;` and the mailbox
   executor's) - still show nothing; outside this finding's named sites (named in the hand-back as a candidate).
 - No circuit or browser ran: the page's handlers and compiled render tree were driven directly.
+
+## Comments and branch-tip gates
+
+Shared by the four records of this branch; the canonical copy is in `aud-a23r.md` ("Comments and branch-tip gates"):
+comments `9fa7664d`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings (the
+baseline's), full suite 6086 passed / 3 skipped / 0 failed (6089), format, the whitespace check and the ASCII lint all exit
+0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac3fd1dd1db4f9c1d`; not merged, not pushed.

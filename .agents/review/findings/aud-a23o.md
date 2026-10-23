@@ -11,7 +11,7 @@ base returns null for ANY failure - a guess. (3) `HasCloudMailboxAsync` reads `G
 Eligible-when-no-user return; a future caller inherits the defect.
 **Status**: Fixed on branch; closed on guard proof; not merged (approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
-**Commit**: -
+**Commit**: `990a02ab` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23r, aud-a23q, aud-a23p)
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidates 1, 2, 3 and 6 of its hand-back)
 
 ## Evidence
@@ -245,3 +245,14 @@ stand-in defined through the services' own `ConnectOnPrem` seam.
   aud-a23k's cloud archive read, through `ReadUnlessNotFound`, still treats that as no archive (noted as a candidate).
 - Behaviour outside Migration: Recipient Lookup's on-premises sizes and location warnings, and Calendar and Mailbox
   Permissions' refusal text for a failed location read (named in the hand-back for their bumps).
+
+## Comments and branch-tip gates
+
+Shared by the four records of this branch; the canonical copy is in `aud-a23r.md` ("Comments and branch-tip gates"):
+comments `9fa7664d`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 59 warnings (the
+baseline's), full suite 6086 passed / 3 skipped / 0 failed (6089), format, the whitespace check and the ASCII lint all exit
+0, page 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac3fd1dd1db4f9c1d`; not merged, not pushed.

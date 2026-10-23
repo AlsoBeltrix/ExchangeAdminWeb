@@ -13,7 +13,7 @@ user has the user principal name ..." and is Undetermined - fail-closed, but a f
 valid mailbox whenever excluded groups are configured.
 **Status**: Fixed on branch; closed on guard proof; not merged (admitted and approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a23o/p/q agent's scope)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
-**Commit**: -
+**Commit**: `dd74db81` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23o, aud-a23q, aud-a23p)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (mig-batch-7, 2026-10-22, candidates 1 and 2)
 
 ## Evidence
@@ -210,3 +210,52 @@ was the stand-in. The full suite runs at the branch tip.
   domain-local or universal group there) is not in the user's domain's memberOf unless that domain controller holds its
   links, and a nested membership is not seen - as before. A configured name two domains hold must be given as the group's
   SID or objectGUID.
+
+## Comments and branch-tip gates (shared by aud-a23r, aud-a23o, aud-a23q, aud-a23p)
+
+The canonical copy for all four records; the other three point here.
+
+**Comments (`9fa7664d`).** Written after every finding's mutation round, at the call sites the rounds proved load-bearing;
+comments only. Checked by `check-comment-only.ps1` (session scratchpad `work/`): HEAD and the tree are each reduced to their
+code - comment-only lines dropped (`//`, `///`, a one-line `@* ... *@`), the trailing comments this branch adds cut off
+(`// aud-...`, `@* aud-... *@`), blank lines dropped - and the reductions are identical for all seven files. The checker was
+shown to bite: against `d58a0bc5`, before aud-a23p's code, it reports the page, `PermissionResult.cs` and the catalog as
+different. In the four `.cs` files every changed line is a comment or blank; on the three pages each changed line is the line
+it was plus a trailing comment, on a line this branch had already changed, so `Migration.razor` stays 4377 lines,
+`CalendarPermissions.razor` 762 and `MailboxPermissions.razor` 808, and every registered line key holds. The comments that
+moved with code in aud-a23o (`IsCancellation`, `ReadSize`, `MailboxSizes`) are reworded for their new home. Code md5s
+(reduced, unchanged by the commit): `ExchangeServiceBase.cs` `1bdd56fc386f4c833f2fb51faeefb437`, `MigrationService.cs`
+`878c15bcc902d6cd54ab39d587124365`, `RecipientLookupService.cs` `23236d8448234afadf96a3e8c35f94ec`, `PermissionResult.cs`
+`ad1ca45caa59a9ed75e474282fedc429`, `Migration.razor` `2c2c31c472f5133780379d3e3b55bdc9`, `CalendarPermissions.razor`
+`d82d12ec45491f788371ee49ee6227a3`, `MailboxPermissions.razor` `b9e2b40f216e4e5aad492314fba6f952`. Final file md5s (LF) at
+the tip: `Services/ExchangeServiceBase.cs` `653b18af6ad5ec0fac6fd6d11dc20cfa`, `Services/MigrationService.cs`
+`9e419c743a3432539fedf788ce61e8ab`, `Services/RecipientLookupService.cs` `8715c127ff3085722977248ad2d681db`,
+`Models/PermissionResult.cs` `f24fdbca73ad71e3044862c6b841cb3c`, `Components/Pages/Migration.razor`
+`4a74131e65da90eec965556ec83d40a6`, `Components/Pages/CalendarPermissions.razor` `ca4f57000c438beddd95ceaf6cd033dc`,
+`Components/Pages/MailboxPermissions.razor` `8e699a6b58d094ee29c03e8f8c3dc50d`; the tests and `Modules/ModuleCatalog.cs` are
+as their fix commits left them. Focused rerun after the comments: 2008/0.
+
+**Branch-tip gates (`9fa7664d`, all four fixes and the comments; the records-only commit after it changes no code):**
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 59 warnings - the count at `5eac8b25`, and the
+  same 19 code warnings (file, line, column, id) as the baseline build of `5eac8b25`; none in a file this branch touched.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): Passed 6086,
+  Skipped 3 (the known `ADDirectorySearchServiceTests ...WhenAdUnavailable_ReturnsEmpty` cases), Failed 0, Total 6089;
+  5 m 23 s; "All tests finished running, Sequence file will not be generated." - no hang. This branch adds 97 cases (four new
+  test classes, 15 + 42 + 15 + 7, and 18 in `MigrationApproveConfirmationTests`); the suite at `5eac8b25` was not run here, so
+  5992 there is derived, not measured.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. The diff whitespace check against HEAD: exit
+  0. `tools/Test-AsciiOnly.ps1` after staging everything: exit 0. `Components/Pages/Migration.razor`: 4377 lines.
+
+No live Exchange, Active Directory, Graph, DHCP or IIS call was made: every Exchange Online cmdlet was a stub in an in-process
+runspace, every on-premises cmdlet a stub defined through the services' own `ConnectOnPrem` seam, every AD cmdlet a stub in
+the directory stand-in (a two-domain forest of `contoso.test` and `fabrikam.test`), the protection check and the mail
+stand-ins. No PowerShell source changed, so PSScriptAnalyzer and Pester were not run. No coder self-review verdict is
+claimed. Version bumps are the supervisor's: the base app (`ExchangeServiceBase`, `PermissionResult`), and the Migration,
+Recipient Lookup, Calendar Permissions and Mailbox Permissions modules.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac3fd1dd1db4f9c1d`; not merged, not pushed. This record was taken from `691671fb` (master's
+copy), so at merge it is an add/add of the same file: master's text plus this branch's Plan, Guard proof, Known gaps, the
+shared section and this closeout - take the branch's copy.
