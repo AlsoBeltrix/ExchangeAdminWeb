@@ -1,7 +1,7 @@
 # aud-a29g: prerendered pages still render and run OnInitialized under a stale ticket
 
 **Severity**: MEDIUM, design - the aud-a29b/c/d/e revalidation closes the circuit when an operator's authorization changes, and no handler can run under a stale ticket. But the prerender pass of a page request still renders the page and runs `OnInitialized` / `OnInitializedAsync` against the request's cached principal before the circuit's revalidation runs, so a revoked operator who requests a page still sees it rendered (reads in `OnInitialized` included) once. Closing it costs a directory read per page request, which is why the aud-a29b record left it for an owner cost decision; the 2026-10-23 evening ruling resolves everything open, so it is dispatched.
-**Status**: Merged to master `a5d12cc8` (fix `2678735e`); codex auth-batch-1 raised two LOW candidates, admitted as aud-a29i and aud-a29j; closes when they land
+**Status**: Closed - merged to master `a5d12cc8` (fix `2678735e`); codex auth-batch-1 raised aud-a29i and aud-a29j, both landed at `d58b5d7c` and reviewed clean (auth-batch-2). Complete once fix/a29g is deleted. Owner calls from the hand-back (one-interval window; one audit line per refused request with a standalone 403; cache-free circuit checks) are held for the owner
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), base `eb017102`
 **Commit**: the `fix(aud-a29g)` commit on `fix/a29g` that carries this record (code and record together)
 **Reviewer**: implementer (recorded by the supervisor from the aud-a29b record's hand-back)

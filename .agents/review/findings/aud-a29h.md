@@ -1,7 +1,7 @@
 # aud-a29h: the revalidation off-switch warning says a removed operator keeps access "until it is reloaded", which is not what happens
 
 **Severity**: LOW - wording that misleads during an incident. `Authorization/MembershipRevalidatingAuthenticationStateProvider.cs` about 238-240 and 247-249, and `README.md` about 873, say that with the off-switch set a removed operator keeps access "until it is reloaded". Under Kerberos a reload keeps the stale access until the ticket renews, and with the switch off page requests are not checked either (aud-a29g). Someone switching revalidation off during an incident would wrongly expect a reload to cut a removed operator off.
-**Status**: Merged to master `d58b5d7c`; codex defect review auth-batch-2 in flight
+**Status**: Closed - merged to master `d58b5d7c`; codex auth-batch-2 clean. Complete once fix/a29g is deleted after its follow-ons land
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), continuing from `2678735e`
 **Commit**: the `fix(aud-a29h)` commit on `fix/a29g` that carries this record
 **Reviewer**: implementer (aud-a29g agent, candidate; not yet confirmed by the supervisor)
@@ -131,3 +131,7 @@ of a tab already open, not of the operator's access as a whole.
 ## Closeout
 
 Pending: review, and merge to `master` by the supervisor. No version bump: no behaviour changes.
+
+## Reviewer comments (supervisor, auth-batch-2)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier=standard pair (grade fallback, owner 2026-08-03) [escalated: T1 Authorization/* paths]; codex-cli 0.163.0; base 2678735e head 0526dc83 (merged d58b5d7c); 2026-10-23 evening; capability proof: AGENTS.md read and git show --stat 0526dc83 both succeeded. Verdict: clean. Codex confirmed the path field on every refusal shape (encoded before the cap, no query), no identity-bearing route segments today, ConcurrentDictionary with exact pair removal so the sweep cannot drop a newer answer, sweep cost bounded to distinct recorded operators after a successful read, RecordedAccountSids internal and test-only, the off-switch wording true in every mode, the startup warning fired once, and the tests reading emitted text rather than the constant. Artefacts: `.agents/review/auth-batch-2.result.txt`, `.stream.log`, `prompt-auth-batch-2.md`.
