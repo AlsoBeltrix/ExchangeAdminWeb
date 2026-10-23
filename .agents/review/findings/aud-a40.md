@@ -7,7 +7,7 @@ Exchange Online Config (two), Module Config (three). The operator sees a provide
 "the store was busy; nothing was written; try again".
 **Status**: Complete on the branch (not merged); gates below; review pending; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a885c578973c1cad3`
-**Commit**: -
+**Commit**: `00ab79a9` (plan `6db3a417`; comments `f219f2e8`)
 **Reviewer**: implementer (surfaced by the aud-a28v/a26s/a28w agent, 2026-10-22, candidate 1 of its hand-back)
 
 ## Evidence
@@ -171,3 +171,13 @@ connection save drains a pool that holds no session. The pages were not rendered
 - A busy read ahead of a write - the corrupt re-checks - would be refused the same way, "nothing written" still true; a WAL read does
   not wait for a writer (aud-a41's measurement), so it is not exercised.
 - Nothing ran against the shared database or a second instance; the held lock is a raw connection on the harness's temp file.
+
+## Branch-tip gates - 2026-10-23 (`f219f2e8`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,933 passed /
+  3 skipped (the three known AD skips) / 0 failed, 5,936 total, 5m46s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `f219f2e8` changes comment lines only: the code lines of all 19 source files the fixes touch, whole-line comments
+  and blank lines stripped, hash the same at `086501ad` and `f219f2e8`.

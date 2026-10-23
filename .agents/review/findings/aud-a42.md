@@ -8,7 +8,7 @@ removed or moved. The aud-a28w branch tripped the inverse (a comment naming `app
 fail) and fixed the comment, not the guard.
 **Status**: Complete on the branch (not merged); gates below; review pending; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a885c578973c1cad3`
-**Commit**: -
+**Commit**: `086501ad` (plan `6db3a417`)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (settings-batch-5, 2026-10-22)
 
 ## Evidence
@@ -106,3 +106,13 @@ coder self-review verdict is claimed.
 - `GlobalProgressWiringTests` keeps its own regex comment stripper, whose known hole (`//` or `/*` inside a literal, review finding
   prog-4b) does not occur in Program.cs today; not converted, as it is not a raw-text scan.
 - Program.cs scans outside the test project (none found) are not covered.
+
+## Branch-tip gates - 2026-10-23 (`f219f2e8`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,933 passed /
+  3 skipped (the three known AD skips) / 0 failed, 5,936 total, 5m46s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `f219f2e8` changes comment lines only: the code lines of all 19 source files the fixes touch, whole-line comments
+  and blank lines stripped, hash the same at `086501ad` and `f219f2e8`.

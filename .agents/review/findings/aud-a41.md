@@ -9,7 +9,7 @@ Blazor circuit is blocked for the whole wait. The aud-a28v test holds a real loc
 35 seconds to the suite.
 **Status**: Complete on the branch (not merged); gates below; review pending; approved under the owner's 2026-10-21 "EVERYTHING" go
 **Branch**: `worktree-agent-a885c578973c1cad3`
-**Commit**: -
+**Commit**: `bcef5fec` (plan `6db3a417`; comments `f219f2e8`)
 **Reviewer**: implementer (surfaced by the aud-a28v/a26s/a28w agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence
@@ -235,3 +235,13 @@ a group grant or a rule that is looked up. The pages were not rendered in a brow
 - A failed access save's record lists the access sections pending when it failed (`PendingAccessSections()` in its catch), which can
   now include an edit made while the save waited.
 - The pages ran on the framework's dispatcher through the harness; no browser or live circuit ran.
+
+## Branch-tip gates - 2026-10-23 (`f219f2e8`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,933 passed /
+  3 skipped (the three known AD skips) / 0 failed, 5,936 total, 5m46s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `f219f2e8` changes comment lines only: the code lines of all 19 source files the fixes touch, whole-line comments
+  and blank lines stripped, hash the same at `086501ad` and `f219f2e8`.
