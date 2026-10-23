@@ -645,7 +645,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.6.1",
+            Version = "1.7.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -781,7 +781,9 @@ public sealed class ModuleCatalog
             // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
             // down), and the bulk-add paste was parsed after a yield from a box still accepting
             // keystrokes.
-            Version = "1.11.3",
+            // 1.12.0: an operation that finishes after the operator has opened another group no
+            // longer puts its banner or outcome table into that group's view (kd-8).
+            Version = "1.12.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -906,7 +908,9 @@ public sealed class ModuleCatalog
             // target (Protected Group Targets) before anything is written and again before each
             // write into it; a protected list refuses the row unless an authorised servicer acts
             // on the page (aud-a2e).
-            Version = "2.7.0",
+            // 2.8.0: a blank ticket is refused by all four write handlers, before their
+            // authorization re-check; the dormant ServiceNow client passed one (kd-7).
+            Version = "2.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -944,7 +948,7 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.3.3",
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "NamedLocations",

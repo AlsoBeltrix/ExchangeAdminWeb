@@ -203,6 +203,9 @@ module previously had no README entry.)
 Create, modify, and delete Microsoft 365 groups via Graph API.
 
 - Full lifecycle management for M365 (Unified) groups
+- A ticket number is required before any create, update, delete or member/owner change runs:
+  a blank one, or one ServiceNow rejects where that integration is enabled, is refused with an
+  audited denial and nothing is sent to Graph
 - **Requires:** Graph app registration with `Group.ReadWrite.All` permission
 - Section access key: `M365GroupManagement`
 
@@ -451,6 +454,9 @@ Manage Entra ID Conditional Access named locations via Microsoft Graph API.
 - Create, edit, and delete IP range locations (IPv4/IPv6 CIDR)
 - Create, edit, and delete country/region locations
 - Mark locations as trusted
+- A ticket number is required before any create, edit or delete runs: a blank one, or one
+  ServiceNow rejects where that integration is enabled, is refused with an audited denial and
+  nothing is sent to Graph
 - Full pagination support for large tenants
 - Results can be downloaded as CSV (`Name,Type,Trusted,IpRanges,CountryCodes,IncludeUnknownCountries,Created,Modified`)
 - **Requires:** Graph app registration with `Policy.ReadWrite.ConditionalAccess` permission

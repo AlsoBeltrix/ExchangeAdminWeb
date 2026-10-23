@@ -664,7 +664,7 @@
         try
         {
             var outcome = await RemoveOneAsync(group, member, sendAdminEmail: true);
-            changeResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            completed = ShowFor(group, outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message));
         }
         finally
         {
@@ -838,7 +838,7 @@
         {
             if (string.IsNullOrWhiteSpace(callerSid))
             {
-                changeResult = completed = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
+                completed = ShowFor(group, PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again."));
                 AuditBatch(action, group, false, "Caller SID unavailable", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -847,7 +847,7 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
             if (!authCheck.Succeeded)
             {
-                changeResult = completed = PermissionResult.Fail("Authorization denied.");
+                completed = ShowFor(group, PermissionResult.Fail("Authorization denied."));
                 AuditBatch(action, group, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -861,11 +861,11 @@
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, summary.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Requested"] = summary.Requested.ToString(), ["Done"] = summary.Done.ToString(), ["Not done"] = summary.NotDone.ToString(), ["Members"] = string.Join("; ", summary.MemberLines) }, summary.ErrorDetail); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
 
             selectedGuids.Clear();
-            bulkOutcome = outcomes;
-            bulkOutcomeTitle = $"Remove selected: {summary.Done} of {summary.Requested} removed";
-            changeResult = completed = summary.Success
-                ? PermissionResult.Ok($"{summary.Done} member(s) removed from {group.Name}.")
-                : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not removed - see the outcome table.");
+            completed = ShowFor(group,
+                summary.Success
+                    ? PermissionResult.Ok($"{summary.Done} member(s) removed from {group.Name}.")
+                    : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not removed - see the outcome table."),
+                outcomes, $"Remove selected: {summary.Done} of {summary.Requested} removed");
         }
         finally
         {
@@ -904,7 +904,7 @@
         try
         {
             var outcome = await ChangeOneAsync(group, identity, operation, sendAdminEmail: true);
-            changeResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            completed = ShowFor(group, outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message));
             if (outcome.Done)
                 memberIdentity = "";
         }
@@ -1088,7 +1088,7 @@
         {
             if (string.IsNullOrWhiteSpace(callerSid))
             {
-                changeResult = completed = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
+                completed = ShowFor(group, PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again."));
                 AuditBatch(action, group, false, "Caller SID unavailable", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -1097,7 +1097,7 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
             if (!authCheck.Succeeded)
             {
-                changeResult = completed = PermissionResult.Fail("Authorization denied.");
+                completed = ShowFor(group, PermissionResult.Fail("Authorization denied."));
                 AuditBatch(action, group, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
                 return;
             }
@@ -1110,11 +1110,11 @@
             AuditBatch(action, group, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, summary.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Requested"] = summary.Requested.ToString(), ["Done"] = summary.Done.ToString(), ["Not done"] = summary.NotDone.ToString(), ["Members"] = string.Join("; ", summary.MemberLines) }, summary.ErrorDetail); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
 
-            bulkOutcome = outcomes;
-            bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";
-            changeResult = completed = summary.Success
-                ? PermissionResult.Ok($"{summary.Done} member(s) added to {group.Name}.")
-                : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not added - see the outcome table.");
+            completed = ShowFor(group,
+                summary.Success
+                    ? PermissionResult.Ok($"{summary.Done} member(s) added to {group.Name}.")
+                    : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not added - see the outcome table."),
+                outcomes, $"Add resolved: {summary.Done} of {summary.Requested} added");
             if (summary.Success)
             {
                 pasteText = "";
@@ -1132,6 +1132,39 @@
         // (LoadMembers keeps the outcome table).
         if (ReferenceEquals(selected, group))
             await LoadMembers();
+    }
+
+    /// <summary>
+    /// kd-8. Puts an operation's outcome on screen - the banner, and for a batch the per-row table -
+    /// only while the group it ran for is still the one shown, and returns it either way, for the
+    /// activity to complete with. The operation's audit rows and emails are written by the handler
+    /// whether or not this shows anything.
+    /// </summary>
+    /// <remarks>
+    /// Back to groups is ungated by design (see its comment), so an operation can still be running
+    /// after the operator has left its group. Its outcome names that group, and published into
+    /// another group's view it reads as that group's result. What keeps a second group from being
+    /// opened meanwhile is the Manage members gate at 128 and 179, which is markup - a disabled
+    /// attribute a programmatic click does not respect - and this is its server-side half: the same
+    /// live ReferenceEquals(selected, group) test the handlers' reloads already make. The input
+    /// clears beside the calls (memberIdentity, selectedGuids, pasteText, resolution) are left as
+    /// they are: a group switch resets the per-group ones and the other group's inputs are disabled
+    /// for the whole of the operation, so they hold nothing of that group's to lose.
+    /// </remarks>
+    private PermissionResult ShowFor(ManageableGroup group, PermissionResult outcome,
+        List<BulkRowOutcome>? table = null, string tableTitle = "")
+    {
+        if (ReferenceEquals(selected, group))
+        {
+            changeResult = outcome;
+            if (table is not null)
+            {
+                bulkOutcome = table;
+                bulkOutcomeTitle = tableTitle;
+            }
+        }
+
+        return outcome;
     }
 
     private async Task LoadOwnedGroups()
