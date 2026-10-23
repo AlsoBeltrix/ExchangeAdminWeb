@@ -1,7 +1,7 @@
 # psl-11: the validate-exists object-kind theory now proves only the unavailable stand-in path
 
 **Severity**: LOW - coverage false confidence. `ExchangeAdminWeb.Tests/ADDirectoryValidateExistsTests.cs` about 245: `Search_AllObjectKindsIncludingOu_DoNotThrow` uses `ADDirectorySearchServiceTests.CreateService()`, whose helper asserts AD is unavailable, so `Search` returns at the availability guard before `ExecuteSearch`; a live-only regression in the User/Group/OU command path (the `Get-ADOrganizationalUnit` branch especially) ships green.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from codex cr-batch-8 on aud-a2y/kd-5/psl-10; inside the released scope
+**Status**: Merged to master `c3af5bd4`; codex defect review cr-batch-9 in flight
 **Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, from `f7b794cb`, no merge of master)
 **Commit**: the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 3e43b35b head f7b794cb (merged 07f2d371); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat f7b794cb)
