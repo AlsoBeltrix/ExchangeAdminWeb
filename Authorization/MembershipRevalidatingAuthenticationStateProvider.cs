@@ -45,6 +45,18 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     internal const string SystemActor = "System";
     internal const string SystemAddress = "localhost";
 
+    /// <summary>
+    /// What the off-switch means for an operator whose access was removed, said in the startup warning
+    /// and the audit line alike (aud-a29h). Not "until it is reloaded": with revalidation off nothing
+    /// consults the directory at all, and under Kerberos a reload brings back the ticket's groups.
+    /// </summary>
+    internal const string DisabledConsequence =
+        "Nothing re-checks an operator's group membership against the directory - not an open tab, not a "
+        + "reload, not a page request. An operator removed from an AD group, or disabled, keeps the access "
+        + "their Windows sign-in carries: under Kerberos every reload and page request brings back the same "
+        + "groups until their ticket is renewed or expires, and a tab already open keeps its access until it "
+        + "is closed or the app restarts.";
+
     private static readonly Task<AuthenticationState> Anonymous =
         Task.FromResult(new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity())));
 
@@ -236,8 +248,7 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
             return false;
 
         logger.LogWarning(
-            "Revocation revalidation is disabled by configuration ({Key} = false): an operator removed "
-            + "from an AD group, or disabled, keeps their access on any tab already open until it is reloaded",
+            "Revocation revalidation is disabled by configuration ({Key} = false). " + DisabledConsequence,
             CircuitRevalidationSettings.EnabledKey);
 
         try
@@ -245,8 +256,7 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
             audit.LogModuleAction(
                 SystemActor, SystemAddress, AuditAction, AuditCategory, CircuitRevalidationSettings.EnabledKey,
                 success: false,
-                errorDetail: "Revocation revalidation is disabled by configuration. An operator removed from "
-                    + "an AD group, or disabled, keeps their access on any tab already open until it is reloaded.",
+                errorDetail: "Revocation revalidation is disabled by configuration. " + DisabledConsequence,
                 extra: new Dictionary<string, object?>
                 {
                     ["reason"] = ReasonDisabled,
@@ -300,11 +310,13 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     /// </summary>
     /// <remarks>
     /// Names the operator, the reason, what triggered the check and, for a membership change, the
-    /// removed group SIDs - SIDs only, never a group name. An audit failure is logged and never undoes
-    /// the refusal it records.
+    /// removed group SIDs - SIDs only, never a group name. A refused page request also names the page
+    /// it asked for (<paramref name="requestPath"/>, aud-a29i); a circuit has no request and passes
+    /// none. An audit failure is logged and never undoes the refusal it records.
     /// </remarks>
     internal static void WriteAuditLine(
-        AuditService audit, ILogger logger, string account, string ipAddress, MembershipRevalidationResult result, string trigger)
+        AuditService audit, ILogger logger, string account, string ipAddress, MembershipRevalidationResult result, string trigger,
+        string? requestPath = null)
     {
         try
         {
@@ -316,6 +328,9 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
 
             if (result.RemovedGroupSids.Count > 0)
                 extra["removedGroupSids"] = result.RemovedGroupSids.ToArray();
+
+            if (requestPath is not null)
+                extra["path"] = requestPath;
 
             audit.LogModuleAction(
                 account, ipAddress, AuditAction, AuditCategory, account,

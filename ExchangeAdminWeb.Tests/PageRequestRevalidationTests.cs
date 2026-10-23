@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -56,6 +57,8 @@ public class PageRequestRevalidationTests
     private const string DomainSid = "S-1-5-21-1000-2000-3000";
     private const string OperatorSid = DomainSid + "-1105";
     private const string OperatorName = @"CONTOSO\operator";
+    private const string ColleagueSid = DomainSid + "-1106";
+    private const string ColleagueName = @"CONTOSO\colleague";
     private const string DomainUsersSid = DomainSid + "-513";
     private const string SectionGroupSid = DomainSid + "-5001";
     private const string LaterGrantedGroupSid = DomainSid + "-5005";
@@ -102,6 +105,52 @@ public class PageRequestRevalidationTests
             Assert.False(audit.TryGetProperty("removedGroupSids", out _));
 
         Assert.Single(h.Log.Warnings, w => w.Contains("Page request for " + OperatorName + " refused", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheRefusalAuditLineNamesThePage_WithoutItsQueryString()
+    {
+        // aud-a29i. Several refused requests from one operator must be told apart by the page they
+        // asked for - but the query string, where a page's search terms would be, stays out of the row.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        await using var host = await h.StartHostAsync(Operator(SectionGroupSid, DomainUsersSid), pathBase: "/probe-base");
+
+        var (status, _, _) = await host.GetAsync("/probe-base" + ProbeRoute + "?lookup=typed-by-the-operator");
+
+        Assert.True(status == HttpStatusCode.Forbidden, h.Log.Explain($"Expected 403, got {(int)status}."));
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("/probe-base" + ProbeRoute, audit.GetProperty("path").GetString());
+        Assert.DoesNotContain("typed-by-the-operator", audit.GetRawText(), StringComparison.Ordinal);
+
+        // Every field the row had before is still there.
+        Assert.Equal("SessionRevalidation", audit.GetProperty("action").GetString());
+        Assert.Equal("PageRequest", audit.GetProperty("trigger").GetString());
+        Assert.Equal("MembershipChanged", audit.GetProperty("reason").GetString());
+        Assert.Equal(new[] { SectionGroupSid }, RemovedSids(audit));
+        Assert.Equal(OperatorName, audit.GetProperty("target").GetString());
+    }
+
+    [Fact]
+    public void TheAuditPath_IsThePathBaseAndPath_EncodedAndBounded()
+    {
+        var request = new DefaultHttpContext().Request;
+        request.PathBase = "/ExchangeAdminWeb";
+        request.Path = "/risky-users";
+        request.QueryString = new QueryString("?upn=someone");
+
+        Assert.Equal("/ExchangeAdminWeb/risky-users", PageRequestRevalidationMiddleware.AuditPath(request));
+
+        // A character that could break a log line arrives encoded; a long path is cut and marked.
+        request.Path = "/line\nbreak/" + new string('x', 400);
+        var bounded = PageRequestRevalidationMiddleware.AuditPath(request);
+
+        Assert.StartsWith("/ExchangeAdminWeb/line%0Abreak/xxx", bounded, StringComparison.Ordinal);
+        Assert.Equal(PageRequestRevalidationMiddleware.MaxAuditPathLength, bounded.Length);
+        Assert.EndsWith("...", bounded, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', bounded);
+        Assert.DoesNotContain('?', bounded);
     }
 
     [Fact]
@@ -410,6 +459,42 @@ public class PageRequestRevalidationTests
         _ = h.Directory.Received(2).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
     }
 
+    [Fact]
+    public async Task AnExpiredAnswer_IsSweptOutWhenAnotherAccountsAnswerIsRecorded()
+    {
+        // aud-a29j. An operator who never comes back must not be held for the app pool's life.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+        Assert.Equal(new[] { OperatorSid }, h.Revalidator.RecordedAccountSids);
+
+        // One interval after the operator's read started, a colleague's read is recorded.
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Colleague(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+
+        Assert.Equal(new[] { ColleagueSid }, h.Revalidator.RecordedAccountSids);
+    }
+
+    [Fact]
+    public async Task AnAnswerStillInsideTheInterval_SurvivesTheSweep()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+        h.Clock.Advance(h.Options.Interval - TimeSpan.FromSeconds(1));
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Colleague(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+
+        Assert.Equal(new[] { OperatorSid, ColleagueSid }, h.Revalidator.RecordedAccountSids.Order(StringComparer.Ordinal));
+
+        // And it still confirms the operator's next page without a read.
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
+        _ = h.Directory.Received(2).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
     // ------------------------------------------------------------------ wording and wiring
 
     [Fact]
@@ -464,11 +549,15 @@ public class PageRequestRevalidationTests
 
     private static CancellationToken AnyToken => Arg.Any<CancellationToken>();
 
-    private static ClaimsPrincipal Operator(params string[] groupSids)
+    private static ClaimsPrincipal Operator(params string[] groupSids) => Principal(OperatorSid, OperatorName, groupSids);
+
+    private static ClaimsPrincipal Colleague(params string[] groupSids) => Principal(ColleagueSid, ColleagueName, groupSids);
+
+    private static ClaimsPrincipal Principal(string accountSid, string name, string[] groupSids)
     {
         var identity = new ClaimsIdentity("Negotiate", ClaimTypes.Name, ClaimTypes.Role);
-        identity.AddClaim(new Claim(ClaimTypes.Name, OperatorName));
-        identity.AddClaim(new Claim(ClaimTypes.PrimarySid, OperatorSid));
+        identity.AddClaim(new Claim(ClaimTypes.Name, name));
+        identity.AddClaim(new Claim(ClaimTypes.PrimarySid, accountSid));
         foreach (var sid in groupSids)
             identity.AddClaim(new Claim(ClaimTypes.GroupSid, sid));
         return new ClaimsPrincipal(identity);
@@ -659,7 +748,7 @@ public class PageRequestRevalidationTests
         /// A host with the production order - authentication, authorization, the page-request check,
         /// antiforgery, the components endpoint - over the probe app, and one endpoint that is not a page.
         /// </summary>
-        public async Task<ProbeHost> StartHostAsync(ClaimsPrincipal? user)
+        public async Task<ProbeHost> StartHostAsync(ClaimsPrincipal? user, string? pathBase = null)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -683,6 +772,11 @@ public class PageRequestRevalidationTests
             builder.Services.AddSingleton(Audit);
 
             var app = builder.Build();
+
+            // As Program.cs does with Application:PathBase, before everything else.
+            if (pathBase is not null)
+                app.UsePathBase(pathBase);
+
             app.UseAuthentication();
             app.UseAuthorization();
             app.UseMiddleware<PageRequestRevalidationMiddleware>();

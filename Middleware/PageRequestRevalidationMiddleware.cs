@@ -33,7 +33,8 @@ namespace ExchangeAdminWeb.Middleware;
 /// Fail closed: any verdict that is not valid refuses - a directory that cannot be read, a store that
 /// cannot be read, a check that did not finish - and so does a failure the check did not anticipate.
 /// The refusal is a 403 with a short page that says why in plain words (no group is named), one
-/// warning and one audit line in the circuit's shape, trigger <c>PageRequest</c>.
+/// warning and one audit line in the circuit's shape, trigger <c>PageRequest</c>, naming the page it
+/// refused (<see cref="AuditPath"/>, aud-a29i).
 /// </para>
 /// <para>
 /// Registered after <c>UseAuthorization</c>, so a request the page's own policy denies costs no
@@ -98,6 +99,26 @@ public sealed class PageRequestRevalidationMiddleware
     internal static bool RendersAPage(HttpContext context) =>
         context.GetEndpoint()?.Metadata.GetMetadata<ComponentTypeMetadata>() is not null;
 
+    /// <summary>The longest page path a refusal's audit line records; a longer one is cut and marked.</summary>
+    internal const int MaxAuditPathLength = 256;
+
+    /// <summary>
+    /// The page a refused request asked for, as its audit line records it (aud-a29i): the path base and
+    /// the path, never the query string - where a page's search terms and anything an operator typed
+    /// would be - percent-encoded, so no character in it can break a log line, and at most
+    /// <see cref="MaxAuditPathLength"/> characters, ending "..." when cut.
+    /// </summary>
+    internal static string AuditPath(HttpRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var path = request.PathBase.Add(request.Path).ToUriComponent();
+        if (path.Length == 0)
+            path = "/";
+
+        return path.Length <= MaxAuditPathLength ? path : path[..(MaxAuditPathLength - 3)] + "...";
+    }
+
     /// <summary>The whole response a refused page request gets: a standalone page, no app markup.</summary>
     internal static string RefusalPage(CircuitRevocationReason reason)
     {
@@ -138,7 +159,8 @@ public sealed class PageRequestRevalidationMiddleware
 
         MembershipRevalidatingAuthenticationStateProvider.WriteAuditLine(
             audit, _logger, account, context.Connection.RemoteIpAddress?.ToString() ?? "Unknown", verdict,
-            MembershipRevalidatingAuthenticationStateProvider.TriggerPageRequest);
+            MembershipRevalidatingAuthenticationStateProvider.TriggerPageRequest,
+            requestPath: AuditPath(context.Request));
 
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
         context.Response.ContentType = "text/html; charset=utf-8";
