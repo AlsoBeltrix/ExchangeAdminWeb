@@ -6,7 +6,7 @@ archive statistics read in `catch { }`, so any failure shows as no archive. aud-
 path this service consumes; these two cloud reads are its own.
 **Status**: Fixed on branch; closed on guard proof; not merged
 **Branch**: `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`)
-**Commit**: the `fix(recipient-lookup): ... (aud-a54)` commit after aud-a55's (SHAs in the closeout)
+**Commit**: `4e2c4e79` (fix, tests, record); plan `3113f6f0`; comments `2e2218e4` (shared with aud-a55)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidate 2 of its hand-back)
 
 ## Evidence
@@ -164,3 +164,15 @@ own `ConnectOnPrem` seam. The full suite runs at the branch tip.
   `Get-Recipient` failure carry the Stop preference prefix; the on-premises archive is never shown (`ArchiveEnabled` is set
   only by the cloud read).
 - No circuit or browser ran: the page's compiled render tree was read directly.
+
+## Comments and branch-tip gates
+
+Shared by the two records of this branch; the canonical copy is in `aud-a55.md` ("Comments and branch-tip gates"):
+comments `2e2218e4`, comment-only by a stripped-code comparison; at the tip, Release build 0 errors / 19 warnings (the
+baseline's), full suite 6361 passed / 3 skipped / 0 failed (6364), format, the whitespace check and the ASCII lint all exit
+0, `Components/Pages/Migration.razor` 4377 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`): plan `3113f6f0`, fix `4e2c4e79` (code, tests,
+record), comments `2e2218e4` (shared with aud-a55); not merged, not pushed. At merge, take the branch's copy of this record.

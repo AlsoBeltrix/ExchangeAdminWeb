@@ -9,7 +9,7 @@ return silently on "no list loaded" guards. (3) `MigrationService.GetCloudMailbo
 read that returns no rows and no error as no archive (minor: no decision reads the cloud size).
 **Status**: Fixed on branch; closed on guard proof; not merged
 **Branch**: `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`)
-**Commit**: the `fix(migration): ... (aud-a55)` commit after plan `3113f6f0` (SHAs in the closeout)
+**Commit**: `d2bcd9c2` (fix, tests, record); plan `3113f6f0`; comments `2e2218e4` (shared with aud-a54)
 **Reviewer**: implementer (surfaced by the aud-a23r/o/q/p agent, 2026-10-22, candidates 3, 4 and 5 of its hand-back)
 
 ## Evidence
@@ -216,3 +216,48 @@ in-process runspace. The full suite runs at the branch tip.
   many-user case.
 - No decision reads the cloud size (aud-a23k): part 3 changes what the page shows, nothing it allows.
 - No circuit or browser ran: the page's handlers and compiled render tree were driven directly.
+
+## Comments and branch-tip gates (shared by aud-a55 and aud-a54)
+
+The canonical copy for both records; aud-a54's points here.
+
+**Comments (`2e2218e4`).** Written after both mutation rounds, at the call sites the rounds proved load-bearing; comments
+only. Checked by `check-comment-only.sh` with `code-only.pl` (session scratchpad `work/`): HEAD's bytes and the tree's are
+each reduced to their code - comment-only lines dropped (`//`, `///`, a one-line `@* ... *@`), the trailing comments this
+commit adds cut off (`// aud-a55...`), blank lines dropped - and the reductions are identical for all five files. The checker
+was shown to bite: against the plan commit `3113f6f0`, before any code, it reports every file the fixes changed as
+different. In the three `.cs` files every changed line is an added comment line (service +18, Recipient Lookup +10, models
++2); `Components/Pages/Migration.razor`'s two changed lines (3545, 3713) are each the line it was plus a trailing comment, so
+it stays 4377 lines and every registered line key holds; `Components/Pages/RecipientLookup.razor` gains one `@* ... *@` line
+(232 to 233; not line-keyed). Reduced-code md5s, unchanged by the commit: `Services/MigrationService.cs`
+`d4e2f3f6c46240d612f9dc79351b7429`, `Components/Pages/Migration.razor` `2f842d18eeb867da859c4d710f4d201d`,
+`Services/RecipientLookupService.cs` `63f6705da70d8234e4448666ae5aee90`, `Models/LookupModels.cs`
+`e6b4b903f1dcaa2e950be0c945b92495`, `Components/Pages/RecipientLookup.razor` `037c2a929e89a9492827649812b93fb3`. Final file
+md5s (LF) at the tip: `Services/MigrationService.cs` `b93a26aeda6957f63112fec50a8beee3`, `Components/Pages/Migration.razor`
+`57d3ab57c485e7f01751f8782c30ba7f`, `Services/RecipientLookupService.cs` `d63fafcf4733b020319f79336ee8783d`,
+`Models/LookupModels.cs` `902f5691d23783b0f4ef3cabfb1a6b76`, `Components/Pages/RecipientLookup.razor`
+`45c8ccf3760248e74997d4fe4f020708`; the tests are as their fix commits left them. Focused rerun after the comments: 1946/0.
+
+**Branch-tip gates (`2e2218e4`, both fixes and the comments; the records-only commit after it changes no code):**
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 19 warnings - the same 19 (file, line, column,
+  id) as the baseline build of `a7300dee`; none in a file this branch touched.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): Passed 6361,
+  Skipped 3 (the known `ADDirectorySearchServiceTests ...WhenAdUnavailable_ReturnsEmpty` cases), Failed 0, Total 6364;
+  6 m 43 s; "All tests finished running, Sequence file will not be generated." - no hang. This branch adds 54 cases (42 for
+  aud-a55, 12 for aud-a54); the suite at `a7300dee` was not run here, so 6310 there is derived, not measured.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. `Components/Pages/Migration.razor`: 4377 lines.
+
+No live Exchange, Active Directory, Graph, DHCP or IIS call was made: every Exchange Online cmdlet was a stub in an
+in-process runspace and every on-premises one a stub defined through the services' own `ConnectOnPrem` seam. No PowerShell
+source changed, so PSScriptAnalyzer and Pester were not run. No coder self-review verdict is claimed. Version bumps are the
+supervisor's: the Migration module (aud-a55) and the Recipient Lookup module (aud-a54); no base-app change
+(`Services/ExchangeServiceBase.cs` was read, not changed).
+
+## Closeout
+
+Fixed on branch `worktree-agent-ae9cc385925087b25` (forked at `a7300dee`): plan `3113f6f0`, fix `d2bcd9c2` (code, tests,
+record), comments `2e2218e4` (shared with aud-a54); not merged, not pushed. This record was taken from `a7300dee`
+(master's copy), so at merge it is master's text plus this branch's Plan, Guard proof, Known gaps, the shared section and
+this closeout - take the branch's copy.
