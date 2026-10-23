@@ -607,6 +607,9 @@ public sealed class AuditWriterThrowFreeTests : IDisposable
             return new InvalidOperationException("tripwire");
         if (type == typeof(List<AttributeChange>))
             return new List<AttributeChange> { new("title", "Job Title", "Analyst", "Lead Analyst") };
+        // aud-a73: the permission rows' explicit result - the one value they are given besides their bool.
+        if (type == typeof(AuditResult?))
+            return AuditResult.Undetermined;
 
         throw new InvalidOperationException(
             $"No argument for {parameter.Member.DeclaringType?.Name}.{parameter.Member.Name}'s {type} {parameter.Name}: extend this tripwire.");

@@ -220,6 +220,36 @@ public sealed class EventLogSectionsTargetTests : IDisposable
         Assert.Equal(["", "Success", "Failed", "Ineligible", "Undetermined"], values);
     }
 
+    // ---- aud-a73: a permission change whose outcome could not be confirmed is no failure either ----------------------------
+
+    [Theory]
+    [InlineData("MailboxPermission")]
+    [InlineData("CalendarPermission")]
+    public void APermissionChangeThatCouldNotBeConfirmed_IsFiledUndetermined_AndTheResultFilterFindsItThere(string category)
+    {
+        // The row of a single change whose write threw said "Whether the change was made could not be confirmed" and was
+        // filed "Failed": the Undetermined filter did not find it, and a reviewer reconciling Exchange read a change that
+        // may have applied as one that had not.
+        const string banner = "Whether the change was made could not be confirmed: the write failed: the session was lost. Check the permissions before trying again.";
+        if (category == "MailboxPermission")
+            _audit.LogMailboxPermission(Admin, Ip, "AddFullAccess", "shared@example.test", "alex.morgan@example.test", "FullAccess",
+                false, "CHG0501", errorDetail: banner, filedAs: AuditResult.Undetermined);
+        else
+            _audit.LogCalendarPermission(Admin, Ip, "SetCalendar", "shared@example.test", "alex.morgan@example.test", "Reviewer",
+                false, "CHG0501", errorDetail: banner, filedAs: AuditResult.Undetermined);
+        var page = new Page();
+        var parse = typeof(Page).GetMethod("ParseAuditLine", PrivateInstance)!;
+        var entry = parse.Invoke(page, [Assert.Single(AuditLines()), DateTime.MinValue, DateTime.MaxValue])
+            ?? throw new InvalidOperationException("the page did not parse the change's audit line");
+
+        Assert.Equal("Undetermined", Read(entry, "Result"));
+
+        ((IList)typeof(Page).GetField("allEvents", PrivateInstance)!.GetValue(page)!).Add(entry);
+        Assert.Same(entry, Assert.Single(ShownUnderResult(page, "Undetermined")));
+        Assert.Empty(ShownUnderResult(page, "Failed"));
+        Assert.Same(entry, Assert.Single(ShownUnderResult(page, "")));
+    }
+
     /// <summary>The page's rows after its own ApplyFilters, with <paramref name="result"/> chosen in the Result filter.</summary>
     private static IList ShownUnderResult(Page page, string result)
     {
