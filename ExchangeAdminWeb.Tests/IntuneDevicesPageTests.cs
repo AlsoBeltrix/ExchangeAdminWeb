@@ -313,11 +313,11 @@ public class IntuneDevicesPageTests
         var body = MethodBody("ExecuteActionAsync");
         var gate = ProgressScan.CodeView(body)[..WriteIndex(body)];
 
-        // Nine: authorization, ticket presence, ticket validation, unavailable-or-ambiguous
-        // resolution, CheckFailed and unserviced-protected on each of the two resolution branches,
-        // and the fail-closed catch for a throwing check.
+        // Ten: authorization, ticket presence, ticket validation, the typed device name of a wipe
+        // (kd-4), unavailable-or-ambiguous resolution, CheckFailed and unserviced-protected on each of
+        // the two resolution branches, and the fail-closed catch for a throwing check.
         var returns = Regex.Matches(gate, @"\breturn;");
-        Assert.Equal(9, returns.Count);
+        Assert.Equal(10, returns.Count);
 
         var previousExit = 0;
         foreach (Match exit in returns)
@@ -676,6 +676,25 @@ public class IntuneDevicesPageTests
         Assert.Contains("!WipeNameConfirmed(device, confirmAction.Value)", text);
         Assert.Contains("action != IntuneDeviceAction.Wipe", guard);
         Assert.Contains("DeviceLabel(device)", guard);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_ReadsTheTypedNameBeforeItsFirstAwait_AndRefusesBeforeTheWrite()
+    {
+        // kd-4. Bound with every other operator input, above the first await, so the name checked is
+        // the one typed when the click was made - not whatever the box holds after the yield - and
+        // refused before the write. IntuneDevicesWipeNameRecheckTests drives the refusal itself; this
+        // pins where it reads. Code view, so a comment naming the call cannot stand in for it.
+        var body = MethodBody("ExecuteActionAsync");
+        var code = ProgressScan.CodeView(body);
+
+        var capture = code.IndexOf("var typedNameMatches = WipeNameConfirmed(device, action);", StringComparison.Ordinal);
+        var firstAwait = Regex.Match(code, @"\bawait\b").Index;
+        var refusal = code.IndexOf("if (!typedNameMatches)", StringComparison.Ordinal);
+
+        Assert.True(capture >= 0, "ExecuteActionAsync no longer reads the typed device name.");
+        Assert.True(capture < firstAwait, "the typed device name is read after the handler's first await.");
+        Assert.True(refusal > capture && refusal < WriteIndex(body), "the typed-name refusal does not precede the Graph write.");
     }
 
     [Fact]

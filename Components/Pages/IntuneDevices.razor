@@ -702,7 +702,8 @@
 
     /// <summary>
     /// True unless this is a wipe whose typed device name does not match. Any action other than wipe
-    /// is unaffected, so the extra step never spreads to the recoverable ones.
+    /// is unaffected, so the extra step never spreads to the recoverable ones. Read twice: by the
+    /// confirm button's disabled expression, and by ExecuteActionAsync on entry, which refuses (kd-4).
     /// </summary>
     private bool WipeNameConfirmed(IntuneDevice device, IntuneDeviceAction action) =>
         action != IntuneDeviceAction.Wipe
@@ -967,6 +968,12 @@
         // WHICH not-sent reason applied - nobody asked, or the operator cleared a ticked box.
         var notifyRequested = notifyPrimaryUser;
         var notifyDefault = IntuneDeviceService.NotifyUserStartsTicked(action) ?? false;
+        // kd-4: the typed device name, read here with every other operator input - so as it stood
+        // when the click was made - and checked against the device THIS call acts on. The confirm
+        // button's disabled expression was the only check, and markup is not a gate: a stale render,
+        // a second dispatch or a programmatic click reached this handler with a name that did not
+        // match. Refused below, with the other pre-gates.
+        var typedNameMatches = WipeNameConfirmed(device, action);
 
         void Refuse(string message, string auditDetail)
         {
@@ -1034,6 +1041,16 @@
             {
                 Refuse($"Ticket validation failed: {ticketValidation.Message}",
                     $"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+
+            // 2b. The typed device name (kd-4), a wipe's second key - WipeNameConfirmed answers true for
+            //     every other action. Before the protected-principal check and the write; like the gates
+            //     above it never reached the device, so it sends no administrator notification.
+            if (!typedNameMatches)
+            {
+                Refuse("The typed device name does not match this device, so it was not wiped. Type its name exactly to confirm.",
+                    "Typed device name does not match the device - wipe not confirmed");
                 return;
             }
 
