@@ -5,7 +5,7 @@ in `PermissionValidator`'s corrupt-branch log, where no page is involved. (2) `C
 `Audit:LogRoot` is still one shared directory under the temp directory, and the per-validator test
 directories aud-a26q introduced are never deleted (pre-existing shape; not a database, so the
 aud-a26q tripwire does not cover it).
-**Status**: Plan written; in progress
+**Status**: Fixed on the branch (fix commit; comments commit to follow); review pending
 **Branch**: `worktree-agent-a4c579a99f70ca768`
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidates 4 and 5 of its hand-back)
@@ -95,13 +95,58 @@ Tests: `PermissionValidatorTests.TheHelpers_KeepEveryDirectoryAndTheLogsTheirOwn
 `ExchangeAdminWeb.Tests/StoreTextSurfaceTests.cs` (2: the page text as it was, the service text without its reload clause);
 `PermissionValidatorConfigReadTests.AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload`; and the
 service-text assertions in `PermissionValidatorExclusionsReadTests.AStoreThatCannotBeRead_LogsTheRowsAndTheirFix_NotAFile`
-and the two `ExoConnectionPoolConfigReadTests` message cases. 5 cases added.
+and the two `ExoConnectionPoolConfigReadTests` message cases. 5 cases added. No departure from the plan; the pool's log line
+goes with its message, since both read the one `UnreadableRows` text.
 
 Caller-visible change, by design: three service texts - the validator's two error lines and the pool's unreadable-rows
 refusal and its log line - end at the fix ("... with both application pools stopped.") instead of "then reload this page".
 Every admin page's text is as it was. The tests change no behaviour: the validator tests' logs no longer share a directory
-under the temp directory, and nothing they make is left behind.
+under the temp directory, and nothing they make is left behind (a run of `PermissionValidatorTests` left the count of
+`eaw-test-*` and `eaw-res-*` directories in the temp directory where it was; 15,674 from earlier runs of the old helpers
+are still there and are not this branch's to delete).
+
+Record note: the Fix section above was committed early, in aud-a28x's commit `da615264`, by a `git add -A` that swept up this
+record while the section was drafted ahead of the code; the code it describes is this commit's. No code was in that slip,
+and the history is not rewritten to move it.
 
 ## Guard proof
 
-Pending.
+Same session-local driver as aud-a28y (`mutate.ps1`; the fix staged, each mutant restored from the git index and touched),
+filter
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~SharedTempDatabaseTripwireTests|FullyQualifiedName~StoreTextSurfaceTests|FullyQualifiedName~SettingsStoreText|FullyQualifiedName~ExoConnection|FullyQualifiedName~ExoConfigFallback|FullyQualifiedName~Settings|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~WriteIdentityTests|FullyQualifiedName~ExchangeIdentityResolver`
+(549 tests). Fixed-file MD5s: `Services/PermissionValidator.cs` `4E16D668DCE77C06AB1C104D198FA802`,
+`ExchangeAdminWeb.Tests/PermissionValidatorTests.cs` `AB1376E676EAC5F874ED378733EC448C`, `Services/ExoConnectionPool.cs`
+`7F070C9260DDB9655B1AA991E1A03B4B`; every mutant built with 0 errors and its file was restored to that MD5 each time. After the
+round, the restored tree rebuilt and the same filter: 549/549 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|---|
+| 1 | the corrupt-branch log back on the page text (`SettingsStoreText.ModuleConfig("MailboxPermissions")`, the reload clause in a service's log line) | `22F450E7D6087DF230F4297CB42B1898` | `PermissionValidatorExclusionsReadTests.AStoreThatCannotBeRead_LogsTheRowsAndTheirFix_NotAFile` |
+| 2 | `CreateValidator`: the shared root again (`["Audit:LogRoot"] = Path.Combine(Path.GetTempPath(), "eaw-test-logs")`) | `D192E9223C0328DA76529E1AF7C533EF` | `SharedTempDatabaseTripwireTests.NoTestSource_SetsTheAuditLogRootFromTheTempDirectory` ("PermissionValidatorTests.cs:94 sets Audit:LogRoot from the temp directory"), `PermissionValidatorTests.TheHelpers_KeepEveryDirectoryAndTheLogsTheirOwn_AndDisposeDeletesThem` (the logs not under its own directory) |
+| E1 | extra, `Dispose`: deletes nothing (`try { }`) | `6C957E1777D4FE37B1C8D89BA4A09DC9` | `PermissionValidatorTests.TheHelpers_KeepEveryDirectoryAndTheLogsTheirOwn_AndDisposeDeletesThem` (a directory left behind) |
+| E2 | extra: the unreadable self-grant setting's log back on the page text | `3BAA085EFC3E0146BE78725C6DFB6D11` | `PermissionValidatorConfigReadTests.AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload` |
+| E3 | extra, `ExoConnectionPool.UnreadableRows`: back on the page text | `61DD543084E8406C8A157C8D14A2A0B3` | both rows of `ExoConnectionPoolConfigReadTests.RowsThatCannotBeRead_RefuseTheBorrow_AndNothingComesFromAppsettings` and of `DrainPool_OverRowsThatCannotBeRead_FailsBeforeItRetiresAnything` |
+
+Mutant E3 is byte for byte `Services/ExoConnectionPool.cs` as aud-a28x committed it (`da615264`). The page texts the store
+text keeps are pinned by `StoreTextSurfaceTests.ThePageText_IsAsItWas` and, through the pages, by aud-a26h's
+`SettingsStoreTextTests`, which pass unchanged. The disposal case passed three runs out of three. The code comments are
+written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors; 61 warnings, all pre-existing, none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 5,947
+  passed / 3 skipped (the three known AD skips) / 0 failed, 5,950 total, 5m32s. No hang. (aud-a28x's tree: 5,945; the five
+  added are this commit's.)
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+
+No PowerShell source, AD module, directory, Exchange Online, Delinea, SMTP, push or deployment. No coder self-review
+verdict is claimed.
+
+## Known gaps
+
+- The tripwire reads an `Audit:LogRoot` value up to the end of its entry. A log root built from the temp directory in a
+  variable first, and the variable handed to the key, is not caught - the gap aud-a26q's scan records for `GetTempPath()`.
+- Other test classes' temp directories are not this finding's; the scan says only that none sets its log root from the
+  temp directory in place.

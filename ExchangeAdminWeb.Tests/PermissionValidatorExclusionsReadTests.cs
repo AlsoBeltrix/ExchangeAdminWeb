@@ -186,8 +186,10 @@ public sealed class PermissionValidatorExclusionsReadTests : IDisposable
         await validator.ValidateTargetMailboxAsync(Other, actingUser: null, ModuleId);
 
         var error = Assert.Single(logger.Errors);
-        Assert.Contains(SettingsStoreText.ModuleConfig(ModuleId), error, StringComparison.Ordinal);
+        Assert.Contains(SettingsStoreText.ServiceModuleConfig(ModuleId), error, StringComparison.Ordinal);
         Assert.DoesNotContain("file", error, StringComparison.OrdinalIgnoreCase);
+        // aud-a26t: a service's log line, so the fix without the admin pages' reload clause - no page is involved.
+        Assert.DoesNotContain("reload this page", error, StringComparison.Ordinal);
     }
 
     [Fact]

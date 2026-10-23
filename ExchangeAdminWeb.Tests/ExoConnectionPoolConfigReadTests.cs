@@ -118,9 +118,11 @@ public sealed class ExoConnectionPoolConfigReadTests : IDisposable
 
         var refused = await Assert.ThrowsAsync<ExoConfigUnreadableException>(() => pool.BorrowAsync(TestContext.Current.CancellationToken));
 
-        Assert.Contains(SettingsStoreText.ModuleConfig(ExoConnectionPool.ConfigModuleKey), refused.Message, StringComparison.Ordinal);
+        Assert.Contains(SettingsStoreText.ServiceModuleConfig(ExoConnectionPool.ConfigModuleKey), refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("reload this page", refused.Message, StringComparison.Ordinal);
         Assert.Empty(_connectedWith);
-        Assert.Single(logger.Errors);
+        var error = Assert.Single(logger.Errors);
+        Assert.Contains(SettingsStoreText.ServiceModuleConfig(ExoConnectionPool.ConfigModuleKey), error, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -189,7 +191,8 @@ public sealed class ExoConnectionPoolConfigReadTests : IDisposable
 
         var refused = Assert.Throws<ExoConfigUnreadableException>(pool.DrainPool);
 
-        Assert.Contains(SettingsStoreText.ModuleConfig(ExoConnectionPool.ConfigModuleKey), refused.Message, StringComparison.Ordinal);
+        Assert.Contains(SettingsStoreText.ServiceModuleConfig(ExoConnectionPool.ConfigModuleKey), refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("reload this page", refused.Message, StringComparison.Ordinal);
         Assert.Equal(generation, pool.ConfigGeneration);
     }
 

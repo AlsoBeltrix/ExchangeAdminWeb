@@ -196,7 +196,7 @@ public sealed class ExoConnectionPool : IDisposable
         return true;
     }
 
-    private static string UnreadableRows => SettingsStoreText.ModuleConfig(ConfigModuleKey);
+    private static string UnreadableRows => SettingsStoreText.ServiceModuleConfig(ConfigModuleKey);
 
     private ExoConnectionConfig GetExoConfig()
     {

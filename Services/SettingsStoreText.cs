@@ -12,9 +12,13 @@ namespace ExchangeAdminWeb.Services;
 /// </remarks>
 public static class SettingsStoreText
 {
+    private const string DatabaseFix =
+        "Correct it as docs/ConfigDbOperations.md describes, or restore a verified backup the same way, with both application pools stopped";
+
     /// <summary>The fix for a table in the config database.</summary>
-    public const string DatabaseRemedy =
-        "Correct it as docs/ConfigDbOperations.md describes, or restore a verified backup the same way, with both application pools stopped, then reload this page.";
+    public const string DatabaseRemedy = DatabaseFix + ", then reload this page.";
+
+    public const string ServiceDatabaseRemedy = DatabaseFix + ".";
 
     private const string LegacyRemedy =
         "Correct or remove the file, then recycle the application pool so the import runs again at start.";
@@ -30,8 +34,12 @@ public static class SettingsStoreText
         : "The section_access table in the config database cannot be read, so every fail-closed module denies access. " + DatabaseRemedy;
 
     /// <summary>Why one module's configuration cannot be read, and its fix.</summary>
-    public static string ModuleConfig(string moduleId) =>
-        $"The {moduleId} rows of the module_config table in the config database cannot be read. " + DatabaseRemedy;
+    public static string ModuleConfig(string moduleId) => ModuleConfigUnreadable(moduleId) + DatabaseRemedy;
+
+    public static string ServiceModuleConfig(string moduleId) => ModuleConfigUnreadable(moduleId) + ServiceDatabaseRemedy;
+
+    private static string ModuleConfigUnreadable(string moduleId) =>
+        $"The {moduleId} rows of the module_config table in the config database cannot be read. ";
 
     /// <summary>Why the module admin groups cannot be read, and their fix.</summary>
     public static string ModuleAdmins() =>

@@ -229,6 +229,21 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     }
 
     [Fact]
+    public void AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload()
+    {
+        // aud-a26t. The unreadable self-grant setting's log line (aud-a28t) names the rows and their fix as the admin
+        // pages do, without their reload clause: it is a service's log line, and no page is involved.
+        var logger = new CapturingLogger();
+        var validator = ValidatorOver(new FailsAfterReadsStore(TestConfigStore.Create(_h.Dir), answered: 0), logger: logger);
+
+        Assert.Equal(SelfGrantRefusal, validator.ValidateSelfGrant(Self, SelfAddress));
+
+        var error = Assert.Single(logger.Errors);
+        Assert.Contains(SettingsStoreText.ServiceModuleConfig(ModuleId), error, StringComparison.Ordinal);
+        Assert.DoesNotContain("reload this page", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AnAppsettingsValueThatIsNeitherTrueNorFalse_IsNamedInTheLog()
     {
         var logger = new CapturingLogger();

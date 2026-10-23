@@ -86,7 +86,7 @@ public class PermissionValidator
         if (!_moduleConfig.TryGetModuleConfig("MailboxPermissions", out var values))
         {
             _logger.LogError("The self-grant setting cannot be read - self-grants are refused until it can be. {Store}",
-                SettingsStoreText.ModuleConfig("MailboxPermissions"));
+                SettingsStoreText.ServiceModuleConfig("MailboxPermissions"));
             return true;
         }
 
@@ -684,7 +684,7 @@ public class PermissionValidator
                 _loadedToken = token;
                 // There is no file to fix: the rows and their fix, as the admin pages name them (aud-a26q).
                 _logger.LogError("The protected-user list cannot be loaded - every protected-target operation is refused; the load is retried after {Retry}. {Store}",
-                    FailedLoadRetry, SettingsStoreText.ModuleConfig("MailboxPermissions"));
+                    FailedLoadRetry, SettingsStoreText.ServiceModuleConfig("MailboxPermissions"));
                 return;
             }
 
