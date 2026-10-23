@@ -1583,11 +1583,15 @@ public static class ProgressRegistry
         [
             new("SearchGroups", "GroupService.SearchGroupsAsync"),
             new("SelectGroup", "GroupService.GetGroupDetailsAsync"),
-            new("SaveGroup", "GroupService.UpdateGroupAsync"),
-            new("DeleteGroup", "GroupService.DeleteGroupAsync"),
-            new("RunMemberOpAsync", "op(",
+            new("SaveGroup", ["TicketRefusalAsync(", "GroupService.UpdateGroupAsync"],
+                "kd-7 added the ticket check above the write, and it is named first: a ServiceNow "
+                + "round trip wherever that integration is enabled, so the Begin must stay above it"),
+            new("DeleteGroup", ["TicketRefusalAsync(", "GroupService.DeleteGroupAsync"],
+                "as SaveGroup: the kd-7 ticket check, then the delete"),
+            new("RunMemberOpAsync", ["TicketRefusalAsync(", "op("],
                 "the shared member/owner pipeline. Its activity spans the delegate the four "
-                + "membership handlers hand it, which is where the Graph write actually happens"),
+                + "membership handlers hand it, which is where the Graph write actually happens, "
+                + "and the kd-7 ticket check above it, named first as on SaveGroup"),
         ],
         Exempt =
         [

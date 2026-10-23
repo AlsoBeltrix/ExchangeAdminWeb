@@ -203,6 +203,9 @@ module previously had no README entry.)
 Create, modify, and delete Microsoft 365 groups via Graph API.
 
 - Full lifecycle management for M365 (Unified) groups
+- A ticket number is required before any create, update, delete or member/owner change runs:
+  a blank one, or one ServiceNow rejects where that integration is enabled, is refused with an
+  audited denial and nothing is sent to Graph
 - **Requires:** Graph app registration with `Group.ReadWrite.All` permission
 - Section access key: `M365GroupManagement`
 

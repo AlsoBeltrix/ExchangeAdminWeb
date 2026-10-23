@@ -1,8 +1,8 @@
 # kd-7: M365 Group Management validates no ticket; the same shape on Named Locations delete and twice on Conference Rooms
 
 **Severity**: MEDIUM - mutating actions without the ticket validation the Constitution and the other modules apply. `M365GroupManagement` validates no ticket on its writes; `NamedLocations` delete and two Conference Rooms paths share the shape. Conference Rooms and Named Locations were not re-verified at the last state pass; the implementing agent verifies each before writing.
-**Status**: Open - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
-**Branch**: -
+**Status**: In progress - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
+**Branch**: `fix/kd7-kd8` (worktree `D:\source\ExchangeAdminWeb-wt\kd7-kd8`, from master `3e43b35b`)
 **Commit**: -
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects"; M365 re-verified 2026-10-23 as of `d881ea58`)
 
@@ -10,11 +10,135 @@
 
 `Components/Pages/M365GroupManagement.razor` and `Services/M365GroupManagementService.cs`; `Components/Pages/NamedLocations.razor` (delete); `Components/Pages/ConferenceRooms.razor` (two paths - locate). Trigger: a write with an empty or malformed ticket. Predicted failure: the write proceeds and the audit row carries no valid ticket.
 
-## Approach (to be written by the implementing agent before code)
+## Approach
 
-- Each listed write path validates the ticket through the shared `TicketNumberInput` / validator shape the other modules use, refuses with an audited denial, and the page tests pin it; pages are line-keyed.
-- Mutation: one validation removed per page.
+Re-read at `3e43b35b`; every line below is that commit's.
+
+### Verification of the record's claims
+
+Where "the shape" comes from: the tier-1 click-gating log for M365GroupManagement (`8b3bfd64`, `.agents/token-log.md`
+2026-09-19 page 7) - "nothing in this module validates a ticket against ServiceNow and no handler re-checks one, so the
+four markup clauses are the ONLY enforcement of the ticket requirement - the NamedLocations 191 / IntuneDevices 403
+shape". The shape is a precondition enforced only by a button's `disabled` expression, which is one round trip stale and
+is bypassed by a double dispatch or a programmatic click.
+
+One fact decides all three pages: `Services/ServiceNowService.cs:57-65` returns `IsValid = true` for EVERY ticket, a blank
+one included, while `ServiceNow:Enabled` is false (the deployment today: no ServiceNow API access,
+`.agents/decisions.md` 2026-08-31), and its own blank check (`:67`) sits below that early return. So
+`ServiceNow.ValidateTicketAsync` alone - the inline shape eight pages use - does not enforce presence on a dormant
+deployment. RiskyUsers (`RiskyUsers.razor:870`, `:876`) and IntuneDevices (`IntuneDevices.razor:1026`, `:1032`) check presence first and then validate; that is the
+shape used here.
+
+1. **M365 Group Management - true.** No handler checks the ticket and the page injects no `ServiceNowService`
+   (`M365GroupManagement.razor:5-12`). `SaveGroup` (`:502-579`) captures the ticket at `:516`, re-checks authorization
+   at `:533-540` and writes at `:546-548`; `DeleteGroup` (`:581-647`) captures at `:587`, re-authorizes at `:601-608`,
+   deletes at `:613`; `RunMemberOpAsync` (`:685-773`, the pipeline `AddMember` `:652`, `AddOwner` `:660`,
+   `RemoveMember` `:668` and `RemoveOwner` `:675` share) captures at `:697`, re-authorizes at `:710-718` and writes at
+   `:720`. The only enforcement is the markup at `:130`, `:149`, `:172`, `:191` (`memberTicketNumber`) and `:291`,
+   `:301` (`formTicketNumber`). Every audit row and admin email carries whatever was in the box, blank included.
+2. **Named Locations delete - true, and the record understates it.** `DeleteLocation` (`NamedLocations.razor:442-506`)
+   captures the ticket at `:453`, re-authorizes at `:467-474` and deletes at `:476` with no ticket check; the Confirm
+   Delete clause at `:196` is the only enforcement (`ClickGateRegistry` says so: "DeleteLocation does not re-check the
+   ticket"). `SaveLocation` (`:341-440`, captures `:359`, re-authorizes `:379-386`, writes `:404-410`) has the same
+   shape - its Save clause at `:206` is equally the only enforcement ("SaveLocation re-checks neither") - so both writes
+   are fixed. The page injects no `ServiceNowService` (`:5-13`).
+3. **Conference Rooms, "two paths validate no ticket" - false as written.** All four writes validate:
+   `SetupSingleRoom` `ConferenceRooms.razor:1033-1039`, `ApplyFinderCsv` `:1277-1283`, `SetSingleRoomType`
+   `:1383-1389`, `ApplyTypeCsv` `:1587-1593` each call `ServiceNow.ValidateTicketAsync(ticket)` and refuse with an
+   audited Failed row. The "twice" in the source note is the page's two room-address clauses (`ClickGateRegistry`,
+   ConferenceRooms entry: "Two of the six clauses are the SOLE enforcement of their condition - neither SetupSingleRoom
+   nor SetSingleRoomType checks its room address anywhere"), and that sub-claim is false as a write defect: an empty
+   address reaches `ConferenceRoomProtectionGate.GuardThenRunAsync` (`Services/ConferenceRoomProtectionGate.cs:103-130`),
+   which refuses a recipient that does not resolve to a room mailbox (NotFound refused since aud-a2d) and the page
+   audits the denial. Declined; no change. **But** the dormant pass-through above means all FOUR ticket checks admit
+   a blank ticket today, so the predicted failure is real there too: presence is enforced only by the markup at `:126`,
+   `:159`, `:313` and `:340`, and `ClickGateRegistry`'s "ServiceNow validation would reject an empty ticket" holds only
+   on a deployment with the integration enabled. The fix is presence on those four lines, in place.
+
+### What changes - M365 Group Management (commit 1)
+
+- `[Inject] private ServiceNowService ServiceNow` beside `Progress` (`:317`), below every registered line.
+- Two helpers at the end of `@code`: `TicketRefusalAsync(ticket)` - presence first ("A ticket number is required."),
+  then `ServiceNow.ValidateTicketAsync`, which refuses a malformed or unknown ticket wherever the integration is enabled
+  ("Ticket validation failed: ..."); null when the ticket passes - and `AuditTicketRefusal(action, target, ticket,
+  refusal)` - one Failed `LogModuleAction` row with the reason in `error` and, in the aud-a28 refusal convention,
+  `refusedAt = "TicketValidation"` and `mutationAttempted = false`.
+- In `SaveGroup`, `DeleteGroup` and `RunMemberOpAsync`, directly below the authorization re-check and above the write:
+  on a refusal the banner and the activity's local get it, the row is written, and the handler returns. Inside the try,
+  so the finally lowers the flag; inside the activity window. No administrator email: like the authorization denial
+  beside it, nothing reached Graph. The protection gap the owner excluded (`UpdateGroupAsync` / `DeleteGroupAsync` call
+  no protection check) is untouched and does not interact: the gate sits above the service call.
+- Line keys: every registered line is in markup at 300 or earlier and every edit is in `@code` below 313, so only
+  `ExpectedLineCount` moves (re-anchor playbook: a diff map, then the ClickGate tests). The registry's M365 remarks and
+  `RendersOnlyWhen` notes that call the markup clauses the only enforcement are corrected; the clauses stay registered.
+  `ProgressRegistry` names `TicketRefusalAsync(` as the opening call of the three entries.
+- Guard: `M365GroupManagementTicketGateTests` drives the compiled handlers by reflection (the kd-4 / AttributeEditor
+  pattern) over a real `AuditService`, a substituted `EmailService` and an unconfigured service, so a write that is
+  reached fails into the catch, which audits it without `mutationAttempted` and emails it.
+- Mutation: one handler's gate removed; the presence half of `TicketRefusalAsync` removed.
+- Module `M365GroupManagement` 1.6.1 -> 1.7.0 in `Modules/ModuleCatalog.cs`; no base app bump.
+
+## Files changed
+
+Commit 1, M365 Group Management:
+
+- `Components/Pages/M365GroupManagement.razor` - `[Inject] ServiceNowService ServiceNow`; `TicketRefusalAsync` and
+  `AuditTicketRefusal` at the end of `@code`; the gate in `SaveGroup`, `DeleteGroup` and `RunMemberOpAsync`, each
+  directly below its authorization re-check. 781 -> 842 lines, every added line below 313.
+- `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` - M365 `ExpectedLineCount` 781 -> 842 (diff map: 24 line keys, none
+  moved, none unmapped); the entry's falsification-6 remarks, the `memberTicketNumber` / `formTicketNumber`
+  ExcludedField reasons, the AnnotatedControls preamble, the `RendersOnlyWhen` notes on 129, 149, 191 and 291 and the
+  `SaveGroup` ticket PostAwaitLiveRead note said no handler checks a ticket; they now say the handlers do and the
+  clauses stay as the click gate's precondition. No clause, key or registration changed.
+- `ExchangeAdminWeb.Tests/ProgressRegistry.cs` - `TicketRefusalAsync(` named first on the `SaveGroup`, `DeleteGroup`
+  and `RunMemberOpAsync` entries.
+- `ExchangeAdminWeb.Tests/M365GroupManagementTicketGateTests.cs` - new.
+- `Modules/ModuleCatalog.cs` - `M365GroupManagement` 1.6.1 -> 1.7.0.
+- `README.md` - the M365 Group Management section states the ticket requirement.
 
 ## Guard proof
 
-Pending.
+### M365 Group Management
+
+`M365GroupManagementTicketGateTests` (35 cases) drives the seven write entry points - Create and Update
+(`SaveGroup`), `DeleteGroup`, and `AddMember`, `AddOwner`, `RemoveMember`, `RemoveOwner` through `RunMemberOpAsync` -
+by reflection, over a real `AuditService` on a temp log root, a substituted `EmailService`, granting authorization,
+and a real `M365GroupManagementService` with no Graph and no directory-read secret, so a write that is reached fails
+without leaving the process and is audited without `mutationAttempted` and emailed.
+
+- `AWriteWithNoTicket_IsRefusedAndAudited_AndNeverReachesTheService` (7 writes x `""`, `"   "`, ServiceNow dormant):
+  one Failed row with the action, target and "A ticket number is required.", `refusedAt` "TicketValidation",
+  `mutationAttempted` false and no ticket; no admin email; the banner is the refusal.
+- `AWriteWithATicketServiceNowRejects_IsRefusedAndAudited_AndNeverReachesTheService` (7; enabled, a stub answering "not
+  found"): the same row with "Ticket validation failed: Ticket INC0042 not found in ServiceNow"; one query.
+- `AMalformedTicket_IsRefusedWithoutAQuery_WhereServiceNowIsEnabled` (7): "Ticket validation failed: Ticket number must
+  be letters and digits only."; no query.
+- `AWriteWithATicket_ReachesTheService` (7, the control): the write is attempted - one Failed row with the service's
+  own error and no refusal fields, and one admin email.
+
+| Mutation | Result |
+| --- | --- |
+| M1: `DeleteGroup`'s gate removed (md5 `4c55d015` -> `156ee1b9`) | FAIL, 4 of 35 - every Delete refusal case: `Expected: "A ticket number is required." Actual: "M365 Group Management module is not configured..."` (the delete reached the service) |
+| M2: the presence half of `TicketRefusalAsync` removed (md5 -> `a3660e13`) | FAIL, 14 of 35 - every blank-ticket case: the dormant client passed it, and the write reached the service ("not configured" x6, "Protection check unavailable" x8) |
+
+After each, the page was restored byte-exact from the fixed copy with a fresh mtime (md5 `4c55d015` again), rebuilt
+and rerun: 35 passed; with the ClickGate and ProgressRegistry groups, 386 passed.
+
+## Coder dispute
+
+None.
+
+## Known gaps
+
+- The refusal sends no administrator email, as the authorization denial beside it does not: nothing reached Graph.
+  Recorded so a reviewer does not take it for an omission (Constitution, Notifications: mutating actions notify; a
+  refused attempt is audited, as here).
+- No live check: no Graph or ServiceNow call was made; rendering is not exercised (no bUnit harness).
+
+## Reviewer comments
+
+None yet (codex review pending, dispatched by the supervising session).
+
+## Closeout
+
+Pending: merge into master, codex review, branch deletion.

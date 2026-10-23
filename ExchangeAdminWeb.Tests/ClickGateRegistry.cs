@@ -2907,10 +2907,10 @@ public static class ClickGateRegistry
     /// page by name - EditGroup (447) and ShowCreateForm (435) both blank it, DeleteGroup audited
     /// and emailed it from the catch after several awaits, and SaveGroup read it live at four
     /// sites - and memberTicketNumber is the same defect on the member and owner half. Worth
-    /// stating plainly because it changes what those clauses are worth: nothing on this page
-    /// validates a ticket against ServiceNow. The emptiness clauses in AnnotatedControls are the
-    /// ONLY thing requiring a ticket before a write, and the capture is the only thing making the
-    /// recorded ticket the one the operator typed.
+    /// stating plainly because it changed what those clauses are worth: until kd-7 nothing on this
+    /// page checked a ticket, so the emptiness clauses in AnnotatedControls were the ONLY thing
+    /// requiring one before a write. Every write now passes TicketRefusalAsync below its
+    /// re-authorization; the capture is what makes the ticket checked the ticket recorded.
     /// </para>
     /// <para>
     /// <b>Two live reads that PostAwaitLiveReads cannot express, fixed in code and recorded
@@ -2928,7 +2928,7 @@ public static class ClickGateRegistry
     private static PageGateEntry M365GroupManagement => new()
     {
         Page = "M365GroupManagement.razor",
-        ExpectedLineCount = 781,
+        ExpectedLineCount = 842,
 
         Predicates =
         [
@@ -3038,7 +3038,7 @@ public static class ClickGateRegistry
 
             new ExcludedField("memberTicketNumber", "the ticket input at 118; read by 124, 144, 166, 186",
                 "the staged ticket for every member and owner change. FOUR buttons read it as an "
-                + "emptiness precondition, and nothing in the handlers or the service re-checks it, "
+                + "emptiness precondition, which RunMemberOpAsync re-checks since kd-7, "
                 + "so typing the ticket that unlocks all four would disable all four"),
 
             new ExcludedField("addMemberIdentity", "the identity box at 123 and Add at 124",
@@ -3051,7 +3051,7 @@ public static class ClickGateRegistry
 
             new ExcludedField("formTicketNumber", "the ticket input at 277; read by 286 and 295",
                 "the staged ticket for a create, an update or a delete. Same shape as "
-                + "memberTicketNumber, and the same absence of any re-check behind it"),
+                + "memberTicketNumber, re-checked by SaveGroup and DeleteGroup since kd-7"),
 
             new ExcludedField("formDisplayName", "the name input at 243 and Save at 295",
                 "the group name. Save reads it as an emptiness precondition, so a predicate naming "
@@ -3201,10 +3201,10 @@ public static class ClickGateRegistry
         // mirrored in prose and none can be satisfied by a tooltip. The assertion reads the disabled
         // attribute value in any case.
         //
-        // Worth saying once for all seven clause-bearing entries: nothing on this page validates a
-        // ticket against ServiceNow and no handler re-checks one, so the four ticket clauses below
-        // are the ONLY enforcement of the ticket requirement anywhere in the module - the
-        // NamedLocations 191 and IntuneDevices 403 shape, four times over.
+        // Worth saying once for all seven clause-bearing entries: until kd-7 no handler on this page
+        // checked a ticket, so the four ticket clauses below were the ONLY enforcement of the ticket
+        // requirement in the module. SaveGroup, DeleteGroup and RunMemberOpAsync now refuse a blank
+        // or invalid one themselves; the clauses stay, as the click gate's precondition.
         AnnotatedControls =
         [
             new AnnotatedControl(60, "@onclick=\"SearchGroups\"",
@@ -3221,15 +3221,15 @@ public static class ClickGateRegistry
                 ],
                 RendersOnlyWhen:
                 "only inside the member/owner panel, so only while selectedGroup != null && members "
-                + "!= null && !showForm. Neither clause is belt and braces: RunMemberOpAsync checks "
-                + "only that a group is selected, and the service takes no ticket at all"),
+                + "!= null && !showForm. RunMemberOpAsync re-checks the ticket (kd-7) but not the "
+                + "identity, and the service takes no ticket at all"),
 
             new AnnotatedControl(149, "@onclick=\"() => RemoveMember(m)\"",
                 ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
                 RendersOnlyWhen:
                 "once per member row, inside the member panel, and then only while "
-                + "confirmRemoveMember == m.Id. The clause is the only thing requiring a ticket "
-                + "before a member is removed from an M365 group"),
+                + "confirmRemoveMember == m.Id. RunMemberOpAsync re-checks the ticket (kd-7); "
+                + "the clause is the click gate's half of that requirement"),
 
             new AnnotatedControl(171, "@onclick=\"AddOwner\"",
                 [
@@ -3242,8 +3242,8 @@ public static class ClickGateRegistry
             new AnnotatedControl(191, "@onclick=\"() => RemoveOwner(o)\"",
                 ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
                 RendersOnlyWhen:
-                "once per owner row, only while confirmRemoveOwner == o.Id. Same sole enforcement "
-                + "as 144, on the half where removing the last row leaves a group nobody owns"),
+                "once per owner row, only while confirmRemoveOwner == o.Id. Same footing as 149, "
+                + "on the half where removing the last row leaves a group nobody owns"),
 
             new AnnotatedControl(221, "@onclick=\"CancelForm\"",
                 [],
@@ -3262,8 +3262,8 @@ public static class ClickGateRegistry
                 ["string.IsNullOrWhiteSpace(formTicketNumber)"],
                 RendersOnlyWhen:
                 "only while showForm && editingGroup != null && confirmDelete == editingGroup.Id. "
-                + "DeleteGroup does not re-check the ticket, so this clause IS the only enforcement "
-                + "of the ticket requirement on the most destructive action in the module"),
+                + "DeleteGroup re-checks the ticket since kd-7; this clause is the click gate's half "
+                + "of the requirement on the most destructive action in the module"),
 
             new AnnotatedControl(300, "@onclick=\"SaveGroup\"",
                 [
@@ -3340,8 +3340,8 @@ public static class ClickGateRegistry
                 + "this page. EditGroup (447) and ShowCreateForm (435) both blank the field, and "
                 + "this handler read it live at four sites including two inside the catch, so the "
                 + "audit row and the admin email could record a ticket that was not the one the "
-                + "operator typed - or no ticket at all. Nothing re-validates it, so the record is "
-                + "all there is"),
+                + "operator typed - or no ticket at all. Since kd-7 it is also the ticket "
+                + "TicketRefusalAsync checks, so the ticket checked and the ticket recorded are one"),
 
             new PostAwaitLiveRead("SaveGroup", "operationResult", "result",
                 SnapshotShape.PublishedFromLocal,
