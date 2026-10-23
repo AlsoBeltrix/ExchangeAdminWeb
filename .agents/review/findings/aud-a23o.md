@@ -9,7 +9,7 @@ base returns null for ANY failure - a guess. (3) `HasCloudMailboxAsync` reads `G
 `-ErrorAction Ignore` and `OnPremRecipientExists` under `SilentlyContinue`: a failed read is "no mailbox".
 (4) `CheckAdGroupMembership` has no caller since aud-a23j but still carries the substring match and the
 Eligible-when-no-user return; a future caller inherits the defect.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
+**Status**: Fixed on branch; closed on guard proof; not merged (approved under the owner's 2026-10-21 "EVERYTHING" go)
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidates 1, 2, 3 and 6 of its hand-back)
@@ -128,4 +128,120 @@ the mutation round.
 
 ## Guard proof
 
-Pending.
+Built as the Plan. Line numbers are at the fix commit's bytes. The fix commit carries no new code comments: the moved
+helpers keep the comments they had in `MigrationService` (reworded for their new home in the comments commit), and the
+comments that described removed code went with it. `Components/Pages/CalendarPermissions.razor` (762 lines) and
+`Components/Pages/MailboxPermissions.razor` (808) keep their line counts: `git diff --numstat` 1/1 each, the location line
+replaced in place; no registered line or snippet changed.
+
+- `Services/ExchangeServiceBase.cs` (base app):
+  - `OnPremNotConfigured` (184), `OnPremCredentialsUnavailable` (186).
+  - Moved from `MigrationService` unchanged: `IsCancellation` (355), `ReadUnlessNotFound` (368), `IsNotFound` (397) with
+    `NamesNotFound`, `Identifiers`, `IdentifierPart`; `ReadSize` (580). aud-a23k's `CloudMailboxSize` is the base's
+    `MailboxSizes` (565), with `Unreadable(reason)` and `UnreadableReason(where)` (569).
+  - `GetOnPremMailboxSizeAsync` (595-) returns `MailboxSizes`: not configured and no credentials are both sizes unreadable
+    with those reasons; the mailbox read (630) and the archive read (644) through new `AddOnPremRead` (681: `Invoke-Command
+    -ErrorAction Stop` over the remote script), each through `Invoke` and `ReadSize`; the archive's not-found by structure
+    (648) is no archive, any other failure "Get-MailboxStatistics -Archive failed: <reason>"; a session that cannot be
+    opened is both unreadable with its words. `ParseExchangeSize` is gone.
+  - `GetMailboxLocationAsync` (688): a failed cloud read is "Exchange Online could not be asked: <reason>" (697).
+    `LocationReadFailure` (706). `HasCloudMailboxAsync` (717): `-ErrorAction Stop`, `ReadUnlessNotFound` (725).
+    `GetOnPremMailboxLocationAsync` (729): not configured (734), no credentials (741) and any failure (769) throw "on-premises
+    Exchange could not be asked: <reason>"; null only when both reads answered not found. `OnPremRecipientExists` (778): no
+    session throws (781); the read under Stop through `AddOnPremRead` and `ReadUnlessNotFound`; a failure is
+    "<cmdlet> failed: <reason>".
+  - `CheckAdGroupMembership` and its section are gone.
+- `Services/MigrationService.cs`: the ToCloud size step (196-223) copies the sizes and markers, applies the quota only to a
+  size that was read, and makes an Eligible verdict Undetermined with "Could not be determined: <UnreadableReason>" (218);
+  the catch (241) the same with both sizes marked. `GetCloudMailboxSizeAsync` (1454) returns `MailboxSizes`. The moved
+  helpers and the now-unused Regex using are gone.
+- `Services/RecipientLookupService.cs` (135-141): a size is set only when it was read; the unreadable one is a warning in the
+  base's words ("The on-premises mailbox size could not be read: <reason>.").
+- `Components/Pages/CalendarPermissions.razor` 431, `Components/Pages/MailboxPermissions.razor` 461: `string location; try
+  { location = await ...GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result =
+  PermissionResult.Fail(ExchangeServiceBase.LocationReadFailure(target, locationEx)); return; }`.
+- `ExchangeAdminWeb.Tests/MigrationStubExchange.cs`: the on-premises stand-in - `OnPremConfigured` (the service is built
+  with a server URI only then), `OnPremCredentials`, `OnPremMailboxes`, `OnPremRemoteMailboxes`, `Recipients` and an
+  Exchange Online `Get-Recipient`; both services' `ConnectOnPrem` and `GetModuleCredentialsAsync` seams overridden
+  (`DefineOnPremSession`: an Invoke-Command that runs the remote script locally, `Remove-PSSession`, and `OnPremStubs` -
+  Get-MailboxStatistics, Get-Mailbox, Get-RemoteMailbox - logged "OnPrem <cmdlet>"; `Failures["OnPrem Connect"]` makes
+  opening the session throw); `RecipientLookup()` builds the real Recipient Lookup service over the same stand-ins;
+  `Stub` takes a label for the logged step.
+- `MigrationExcludedGroupTests`, `MigrationForestLookupTests`: their size-step reason in the new words (no server
+  configured there).
+
+New `ExchangeAdminWeb.Tests/ExchangeServiceBaseOnPremReadTests.cs`, 22 tests (42 cases):
+
+| Test | Pins |
+| --- | --- |
+| `AnOnPremMailboxSizeThatCannotBeRead_IsUndetermined_NeverZero` (thrown, written, no row, no size, does not parse) | **the finding, (1)/(2)**: Undetermined, the marker, "Could not be determined: the on-premises mailbox size could not be read: <reason>". Before: a size that does not parse was 0, Eligible; a failed read Ineligible "(on-prem connection unavailable)" |
+| `AnOnPremArchiveThatCannotBeRead_IsUndetermined_NotNoArchive` (thrown, written, no row, does not parse) | **the finding**: the archive marker; the mailbox read as 2.5. Before: no archive, Eligible |
+| `NoOnPremArchive_IsNoArchive` (category, type, identifier) | Exchange's not-found by structure: Eligible, archive 0, no marker |
+| `ASizeReadThatCannotBeMade_IsUndetermined_InTheBasesWords` (not configured, no credentials, the session cannot be opened) | both sizes marked with the base's own reason, never "(on-prem connection unavailable)" |
+| `ReadableSizesUnderTheQuota_AreEligible_WithTheSizes`, `AReadableSizeOverTheQuota_IsIneligible` | the controls: the quota decides as before |
+| `AnIneligibleSizeAnswer_WithAnArchiveThatCannotBeRead_StaysIneligible_WithBothReasons` | a known reason stands; the unread archive named beside it |
+| `ThePage_ShowsASizeThatCouldNotBeRead_AsUndetermined` | through `CheckSingleEligibility`: "could not be determined", the reason, "could not be read (...)", no "IS NOT eligible", no "0.00 GB" |
+| `ACloudMailbox_IsCloud_AndNothingOnPremisesIsAsked` | the control |
+| `ACloudReadThatFails_IsAFailedRead_NeverNoMailbox` (thrown, written) | **the finding, (3)**: "Exchange Online could not be asked: ..."; on-premises not asked. Before: on to on-premises, "Unknown" |
+| `NotInTheCloud_OnPremisesDecides` (on-premises mailbox, remote mailbox, neither) | OnPrem, Cloud, Unknown - "Unknown" only when both sides said there is none |
+| `AnOnPremReadThatFails_IsAFailedRead` (Get-Mailbox, Get-RemoteMailbox; thrown, written) | **the finding, (3)**: "on-premises Exchange could not be asked: <cmdlet> failed: ...". Before: "Unknown" |
+| `AnOnPremCmdletTheSessionLacks_IsAFailedRead` | CommandNotFoundException is no answer |
+| `OnPremisesThatCannotBeAsked_IsAFailedRead` (not configured, no credentials, the session cannot be opened) | each a failure in the base's words. Before: "Unknown" |
+| `ALocationReadThatFailed_IsRefusedSayingNothingWasChanged` | `LocationReadFailure`'s text |
+| `APermissionsPage_RefusesALocationReadThatFailed_BeforeAnyWrite` (Calendar, Mailbox) | the guarded line, and no unguarded `var location = await` left (source - neither page has a handler harness) |
+| `RecipientLookup_AnOnPremSizeThatCannotBeRead_IsAWarning_NotZero` | no size, the warning naming why. Before: 0.00 GB |
+| `RecipientLookup_AnOnPremArchiveReadThatFails_KeepsTheMailboxSize_AndSaysWhy` | the mailbox size, no archive size, the archive's warning |
+| `RecipientLookup_ReadableOnPremSizes_AreShown`, `RecipientLookup_ACloudLocationReadThatFails_IsUnknown_SayingWhy` | the control; a failed location read reaches its existing warning |
+| `TheBaseNoLongerCarries` (CheckAdGroupMembership, ParseExchangeSize) | **the finding, (4)**: both gone |
+
+**Against the unfixed code: not runnable as a whole** - the size read's return type and the base's members changed, so each
+behaviour was put back at its own call site instead, and each revert fails the tests that pin it.
+
+Mutations at the call site, by the same driver and protocol as aud-a23r's (session scratchpad `work/mutate.ps1`,
+`work/round-a23o.ps1`; fix staged, restored from git's index, touched, md5 equal, rebuilt, green), over the 1930 tests of
+the same filter. Bytes (LF) before every mutation and after every restore: base `75a621657fc4a66611e98299cbd2cb48`, service
+`4933f50ba497e3a39f7921ff3b0e19ad`, Recipient Lookup `5cb32b315c11692fa9e9b581260a28c1`, Calendar Permissions page
+`329585d56f12ad3287f2076c26bd3ec5`.
+
+| Mutation | File | md5 mutated | Failed (of 1930) | Restored, rerun |
+| --- | --- | --- | --- | --- |
+| O1 (the record's): `?? 0` again - the mailbox size `ParseSizeToGB(...) ?? 0`, no marker | base | `f48c5ee68dd8524176ae786886508095` | 5: `AnOnPremMailboxSizeThatCannotBeRead...` (no row, no size, does not parse), `ThePage_ShowsASize...`, `RecipientLookup_AnOnPremSizeThatCannotBeRead...` | equal; 1930/0 |
+| O2 (the record's): the archive catch again - any archive failure no archive | base | `c70d3d3c7e2593d8a0dfc7ccc6e0c4f5` | 4: `AnOnPremArchiveThatCannotBeRead...` (thrown, written), `AnIneligibleSizeAnswer_WithAnArchive...`, `RecipientLookup_AnOnPremArchiveReadThatFails...` | equal; 1930/0 |
+| O3 (the record's): `-ErrorAction Ignore` again on `HasCloudMailboxAsync` | base | `a725ee68f98060106b3c84c525f0300e` | 3: `ACloudReadThatFails...` (thrown, written), `RecipientLookup_ACloudLocationReadThatFails...` | equal; 1930/0 |
+| O4: an unreadable size filed Ineligible again | service | `af27fd094d1399538c633036796ff83e` | 13: every size-unreadable case's Undetermined, the page test | equal; 1930/0 |
+| O5: SilentlyContinue again in `OnPremRecipientExists` | base | `878dfac0d1fc9dd49d559d8a3b73d5fa` | 4: `AnOnPremReadThatFails...` (all four - a throw is suppressed too) | equal; 1930/0 |
+| O6: `GetOnPremMailboxLocationAsync`'s catch returns null again | base | `9da11be6839776d4c371ced554bff093` | 6: `AnOnPremReadThatFails...` (4), `AnOnPremCmdletTheSessionLacks...`, `OnPremisesThatCannotBeAsked...` (session) | equal; 1930/0 |
+| O7: Recipient Lookup shows an unreadable size (0) again | lookup | `5a5b5a4af82fe946b541920913b7bd37` | 1: `RecipientLookup_AnOnPremSizeThatCannotBeRead...` | equal; 1930/0 |
+| O8: the Calendar page's location read unguarded again | page | `52f4ddb3415520f5126a918489777a50` | 1: `APermissionsPage_Refuses...` (Calendar) | equal; 1930/0 |
+
+md5s (LF) of the other files at the fix commit: `MailboxPermissions.razor` `1769c207ec6aef7df9097fa2146cc857`,
+`MigrationStubExchange.cs` `5bd6bed670f0c5d8122ac6394b52ebbb`, `ExchangeServiceBaseOnPremReadTests.cs`
+`ed0a5003d741d5b22f41293928ea7b68`, `MigrationExcludedGroupTests.cs` `248dad8c06f0bda8b019183f563b5b5b`,
+`MigrationForestLookupTests.cs` `751b25f817d9f7ba694e344c381e098b`.
+
+On the fix commit's tree: Release build 0 errors, 59 warnings (none in a touched file); the 1930 focused tests 1930/0 (every
+`ExchangeServiceBase` subclass's among them); `dotnet format --verify-no-changes` exit 0; `git diff --cached --check` exit 0;
+`tools/Test-AsciiOnly.ps1` exit 0. No Exchange, Delinea or remote session was touched: every on-premises cmdlet was a
+stand-in defined through the services' own `ConnectOnPrem` seam.
+
+## Left for a follow-up (file owned by another agent)
+
+- `Services/ConferenceRoomService.cs` 1533, a comment: "Runs in its own AD runspace (mirrors Comms10k /
+  CheckAdGroupMembership), not through". `CheckAdGroupMembership` no longer exists; the comment should name
+  `MigrationService.CheckExcludedGroups` (or drop the reference). Comment only - no behaviour.
+
+## Known gaps
+
+- **Assumptions, labelled (no live call):** on-premises Exchange's not-found, through remoting, keeps the category / reason /
+  FailureCategory shape `IsNotFound` reads, for Get-Mailbox, Get-RemoteMailbox and Get-MailboxStatistics -Archive (a
+  mailbox with no archive); Exchange Online's for Get-Mailbox (aud-a23h's assumption, now also carried by Calendar
+  Permissions, Mailbox Permissions and Recipient Lookup through `GetMailboxLocationAsync`). If either is wrong, a ToCloud
+  check of a mailbox with no archive is Undetermined, and a location read of a mailbox not on that side is refused with
+  Exchange's own words - fail closed, visible; one dev check of each error record settles it before a deploy. **This is the
+  change's biggest risk**: if Exchange Online's not-found is not recognised, on-premises targets in Calendar and Mailbox
+  Permissions are refused until it is.
+- The two permission pages' new refusal is pinned by source, not driven: neither page has a handler harness.
+- The on-premises archive read that returns no row and no error is now unreadable ("returned no archive statistics");
+  aud-a23k's cloud archive read, through `ReadUnlessNotFound`, still treats that as no archive (noted as a candidate).
+- Behaviour outside Migration: Recipient Lookup's on-premises sizes and location warnings, and Calendar and Mailbox
+  Permissions' refusal text for a failed location read (named in the hand-back for their bumps).

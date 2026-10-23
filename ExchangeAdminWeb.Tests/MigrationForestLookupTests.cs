@@ -27,7 +27,7 @@ public sealed class MigrationForestLookupTests : IDisposable
     private const string SalesDn = "CN=Sales,OU=Groups,DC=contoso,DC=test";
     private const string SecondSalesDn = "CN=Sales,OU=Groups,DC=fabrikam,DC=test";
     private const string StaffDn = "CN=Staff,OU=Groups,DC=fabrikam,DC=test";
-    private const string SizeStep = "Could not verify on-prem mailbox size (on-prem connection unavailable)";
+    private const string SizeStep = "Could not be determined: the on-premises mailbox and archive sizes could not be read: on-premises Exchange is not configured (OnPremExchange:ServerUri is not set)";
     private const string Incomplete = "Could not be determined: the excluded-group check could not be completed: ";
 
     private readonly MigrationStubExchange _exchange = new();

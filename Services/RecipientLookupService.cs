@@ -133,15 +133,12 @@ public class RecipientLookupService : ExchangeServiceBase
             try
             {
                 var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
-                if (onPremSize != null)
-                {
-                    result.MailboxSizeGB = onPremSize.Value.mailboxSizeGB;
-                    result.ArchiveSizeGB = onPremSize.Value.archiveSizeGB;
-                }
-                else
-                {
-                    result.Warnings.Add("On-premises mailbox size unavailable (connection not configured).");
-                }
+                if (onPremSize.MailboxUnreadable is null)
+                    result.MailboxSizeGB = onPremSize.MailboxGB;
+                if (onPremSize.ArchiveUnreadable is null)
+                    result.ArchiveSizeGB = onPremSize.ArchiveGB;
+                if (onPremSize.UnreadableReason("on-premises") is { } unreadable)
+                    result.Warnings.Add($"{char.ToUpperInvariant(unreadable[0])}{unreadable[1..]}.");
             }
             catch (Exception ex)
             {

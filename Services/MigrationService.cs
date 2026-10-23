@@ -4,7 +4,6 @@ using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Security.Claims;
 using System.Text;
-using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExchangeAdminWeb.Models;
@@ -194,33 +193,33 @@ public class MigrationService : ExchangeServiceBase
             {
                 if (direction == MigrationDirection.ToCloud)
                 {
-                    var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress);
-                    if (sizeResult is not null)
-                    {
-                        var (mailboxGB, archiveGB) = sizeResult.Value;
-                        result.MailboxSizeGB = mailboxGB;
-                        result.ArchiveSizeGB = archiveGB;
-                        result.CloudQuotaGB = _cloudQuotaGB;
+                    var size = await GetOnPremMailboxSizeAsync(emailAddress);
+                    result.MailboxSizeGB = size.MailboxGB;
+                    result.ArchiveSizeGB = size.ArchiveGB;
+                    result.MailboxSizeUnreadable = size.MailboxUnreadable;
+                    result.ArchiveSizeUnreadable = size.ArchiveUnreadable;
+                    result.CloudQuotaGB = _cloudQuotaGB;
 
-                        // The primary mailbox and the archive are each capped at the per-mailbox
-                        // limit on their own. Their combined size is not a migration criterion,
-                        // so a user with a large mailbox AND a large archive stays eligible.
-                        if (result.MailboxExceedsQuota)
-                        {
-                            result.Status = MigrationStatus.Ineligible;
-                            result.IneligibilityReasons.Add($"Primary mailbox size ({mailboxGB:F2} GB) exceeds the per-mailbox limit ({_cloudQuotaGB} GB)");
-                        }
-
-                        if (result.ArchiveExceedsQuota)
-                        {
-                            result.Status = MigrationStatus.Ineligible;
-                            result.IneligibilityReasons.Add($"Archive size ({archiveGB:F2} GB) exceeds the per-mailbox limit ({_cloudQuotaGB} GB)");
-                        }
-                    }
-                    else
+                    // The primary mailbox and the archive are each capped at the per-mailbox
+                    // limit on their own. Their combined size is not a migration criterion,
+                    // so a user with a large mailbox AND a large archive stays eligible.
+                    if (size.MailboxUnreadable is null && result.MailboxExceedsQuota)
                     {
                         result.Status = MigrationStatus.Ineligible;
-                        result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
+                        result.IneligibilityReasons.Add($"Primary mailbox size ({size.MailboxGB:F2} GB) exceeds the per-mailbox limit ({_cloudQuotaGB} GB)");
+                    }
+
+                    if (size.ArchiveUnreadable is null && result.ArchiveExceedsQuota)
+                    {
+                        result.Status = MigrationStatus.Ineligible;
+                        result.IneligibilityReasons.Add($"Archive size ({size.ArchiveGB:F2} GB) exceeds the per-mailbox limit ({_cloudQuotaGB} GB)");
+                    }
+
+                    if (size.UnreadableReason("on-premises") is { } unreadable)
+                    {
+                        if (result.Status == MigrationStatus.Eligible)
+                            result.Status = MigrationStatus.Undetermined;
+                        result.IneligibilityReasons.Add($"Could not be determined: {unreadable}");
                     }
                 }
                 else
@@ -239,8 +238,12 @@ public class MigrationService : ExchangeServiceBase
                 _logger.LogWarning(sizeEx, "Could not retrieve mailbox size for {Email}", emailAddress);
                 if (direction == MigrationDirection.ToCloud)
                 {
-                    result.Status = MigrationStatus.Ineligible;
-                    result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
+                    var unread = MailboxSizes.Unreadable(ResolveFailure(sizeEx).primary.TrimEnd('.'));
+                    result.MailboxSizeUnreadable = unread.MailboxUnreadable;
+                    result.ArchiveSizeUnreadable = unread.ArchiveUnreadable;
+                    if (result.Status == MigrationStatus.Eligible)
+                        result.Status = MigrationStatus.Undetermined;
+                    result.IneligibilityReasons.Add($"Could not be determined: {unread.UnreadableReason("on-premises")}");
                 }
                 else
                 {
@@ -1017,80 +1020,6 @@ https://admin.exchange.microsoft.com/#/migration";
         }, allowRetry: true);
     }
 
-    // aud-a23g. A cancelled or stopped load is neither a row that could not be read nor a read that failed, so
-    // both catches above let it pass. The whole chain is searched because PowerShell's adapter wraps whatever a
-    // property getter throws, a cancellation included, in a GetValueInvocationException.
-    private static bool IsCancellation(Exception ex)
-    {
-        for (Exception? cause = ex; cause != null; cause = cause.InnerException)
-        {
-            if (cause is OperationCanceledException or PipelineStoppedException)
-                return true;
-        }
-        return false;
-    }
-
-    // aud-a23h. A read under -ErrorAction Stop through InvokeOptional (aud-a23g: it fails on an exception, not on
-    // HadErrors alone, which an error a nested command suppresses sets with nothing thrown). Rows when Exchange found the
-    // object; none when it said there is no such object; any other failure thrown to the caller.
-    private static Collection<PSObject> ReadUnlessNotFound(PowerShell ps, ConnectionErrorTracker tracker)
-    {
-        try
-        {
-            return InvokeOptional(ps, tracker);
-        }
-        catch (Exception ex) when (IsNotFound(ex))
-        {
-            return new Collection<PSObject>();
-        }
-    }
-
-    /// <summary>
-    /// aud-a23h. Whether a failed read was Exchange saying there is no such object - the one failure that is an answer.
-    /// Read from the error record's structure, never its text: the category ObjectNotFound; a reason (the exception's
-    /// type name) ending NotFoundException; or such a name among the identifiers of its FullyQualifiedErrorId, the Exchange
-    /// Online module's form ("[FailureCategory=Cmdlet-ManagementObjectNotFoundException] 2B5E15D7,..."). The record is the
-    /// exception's own or, one level in, the one inside the base class's Invoke wrapper.
-    /// </summary>
-    /// <remarks>
-    /// ASSUMPTION, unverified (no live call): that the module reports "no such object" from Get-MigrationUser, Get-Mailbox
-    /// and Get-MigrationBatch -Identity in one of those shapes. If it uses none, a check of a mailbox with no migration
-    /// reads "could not be determined" and creation is blocked - visible and fail-closed, never "eligible".
-    /// <para>
-    /// Never CommandNotFoundException, which PowerShell also files under ObjectNotFound: a cmdlet this session does not
-    /// have - a role not granted, a module not loaded - says nothing about the mailbox. And never the identifier of an
-    /// error a throw statement raised, which PowerShell makes of the thrown text.
-    /// </para>
-    /// </remarks>
-    internal static bool IsNotFound(Exception ex)
-    {
-        var record = (ex as IContainsErrorRecord ?? ex.InnerException as IContainsErrorRecord)?.ErrorRecord;
-        if (record is null
-            || ex is CommandNotFoundException
-            || ex.InnerException is CommandNotFoundException
-            || Identifiers(record.FullyQualifiedErrorId).Contains(nameof(CommandNotFoundException), StringComparer.Ordinal))
-        {
-            return false;
-        }
-
-        if (record.CategoryInfo.Category == ErrorCategory.ObjectNotFound || NamesNotFound(record.CategoryInfo.Reason))
-            return true;
-
-        var thrown = record.Exception as RuntimeException ?? ex as RuntimeException ?? ex.InnerException as RuntimeException;
-        return thrown is not { WasThrownFromThrowStatement: true }
-            && Identifiers(record.FullyQualifiedErrorId).Any(NamesNotFound);
-    }
-
-    private static bool NamesNotFound(string? identifier) =>
-        identifier is not null
-        && identifier.EndsWith("NotFoundException", StringComparison.Ordinal)
-        && !identifier.EndsWith(nameof(CommandNotFoundException), StringComparison.Ordinal);
-
-    private static IEnumerable<string> Identifiers(string? fullyQualifiedErrorId) =>
-        IdentifierPart.Matches(fullyQualifiedErrorId ?? "").Select(match => match.Value);
-
-    private static readonly Regex IdentifierPart = new(@"[A-Za-z0-9_.]+", RegexOptions.CultureInvariant);
-
     // aud-a23f. A flag as reported: false when nothing was, a bool as itself (wrappers unwrapped), text only
     // when it is True or False. Anything else is null, not false, which would be a guess.
     private static bool? ReadFlag(object? reported) => ReportedTime.Unwrap(reported) switch
@@ -1516,17 +1445,13 @@ https://admin.exchange.microsoft.com/#/migration";
         }, () => ($"Migration batch '{batchName}' queued to start.", (string?)null), allowRetry: true);
     }
 
-    // aud-a23k. The sizes a move back on-premises shows, each with why it could not be read when it could not; a size with a
-    // reason is never shown as a number or summed.
-    private sealed record CloudMailboxSize(double MailboxGB, string? MailboxUnreadable, double ArchiveGB, string? ArchiveUnreadable);
-
     // aud-a23k. A size that could not be read used to be 0 - the read failing, no row, a size that did not parse, and any
     // failure of the archive read at all - which the page showed as an empty mailbox or no size. Each is a marker now (the
     // ReportedCount idea, for a size). Exchange's not-found for the archive is no archive, read from the error's structure
     // (aud-a23h's IsNotFound). ASSUMPTION, unverified (no live call): Get-MailboxStatistics -Archive reports a mailbox with
     // no archive in one of those shapes; if not, such a mailbox shows "Archive: could not be read (...)" - visible, and no
     // decision reads it. Neither read's catch takes a cancellation (aud-a23g's rule); one escapes to the caller.
-    private async Task<CloudMailboxSize> GetCloudMailboxSizeAsync(string emailAddress)
+    private async Task<MailboxSizes> GetCloudMailboxSizeAsync(string emailAddress)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
@@ -1561,24 +1486,8 @@ https://admin.exchange.microsoft.com/#/migration";
                 archiveUnreadable = $"Get-MailboxStatistics -Archive failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
             }
 
-            return new CloudMailboxSize(mailboxGB, mailboxUnreadable, archiveGB, archiveUnreadable);
+            return new MailboxSizes(mailboxGB, mailboxUnreadable, archiveGB, archiveUnreadable);
         }, allowRetry: true);
-    }
-
-    // aud-a23k. A size as reported, or why it is not one: no row, no TotalItemSize, or one ParseSizeToGB cannot read.
-    private static (double gb, string? unreadable) ReadSize(Collection<PSObject> stats, string noRow)
-    {
-        var row = stats.FirstOrDefault();
-        if (row is null)
-            return (0, noRow);
-
-        var reported = row.Properties["TotalItemSize"]?.Value?.ToString();
-        if (string.IsNullOrWhiteSpace(reported))
-            return (0, "Exchange reported no TotalItemSize");
-
-        return ParseSizeToGB(reported) is { } gb
-            ? (gb, null)
-            : (0, $"the reported TotalItemSize '{reported}' is not a size this app can read");
     }
 
     // aud-a23k. The report, or why there is none - never failure text where the report goes. A failed fetch came back as

@@ -104,8 +104,30 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>The record a lookup writes for an identity it does not hold. Defaults to the module's FQID form.</summary>
     public Func<string, ErrorRecord> NotFound { get; set; } = NotFoundByIdentifier;
 
-    /// <summary>Cmdlets the session does not have: a call to one is PowerShell's CommandNotFoundException.</summary>
+    /// <summary>
+    /// Cmdlets the session does not have: a call to one is PowerShell's CommandNotFoundException. aud-a23o: "OnPrem
+    /// &lt;cmdlet&gt;" for one the on-premises session does not have.
+    /// </summary>
     public HashSet<string> Missing { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// aud-a23o. Whether a service built from here has an on-premises server to ask (OnPremExchange:ServerUri, read when it is
+    /// built). Nothing connects to it: the service's ConnectOnPrem seam defines the on-premises stand-ins in its own runspace
+    /// (<see cref="DefineOnPremSession"/>), and Failures["OnPrem Connect"] (a string) makes opening that session throw.
+    /// </summary>
+    public bool OnPremConfigured { get; set; }
+
+    /// <summary>aud-a23o. Whether the module's on-premises credentials come back; false is the base's "could not be retrieved".</summary>
+    public bool OnPremCredentials { get; set; } = true;
+
+    /// <summary>aud-a23o. On-premises Get-Mailbox answers these; any other identity is <see cref="NotFound"/>'s record.</summary>
+    public Hashtable OnPremMailboxes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a23o. On-premises Get-RemoteMailbox answers these; any other identity is <see cref="NotFound"/>'s record.</summary>
+    public Hashtable OnPremRemoteMailboxes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a23o. Exchange Online's Get-Recipient answers these (Recipient Lookup's first read).</summary>
+    public Hashtable Recipients { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// aud-a23j. The Active Directory stand-in's users: Get-ADUser -Filter "UserPrincipalName -eq '...'" answers the rows
@@ -242,13 +264,102 @@ internal sealed class MigrationStubExchange : IDisposable
     /// set, its protected-principal check is the stand-in's too; unset, it has none, and that check fails closed.
     /// </summary>
     internal sealed class StubMigrationService(MigrationStubExchange exchange, bool connects)
-        : MigrationService(exchange._config, exchange.Pool(connects), null!, NullLogger<MigrationService>.Instance,
+        : MigrationService(exchange.ServiceConfig(), exchange.Pool(connects), null!, NullLogger<MigrationService>.Instance,
             exchange._moduleConfig, null!, exchange._trace,
             exchange.Protection is null ? null! : exchange.ProtectionStandIn(),
             exchange.Protection is null ? null! : exchange.Servicers())
     {
         internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
+
+        // aud-a23o. The on-premises seams: no Delinea, no remote session.
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+            exchange.DefineOnPremSession(ps);
+
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            exchange.OnPremCredentialsFor();
     }
+
+    /// <summary>aud-a23o. The real Recipient Lookup service over the same stand-ins: Exchange Online in the pool, on-premises in its seams.</summary>
+    public RecipientLookupService RecipientLookup() => new StubRecipientLookupService(this);
+
+    internal sealed class StubRecipientLookupService(MigrationStubExchange exchange)
+        : RecipientLookupService(exchange.Pool(), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), null!, exchange._trace)
+    {
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+            exchange.DefineOnPremSession(ps);
+
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            exchange.OnPremCredentialsFor();
+    }
+
+    // aud-a23o. The configuration a service is built with: the stand-in's, plus an on-premises server only when asked for.
+    private IConfiguration ServiceConfig() => OnPremConfigured
+        ? new ConfigurationBuilder().AddConfiguration(_config)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["OnPremExchange:ServerUri"] = "https://exchange.contoso.test/PowerShell/" })
+            .Build()
+        : _config;
+
+    private Task<(string username, string password, string domain)?> OnPremCredentialsFor() =>
+        Task.FromResult<(string username, string password, string domain)?>(OnPremCredentials ? ("svc-migration", "not-a-secret", "CONTOSO") : null);
+
+    /// <summary>
+    /// aud-a23o. What the services' ConnectOnPrem seam does here: in the service's own on-premises runspace, an Invoke-Command
+    /// that runs the remote script locally, a Remove-PSSession, and the on-premises Get-MailboxStatistics, Get-Mailbox and
+    /// Get-RemoteMailbox (<see cref="OnPremStubs"/>), logged as "OnPrem &lt;cmdlet&gt;" and failing as Failures["OnPrem
+    /// &lt;cmdlet&gt;[ -Archive]"] says; then a marker session. Failures["OnPrem Connect"] throws instead, as a session that
+    /// cannot be opened.
+    /// </summary>
+    internal void DefineOnPremSession(PowerShell ps)
+    {
+        if (Failures["OnPrem Connect"] is string refused)
+            throw new InvalidOperationException(refused);
+
+        var proxy = ps.Runspace.SessionStateProxy;
+        proxy.SetVariable("Failures", Failures);
+        proxy.SetVariable("Calls", Calls);
+        proxy.SetVariable("Behaviour", Behaviour);
+        proxy.SetVariable("NotFound", NotFound);
+        proxy.SetVariable("OnPremMailboxes", OnPremMailboxes);
+        proxy.SetVariable("OnPremRemoteMailboxes", OnPremRemoteMailboxes);
+
+        var definitions = new System.Text.StringBuilder();
+        definitions.AppendLine("function global:Invoke-Command { [CmdletBinding()] param($Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList) & $ScriptBlock @ArgumentList }");
+        definitions.AppendLine("function global:Remove-PSSession { param($Session) }");
+        foreach (var (name, parameters, answer) in OnPremStubs)
+        {
+            if (!Missing.Contains("OnPrem " + name))
+                definitions.AppendLine($"function global:{name} {{\n{Stub(name, parameters, answer, "OnPrem " + name)}\n}}");
+        }
+
+        using var init = PowerShell.Create();
+        init.Runspace = ps.Runspace;
+        init.AddScript(definitions.ToString());
+        init.Invoke();
+        if (init.HadErrors)
+            throw new InvalidOperationException("the on-premises stand-ins could not be defined: " + string.Join(" | ", init.Streams.Error.Select(e => e.ToString())));
+        proxy.SetVariable("onpremSession", "stand-in-session");
+    }
+
+    // aud-a23o. On-premises Exchange. Get-MailboxStatistics reports Behaviour["OnPremMailboxSize"] / ["OnPremArchiveSize"] as
+    // the TotalItemSize (null: no row), else 2.5 GB and 512 MB; Behaviour["OnPremNoArchive"]: the archive read is
+    // NotFound's record.
+    private static readonly (string Name, string Parameters, string Answer)[] OnPremStubs =
+    [
+        ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", $$"""
+            if ($Archive -and $Behaviour['OnPremNoArchive']) { {{Lookup}}; return }
+            $key = if ($Archive) { 'OnPremArchiveSize' } else { 'OnPremMailboxSize' }
+            if ($Behaviour.ContainsKey($key)) { if ($null -ne $Behaviour[$key]) { [pscustomobject]@{ TotalItemSize = $Behaviour[$key] } }; return }
+            if ($Archive) { [pscustomobject]@{ TotalItemSize = '512 MB (536,870,912 bytes)' } } else { [pscustomobject]@{ TotalItemSize = '2.5 GB (2,684,354,560 bytes)' } }
+            """),
+        ("Get-Mailbox", "[string] $Identity", $$"""
+            if ($OnPremMailboxes.ContainsKey($Identity)) { return $OnPremMailboxes[$Identity] }
+            {{Lookup}}
+            """),
+        ("Get-RemoteMailbox", "[string] $Identity", $$"""
+            if ($OnPremRemoteMailboxes.ContainsKey($Identity)) { return $OnPremRemoteMailboxes[$Identity] }
+            {{Lookup}}
+            """),
+    ];
 
     /// <summary>
     /// aud-a23m. The protected-principal check's answer per target, when set: "protected", "unavailable", "ambiguous" or
@@ -385,6 +496,7 @@ internal sealed class MigrationStubExchange : IDisposable
         state.Variables.Add(new SessionStateVariableEntry("MigrationUsers", MigrationUsers, null));
         state.Variables.Add(new SessionStateVariableEntry("BatchUsers", BatchUsers, null));
         state.Variables.Add(new SessionStateVariableEntry("Mailboxes", Mailboxes, null));
+        state.Variables.Add(new SessionStateVariableEntry("Recipients", Recipients, null));
         state.Variables.Add(new SessionStateVariableEntry("Batches", Batches, null));
         state.Variables.Add(new SessionStateVariableEntry("Behaviour", Behaviour, null));
         state.Variables.Add(new SessionStateVariableEntry("Calls", Calls, null));
@@ -417,6 +529,10 @@ internal sealed class MigrationStubExchange : IDisposable
             """),
         ("Get-Mailbox", "[string] $Identity", $$"""
             if ($Mailboxes.ContainsKey($Identity)) { return $Mailboxes[$Identity] }
+            {{Lookup}}
+            """),
+        ("Get-Recipient", "[string] $Identity", $$"""
+            if ($Recipients.ContainsKey($Identity)) { return $Recipients[$Identity] }
             {{Lookup}}
             """),
         ("Get-MigrationBatch", "[string] $Identity", $$"""
@@ -465,12 +581,13 @@ internal sealed class MigrationStubExchange : IDisposable
             """),
     ];
 
-    // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers.
-    private static string Stub(string name, string parameters, string answer) => $$"""
+    // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers. aud-a23o: the
+    // step is logged under its label when it has one ("OnPrem Get-Mailbox").
+    private static string Stub(string name, string parameters, string answer, string? label = null) => $$"""
         [CmdletBinding()]
         param({{parameters}})
         $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
-        $step = '{{name}}' + $switches
+        $step = '{{label ?? name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]
         if ($null -eq $failure) { $failure = $Failures[$step] }
