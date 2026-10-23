@@ -1180,6 +1180,51 @@ public class CircuitRevalidationTests
     }
 
     [Fact]
+    public void DisabledRevalidation_SaysThatNothingReChecksMembership_NotEvenAReload()
+    {
+        // aud-a29h. Both lines said a removed operator kept their access "until it is reloaded". With
+        // the switch off nothing consults the directory - no tab, no reload, no page request (aud-a29g) -
+        // and under Kerberos a reload brings back the ticket's groups, so that told an operator turning
+        // revalidation off during an incident that a reload would cut someone off. Written out here, not
+        // read from the provider's constant, so changing the constant cannot pass this.
+        const string consequence =
+            "Nothing re-checks an operator's group membership against the directory - not an open tab, not a "
+            + "reload, not a page request. An operator removed from an AD group, or disabled, keeps the access "
+            + "their Windows sign-in carries: under Kerberos every reload and page request brings back the same "
+            + "groups until their ticket is renewed or expires, and a tab already open keeps its access until it "
+            + "is closed or the app restarts.";
+
+        using var h = new Harness(enabled: false);
+        var log = new WarningLog();
+        MembershipRevalidatingAuthenticationStateProvider.ReportIfDisabled(h.Options, h.Audit, log);
+
+        Assert.Equal(
+            "Revocation revalidation is disabled by configuration (Authentication:RevalidationEnabled = false). " + consequence,
+            Assert.Single(log.Warnings));
+        Assert.Equal(
+            "Revocation revalidation is disabled by configuration. " + consequence,
+            Assert.Single(h.AuditEvents()).RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public void Readme_SaysTheOffSwitchLeavesEveryReloadAndPageRequestUnchecked()
+    {
+        // aud-a29h, the README half: the old bullet said removed operators "keep their open tabs until
+        // they reload".
+        var readme = Squash(File.ReadAllText(Path.Combine(RepoRoot(), "README.md")));
+
+        Assert.DoesNotContain("until they reload", readme, StringComparison.Ordinal);
+        Assert.Contains(
+            "Nothing then re-checks an operator's group membership against the directory - not an open tab, not a "
+            + "reload, not a page request - so an operator removed from an AD group, or disabled, keeps the access "
+            + "their Windows sign-in carries: under Kerberos every reload and page request brings back the same "
+            + "groups until their ticket is renewed or expires, and a tab already open keeps its access until it "
+            + "is closed or the app restarts.",
+            readme,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EnabledRevalidation_ReportsNothingAtStartup()
     {
         using var h = new Harness();

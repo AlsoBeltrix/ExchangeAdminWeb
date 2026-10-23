@@ -870,9 +870,13 @@ rendered (aud-a29g).
 - **Default** `00:05:00` when the key is absent. The app refuses to start on a value that is not
   a time span, is below `00:00:30`, or is above `01:00:00` - a bare `5` is read as five days.
 - **Off-switch:** `RevalidationEnabled` is `true` when absent. Setting it to `false` (and
-  restarting) stops every re-check and every revocation - removed or disabled operators keep their
-  open tabs until they reload - so use it only while a wrong revocation is being fixed. It is never
-  silent: at startup the app logs a warning and writes one audit line (action `SessionRevalidation`,
+  restarting) stops every re-check and every revocation. Nothing then re-checks an operator's group
+  membership against the directory - not an open tab, not a reload, not a page request - so an
+  operator removed from an AD group, or disabled, keeps the access their Windows sign-in carries:
+  under Kerberos every reload and page request brings back the same groups until their ticket is
+  renewed or expires, and a tab already open keeps its access until it is closed or the app
+  restarts. Use it only while a wrong revocation is being fixed. It is never silent: at startup
+  the app logs a warning and writes one audit line (action `SessionRevalidation`,
   reason `Disabled`). Anything other than `true` or `false` stops startup. The interval is still
   validated while the switch is off.
 - **Static groups must be domain groups while revalidation is on.** An entry in
