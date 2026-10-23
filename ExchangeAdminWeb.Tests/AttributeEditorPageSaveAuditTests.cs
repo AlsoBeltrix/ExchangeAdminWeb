@@ -3,8 +3,11 @@ using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Progress;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Page = ExchangeAdminWeb.Components.Pages.ADAttributeEditor;
@@ -228,4 +231,90 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
         Assert.Single(_h.Ad.Sets);
         Assert.Single(_h.Notices);
     }
+
+    // ---- aud-a26u: the grid offers for editing only what the editor can write -------------------------------------
+
+    [Fact]
+    public async Task TheGrid_ShowsTheReasonInPlaceOfTheInput_ForEachAttributeTheEditorCannotWrite()
+    {
+        // The lookup's "555-0100; 555-0101" and "binary (16 bytes)" filled editable text inputs, and only the save said
+        // the editor writes neither. The search runs against the harness's directory, and the grid is read from the
+        // page's own render tree.
+        _h.Allowlist.SaveAllowlist(
+        [
+            new AttributeRow("title", "Job Title", "String", null, false, true, null, null, 1),
+            new AttributeRow("otherTelephone", "Other Phones", "String", null, false, true, null, null, 1),
+            new AttributeRow("thumbnailPhoto", "Photo", "String", null, false, true, null, null, 1),
+        ]);
+        _h.Service.InvalidateAllowlistCache();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes["otherTelephone"] = "555-0100|555-0101";
+        alex.Attributes["thumbnailPhoto"] = "a picture";
+        _h.Ad.ReadsAs = (name, stored) => name switch
+        {
+            _ when stored is null => null,
+            "thumbnailPhoto" => new byte[16],
+            "otherTelephone" => stored.Split('|'),
+            _ => stored,
+        };
+        var page = PageShowing(null);
+        SetProperty(page, "ProtectedPrincipalService", _h.Protection);
+        SetProperty(page, "Servicers", _h.Servicers);
+        SetField(page, "authChecked", true);
+        SetField(page, "searchIdentity", alex.Upn);
+
+        await PerformSearch(page);
+
+        var (elements, text) = Rendered(page);
+        var valueInputs = elements
+            .Where(e => e.Name == "input" && Equals(e.Attributes.GetValueOrDefault("class"), "form-control form-control-sm"))
+            .ToList();
+        Assert.Equal("Analyst", Assert.Single(valueInputs).Attributes["value"]);
+        Assert.DoesNotContain(elements, e => e.Name == "select");
+        Assert.Contains(
+            "This attribute holds 2 values in the directory; the attribute editor writes single-valued attributes only.",
+            text, StringComparison.Ordinal);
+        Assert.Contains(
+            "This attribute is binary (16 bytes) in the directory; the attribute editor writes text attributes only.",
+            text, StringComparison.Ordinal);
+    }
+
+    private static Task PerformSearch(Page page) =>
+        (Task)typeof(Page).GetMethod("PerformSearch", PrivateInstance)!.Invoke(page, null)!;
+
+#pragma warning disable BL0006
+    /// <summary>
+    /// The page's own render tree - its BuildRenderTree into a builder, no renderer, as the Comms10k and Defender page
+    /// tests read theirs: each element with its attributes, and the text it renders.
+    /// </summary>
+    private static (List<(string Name, Dictionary<string, object?> Attributes)> Elements, string Text) Rendered(Page page)
+    {
+        using var builder = new RenderTreeBuilder();
+        typeof(Page).GetMethod("BuildRenderTree", PrivateInstance)!.Invoke(page, [builder]);
+        var frames = builder.GetFrames();
+        var elements = new List<(string Name, Dictionary<string, object?> Attributes)>();
+        var text = new System.Text.StringBuilder();
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames.Array[i];
+            if (frame.FrameType == RenderTreeFrameType.Element)
+            {
+                var attributes = new Dictionary<string, object?>(StringComparer.Ordinal);
+                for (var j = i + 1; j < frames.Count && frames.Array[j].FrameType == RenderTreeFrameType.Attribute; j++)
+                    attributes[frames.Array[j].AttributeName] = frames.Array[j].AttributeValue;
+                elements.Add((frame.ElementName, attributes));
+            }
+            else if (frame.FrameType == RenderTreeFrameType.Text)
+            {
+                text.Append(frame.TextContent).Append(' ');
+            }
+            else if (frame.FrameType == RenderTreeFrameType.Markup)
+            {
+                text.Append(frame.MarkupContent).Append(' ');
+            }
+        }
+
+        return (elements, text.ToString());
+    }
+#pragma warning restore BL0006
 }

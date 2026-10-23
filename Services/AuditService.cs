@@ -124,7 +124,10 @@ public class AuditService
             ["ip"] = ipAddress,
             ["action"] = "CheckMigrationEligibility",
             ["category"] = "MigrationCheck",
-            ["result"] = status == "Eligible" ? "Success" : "Ineligible",
+            // aud-a28z part 5 (from aud-a23l). The result says what the check found. Every status but Eligible was filed
+            // "Ineligible", so a check that could not decide (aud-a23h's Undetermined) or threw (the page's "Error") read
+            // as a verdict against the mailbox. The status field keeps the caller's own word.
+            ["result"] = status switch { "Eligible" => "Success", "Ineligible" => "Ineligible", _ => "Undetermined" },
             ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
             ["target"] = emailAddress,
             ["status"] = status,
@@ -540,8 +543,27 @@ public class AuditService
     private static string? GetAuditTarget(IReadOnlyDictionary<string, object?> evt)
         => GetString(evt, "target") ?? GetString(evt, "batchName") ?? GetString(evt, "section");
 
+    // aud-a28z. A field WriteAuditEvent reads - for the trace's operation, the step's details, the operation's result
+    // and the usage count - is the caller's value as text. A caller's extra can put any object under any of them, and
+    // its ToString ran unguarded, so one that threw escaped the audit call before the write or after it (aud-a28q's
+    // second gap). A value whose ToString throws reads as "(unreadable <TypeName>)": its type's name, never the value.
     private static string? GetString(IReadOnlyDictionary<string, object?> evt, string key)
-        => evt.TryGetValue(key, out var value) ? value?.ToString() : null;
+        => evt.TryGetValue(key, out var value) ? TextOf(value) : null;
+
+    private static string? TextOf(object? value)
+    {
+        if (value is null or string)
+            return (string?)value;
+
+        try
+        {
+            return value.ToString();
+        }
+        catch (Exception)
+        {
+            return $"(unreadable {value.GetType().Name})";
+        }
+    }
 
     private static bool IsSuccessfulAuditResult(string? result)
         => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);

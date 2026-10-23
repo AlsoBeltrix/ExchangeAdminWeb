@@ -1,5 +1,7 @@
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -210,8 +212,209 @@ public class ExtendedLogServiceTests
         Assert.Equal("Debug", service.CurrentLevel);
     }
 
+    // ---- aud-a28z: no logging failure escapes the extended log into its caller, or ends its consumer ---------------
+
+    private const string DetailFactoryThrows = "a detail factory that throws";
+    private const string QueueClosed = "a closed queue";
+    private const string ChangeTokenUnreadable = "an unreadable change token";
+    private const string LegacyFileUnreadable = "a legacy level file it cannot read";
+
+    /// <summary>
+    /// The aud-a28q tripwire's throwing-logger theory, for this service, by cause: each report the service makes is
+    /// reached its own way, so each cause is induced as it happens - none takes a value the tripwire could hand it.
+    /// </summary>
+    [Theory]
+    [InlineData(DetailFactoryThrows)]
+    [InlineData(QueueClosed)]
+    [InlineData(ChangeTokenUnreadable)]
+    [InlineData(LegacyFileUnreadable)]
+    public void ExtendedLogService_GivenALoggerThatThrows_StillReturns(string cause)
+    {
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+
+        switch (cause)
+        {
+            case DetailFactoryThrows:
+                {
+                    // The report ran on the caller's thread, after the caller's own work had completed.
+                    var service = CreateService(temp.Path, logger: logger);
+                    service.SetLevel("Error");
+                    logger.Throws = true;
+
+                    var thrown = Record.Exception(() => service.Write(
+                        LogEventLevel.Error, "an entry whose detail failed", "Test", () => throw new InvalidOperationException("no detail")));
+                    service.Dispose();
+
+                    Assert.Null(thrown);
+                    Assert.Contains(logger.Entries, e => e.Text == "Failed to build extended log detail");
+                    var line = Assert.Single(File.ReadAllLines(GetTodayLogPath(temp.Path)), l => l.Contains("an entry whose detail failed"));
+                    Assert.DoesNotContain("\"detail\"", line);
+                    break;
+                }
+
+            case QueueClosed:
+                {
+                    var service = CreateService(temp.Path, logger: logger);
+                    service.SetLevel("Error");
+                    service.Dispose();
+                    logger.Throws = true;
+
+                    var thrown = Record.Exception(() => service.Write(LogEventLevel.Error, "an entry after the queue closed", "Test"));
+
+                    Assert.Null(thrown);
+                    Assert.Equal(1, service.DroppedEntryCount);
+                    Assert.Contains(logger.Entries, e => e.Text == "Extended log queue is closed; dropping extended log entry");
+                    break;
+                }
+
+            case ChangeTokenUnreadable:
+                {
+                    // The change watcher reports an unreadable token through this service's own logger, from inside the
+                    // level check Write makes first.
+                    var store = Substitute.For<IConfigStore>();
+                    var unreadable = false;
+                    store.GetChangeToken().Returns(_ => unreadable ? throw new InvalidOperationException("the change token cannot be read") : 1L);
+                    using var service = CreateService(temp.Path, settings: new AppSettingRepository(store), logger: logger);
+                    unreadable = true;
+                    logger.Throws = true;
+
+                    var thrown = Record.Exception(() => service.Write(LogEventLevel.Error, "an entry while the store is unreadable", "Test"));
+
+                    Assert.Null(thrown);
+                    Assert.Null(Record.Exception(() => service.IsEnabledFor(LogEventLevel.Error)));
+                    Assert.Null(Record.Exception(() => service.CurrentLevel));
+                    Assert.Contains(logger.Entries, e => e.Text.StartsWith("Config change token could not be read", StringComparison.Ordinal));
+                    break;
+                }
+
+            case LegacyFileUnreadable:
+                {
+                    // Reported from the constructor: a provider that threw there failed the service's construction.
+                    var appDir = Path.Combine(temp.Path, "app");
+                    Directory.CreateDirectory(Path.Combine(appDir, "config"));
+                    var legacyPath = Path.Combine(appDir, "config", "extended-log-level.txt");
+                    File.WriteAllText(legacyPath, "Error");
+                    logger.Throws = true;
+
+                    ExtendedLogService? service = null;
+                    Exception? thrown;
+                    using (new FileStream(legacyPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                        thrown = Record.Exception(() => service = CreateService(temp.Path, appDir: appDir, logger: logger));
+                    service?.Dispose();
+
+                    Assert.Null(thrown);
+                    Assert.NotNull(service);
+                    Assert.Contains(logger.Entries, e => e.Text == "Failed to import legacy extended log level file");
+                    break;
+                }
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(cause), cause, null);
+        }
+    }
+
+    [Fact]
+    public void TheConsumer_GivenAnEntryItCannotWrite_AndALoggerThatThrows_DropsAndCountsIt_AndWritesTheNext()
+    {
+        // The report of a failed write is the one background consumer's: thrown out of its catch, it faulted the
+        // consumer, and every later entry waited in the queue until the queue dropped it, with nothing to say so.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var service = CreateService(temp.Path, logger: logger);
+        service.SetLevel("Error");
+        logger.Throws = true;
+
+        using (HoldTodaysLogFile(temp.Path))
+        {
+            service.Write(LogEventLevel.Error, "an entry lost while its file is held", "Test");
+            Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, TimeSpan.FromSeconds(10)),
+                "the consumer never counted the entry it could not write");
+        }
+
+        service.Write(LogEventLevel.Error, "an entry written once the file is free", "Test");
+        service.Dispose();
+
+        var text = File.ReadAllText(GetTodayLogPath(temp.Path));
+        Assert.Contains("an entry written once the file is free", text);
+        Assert.DoesNotContain("an entry lost while its file is held", text);
+        Assert.Equal(1, service.DroppedEntryCount);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Text == "Failed to write extended log entry");
+    }
+
+    [Fact]
+    public void SetLevel_WhenTheStoreRefusesIt_AndTheLoggerThrows_ThrowsTheStoresFailure()
+    {
+        // The report before the rethrow could replace the store's exception with the provider's own.
+        using var temp = new TempDirectory();
+        var logger = new CapturingLogger();
+        var store = Substitute.For<IConfigStore>();
+        store.When(s => s.Write(Arg.Any<Action<SqliteConnection, SqliteTransaction>>()))
+            .Do(_ => throw new InvalidOperationException("the store refused the level"));
+        using var service = CreateService(temp.Path, settings: new AppSettingRepository(store), logger: logger);
+        logger.Throws = true;
+
+        var thrown = Record.Exception(() => service.SetLevel("Error"));
+
+        Assert.Equal("the store refused the level", Assert.IsType<InvalidOperationException>(thrown).Message);
+        Assert.Equal("None", service.CurrentLevel);
+        Assert.Contains(logger.Entries, e => e.Text == "Failed to persist extended log level");
+    }
+
+    /// <summary>Holds today's extended log file - and the next minute's, across midnight - open with no sharing.</summary>
+    private static IDisposable HoldTodaysLogFile(string logRoot)
+    {
+        Directory.CreateDirectory(Path.Combine(logRoot, "ExchangeAdminWeb"));
+        var now = DateTime.Now;
+        var held = new[] { now, now.AddMinutes(1) }
+            .Select(date => Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .ToList();
+        return new HeldFiles(held);
+    }
+
+    private sealed class HeldFiles(List<FileStream> streams) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var stream in streams)
+                stream.Dispose();
+        }
+    }
+
+    private sealed record LogEntry(LogLevel Level, string Text);
+
+    /// <summary>Records every entry; when <see cref="Throws"/> is set, throws once it has, as a failing provider can.</summary>
+    private sealed class CapturingLogger : ILogger<ExtendedLogService>
+    {
+        private readonly List<LogEntry> _entries = [];
+
+        public bool Throws { get; set; }
+
+        public IReadOnlyList<LogEntry> Entries
+        {
+            get { lock (_entries) return _entries.ToList(); }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries)
+                _entries.Add(new LogEntry(logLevel, formatter(state, exception)));
+
+            if (Throws)
+                throw new InvalidOperationException("the logging provider failed");
+        }
+    }
+
     private static ExtendedLogService CreateService(string logRoot, Dictionary<string, string?>? additionalSettings = null,
-        ExchangeAdminWeb.Services.Storage.AppSettingRepository? settings = null, string? appDir = null)
+        ExchangeAdminWeb.Services.Storage.AppSettingRepository? settings = null, string? appDir = null,
+        ILogger<ExtendedLogService>? logger = null)
     {
         var configValues = new Dictionary<string, string?>
         {
@@ -235,7 +438,7 @@ public class ExtendedLogServiceTests
 
         settings ??= TestConfigStore.CreateAppSettings(appDir);
 
-        return new ExtendedLogService(config, env, settings, Substitute.For<ILogger<ExtendedLogService>>());
+        return new ExtendedLogService(config, env, settings, logger ?? Substitute.For<ILogger<ExtendedLogService>>());
     }
 
     private static string GetTodayLogPath(string logRoot)

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CsvHelper;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Progress;
@@ -177,6 +178,54 @@ public sealed class EventLogSectionsTargetTests : IDisposable
 
         var rows = await ExportCsv(page, entries);
         Assert.Equal(2, rows.Count(r => r["Target"] == Mailbox));
+    }
+
+    // ---- aud-a28z part 5, folded in from aud-a23l: a check that could not decide is no ineligibility ---------------
+
+    [Theory]
+    [InlineData("Undetermined")]
+    [InlineData("Error")]
+    public void AnEligibilityCheckThatDidNotDecide_IsFiledUndetermined_AndTheResultFilterFindsItThere(string status)
+    {
+        // Every status but Eligible was filed under "Ineligible": a check whose read failed (aud-a23h's Undetermined),
+        // or that threw (the page's "Error"), read in the log as a verdict against the mailbox, and the Result filter had
+        // nowhere else to look for it.
+        _audit.LogMigrationCheck(Admin, Ip, "alex.morgan@example.test", status, "CHG0500", "the excluded-group check failed");
+        var page = new Page();
+        var parse = typeof(Page).GetMethod("ParseAuditLine", PrivateInstance)!;
+        var entry = parse.Invoke(page, [Assert.Single(AuditLines()), DateTime.MinValue, DateTime.MaxValue])
+            ?? throw new InvalidOperationException("the page did not parse the check's audit line");
+
+        Assert.Equal("Undetermined", Read(entry, "Result"));
+
+        ((IList)typeof(Page).GetField("allEvents", PrivateInstance)!.GetValue(page)!).Add(entry);
+        Assert.Same(entry, Assert.Single(ShownUnderResult(page, "Undetermined")));
+        Assert.Empty(ShownUnderResult(page, "Ineligible"));
+        Assert.Same(entry, Assert.Single(ShownUnderResult(page, "")));
+    }
+
+    [Fact]
+    public void TheResultFilter_OffersUndetermined()
+    {
+        // Tripwire, as the undo panel's close buttons are pinned: no host renders the page, so its markup is read, its
+        // comments blanked.
+        var markup = RazorSyntax.CommentsBlanked(File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor")));
+
+        var select = Regex.Match(markup, @"<select[^>]*@bind=""selectedResult""[^>]*>(?<options>.*?)</select>", RegexOptions.Singleline);
+        Assert.True(select.Success, "the Result filter's select was not found");
+        var values = Regex.Matches(select.Groups["options"].Value, @"<option value=""(?<value>[^""]*)"">")
+            .Select(m => m.Groups["value"].Value)
+            .ToList();
+        Assert.Equal(["", "Success", "Failed", "Ineligible", "Undetermined"], values);
+    }
+
+    /// <summary>The page's rows after its own ApplyFilters, with <paramref name="result"/> chosen in the Result filter.</summary>
+    private static IList ShownUnderResult(Page page, string result)
+    {
+        typeof(Page).GetField("selectedResult", PrivateInstance)!.SetValue(page, result);
+        typeof(Page).GetMethod("ApplyFilters", PrivateInstance)!.Invoke(page, null);
+        return (IList)typeof(Page).GetField("filteredEvents", PrivateInstance)!.GetValue(page)!;
     }
 
     private sealed class RecordingJs : IJSRuntime

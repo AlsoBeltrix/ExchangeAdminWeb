@@ -7,6 +7,15 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <!-- cdt-41. NuGet's audit as the app's project has it: every package in the graph, transitive ones
+       included, from moderate severity up, each advisory an error. -->
+  <PropertyGroup>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>moderate</NuGetAuditLevel>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1902;NU1903;NU1904</WarningsAsErrors>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="10.0.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -22,6 +31,11 @@
     <PackageReference Include="NSubstitute" Version="5.3.0" />
     <PackageReference Include="xunit.v3" Version="3.2.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <!-- cdt-41. Pinned to the first version clear of its eight advisories (GHSA-cvvh-rhrc-wg4q and seven
+         more): Microsoft.PowerShell.SDK, Microsoft.Windows.Compatibility and System.ServiceModel.Primitives
+         resolve 10.0.6 here. Only this project's graph holds it - the app's prunes it, the ASP.NET Core
+         shared framework carrying it - so the pin is here. It can go once those ask for 10.0.13 or later. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>

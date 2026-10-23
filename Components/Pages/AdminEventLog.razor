@@ -93,6 +93,7 @@
                 <option value="Success">Success</option>
                 <option value="Failed">Failed</option>
                 <option value="Ineligible">Ineligible</option>
+                <option value="Undetermined">Undetermined</option>
             </select>
         </div>
         <div class="col-auto pt-4">
@@ -468,6 +469,9 @@
     // aud-a26r. The preview the panel is waiting for: a new token per ShowUndoPreview, cleared by CloseUndoPanel. Only
     // that request's answer fills the panel, and only it lowers undoLoading.
     private object? undoPreviewRequest;
+    // aud-a26u. The status-bar activity of the preview the panel is waiting for, so CloseUndoPanel can end it with the
+    // panel. Held by the request that began it, and cleared only by that request's finally while it is still the panel's.
+    private IActivityHandle? undoPreviewActivity;
     private HashSet<string> reversedOperationIds = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
@@ -935,6 +939,8 @@
 
         using var activity = Progress.Begin(
             "Event Log", "Building undo preview", ActivitySize.Unknown);
+        // The panel's, until this request's finally or a close ends it (aud-a26u).
+        undoPreviewActivity = activity;
 
         try
         {
@@ -968,9 +974,14 @@
         {
             activity.Complete(undoError == null);
             // The flag is the panel's request's (aud-a26r): a request a close made stale must not lower it under the
-            // next one, which is still loading.
+            // next one, which is still loading. The activity field the same (aud-a26u): a closed request clearing it
+            // would leave the next preview's activity out of the close's reach. Its own activity a close has already
+            // completed, and Complete's first call wins.
             if (ReferenceEquals(undoPreviewRequest, request))
+            {
                 undoLoading = false;
+                undoPreviewActivity = null;
+            }
             StateHasChanged();
         }
     }
@@ -990,6 +1001,11 @@
         // returned.
         undoPreviewRequest = null;
         undoLoading = false;
+        // aud-a26u: and its activity ends with the panel. Left to the handler's finally, "Building undo preview" stayed in
+        // the status frame for a wait the operator no longer had. The handler runs on behind it, its answer dropped; it
+        // takes no token, so there is nothing to cancel.
+        undoPreviewActivity?.Complete(false, "Closed before the preview was ready.");
+        undoPreviewActivity = null;
         undoPreview = null;
         undoTargetEvent = null;
         undoError = null;

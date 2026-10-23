@@ -33,6 +33,9 @@ public class ExtendedLogService : IDisposable
     // cost of MinimumLevel is a clock read and a compare.
     private readonly ConfigChangeWatcher _changeWatcher;
     private long _loadedToken = ConfigChangeWatcher.Unknown;
+    // aud-a28z. Entries that passed the level and were not written: a write the consumer could not make, an entry a
+    // closed queue refused. Incremented before the drop is reported, so it holds when the report itself fails.
+    private long _droppedEntries;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -66,6 +69,12 @@ public class ExtendedLogService : IDisposable
 
     public bool IsEnabledFor(LogEventLevel level) => level >= MinimumLevel;
 
+    /// <summary>
+    /// How many entries passed the level but were not written since the service started (aud-a28z): the one count a
+    /// health surface, or a later line, can show when the logging provider could not say so itself.
+    /// </summary>
+    public long DroppedEntryCount => Interlocked.Read(ref _droppedEntries);
+
     /// <summary>Test seam: the watcher consulted before every read of the level.</summary>
     internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
 
@@ -75,8 +84,18 @@ public class ExtendedLogService : IDisposable
     {
         get
         {
-            if (_changeWatcher.HasChangedSince(_loadedToken))
-                LoadLevel();
+            try
+            {
+                if (_changeWatcher.HasChangedSince(_loadedToken))
+                    LoadLevel();
+            }
+            catch (Exception)
+            {
+                // aud-a28z. The watcher reports an unreadable change token through this service's own logger, and a
+                // provider that throws took its exception out of Write - and of every level check - into the caller.
+                // A failed check serves the level in effect, as the watcher does for a failed read.
+            }
+
             return _minimumLevel;
         }
     }
@@ -98,7 +117,8 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to persist extended log level");
+            // aud-a28z. Guarded, so the exception rethrown is the store's: a provider that threw here replaced it.
+            ReportSafely(logger => logger.LogError(ex, "Failed to persist extended log level"));
             throw;
         }
 
@@ -131,7 +151,9 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to build extended log detail");
+            // aud-a28z. On the caller's thread, after the caller's own work completed: a provider that threw here took
+            // its exception into the caller (aud-a28q's class). The entry is still written, without its detail.
+            ReportSafely(logger => logger.LogError(ex, "Failed to build extended log detail"));
         }
 
         var entry = new
@@ -146,7 +168,12 @@ public class ExtendedLogService : IDisposable
         var json = JsonSerializer.Serialize(entry, JsonOptions);
 
         if (!_writeQueue.Writer.TryWrite(new PendingLogEntry(DateTime.Now.Date, json)))
-            _logger.LogWarning("Extended log queue is closed; dropping extended log entry");
+        {
+            // A closed queue (after Dispose) drops the entry: counted, and reported without the report's own failure
+            // reaching the caller.
+            Interlocked.Increment(ref _droppedEntries);
+            ReportSafely(logger => logger.LogWarning("Extended log queue is closed; dropping extended log entry"));
+        }
     }
 
     public List<string> GetEntries(DateTime date, int maxLines = DefaultMaxLines)
@@ -218,7 +245,8 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to flush extended log queue during shutdown");
+            // Reached only if the consumer faulted, which since aud-a28z its catch prevents; guarded all the same.
+            ReportSafely(logger => logger.LogError(ex, "Failed to flush extended log queue during shutdown"));
         }
     }
 
@@ -236,8 +264,27 @@ public class ExtendedLogService : IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to write extended log entry");
+                // aud-a28z. This is the one consumer: a report that threw out of this catch faulted it, and every later
+                // entry waited in the queue until the queue dropped it, with nothing to say so. The entry is dropped and
+                // counted, and the loop takes the next one whatever the report does.
+                Interlocked.Increment(ref _droppedEntries);
+                ReportSafely(logger => logger.LogError(ex, "Failed to write extended log entry"));
             }
+        }
+    }
+
+    // aud-a28z. Every report this service makes goes through here, as the JSONL writer's do (aud-a28u): a logging
+    // provider or formatter that throws while a failure is reported must not become a failure of its own - not in the
+    // caller, not in the consumer, not in the constructor.
+    private void ReportSafely(Action<ILogger> report)
+    {
+        try
+        {
+            report(_logger);
+        }
+        catch (Exception)
+        {
+            // Nowhere left to say so.
         }
     }
 
@@ -325,7 +372,8 @@ public class ExtendedLogService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy extended log level file");
+            // Run by the constructor: a provider that threw here failed the service's construction (aud-a28z).
+            ReportSafely(logger => logger.LogWarning(ex, "Failed to import legacy extended log level file"));
         }
     }
 

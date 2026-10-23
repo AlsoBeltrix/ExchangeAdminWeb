@@ -17,6 +17,9 @@ public sealed record EditableAttribute(
     string? Pattern,
     int Level = 1);
 
+// ReadOnlyAttributes (aud-a26u): each allowlisted attribute the editor will not write for this object - it holds several
+// values, or a binary value - by name, with the reason the page shows in place of its input. The save refuses such an
+// attribute as well; this is what lets the page say so before anyone types. Null from every lookup that failed.
 public sealed record AttributeLookupResult(
     bool Success,
     string? Error,
@@ -24,7 +27,8 @@ public sealed record AttributeLookupResult(
     string? SourceOfAuthority,
     bool IsReadOnly,
     string? ReadOnlyReason,
-    Dictionary<string, string?>? CurrentValues);
+    Dictionary<string, string?>? CurrentValues,
+    IReadOnlyDictionary<string, string>? ReadOnlyAttributes = null);
 
 public sealed record AttributeChange(string Name, string Label, string? OldValue, string? NewValue);
 
@@ -1301,13 +1305,19 @@ public class ADAttributeEditorService
         // a one-element collection was its type's name, in the form and in both undo conflict checks, which compare the
         // lookup's reading with the element the save's record holds - so an edit of such an attribute could never be
         // undone. Several values read as their join, a binary value as "binary (N bytes)".
+        // aud-a26u. And each attribute that is not one text value is named read-only, with the reason, by the same
+        // reading the save's refusal uses (NotSingleText): the page offered "a; b" and "binary (16 bytes)" as editable
+        // text, and the operator learned only at save time that the editor writes neither.
         var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var readOnlyAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in allowlist)
         {
             currentValues[attr.Name] = ReadDirectoryValue(adUser, attr.Name)?.ToString();
+            if (NotSingleText(adUser, attr.Name) is { } notText)
+                readOnlyAttributes[attr.Name] = $"This attribute {notText.Holds}; {RuleFor(notText)}";
         }
 
-        return new(true, null, principal, "OnPremAD", false, null, currentValues);
+        return new(true, null, principal, "OnPremAD", false, null, currentValues, readOnlyAttributes);
     }
 
     /// <summary>Each failed search base with its reason, for the operator's message and the log (psl-6).</summary>
@@ -1788,7 +1798,8 @@ public class ADAttributeEditorService
     // may hold what it holds. *Assumption, not probed*: the module answers an attribute holding several values with a
     // collection, one holding a single value with that value or a one-element collection, and a binary attribute with a
     // byte array. A byte array was a collection to DirectoryValues, so a binary attribute was refused as holding one
-    // value per byte: safe, but the count named values it does not have. Several binary values still read as several.
+    // value per byte: safe, but the count named values it does not have. Since aud-a26u several binary values are binary
+    // too - they were refused under the single-valued rule - and the lookup marks the page by the same reading.
     private static string? NotSingleTextRefusal(PSObject read, Dictionary<string, string?> proposedValues, List<EditableAttribute> allowlist)
     {
         var several = new List<string>();
@@ -1799,21 +1810,47 @@ public class ADAttributeEditorService
             if (attr == null)
                 continue;
 
-            var values = DirectoryValues(read, attr.Name);
-            if (values.Count > 1)
-                several.Add($"'{attr.Label}' ({attr.Name}) holds {values.Count} values in the directory");
-            else if (values is [byte[] bytes])
-                binary.Add($"'{attr.Label}' ({attr.Name}) is {Binary(bytes)} in the directory");
+            if (NotSingleText(read, attr.Name) is not { } notText)
+                continue;
+
+            (notText.Binary ? binary : several).Add($"'{attr.Label}' ({attr.Name}) {notText.Holds}");
         }
 
         var refusals = new List<string>();
         if (several.Count > 0)
-            refusals.Add($"{string.Join("; ", several)}; the attribute editor writes single-valued attributes only.");
+            refusals.Add($"{string.Join("; ", several)}; {SingleValuedRule}");
         if (binary.Count > 0)
-            refusals.Add($"{string.Join("; ", binary)}; the attribute editor writes text attributes only.");
+            refusals.Add($"{string.Join("; ", binary)}; {TextOnlyRule}");
 
         return refusals.Count == 0 ? null : $"{string.Join(" ", refusals)} Nothing was written.";
     }
+
+    // The two rules a refusal and a read-only mark close with (aud-a26u, the words unchanged since aud-a26r).
+    private const string SingleValuedRule = "the attribute editor writes single-valued attributes only.";
+
+    private const string TextOnlyRule = "the attribute editor writes text attributes only.";
+
+    // Why an attribute is not one text value: binary (the text-only rule) or several values (the single-valued rule),
+    // and what it holds, in the words the refusal and the read-only mark both use.
+    private readonly record struct NotText(bool Binary, string Holds);
+
+    // aud-a26u. One reading for the save's and the preview's refusal and the lookup's read-only mark. Binary is checked
+    // first, and several values that are all byte arrays are binary: counted as several before their elements were
+    // looked at, they were refused under the single-valued rule, while the editor writes binary values in no number.
+    private static NotText? NotSingleText(PSObject read, string name)
+    {
+        var values = DirectoryValues(read, name);
+        if (values is [byte[] bytes])
+            return new NotText(true, $"is {Binary(bytes)} in the directory");
+        if (values.Count > 1 && values.All(value => value is byte[]))
+            return new NotText(true, $"holds {values.Count} binary values in the directory");
+        if (values.Count > 1)
+            return new NotText(false, $"holds {values.Count} values in the directory");
+
+        return null;
+    }
+
+    private static string RuleFor(NotText notText) => notText.Binary ? TextOnlyRule : SingleValuedRule;
 
     private static object? Unwrapped(object? value) => value is PSObject wrapped ? wrapped.BaseObject : value;
 

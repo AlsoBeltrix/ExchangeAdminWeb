@@ -1302,4 +1302,73 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
             both.Error);
         Assert.Empty(_h.Ad.Sets);
     }
+
+    // ---- the lookup says which attributes the editor cannot write, and several binary values are binary (aud-a26u) --
+
+    private const string SeveralValuesReason =
+        "This attribute holds 2 values in the directory; the attribute editor writes single-valued attributes only.";
+
+    private const string BinaryReason =
+        "This attribute is binary (16 bytes) in the directory; the attribute editor writes text attributes only.";
+
+    [Fact]
+    public async Task SeveralValuesAndABinaryValue_AreReadOnlyInTheLookup_EachWithItsReason()
+    {
+        // The lookup named them in its values only - "a; b", "binary (16 bytes)" - so the page offered each as editable
+        // text and the operator learned at save time that the editor writes neither.
+        AllowAPhoneListAndAPhoto();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Phones] = "555-0100|555-0101";
+        alex.Attributes[Photo] = "a picture";
+        _h.Ad.ReadsAs = ReadsThePhotoAsBytes;
+
+        var lookup = await _h.Service.LookupAsync(alex.Upn);
+
+        Assert.True(lookup.Success, lookup.Error);
+        var readOnly = lookup.ReadOnlyAttributes!;
+        Assert.Equal(SeveralValuesReason, readOnly[Phones]);
+        Assert.Equal(BinaryReason, readOnly[Photo]);
+        Assert.Equal(2, readOnly.Count);
+
+        // One value read as a one-element collection is one text value, which the editor writes.
+        alex.Attributes[Phones] = "555-0199";
+        var again = await _h.Service.LookupAsync(alex.Upn);
+
+        Assert.True(again.Success, again.Error);
+        Assert.False(again.ReadOnlyAttributes!.ContainsKey(Phones));
+        Assert.Equal("555-0199", again.CurrentValues![Phones]);
+    }
+
+    [Fact]
+    public async Task SeveralBinaryValues_AreRefusedAsBinary_NotUnderTheSingleValuedRule_AndNothingIsWritten()
+    {
+        // A collection of byte arrays was counted as several values before its elements were looked at, so it was
+        // refused under the single-valued rule; it is binary, which the editor does not write in any number.
+        AllowAPhoneListAndAPhoto();
+        var alex = _h.Ad.AddAlex();
+        alex.Attributes[Photo] = "two pictures";
+        _h.Ad.ReadsAs = (name, stored) => string.Equals(name, Photo, StringComparison.OrdinalIgnoreCase) && stored is not null
+            ? (object)new[] { PhotoBytes, PhotoBytes }
+            : stored;
+
+        var result = await Save(alex, new() { [Photo] = "a caption" });
+
+        const string refusal =
+            $"'Photo' ({Photo}) holds 2 binary values in the directory; the attribute editor writes text attributes only. "
+            + "Nothing was written.";
+        Assert.False(result.Success);
+        Assert.Equal(refusal, result.Error);
+        Assert.DoesNotContain("single-valued", result.Error, StringComparison.Ordinal);
+        Assert.Empty(_h.Ad.Sets);
+        Assert.Equal("two pictures", alex.Attributes[Photo]);
+
+        var preview = await _h.Service.PreviewAsync(AttributeEditorHarness.PrincipalFor(alex), new() { [Photo] = "a caption" });
+        Assert.False(preview.Success);
+        Assert.Equal(refusal, preview.Error);
+
+        var lookup = await _h.Service.LookupAsync(alex.Upn);
+        Assert.Equal(
+            "This attribute holds 2 binary values in the directory; the attribute editor writes text attributes only.",
+            lookup.ReadOnlyAttributes![Photo]);
+    }
 }
