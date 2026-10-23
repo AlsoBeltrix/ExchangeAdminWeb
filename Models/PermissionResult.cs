@@ -15,6 +15,14 @@ public class PermissionResult
     public IReadOnlyList<string>? ExcludedTargets { get; init; }
 
     /// <summary>
+    /// aud-a23p. The entries of <see cref="ExcludedTargets"/> whose protection check could not answer - unavailable,
+    /// ambiguous, failed - in the same "identity - reason" text. They were excluded because they could not be verified as
+    /// unprotected, not because they are protected, and are never to be called protected principals. Null or empty when
+    /// none.
+    /// </summary>
+    public IReadOnlyList<string>? UnverifiedTargets { get; init; }
+
+    /// <summary>
     /// The rights that were actually applied, whether or not the operation succeeded overall.
     /// Null or empty when nothing landed.
     /// </summary>

@@ -104,8 +104,30 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>The record a lookup writes for an identity it does not hold. Defaults to the module's FQID form.</summary>
     public Func<string, ErrorRecord> NotFound { get; set; } = NotFoundByIdentifier;
 
-    /// <summary>Cmdlets the session does not have: a call to one is PowerShell's CommandNotFoundException.</summary>
+    /// <summary>
+    /// Cmdlets the session does not have: a call to one is PowerShell's CommandNotFoundException. aud-a23o: "OnPrem
+    /// &lt;cmdlet&gt;" for one the on-premises session does not have.
+    /// </summary>
     public HashSet<string> Missing { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// aud-a23o. Whether a service built from here has an on-premises server to ask (OnPremExchange:ServerUri, read when it is
+    /// built). Nothing connects to it: the service's ConnectOnPrem seam defines the on-premises stand-ins in its own runspace
+    /// (<see cref="DefineOnPremSession"/>), and Failures["OnPrem Connect"] (a string) makes opening that session throw.
+    /// </summary>
+    public bool OnPremConfigured { get; set; }
+
+    /// <summary>aud-a23o. Whether the module's on-premises credentials come back; false is the base's "could not be retrieved".</summary>
+    public bool OnPremCredentials { get; set; } = true;
+
+    /// <summary>aud-a23o. On-premises Get-Mailbox answers these; any other identity is <see cref="NotFound"/>'s record.</summary>
+    public Hashtable OnPremMailboxes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a23o. On-premises Get-RemoteMailbox answers these; any other identity is <see cref="NotFound"/>'s record.</summary>
+    public Hashtable OnPremRemoteMailboxes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>aud-a23o. Exchange Online's Get-Recipient answers these (Recipient Lookup's first read).</summary>
+    public Hashtable Recipients { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// aud-a23j. The Active Directory stand-in's users: Get-ADUser -Filter "UserPrincipalName -eq '...'" answers the rows
@@ -113,8 +135,28 @@ internal sealed class MigrationStubExchange : IDisposable
     /// </summary>
     public Hashtable DirectoryUsers { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>aud-a23j. Get-ADGroup -Identity answers these: an identity to the group's DN; any other is not found.</summary>
+    /// <summary>
+    /// aud-a23j. Get-ADGroup -Identity answers these: an identity to the group's DN, or to several DNs (aud-a23r: one per
+    /// domain that holds a group by that identity). A domain is asked only for the DNs it holds; any other is not found.
+    /// </summary>
     public Hashtable DirectoryGroups { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a23r. The forest's domains as Get-ADForest reports them, the host's own first: a directory call that names no
+    /// server is answered from it, as a domain controller of the host's domain answers one.
+    /// </summary>
+    public ArrayList ForestDomains { get; } = ArrayList.Synchronized(new ArrayList { "contoso.test" });
+
+    /// <summary>aud-a23r. The forest's global catalogs as Get-ADForest reports them; none, and the forest reports none.</summary>
+    public ArrayList ForestCatalogs { get; } = ArrayList.Synchronized(new ArrayList { "gc1.contoso.test" });
+
+    /// <summary>
+    /// aud-a23r. Every user and group lookup with the server it named: "Get-ADUser -Server &lt;server&gt; &lt;identity or
+    /// filter&gt;", "Get-ADGroup -Server &lt;server&gt; &lt;identity&gt;".
+    /// </summary>
+    public ArrayList DirectoryCalls { get; } = ArrayList.Synchronized(new ArrayList());
+
+    public string[] DirectoryCallList() => DirectoryCalls.Cast<string>().ToArray();
 
     /// <summary>aud-a23j. Saves the Migration module's excluded groups, as the comma-separated setting holds them.</summary>
     public void ExcludeGroups(params string[] groups) =>
@@ -145,10 +187,16 @@ internal sealed class MigrationStubExchange : IDisposable
     public sealed class ManagementObjectNotFoundException(string message) : Exception(message);
 
     /// <summary>aud-a23j. The Active Directory module's "no such object", as Get-ADGroup -Identity writes it.</summary>
-    public static ErrorRecord DirectoryNotFound(string identity) =>
-        new(new InvalidOperationException($"Cannot find an object with identity: '{identity}' under: 'DC=contoso,DC=test'."),
+    public static ErrorRecord DirectoryNotFound(string identity) => DirectoryNotFoundIn(identity, "contoso.test");
+
+    /// <summary>aud-a23r. The same, from a domain controller of <paramref name="domain"/>.</summary>
+    public static ErrorRecord DirectoryNotFoundIn(string identity, string domain) =>
+        new(new InvalidOperationException($"Cannot find an object with identity: '{identity}' under: '{DomainDn(domain)}'."),
             "ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException,Microsoft.ActiveDirectory.Management.Commands.GetADGroup",
             ErrorCategory.ObjectNotFound, identity);
+
+    /// <summary>aud-a23r. "contoso.test" as "DC=contoso,DC=test".</summary>
+    public static string DomainDn(string domain) => string.Join(",", domain.Split('.').Select(label => "DC=" + label));
 
     // ---- rows ------------------------------------------------------------------------------------
 
@@ -162,9 +210,17 @@ internal sealed class MigrationStubExchange : IDisposable
 
     public static PSObject CloudMailbox(string address) => Row(("PrimarySmtpAddress", address), ("RecipientTypeDetails", "UserMailbox"));
 
-    /// <summary>aud-a23j. A directory user and the DNs its memberOf reports.</summary>
+    /// <summary>aud-a23j. A directory user and the DNs its memberOf reports. aud-a23r: in the host's domain, contoso.test.</summary>
     public static PSObject DirectoryUser(string userPrincipalName, params string[] memberOf) =>
-        Row(("UserPrincipalName", userPrincipalName), ("memberOf", memberOf));
+        DirectoryUserIn("contoso.test", userPrincipalName, memberOf);
+
+    /// <summary>aud-a23r. A directory user of <paramref name="domain"/>, its DN under that domain's DN.</summary>
+    public static PSObject DirectoryUserIn(string domain, string userPrincipalName, params string[] memberOf) =>
+        Row(("UserPrincipalName", userPrincipalName), ("DistinguishedName", UserDn(domain, userPrincipalName)), ("memberOf", memberOf));
+
+    /// <summary>aud-a23r. The DN <see cref="DirectoryUserIn"/> gives a user.</summary>
+    public static string UserDn(string domain, string userPrincipalName) =>
+        $"CN={userPrincipalName.Split('@')[0]},OU=Users,{DomainDn(domain)}";
 
     /// <summary>aud-a23j. The rows Get-ADUser answers for one UPN, for <see cref="DirectoryUsers"/>.</summary>
     public static List<object> Users(params PSObject[] rows) => [.. rows];
@@ -208,13 +264,102 @@ internal sealed class MigrationStubExchange : IDisposable
     /// set, its protected-principal check is the stand-in's too; unset, it has none, and that check fails closed.
     /// </summary>
     internal sealed class StubMigrationService(MigrationStubExchange exchange, bool connects)
-        : MigrationService(exchange._config, exchange.Pool(connects), null!, NullLogger<MigrationService>.Instance,
+        : MigrationService(exchange.ServiceConfig(), exchange.Pool(connects), null!, NullLogger<MigrationService>.Instance,
             exchange._moduleConfig, null!, exchange._trace,
             exchange.Protection is null ? null! : exchange.ProtectionStandIn(),
             exchange.Protection is null ? null! : exchange.Servicers())
     {
         internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
+
+        // aud-a23o. The on-premises seams: no Delinea, no remote session.
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+            exchange.DefineOnPremSession(ps);
+
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            exchange.OnPremCredentialsFor();
     }
+
+    /// <summary>aud-a23o. The real Recipient Lookup service over the same stand-ins: Exchange Online in the pool, on-premises in its seams.</summary>
+    public RecipientLookupService RecipientLookup() => new StubRecipientLookupService(this);
+
+    internal sealed class StubRecipientLookupService(MigrationStubExchange exchange)
+        : RecipientLookupService(exchange.Pool(), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), null!, exchange._trace)
+    {
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+            exchange.DefineOnPremSession(ps);
+
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            exchange.OnPremCredentialsFor();
+    }
+
+    // aud-a23o. The configuration a service is built with: the stand-in's, plus an on-premises server only when asked for.
+    private IConfiguration ServiceConfig() => OnPremConfigured
+        ? new ConfigurationBuilder().AddConfiguration(_config)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["OnPremExchange:ServerUri"] = "https://exchange.contoso.test/PowerShell/" })
+            .Build()
+        : _config;
+
+    private Task<(string username, string password, string domain)?> OnPremCredentialsFor() =>
+        Task.FromResult<(string username, string password, string domain)?>(OnPremCredentials ? ("svc-migration", "not-a-secret", "CONTOSO") : null);
+
+    /// <summary>
+    /// aud-a23o. What the services' ConnectOnPrem seam does here: in the service's own on-premises runspace, an Invoke-Command
+    /// that runs the remote script locally, a Remove-PSSession, and the on-premises Get-MailboxStatistics, Get-Mailbox and
+    /// Get-RemoteMailbox (<see cref="OnPremStubs"/>), logged as "OnPrem &lt;cmdlet&gt;" and failing as Failures["OnPrem
+    /// &lt;cmdlet&gt;[ -Archive]"] says; then a marker session. Failures["OnPrem Connect"] throws instead, as a session that
+    /// cannot be opened.
+    /// </summary>
+    internal void DefineOnPremSession(PowerShell ps)
+    {
+        if (Failures["OnPrem Connect"] is string refused)
+            throw new InvalidOperationException(refused);
+
+        var proxy = ps.Runspace.SessionStateProxy;
+        proxy.SetVariable("Failures", Failures);
+        proxy.SetVariable("Calls", Calls);
+        proxy.SetVariable("Behaviour", Behaviour);
+        proxy.SetVariable("NotFound", NotFound);
+        proxy.SetVariable("OnPremMailboxes", OnPremMailboxes);
+        proxy.SetVariable("OnPremRemoteMailboxes", OnPremRemoteMailboxes);
+
+        var definitions = new System.Text.StringBuilder();
+        definitions.AppendLine("function global:Invoke-Command { [CmdletBinding()] param($Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList) & $ScriptBlock @ArgumentList }");
+        definitions.AppendLine("function global:Remove-PSSession { param($Session) }");
+        foreach (var (name, parameters, answer) in OnPremStubs)
+        {
+            if (!Missing.Contains("OnPrem " + name))
+                definitions.AppendLine($"function global:{name} {{\n{Stub(name, parameters, answer, "OnPrem " + name)}\n}}");
+        }
+
+        using var init = PowerShell.Create();
+        init.Runspace = ps.Runspace;
+        init.AddScript(definitions.ToString());
+        init.Invoke();
+        if (init.HadErrors)
+            throw new InvalidOperationException("the on-premises stand-ins could not be defined: " + string.Join(" | ", init.Streams.Error.Select(e => e.ToString())));
+        proxy.SetVariable("onpremSession", "stand-in-session");
+    }
+
+    // aud-a23o. On-premises Exchange. Get-MailboxStatistics reports Behaviour["OnPremMailboxSize"] / ["OnPremArchiveSize"] as
+    // the TotalItemSize (null: no row), else 2.5 GB and 512 MB; Behaviour["OnPremNoArchive"]: the archive read is
+    // NotFound's record.
+    private static readonly (string Name, string Parameters, string Answer)[] OnPremStubs =
+    [
+        ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", $$"""
+            if ($Archive -and $Behaviour['OnPremNoArchive']) { {{Lookup}}; return }
+            $key = if ($Archive) { 'OnPremArchiveSize' } else { 'OnPremMailboxSize' }
+            if ($Behaviour.ContainsKey($key)) { if ($null -ne $Behaviour[$key]) { [pscustomobject]@{ TotalItemSize = $Behaviour[$key] } }; return }
+            if ($Archive) { [pscustomobject]@{ TotalItemSize = '512 MB (536,870,912 bytes)' } } else { [pscustomobject]@{ TotalItemSize = '2.5 GB (2,684,354,560 bytes)' } }
+            """),
+        ("Get-Mailbox", "[string] $Identity", $$"""
+            if ($OnPremMailboxes.ContainsKey($Identity)) { return $OnPremMailboxes[$Identity] }
+            {{Lookup}}
+            """),
+        ("Get-RemoteMailbox", "[string] $Identity", $$"""
+            if ($OnPremRemoteMailboxes.ContainsKey($Identity)) { return $OnPremRemoteMailboxes[$Identity] }
+            {{Lookup}}
+            """),
+    ];
 
     /// <summary>
     /// aud-a23m. The protected-principal check's answer per target, when set: "protected", "unavailable", "ambiguous" or
@@ -266,35 +411,77 @@ internal sealed class MigrationStubExchange : IDisposable
     internal sealed class RecordingEmail(IConfiguration config, bool throws) : EmailService(config, NullLogger<EmailService>.Instance)
     {
         private readonly List<string> _sent = [];
+        private readonly List<string> _notes = [];
 
         public IReadOnlyList<string> Sent
         {
             get { lock (_sent) return _sent.ToList(); }
         }
 
+        /// <summary>aud-a23p. Each notification's note (its permissionType argument), in the order sent.</summary>
+        public IReadOnlyList<string> Notes
+        {
+            get { lock (_sent) return _notes.ToList(); }
+        }
+
         public override Task SendAdminNotificationAsync(string performedBy, string ipAddress, string action, string targetMailbox,
             string affectedUser, string permissionType, bool success, string ticketNumber, string? errorDetail = null)
         {
-            lock (_sent) _sent.Add(action);
+            lock (_sent)
+            {
+                _sent.Add(action);
+                _notes.Add(permissionType);
+            }
             return throws
                 ? Task.FromException(new InvalidOperationException("the mail relay refused the message"))
                 : Task.CompletedTask;
         }
     }
 
+    // aud-a23r. A forest: Get-ADForest reports ForestCatalogs and ForestDomains. A user search on a catalog (a server on port
+    // 3268) answers every domain's users as the catalog's partial copy - no memberOf - and one on a domain answers that
+    // domain's only; a read by DN answers on the DN's own domain only. Get-ADGroup answers, on a domain, the groups that
+    // domain holds under the identity, else the AD module's not-found; Failures["Get-ADGroup <identity> @<domain>"] fails one
+    // domain's. A call that names no server is the host's domain's, the first of ForestDomains.
     private static readonly (string Name, string Parameters, string Answer)[] DirectoryStubs =
     [
         ("Import-Module", "[string] $Name", ""),
-        ("Get-ADUser", "[string] $Filter, [object] $Properties", """
+        ("Get-ADForest", "", """
+            [pscustomobject]@{ GlobalCatalogs = @($ForestCatalogs); Domains = @($ForestDomains) }
+            """),
+        ("Get-ADUser", "[string] $Filter, [object] $Properties, [string] $Server, [string] $Identity", """
+            $null = $DirectoryCalls.Add("Get-ADUser -Server $Server $(if ($Identity) { $Identity } else { $Filter })")
+            if ($Identity) {
+                foreach ($rows in $DirectoryUsers.Values) { foreach ($row in $rows) {
+                    if ([string]$row.DistinguishedName -ieq $Identity -and (Get-StandInDomain ([string]$row.DistinguishedName)) -ieq $Server) { return $row }
+                } }
+                $PSCmdlet.WriteError($DirectoryNotFoundIn.Invoke($Identity, $Server)); return
+            }
             $upn = $null
             if ($Filter -match '^UserPrincipalName -eq ''(.*)''$') { $upn = $Matches[1] -replace "''", "'" }
-            if ($null -ne $upn -and $DirectoryUsers.ContainsKey($upn)) { foreach ($row in $DirectoryUsers[$upn]) { $row } }
+            if ($null -eq $upn -or -not $DirectoryUsers.ContainsKey($upn)) { return }
+            $scope = if ($Server) { $Server } else { [string]$ForestDomains[0] }
+            foreach ($row in $DirectoryUsers[$upn]) {
+                if ($Server -like '*:3268') { [pscustomobject]@{ UserPrincipalName = $row.UserPrincipalName; DistinguishedName = $row.DistinguishedName } }
+                elseif ((Get-StandInDomain ([string]$row.DistinguishedName)) -ieq $scope) { $row }
+            }
             """),
-        ("Get-ADGroup", "[string] $Identity", """
-            if ($DirectoryGroups.ContainsKey($Identity)) { return [pscustomobject]@{ DistinguishedName = $DirectoryGroups[$Identity] } }
-            $PSCmdlet.WriteError($DirectoryNotFound.Invoke([string]$Identity))
+        ("Get-ADGroup", "[string] $Identity, [string] $Server", """
+            $null = $DirectoryCalls.Add("Get-ADGroup -Server $Server $Identity")
+            $scope = if ($Server) { $Server } else { [string]$ForestDomains[0] }
+            $refusal = $Failures["Get-ADGroup $Identity @$scope"]
+            if ($null -ne $refusal) { if ($refusal -is [string]) { throw $refusal }; $PSCmdlet.WriteError($refusal.Invoke([string]$Identity)); return }
+            $found = @(if ($DirectoryGroups.ContainsKey($Identity)) { foreach ($dn in @($DirectoryGroups[$Identity])) { if ((Get-StandInDomain ([string]$dn)) -ieq $scope) { [pscustomobject]@{ DistinguishedName = $dn } } } })
+            if ($found.Count -gt 0) { return $found }
+            $PSCmdlet.WriteError($DirectoryNotFoundIn.Invoke([string]$Identity, $scope))
             """),
     ];
+
+    // aud-a23r. The domain a DN names, from its DC= labels.
+    private const string StandInDomain = """
+        param([string] $DistinguishedName)
+        @($DistinguishedName -split ',' | Where-Object { $_ -match '^\s*DC=' } | ForEach-Object { ($_ -replace '^\s*DC=', '').Trim() }) -join '.'
+        """;
 
     private Runspace DirectoryStandIn()
     {
@@ -303,7 +490,11 @@ internal sealed class MigrationStubExchange : IDisposable
         state.Variables.Add(new SessionStateVariableEntry("Calls", Calls, null));
         state.Variables.Add(new SessionStateVariableEntry("DirectoryUsers", DirectoryUsers, null));
         state.Variables.Add(new SessionStateVariableEntry("DirectoryGroups", DirectoryGroups, null));
-        state.Variables.Add(new SessionStateVariableEntry("DirectoryNotFound", (Func<string, ErrorRecord>)DirectoryNotFound, null));
+        state.Variables.Add(new SessionStateVariableEntry("ForestDomains", ForestDomains, null));
+        state.Variables.Add(new SessionStateVariableEntry("ForestCatalogs", ForestCatalogs, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryCalls", DirectoryCalls, null));
+        state.Variables.Add(new SessionStateVariableEntry("DirectoryNotFoundIn", (Func<string, string, ErrorRecord>)DirectoryNotFoundIn, null));
+        state.Commands.Add(new SessionStateFunctionEntry("Get-StandInDomain", StandInDomain));
         foreach (var (name, parameters, answer) in DirectoryStubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, Stub(name, parameters, answer)));
         return RunspaceFactory.CreateRunspace(state);
@@ -316,6 +507,7 @@ internal sealed class MigrationStubExchange : IDisposable
         state.Variables.Add(new SessionStateVariableEntry("MigrationUsers", MigrationUsers, null));
         state.Variables.Add(new SessionStateVariableEntry("BatchUsers", BatchUsers, null));
         state.Variables.Add(new SessionStateVariableEntry("Mailboxes", Mailboxes, null));
+        state.Variables.Add(new SessionStateVariableEntry("Recipients", Recipients, null));
         state.Variables.Add(new SessionStateVariableEntry("Batches", Batches, null));
         state.Variables.Add(new SessionStateVariableEntry("Behaviour", Behaviour, null));
         state.Variables.Add(new SessionStateVariableEntry("Calls", Calls, null));
@@ -348,6 +540,10 @@ internal sealed class MigrationStubExchange : IDisposable
             """),
         ("Get-Mailbox", "[string] $Identity", $$"""
             if ($Mailboxes.ContainsKey($Identity)) { return $Mailboxes[$Identity] }
+            {{Lookup}}
+            """),
+        ("Get-Recipient", "[string] $Identity", $$"""
+            if ($Recipients.ContainsKey($Identity)) { return $Recipients[$Identity] }
             {{Lookup}}
             """),
         ("Get-MigrationBatch", "[string] $Identity", $$"""
@@ -396,12 +592,13 @@ internal sealed class MigrationStubExchange : IDisposable
             """),
     ];
 
-    // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers.
-    private static string Stub(string name, string parameters, string answer) => $$"""
+    // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers. aud-a23o: the
+    // step is logged under its label when it has one ("OnPrem Get-Mailbox").
+    private static string Stub(string name, string parameters, string answer, string? label = null) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails' } | ForEach-Object { " -$_" }) -join ''
-        $step = '{{name}}' + $switches
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
+        $step = '{{label ?? name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         $failure = $Failures["$step $Identity"]
         if ($null -eq $failure) { $failure = $Failures[$step] }
@@ -413,7 +610,8 @@ internal sealed class MigrationStubExchange : IDisposable
         """;
 
     /// <summary>The Migration page over <paramref name="service"/>, its injected services set by hand.</summary>
-    public RenderableMigration Page(MigrationService service)
+    /// <param name="deny">aud-a23q. A policy the authorization stand-in refuses; every other policy is granted.</param>
+    public RenderableMigration Page(MigrationService service, string? deny = null)
     {
         var page = new RenderableMigration();
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "CONTOSO\\operator")], "test"));
@@ -421,7 +619,7 @@ internal sealed class MigrationStubExchange : IDisposable
         auth.GetAuthenticationStateAsync().Returns(new AuthenticationState(principal));
         var authorization = Substitute.For<IAuthorizationService>();
         authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
-            .Returns(AuthorizationResult.Success());
+            .Returns(call => call.ArgAt<string>(2) == deny ? AuthorizationResult.Failed() : AuthorizationResult.Success());
         Set(page, "MigrationSvc", service);
         Set(page, "Audit", Audit);
         Set(page, "Email", new EmailService(_config, NullLogger<EmailService>.Instance));

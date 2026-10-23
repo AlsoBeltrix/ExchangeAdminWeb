@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Runtime.ExceptionServices;
+using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
@@ -180,6 +181,14 @@ public abstract class ExchangeServiceBase
         "The command flagged an error but surfaced none: an error suppressed by -ErrorAction SilentlyContinue or Ignore, "
         + "on a command it ran or on itself, sets that flag without writing an error record.";
 
+    // aud-a23o. Why an on-premises read could not be made at all, in the base's own words. Each was a null: the size read's
+    // callers turned it into a cause they guessed ("on-prem connection unavailable", "connection not configured"), and the
+    // location read into "Unknown", which the pages word "No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was
+    // found."
+    internal const string OnPremNotConfigured = "on-premises Exchange is not configured (OnPremExchange:ServerUri is not set)";
+
+    internal const string OnPremCredentialsUnavailable = "the module's on-premises Exchange credentials could not be retrieved";
+
     private static List<string> SnapshotErrorMessages(PowerShell ps) =>
         ps.Streams.Error
           .Select(e => e.Exception?.Message ?? e.ToString())
@@ -344,6 +353,88 @@ public abstract class ExchangeServiceBase
         return InvokeOptional(ps, new ConnectionErrorTracker());
     }
 
+    // aud-a23g. A cancelled or stopped read is neither a row that could not be read nor a read that failed, so a read's
+    // catch lets it pass. The whole chain is searched because PowerShell's adapter wraps whatever a property getter throws,
+    // a cancellation included, in a GetValueInvocationException. aud-a23o: moved here from MigrationService, with
+    // ReadUnlessNotFound, IsNotFound and ReadSize, so the base's own reads decide by the same rules as Migration's.
+    protected static bool IsCancellation(Exception ex)
+    {
+        for (Exception? cause = ex; cause != null; cause = cause.InnerException)
+        {
+            if (cause is OperationCanceledException or PipelineStoppedException)
+                return true;
+        }
+        return false;
+    }
+
+    // aud-a23h. A read under -ErrorAction Stop through InvokeOptional (aud-a23g: it fails on an exception, not on
+    // HadErrors alone, which an error a nested command suppresses sets with nothing thrown). Rows when Exchange found the
+    // object; none when it said there is no such object; any other failure thrown to the caller.
+    protected static Collection<PSObject> ReadUnlessNotFound(PowerShell ps, ConnectionErrorTracker tracker)
+    {
+        try
+        {
+            return InvokeOptional(ps, tracker);
+        }
+        catch (Exception ex) when (IsNotFound(ex))
+        {
+            return new Collection<PSObject>();
+        }
+    }
+
+    /// <summary>
+    /// aud-a23h. Whether a failed read was Exchange saying there is no such object - the one failure that is an answer.
+    /// Read from the error record's structure, never its text: the category ObjectNotFound; a reason (the exception's
+    /// type name) ending NotFoundException; or such a name among the identifiers of its FullyQualifiedErrorId, the Exchange
+    /// Online module's form ("[FailureCategory=Cmdlet-ManagementObjectNotFoundException] 2B5E15D7,..."). The record is the
+    /// exception's own or, one level in, the one inside the base class's Invoke wrapper.
+    /// </summary>
+    /// <remarks>
+    /// ASSUMPTION, unverified (no live call): that the module reports "no such object" from Get-MigrationUser, Get-Mailbox
+    /// and Get-MigrationBatch -Identity in one of those shapes. If it uses none, a check of a mailbox with no migration
+    /// reads "could not be determined" and creation is blocked - visible and fail-closed, never "eligible".
+    /// <para>
+    /// Never CommandNotFoundException, which PowerShell also files under ObjectNotFound: a cmdlet this session does not
+    /// have - a role not granted, a module not loaded - says nothing about the mailbox. And never the identifier of an
+    /// error a throw statement raised, which PowerShell makes of the thrown text.
+    /// </para>
+    /// <para>
+    /// aud-a23o. Also what the base's own reads take for "no such object": Exchange Online's Get-Mailbox for the location
+    /// read, and on-premises Exchange's Get-Mailbox, Get-RemoteMailbox and Get-MailboxStatistics -Archive through
+    /// Invoke-Command. ASSUMPTION, unverified (no live call): remoting keeps the record's category, reason and
+    /// FullyQualifiedErrorId. If it does not, a location read of a mailbox not on that side is refused, and a move to Exchange
+    /// Online of a mailbox with no archive is Undetermined - visible and fail-closed, never "no mailbox" or "no archive".
+    /// </para>
+    /// </remarks>
+    internal static bool IsNotFound(Exception ex)
+    {
+        var record = (ex as IContainsErrorRecord ?? ex.InnerException as IContainsErrorRecord)?.ErrorRecord;
+        if (record is null
+            || ex is CommandNotFoundException
+            || ex.InnerException is CommandNotFoundException
+            || Identifiers(record.FullyQualifiedErrorId).Contains(nameof(CommandNotFoundException), StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        if (record.CategoryInfo.Category == ErrorCategory.ObjectNotFound || NamesNotFound(record.CategoryInfo.Reason))
+            return true;
+
+        var thrown = record.Exception as RuntimeException ?? ex as RuntimeException ?? ex.InnerException as RuntimeException;
+        return thrown is not { WasThrownFromThrowStatement: true }
+            && Identifiers(record.FullyQualifiedErrorId).Any(NamesNotFound);
+    }
+
+    private static bool NamesNotFound(string? identifier) =>
+        identifier is not null
+        && identifier.EndsWith("NotFoundException", StringComparison.Ordinal)
+        && !identifier.EndsWith(nameof(CommandNotFoundException), StringComparison.Ordinal);
+
+    private static IEnumerable<string> Identifiers(string? fullyQualifiedErrorId) =>
+        IdentifierPart.Matches(fullyQualifiedErrorId ?? "").Select(match => match.Value);
+
+    private static readonly Regex IdentifierPart = new(@"[A-Za-z0-9_.]+", RegexOptions.CultureInvariant);
+
     // -------------------------------------------------------------------------
     // Validation helpers
     // -------------------------------------------------------------------------
@@ -481,12 +572,58 @@ public abstract class ExchangeServiceBase
     // On-Prem queries (shared by multiple services)
     // -------------------------------------------------------------------------
 
-    protected async Task<(double mailboxSizeGB, double archiveSizeGB)?> GetOnPremMailboxSizeAsync(string emailAddress)
+    // aud-a23k, aud-a23o. A mailbox's size and its archive's, each with why it could not be read when it could not; a size
+    // with a reason is never shown as a number, summed, or held against a quota. Both size reads return it: Exchange Online's,
+    // for a move back on-premises (MigrationService), and on-premises Exchange's, for the quota a move to Exchange Online is
+    // checked against and for Recipient Lookup (GetOnPremMailboxSizeAsync).
+    protected internal sealed record MailboxSizes(double MailboxGB, string? MailboxUnreadable, double ArchiveGB, string? ArchiveUnreadable)
+    {
+        // aud-a23o. Neither size could be read, for one reason: a read that could not be made at all.
+        internal static MailboxSizes Unreadable(string reason) => new(0, reason, 0, reason);
+
+        // aud-a23o. What could not be read and why, as one clause ("the on-premises mailbox size could not be read: ..."), or
+        // null when both were read; one reason for both sizes is said once.
+        internal string? UnreadableReason(string where) => (MailboxUnreadable, ArchiveUnreadable) switch
+        {
+            (null, null) => null,
+            (string mailbox, string archive) when mailbox == archive => $"the {where} mailbox and archive sizes could not be read: {mailbox}",
+            (string mailbox, null) => $"the {where} mailbox size could not be read: {mailbox}",
+            (null, string archive) => $"the {where} archive size could not be read: {archive}",
+            (string mailbox, string archive) => $"the {where} mailbox size could not be read: {mailbox}; the {where} archive size could not be read: {archive}",
+        };
+    }
+
+    // aud-a23k. A size as reported, or why it is not one: no row, no TotalItemSize, or one ParseSizeToGB cannot read.
+    // aud-a23o: moved here from MigrationService; both size reads use it.
+    protected static (double gb, string? unreadable) ReadSize(Collection<PSObject> stats, string noRow)
+    {
+        var row = stats.FirstOrDefault();
+        if (row is null)
+            return (0, noRow);
+
+        var reported = row.Properties["TotalItemSize"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(reported))
+            return (0, "Exchange reported no TotalItemSize");
+
+        return ParseSizeToGB(reported) is { } gb
+            ? (gb, null)
+            : (0, $"the reported TotalItemSize '{reported}' is not a size this app can read");
+    }
+
+    // aud-a23o. The sizes a move to Exchange Online is checked against, each read or with why it was not - never 0. It read a
+    // TotalItemSize it could not parse as 0 (ParseExchangeSize's "?? 0", now gone) and any failure of the archive read as no
+    // archive, so the quota check could pass a mailbox whose size was never read; and it returned null for every other
+    // failure, which its callers filed under a cause they guessed. Exchange's own not-found for the archive, read from the
+    // error's structure (IsNotFound), is no archive; no row, or a size that does not parse, is a marker. Neither read's catch
+    // takes a cancellation. ASSUMPTION, unverified (no live call): on-premises Exchange reports a mailbox with no archive,
+    // through remoting, in a shape IsNotFound reads; if not, the check of such a mailbox is Undetermined - visible, never a
+    // guess, and one dev check of that error record settles it.
+    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress)
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
         {
             _logger.LogError("OnPremExchange:ServerUri is not configured - cannot check mailbox size");
-            return null;
+            return MailboxSizes.Unreadable(OnPremNotConfigured);
         }
 
         _operationTrace?.Step("OnPremMailboxSizeRequested", backend: "OnPremExchange", target: emailAddress);
@@ -495,7 +632,7 @@ public abstract class ExchangeServiceBase
         {
             _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
             _operationTrace?.Step("OnPremMailboxSizeRequested", "Failed", backend: "OnPremExchange", target: emailAddress, details: new Dictionary<string, object?> { ["reason"] = "Credentials unavailable" });
-            return null;
+            return MailboxSizes.Unreadable(OnPremCredentialsUnavailable);
         }
 
         return await ThrottledAsync(() => Task.Run(() =>
@@ -510,42 +647,45 @@ public abstract class ExchangeServiceBase
             try
             {
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
-                var mbxScript = ScriptBlock.Create("param($Identity) Get-MailboxStatistics -Identity $Identity -ErrorAction Stop | Select-Object TotalItemSize");
-                ps.AddCommand("Invoke-Command")
-                  .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
-                  .AddParameter("ScriptBlock", mbxScript)
-                  .AddParameter("ArgumentList", new object[] { emailAddress });
-                var mbxStats = Invoke(ps);
-                var totalItemSize = mbxStats.FirstOrDefault()?.Properties["TotalItemSize"]?.Value?.ToString();
-                var mailboxGB = ParseExchangeSize(totalItemSize);
-
-                _logger.LogInformation("On-prem mailbox size for {Email}: {Size} GB", emailAddress, mailboxGB);
-
-                double archiveGB = 0;
+                double mailboxGB = 0;
+                string? mailboxUnreadable;
                 try
                 {
-                    var archiveScript = ScriptBlock.Create("param($Identity) Get-MailboxStatistics -Identity $Identity -Archive -ErrorAction Stop | Select-Object TotalItemSize");
-                    ps.AddCommand("Invoke-Command")
-                      .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
-                      .AddParameter("ScriptBlock", archiveScript)
-                      .AddParameter("ArgumentList", new object[] { emailAddress });
-                    var archiveStats = Invoke(ps);
-                    var archiveSize = archiveStats.FirstOrDefault()?.Properties["TotalItemSize"]?.Value?.ToString();
-                    archiveGB = ParseExchangeSize(archiveSize);
-                    _logger.LogInformation("On-prem archive size for {Email}: {Size} GB", emailAddress, archiveGB);
+                    AddOnPremRead(ps, session, "Get-MailboxStatistics -Identity $Identity -ErrorAction Stop | Select-Object TotalItemSize", emailAddress);
+                    (mailboxGB, mailboxUnreadable) = ReadSize(Invoke(ps), "on-premises Exchange returned no mailbox statistics");
                 }
-                catch
+                catch (Exception ex) when (!IsCancellation(ex))
+                {
+                    mailboxUnreadable = $"Get-MailboxStatistics failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+                }
+
+                _logger.LogInformation("On-prem mailbox size for {Email}: {Size}", emailAddress, mailboxUnreadable ?? $"{mailboxGB} GB");
+
+                double archiveGB = 0;
+                string? archiveUnreadable = null;
+                try
+                {
+                    AddOnPremRead(ps, session, "Get-MailboxStatistics -Identity $Identity -Archive -ErrorAction Stop | Select-Object TotalItemSize", emailAddress);
+                    (archiveGB, archiveUnreadable) = ReadSize(Invoke(ps), "on-premises Exchange returned no archive statistics");
+                    _logger.LogInformation("On-prem archive size for {Email}: {Size}", emailAddress, archiveUnreadable ?? $"{archiveGB} GB");
+                }
+                catch (Exception ex) when (IsNotFound(ex))
                 {
                     _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
                 }
+                catch (Exception ex) when (!IsCancellation(ex))
+                {
+                    archiveUnreadable = $"Get-MailboxStatistics -Archive failed: {ResolveFailure(ex).primary.TrimEnd('.')}";
+                }
 
-                return ((double mailboxSizeGB, double archiveSizeGB)?)(mailboxGB, archiveGB);
+                return new MailboxSizes(mailboxGB, mailboxUnreadable, archiveGB, archiveUnreadable);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsCancellation(ex))
             {
                 _logger.LogError(ex, "Failed to get on-prem mailbox size for {Email}", emailAddress);
-                return null;
+                return MailboxSizes.Unreadable(ResolveFailure(ex).primary.TrimEnd('.'));
             }
             finally
             {
@@ -564,13 +704,42 @@ public abstract class ExchangeServiceBase
         }), _onPremThrottle);
     }
 
+    // aud-a23o. One read in the on-premises session: -ErrorAction Stop on the remote command and on Invoke-Command, so a
+    // remote failure throws here with its record - category, reason, FullyQualifiedErrorId - for IsNotFound to read, where it
+    // reached the local error stream as text, or, under SilentlyContinue, not at all.
+    private static void AddOnPremRead(PowerShell ps, object? session, string command, string identity) =>
+        ps.AddCommand("Invoke-Command")
+          .AddParameter("Session", session)
+          .AddParameter("ScriptBlock", ScriptBlock.Create($"param($Identity) {command}"))
+          .AddParameter("ArgumentList", new object[] { identity })
+          .AddParameter("ErrorAction", "Stop");
+
+    // aud-a23o. Where a mailbox is, or why that could not be told: a cloud read that fails is reported as such, not as "no
+    // cloud mailbox" - under Ignore it was, and on-premises was then asked about a mailbox Exchange Online had not answered
+    // for. "Unknown" means both sides answered that they hold no such mailbox.
     public async Task<string> GetMailboxLocationAsync(string identity)
     {
-        if (await HasCloudMailboxAsync(identity))
+        bool inTheCloud;
+        try
+        {
+            inTheCloud = await HasCloudMailboxAsync(identity);
+        }
+        catch (Exception ex) when (!IsCancellation(ex))
+        {
+            throw new InvalidOperationException($"Exchange Online could not be asked: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
+        }
+
+        if (inTheCloud)
             return "Cloud";
 
         return await GetOnPremMailboxLocationAsync(identity) ?? "Unknown";
     }
+
+    // aud-a23o. What a page refuses with when the location read fails, before any write. On the two permissions pages it
+    // reached the handler's catch, "Operation may have succeeded but audit logging failed", which says of a read that a write
+    // may have happened.
+    internal static string LocationReadFailure(string target, Exception ex) =>
+        $"Could not determine mailbox location for {target}: {ResolveFailure(ex).primary.TrimEnd('.')}. Nothing was changed.";
 
     /// <summary>
     /// Where the validated mailbox lives, asked by its GUID so the location decides the path for
@@ -585,26 +754,32 @@ public abstract class ExchangeServiceBase
         // Read-only: safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
+            // aud-a23o. Stop, not Ignore: under Ignore a read that failed - an error the cmdlet wrote, even a throw - was no
+            // rows, "no cloud mailbox". ReadUnlessNotFound keeps Exchange's own "no such object" an answer and rethrows every
+            // other failure as it was thrown, so the pool's discard and retry (psl-4) see what they saw before.
             ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", identity)
-              .AddParameter("ErrorAction", "Ignore");
-            return InvokeOptional(ps, tracker).Any();
+              .AddParameter("ErrorAction", "Stop");
+            return ReadUnlessNotFound(ps, tracker).Count > 0;
         }, allowRetry: true);
     }
 
+    // aud-a23o. A side that could not be asked - no server, no credentials, a session or a read that fails - throws, naming
+    // why. Each was null, which GetMailboxLocationAsync made "Unknown". Null now only when both reads answered that there is
+    // no such recipient.
     private async Task<string?> GetOnPremMailboxLocationAsync(string identity)
     {
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
         {
             _logger.LogWarning("OnPremExchange:ServerUri is not configured; cannot determine on-prem mailbox location for {Identity}", identity);
-            return null;
+            throw new InvalidOperationException($"on-premises Exchange could not be asked: {OnPremNotConfigured}");
         }
 
         var creds = await GetModuleCredentialsAsync("on-prem mailbox location check");
         if (creds is null)
         {
             _logger.LogError("Cannot determine on-prem mailbox location for {Identity}: failed to retrieve credentials from Delinea", identity);
-            return null;
+            throw new InvalidOperationException($"on-premises Exchange could not be asked: {OnPremCredentialsUnavailable}");
         }
 
         return await ThrottledAsync(() => Task.Run(() =>
@@ -629,10 +804,10 @@ public abstract class ExchangeServiceBase
 
                 return null;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsCancellation(ex))
             {
                 _logger.LogError(ex, "Failed to determine on-prem mailbox location for {Identity}", identity);
-                return null;
+                throw new InvalidOperationException($"on-premises Exchange could not be asked: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
             }
             finally
             {
@@ -641,17 +816,23 @@ public abstract class ExchangeServiceBase
         }), _onPremThrottle);
     }
 
+    // aud-a23o. Stop, not SilentlyContinue, which made a read that failed "no such recipient": Exchange's not-found, by
+    // structure, is the answer, and any other failure is "<cmdlet> failed: <reason>". No session is no answer either; it was
+    // "no recipient".
     protected static bool OnPremRecipientExists(PowerShell ps, object? session, string commandName, string identity)
     {
         if (session is null)
-            return false;
+            throw new InvalidOperationException($"{commandName} failed: there is no on-premises Exchange session to run it in");
 
-        var script = ScriptBlock.Create($"param($Identity) {commandName} -Identity $Identity -ErrorAction SilentlyContinue | Select-Object -First 1 Identity");
-        ps.AddCommand("Invoke-Command")
-          .AddParameter("Session", session)
-          .AddParameter("ScriptBlock", script)
-          .AddParameter("ArgumentList", new object[] { identity });
-        return InvokeOptional(ps).Any();
+        AddOnPremRead(ps, session, $"{commandName} -Identity $Identity -ErrorAction Stop | Select-Object -First 1 Identity", identity);
+        try
+        {
+            return ReadUnlessNotFound(ps, new ConnectionErrorTracker()).Count > 0;
+        }
+        catch (Exception ex) when (!IsCancellation(ex))
+        {
+            throw new InvalidOperationException($"{commandName} failed: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
+        }
     }
 
     protected static void RemoveOnPremSession(PowerShell ps)
@@ -697,57 +878,6 @@ public abstract class ExchangeServiceBase
     }
 
     // -------------------------------------------------------------------------
-    // AD Group check
-    // -------------------------------------------------------------------------
-
-    protected void CheckAdGroupMembership(MigrationEligibilityResult result, string[] excludedADGroups)
-    {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ActiveDirectory")
-          .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-
-        ps.AddCommand("Get-ADUser")
-          .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress.Replace("'", "''")}'")
-
-          .AddParameter("Properties", "memberOf")
-          .AddParameter("ErrorAction", "Stop");
-        var adUser = ps.Invoke();
-        ps.Commands.Clear();
-
-        var memberOf = adUser.FirstOrDefault()?.Properties["memberOf"]?.Value;
-        if (memberOf == null) return;
-
-        var groups = new List<string>();
-        if (memberOf is System.Collections.IEnumerable enumerable)
-        {
-            foreach (var item in enumerable)
-            {
-                if (item != null)
-                    groups.Add(item.ToString() ?? string.Empty);
-            }
-        }
-
-        foreach (var excludedGroup in excludedADGroups)
-        {
-            if (groups.Any(g => g.Contains(excludedGroup, StringComparison.OrdinalIgnoreCase)))
-            {
-                result.Status = MigrationStatus.Ineligible;
-                result.IneligibilityReasons.Add($"Member of excluded group: {excludedGroup}");
-                _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", result.EmailAddress, excludedGroup);
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // Parse helpers
     // -------------------------------------------------------------------------
 
@@ -790,11 +920,6 @@ public abstract class ExchangeServiceBase
         if (value is int i) return i;
         if (value != null && long.TryParse(value.ToString(), out var parsed)) return parsed;
         return null;
-    }
-
-    protected static double ParseExchangeSize(string? sizeString)
-    {
-        return ParseSizeToGB(sizeString) ?? 0;
     }
 
     protected static bool ParseBool(string? value, string fieldName = "field")
