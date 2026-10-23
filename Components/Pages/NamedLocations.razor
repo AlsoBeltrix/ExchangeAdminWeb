@@ -220,6 +220,7 @@
     // registry entry is keyed by LINE NUMBER. A directive at the top shifts every registered
     // control down one; a property here sits below all of them and moves nothing.
     [Inject] private IActivityProgress Progress { get; set; } = default!;
+    [Inject] private ServiceNowService ServiceNow { get; set; } = default!;
 
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
@@ -385,6 +386,15 @@
                 return;
             }
 
+            // kd-7. The ticket is checked here, below the authorization re-check and above the
+            // write, rather than left to the Save button's emptiness clause - see TicketRefusalAsync.
+            if (await TicketRefusalAsync(ticket) is { } ticketRefusal)
+            {
+                operationResult = completed = new NamedLocationResult { Success = false, Message = ticketRefusal };
+                AuditTicketRefusal(action, auditTarget, ticket, ticketRefusal);
+                return;
+            }
+
             if (values.Count == 0)
             {
                 operationResult = new NamedLocationResult
@@ -470,6 +480,14 @@
             {
                 operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations_Delete auth denial"); }
+                return;
+            }
+
+            // kd-7. As SaveLocation: the Confirm Delete clause is not what requires the ticket.
+            if (await TicketRefusalAsync(ticket) is { } ticketRefusal)
+            {
+                operationResult = completed = new NamedLocationResult { Success = false, Message = ticketRefusal };
+                AuditTicketRefusal("NamedLocations_Delete", target, ticket, ticketRefusal);
                 return;
             }
 
@@ -595,6 +613,41 @@
         {
             isDownloadingCsv = false;
         }
+    }
+
+    /// <summary>
+    /// kd-7. The ticket check both writes on this page pass before Graph is called: the refusal the
+    /// operator is shown, or null when the ticket passes.
+    /// </summary>
+    /// <remarks>
+    /// The Save and Confirm Delete emptiness clauses used to be the only enforcement, and a disabled
+    /// attribute is one round trip stale and is bypassed by a second dispatch or a programmatic
+    /// click. Presence is tested on its own because ServiceNowService passes every ticket - a blank
+    /// one included - while the integration is dormant, so validation alone would admit a blank
+    /// ticket on a deployment without it (the RiskyUsers and IntuneDevices shape). A present ticket
+    /// is then validated, which refuses a malformed or unknown one wherever the integration is
+    /// enabled.
+    /// </remarks>
+    private async Task<string?> TicketRefusalAsync(string ticket)
+    {
+        if (string.IsNullOrWhiteSpace(ticket))
+            return "A ticket number is required.";
+
+        var validation = await ServiceNow.ValidateTicketAsync(ticket);
+        return validation.IsValid ? null : $"Ticket validation failed: {validation.Message}";
+    }
+
+    /// <summary>
+    /// kd-7. A ticket refusal's audit row, in the aud-a28 refusal convention: Failed, the reason the
+    /// operator was shown, the step that refused, and mutationAttempted false - which is what tells
+    /// a refusal (nothing was sent to Graph) apart from a failed write (something may have been).
+    /// No administrator email, as for the authorization denial beside each call: nothing reached
+    /// the tenant's Conditional Access configuration.
+    /// </summary>
+    private void AuditTicketRefusal(string action, string target, string ticket, string refusal)
+    {
+        try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", target, false, ticket, refusal, new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false }); }
+        catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} ticket refusal", action); }
     }
 
     private static List<string> ParseLines(string input) =>

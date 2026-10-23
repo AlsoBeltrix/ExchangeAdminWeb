@@ -454,6 +454,9 @@ Manage Entra ID Conditional Access named locations via Microsoft Graph API.
 - Create, edit, and delete IP range locations (IPv4/IPv6 CIDR)
 - Create, edit, and delete country/region locations
 - Mark locations as trusted
+- A ticket number is required before any create, edit or delete runs: a blank one, or one
+  ServiceNow rejects where that integration is enabled, is refused with an audited denial and
+  nothing is sent to Graph
 - Full pagination support for large tenants
 - Results can be downloaded as CSV (`Name,Type,Trusted,IpRanges,CountryCodes,IncludeUnknownCountries,Created,Modified`)
 - **Requires:** Graph app registration with `Policy.ReadWrite.ConditionalAccess` permission

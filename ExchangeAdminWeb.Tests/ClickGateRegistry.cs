@@ -739,7 +739,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 604,
+        ExpectedLineCount = 657,
 
         Predicates =
         [
@@ -888,10 +888,10 @@ public static class ClickGateRegistry
             new AnnotatedControl(196, "@onclick=\"() => DeleteLocation(editingLocation)\"",
                 ["string.IsNullOrWhiteSpace(formTicketNumber)"],
                 RendersOnlyWhen:
-                "only while confirmDelete == editingLocation.Id. DeleteLocation does not re-check "
-                + "the ticket, so unlike DhcpAuthorization 82 this clause IS the only enforcement "
-                + "of the ticket requirement on a deletion - the IntuneDevices 403 shape. It is "
-                + "OR-ed with IsBusy and must never be replaced by it"),
+                "only while confirmDelete == editingLocation.Id. DeleteLocation re-checks the "
+                + "ticket since kd-7, so like DhcpAuthorization 82 this clause is no longer the only "
+                + "enforcement of the ticket requirement on a deletion, but it is still the click "
+                + "gate's precondition. It is OR-ed with IsBusy and must never be replaced by it"),
 
             new AnnotatedControl(205, "@onclick=\"SaveLocation\"",
                 [
@@ -900,7 +900,7 @@ public static class ClickGateRegistry
                 ],
                 RendersOnlyWhen:
                 "always, while the form is open. Two form-validity clauses that IsBusy is OR-ed in "
-                + "front of, never substituted for; SaveLocation re-checks neither"),
+                + "front of, never substituted for; SaveLocation re-checks the ticket since kd-7, not the name"),
         ],
 
         // SpinnerExpressions is EMPTY on purpose, and the emptiness is the record. This page had

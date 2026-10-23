@@ -2154,8 +2154,11 @@ public static class ProgressRegistry
         Reports =
         [
             new("LoadLocations", "LocationService.GetAllAsync"),
-            new("SaveLocation", "LocationService.UpdateIpLocationAsync"),
-            new("DeleteLocation", "LocationService.DeleteAsync"),
+            new("SaveLocation", ["TicketRefusalAsync(", "LocationService.UpdateIpLocationAsync"],
+                "kd-7 added the ticket check above the write, and it is named first: a ServiceNow "
+                + "round trip wherever that integration is enabled, so the Begin must stay above it"),
+            new("DeleteLocation", ["TicketRefusalAsync(", "LocationService.DeleteAsync"],
+                "as SaveLocation: the kd-7 ticket check, then the delete"),
             new("DownloadCsvAsync",
                 [
                     "BuildCsv(",

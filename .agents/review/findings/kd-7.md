@@ -78,6 +78,21 @@ shape used here.
 - Mutation: one handler's gate removed; the presence half of `TicketRefusalAsync` removed.
 - Module `M365GroupManagement` 1.6.1 -> 1.7.0 in `Modules/ModuleCatalog.cs`; no base app bump.
 
+### What changes - Named Locations (commit 2)
+
+The M365 shape, on `NamedLocations.razor` at `cd25a924` (lines unchanged from `3e43b35b`):
+
+- `[Inject] private ServiceNowService ServiceNow` beside `Progress` (`:222`).
+- `TicketRefusalAsync` and `AuditTicketRefusal` above `ParseLines` (`:600`), category `NamedLocations`.
+- `SaveLocation`: the gate below the authorization re-check (`:379-386`) and above the empty-values check (`:388`) and
+  the write (`:404-410`). `DeleteLocation`: below the re-check (`:467-474`), above the delete (`:476`).
+- Line keys: every registered line is in markup at 205 or earlier and every edit is in `@code` below 218, so only
+  `ExpectedLineCount` moves. The Confirm Delete (196) and Save (205) `RendersOnlyWhen` notes that say the handlers
+  re-check nothing are corrected. `ProgressRegistry` names `TicketRefusalAsync(` first on both entries.
+- Guard: `NamedLocationsTicketGateTests` (create, update, delete) over a real `NamedLocationsService` with no Graph
+  secret. Mutation: `DeleteLocation`'s gate removed; the presence half removed.
+- Module `NamedLocations` 1.3.3 -> 1.4.0; README states the requirement.
+
 ## Files changed
 
 Commit 1, M365 Group Management:
@@ -95,6 +110,18 @@ Commit 1, M365 Group Management:
 - `ExchangeAdminWeb.Tests/M365GroupManagementTicketGateTests.cs` - new.
 - `Modules/ModuleCatalog.cs` - `M365GroupManagement` 1.6.1 -> 1.7.0.
 - `README.md` - the M365 Group Management section states the ticket requirement.
+
+Commit 2, Named Locations:
+
+- `Components/Pages/NamedLocations.razor` - `[Inject] ServiceNowService ServiceNow`; `TicketRefusalAsync` and
+  `AuditTicketRefusal` above `ParseLines`; the gate in `SaveLocation` and `DeleteLocation`, each directly below its
+  authorization re-check. 604 -> 657 lines, every added line below 218.
+- `ExchangeAdminWeb.Tests/ClickGateRegistry.cs` - NamedLocations `ExpectedLineCount` 604 -> 657 (diff map: 14 line keys,
+  none moved, none unmapped); the Confirm Delete (196) and Save (205) `RendersOnlyWhen` notes corrected.
+- `ExchangeAdminWeb.Tests/ProgressRegistry.cs` - `TicketRefusalAsync(` named first on `SaveLocation` and `DeleteLocation`.
+- `ExchangeAdminWeb.Tests/NamedLocationsTicketGateTests.cs` - new.
+- `Modules/ModuleCatalog.cs` - `NamedLocations` 1.3.3 -> 1.4.0.
+- `README.md` - the Named Locations section states the ticket requirement.
 
 ## Guard proof
 
@@ -123,6 +150,22 @@ without leaving the process and is audited without `mutationAttempted` and email
 
 After each, the page was restored byte-exact from the fixed copy with a fresh mtime (md5 `4c55d015` again), rebuilt
 and rerun: 35 passed; with the ClickGate and ProgressRegistry groups, 386 passed.
+
+### Named Locations
+
+`NamedLocationsTicketGateTests` (15 cases): the same four tests over create, update and delete, behind a real
+`NamedLocationsService` with no Graph secret, so a reached write throws "not configured" into the catch, which audits
+it without `mutationAttempted` and emails it. Blank (dormant) -> "A ticket number is required."; rejected by an
+enabled stub -> "Ticket validation failed: Ticket INC0042 not found in ServiceNow", one query; malformed -> the pattern
+refusal, no query; the control reaches the service and emails once.
+
+| Mutation | Result |
+| --- | --- |
+| M1: `DeleteLocation`'s gate removed (md5 `175da707` -> `14f37495`) | FAIL, 4 of 15 - every Delete refusal case: `Actual: "Named Locations module is not configured..."` |
+| M2: the presence half of `TicketRefusalAsync` removed (md5 -> `5e76f3a9`) | FAIL, 6 of 15 - every blank-ticket case reached the service |
+
+Restored byte-exact with a fresh mtime (md5 `175da707`), rebuilt, rerun: 15 passed; with the ClickGate and
+ProgressRegistry groups, 369 passed.
 
 ## Coder dispute
 
