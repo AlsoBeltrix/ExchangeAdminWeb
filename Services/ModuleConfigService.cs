@@ -100,7 +100,7 @@ public class ModuleConfigService
         lock (_writeLock)
         {
             _repository.SaveModule(moduleId, values);
-            _logger.LogInformation("Module config for {Module} saved", moduleId);
+            ReportSafely(logger => logger.LogInformation("Module config for {Module} saved", moduleId));
         }
 
         ConfigSaved?.Invoke(moduleId);
@@ -124,7 +124,7 @@ public class ModuleConfigService
         lock (_writeLock)
         {
             update = _repository.UpdateModule(moduleId, values);
-            _logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, values.Count);
+            ReportSafely(logger => logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, values.Count));
         }
 
         ConfigSaved?.Invoke(moduleId);
@@ -220,7 +220,7 @@ public class ModuleConfigService
             });
 
             if (update.Written)
-                _logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, wanted.Count - alreadyApplied.Count);
+                ReportSafely(logger => logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, wanted.Count - alreadyApplied.Count));
         }
 
         if (update.Written)
@@ -299,6 +299,21 @@ public class ModuleConfigService
             }
 
             return new(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    // aud-a63. A committed write is reported through here (the aud-a28z shape): a provider that threw - inside the lock,
+    // before ConfigSaved - made a saved change look failed to its caller, and this instance's ConfigSaved subscribers never
+    // heard of it. The write stands whatever the report does.
+    private void ReportSafely(Action<ILogger> report)
+    {
+        try
+        {
+            report(_logger);
+        }
+        catch (Exception)
+        {
+            // Nowhere left to say so.
         }
     }
 

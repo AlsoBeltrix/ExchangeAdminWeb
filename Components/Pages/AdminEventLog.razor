@@ -1206,13 +1206,16 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Failed to execute undo for operation {OperationId}", target.OperationId);
+            // aud-a63. The outcome first and the report last, through the guard: the report ran first and unguarded, so a
+            // provider that threw left undoError unset - the finally then completed the activity as a success - recorded
+            // nothing of an undo the module never saw, and took its exception to the circuit.
             undoError = $"Unexpected error: {ex.Message}";
             // aud-a28m: an exception before the module was called - the auth state, the re-check, the
             // level check - used to leave no record. One after it is the module's to record, and one
             // from the trailing LoadEvents follows a success the module has already recorded.
             if (!moduleCalled)
                 LogUndoNotRun(target, userName ?? "unknown", clientIp, ticket, null, undoError);
+            ReportSafely(logger => logger.LogError(ex, "Failed to execute undo for operation {OperationId}", target.OperationId));
         }
         finally
         {
