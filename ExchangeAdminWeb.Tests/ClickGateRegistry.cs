@@ -4198,14 +4198,14 @@ public static class ClickGateRegistry
     /// dismiss at 300 needs no prerequisite; the day an await appears between them it does.
     /// </para>
     /// <para>
-    /// <b>Not fixed, and not a gating problem.</b> Re-entering the manage view for a DIFFERENT
-    /// group while a previous group's operation is still in flight lets that operation publish its
+    /// <b>Fixed by kd-8, and not a gating problem.</b> Re-entering the manage view for a DIFFERENT
+    /// group while a previous group's operation was still in flight let that operation publish its
     /// <c>changeResult</c> banner and its <c>bulkOutcome</c> table into the new group's view - the
-    /// text names the old group, so it is misleading rather than wrong, and the gate on 128/179
-    /// narrows the window to one round trip but cannot close it. Closing it means stamping the
-    /// group onto the result and discarding a result whose group is no longer selected, which is a
-    /// change to what those two fields are rather than to how a control refuses a click, and it is
-    /// out of this slice's scope. Recorded here rather than left to be rediscovered.
+    /// text names the old group, so it was misleading rather than wrong. The gate on 128/179 is
+    /// the only thing that stops that re-entry, and it is markup; ShowFor is its server-side half:
+    /// all four mutating handlers publish their outcome through it, and it writes the two fields
+    /// only while ReferenceEquals(selected, group) - the same live read as their reload tests.
+    /// The audit rows, the emails and the status-bar outcome do not depend on it.
     /// </para>
     /// <para>
     /// <b>The standing exemption is untouched.</b> Self-Service Groups does not consult Protected
@@ -4217,7 +4217,7 @@ public static class ClickGateRegistry
     private static PageGateEntry SelfServiceGroups => new()
     {
         Page = "SelfServiceGroups.razor",
-        ExpectedLineCount = 1211,
+        ExpectedLineCount = 1244,
 
         // Two, and the list field exists for exactly this. Both scopes have real flags and real
         // controls; see the remarks for why a single page-wide predicate cannot work here and why

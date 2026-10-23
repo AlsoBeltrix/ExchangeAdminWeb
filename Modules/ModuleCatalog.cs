@@ -781,7 +781,9 @@ public sealed class ModuleCatalog
             // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
             // down), and the bulk-add paste was parsed after a yield from a box still accepting
             // keystrokes.
-            Version = "1.11.3",
+            // 1.12.0: an operation that finishes after the operator has opened another group no
+            // longer puts its banner or outcome table into that group's view (kd-8).
+            Version = "1.12.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
