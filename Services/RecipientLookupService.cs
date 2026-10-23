@@ -168,13 +168,20 @@ public class RecipientLookupService : ExchangeServiceBase
                 var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
                 if (onPremSize.MailboxUnreadable is null)
                     result.MailboxSizeGB = onPremSize.MailboxGB;
-                if (onPremSize.ArchiveUnreadable is null)
+                // aud-a68. An on-premises mailbox's archive is the on-premises read's to say: found, it is shown with its size;
+                // not read, "Could not be read". ArchiveEnabled was set by the Exchange Online read alone, so every on-premises
+                // archive showed "Archive: Disabled" with its rows hidden, and one that could not be read "Disabled" beside its
+                // warning.
+                result.ArchiveEnabled = onPremSize.ArchiveFound;
+                result.ArchiveUnreadable = onPremSize.ArchiveUnreadable;
+                if (onPremSize.ArchiveFound && onPremSize.ArchiveUnreadable is null)
                     result.ArchiveSizeGB = onPremSize.ArchiveGB;
                 if (onPremSize.UnreadableReason("on-premises") is { } unreadable)
                     result.Warnings.Add($"{char.ToUpperInvariant(unreadable[0])}{unreadable[1..]}.");
             }
             catch (Exception ex)
             {
+                result.ArchiveUnreadable = ResolveFailure(ex).primary.TrimEnd('.'); // aud-a68: the archive was not read either, so it is not "Disabled"
                 result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ex.Message}");
             }
         }

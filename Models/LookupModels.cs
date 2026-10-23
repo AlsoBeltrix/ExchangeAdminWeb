@@ -118,6 +118,7 @@ public class RecipientInfoResult
     public bool ArchiveEnabled { get; set; }
     // aud-a54. Why the Exchange Online mailbox, and its archive, could not be read; null when read, or when Exchange said
     // there is none. The page shows "Could not be read" for either, where it showed the absence ("None", "Disabled").
+    // aud-a68: for an on-premises mailbox the archive's is the on-premises read's, as ArchiveEnabled is.
     public string? MailboxUnreadable { get; set; }
     public string? ArchiveUnreadable { get; set; }
     public double? MailboxSizeGB { get; set; }

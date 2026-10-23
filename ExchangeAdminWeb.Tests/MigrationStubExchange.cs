@@ -342,10 +342,12 @@ internal sealed class MigrationStubExchange : IDisposable
 
     // aud-a23o. On-premises Exchange. Get-MailboxStatistics reports Behaviour["OnPremMailboxSize"] / ["OnPremArchiveSize"] as
     // the TotalItemSize (null: no row), else 2.5 GB and 512 MB; Behaviour["OnPremNoArchive"]: the archive read is
-    // NotFound's record.
+    // NotFound's record. aud-a68: Behaviour["OnPremStatisticsCancelled"]: a cancellation, which the size read's own catches
+    // let through, so the read throws as a whole.
     private static readonly (string Name, string Parameters, string Answer)[] OnPremStubs =
     [
         ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", $$"""
+            if ($Behaviour['OnPremStatisticsCancelled']) { throw [System.OperationCanceledException]::new('the on-premises size read was cancelled') }
             if ($Archive -and $Behaviour['OnPremNoArchive']) { {{Lookup}}; return }
             $key = if ($Archive) { 'OnPremArchiveSize' } else { 'OnPremMailboxSize' }
             if ($Behaviour.ContainsKey($key)) { if ($null -ne $Behaviour[$key]) { [pscustomobject]@{ TotalItemSize = $Behaviour[$key] } }; return }
