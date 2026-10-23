@@ -5,9 +5,9 @@
 `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 and `System.Security.Cryptography.Pkcs` 10.0.7 (as the aud-a28u/a26r
 agent saw them on 2026-10-22; the exact set is whatever the current restore reports). They sit inside the
 61-warning baseline, so no gate sees them.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
-**Branch**: `worktree-agent-aca5b5b4f6295736c`
-**Commit**: -
+**Status**: Fixed on branch, not merged, not pushed; closed on guard proof (each downgrade fails the build); codex review pending
+**Branch**: `worktree-agent-aca5b5b4f6295736c` (from `18530b58`)
+**Commit**: `f42f23aa` (packages, audit settings and their comments, record); plan `5a6e5a5d`
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidate 6 of its hand-back)
 
 ## Evidence
@@ -157,6 +157,19 @@ build must fail. After the round, a build on the restored bytes: exit 0, 0 error
 
 Network: nuget.org only, for restore, the audit's data and `dotnet list --vulnerable`. No AD, EXO, Graph, DHCP or IIS
 call, no deployment. No coder self-review verdict is claimed.
+
+## Branch-tip gates - 2026-10-22 (`7698c096`)
+
+As aud-a28z's record: Release build 0 errors / 21 warnings, no NU; the full suite 5,865 / 3 / 0, 5,868 total; Pester
+478/0/0 against the Release build; `dotnet list ... --vulnerable --include-transitive` none in either project; format,
+`git diff --check HEAD` and `tools/Test-AsciiOnly.ps1` exit 0; a dry `git merge-tree` against master `1410013e` reports no
+conflict, and master changed neither csproj file.
+
+## Closeout
+
+Fixed on branch `worktree-agent-aca5b5b4f6295736c`, not merged, not pushed. The packages ship inside the app, so the base
+app version is due; no module's own behaviour changed. The bump is the supervisor's, at merge: the csproj's version
+elements were outside this brief and are untouched.
 
 ## Known gaps
 

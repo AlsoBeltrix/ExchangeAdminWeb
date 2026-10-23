@@ -6,9 +6,9 @@ aud-a28q class), and in `ProcessQueueAsync` it would end the background consumer
 written to the extended log until a restart and no one is told. (2) Left from aud-a28q: a value whose
 `ToString` throws, in a field `WriteAuditEvent` reads before handing the record to the writer, still
 throws out of the audit call.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
-**Branch**: `worktree-agent-aca5b5b4f6295736c`
-**Commit**: -
+**Status**: Fixed on branch, not merged, not pushed; closed on guard proof (parts 1-5); codex review pending
+**Branch**: `worktree-agent-aca5b5b4f6295736c` (from `18530b58`)
+**Commit**: `1756aeb4` (parts 1-4: fix, tests, record); part 5 `d54da14e` (its plan `efbea61b`); comments `7698c096`; plan `5a6e5a5d`
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidates 1 and 5 of its hand-back)
 
 ## Evidence
@@ -304,6 +304,29 @@ files. Across the six code files the comments add 84 lines and change 5 (`git di
   and `TextField`'s "never another field" - the report now names six more, string-only.
 
 The tests carry their comments from their own commits.
+
+## Branch-tip gates - 2026-10-22 (`7698c096`: the five fix and plan commits and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 21 warnings (12 CS8604, 5 CS8602, 3 CS0649,
+  1 CS0414 - cdt-41's new baseline, no NU), none in a touched file of the branch.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 5,865 passed / 3 skipped
+  (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0 failed, 5,868 total,
+  5m45s; nothing hung, no Sequence file. The twenty-six new cases are this branch's (aud-a28z nineteen and part 5's
+  three, aud-a26u four); the base was not run separately (5,842 expected at `18530b58`).
+- `ClickGate*` 316/316 and `ProgressRegistryTests` 35/35, each run alone (Release). `Invoke-Pester tests/ps` (Pester
+  6.2.0) against the Release build: 478 passed, 0 failed, 0 skipped, 0 not run.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- Against master as it stood at hand-back (`1410013e`): `git merge-tree --write-tree --name-only master HEAD` exit 0, no
+  conflicted file - a dry run that moves no ref. Master changed none of this branch's files but this record, whose two
+  "Folded in" sections (from `3e1111eb` and `3a948129`) it carries byte-identically, after the `Pending.` line above them.
+
+## Closeout
+
+Fixed on branch `worktree-agent-aca5b5b4f6295736c`, not merged, not pushed. Shared infrastructure - the extended log, the
+audit service's common path and the JSONL writer every audit and trace call ends in - so the base app version is due;
+part 5's Result filter option is Admin Event Log behaviour, whose module version aud-a26u already makes due. The bumps are
+the supervisor's, at merge: `Modules/ModuleCatalog.cs` and the csproj version elements were outside this brief.
 
 ## Known gaps
 

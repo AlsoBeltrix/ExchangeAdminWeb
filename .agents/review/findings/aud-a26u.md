@@ -7,9 +7,9 @@ editor writes text attributes only. (2) An attribute holding several binary valu
 several-values wording rather than named as binary. (3) On the Admin Event Log page, a closed undo
 preview's progress bar stays visible until its handler returns (cosmetic; aud-a26r cleared the loading
 guard, not the bar).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; in progress (plan below)
-**Branch**: `worktree-agent-aca5b5b4f6295736c`
-**Commit**: -
+**Status**: Fixed on branch, not merged, not pushed; closed on guard proof; codex review pending
+**Branch**: `worktree-agent-aca5b5b4f6295736c` (from `18530b58`)
+**Commit**: `2904ec9b` (fix, tests, record); comments `7698c096`; plan `5a6e5a5d`
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
 
 ## Evidence
@@ -207,6 +207,20 @@ record's files:
   (1,605 lines -> 1,613; NotYetConverted).
 
 The tests carry their comments from their own commit.
+
+## Branch-tip gates - 2026-10-22 (`7698c096`)
+
+As aud-a28z's record: Release build 0 errors / 21 warnings (cdt-41's baseline), none in this record's files; the full
+suite 5,865 / 3 / 0, 5,868 total, 5m45s, the four cases here among the branch's twenty-six; `ClickGate*` 316/316 and
+`ProgressRegistryTests` 35/35 alone; Pester 478/0/0; format, `git diff --check HEAD` and `tools/Test-AsciiOnly.ps1` exit
+0; a dry `git merge-tree` against master `1410013e` reports no conflict, and master changed none of this record's files.
+
+## Closeout
+
+Fixed on branch `worktree-agent-aca5b5b4f6295736c`, not merged, not pushed. Two module-scoped behaviour changes: the AD
+Attribute Editor (the read-only marks, the several-binary refusal) and the Admin Event Log (the closed preview's
+activity): both module versions are due. No shared code changed here. The bumps are the supervisor's, at merge:
+`Modules/ModuleCatalog.cs` and the csproj version elements were outside this brief.
 
 ## Known gaps
 
