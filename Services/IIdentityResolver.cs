@@ -99,8 +99,8 @@ public interface IIdentityResolver
     /// <exception cref="Exception">
     /// Thrown when the membership could not be read in full: Exchange Online unreachable, unreadable or not configured, the
     /// group not found, a group of a kind the read does not expand, a nested group without an address or a sync state, or
-    /// more groups than it reads. Never an empty list standing in for a read that did not complete: the self-grant check
-    /// takes the answer for evidence.
+    /// more nested cloud groups than it follows (aud-a61: an exception of its own, so the refusal can name the bound). Never
+    /// an empty list standing in for a read that did not complete: the self-grant check takes the answer for evidence.
     /// </exception>
     Task<IReadOnlyList<ExchangeGroupMember>> ReadGroupMembersAsync(string group);
 }

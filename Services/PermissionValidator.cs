@@ -769,8 +769,9 @@ public class PermissionValidator
     /// primary address: the object that address belongs to is the mailbox the grant would land on.
     ///
     /// aud-a52. Whether a group holds the operator is the protected-group evaluator's question
-    /// (<see cref="ProtectedGroupMembership.Evaluate"/>), asked once over every group concerned and read through this
-    /// session (<see cref="SelfGrantDirectory.Groups"/>): ancestry in the operator's own domain, universal ancestry at the
+    /// (<see cref="ProtectedGroupMembership.Evaluate"/>), asked once over every group concerned and read in this session
+    /// under the protected-principal directory-read credential (<see cref="SelfGrantDirectory.GroupsUnder"/>, aud-a60) - once
+    /// per run (<see cref="SelfGrantRun"/>, aud-a61): ancestry in the operator's own domain, universal ancestry at the
     /// catalog, a domain-local group in its own domain, and the primary group, which no member link records. It reads
     /// nesting where aud-a43 read a direct member link only, and an answer it could not complete refuses. A group Exchange
     /// names that the directory does not hold is the directory's to answer when Exchange calls it synced - it was not found,
@@ -870,7 +871,8 @@ public class PermissionValidator
     /// </summary>
     /// <remarks>
     /// Its membership is Exchange's, so Exchange is asked - for the group's canonical address, through the identity resolver
-    /// and the pool (<see cref="ExchangeGroupMembers"/> reads through the cloud groups nested in it). Its members are
+    /// and the pool (<see cref="ExchangeGroupMembers"/> reads through the cloud groups nested in it, up to its bound, which
+    /// refuses naming itself - aud-a61), once per run (<see cref="SelfGrantRun"/>). Its members are
     /// recipients, so the operator's own recipient is what is looked for: with none there is nothing to compare, and the
     /// check refuses. A read that cannot be made, or answers nothing, refuses; so does a member that cannot be told apart
     /// from the operator. A synced group among the members is not Exchange's to expand - the directory holds its whole
