@@ -620,7 +620,9 @@ public sealed class ModuleCatalog
             // the circuit down if the operator closed the panel or picked another group mid-load.
             // 2.12.0: a membership change now emails the group's managedBy manager a
             // summary - one message per operation, never one per member (aud-a25).
-            Version = "2.12.1",
+            // 2.13.0: the four membership writes refuse a blank ticket themselves, before
+            // ServiceNow, which passes one while it is dormant (kd-18).
+            Version = "2.13.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
