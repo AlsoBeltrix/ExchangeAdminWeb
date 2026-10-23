@@ -1,7 +1,7 @@
 # cdt-42: deploy.ps1's upgrade path reconfigures and grants folder ACLs to the pool named by -AppPoolName before the binding check can refuse
 
 **Severity**: MEDIUM - an upgrade run whose `-AppPoolName` names another existing pool (one that runs as a user) reconfigures that pool (managedRuntimeVersion "", AlwaysRunning, loadUserProfile) and grants its account Modify on this instance's folders, then refuses with "runs under app pool X" - leaving the other pool changed and its account holding ACLs on this instance. The refusal arrives after the side effects (Known Failure Class 1: side-effect ordering).
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from the cdt-36 agent's hand-back; inside the released scope. Admitted first as `cdt-38` in `f8d9e6fd`, an ID a completed finding already held; re-filed as cdt-42 by the coordinator (2026-10-23, `4755a8b3`), who restored the original `cdt-38` record on master
+**Status**: Merged to master `0c9917d5`; codex defect review ops-batch-13 in flight. Was: Verified on branch - admitted 2026-10-23 evening from the cdt-36 agent's hand-back; inside the released scope. Admitted first as `cdt-38` in `f8d9e6fd`, an ID a completed finding already held; re-filed as cdt-42 by the coordinator (2026-10-23, `4755a8b3`), who restored the original `cdt-38` record on master
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), continuing from `493c270d`
 **Commit**: the `fix(cdt-42)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (cdt-36 agent, candidate; admitted by the supervisor)

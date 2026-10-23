@@ -1,7 +1,7 @@
 # cdt-45: a run the cdt-36 check refuses has already created the backup folder and copied appsettings.json
 
 **Severity**: LOW - `deploy.ps1 -Force` with an `appsettings.json` under the run's `-PublishPath` creates `$BackupDir` (about 259) and copies `appsettings.json` (about 268) before the IIS comparison at about 296; the run then refuses with "Nothing was deployed" while filesystem artefacts remain, possibly for the wrong folder. Nothing in IIS moves; the "read-only check first" expectation is broken and misleading residue is left.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from codex ops-batch-12 on cdt-36; inside the released scope
+**Status**: Merged to master `0c9917d5`; codex defect review ops-batch-13 in flight. Was: Verified on branch - admitted 2026-10-23 evening from codex ops-batch-12 on cdt-36; inside the released scope
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-43 commit `de48aff4`
 **Commit**: the `fix(cdt-45)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base eb017102 head 493c270d (merged 72430407); 2026-10-23T19:06-19:13Z; capability proof: AGENTS.md read and git show --stat 493c270d both succeeded
