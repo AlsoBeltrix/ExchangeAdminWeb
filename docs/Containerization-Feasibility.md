@@ -58,22 +58,22 @@ This is the evidence base for everything that follows. Each row was read, not re
 
 | What | Where | What it needs from the host |
 | --- | --- | --- |
-| Target framework `net10.0-windows10.0.17763.0` | `ExchangeAdminWeb.csproj:4` | Windows. The `10.0.17763.0` OS suffix is not decoration: it turns on the Windows SDK / WinRT projections, which is the only reason the next row compiles. |
-| Delinea bootstrap credential | `Services/CredentialManagerService.cs:1,11-12` | `using Windows.Security.Credentials;` and `new PasswordVault()`. WinRT credential locker. Microsoft's reference states plainly: "Lockers are specific to a user." |
-| Delinea client uses it | `Services/DelineaService.cs:28-46` | `CredentialManagerService.ReadCredential(_credentialTarget)`; on empty it blanks `_apiUsername`/`_apiKey` and every secret fetch then fails closed. |
+| Target framework `net10.0-windows10.0.17763.0` | `ExchangeAdminWeb.csproj`, its `<TargetFramework>` | Windows. The `10.0.17763.0` OS suffix is not decoration: it turns on the Windows SDK / WinRT projections, which is the only reason the next row compiles. |
+| Delinea bootstrap credential | `Services/CredentialManagerService.cs`: its `using` line and `ReadCredential` | `using Windows.Security.Credentials;` and `new PasswordVault()`. WinRT credential locker. Microsoft's reference states plainly: "Lockers are specific to a user." |
+| Delinea client uses it | `Services/DelineaService.cs`: its constructors and `LoadCredentials` | The public constructor passes `CredentialManagerService.ReadCredential` in, and `LoadCredentials` calls it with `_credentialTarget`; on empty it blanks `_apiUsername`/`_apiKey`, and every secret fetch then retries the read once and fails closed. |
 | App pool loads a user profile | `deploy.ps1` and `tools/Install-ExchangeAdminWeb.ps1`, each at `Set-ItemProperty ... processModel.loadUserProfile` | `processModel.loadUserProfile = $true`. This is the repo's own evidence that the credential store is profile-bound. |
-| Browser authentication | `Program.cs:38-39` | `AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate()`. |
-| Hosting model | `web.config:6-8` | `AspNetCoreModuleV2`, `hostingModel="inprocess"`. The app runs inside `w3wp.exe`, not behind a reverse proxy. |
+| Browser authentication | `Program.cs`, its `AddAuthentication` call | `AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate()`. |
+| Hosting model | `web.config`, its `aspNetCore` handler and element | `AspNetCoreModuleV2`, `hostingModel="inprocess"`. The app runs inside `w3wp.exe`, not behind a reverse proxy. |
 | IIS auth configuration | `deploy.ps1` and `tools/Install-ExchangeAdminWeb.ps1`, their `windowsAuthentication` and `anonymousAuthentication` `Set-WebConfigurationProperty` calls | Windows auth on, kernel mode off, `useAppPoolCredentials` true, anonymous off, **and the Negotiate provider removed**. |
 | App pool identity | `deploy.ps1`, its "Configuring app pool" step | `identityType 3` (a specific domain user) with a password; the installer also supports `identityType 4` (ApplicationPoolIdentity), in its app pool step. |
-| On-prem AD, ambient identity | `Services/ADDirectorySearchService.cs:496,551,560` | `iss.ImportPSModule("ActiveDirectory")`, then `Get-ADForest` to find a global catalog and query `host:3268`. No `-Credential`: this path runs as the app pool identity. |
-| On-prem AD, explicit credential | 12 services, e.g. `Services/GroupManagementService.cs` (x15), `Services/SelfServiceGroups/SelfServiceGroupService.cs:947,1472-1478` | `Import-Module ActiveDirectory` plus `-Credential` from a `PSCredential` built out of a Delinea secret. |
+| On-prem AD, ambient identity | `Services/ADDirectorySearchService.cs`: `GetOrCreateRunspace`, then `ResolveGlobalCatalog` | `iss.ImportPSModule("ActiveDirectory")`, then `Get-ADForest` to find a global catalog and query `host:3268`. No `-Credential`: this path runs as the app pool identity. |
+| On-prem AD, explicit credential | `Services/GroupManagementService.cs` and `Services/SelfServiceGroups/SelfServiceGroupService.cs`, each through its `CreateCredential`; the other services that build one are found by searching `Services/` for `new PSCredential(` | `Import-Module ActiveDirectory` (in these two, through `ActiveDirectoryModuleImport.Import`) plus `-Credential` from a `PSCredential` built out of a Delinea secret. |
 | The AD module itself | host-installed | `ActiveDirectory 1.0.1.0` at `C:\Windows\system32\WindowsPowerShell\v1.0\Modules\ActiveDirectory` on the current deploy host. RSAT. Not in this repo, not restored by NuGet. |
-| Exchange Online | `Services/ExoConnectionPool.cs:422-443` | `Microsoft.PowerShell.SDK` 7.6.1 (`ExchangeAdminWeb.csproj:30`) hosting an in-process runspace, then `Import-Module ExchangeOnlineManagement` and `Connect-ExchangeOnline -AppId -CertificateThumbprint -Organization`. The module is host-installed from the gallery, not bundled. |
-| The EXO certificate | `Services/ExoConnectionPool.cs:507-529` | `new X509Store(StoreName.My, StoreLocation.LocalMachine)`, falling back to `CurrentUser`. A Windows certificate store, with a private key the deploy scripts explicitly ACL to the app pool identity (the certificate private-key ACL step of `deploy.ps1` and of `tools/Install-ExchangeAdminWeb.ps1`). |
-| Shared config database | `Services/Storage/ConfigStorePath.cs:38-53`, `Program.cs:50-64` | An **absolute local** path that **must already exist**. UNC is refused by name. Drive-relative is refused. |
-| Per-instance databases and logs | `Program.cs:82,91,28` | `config/exchangeadmin-jobs.db`, `config/exchangeadmin-usage.db`, `logs/app-.log`, all under the content root. |
-| PathBase | `Program.cs:354-358` | `Application:PathBase`, default `/ExchangeAdminWeb`; the app calls `UsePathBase` itself. |
+| Exchange Online | `Services/ExoConnectionPool.cs`: `CreateConnected`, on a runspace from `DefaultConnectRunspace` | `Microsoft.PowerShell.SDK` 7.6.1 (`ExchangeAdminWeb.csproj`, its `PackageReference`) hosting an in-process runspace, then `Import-Module ExchangeOnlineManagement` and `Connect-ExchangeOnline -AppId -CertificateThumbprint -Organization`. The module is host-installed from the gallery, not bundled. |
+| The EXO certificate | `Services/ExoConnectionPool.cs`, its `FindCertificate` | `new X509Store(StoreName.My, StoreLocation.LocalMachine)`, falling back to `CurrentUser`. A Windows certificate store, with a private key the deploy scripts explicitly ACL to the app pool identity (the certificate private-key ACL step of `deploy.ps1` and of `tools/Install-ExchangeAdminWeb.ps1`). |
+| Shared config database | `ConfigStorePath.Resolve` (`Services/Storage/ConfigStorePath.cs`) and its call in `Program.cs` | An **absolute local** path that **must already exist**. UNC is refused by name. Drive-relative is refused. |
+| Per-instance databases and logs | `Program.cs`: `jobsDbPath`, `usageDbPath` and its `WriteTo.File` log sink | `config/exchangeadmin-jobs.db`, `config/exchangeadmin-usage.db`, `logs/app-.log`, all under the content root. |
+| PathBase | `Program.cs`, its `pathBase` and `UsePathBase` | `Application:PathBase`, default `/ExchangeAdminWeb`; the app calls `UsePathBase` itself. |
 | Deploy tooling | `deploy.ps1`'s opening `Import-Module WebAdministration` and its `IIS:` drive check | `WebAdministration` and therefore **Windows PowerShell 5.1** - the script throws with that exact instruction if the `IIS:` drive is missing. |
 
 Four independent Windows dependencies, then. The WinRT credential locker, the RSAT
@@ -86,11 +86,12 @@ script. Only the last of those is about IIS.
 
 **Windows. There is no Linux option, and it is not close.**
 
-`net10.0-windows10.0.17763.0` (`ExchangeAdminWeb.csproj:4`) cannot be published for Linux at
-all while `Services/CredentialManagerService.cs` exists, because `Windows.Security.Credentials`
-resolves only through the OS-versioned TFM's WinRT projection. Even after deleting that file the
-RSAT `ActiveDirectory` module and `X509Store(StoreLocation.LocalMachine)` both remain Windows-only.
-`Microsoft.PowerShell.SDK` itself is cross-platform and is not the constraint.
+`net10.0-windows10.0.17763.0` (the `<TargetFramework>` in `ExchangeAdminWeb.csproj`) cannot be
+published for Linux at all while `Services/CredentialManagerService.cs` exists, because
+`Windows.Security.Credentials` resolves only through the OS-versioned TFM's WinRT projection.
+Even after deleting that file the RSAT `ActiveDirectory` module and
+`X509Store(StoreLocation.LocalMachine)` both remain Windows-only. `Microsoft.PowerShell.SDK`
+itself is cross-platform and is not the constraint.
 
 Base images are available. MCR publishes `mcr.microsoft.com/dotnet/aspnet` tags
 `10.0-nanoserver-ltsc2022`, `10.0-nanoserver-ltsc2025`, `10.0-windowsservercore-ltsc2022` and
@@ -128,9 +129,9 @@ else IIS does here, the app already does for itself.**
 
 What IIS actually contributes, by evidence:
 
-- **Windows Authentication.** This is the load-bearing part. `web.config:6-8` uses
-  `hostingModel="inprocess"`, so IIS terminates the request and performs the Windows
-  authentication handshake itself. The `AddNegotiate()` call in `Program.cs:39` does not do the
+- **Windows Authentication.** This is the load-bearing part. `web.config`'s `aspNetCore` element
+  uses `hostingModel="inprocess"`, so IIS terminates the request and performs the Windows
+  authentication handshake itself. The `AddNegotiate()` call in `Program.cs` does not do the
   handshake in that configuration: the Negotiate package ships
   `PostConfigureNegotiateOptions`, documented as "Reconfigures the NegotiateOptions to defer to
   the integrated server authentication if present". Behind IIS in-process, the integrated server
@@ -138,8 +139,8 @@ What IIS actually contributes, by evidence:
   would be present to defer to, and the same `AddNegotiate()` line would have to do the work
   itself for the first time. That is a behaviour change in the authentication path, not a
   configuration change.
-- **PathBase.** Not IIS's job here. `Program.cs:354-358` reads `Application:PathBase` and calls
-  `UsePathBase` in application code. A container keeps this unchanged.
+- **PathBase.** Not IIS's job here. `Program.cs` reads `Application:PathBase` into its `pathBase`
+  and calls `UsePathBase` in application code. A container keeps this unchanged.
 - **App pool identity.** This is how the app gets a domain identity for ambient AD queries
   (`Services/ADDirectorySearchService.cs`) and for the loaded user profile that the credential
   locker needs. In a container the equivalent is a gMSA; see section 3.
@@ -210,9 +211,9 @@ it determines whether a bad deploy is loud or quiet. Three distinct failure shap
    tightens NTLM, or works for domain clients and not for others. This is the quiet, bad
    failure, and it is the one this app is most exposed to because it has never had an SPN.
 3. **Authentication fails outright at runtime.** Every endpoint in this app is behind
-   `.RequireAuthorization()` (`Program.cs:375`), and anonymous authentication is disabled in the
-   IIS configuration the scripts write (`deploy.ps1`'s `anonymousAuthentication` `enabled`
-   `$false`). There is no configured anonymous
+   `.RequireAuthorization()` (on `app.MapRazorComponents<App>()` in `Program.cs`), and anonymous
+   authentication is disabled in the IIS configuration the scripts write (`deploy.ps1`'s
+   `anonymousAuthentication` `enabled` `$false`). There is no configured anonymous
    fallback, so the answer to "does everyone get a 401, or a silent fallback to anonymous?" is
    **everyone gets a 401** - the app is not reachable, rather than reachable and unprotected.
    That is the correct failure direction and worth stating plainly, because it means a botched
@@ -230,10 +231,11 @@ worked".
 
 Browser authentication is the half everyone anticipates. This is the half that stops the project.
 
-`Services/DelineaService.cs:28-46` obtains its API username and key from
-`CredentialManagerService.ReadCredential(_credentialTarget)`, and
-`Services/CredentialManagerService.cs:11-12` implements that with the WinRT
-`PasswordVault`. Microsoft's reference for that class states: "Lockers are specific to a
+`Services/DelineaService.cs` obtains its API username and key from
+`CredentialManagerService.ReadCredential`: the public constructor passes it in, and
+`LoadCredentials` calls it with `_credentialTarget`. `Services/CredentialManagerService.cs`
+implements that with the WinRT `PasswordVault` (`new PasswordVault()` in `ReadCredential`).
+Microsoft's reference for that class states: "Lockers are specific to a
 user." The repo corroborates the profile dependency independently - both deploy paths set
 `processModel.loadUserProfile = $true` (the `processModel.loadUserProfile` setting in `deploy.ps1`
 and `tools/Install-ExchangeAdminWeb.ps1`), which exists precisely so the app pool identity has a
@@ -309,7 +311,7 @@ So the honest statement is: **a gMSA makes directory *search* work and does noth
 directory *writes*, because the writes run on a credential the container cannot obtain.**
 
 The Exchange Online path has the same shape for the same reason plus one of its own:
-`Services/ExoConnectionPool.cs:507-529` reads the certificate from
+`FindCertificate` in `Services/ExoConnectionPool.cs` reads the certificate from
 `X509Store(StoreName.My, StoreLocation.LocalMachine)`. A container has its own empty machine
 store, so the certificate and its private key must be mounted or injected at run time and ACLed
 to the container identity - reproducing, in a new mechanism, the ACL step the deploy scripts
@@ -323,12 +325,13 @@ perform today in the certificate private-key ACL step of `deploy.ps1` and of
 **The repo has already ruled out the only way a container could reach it, and the rule is in
 code, not in a doc.**
 
-`Services/Storage/ConfigStorePath.cs:38-43` refuses a UNC path outright, with the reason in the
-exception message: "The shared config database must be a local file on this server - SQLite's
-locking is not reliable over a network share." Lines 49-53 additionally refuse anything not
-fully qualified, so that two instances cannot believe they share one file while opening two.
-`Program.cs:50-64` treats a failure here as fatal at startup. This is Architectural Invariant 2
-enforced in code.
+`ConfigStorePath.Resolve` (`Services/Storage/ConfigStorePath.cs`) refuses a UNC path outright,
+with the reason in the exception message: "The shared config database must be a local file on
+this server - SQLite's locking is not reliable over a network share." It then refuses anything
+that is not a drive letter, a colon and a separator (`IsDriveLetterPath`), so that two instances
+cannot believe they share one file while opening two. `Program.cs` treats a failure here as fatal
+at startup: it logs the exception from its `ConfigStorePath.Resolve` call with `Log.Fatal` and
+rethrows. This is Architectural Invariant 2 enforced in code.
 
 What that means for a container, step by step:
 
@@ -356,8 +359,8 @@ What that means for a container, step by step:
   SMB from two hosts, which the code says is unsound. **Neither branch is acceptable without an
   owner ruling** (open question 4).
 - Separately, three things under the content root are per-instance and deploy-excluded by
-  invariant 3: `config/exchangeadmin-jobs.db` (`Program.cs:82`),
-  `config/exchangeadmin-usage.db` (`Program.cs:91`) and `logs/` (`Program.cs:28`). In a
+  invariant 3: `config/exchangeadmin-jobs.db` (`jobsDbPath` in `Program.cs`),
+  `config/exchangeadmin-usage.db` (`usageDbPath`) and `logs/` (the `WriteTo.File` sink). In a
   container these live in the ephemeral scratch space, which Microsoft describes as discarded on
   stop: "When a container instance is stopped, all changes that occurred in the scratch space
   are thrown away." Job state and logs vanishing on every restart is a behaviour change that
