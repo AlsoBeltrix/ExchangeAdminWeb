@@ -116,7 +116,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.4.0: every refusal path writes an audit record (aud-a28).
         // 1.5.0: the notice goes to the configured NotifySecurityTeam address rather than the
         // global admin list, and the page states the outcome instead of claiming one (aud-a27).
-        Assert.Equal("1.5.0", module.Version);
+        Assert.Equal("1.5.1", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
