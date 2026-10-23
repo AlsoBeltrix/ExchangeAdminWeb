@@ -89,3 +89,7 @@ None yet.
 ## Closeout
 
 Pending: commit on `fix/cdt36`, merge into `master`, branch deletion.
+
+## Reviewer comments (supervisor, ops-batch-14)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 42c2690b head 7f1890f3 (merged fb2b288f); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 7f1890f3). Two candidates across the range, admitted as cdt-55 and cdt-56. Codex confirmed: cdt-49 uses the staged build's db active-jobs per repo guidance and missing or unreadable jobs databases soft-warn; the cdt-48 module import predates the change; no ops-script line pointer remains in the containerization doc; the changed PowerShell is ASCII-only. Artefacts: `.agents/review/ops-batch-14.result.txt`, `.stream.log`, `prompt-ops-batch-14.md`.

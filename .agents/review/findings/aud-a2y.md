@@ -7,7 +7,7 @@ is shown whatever the actual reason at six `SelfServiceGroupService` sites and o
 site - the aud-a2x defect in other modules; they can now call `ModuleCredentialService.LookupCredentialsAsync`.
 (3) Refusals outside the service do not end "Nothing was written.": `ConferenceRoomBulkProcessor` "Invalid
 type" and `ConferenceRooms.razor` "Invalid room type" (line-keyed page).
-**Status**: Verified on branch; awaiting merge and codex review - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 "EVERYTHING" go
+**Status**: Merged to master `07f2d371`; codex defect review cr-batch-8 in flight
 **Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
 **Commit**: (1) `3f641ce4`, (2) `2de45069`, (3) the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, candidates 1, 7 and 8 of its hand-back)

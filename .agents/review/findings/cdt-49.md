@@ -1,7 +1,7 @@
 # cdt-49: in a pool move the active-jobs warning reads the instance running today while the stop hits the new pool
 
 **Severity**: LOW - a warning only. `deploy.ps1`: with `-AllowRepoint` to a new pool, the active-jobs check (`tools/JobStateWarning.psm1`) reads the current instance's jobs database while the stop/start acts on the new pool, so the warning can describe the wrong instance.
-**Status**: Merged to master `fb2b288f`; codex defect review ops-batch-14 in flight
+**Status**: Closed - merged to master `fb2b288f`; codex ops-batch-14 clean on this finding. Complete once fix/cdt36 is deleted
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-48 commit `cc5f8c82`
 **Commit**: the `fix(cdt-49)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (cdt-36 agent, candidate; not yet confirmed by the supervisor)
@@ -146,3 +146,7 @@ None yet.
 ## Closeout
 
 Pending: commit on `fix/cdt36`, codex review, merge into `master`, branch deletion.
+
+## Reviewer comments (supervisor, ops-batch-14)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 42c2690b head 7f1890f3 (merged fb2b288f); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 7f1890f3). Two candidates across the range, admitted as cdt-55 and cdt-56. Codex confirmed: cdt-49 uses the staged build's db active-jobs per repo guidance and missing or unreadable jobs databases soft-warn; the cdt-48 module import predates the change; no ops-script line pointer remains in the containerization doc; the changed PowerShell is ASCII-only. Artefacts: `.agents/review/ops-batch-14.result.txt`, `.stream.log`, `prompt-ops-batch-14.md`.

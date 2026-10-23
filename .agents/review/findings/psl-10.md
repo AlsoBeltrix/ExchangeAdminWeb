@@ -13,7 +13,7 @@ through the production probe wherever AD is reachable; it could use the psl-8 st
 deliberately live classes `ADDirectoryLiveTests` (5) and `AdDirectoryForestSearchLiveTests` (3) query the
 live directory on every full-suite run on this host - the "no live directory calls" rule for agents is not
 met by the mandated gate itself; whether those classes stay in the default run is the owner's call.
-**Status**: Verified on branch; awaiting merge and codex review - items (1)-(4); item (5) an owner call, not implemented (below) - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 "EVERYTHING" go
+**Status**: Merged to master `07f2d371`; codex defect review cr-batch-8 in flight
 **Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
 **Commit**: (1) `c4374938`, (2) `370e32f3`, (3) `313775a0`, (4) `91559b4a`; this closeout the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, candidates 2-6 of its hand-back)

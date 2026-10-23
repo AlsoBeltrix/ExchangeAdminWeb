@@ -1,7 +1,7 @@
 # cdt-50: the cdt-46 8.3 Pester test can skip, and CI fails on any skip
 
 **Severity**: LOW - CI gate risk. The 8.3 short-name test in `tests/ps/AppPoolControl.Tests.ps1` skips when neither the temp volume nor Program Files has a short name; `.github/workflows/ci.yml` fails the powershell job on any skip. Unlikely on windows-latest but not proven.
-**Status**: Merged to master `fb2b288f`; codex defect review ops-batch-14 in flight
+**Status**: Merged to master `fb2b288f`; codex ops-batch-14 raised cdt-56 (the positive branch bypassed by an if); closes when cdt-56 lands
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-49 commit `e999ddda`
 **Commit**: the `fix(cdt-50)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (cdt-36 agent, candidate; not yet confirmed by the supervisor)
@@ -121,3 +121,7 @@ None yet.
 ## Closeout
 
 Pending: commit on `fix/cdt36`, codex review, merge into `master`, branch deletion.
+
+## Reviewer comments (supervisor, ops-batch-14)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 42c2690b head 7f1890f3 (merged fb2b288f); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 7f1890f3). Two candidates across the range, admitted as cdt-55 and cdt-56. Codex confirmed: cdt-49 uses the staged build's db active-jobs per repo guidance and missing or unreadable jobs databases soft-warn; the cdt-48 module import predates the change; no ops-script line pointer remains in the containerization doc; the changed PowerShell is ASCII-only. Artefacts: `.agents/review/ops-batch-14.result.txt`, `.stream.log`, `prompt-ops-batch-14.md`.

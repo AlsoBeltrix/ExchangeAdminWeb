@@ -1,7 +1,7 @@
 # kd-5: Conference Rooms - CancelJob cancels a running bulk job and audits nothing
 
 **Severity**: MEDIUM - an audit gap on a mutating operator action. `Components/Pages/ConferenceRooms.razor` `CancelJob` (about 837) cancels a running bulk job with no audit row, while `RemoveJob` audits. The Constitution requires audit on every mutating action.
-**Status**: Verified on branch; awaiting merge and codex review - released by the owner's 2026-10-23 evening ruling (`.agents/decisions.md`); approved under the 2026-10-21 go
+**Status**: Merged to master `07f2d371`; codex defect review cr-batch-8 in flight
 **Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
 **Commit**: the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)
