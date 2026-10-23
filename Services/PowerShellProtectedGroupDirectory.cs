@@ -22,7 +22,8 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     private static readonly string[] GroupProperties = ["objectSid", "GroupScope"];
 
     private readonly PowerShell _ps;
-    private readonly PSCredential _credential;
+    private readonly PSCredential? _credential;
+    private readonly bool _underSessionIdentity;
     private string? _globalCatalog;
 
     internal PowerShellProtectedGroupDirectory(PowerShell ps, PSCredential credential)
@@ -30,6 +31,18 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
         _ps = ps;
         _credential = credential;
     }
+
+    private PowerShellProtectedGroupDirectory(PowerShell ps, string globalCatalog)
+    {
+        _ps = ps;
+        _underSessionIdentity = true;
+        _globalCatalog = globalCatalog;
+    }
+
+    internal static PowerShellProtectedGroupDirectory UnderSessionIdentity(PowerShell ps, string globalCatalog) =>
+        string.IsNullOrWhiteSpace(globalCatalog)
+            ? throw new ArgumentException("A global catalog is required.", nameof(globalCatalog))
+            : new(ps, globalCatalog);
 
     public DirectoryTarget ReadTarget(string targetDn, string server)
     {
@@ -205,8 +218,9 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             var cmd = _ps.AddCommand(command);
             foreach (var (name, value) in parameters)
                 cmd.AddParameter(name, value);
-            cmd.AddParameter("Credential", _credential)
-               .AddParameter("ErrorAction", "Stop");
+            if (!_underSessionIdentity)
+                cmd.AddParameter("Credential", _credential);
+            cmd.AddParameter("ErrorAction", "Stop");
 
             var rows = _ps.Invoke();
             if (_ps.HadErrors)

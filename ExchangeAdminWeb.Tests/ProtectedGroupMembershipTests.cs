@@ -636,4 +636,34 @@ public class ProtectedGroupMembershipTests
         // The per-group query that read "no rows" as "not a member" is gone from the service.
         Assert.DoesNotContain("inChainResult", body, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void TheCredentialedReads_KeepTheirCredential_AndTheSessionIdentityReads_CarryNone()
+    {
+        // aud-a52. The self-grant check runs the same reads under its own session's identity, with the catalog that session
+        // found; the protected-principal check's reads, built with its credential, still pass it on every read.
+        using var runspace = System.Management.Automation.Runspaces.RunspaceFactory.CreateRunspace();
+        runspace.Open();
+        var calls = new System.Collections.ArrayList();
+        runspace.SessionStateProxy.SetVariable("ReadCalls", calls);
+        using (var init = System.Management.Automation.PowerShell.Create())
+        {
+            init.Runspace = runspace;
+            init.AddScript("""
+                function global:Get-ADGroup {
+                    [CmdletBinding()] param($LDAPFilter, $Server, $Properties, $Credential)
+                    [void]$ReadCalls.Add("$Server credential=$($PSBoundParameters.ContainsKey('Credential'))")
+                }
+                """).Invoke();
+        }
+        using var ps = System.Management.Automation.PowerShell.Create();
+        ps.Runspace = runspace;
+        var credential = new System.Management.Automation.PSCredential("svc", new System.Net.NetworkCredential("", "secret").SecurePassword);
+
+        new PowerShellProtectedGroupDirectory(ps, credential).FindGroups(GroupLookupKey.Sid, $"{SidA}-512", DomainA);
+        PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, "gc.a.example:3268").FindGroups(GroupLookupKey.Sid, $"{SidA}-512", null);
+
+        Assert.Equal([$"{DomainA} credential=True", "gc.a.example:3268 credential=False"], calls.Cast<string>());
+        Assert.Throws<ArgumentException>(() => PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, " "));
+    }
 }

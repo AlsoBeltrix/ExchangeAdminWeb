@@ -123,6 +123,104 @@ group's direct members, each row carrying `PrimarySmtpAddress`, `ExternalDirecto
 `RecipientTypeDetails` and `IsDirSynced`; `RecipientTypeDetails` `GroupMailbox` names a Microsoft 365 group; a synced
 group's whole membership is the on-premises directory's.
 
+## Fix
+
+- `Services/PermissionValidator.cs`: `CompareInDirectory` is `CompareInDirectoryAsync`, each directory read still off the
+  caller's thread. The DNs of the groups the grantee names - and, for a cloud-only group, of the synced groups nested in
+  it - go to one `ProtectedGroupMembership.Evaluate(groups, account.DistinguishedName, directory.Groups, _logger)`: a match
+  refuses as a self-grant (the matched groups logged); an incomplete answer, or a throw out of the call, refuses as
+  incomplete with aud-a43's text. `IsPrimaryGroupOf` is removed. A group Exchange names that the directory does not hold:
+  synced, refused as incomplete as before; cloud-only, new `CompareInExchangeGroupAsync` - no Exchange recipient for the
+  operator: "Exchange Online holds no recipient for you, so whether you are a member of the group '<x>' could not be
+  checked"; `IIdentityResolver.ReadGroupMembersAsync(<the group's canonical address>)` through a fresh scope, where a throw
+  or a null answer refuses as incomplete; a member that is not a group and is the operator's recipient
+  (`IsTheOperatorsRecipient`: a shared non-blank object id, or the primary address of their recipient or their account)
+  refuses as a self-grant; one that cannot be compared (`CanBeCompared`: no address, and no object id on both sides)
+  refuses as incomplete; each synced group among the members - none looked up when the operator has no directory
+  account - is found by `FindNamedBy(address, address)` as a group carrying the address (none, or a search that fails,
+  refuses as incomplete) and joins the evaluation.
+- `Services/PowerShellProtectedGroupDirectory.cs`: `UnderSessionIdentity(ps, globalCatalog)` (a blank catalog throws): the
+  catalog preset, and a flag only it sets, under which `Run` passes no `-Credential`. The credentialed constructor and
+  every read it makes are unchanged.
+- `Services/SelfGrantDirectory.cs`: `Groups`, the session's `UnderSessionIdentity` reads over its own runspace and
+  catalog; `HasDirectMember` and `DirectMemberFilter` removed.
+- `Services/IIdentityResolver.cs`: `ExchangeGroupMember(PrimarySmtpAddress, ExternalDirectoryObjectId, RecipientType,
+  RecipientTypeDetails, IsDirSynced)`, `IsGroup` when the RecipientType carries "Group"; `ReadGroupMembersAsync(group)`.
+- `Services/ExchangeIdentityResolver.cs` `ReadGroupMembersAsync`: `ResolveRecipientAsync`'s guards (unreadable, not
+  configured: throw), then `RunPooledQueryAsync(... ExchangeGroupMembers.Read(ps, group, pipeline => Invoke(pipeline,
+  tracker)), allowRetry: true)`.
+- New `Services/ExchangeGroupMembers.cs` `Read`: `Get-Recipient -Identity` (exactly one row), then each group by its
+  `RecipientTypeDetails` - `GroupMailbox` with `Get-UnifiedGroupLinks -LinkType Members -ResultSize Unlimited`;
+  `MailUniversalDistributionGroup`, `MailUniversalSecurityGroup`, `MailNonUniversalGroup`, `RoomList` with
+  `Get-DistributionGroupMember -ResultSize Unlimited`; any other kind throws. Every row is a member; a member that is a
+  group with no sync state throws, a synced one is not read, a cloud-only one (an address required) is read once
+  (visited by address); more than `MaxGroupsRead` (50) groups throws.
+
+Tests: `SelfGrantDirectoryStandIn` - `Get-ADGroup` (groups only; no `Credential` parameter), the in-chain and bit-and
+rules, group scopes (`GroupScope`, `groupType`), each domain's Domain Users (`DomainUsers`, `OtherDomainUsers`), `Searches`
+over both cmdlets, the failure keys per cmdlet. `PermissionValidatorSelfGrantTests` +18:
+`AGroupHoldingTheOperatorThroughAnotherGroup_IsRefused` (5 chains), `AGroupNestingOnlyOthers_IsAllowed`,
+`ANestedMembershipThatCannotBeRead_IsRefused_AsIncomplete`, `ACloudOnlyGroupHoldingTheOperator_IsRefused_ExchangeAskedForItsMembers`
+(by address, by object id), `ACloudOnlyGroupWithoutTheOperator_IsAllowed`, `ACloudOnlyGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete`
+(throws, no answer), `ACloudOnlyGroup_WhenExchangeHoldsNoRecipientForTheOperator_IsRefused_AsIncomplete`,
+`ACloudOnlyGroupMemberThatCannotBeCompared_IsRefused_AsIncomplete` (2), `ASyncedGroupInACloudOnlyGroup_IsAskedOfTheDirectory`
+(the operator inside, and not), `ASyncedGroupInACloudOnlyGroup_ThatTheDirectoryDoesNotHold_IsRefused_AsIncomplete`; aud-a43's
+cases carried over - `AGroupTheOperatorIsADirectMemberOf_IsRefused` (the decisive read now the evaluator's, the group of
+another domain domain-local), `TheOperatorsPrimaryGroup_IsAGroupTheyAreAMemberOf` (the forest's own Domain Users),
+`AGroupWithoutTheOperator_IsAllowed_AndItsMembershipIsAskedInItsOwnDomain` (its reads at its domain),
+`AMembershipThatCannotBeRead_IsRefused_AsIncomplete` (the `Get-ADGroup` failure keys), and
+`AGroupExchangeNamesThatTheDirectoryDoesNotHold_IsRefused_AsIncomplete` now
+`ASyncedGroupExchangeNamesThatTheDirectoryDoesNotHold_IsRefused_AsIncomplete` (a synced group; Exchange not asked). New
+`ExchangeGroupMembersTests` (16): a distribution or security group's members; a Microsoft 365 group's through
+`Get-UnifiedGroupLinks -LinkType Members`; a nested cloud group and a Microsoft 365 group under it read; a cycle read once;
+a synced nested group listed, not read; seven ways the read throws (not found, no kind, a dynamic group, a nested group
+without an address or a sync state, a member read that fails, 51 groups); 50 groups read; and the resolver - through the
+harness's pool (`-ResultSize Unlimited`, one connection), over an Exchange Online not configured and over rows that cannot
+be read (throws, nothing connected). `ProtectedGroupMembershipTests.TheCredentialedReads_KeepTheirCredential_AndTheSessionIdentityReads_CarryNone`.
+
+Caller-visible change, by design: a Mailbox Permissions or Calendar Permissions grant, single or bulk, to a group that
+holds the operator through any nesting the forest's in-chain reads find, or through their primary group nested in it, is
+refused as a self-grant; such reads that cannot be made refuse as incomplete. A grant to a group only Exchange Online holds
+is no longer refused outright: it is allowed when Exchange's members of it (and of the cloud groups nested in it, the
+synced ones read in the directory) do not include the operator, refused as a self-grant when they do, and refused as
+incomplete when they cannot be read or compared or Exchange holds no recipient for the operator. Each group grantee costs
+the evaluator's reads (the operator and their primary group in their own domain, ancestry there and at the catalog, each
+group in its own domain) where it cost two; a cloud-only one costs one Exchange borrow with a read per group in its
+nesting, at most 50.
+
 ## Guard proof
 
-Pending.
+The aud-a50 driver and protocol (that record's Guard proof). Filter
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ProtectedGroupMembership|FullyQualifiedName~ResourceDomainDenies|FullyQualifiedName~GroupMemberNesting|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeIdentityResolver`
+(409 tests for N1-N6, 410 once the credential guard was added for N7 and N8). Fixed-file MD5s:
+`Services/PermissionValidator.cs` `037364B38955C7026009754697B0E8FD`, `Services/SelfGrantDirectory.cs`
+`A1070A2D646391EFD5CB8C9B23EA3A05`, `Services/PowerShellProtectedGroupDirectory.cs` `9477ED43438D5C27A9B84762A4C36744`,
+`Services/ExchangeGroupMembers.cs` `F1F7ABAC2A17B0A7869722F02B0B6283`. Every mutant built with 0 errors and every restore
+matched. After the round, the restored tree rebuilt and the filter: 410/410 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| N1 | direct-only membership again: aud-a43's primary-group-or-direct-link loop over the named groups in place of `Evaluate`, `IsPrimaryGroupOf` and `HasDirectMember`/`DirectMemberFilter` restored | `PermissionValidator.cs` `95114405415127B3B5799FF7A25F8D70`, `SelfGrantDirectory.cs` `46D79D4EA64B0BEA6C100883C96EED79` | 13 of 409: all five `AGroupHoldingTheOperatorThroughAnotherGroup_IsRefused` chains and `ASyncedGroupInACloudOnlyGroup_IsAskedOfTheDirectory(operatorInside: True)` - allowed; `ANestedMembershipThatCannotBeRead_IsRefused_AsIncomplete` - allowed (no universal read made); the three `AGroupTheOperatorIsADirectMemberOf_IsRefused` rows and `AGroupWithoutTheOperator_IsAllowed_AndItsMembershipIsAskedInItsOwnDomain` - the evaluator's reads not made; two `AMembershipThatCannotBeRead_IsRefused_AsIncomplete` rows (the member read fails, the domain cannot be reached) - the `Get-ADGroup` reads they fail are not made, so allowed |
+| N2 | the outright cloud-only refusal again: aud-a43's block for every group the directory does not hold | `5E344AFA5E8E6B0DDAB27D2DCA4E25FC` | 11 of 409, every cloud-only case: the outright refusal where the operator is not a member (`ACloudOnlyGroupWithoutTheOperator_IsAllowed`, `ASyncedGroupInACloudOnlyGroup_IsAskedOfTheDirectory(operatorInside: False)`), and its text in place of each other case's refusal |
+| N3 | extra: an incomplete `Evaluate` answer taken as "not a member" (its refusal removed) | `9779520E8074B7B615C7728AD7FB2FDD` | 4 of 409: the three `AMembershipThatCannotBeRead_IsRefused_AsIncomplete` rows and `ANestedMembershipThatCannotBeRead_IsRefused_AsIncomplete` - allowed |
+| N4 | extra: the synced groups nested in a cloud-only group not evaluated (`groups.AddRange(synced);` removed) | `4E887632038A700082F12BE49A69815C` | 1 of 409: `ASyncedGroupInACloudOnlyGroup_IsAskedOfTheDirectory(operatorInside: True)` - allowed |
+| N5 | extra, `ExchangeGroupMembers.Read`: no nested group read (the enqueue removed) | `844FE55A8FD28EE9C5217701AA4F4102` | 4 of 409: `ACloudGroupNestedInIt_IsReadToo`, `AGroupNestedInItsOwnMember_IsReadOnce`, `AsManyGroupsAsTheBound_AreRead`, `AMembershipThatCannotBeReadWhole_Throws(shape: "more groups than the bound")` |
+| N6 | extra: the operator with no Exchange recipient allowed past a cloud-only group | `0452C0EB5DC89317753E6093685DC55C` | 1 of 409: `ACloudOnlyGroup_WhenExchangeHoldsNoRecipientForTheOperator_IsRefused_AsIncomplete` |
+| N7 | extra, `PowerShellProtectedGroupDirectory.Run`: the credentialed reads lose their credential | `F88B84F433B4E0EE6F615338227F0F5F` | 1 of 410: `ProtectedGroupMembershipTests.TheCredentialedReads_KeepTheirCredential_AndTheSessionIdentityReads_CarryNone` |
+| N8 | extra, the same: the session-identity reads pass a credential too | `9AD07DD0ACD11A281048CE93D8E2DB27` | 14 of 410: that test, and every case whose answer needs a group read (the stand-in declares no `Credential`, so each read fails to bind and the check is incomplete) - the five nested chains, `AGroupNestingOnlyOthers_IsAllowed`, the three direct rows, `AGroupWithoutTheOperator_...`, `TheOperatorsPrimaryGroup_...`, both `ASyncedGroupInACloudOnlyGroup_IsAskedOfTheDirectory` rows |
+
+No separate pre-fix reproduction: N1 and N2 are the code as it stood at `132d6e97`, each at its call site.
+
+## Known gaps
+
+- Labelled assumptions, as the plan records: the Exchange Online cmdlets' members and their properties as documented, and
+  a synced group's whole membership as the on-premises directory's. Nothing ran against a tenant or a forest.
+- A member Exchange lists without an address is compared by object id, so an operator whose recipient Exchange reports
+  without an object id cannot be told apart from it and the grant is refused as incomplete.
+- An operator Exchange Online holds no recipient for cannot grant to a cloud-only group: refused as incomplete.
+- A cloud-only group of any kind the reader does not expand (a dynamic distribution group, an unreported kind), or one
+  nesting more than 50 groups, is refused as incomplete.
+- A group Exchange calls cloud-only that the directory still holds under its address is read in the directory, as a held
+  group, not in Exchange.
+- The evaluator's `DOMAIN\name` resolution is never reached by the self-grant check, whose entries are DNs; under the
+  session's identity it would run without a credential.

@@ -30,6 +30,16 @@ public sealed record ResolvedRecipient(
     bool ExistsOnPrem,
     Guid? ExchangeGuid = null);
 
+public sealed record ExchangeGroupMember(
+    string? PrimarySmtpAddress,
+    string? ExternalDirectoryObjectId,
+    string? RecipientType,
+    string? RecipientTypeDetails,
+    bool? IsDirSynced)
+{
+    public bool IsGroup => RecipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true;
+}
+
 /// <remarks>
 /// There is deliberately no object-id-only lookup. <c>ResolveToObjectIdAsync</c> answered a lookup that could not run as
 /// null, and the self-grant check took that null for "no such recipient" and cleared the grant (aud-a28y). Every caller asks
@@ -50,4 +60,6 @@ public interface IIdentityResolver
     /// un-protect a principal. See docs/ProtectedPrincipalResolution-Plan.md, Design.
     /// </exception>
     Task<ResolvedRecipient?> ResolveRecipientAsync(string identity);
+
+    Task<IReadOnlyList<ExchangeGroupMember>> ReadGroupMembersAsync(string group);
 }

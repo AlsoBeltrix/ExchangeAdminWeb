@@ -675,7 +675,7 @@ public class PermissionValidator
 
             // The directory, on every path: on-premises Exchange resolves the grantee against it, and Exchange Online's
             // comparison cannot see a grantee it holds no recipient for.
-            return await Task.Run(() => CompareInDirectory(directory, account, actor, exchangeIdentity!, affectedUser, grantee));
+            return await CompareInDirectoryAsync(directory, account, actor, exchangeIdentity!, affectedUser, grantee);
         }
     }
 
@@ -749,13 +749,13 @@ public class PermissionValidator
     /// member link, or the primary group, which no member link records; a group holding the operator only through another
     /// group is not detected.
     /// </remarks>
-    private string? CompareInDirectory(SelfGrantDirectory directory, SelfGrantDirectoryObject? account, ResolvedRecipient? actor,
+    private async Task<string?> CompareInDirectoryAsync(SelfGrantDirectory directory, SelfGrantDirectoryObject? account, ResolvedRecipient? actor,
         string exchangeIdentity, string affectedUser, ResolvedRecipient? grantee)
     {
         IReadOnlyList<SelfGrantDirectoryObject> named;
         try
         {
-            named = directory.FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress);
+            named = await Task.Run(() => directory.FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress));
         }
         catch (Exception ex)
         {
@@ -772,38 +772,147 @@ public class PermissionValidator
             }
         }
 
+        var groups = named.Where(candidate => candidate.IsGroup).Select(candidate => candidate.DistinguishedName).ToList();
+
         if (grantee is not null && IsGroupRecipient(grantee)
             && !named.Any(candidate => candidate.IsGroup && candidate.CarriesAddress(grantee.PrimarySmtpAddress)))
         {
-            _logger.LogWarning("The self-grant check found no on-premises group for {Affected}, which Exchange Online names as a group - failing closed", affectedUser);
-            return SelfGrantCheckIncompleteBecause($"'{affectedUser}' is a group the on-premises directory does not hold, so whether you are a member could not be checked");
+            if (grantee.ExistsOnPrem)
+            {
+                _logger.LogWarning("The self-grant check found no on-premises group for {Affected}, which Exchange Online names as a synced group - failing closed", affectedUser);
+                return SelfGrantCheckIncompleteBecause($"'{affectedUser}' is a group the on-premises directory does not hold, so whether you are a member could not be checked");
+            }
+
+            var (refusal, synced) = await CompareInExchangeGroupAsync(directory, account, actor, exchangeIdentity, affectedUser, grantee);
+            if (refusal is not null)
+                return refusal;
+            groups.AddRange(synced);
         }
 
-        if (account is null)
+        if (account is null || groups.Count == 0)
             return null;
 
-        foreach (var group in named.Where(candidate => candidate.IsGroup))
+        ProtectedGroupMembership.Result membership;
+        try
         {
-            bool member;
-            try
-            {
-                member = IsPrimaryGroupOf(group, account) || directory.HasDirectMember(group, account);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "The self-grant check could not read whether {User} is a member of {Group} - failing closed", exchangeIdentity, group.DistinguishedName);
-                return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
-            }
+            var entries = groups.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            membership = await Task.Run(() => ProtectedGroupMembership.Evaluate(entries, account.DistinguishedName, directory.Groups, _logger));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The self-grant check could not read whether {User} is a member of a group {Affected} names - failing closed", exchangeIdentity, affectedUser);
+            return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
+        }
 
-            if (member)
-            {
-                _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}, {Group})", exchangeIdentity, affectedUser, group.DistinguishedName);
-                return SelfGrantRefusal;
-            }
+        if (membership.Matches.Count > 0)
+        {
+            _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}, {Groups})", exchangeIdentity, affectedUser, string.Join("; ", membership.MatchedEntries));
+            return SelfGrantRefusal;
+        }
+
+        if (membership.Incomplete)
+        {
+            _logger.LogWarning("The self-grant check could not read whether {User} is a member of every group {Affected} names - failing closed", exchangeIdentity, affectedUser);
+            return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
         }
 
         return null;
     }
+
+    private async Task<(string? Refusal, IReadOnlyList<string> SyncedGroups)> CompareInExchangeGroupAsync(SelfGrantDirectory directory,
+        SelfGrantDirectoryObject? account, ResolvedRecipient? actor, string exchangeIdentity, string affectedUser, ResolvedRecipient group)
+    {
+        var unread = SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
+        if (actor is null)
+        {
+            _logger.LogWarning("The self-grant check cannot compare {User} with the members of {Affected}, a group only Exchange Online holds: it holds no recipient for them - failing closed", exchangeIdentity, affectedUser);
+            return (SelfGrantCheckIncompleteBecause($"Exchange Online holds no recipient for you, so whether you are a member of the group '{affectedUser}' could not be checked"), []);
+        }
+
+        IReadOnlyList<ExchangeGroupMember>? members;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>()
+                ?? throw new InvalidOperationException("no identity resolver is registered");
+            members = await resolver.ReadGroupMembersAsync(group.PrimarySmtpAddress);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The self-grant check could not read the members of {Affected} from Exchange Online - failing closed", affectedUser);
+            return (unread, []);
+        }
+
+        if (members is null)
+        {
+            _logger.LogWarning("Exchange Online gave no answer for the members of {Affected} - failing closed", affectedUser);
+            return (unread, []);
+        }
+
+        var people = members.Where(member => !member.IsGroup).ToList();
+        if (people.Any(member => IsTheOperatorsRecipient(member, account, actor)))
+        {
+            _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}) - Exchange Online names them among its members", exchangeIdentity, affectedUser);
+            return (SelfGrantRefusal, []);
+        }
+
+        if (people.Any(member => !CanBeCompared(member, actor)))
+        {
+            _logger.LogWarning("Exchange Online names a member of {Affected} that cannot be compared with {User} - failing closed", affectedUser, exchangeIdentity);
+            return (unread, []);
+        }
+
+        if (account is null)
+            return (null, []);
+
+        var synced = new List<string>();
+        foreach (var nested in members.Where(member => member.IsGroup && member.IsDirSynced == true))
+        {
+            var address = nested.PrimarySmtpAddress;
+            IReadOnlyList<SelfGrantDirectoryObject> held;
+            try
+            {
+                held = address is null
+                    ? []
+                    : (await Task.Run(() => directory.FindNamedBy(address, address)))
+                        .Where(candidate => candidate.IsGroup && candidate.CarriesAddress(address))
+                        .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "The self-grant check could not look up {Nested}, a synced group in {Affected}, in the on-premises directory - failing closed", address, affectedUser);
+                return (unread, []);
+            }
+
+            if (held.Count == 0)
+            {
+                _logger.LogWarning("The self-grant check found no on-premises group for {Nested}, a synced group in {Affected} - failing closed", address ?? "(no address)", affectedUser);
+                return (unread, []);
+            }
+
+            synced.AddRange(held.Select(candidate => candidate.DistinguishedName));
+        }
+
+        return (null, synced);
+    }
+
+    private static bool IsTheOperatorsRecipient(ExchangeGroupMember member, SelfGrantDirectoryObject? account, ResolvedRecipient actor)
+    {
+        if (!string.IsNullOrWhiteSpace(member.ExternalDirectoryObjectId) && !string.IsNullOrWhiteSpace(actor.ExternalDirectoryObjectId)
+            && string.Equals(member.ExternalDirectoryObjectId, actor.ExternalDirectoryObjectId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var address = member.PrimarySmtpAddress;
+        if (string.IsNullOrWhiteSpace(address))
+            return false;
+
+        return string.Equals(address, actor.PrimarySmtpAddress, StringComparison.OrdinalIgnoreCase)
+            || (account?.PrimarySmtpAddress is { } own && string.Equals(address, own, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool CanBeCompared(ExchangeGroupMember member, ResolvedRecipient actor) =>
+        !string.IsNullOrWhiteSpace(member.PrimarySmtpAddress)
+        || (!string.IsNullOrWhiteSpace(member.ExternalDirectoryObjectId) && !string.IsNullOrWhiteSpace(actor.ExternalDirectoryObjectId));
 
     /// <summary>
     /// The operator's own account, or an object carrying the primary address of their account or of their Exchange recipient.
@@ -819,21 +928,6 @@ public class PermissionValidator
 
         return (account?.PrimarySmtpAddress is { } own && string.Equals(address, own, StringComparison.OrdinalIgnoreCase))
             || (actor is not null && string.Equals(address, actor.PrimarySmtpAddress, StringComparison.OrdinalIgnoreCase));
-    }
-
-    /// <summary>
-    /// Whether <paramref name="group"/> is the account's primary group - the account's domain SID with its primaryGroupID,
-    /// against the group's objectSid. Throws when that cannot be derived: an account always has one.
-    /// </summary>
-    private static bool IsPrimaryGroupOf(SelfGrantDirectoryObject group, SelfGrantDirectoryObject account)
-    {
-        var primary = account.Sid is not null && account.PrimaryGroupId is int rid
-            ? ProtectedGroupMembership.PrimaryGroupSid(account.Sid, rid)
-            : null;
-        if (primary is null)
-            throw new InvalidOperationException($"the primary group of '{account.DistinguishedName}' cannot be derived");
-
-        return group.Sid is not null && string.Equals(group.Sid, primary, StringComparison.OrdinalIgnoreCase);
     }
 
     // Every kind of group Exchange reports carries "Group" in its RecipientType - the test TryExpandGroupAsync applies to
