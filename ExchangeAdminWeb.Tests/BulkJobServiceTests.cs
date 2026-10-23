@@ -266,6 +266,30 @@ public class BulkJobServiceTests
         Assert.Equal(1, h.CreatedProcessors[0].CompletionCalls);
     }
 
+    [Theory]
+    [InlineData("Queued", true)]
+    [InlineData("Running", true)]
+    [InlineData("Completed", false)]
+    [InlineData("Cancelled", false)]
+    [InlineData("Interrupted", false)]
+    [InlineData(null, false)]
+    public void CancelJob_SaysWhetherItTookEffect(string? status, bool expected)
+    {
+        // kd-5. A caller that audits the cancel records whether it happened: a queued job finished as Cancelled or a running
+        // job's cancellation requested is true; a finished job, or none (null - not there), is false and changes nothing.
+        using var h = new Harness();
+        if (status is not null)
+            h.Repository.Insert(h.NewJob("j1", "S", status));
+
+        Assert.Equal(expected, h.Service.CancelJob("j1"));
+
+        var after = h.Repository.Get("j1");
+        if (status is null)
+            Assert.Null(after);
+        else if (!expected)
+            Assert.Equal(Enum.Parse<BulkJobStatus>(status), after!.Status);
+    }
+
     [Fact]
     public async Task CancelJob_Queued_FinishesAsCancelled_NeverRuns()
     {

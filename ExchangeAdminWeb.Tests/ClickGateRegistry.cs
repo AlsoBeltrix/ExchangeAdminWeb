@@ -3752,17 +3752,19 @@ public static class ClickGateRegistry
                 ConditionThatKeepsItTrue:
                 "ToggleJobDetails keeps taking an id and keeps reading nothing but BulkJobs.GetRows"),
 
-            new ExemptControl(511, "@onclick=\"() => CancelJob(job.Id)\"",
+            new ExemptControl(511, "@onclick=\"() => CancelJob(job)\"",
                 "cancels or dequeues a running server-side job, and it belongs to the jobs scope, "
                 + "not the form scope. The form predicate has no authority over it in either "
                 + "direction: nothing the panel does raises IsBusy, and nothing IsBusy describes is "
                 + "happening to this job. Gating it on IsBusy would make a runaway bulk job - which "
                 + "keeps writing to Exchange after the browser is closed - uncancellable for the "
-                + "whole of an unrelated CSV parse. CancelJob takes job.Id and calls straight "
-                + "through, so the callback swapping the list under it changes nothing",
+                + "whole of an unrelated CSV parse. Since kd-5 it audits the cancel, so it needs the "
+                + "row - its ticket and what the operator saw - and takes the rendered BulkJob, as "
+                + "RemoveJob does, cancelling by that row's id: the callback swapping the list under "
+                + "it changes nothing",
                 ConditionThatKeepsItTrue:
-                "CancelJob keeps taking an id and keeps making no read of activeJobs. If it ever "
-                + "needs the row, it must take the rendered BulkJob the way RemoveJob now does"),
+                "CancelJob keeps taking the rendered BulkJob and never looks a row up in activeJobs, "
+                + "recentJobs or any other collection RefreshJobs replaces"),
 
             new ExemptControl(572, "title=\"Show or hide the rows of this finished job\"",
                 "the FINISHED-job half of the same view toggle, in the second loop. Textually "

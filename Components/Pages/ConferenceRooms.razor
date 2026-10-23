@@ -508,7 +508,7 @@
                                         <button class="btn btn-outline-secondary btn-sm me-1" title="Show or hide the rows of this active job" @onclick="() => ToggleJobDetails(job.Id)">
                                             @(detailsJobId == job.Id ? "Hide" : "Details")
                                         </button>
-                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job.Id)">
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job)">
                                             @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued ? "Remove" : "Cancel")
                                         </button>
                                     </td>
@@ -833,8 +833,8 @@
             Logger.LogWarning(ex, "Failed to refresh bulk job view on job change");
         }
     }
-
-    private void CancelJob(string jobId) => BulkJobs.CancelJob(jobId);
+    // kd-5. Audited as RemoveJob is, from the RENDERED row (so its ticket): refused and failed too - one line, so no line-keyed entry moves.
+    private void CancelJob(ExchangeAdminWeb.Services.Jobs.BulkJob job) { var cancelled = false; string? error = "The job was not cancelled: it had already finished, or it no longer exists."; try { cancelled = BulkJobs.CancelJob(job.Id); if (cancelled) error = null; } catch (Exception ex) { error = ex.Message; throw; } finally { try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_CancelBulkJob", target: job.Id, success: cancelled, ticketNumber: job.Ticket ?? "", errorDetail: error, oldValues: new Dictionary<string, object?> { ["JobType"] = job.JobType, ["Status"] = job.Status.ToString(), ["SubmittedBy"] = job.SubmittedBy, ["SubmittedAtUtc"] = job.SubmittedAtUtc, ["TotalRows"] = job.TotalRows }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); } } }
 
     // One expanded row at a time; clicking the open one closes it.
     private string? detailsJobId;

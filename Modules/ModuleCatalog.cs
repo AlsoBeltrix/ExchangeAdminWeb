@@ -914,7 +914,9 @@ public sealed class ModuleCatalog
             // on the page (aud-a2e).
             // 2.8.0: a Room Type apply whose room read throws leaves one warning in the application
             // log, as a Room Finder row's has since aud-a2w; and the page's and the bulk processor's
-            // refusals of a type they cannot parse say that nothing was written (aud-a2y).
+            // refusals of a type they cannot parse say that nothing was written (aud-a2y). Cancelling
+            // a bulk job writes an audit row - operator, job, ticket, and whether it was cancelled,
+            // refused or failed - as removing one does (kd-5).
             Version = "2.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
