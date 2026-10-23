@@ -1,7 +1,7 @@
 # kd-7: M365 Group Management validates no ticket; the same shape on Named Locations delete and twice on Conference Rooms
 
 **Severity**: MEDIUM - mutating actions without the ticket validation the Constitution and the other modules apply. `M365GroupManagement` validates no ticket on its writes; `NamedLocations` delete and two Conference Rooms paths share the shape. Conference Rooms and Named Locations were not re-verified at the last state pass; the implementing agent verifies each before writing.
-**Status**: Merged to master `881b8d5b`; codex defect review ticket-batch-1 in flight
+**Status**: Merged to master `881b8d5b`; codex ticket-batch-1 raised kd-23 (MEDIUM, the bulk processor) and kd-24 (LOW, control-only tickets); closes when they land
 **Branch**: `fix/kd7-kd8` (worktree `D:\source\ExchangeAdminWeb-wt\kd7-kd8`, from master `3e43b35b`)
 **Commit**: `cd25a924` (M365 Group Management), `11408fae` (Named Locations), the Conference Rooms commit after it on `fix/kd7-kd8`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects"; M365 re-verified 2026-10-23 as of `d881ea58`)
@@ -255,3 +255,7 @@ None yet (codex review pending, dispatched by the supervising session).
 ## Closeout
 
 Pending: merge into master, codex review, branch deletion.
+
+## Reviewer comments (supervisor, ticket-batch-1)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 3e43b35b head aed153c9 (merged 881b8d5b); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat aed153c9). Two candidates admitted (kd-23, kd-24). Codex confirmed: seven M365 write paths with no eighth missed; Named Locations save/delete gate before Graph; the no-admin-email choice matches RiskyUsers/IntuneDevices; registry line counts and key snippets match the pages. Artefacts: `.agents/review/ticket-batch-1.result.txt`, `.stream.log`, `prompt-ticket-batch-1.md`.

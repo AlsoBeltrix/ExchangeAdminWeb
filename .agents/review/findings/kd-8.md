@@ -1,7 +1,7 @@
 # kd-8: Self-Service Groups - a previous group's operation can publish its banner into another group's view
 
 **Severity**: LOW - misleading UI. In `Components/Pages/SelfServiceGroups.razor` an operation started on group A completes after the operator has opened group B and sets the page banner, so B shows A's result. Not re-verified at the last state pass; the agent verifies before writing.
-**Status**: Merged to master `881b8d5b`; codex defect review ticket-batch-1 in flight
+**Status**: Closed - merged to master `881b8d5b`; codex ticket-batch-1 clean (the four mutating completion publishers route through ShowFor). Complete once fix/kd7-kd8 is deleted
 **Branch**: `fix/kd7-kd8` (worktree `D:\source\ExchangeAdminWeb-wt\kd7-kd8`, from master `3e43b35b`)
 **Commit**: the kd-8 commit on `fix/kd7-kd8`, after `f0ce2431`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects")
@@ -120,3 +120,7 @@ None yet (codex review pending, dispatched by the supervising session).
 ## Closeout
 
 Pending: merge into master, codex review, branch deletion.
+
+## Reviewer comments (supervisor, ticket-batch-1)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 3e43b35b head aed153c9 (merged 881b8d5b); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat aed153c9). Clean on this finding. Artefacts as in kd-7.
