@@ -455,7 +455,7 @@
                     return;
                 }
             }
-
+            var step = PermissionChangeFailure.BeforeTheWrite; // aud-a53: the stage a throw in the try below came from
             try
             {
                 string location; try { location = await MailboxService.GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result = PermissionResult.Fail(ExchangeServiceBase.LocationReadFailure(target, locationEx)); return; } // aud-a23o: a failed location read is refused as such, before any write; it reached the catch below, "Operation may have succeeded but audit logging failed"
@@ -483,11 +483,11 @@
                     onPremConfirmPending = true;
                     return;
                 }
-
+                step = PermissionChangeFailure.TheWrite;
                 var opResult = isAdd
                     ? await MailboxService.AddMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs, autoMap)
                     : await MailboxService.RemoveMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs);
-
+                step = PermissionChangeFailure.AfterTheWrite;
                 var perms = new List<string>();
                 if (fullAccess) perms.Add("FullAccess");
                 if (sendAs) perms.Add("SendAs");
@@ -498,17 +498,17 @@
                 // The serviced note rides `extra`: this is the SUCCESS path, and LogMailboxPermission
                 // drops errorDetail on success, so the field explaining why a protected mailbox could
                 // be modified would vanish. So does the identity written (aud-a2d); target stays typed.
-                Audit.LogMailboxPermission(
+                try { Audit.LogMailboxPermission(
                     currentUser, ipAddress, action, target, user, permType,
                     opResult.Success, ticket,
                     autoMapping: isAdd && fullAccess ? autoMap : null,
                     errorDetail: opResult.Success ? null : opResult.Message,
-                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox));
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)); } catch (Exception auditEx) { Logger.LogWarning(auditEx, "Failed to write audit for the permission change on {Target}; the change stands", target); }
 
                 // Send admin notification
-                await Email.SendAdminNotificationAsync(
+                try { await Email.SendAdminNotificationAsync(
                     currentUser, ipAddress, action, target, user, permType,
-                    opResult.Success, ticket, opResult.Success ? null : opResult.Message);
+                    opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The administrator notification for {Target} could not be sent; the change stands", target); }
 
                 // A23: notify on what ACTUALLY applied, not on overall success - a partial
                 // grant (FullAccess applied, SendAs failed) told the affected user nothing.
@@ -516,8 +516,8 @@
                 if (applied.Count > 0)
                 {
                     var notifyPerm = string.Join("+", applied);
-                    await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isAdd);
-                    await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isAdd);
+                    try { await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isAdd); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to {User} of the change on {Target} could not be sent; the change stands", user, target); }
+                    try { await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isAdd); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
                 }
 
                 result = opResult;
@@ -525,8 +525,8 @@
             }
             catch (Exception ex)
             {
-                activity.Complete(false, ex.Message);
-                result = PermissionResult.Fail($"Operation may have succeeded but audit logging failed: {ex.Message}");
+                Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); activity.Complete(false, PermissionChangeFailure.Banner(step, ex));
+                result = PermissionResult.Fail(PermissionChangeFailure.Banner(step, ex));
             }
         }
         finally
@@ -725,16 +725,16 @@
             }
 
             var isPartial = !opResult.Success && applied.Count > 0;
-            await Email.SendAdminNotificationAsync(
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, isPartial ? $"{action}_PARTIAL" : action, target, user, permType,
-                opResult.Success, ticket, opResult.Success ? null : opResult.Message);
+                opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The administrator notification for {Target} could not be sent; the change stands", target); }
 
             if (opResult.Success || applied.Count > 0)
             {
                 var isGrant = isAdd;
                 var notifyPerm = string.Join("+", applied.Count > 0 ? applied : new[] { permType });
-                await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isGrant);
-                await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant);
+                try { await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to {User} of the change on {Target} could not be sent; the change stands", user, target); }
+                try { await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
             }
 
             result = outcome = opResult;
