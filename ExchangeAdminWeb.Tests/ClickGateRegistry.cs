@@ -479,7 +479,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DhcpAuthorization => new()
     {
         Page = "DhcpAuthorization.razor",
-        ExpectedLineCount = 452,
+        ExpectedLineCount = 454,
 
         Predicates =
         [
@@ -2346,8 +2346,9 @@ public static class ClickGateRegistry
         Page = "GroupManagement.razor",
         // A25 added the manager-notification helper and four call sites, all inside @code
         // well below every registered control (the lowest is 315), so no line key moved -
-        // only the count. Verified by running the ClickGate suite after the edit.
-        ExpectedLineCount = 1139,
+        // only the count. Verified by running the ClickGate suite after the edit. kd-18 and kd-24
+        // the same.
+        ExpectedLineCount = 1158,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces
@@ -2609,8 +2610,8 @@ public static class ClickGateRegistry
 
         // Six gated buttons whose disabled expression keeps a non-busy clause that must survive a
         // mechanical rewrite. None of the six is equivalent to the predicate: each is a precondition
-        // the operator has to satisfy before the action is meaningful, and four of them are the only
-        // thing requiring a ticket number before a write.
+        // the operator has to satisfy before the action is meaningful, and four of them carry the
+        // ticket requirement, which until kd-18 nothing behind them re-checked.
         //
         // The sixth is the per-row Remove at 274, and it could not be registered when this page was
         // converted: the tag walkers could not see that tag, so the entry failed outright with "no
@@ -2633,7 +2634,7 @@ public static class ClickGateRegistry
                 RendersOnlyWhen:
                 "inside the manage card, inside the answered-and-allowed protection branch, inside "
                 + "memberList != null with no Error, and then only while canManageOnPrem. AddMember "
-                + "re-checks the member label itself and ServiceNow re-checks the ticket, so both "
+                + "re-checks the member label itself and the ticket's presence (kd-18), so both "
                 + "clauses are belt and braces here - but they are what keeps the operator from "
                 + "submitting a write that can only be refused"),
 
@@ -4203,8 +4204,8 @@ public static class ClickGateRegistry
     /// <b>Fixed by kd-8, and not a gating problem.</b> Re-entering the manage view for a DIFFERENT
     /// group while a previous group's operation was still in flight let that operation publish its
     /// <c>changeResult</c> banner and its <c>bulkOutcome</c> table into the new group's view - the
-    /// text names the old group, so it was misleading rather than wrong. The gate on 128/179 is
-    /// the only thing that stops that re-entry, and it is markup; ShowFor is its server-side half:
+    /// text names the old group, so it was misleading rather than wrong. The gate on 128/179 stops
+    /// that re-entry, and since kd-19 SelectGroup refuses the same itself; ShowFor is the last line:
     /// all four mutating handlers publish their outcome through it, and it writes the two fields
     /// only while ReferenceEquals(selected, group) - the same live read as their reload tests.
     /// The audit rows, the emails and the status-bar outcome do not depend on it.
@@ -4219,7 +4220,7 @@ public static class ClickGateRegistry
     private static PageGateEntry SelfServiceGroups => new()
     {
         Page = "SelfServiceGroups.razor",
-        ExpectedLineCount = 1244,
+        ExpectedLineCount = 1272,
 
         // Two, and the list field exists for exactly this. Both scopes have real flags and real
         // controls; see the remarks for why a single page-wide predicate cannot work here and why

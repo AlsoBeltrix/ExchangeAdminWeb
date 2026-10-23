@@ -299,11 +299,13 @@
 
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            // kd-18, kd-24: ServiceNow passes every ticket while it is dormant, so presence is the
+            // shared rule's to answer first.
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{dns} ({ip})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize ticket validation"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{dns} ({ip})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize ticket validation"); }
                 return;
             }
 
@@ -382,7 +384,7 @@
 
         try
         {
-            if (string.IsNullOrWhiteSpace(ticket))
+            if (!TicketPresence.IsPresent(ticket))
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = "A ticket number is required for deauthorization. Enter one in the Authorize form." };
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, "", "Ticket number not provided"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize missing ticket"); }

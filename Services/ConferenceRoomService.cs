@@ -3051,12 +3051,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// dormant, so the page's ServiceNow check alone admitted a blank ticket on a deployment without it and the buttons'
     /// emptiness clauses were the only enforcement. The message is the one that service gives a blank ticket when it is enabled,
     /// so the operator reads the same refusal either way. It lives here rather than on the page because the page is line-keyed
-    /// by ClickGateRegistry and the fix had to leave its line count alone.
+    /// by ClickGateRegistry and the fix had to leave its line count alone. Since kd-24 it is the shared
+    /// <see cref="TicketPresence"/> rule, which also refuses a ticket carrying a control character; the page and the bulk
+    /// processor (kd-23) keep calling it by this name.
     /// </remarks>
-    public static TicketValidationResult? RequireTicket(string? ticket) =>
-        string.IsNullOrWhiteSpace(ticket)
-            ? new TicketValidationResult { IsValid = false, Message = "Ticket number is required" }
-            : null;
+    public static TicketValidationResult? RequireTicket(string? ticket) => TicketPresence.Refusal(ticket);
 
     /// <summary>
     /// aud-a2r. The admin notification's row carrying <see cref="RoomOperationResult.DirectoryAttributesConfirmed"/>

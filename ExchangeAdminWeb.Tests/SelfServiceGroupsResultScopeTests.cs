@@ -32,10 +32,11 @@ namespace ExchangeAdminWeb.Tests;
 /// it fails at once without touching a directory.
 /// </para>
 /// <para>
-/// What opens a second group mid-operation in the app is only the Manage members gate, which is
-/// markup; these tests reach the handlers past it, which is exactly the case the handlers have to
-/// survive on their own. The operation is then refused at that held re-check (or, for a batch, at its
-/// rows' re-checks), so nothing here writes to a directory either.
+/// What stops a second group being opened mid-operation is the Manage members gate, which is markup,
+/// and since kd-19 SelectGroup's own refusal while the view is busy. The switch test shows that
+/// refusal and then goes past both, which is exactly the case ShowFor has to survive on its own. The
+/// operation is then refused at that held re-check (or, for a batch, at its rows' re-checks), so
+/// nothing here writes to a directory either.
 /// </para>
 /// </remarks>
 public sealed class SelfServiceGroupsResultScopeTests : IDisposable
@@ -128,7 +129,7 @@ public sealed class SelfServiceGroupsResultScopeTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Operations))]
-    public async Task AnOperationThatFinishesAfterTheOperatorOpenedAnotherGroup_PublishesNothingIntoThatGroupsView(
+    public async Task AnOperationThatFinishesAfterAnotherGroupIsShown_PublishesNothingIntoThatGroupsView(
         string operation, bool letTheBatchThrough)
     {
         var (first, second) = (Group("Finance Team"), Group("Payroll Team"));
@@ -137,10 +138,16 @@ public sealed class SelfServiceGroupsResultScopeTests : IDisposable
         var running = Start(page, operation);
         await _held.Task.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
-        // The operator goes back and opens another group while the operation is held.
+        // The operator goes back and clicks Manage members on another group while the operation is
+        // held. Since kd-19 that click is refused - the view is busy - and the page stays on the
+        // browse view.
         Invoke(page, "BackToGroups");
         await (Task)Invoke(page, "SelectGroup", second);
-        Assert.Same(second, Field<ManageableGroup>(page, "selected"));
+        Assert.Null(Field<ManageableGroup>(page, "selected"));
+
+        // ShowFor is the line behind that refusal, so the test goes past it: the other group is put
+        // on screen directly, as a re-entry neither the gate nor the refusal stopped would put it.
+        SetField(page, "selected", second);
 
         _gate.SetResult(letTheBatchThrough ? AuthorizationResult.Success() : AuthorizationResult.Failed());
         await running.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);

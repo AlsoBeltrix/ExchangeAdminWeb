@@ -322,12 +322,15 @@
 
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            // kd-18, kd-24: ServiceNow passes every ticket while it is dormant, so presence is the
+            // shared rule's to answer first.
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = new MfaResetResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                    errorDetail: $"Ticket validation failed: {ticketValidation.Message}");
+                    errorDetail: $"Ticket validation failed: {ticketValidation.Message}",
+                    extra: new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false });
                 return;
             }
 

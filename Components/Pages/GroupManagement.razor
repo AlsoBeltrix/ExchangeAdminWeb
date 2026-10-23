@@ -570,11 +570,11 @@
             "AD Group Management", $"Updating membership of {group?.Name}", ActivitySize.Unknown);
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName, ["refusedAt"] = TicketRefusalStep, ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
                 return;
             }
 
@@ -699,11 +699,11 @@
             "AD Group Management", $"Updating membership of {group?.Name}", ActivitySize.Unknown);
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName, ["refusedAt"] = TicketRefusalStep, ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
                 return;
             }
 
@@ -889,10 +889,29 @@
         }
     }
 
-    private void AuditBatch(string action, GroupInfo group, string ticket, bool success, string? errorDetail, int requested, int done, int notDone, IReadOnlyList<string> memberLines)
+    private void AuditBatch(string action, GroupInfo group, string ticket, bool success, string? errorDetail, int requested, int done, int notDone, IReadOnlyList<string> memberLines, string? refusedAt = null)
     {
-        try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "GroupManagement", group.Name, success, ticket, errorDetail, new Dictionary<string, object?> { ["requested"] = requested, ["done"] = done, ["notDone"] = notDone, ["members"] = memberLines }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+        var extra = new Dictionary<string, object?> { ["requested"] = requested, ["done"] = done, ["notDone"] = notDone, ["members"] = memberLines };
+
+        // kd-18: a refusal says where it refused and that nothing was attempted (the aud-a28
+        // convention), which is what tells it apart from a batch that ran and failed.
+        if (refusedAt is not null)
+        {
+            extra["refusedAt"] = refusedAt;
+            extra["mutationAttempted"] = false;
+        }
+
+        try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "GroupManagement", group.Name, success, ticket, errorDetail, extra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
     }
+
+    /// <summary>
+    /// kd-18. The step a ticket refusal's audit row records as <c>refusedAt</c>. The four writes ask
+    /// ServiceNow only about a ticket the shared TicketPresence rule (kd-24) calls present, because
+    /// ServiceNow passes every ticket - a blank one included - while it is dormant, and the buttons'
+    /// emptiness clauses were otherwise the only thing requiring one.
+    /// </summary>
+    private const string TicketRefusalStep = "TicketValidation";
+
 
     /// <summary>
     /// Removes every ticked member, one at a time, in list order, through RemoveOneAsync -
@@ -930,11 +949,11 @@
         var notAttempted = rows.Select(r => $"{r.DisplayName}: Not attempted").ToList();
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                AuditBatch(action, group, ticket, false, $"Ticket validation failed: {ticketValidation.Message}", rows.Count, 0, 0, notAttempted);
+                AuditBatch(action, group, ticket, false, $"Ticket validation failed: {ticketValidation.Message}", rows.Count, 0, 0, notAttempted, refusedAt: TicketRefusalStep);
                 return;
             }
 
@@ -1075,11 +1094,11 @@
         var notAttempted = rows.Select(r => $"{r.Line.Text}: Not attempted").ToList();
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 opResult = completed = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                AuditBatch(action, group, ticket, false, $"Ticket validation failed: {ticketValidation.Message}", rows.Count, 0, 0, notAttempted);
+                AuditBatch(action, group, ticket, false, $"Ticket validation failed: {ticketValidation.Message}", rows.Count, 0, 0, notAttempted, refusedAt: TicketRefusalStep);
                 return;
             }
 

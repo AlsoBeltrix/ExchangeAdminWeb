@@ -628,6 +628,11 @@ public sealed class ModuleCatalog
             // the secret ID unset, Delinea returning none for the ID that is set, or the module's
             // configuration unreadable - instead of always sending the operator to the ID (aud-a2y).
             Version = "2.13.0",
+            // 2.14.0: the four membership writes refuse a blank ticket themselves, before
+            // ServiceNow, which passes one while it is dormant (kd-18).
+            // 2.15.0: presence is the shared TicketPresence rule, which also refuses a ticket made
+            // only of control characters (kd-24).
+            Version = "2.15.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -652,7 +657,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.7.0",
+            // 1.8.0: a ticket made only of control characters is no ticket - the shared
+            // TicketPresence rule (kd-24).
+            Version = "1.8.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -796,7 +803,9 @@ public sealed class ModuleCatalog
             // An error record the caller's or the groups' read leaves without throwing no longer
             // hides the first owned group, or the searched one, as if the caller could not manage it
             // (psl-10).
-            Version = "1.13.0",
+            // 1.14.0: Manage members refuses while the open group is still loading or changing,
+            // and a member load publishes only while its group is still the one shown (kd-19).
+            Version = "1.14.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -825,7 +834,11 @@ public sealed class ModuleCatalog
             // 1.2.3: the method lookup the operator runs before the reset reports its Graph
             // round trip instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.2.4",
+            // 1.3.0: a reset refuses a blank ticket itself, before ServiceNow, which passes one
+            // while it is dormant (kd-18).
+            // 1.4.0: presence is the shared TicketPresence rule, which also refuses a ticket made
+            // only of control characters (kd-24).
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -928,7 +941,11 @@ public sealed class ModuleCatalog
             // refusals of a type they cannot parse say that nothing was written (aud-a2y). Cancelling
             // a bulk job writes an audit row - operator, job, ticket, and whether it was cancelled,
             // refused or failed - as removing one does (kd-5).
-            Version = "2.9.0",
+            // 2.10.0: the bulk processor refuses each row of a job with no ticket, before the
+            // authorization re-check and any write, audited (kd-23).
+            // 2.11.0: the page and the bulk processor judge presence by the shared TicketPresence
+            // rule, which also refuses a ticket made only of control characters (kd-24).
+            Version = "2.11.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -966,7 +983,9 @@ public sealed class ModuleCatalog
             // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
             // no longer retarget a Conditional Access write, blank its ticket, or report a
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
-            Version = "1.4.0",
+            // 1.5.0: a ticket made only of control characters is no ticket - the shared
+            // TicketPresence rule (kd-24).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1112,7 +1131,11 @@ public sealed class ModuleCatalog
             // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
             // 1.5.0: an error record the remote DhcpServer import leaves without throwing no longer
             // reports the authorization or deauthorization after it as failed (psl-10).
-            Version = "1.5.0",
+            // 1.6.0: authorizing a server refuses a blank ticket itself, before ServiceNow, which
+            // passes one while it is dormant; deauthorizing already did (kd-18).
+            // 1.7.0: both paths judge presence by the shared TicketPresence rule, which also refuses
+            // a ticket made only of control characters (kd-24).
+            Version = "1.7.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",

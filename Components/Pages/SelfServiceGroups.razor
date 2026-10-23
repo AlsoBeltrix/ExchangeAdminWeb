@@ -498,6 +498,12 @@
     private bool isLoadingMembers;
     private string? memberLoadError;
 
+    // kd-19. Which member load may publish. Every load takes the next value and BackToGroups - the
+    // only other writer of `selected` - advances it, so a load publishes only while its group is
+    // still the one shown. A token rather than ReferenceEquals(selected, group): LoadMembers is
+    // registered as never reading `selected` after its first await (ClickGateRegistry).
+    private int memberLoadToken;
+
     // Bulk remove state (docs/GroupBulkActions-Plan.md S4). Selection is keyed on the immutable
     // objectGUID, the same key the remove path acts on; it never survives a list reload or a
     // group switch (the gmn-4 shape pendingGroupRemoval already follows).
@@ -541,6 +547,14 @@
 
     private async Task SelectGroup(ManageableGroup group)
     {
+        // kd-19. Refused while the manage scope is busy, which is what the two Manage members
+        // buttons' disabled="@IsManageBusy" says - but that attribute is one round trip stale, so
+        // two clicks on different groups inside it both reached here and the second group's view
+        // could list the first group's members. LoadMembers raises isLoadingMembers before its
+        // first await, so this also refuses a second Manage click while the first group loads.
+        if (IsManageBusy)
+            return;
+
         selected = group;
         memberIdentity = "";
         changeResult = null;
@@ -553,6 +567,8 @@
     private void BackToGroups()
     {
         selected = null;
+        // kd-19: a member load still running for the group being left must not publish.
+        memberLoadToken++;
         memberIdentity = "";
         changeResult = null;
         groupMembers = [];
@@ -575,6 +591,7 @@
         if (group == null)
             return;
 
+        var token = ++memberLoadToken;
         isLoadingMembers = true;
         memberLoadError = null;
         groupMembers = [];
@@ -588,22 +605,33 @@
         // outcome table of a batch that just ran is kept - the post-batch refresh comes here.
         selectedGuids.Clear();
         showRemoveConfirm = false;
+
+        // kd-19: this load's own outcome, for the activity. The page's fields get it only while the
+        // token is still current - only while this load's group is still the one shown.
+        string? loadError = null;
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
                 throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
 
-            groupMembers = await GroupService.GetGroupMembersAsync(callerSid, callerGroupSids, denyOnlySids, group.ObjectGuid);
+            var members = await GroupService.GetGroupMembersAsync(callerSid, callerGroupSids, denyOnlySids, group.ObjectGuid);
+            if (token == memberLoadToken)
+                groupMembers = members;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Self-service member load failed for {User} on {Group}", callerSid, group.Name);
-            memberLoadError = "The group's members could not be loaded right now. Please try again; if the problem persists, contact the IT Support Desk.";
+            loadError = "The group's members could not be loaded right now. Please try again; if the problem persists, contact the IT Support Desk.";
+            if (token == memberLoadToken)
+                memberLoadError = loadError;
         }
         finally
         {
+            // Unconditional, deliberately: BackToGroups advances the token mid-load, and a lowering
+            // that waited for a current token would then never run, leaving isLoadingMembers - a
+            // member of IsManageBusy - stuck true and both Manage members buttons dead.
             isLoadingMembers = false;
-            loadActivity.Complete(memberLoadError is null, memberLoadError);
+            loadActivity.Complete(loadError is null, loadError);
         }
     }
 
@@ -1144,8 +1172,8 @@
     /// Back to groups is ungated by design (see its comment), so an operation can still be running
     /// after the operator has left its group. Its outcome names that group, and published into
     /// another group's view it reads as that group's result. What keeps a second group from being
-    /// opened meanwhile is the Manage members gate at 128 and 179, which is markup - a disabled
-    /// attribute a programmatic click does not respect - and this is its server-side half: the same
+    /// opened meanwhile is the Manage members gate at 128 and 179 and, since kd-19, SelectGroup's
+    /// own refusal while the view is busy; this is the last line behind both: the same
     /// live ReferenceEquals(selected, group) test the handlers' reloads already make. The input
     /// clears beside the calls (memberIdentity, selectedGuids, pasteText, resolution) are left as
     /// they are: a group switch resets the per-group ones and the other group's inputs are disabled

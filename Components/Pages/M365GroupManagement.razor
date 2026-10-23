@@ -806,14 +806,14 @@
     /// <remarks>
     /// The buttons' emptiness clauses used to be the only enforcement, and a disabled attribute is
     /// one round trip stale and is bypassed by a second dispatch or a programmatic click. Presence
-    /// is tested on its own because ServiceNowService passes every ticket - a blank one included -
-    /// while the integration is dormant, so validation alone would admit a blank ticket on a
-    /// deployment without it (the RiskyUsers and IntuneDevices shape). A present ticket is then
-    /// validated, which refuses a malformed or unknown one wherever the integration is enabled.
+    /// is tested on its own, by the shared TicketPresence rule (kd-24: blank, or any control
+    /// character, is no ticket), because ServiceNowService passes every ticket while it is dormant,
+    /// so validation alone would admit a missing one on a deployment without it. A present ticket is
+    /// then validated, which refuses a malformed or unknown one wherever the integration is enabled.
     /// </remarks>
     private async Task<string?> TicketRefusalAsync(string ticket)
     {
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (!TicketPresence.IsPresent(ticket))
             return "A ticket number is required.";
 
         var validation = await ServiceNow.ValidateTicketAsync(ticket);
