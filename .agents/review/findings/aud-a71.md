@@ -8,7 +8,7 @@ leaves no audit evidence (Known Failure Class 1 on the audit side). `ExecuteOnPr
 write the row.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (HIGH); folded into the aud-a69 agent's scope; fixed on the branch below, not merged; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
-**Commit**: -
+**Commit**: plan `a8fdcbf5`; fix `bc1183ab`; the census follow-up `9d3697ee`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-7, 2026-10-23, candidate 1)
 
 ## Evidence
@@ -165,3 +165,29 @@ expected: 3)` / `(page: "CalendarPermissions.razor", expected: 3)`. The restored
   "Unknown" location still return unrecorded, as before.
 - Nothing ran against Exchange: the stand-in cmdlets behind a test pool, the harness's validator, a substitute progress
   service.
+
+## Comments after the round
+
+None for this record's files: its comments were written with the fix. The branch's comments commit `a9ce01f5` touches only
+`Services/PermissionValidator.cs` (aud-a69, aud-a72).
+
+## Gates - 2026-10-23 (branch tip `a9ce01f5`: the three fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline - none in a
+  touched file (they are in GroupManagement, MessageTrace, RiskyUsers and SelfServiceGroups, Comms10kApprovedSetTests,
+  AccountLockoutRemediationService, HeaderAnalysisService and MigrationReportExportProcessor).
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,569
+  passed / 0 skipped / 0 failed, 6,569 total, 3m41s; nothing hung (the blame collector wrote no Sequence file). On the way:
+  6,546 passed / 2 failed on `bc1183ab` (the census, `9d3697ee`), 6,560 / 0 on `828fc33a`.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0. `git add -A`
+  then `tools/Test-AsciiOnly.ps1`: exit 0 ("ASCII lint passed"). The pages: 808 and 762 lines (`wc -l`).
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool or a
+test pool over the harness's stand-in cmdlets, or a stand-in resolver, the secret store a stand-in fetch. No coder self-review
+verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac701914283a170ea`, not merged, not pushed. Due at merge: the base app version - the shared
+`SelfGrantRefusalRecord` (`FailedSingleChangeRecord`) - and the Mailbox Permissions and Calendar Permissions module versions:
+what the single change's catch records and says.

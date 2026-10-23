@@ -8,7 +8,7 @@ as incomplete. Exchange Online exposes a dynamic group's current membership thro
 compared without evaluating the filter in the app.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a69 agent's scope; fixed on the branch below, not merged; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
-**Commit**: -
+**Commit**: plan `8391a40a`; fix `6a9f3fe7`; one sentence in the comments commit `a9ce01f5`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-7, 2026-10-23, candidate 2)
 
 ## Evidence
@@ -141,3 +141,21 @@ No separate pre-fix reproduction: M1 is the reader as it stood, at its call site
   record's approach). A candidate in the hand-back (LOW).
 - Whether Exchange accepts a dynamic distribution group as the trustee of a mailbox or folder permission at all is not
   verified here; the check now answers for one instead of refusing it, and the write answers for itself.
+
+## Comments after the round
+
+The branch's comments commit `a9ce01f5` adds one sentence for this record to `PermissionValidator.CompareInExchangeGroupAsync`'s
+remarks (a dynamic group's members are the ones Exchange calculated); aud-a69's record has the comment-only check of that commit.
+`Services/IIdentityResolver.cs`'s remark was written with the fix (comment only; a file outside the plan's list, named here).
+
+## Gates - 2026-10-23 (branch tip `a9ce01f5`: the three fixes and the comments)
+
+As aud-a71's record gives them: the Release build 0 errors and the 19 baseline warnings, none in a touched file; `dotnet test`
+6,569 passed / 0 skipped / 0 failed, nothing hung; format, `git diff --check HEAD` and the ASCII lint exit 0; the pages 808
+and 762 lines. No AD, Exchange Online, Graph, DHCP or IIS call. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac701914283a170ea`, not merged, not pushed. Due at merge: the base app version - the shared
+`ExchangeGroupMembers` - and the Mailbox Permissions and Calendar Permissions module versions: what a grant to a dynamic
+distribution group, or to a cloud group nesting one, is refused or allowed on.

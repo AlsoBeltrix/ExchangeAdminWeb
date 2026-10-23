@@ -8,7 +8,7 @@ returns null (allow) with no membership read - the safety rests on the deploymen
 (Invariant 7). The synced-nested lookup at line 953 already fails closed.
 **Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on the branch below, not merged; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
-**Commit**: -
+**Commit**: plan `5d120fbc`; fix `828fc33a`; comments `a9ce01f5`
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidate 1 of its hand-back)
 
 ## Evidence
@@ -196,3 +196,28 @@ No separate pre-fix reproduction: M1 is the lookup as it stood, at its call site
   hand-back (LOW).
 - Every grant the check reaches the directory for now fetches the directory-read secret once per run (one HTTP call to the
   secret store; the store keeps no cache), where only a grant to a group did.
+
+## Comments after the round
+
+In the branch's comments commit `a9ce01f5`, checked comment-only by `codelines.ps1` (session scratchpad): its 8 changed lines
+in `Services/PermissionValidator.cs` are all whole-line `///` comments, and the file's code lines - blanks and whole-line
+comments stripped - hash `9F85DD5A5F74351E4C2679A9EC48C95A` before and after. `ValidateSelfGrantAsync`'s remarks name the
+grantee's lookup under the credential and the refusal of a grantee nothing holds; `CompareInExchangeGroupAsync`'s name the
+synced nested group's lookup under it and the refusal without it (and, for aud-a72, whose members a dynamic group's are). The
+other comments of this record were written with the fix.
+
+## Gates - 2026-10-23 (branch tip `a9ce01f5`: the three fixes and the comments)
+
+As aud-a71's record gives them: the Release build 0 errors and the 19 baseline warnings, none in a touched file; `dotnet test`
+6,569 passed / 0 skipped / 0 failed, nothing hung (6,560 / 0 on this fix's commit `828fc33a`); format, `git diff --check HEAD`
+and the ASCII lint exit 0; the pages 808 and 762 lines. No AD, Exchange Online, Graph, DHCP or IIS call. No coder self-review
+verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac701914283a170ea`, not merged, not pushed. Due at merge: the base app version - the shared
+`PermissionValidator` and `SelfGrantDirectory` - and the Mailbox Permissions and Calendar Permissions module versions: what a
+grant is refused on. Deployment note for the release: with the Directory Read Credential (Admin Settings, Protected
+principals) configured, every Mailbox Permissions and Calendar Permissions grant fetches it once per check (once per bulk file);
+without it, a grant to a grantee Exchange Online holds no recipient for is refused as incomplete, naming the setting, as a grant
+to a group the directory holds already was (aud-a60).
