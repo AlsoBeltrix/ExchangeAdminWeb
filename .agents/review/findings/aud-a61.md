@@ -7,7 +7,7 @@ Unlimited`; a 200-row upload granting one large cloud group does 200 full traver
 groups that does not contain the operator is refused as incomplete. (3) The aud-a50 write-time re-check
 refusal shows the generic refusal and records the same `*_SelfGrantAttempt` action as the pre-confirmation
 check, so the operator cannot tell that the first check passed and the state changed in between.
-**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go
+**Status**: Merged `c89f639c`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
 **Commit**: plan `fa1ed15c`; fix `d945d8c7` (after aud-a60's `e06c1c2d`); comments `1c982906`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-6, 2026-10-22, candidates 3, 4 and 5)

@@ -5,7 +5,7 @@ imports ExchangeOnlineManagement and clears only `ps.Commands`; `ReadConnectionI
 `ps.Streams.Error.Count > 0` and takes a record the import left for its own failure, so the new connection's
 id goes unidentified and the connection is left to time out (the aud-a6b disconnect-by-id path cannot find
 it).
-**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a60/a61/a53/a59 agent's scope
+**Status**: Merged `c89f639c`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a83ff1596fd6eee17` (from master `a7300dee`)
 **Commit**: plan `4614080e`; fix `69720893` (after aud-a59's `7328135e`)
 **Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, its "Left for a follow-up")
