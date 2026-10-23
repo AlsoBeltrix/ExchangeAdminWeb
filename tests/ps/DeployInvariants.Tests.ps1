@@ -1350,6 +1350,55 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'deploys in place when IIS spells the folder through a junction, and names a spelling it cannot resolve on disk (cdt-46, real files)' {
+        # The check took one folder under two spellings for a move - a refusal, or with -AllowRepoint a
+        # "MOVES it" for a folder that stays. The real function, lifted, against a temporary folder and
+        # a junction to it, with the real module.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt46d_' + [guid]::NewGuid().ToString('N'))
+        $folder = Join-Path $root 'Publish Folder With A Long Name'
+        $sibling = Join-Path $root 'Another Publish Folder'
+        $link = Join-Path $root 'link'
+        try {
+            New-Item -ItemType Directory -Path $folder, $sibling -Force | Out-Null
+            $null = cmd /c "mklink /J `"$link`" `"$folder`""
+            Test-Path -LiteralPath $link | Should -BeTrue -Because 'the junction fixture exists'
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt46Printed.Add("$Object") }
+            $check = {
+                param([string]$Served, [string]$Publish, [bool]$Allow, [bool]$Upgrade)
+                $script:cdt46Printed = New-Object System.Collections.Generic.List[string]
+                $thrown = $null
+                try {
+                    Assert-ApplicationTargetUnchanged -Location 'Example Site/ExampleApp' -Exists $true -ExistingPool 'ExamplePool' -ExistingPhysicalPath $Served -AppPoolName 'ExamplePool' -PublishPath $Publish -AllowRepoint:$Allow -Upgrade:$Upgrade
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt46Printed -join "`n") }
+            }
+
+            foreach ($mode in @(@{ Allow = $false; Upgrade = $false }, @{ Allow = $true; Upgrade = $false }, @{ Allow = $false; Upgrade = $true })) {
+                $same = & $check $link $folder $mode.Allow $mode.Upgrade
+                $same.Thrown | Should -BeNullOrEmpty -Because "the junction is the folder this run names (-AllowRepoint $($mode.Allow), upgrade $($mode.Upgrade))"
+                $same.Printed | Should -BeLike '*deployed in place*'
+                $same.Printed | Should -Not -BeLike '*MOVES it*' -Because 'nothing moves'
+            }
+
+            $missing = Join-Path $root 'missing'
+            $unresolved = & $check $folder $missing $false $false
+            $unresolved.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with files at '$folder' (this run: -PublishPath '$missing'). A spelling that cannot be resolved on disk is not taken as the same folder: '$missing'. -Force and -ConfirmFreshInstall*Nothing was deployed." -Because 'a folder that does not exist cannot be shown to be the same one under another spelling, and the refusal says which'
+
+            $different = & $check $folder $sibling $false $false
+            $different.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with files at '$folder' (this run: -PublishPath '$sibling'). -Force and -ConfirmFreshInstall*" -Because 'two folders that both exist and differ are refused as before, with no note'
+        } finally {
+            if (Test-Path -LiteralPath $link) { [System.IO.Directory]::Delete($link) }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'backs up the runtime config directory before the upgrade mirror (incident fix #4)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,

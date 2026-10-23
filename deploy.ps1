@@ -229,8 +229,16 @@ function Assert-ApplicationTargetUnchanged {
     # A folder IIS does not report counts as different: the run cannot show it deploys in place. The
     # module's Test-SamePhysicalFolder is the one comparison, shared with the serving-folder choice
     # after this check (cdt-44).
+    # cdt-46: it also takes one folder under two spellings - an 8.3 short name, a junction - when both
+    # exist on disk. A spelling that does not exist cannot be matched that way, so a refusal names it.
+    $spellingNote = ''
     if (-not (Test-SamePhysicalFolder -Path $ExistingPhysicalPath -Other $PublishPath)) {
         $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
+        $missing = @(foreach ($spelling in @($ExistingPhysicalPath, $PublishPath)) {
+                $comparable = ConvertTo-ComparablePhysicalPath $spelling
+                if ($comparable -and -not [System.IO.Directory]::Exists($comparable)) { "'$spelling'" }
+            })
+        if ($missing.Count -gt 0) { $spellingNote = " A spelling that cannot be resolved on disk is not taken as the same folder: $($missing -join ', ')." }
     }
 
     if ($differences.Count -eq 0) {
@@ -240,13 +248,13 @@ function Assert-ApplicationTargetUnchanged {
     if ($Upgrade) {
         $switchNote = ''
         if ($AllowRepoint) { $switchNote = ' -AllowRepoint does not apply: only a -Force or -ConfirmFreshInstall run re-points an application.' }
-        Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). An upgrade configures the app pool and the folders it names before it deploys, and never moves the application, so this run would change a pool or folder that does not serve it. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder', or move the application in IIS first.$switchNote Nothing was deployed."
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote An upgrade configures the app pool and the folders it names before it deploys, and never moves the application, so this run would change a pool or folder that does not serve it. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder', or move the application in IIS first.$switchNote Nothing was deployed."
     }
     if ($AllowRepoint) {
         Write-Warn "IIS application $Location exists, with $($differences -join ' and '). -AllowRepoint: this run MOVES it to app pool '$AppPoolName' with its files at '$PublishPath'. The old pool and folder are left as they are, no longer serving it."
         return
     }
-    Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). -Force and -ConfirmFreshInstall point an existing application at this run's -AppPoolName and -PublishPath, so this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
+    Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote -Force and -ConfirmFreshInstall point an existing application at this run's -AppPoolName and -PublishPath, so this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
 }
 
 $ProjectRoot = $PSScriptRoot
