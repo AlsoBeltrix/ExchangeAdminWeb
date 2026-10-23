@@ -10,7 +10,7 @@ save wait closes the Save-button path as a side effect, but the directory-lookup
 no test pins it (the harness has no directory stand-in). Read from the code, not run.
 **Status**: Fixed on branch, with the folded-in MEDIUM; closed on guard proof; not merged; codex review pending (approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule)
 **Branch**: `worktree-agent-a047027df146de3ac`
-**Commit**: the branch's fix commit (plan `a8647062`)
+**Commit**: `0267d70d` (plan `a8647062`; comments `653a800a`)
 **Reviewer**: implementer (surfaced by the aud-a41/a40/a42 agent, 2026-10-23, candidate 1 of its hand-back)
 
 ## Evidence
@@ -264,6 +264,18 @@ comments are written after the round, in their own commit, so the MD5s above are
 ## Left for a follow-up (file owned by another agent)
 
 None: no change was needed in a file another agent owns.
+
+## Branch-tip gates - 2026-10-23 (`653a800a`: the fix and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 19 warnings, all pre-existing, none in a touched
+  file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,421
+  passed / 0 skipped / 0 failed, 6,421 total, 3m31s. No hang.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- The comments commit `653a800a` changes comment lines only, in the one file it touches: `Components/Pages/ModuleConfig.razor`,
+  whole-line comments and blank lines stripped, hashes the same at `0267d70d` and `653a800a` (MD5
+  `6C84BAAF19B51AC62EC9B57008FC4878`, 1,818 lines); the 702-test filter of the guard proof ran green on it.
 
 ## Guard proof at admission
 
