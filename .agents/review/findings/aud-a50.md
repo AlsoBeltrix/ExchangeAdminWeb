@@ -11,9 +11,9 @@ invalid row. (4) `AuditService.LogMailboxPermission` / `LogCalendarPermission` r
 cannot learn the aud-a28u write outcome; the banner says "The audit row could not be written." only when the
 call throws. (5) `SettingsStoreText` has no `ServiceEnablement(bool)`; the pool rebuilds the service wording
 by replacing the page clause.
-**Status**: In progress; plan committed
-**Branch**: `worktree-agent-a80f49ad9ee618412`
-**Commit**: -
+**Status**: Fixed on branch, closed on guard proof; not merged, not pushed; codex review pending
+**Branch**: `worktree-agent-a80f49ad9ee618412` (from master `132d6e97`)
+**Commit**: plan `1d7346ca`; part 1 `fcac67d7`; part 3 `29d9b16f`; part 2 `b1ec0b5d`; part 4 `43a82568` (after aud-a52's `f7921ce8`); part 5 `0e00ab23`; comments `dcfec67c`
 **Reviewer**: implementer (surfaced by the aud-a43/a44 agent, 2026-10-22, candidates 1-3 and its two "Left for a follow-up" items)
 
 ## Evidence
@@ -312,3 +312,54 @@ filter: 480/480 green.
 |---|---|---|---|
 | M5 | the pool's replace again: `UnreadableEnablement` rebuilt from the page text, as it stood | `905BACF98F5C2BD4843FD5A06653153E` (the file at `132d6e97`, byte for byte) | 1 of 480: `ExoConnectionPoolConfigReadTests.TheUnreadableEnablement_IsTheStoreTextsServiceWording_NotThePageTextRewritten` - the replace says the same words today, so only the code-view guard can see it, as the plan says |
 | E5 | extra: `ServiceEnablement(false)` on the page remedy | `B7564C5AB62012F50D997961A6DF3F03` | 2 of 480: `StoreTextSurfaceTests.TheServiceEnablementText_IsThePageTextWithoutItsReloadClause_AndTheLegacyTextIsOneText` and `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled(legacyFile: False)` |
+
+## Comments after the round
+
+Written after every mutation round (aud-a50's five parts and aud-a52), in their own commit `dcfec67c`, checked by
+`codelines.ps1` (session scratchpad `a50`) over the staged change: every line it adds or removes in the twelve code files
+is a whole-line `//` or `///` comment or blank (170 lines), and each file's code lines - blanks and whole-line comments
+stripped - hash the same before and after; an untouched file fails the check (control `Services/ProtectedGroupMembership.cs`:
+"no change"). This record's files, with their code-line MD5s equal before and after: `Services/SelfGrantRefusalRecord.cs`
+(17 lines) `BF24F34F693586F0B8F3CCB82F35402D`, `Services/MailboxPermissionService.cs` (7) `CF134B435A3B3616341747F9CC117E12`,
+`Services/CalendarPermissionService.cs` (2) `4BC60A2570107085EFF3006DE731B593`, `Services/PermissionValidator.cs` (58, with
+aud-a52's) `20B028FDC08C8FB53E3F75C6EC19B474`, `Services/AuditService.cs` (9: `WriteAuditEvent` and the two methods only)
+`BEAD7308691CC5AC49D94EB334021A91`, `Services/SettingsStoreText.cs` (6) `1481699D1DDC2CE4042951DA1EFA384B`,
+`Services/ExoConnectionPool.cs` (5: the follow-up note aud-a44 left, rewritten) `638690CBDE29FBE020B38C6CBFC94C95`. The
+pages carry no comment change.
+
+## Gates - 2026-10-22 (branch tip `dcfec67c`: every fix and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline, 19 at
+  `132d6e97` - none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,195
+  passed / 3 skipped (the three known AD skips, `ADDirectorySearchServiceTests.*_WhenAdUnavailable_ReturnsEmpty`) / 0
+  failed, 6,198 total, 5m39s; nothing hung, no Sequence file. Over aud-a52's commit, before parts 4 and 5: 6,180 / 3 / 0.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange the harness's pool
+over stand-in cmdlets or a stand-in resolver, the on-premises session the harness's `DefineOnPremSession`. No coder
+self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a80f49ad9ee618412`, not merged, not pushed. Due at merge: the base app version - the shared
+`PermissionValidator`, `AuditService`, `ExoConnectionPool` and `SettingsStoreText`, and the new `SelfGrantRefusalRecord` - and
+the Mailbox Permissions and Calendar Permissions module versions: the on-premises re-check, the banner that says when a
+refusal's row was dropped, and the bulk loops' `*_NoUser` rows. The bumps are the supervisor's: `ExchangeAdminWeb.csproj` and
+`Modules/ModuleCatalog.cs` were outside this brief. No file owned by another agent was edited; `UsageTelemetryServiceTests`
+(another agent's) shaped part 4's out parameter and passes unedited.
+
+## Known gaps
+
+- Part 1: the on-premises re-check runs for a grant only (Add, Set), as `SubmitSingle`'s check does; its record carries no
+  auto-mapping, which the on-premises grant does not do, and is otherwise `SubmitSingle`'s.
+- Parts 1 and 4: `SubmitSingle`'s try/catch and `SelfGrantRefusalRecord.Banner` say the same thing through one constant in
+  two code shapes - the pages are line-keyed, and one free line could not hold the try/catch. The page tests pin both.
+- Part 2: the once-guard keys on the stored value as stored (ordinal), as aud-a43's appsettings guard does: "Yes" and "yes"
+  are named once each.
+- Part 3: a row with an empty Target is not refused as an invalid row - outside this finding (a candidate in the hand-back).
+- Part 4: only the self-grant refusal's banner learns the writer's outcome; the protected-target denial's banner on both
+  pages does not (a candidate in the hand-back).
+- Nothing ran against Exchange, a directory or an on-premises session: the harness's stand-ins and the self-grant forest
+  stand in for them.

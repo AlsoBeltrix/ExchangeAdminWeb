@@ -8,9 +8,9 @@ check is a finding. (2) The same branch refuses any Exchange group recipient wit
 group as "could not be completed"; a Microsoft 365 group or any cloud-only group never has one, so every
 Mailbox Permissions and Calendar Permissions grant to such a group now fails before Exchange can write - a
 functional block introduced by aud-a43.
-**Status**: In progress (folded into the aud-a50 agent's scope); plan committed
-**Branch**: `worktree-agent-a80f49ad9ee618412`
-**Commit**: -
+**Status**: Fixed on branch (folded into the aud-a50 agent's scope), closed on guard proof; not merged, not pushed; codex review pending
+**Branch**: `worktree-agent-a80f49ad9ee618412` (from master `132d6e97`)
+**Commit**: plan `43c47893`; fix `f7921ce8` (after aud-a50 parts 1, 3, 2; before its part 4); comments `dcfec67c`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-5, 2026-10-22, candidates 1 and 2)
 
 ## Evidence
@@ -210,6 +210,37 @@ matched. After the round, the restored tree rebuilt and the filter: 410/410 gree
 | N8 | extra, the same: the session-identity reads pass a credential too | `9AD07DD0ACD11A281048CE93D8E2DB27` | 14 of 410: that test, and every case whose answer needs a group read (the stand-in declares no `Credential`, so each read fails to bind and the check is incomplete) - the five nested chains, `AGroupNestingOnlyOthers_IsAllowed`, the three direct rows, `AGroupWithoutTheOperator_...`, `TheOperatorsPrimaryGroup_...`, both `ASyncedGroupInACloudOnlyGroup_IsAskedOfTheDirectory` rows |
 
 No separate pre-fix reproduction: N1 and N2 are the code as it stood at `132d6e97`, each at its call site.
+
+Before the commit, the whole suite over this commit's tree (Debug, `dotnet test --no-build` on the test project): 6,180
+passed / 3 skipped (the known AD skips) / 0 failed, 6,183 total.
+
+## Comments after the round
+
+In the branch's comments commit `dcfec67c`, checked comment-only as aud-a50 records it. This record's files, their
+code-line MD5s equal before and after: `Services/PermissionValidator.cs` (58 lines, with aud-a50's)
+`20B028FDC08C8FB53E3F75C6EC19B474`, `Services/SelfGrantDirectory.cs` (8) `FE115BC2685DCEDF3950BAC866AD6AB8`,
+`Services/PowerShellProtectedGroupDirectory.cs` (12, one of them the removal of a summary line rewritten)
+`D01492844F91F5DF80C3FF0CB08F79D6`, `Services/IIdentityResolver.cs` (16) `5C8CA633AF2F91FAD63B2EDEB3297C42`,
+`Services/ExchangeIdentityResolver.cs` (2) `8D872F8A4C804E235E8F0D5080FD2A42`, `Services/ExchangeGroupMembers.cs` (28)
+`9439A783EF97418F5C55FFCB65918597`. The stale remarks the fix left - aud-a43's note that a group holding the operator only
+through another group is not detected, and that a group Exchange names must be one the directory holds - are corrected
+there.
+
+## Gates - 2026-10-22 (branch tip `dcfec67c`)
+
+As aud-a50 records them: Release build 0 errors, 19 warnings (the baseline, none in a touched file); `dotnet test` 6,195
+passed / 3 skipped (the known AD skips) / 0 failed, 6,198 total, 5m39s, nothing hung; format, `git diff --check HEAD` and
+the ASCII lint exit 0; the pages 808 and 762 lines. No AD, Exchange Online, Graph, DHCP or IIS call: the forest stand-in,
+stand-in resolvers, and stand-in Exchange cmdlets behind the harness's pool or a local runspace. No coder self-review
+verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-a80f49ad9ee618412`, not merged, not pushed. Due at merge: the base app version - the shared
+`PermissionValidator`, `PowerShellProtectedGroupDirectory` (also the protected-principal check's and the self-service DACL
+check's reads; their credentialed path is unchanged and pinned), `IIdentityResolver` and `ExchangeIdentityResolver`, and the new
+`ExchangeGroupMembers` - and the Mailbox Permissions and Calendar Permissions module versions: what a grant to a group is
+refused or allowed on. The bumps are the supervisor's.
 
 ## Known gaps
 
