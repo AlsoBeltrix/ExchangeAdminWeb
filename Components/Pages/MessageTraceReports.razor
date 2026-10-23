@@ -21,8 +21,9 @@
        hand-rolling the lookup; the sub-route gap is recorded in .agents/state.md. *@
     <h2>Downloadable Reports<ModuleVersion /></h2>
     <p class="text-muted">
-        Message Analysis detail exports produced as background jobs. Downloads are logged for audit;
-        a ticket number is required and is recorded with the download.
+        Message Analysis detail exports produced as background jobs. You see the exports you ran; an
+        application administrator sees every operator's. Downloads are logged for audit; a ticket
+        number is required and is recorded with the download.
     </p>
     <div class="alert alert-info py-2 mb-3">
         <small>
@@ -53,7 +54,7 @@
 
     @if (items.Count == 0)
     {
-        <div class="alert alert-secondary">No detail exports have been produced yet.</div>
+        <div class="alert alert-secondary">No detail exports to show.</div>
     }
     else
     {
@@ -132,14 +133,20 @@
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
 
-        Refresh();
+        await Refresh();
     }
 
-    private void Refresh()
+    private async Task Refresh()
     {
         error = null;
-        items = Exports.GetExports();
+        // kd-1: the operator's own exports, or every operator's for an application administrator.
+        // The principal is read fresh each time, so a grant removed while the page is open stops
+        // widening the list at the next refresh.
+        items = await Exports.GetExportsAsync(await CurrentPrincipalAsync());
     }
+
+    private async Task<System.Security.Claims.ClaimsPrincipal> CurrentPrincipalAsync() =>
+        (await AuthStateProvider.GetAuthenticationStateAsync()).User;
 
     private async Task Download(string jobId)
     {
@@ -152,10 +159,12 @@
             using var activity = Progress.Begin(
                 "Message Trace Reports", $"Preparing export {jobId}", ActivitySize.Unknown);
 
-            // The listing owns the whole decision (ticket presence, re-resolution at click time, and
-            // the read), so a row rendered before the retention task ran cannot download a file that
-            // is already gone, and a blank ticket never reaches the filesystem.
-            var result = await Exports.TryDownloadAsync(jobId, ticket);
+            // The listing owns the whole decision (ticket presence, re-resolution at click time,
+            // ownership, and the read), so a row rendered before the retention task ran cannot
+            // download a file that is already gone, a blank ticket never reaches the filesystem, and
+            // another operator's export is refused (kd-1) - against the principal as it is now.
+            var viewer = await CurrentPrincipalAsync();
+            var result = await Exports.TryDownloadAsync(jobId, ticket, viewer);
 
             if (result.Succeeded)
             {
@@ -167,7 +176,7 @@
                 error = result.Error;
                 // Refresh the whole list so a vanished file stops showing a live action everywhere,
                 // not only on the row that was clicked.
-                items = Exports.GetExports();
+                items = await Exports.GetExportsAsync(viewer);
             }
 
             // Completed BELOW the transfer, not on the line after the read. The whole export is
@@ -185,11 +194,13 @@
             activity.Complete(result.Succeeded, result.Error);
 
             // Audit every attempt, hit and miss (plan slice 2). The ticket is recorded, never
-            // validated (D2). An audit failure must never fail the download (Constitution).
+            // validated (D2). An audit failure must never fail the download (Constitution). kd-1: the
+            // listing's AuditExtra rides along - on a refused download of another operator's export
+            // it says so, with mutationAttempted false; on an administrator's download of one, whose.
             try
             {
                 Audit.LogLookupAction(currentUser, clientIpAddress, AuditAction, $"job {jobId}",
-                    result.Succeeded, result.Error, ticket);
+                    result.Succeeded, result.Error, ticket, result.AuditExtra);
             }
             catch { }
         }
