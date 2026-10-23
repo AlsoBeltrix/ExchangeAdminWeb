@@ -911,11 +911,18 @@ Describe 'cdt-15: an update refuses to move an existing application to another p
         $errors = $null
         $script:Cdt15Ast = [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
-        foreach ($name in 'Write-Fail', 'ConvertTo-InstallerComparablePath', 'Assert-ApplicationTargetUnchanged') {
+        # Since cdt-48 the folder comparison is the module's Test-SamePhysicalFolder, which the
+        # installer imports from tools\AppPoolControl.psm1 before the check runs; imported here too.
+        foreach ($name in 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
             $fn = $script:Cdt15Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
             if ($null -eq $fn) { throw "the installer defines no function $name" }
             . ([scriptblock]::Create($fn.Extent.Text))
         }
+        Import-Module (Join-Path $PSScriptRoot '..\..\tools\AppPoolControl.psm1') -Force
+    }
+
+    AfterAll {
+        Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
     }
 
     It 'passes a fresh install and an in-place update, however IIS spells the folder' {
@@ -946,6 +953,34 @@ Describe 'cdt-15: an update refuses to move an existing application to another p
         foreach ($text in $Expect) { "$err" | Should -BeLike "*$text*" }
         "$err" | Should -BeLike "*Re-run with -AppPoolName '$Pool' -PublishPath '$Folder'*"
         "$err" | Should -BeLike '*Nothing was changed*'
+    }
+
+    It 'takes a junction for the folder it points at, and still refuses a sibling (cdt-48, real files)' {
+        # The comparison was literal: IIS serving the application through a junction to the folder this
+        # run names read as a move, and the update was refused, while the installer's own
+        # Assert-AppPoolServesPath, later in the run, already took the junction for the folder (cdt-46).
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt48_' + [guid]::NewGuid().ToString('N'))
+        $folder = Join-Path $root 'Publish Folder With A Long Name'
+        $sibling = Join-Path $root 'Another Publish Folder'
+        $link = Join-Path $root 'link'
+        try {
+            New-Item -ItemType Directory -Path $folder, $sibling -Force | Out-Null
+            $null = cmd /c "mklink /J `"$link`" `"$folder`""
+            Test-Path -LiteralPath $link | Should -BeTrue -Because 'the junction fixture exists'
+
+            { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool 'Pool' -ExistingPhysicalPath $link -AppPoolName 'Pool' -PublishPath $folder } |
+                Should -Not -Throw -Because 'IIS at the junction is the folder this run names: an update in place'
+            { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool 'Pool' -ExistingPhysicalPath $folder -AppPoolName 'Pool' -PublishPath "$link\" } |
+                Should -Not -Throw -Because 'and the other way round, whatever the trailing separator'
+
+            $err = $null
+            try { Assert-ApplicationTargetUnchanged -Location 'Site/App' -Exists $true -ExistingPool 'Pool' -ExistingPhysicalPath $link -AppPoolName 'Pool' -PublishPath $sibling } catch { $err = $_ }
+            $err | Should -Not -BeNullOrEmpty -Because 'a sibling folder is another folder, however IIS spells the one it serves'
+            "$err" | Should -BeLike "*files at '$link' (this run: -PublishPath '$sibling')*Nothing was changed*"
+        } finally {
+            if (Test-Path -LiteralPath $link) { [System.IO.Directory]::Delete($link) }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It 'reads the application and asserts once, at script level, before anything changes (AST)' {

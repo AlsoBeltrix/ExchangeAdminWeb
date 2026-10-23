@@ -641,23 +641,6 @@ function Assert-ConfigStorePlanDatabase {
     Write-Fail "ConfigStore:Path from $from names '$($Plan.Path)' but no database exists there. The app opens a configured database without creating it, so this instance cannot start on it. Fix the key, restore the file, run tools\Move-ConfigDbToShared.ps1, or re-run with -RegenerateAppSettings -ConfigStorePath naming a database that exists. Nothing was changed."
 }
 
-function ConvertTo-InstallerComparablePath {
-    # One spelling per folder (cdt-15): environment variables expanded (IIS often stores
-    # %SystemDrive%\...), made absolute and normalised, trailing separators dropped. Callers
-    # compare the results by equality, case-insensitively - never by prefix, because one
-    # instance's folder is easily a prefix of a sibling's.
-    param([string]$Path)
-
-    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
-    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
-    try {
-        $full = [System.IO.Path]::GetFullPath($expanded)
-    } catch {
-        $full = $expanded
-    }
-    return $full.TrimEnd('\', '/')
-}
-
 function Assert-ApplicationTargetUnchanged {
     # cdt-15. "Create or update IIS web application" below sets an EXISTING application's pool and
     # folder to this run's -AppPoolName and -PublishPath, and both default to fixed values when
@@ -682,9 +665,13 @@ function Assert-ApplicationTargetUnchanged {
     if (-not [string]::Equals($ExistingPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase)) {
         $differences += "app pool '$ExistingPool' (this run: -AppPoolName '$AppPoolName')"
     }
-    $existingFolder = ConvertTo-InstallerComparablePath $ExistingPhysicalPath
-    $runFolder = ConvertTo-InstallerComparablePath $PublishPath
-    if ([string]::IsNullOrWhiteSpace($existingFolder) -or -not [string]::Equals($existingFolder, $runFolder, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # One folder rule, the module's (cdt-48): environment variables expanded (IIS often stores
+    # %SystemDrive%\...), made absolute, trailing separators dropped, compared case-insensitively and
+    # never by prefix - one instance's folder is easily a prefix of a sibling's - and an empty folder is
+    # never the same; or both spellings exist and resolve to one final path, so a junction is taken for
+    # its target (cdt-46). The installer imports tools\AppPoolControl.psm1 below, before this runs, and
+    # its Assert-AppPoolServesPath uses the same rule, so its two checks cannot disagree.
+    if (-not (Test-SamePhysicalFolder -Path $ExistingPhysicalPath -Other $PublishPath)) {
         $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
     }
     if ($differences.Count -gt 0) {
