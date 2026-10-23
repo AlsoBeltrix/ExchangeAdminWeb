@@ -910,7 +910,8 @@ rendered (aud-a29g).
   page's first, server-side render runs its initialization before the tab connects. A refused
   request gets a short "This page was not shown" page (HTTP 403) instead of the page - nothing of
   the page, its menu or its initialization runs - with the reason and a Reload link, and writes one
-  audit line (trigger `PageRequest`). If the check cannot be completed the page is refused (fail
+  audit line (trigger `PageRequest`, `path` the page asked for - path base and path, never the query
+  string, at most 256 characters; aud-a29i). If the check cannot be completed the page is refused (fail
   closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
   status frame shows it loading. The directory is not read for every page: an answer read for the
   same account within `RevalidationInterval` - by an earlier page request or by one of its open

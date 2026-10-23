@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -102,6 +103,52 @@ public class PageRequestRevalidationTests
             Assert.False(audit.TryGetProperty("removedGroupSids", out _));
 
         Assert.Single(h.Log.Warnings, w => w.Contains("Page request for " + OperatorName + " refused", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheRefusalAuditLineNamesThePage_WithoutItsQueryString()
+    {
+        // aud-a29i. Several refused requests from one operator must be told apart by the page they
+        // asked for - but the query string, where a page's search terms would be, stays out of the row.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid);
+        await using var host = await h.StartHostAsync(Operator(SectionGroupSid, DomainUsersSid), pathBase: "/probe-base");
+
+        var (status, _, _) = await host.GetAsync("/probe-base" + ProbeRoute + "?lookup=typed-by-the-operator");
+
+        Assert.True(status == HttpStatusCode.Forbidden, h.Log.Explain($"Expected 403, got {(int)status}."));
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("/probe-base" + ProbeRoute, audit.GetProperty("path").GetString());
+        Assert.DoesNotContain("typed-by-the-operator", audit.GetRawText(), StringComparison.Ordinal);
+
+        // Every field the row had before is still there.
+        Assert.Equal("SessionRevalidation", audit.GetProperty("action").GetString());
+        Assert.Equal("PageRequest", audit.GetProperty("trigger").GetString());
+        Assert.Equal("MembershipChanged", audit.GetProperty("reason").GetString());
+        Assert.Equal(new[] { SectionGroupSid }, RemovedSids(audit));
+        Assert.Equal(OperatorName, audit.GetProperty("target").GetString());
+    }
+
+    [Fact]
+    public void TheAuditPath_IsThePathBaseAndPath_EncodedAndBounded()
+    {
+        var request = new DefaultHttpContext().Request;
+        request.PathBase = "/ExchangeAdminWeb";
+        request.Path = "/risky-users";
+        request.QueryString = new QueryString("?upn=someone");
+
+        Assert.Equal("/ExchangeAdminWeb/risky-users", PageRequestRevalidationMiddleware.AuditPath(request));
+
+        // A character that could break a log line arrives encoded; a long path is cut and marked.
+        request.Path = "/line\nbreak/" + new string('x', 400);
+        var bounded = PageRequestRevalidationMiddleware.AuditPath(request);
+
+        Assert.StartsWith("/ExchangeAdminWeb/line%0Abreak/xxx", bounded, StringComparison.Ordinal);
+        Assert.Equal(PageRequestRevalidationMiddleware.MaxAuditPathLength, bounded.Length);
+        Assert.EndsWith("...", bounded, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', bounded);
+        Assert.DoesNotContain('?', bounded);
     }
 
     [Fact]
@@ -659,7 +706,7 @@ public class PageRequestRevalidationTests
         /// A host with the production order - authentication, authorization, the page-request check,
         /// antiforgery, the components endpoint - over the probe app, and one endpoint that is not a page.
         /// </summary>
-        public async Task<ProbeHost> StartHostAsync(ClaimsPrincipal? user)
+        public async Task<ProbeHost> StartHostAsync(ClaimsPrincipal? user, string? pathBase = null)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -683,6 +730,11 @@ public class PageRequestRevalidationTests
             builder.Services.AddSingleton(Audit);
 
             var app = builder.Build();
+
+            // As Program.cs does with Application:PathBase, before everything else.
+            if (pathBase is not null)
+                app.UsePathBase(pathBase);
+
             app.UseAuthentication();
             app.UseAuthorization();
             app.UseMiddleware<PageRequestRevalidationMiddleware>();

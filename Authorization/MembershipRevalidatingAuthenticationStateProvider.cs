@@ -310,11 +310,13 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     /// </summary>
     /// <remarks>
     /// Names the operator, the reason, what triggered the check and, for a membership change, the
-    /// removed group SIDs - SIDs only, never a group name. An audit failure is logged and never undoes
-    /// the refusal it records.
+    /// removed group SIDs - SIDs only, never a group name. A refused page request also names the page
+    /// it asked for (<paramref name="requestPath"/>, aud-a29i); a circuit has no request and passes
+    /// none. An audit failure is logged and never undoes the refusal it records.
     /// </remarks>
     internal static void WriteAuditLine(
-        AuditService audit, ILogger logger, string account, string ipAddress, MembershipRevalidationResult result, string trigger)
+        AuditService audit, ILogger logger, string account, string ipAddress, MembershipRevalidationResult result, string trigger,
+        string? requestPath = null)
     {
         try
         {
@@ -326,6 +328,9 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
 
             if (result.RemovedGroupSids.Count > 0)
                 extra["removedGroupSids"] = result.RemovedGroupSids.ToArray();
+
+            if (requestPath is not null)
+                extra["path"] = requestPath;
 
             audit.LogModuleAction(
                 account, ipAddress, AuditAction, AuditCategory, account,
