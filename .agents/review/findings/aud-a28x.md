@@ -7,7 +7,7 @@ module-specific config is ABSENT; an unreadable store is not absent. If the stor
 presence check, a borrow connects under appsettings values (tenant, app ID, certificate) instead of the
 module config's. aud-a28t added `TryGetIsConfigured` beside `IsConfigured` for the permission gate; the
 pool's own three reads still use the permissive path.
-**Status**: Fixed on the branch, with the folded-in aud-a26s follow-up, not merged; review pending
+**Status**: Merged `448b02c8` (with the folded-in aud-a26s follow-up); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a4c579a99f70ca768`
 **Commit**: `da615264` (fix, tests, record, the folded-in follow-up); master `8151de3e` merged in first (`8ee81571`); plan `7e65ce6a`; comments `5c32669e`
 **Reviewer**: implementer (surfaced by the aud-a28t/a26q agent, 2026-10-22, candidate 1 of its hand-back)
