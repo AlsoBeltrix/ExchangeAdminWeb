@@ -325,7 +325,7 @@
         onPremTarget = null;
     }
 
-    private async Task<bool> ReauthorizeAsync()
+    private async Task<string?> ReauthorizeAsync() // kd-40: null when authorized, else the refusal - its caller shows it and records it
     {
         // Re-check authorization immediately before the write: a user removed
         // from the section group (or whose module was disabled) mid-session
@@ -334,10 +334,10 @@
         var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "MailboxPermissions");
         if (!authCheck.Succeeded)
         {
-            result = PermissionResult.Fail("Authorization denied.");
-            return false;
+            // Not shown here: the caller knows the change it refused, and its row names it.
+            return SelfGrantRefusalRecord.ReauthorizationDenied;
         }
-        return true;
+        return null;
     }
 
     /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
@@ -365,7 +365,7 @@
         var fullAccess = grantFullAccess;
         var sendAs = grantSendAs;
         var autoMap = autoMapping;
-
+        string RefusedAt(string refusal, string step) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{string.Join("+", new[] { fullAccess ? "FullAccess" : null, sendAs ? "SendAs" : null }.OfType<string>())}", target, user, string.Join("+", new[] { fullAccess ? "FullAccess" : null, sendAs ? "SendAs" : null }.OfType<string>()), false, ticket, errorDetail: refusal, extra: SelfGrantRefusalRecord.RefusalExtra(step)), Logger, target, SelfGrantRefusalRecord.RefusedChangeRecord); // kd-40: a refusal before the target is checked - the re-authorization, the ticket - is the change's own Failed row, nothing attempted
         isLoading = true;
         result = null;
         await Task.Yield();
@@ -388,13 +388,13 @@
         // than one dead button. The early returns below therefore no longer clear the flag.
         try
         {
-            if (!await ReauthorizeAsync())
-                return;
+            if (await ReauthorizeAsync() is { } denied)
+            { result = PermissionResult.Fail(RefusedAt(denied, SelfGrantRefusalRecord.AuthorizationRefusalStep)); return; } // kd-40: recorded
 
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = SelfGrantRefusalRecord.MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket); // kd-18: presence first - a dormant ServiceNow passes every ticket, a blank one included
             if (!ticketValidation.IsValid)
             {
-                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                result = PermissionResult.Fail(RefusedAt(SelfGrantRefusalRecord.TicketRefused(ticketValidation.Message), SelfGrantRefusalRecord.TicketRefusalStep)); // kd-40: recorded
                 return;
             }
 
@@ -561,7 +561,7 @@
         var isAdd = bulkIsAdd;
         var ticket = bulkTicketNumber.Trim();
         var ipAddress = clientIpAddress;
-
+        string RefusedAt(string refusal, string step) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogMailboxPermission(currentUser, ipAddress, isAdd ? "BulkAdd" : "BulkRemove", "Bulk", file.Name, "Multiple", false, ticket, errorDetail: refusal, extra: SelfGrantRefusalRecord.RefusalExtra(step)), Logger, "Bulk", SelfGrantRefusalRecord.RefusedChangeRecord); // kd-40: a refusal before the file is read is the run's own Failed row, nothing attempted
         isLoading = true;
         bulkResult = null;
         await Task.Yield();
@@ -581,13 +581,13 @@
         // between the raise and the try has no finally behind it.
         try
         {
-            if (!await ReauthorizeAsync())
-                return;
+            if (await ReauthorizeAsync() is { } denied)
+            { result = PermissionResult.Fail(RefusedAt(denied, SelfGrantRefusalRecord.AuthorizationRefusalStep)); return; } // kd-40: recorded
 
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = SelfGrantRefusalRecord.MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket); // kd-18: presence first, as SubmitSingle's
             if (!ticketValidation.IsValid)
             {
-                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                result = PermissionResult.Fail(RefusedAt(SelfGrantRefusalRecord.TicketRefused(ticketValidation.Message), SelfGrantRefusalRecord.TicketRefusalStep)); // kd-40: recorded
                 return;
             }
 

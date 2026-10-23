@@ -53,6 +53,39 @@ internal static class SelfGrantRefusalRecord
     /// <summary>aud-a70 (5). <c>ExecuteOnPrem</c>'s refusal when the operator may not change on-premises permissions.</summary>
     internal const string OnPremNotAuthorized = "Authorization denied for on-prem operations. Nothing was written.";
 
+    /// <summary>kd-40. The <c>refusedAt</c> of a refusal at the ticket's check.</summary>
+    internal const string TicketRefusalStep = "TicketValidation";
+
+    /// <summary>kd-40. The <c>refusedAt</c> of a refusal at the per-click re-authorization.</summary>
+    internal const string AuthorizationRefusalStep = "Authorization";
+
+    /// <summary>
+    /// kd-40. What the pages' <c>ReauthorizeAsync</c> refuses with - the operator may no longer use the module - for the caller
+    /// to show and to record with the change it refused.
+    /// </summary>
+    internal const string ReauthorizationDenied = "Authorization denied. Nothing was written.";
+
+    /// <summary>
+    /// kd-40. The extra of a refusal made before anything was attempted, in the aud-a28 refusal convention: the step that
+    /// refused (<c>refusedAt</c>) and <c>mutationAttempted</c> false, which tells it from a write that failed.
+    /// </summary>
+    internal static Dictionary<string, object?> RefusalExtra(string step) =>
+        new() { ["refusedAt"] = step, ["mutationAttempted"] = false };
+
+    /// <summary>
+    /// kd-18. The refusal of a ticket with nothing in it that identifies one - null, blank, white space or control characters
+    /// only - in the words <see cref="ServiceNowService"/> refuses a blank ticket with when it is enabled; null when one is
+    /// present. Asked before ServiceNow, which passes every ticket while it is switched off, a blank one included.
+    /// </summary>
+    internal static TicketValidationResult? MissingTicket(string? ticket) =>
+        ticket is not null && ticket.Any(c => !char.IsWhiteSpace(c) && !char.IsControl(c))
+            ? null
+            : new TicketValidationResult { IsValid = false, Message = "Ticket number is required" };
+
+    /// <summary>kd-40. A ticket refusal as its banner and its row say it: the check's own words, and that nothing was written.</summary>
+    internal static string TicketRefused(string? message) =>
+        $"Ticket validation failed: {(message ?? "").Trim().TrimEnd('.')}. Nothing was written.";
+
     /// <summary>aud-a70 (1). A single change's own record (<c>SubmitSingle</c>), in the words its guard has always logged.</summary>
     internal const string SingleChangeRecord = "the permission change";
 
