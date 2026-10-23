@@ -186,6 +186,28 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>Named like Exchange's: a record whose reason is this type is Exchange saying there is no such object.</summary>
     public sealed class ManagementObjectNotFoundException(string message) : Exception(message);
 
+    /// <summary>
+    /// aud-a68, kd-14. A failure as PowerShell makes one under -ErrorAction Stop: a stand-in that writes the error, called
+    /// with Stop, so it is an ActionPreferenceStopException whose message puts "The running command stopped because ..." in
+    /// front of the error as written - what a live Connect-ExchangeOnline failure is, and what the error-text helper reads.
+    /// </summary>
+    public static Exception StopFailure(string message)
+    {
+        using var ps = PowerShell.Create();
+        ps.AddScript("""
+            param([string] $Text)
+            function Connect-StandIn {
+                [CmdletBinding()]
+                param([string] $Text)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.InvalidOperationException]::new($Text), 'StubConnect', [System.Management.Automation.ErrorCategory]::NotSpecified, $null))
+            }
+            Connect-StandIn -Text $Text -ErrorAction Stop
+            """).AddArgument(message);
+        var failure = Assert.ThrowsAny<RuntimeException>(() => ps.Invoke());
+        Assert.StartsWith("The running command stopped", failure.Message, StringComparison.Ordinal);
+        return failure;
+    }
+
     /// <summary>aud-a23j. The Active Directory module's "no such object", as Get-ADGroup -Identity writes it.</summary>
     public static ErrorRecord DirectoryNotFound(string identity) => DirectoryNotFoundIn(identity, "contoso.test");
 
@@ -283,7 +305,7 @@ internal sealed class MigrationStubExchange : IDisposable
             exchange.DefineOnPremSession(ps);
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
-            exchange.OnPremCredentialsFor();
+            exchange.OnPremCredentialsFor(purpose);
     }
 
     /// <summary>aud-a23o. The real Recipient Lookup service over the same stand-ins: Exchange Online in the pool, on-premises in its seams.</summary>
@@ -297,7 +319,7 @@ internal sealed class MigrationStubExchange : IDisposable
             exchange.DefineOnPremSession(ps);
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
-            exchange.OnPremCredentialsFor();
+            exchange.OnPremCredentialsFor(purpose);
     }
 
     // aud-a23o. The configuration a service is built with: the stand-in's, plus an on-premises server only when asked for.
@@ -307,8 +329,16 @@ internal sealed class MigrationStubExchange : IDisposable
             .Build()
         : _config;
 
-    private Task<(string username, string password, string domain)?> OnPremCredentialsFor() =>
-        Task.FromResult<(string username, string password, string domain)?>(OnPremCredentials ? ("svc-migration", "not-a-secret", "CONTOSO") : null);
+    // kd-14: Failures["OnPrem Credentials <purpose>"] fails one read's credentials - an exception thrown as it is, a string as
+    // an InvalidOperationException - so the location read ("on-prem mailbox location check") and the size read ("on-prem
+    // mailbox size check") can fail apart.
+    private Task<(string username, string password, string domain)?> OnPremCredentialsFor(string purpose) =>
+        Failures[$"OnPrem Credentials {purpose}"] switch
+        {
+            Exception failure => Task.FromException<(string username, string password, string domain)?>(failure),
+            string refused => Task.FromException<(string username, string password, string domain)?>(new InvalidOperationException(refused)),
+            _ => Task.FromResult<(string username, string password, string domain)?>(OnPremCredentials ? ("svc-migration", "not-a-secret", "CONTOSO") : null),
+        };
 
     /// <summary>
     /// aud-a23o. What the services' ConnectOnPrem seam does here: in the service's own on-premises runspace, an Invoke-Command

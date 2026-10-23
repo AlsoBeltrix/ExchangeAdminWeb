@@ -163,10 +163,12 @@ public class RecipientLookupService : ExchangeServiceBase
                     _ => "Unknown"
                 };
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsCancellation(ex))
             {
+                // kd-14. As the statistics read's catch (aud-a68 (2)): a cancellation is not a read that failed, so it leaves the
+                // lookup (aud-a23g's rule); anything else in the error's own words (aud-a23i's helper).
                 result.MailboxLocation = "Unknown";
-                result.Warnings.Add($"Could not determine mailbox location: {ex.Message}");
+                result.Warnings.Add($"Could not determine mailbox location: {ResolveFailure(ex).primary}");
             }
         }
 
@@ -191,10 +193,10 @@ public class RecipientLookupService : ExchangeServiceBase
                 if (onPremSize.UnreadableReason("on-premises") is { } unreadable)
                     result.Warnings.Add($"{char.ToUpperInvariant(unreadable[0])}{unreadable[1..]}.");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsCancellation(ex)) // kd-14: the same
             {
                 result.ArchiveUnreadable = ResolveFailure(ex).primary.TrimEnd('.'); // aud-a68: the archive was not read either, so it is not "Disabled"
-                result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ex.Message}");
+                result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ResolveFailure(ex).primary}");
             }
         }
 
