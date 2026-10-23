@@ -15,6 +15,17 @@
     <FileVersion>2.34.0.0</FileVersion>
   </PropertyGroup>
 
+  <!-- cdt-41. A package with a known advisory fails the build instead of adding a line to the warning
+       count, where 40 of them sat unseen: NuGet audits every package in the graph, transitive ones
+       included, from moderate severity up, and each advisory it reports is an error. The test project
+       carries the same settings. -->
+  <PropertyGroup>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>moderate</NuGetAuditLevel>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1902;NU1903;NU1904</WarningsAsErrors>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="ExchangeAdminWeb.Tests" />
   </ItemGroup>
@@ -31,7 +42,7 @@
     <PackageReference Include="CsvHelper" Version="33.1.0" />
     <PackageReference Include="HtmlSanitizer" Version="9.2.1039" />
     <PackageReference Include="MailKit" Version="4.16.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.7" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Negotiate" Version="10.0.13" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
     <PackageReference Include="MsgReader" Version="6.0.11" />
     <PackageReference Include="OpenMcdf" Version="3.1.4" />
@@ -39,6 +50,19 @@
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <!-- cdt-41. Transitive packages pinned to the first version clear of the advisories NuGet reports
+       against the version the graph would otherwise resolve. Each pin can go once what brings the
+       package asks for that version or later. -->
+  <ItemGroup>
+    <!-- The SQLite engine the app runs on, through Microsoft.Data.Sqlite 10.0.7 and
+         SQLitePCLRaw.bundle_e_sqlite3 2.1.11, which ask for 2.1.11: SQLite 3.49.1, GHSA-2m69-gcr7-jv3q
+         (CVE-2025-6965, fixed in SQLite 3.50.2). 2.1.12 carries SQLite 3.53.3. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+    <!-- Through Microsoft.PowerShell.SDK 7.6.1, MailKit's MimeKit 4.16.0 and MsgReader 6.0.11, which
+         resolved 10.0.7: GHSA-846f-f764-76mx and GHSA-2fmv-rv2c-59x7. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
 </Project>
