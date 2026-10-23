@@ -9,7 +9,7 @@ truncates back to the pre-write length. With two writers: A records its start of
 completed row; B's trace still says AuditWritten Success and the Admin Event Log later misses or drops the
 row. The `db` command-line mode exits before logging, so the second writer is another web instance. The
 aud-a28z record states "one writer per JSONL file" as an unprobed assumption; nothing enforces it.
-**Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a45/a46 agent's scope)
+**Status**: Merged `2a15e9ed`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
 **Commit**: `867957f8` (fix, tests, docs, record); comments `ab666f85`; plan `45a99de1`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-13, 2026-10-22)

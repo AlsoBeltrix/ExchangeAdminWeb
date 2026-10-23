@@ -6,7 +6,7 @@ Log's `ParseExtendedLine` drops a merged line. (2) `GetEntries` has a bare catch
 on any read failure, so the event log shows "no diagnostics" instead of "the diagnostics could not be read".
 (3) `DroppedEntryCount` (aud-a28z) is exposed but shown on no page. (4) The bounded queue's DropOldest
 overflow is not counted (the channel's itemDropped callback would do it).
-**Status**: Fixed on branch, closed on guard proof; not merged (plan approved under the owner's 2026-10-21 "EVERYTHING" go)
+**Status**: Merged `2a15e9ed`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-a42d5cbfa41a7a483` (from `2df48c36`)
 **Commit**: `543f5d5f` (fix, tests, README, record); comments `ab666f85`; plan `45a99de1`
 **Reviewer**: implementer (surfaced by the aud-a28z/a26u/cdt-41 agent, 2026-10-22, candidates 2, 3 and 4 of its hand-back)
