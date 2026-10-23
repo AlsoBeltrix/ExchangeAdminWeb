@@ -286,6 +286,35 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
     }
 
     [Fact]
+    public async Task AStoredValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation()
+    {
+        // aud-a50, part 2. A stored value that is neither true nor false was named on every self-grant check - one warning per
+        // row of a bulk upload - where the appsettings one is named once (aud-a43). It still refuses every time, is named
+        // once per process for each value, so a second validator over it says nothing, and a new value is named in its turn.
+        const string Named = "The self-grant setting holds";
+        var value = "maybe-" + Guid.NewGuid().ToString("N");
+        SeedMailboxPermissions("PreventSelfGrant", value);
+        var first = new CapturingLogger();
+        var second = new CapturingLogger();
+        var validator = ValidatorOver(TestConfigStore.Create(_h.Dir), logger: first);
+        var another = ValidatorOver(TestConfigStore.Create(_h.Dir), logger: second);
+
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await another.ValidateSelfGrantAsync(_self, SelfAddress));
+
+        var warning = Assert.Single(first.Warnings, w => w.Contains(Named, StringComparison.Ordinal));
+        Assert.Contains($"'{value}'", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain(second.Warnings, w => w.Contains(Named, StringComparison.Ordinal));
+
+        var next = "perhaps-" + Guid.NewGuid().ToString("N");
+        SeedMailboxPermissions("PreventSelfGrant", next);
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
+        Assert.Equal(SelfGrantRefusal, await validator.ValidateSelfGrantAsync(_self, SelfAddress));
+        Assert.Single(first.Warnings, w => w.Contains($"'{next}'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ExchangeOnlineRowsThatCannotBeRead_RefuseASelfGrant_AsACheckThatCouldNotBeCompleted()
     {
         // aud-a28y. The store answers the self-grant setting's read and fails every later one: the Exchange Online rows

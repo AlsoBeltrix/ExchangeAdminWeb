@@ -52,6 +52,20 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
         }, allowRetry: true);
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ExchangeGroupMember>> ReadGroupMembersAsync(string group)
+    {
+        // aud-a52. ResolveRecipientAsync's guards and its pool: an Exchange Online that cannot be read, or is not configured,
+        // throws - never an empty membership - and the read is read-only, so a dead session may be retried once.
+        if (!_exoPool.TryGetIsConfigured(out var configured))
+            throw new InvalidOperationException("Exchange Online's module enablement or its module_config rows could not be read - cannot read the group's members.");
+        if (!configured)
+            throw new InvalidOperationException("Exchange Online is not configured - cannot read the group's members.");
+
+        return await RunPooledQueryAsync<IReadOnlyList<ExchangeGroupMember>>(
+            (ps, tracker) => ExchangeGroupMembers.Read(ps, group, pipeline => Invoke(pipeline, tracker)), allowRetry: true);
+    }
+
     /// <summary>
     /// True only for Exchange's "no such recipient" terminating error. Every other exception is
     /// a failed lookup and must propagate - see the contract on

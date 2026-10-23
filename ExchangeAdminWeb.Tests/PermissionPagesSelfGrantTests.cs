@@ -1,3 +1,4 @@
+using System.Management.Automation;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
@@ -216,6 +217,242 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var result = await SubmitCalendarGrant(resolver, AuditWithoutAWriter(), logger);
 
         AssertTheBanner(result, refusal, logger.Warnings);
+    }
+
+    // ---- aud-a50, part 1: the on-premises write re-checks the grantee right before it writes -----------------------
+
+    private const string MailboxPage = "Mailbox Permissions";
+    private const string CalendarPage = "Calendar Permissions";
+    private const string Other = "other@contoso.test";
+
+    public static TheoryData<string> Pages => [MailboxPage, CalendarPage];
+
+    /// <summary>The on-premises Mailbox Permissions write, its credential and its session the harness's.</summary>
+    private sealed class OnPremMailboxService(ExchangeWriteHarness h)
+        : MailboxPermissionService(h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, h.Config, null!, h.Trace)
+    {
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
+
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+            h.DefineOnPremSession(ps);
+    }
+
+    /// <summary>The on-premises Calendar Permissions write, its credential and its session the harness's.</summary>
+    private sealed class OnPremCalendarService(ExchangeWriteHarness h)
+        : CalendarPermissionService(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, null!, h.Trace)
+    {
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+            Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
+
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+            h.DefineOnPremSession(ps);
+    }
+
+    /// <summary>The grant <c>SubmitSingle</c> stages before the operator's confirmation: the target, the grantee and the ticket.</summary>
+    private static void Stage(object page, string grantee)
+    {
+        SetField(page, "onPremTarget", Target);
+        SetField(page, "onPremUser", grantee);
+        SetField(page, "onPremTicket", "INC100");
+    }
+
+    /// <summary>
+    /// What the operator's Continue reaches: <paramref name="page"/>'s <c>ExecuteOnPrem</c>, over a staged Full Access
+    /// (Mailbox Permissions) or Reviewer (Calendar Permissions) grant to <paramref name="grantee"/>; the result and the
+    /// warnings the page logged.
+    /// </summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
+        string page, string grantee, IIdentityResolver resolver, AuditService audit)
+    {
+        ComponentBase component;
+        Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
+        if (page == MailboxPage)
+        {
+            var logger = new CapturingLogger<MailboxPermissions>();
+            component = new MailboxPermissions();
+            Wire(component, resolver, audit, logger);
+            Set(component, "MailboxService", new OnPremMailboxService(_h));
+            SetField(component, "onPremFullAccess", true);
+            SetField(component, "onPremSendAs", false);
+            warnings = () => logger.Warnings;
+        }
+        else
+        {
+            var logger = new CapturingLogger<CalendarPermissions>();
+            component = new CalendarPermissions();
+            Wire(component, resolver, audit, logger);
+            Set(component, "CalendarService", new OnPremCalendarService(_h));
+            SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
+            warnings = () => logger.Warnings;
+        }
+        Stage(component, grantee);
+
+        await Call(component, "ExecuteOnPrem");
+
+        Assert.False(GetField<bool>(component, "isLoading"));
+        Assert.Null(GetField<string>(component, "onPremTarget"));
+        return (Assert.IsType<PermissionResult>(GetField<PermissionResult>(component, "result")), warnings());
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheOnPremWrite_ReChecksTheGrantee_RightBeforeItWrites_AndRefusesASelfGrant(string page)
+    {
+        var (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Equal(SelfGrantRefusal, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttempt" : "SetCalendar_SelfGrantAttempt", Text(record, "action"));
+        Assert.Equal(SelfGrantRefusal, Text(record, "error"));
+        Assert.Equal(CloudAlias, Text(record, "affectedUser"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+        Assert.Empty(_h.Writes);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheOnPremWrite_ToSomeoneElse_StillWrites(string page)
+    {
+        var (result, _) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        Assert.True(result.Success, result.Message);
+        Assert.NotEmpty(_h.CallsTo("Invoke-Command"));
+        Assert.Equal(page == MailboxPage ? "Add-MailboxPermission" : "Set-MailboxFolderPermission", Assert.Single(_h.Writes));
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheOnPremRefusal_WhoseRecordCannotBeWritten_IsTheValidatorsRefusal_AndSaysSo(string page)
+    {
+        var (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter());
+
+        AssertTheBanner(result, SelfGrantRefusal, warnings);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+    }
+
+    [Fact]
+    public void TheRefusalsBanner_IsTheRefusal_WhenItsRecordIsWritten()
+    {
+        var logger = new CapturingLogger<MailboxPermissions>();
+        var written = 0;
+
+        var banner = SelfGrantRefusalRecord.Banner(SelfGrantRefusal, () =>
+        {
+            written++;
+            return JsonlWriteOutcome.Written;
+        }, logger, Target);
+
+        Assert.Equal(SelfGrantRefusal, banner);
+        Assert.Equal(1, written);
+        Assert.Empty(logger.Warnings);
+    }
+
+    [Theory]
+    [InlineData(JsonlWriteOutcome.NotSerializable)]
+    [InlineData(JsonlWriteOutcome.FileWriteFailed)]
+    public void TheRefusalsBanner_WhenTheWriterDropsItsRecord_SaysTheRowCouldNotBeWritten(JsonlWriteOutcome dropped)
+    {
+        // aud-a50, part 4: the writer does not throw (aud-a28q), it says what became of the row - and it logs its own error.
+        var logger = new CapturingLogger<MailboxPermissions>();
+
+        var banner = SelfGrantRefusalRecord.Banner(SelfGrantRefusal, () => dropped, logger, Target);
+
+        Assert.Equal(SelfGrantRefusal + " The audit row could not be written.", banner);
+        Assert.Empty(logger.Warnings);
+    }
+
+    // ---- aud-a50, part 4: a row the writer drops is a row not written ----------------------------------------
+
+    /// <summary>The audit file of this minute and the next held with no sharing: the writer drops the row and says so.</summary>
+    private IDisposable HoldTheAuditFile()
+    {
+        var now = DateTime.Now;
+        var streams = new[] { now, now.AddMinutes(1) }
+            .Select(date => _h.Jsonl.GetAuditLogPaths(date).Last())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            .ToList();
+        return new HeldFiles(streams);
+    }
+
+    private sealed class HeldFiles(List<FileStream> streams) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var stream in streams)
+                stream.Dispose();
+        }
+    }
+
+    /// <summary><paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to the alias; the result and the page's warnings.</summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Submit(
+        string page, IIdentityResolver resolver, AuditService audit)
+    {
+        if (page == MailboxPage)
+        {
+            var logger = new CapturingLogger<MailboxPermissions>();
+            return (await SubmitMailboxGrant(resolver, audit, logger), logger.Warnings);
+        }
+
+        var calendarLogger = new CapturingLogger<CalendarPermissions>();
+        return (await SubmitCalendarGrant(resolver, audit, calendarLogger), calendarLogger.Warnings);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheSubmitSingleBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten(string page)
+    {
+        // Nothing throws: the writer hands back that it dropped the row, and the banner said nothing of it.
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Equal(SelfGrantRefusal + " The audit row could not be written.", result.Message);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task TheOnPremBanner_WhenTheWriterDropsTheRefusalsRow_SaysTheRowCouldNotBeWritten(string page)
+    {
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await ConfirmOnPrem(page, CloudAlias, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Equal(SelfGrantRefusal + " The audit row could not be written.", result.Message);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+    }
+
+    [Fact]
+    public void TheRefusalsBanner_WhenItsRecordThrows_SaysTheRowCouldNotBeWritten_AndLogsTheException()
+    {
+        var logger = new CapturingLogger<MailboxPermissions>();
+        var failure = new InvalidOperationException("the disk is full - payload-5e1f");
+
+        var banner = SelfGrantRefusalRecord.Banner(SelfGrantRefusal, () => throw failure, logger, Target);
+
+        Assert.Equal(SelfGrantRefusal + " The audit row could not be written.", banner);
+        var (message, exception) = Assert.Single(logger.Warnings);
+        Assert.Same(failure, exception);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
+        Assert.DoesNotContain("payload-5e1f", banner, StringComparison.Ordinal);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

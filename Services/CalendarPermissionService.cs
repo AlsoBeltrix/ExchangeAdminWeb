@@ -134,6 +134,26 @@ public class CalendarPermissionService : ExchangeServiceBase
         {
             try
             {
+                // aud-a50. A row that names no user is an invalid row, refused before any check and recorded as one - the
+                // Mailbox Permissions loop's rule and detail.
+                if (string.IsNullOrWhiteSpace(row.User))
+                {
+                    audit.LogCalendarPermission(
+                        currentUser, ipAddress, $"Bulk{(isSet ? "Set" : "Remove")}Calendar_NoUser",
+                        row.Target, row.User, null, false, ticketNumber,
+                        errorDetail: MailboxPermissionService.BulkRowNamesNoUser);
+                    errors.Add($"{row.Target}/{row.User}: {MailboxPermissionService.BulkRowNamesNoUser}");
+                    entries.Add(new BulkOperationEntry
+                    {
+                        Target = row.Target,
+                        User = row.User,
+                        Permission = "Calendar",
+                        Status = "FAILED",
+                        Message = "No user specified"
+                    });
+                    continue;
+                }
+
                 // The servicing overload with an explicit module id: the back-compat overload
                 // cannot service by construction, and a borrowed id would let a Mailbox grant
                 // authorise Calendar - the validator serves three modules (pps-1).

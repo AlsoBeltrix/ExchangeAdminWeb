@@ -18,6 +18,12 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// </summary>
     private const string ServicerModuleId = "MailboxPermissions";
 
+    /// <summary>
+    /// The detail recorded for a bulk row whose User is empty or blank (aud-a50); the Calendar Permissions loop records the
+    /// same.
+    /// </summary>
+    internal const string BulkRowNamesNoUser = "No user specified (the User column is empty)";
+
     public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MailboxPermissions", operationTrace) { }
 
@@ -219,6 +225,27 @@ public class MailboxPermissionService : ExchangeServiceBase
         {
             try
             {
+                // aud-a50. A row that names no user is an invalid row, refused before any check: the self-grant check put ''
+                // to Exchange and the directory and recorded the row as a self-grant attempt, and a revocation went on to the
+                // write. It is recorded as what it is, and the next row is processed.
+                if (string.IsNullOrWhiteSpace(row.User))
+                {
+                    audit.LogMailboxPermission(
+                        currentUser, ipAddress, $"Bulk{(isAdd ? "Add" : "Remove")}_NoUser",
+                        row.Target, row.User, "Mailbox", false, ticketNumber,
+                        errorDetail: BulkRowNamesNoUser);
+                    errors.Add($"{row.Target}/{row.User}: {BulkRowNamesNoUser}");
+                    entries.Add(new BulkOperationEntry
+                    {
+                        Target = row.Target,
+                        User = row.User,
+                        Permission = "Mailbox",
+                        Status = "FAILED",
+                        Message = "No user specified"
+                    });
+                    continue;
+                }
+
                 var fullAccess = ParseBool(row.FullAccess, "FullAccess");
                 var sendAs = ParseBool(row.SendAs, "SendAs");
                 var autoMap = ParseBool(string.IsNullOrWhiteSpace(row.AutoMapping) ? "True" : row.AutoMapping, "AutoMapping");

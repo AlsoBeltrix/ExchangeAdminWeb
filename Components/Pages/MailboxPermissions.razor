@@ -440,15 +440,15 @@
 
                     try
                     {
-                        Audit.LogMailboxPermission(
+                        if (Audit.LogMailboxPermission(
                             currentUser, ipAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType,
                             false, ticket, autoMap,
-                            errorDetail: selfGrantError);
+                            errorDetail: selfGrantError) != JsonlWriteOutcome.Written) selfGrantError += " " + SelfGrantRefusalRecord.AuditRowNotWritten;
                     }
                     catch (Exception ex)
                     {
                         Logger.LogWarning(ex, "Failed to write audit for the self-grant refusal on {Target}", target);
-                        selfGrantError += " The audit row could not be written.";
+                        selfGrantError += " " + SelfGrantRefusalRecord.AuditRowNotWritten;
                     }
 
                     result = PermissionResult.Fail(selfGrantError);
@@ -701,7 +701,7 @@
                     false, ticket, errorDetail: onPremValidation.Error);
                 return;
             }
-
+            if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(selfGrantError, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             var onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
 
             var opResult = isAdd

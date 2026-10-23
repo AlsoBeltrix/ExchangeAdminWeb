@@ -44,7 +44,11 @@ public class AuditService
             evt[kvp.Key] = kvp.Value;
     }
 
-    public void LogMailboxPermission(
+    /// <returns>
+    /// What became of the row (aud-a50): the Mailbox Permissions page says when a refusal's row was not written. Every
+    /// other caller may ignore it.
+    /// </returns>
+    public JsonlWriteOutcome LogMailboxPermission(
         string performedBy,
         string ipAddress,
         string action,
@@ -74,10 +78,12 @@ public class AuditService
         };
 
         MergeExtra(evt, extra);
-        WriteAuditEvent(evt);
+        WriteAuditEvent(evt, out var outcome);
+        return outcome;
     }
 
-    public void LogCalendarPermission(
+    /// <returns>What became of the row (aud-a50), as <see cref="LogMailboxPermission"/> hands it back.</returns>
+    public JsonlWriteOutcome LogCalendarPermission(
         string performedBy,
         string ipAddress,
         string action,
@@ -105,7 +111,8 @@ public class AuditService
         };
 
         MergeExtra(evt, extra);
-        WriteAuditEvent(evt);
+        WriteAuditEvent(evt, out var outcome);
+        return outcome;
     }
 
     public void LogMigrationCheck(
@@ -463,7 +470,10 @@ public class AuditService
     private const string SettingsChangeCategory = "AdminSettings";
     private const string ConnectionPoolDrainAction = "DrainConnectionPool";
 
-    private void WriteAuditEvent(Dictionary<string, object?> evt)
+    // The one method every audit method ends in. aud-a50: it hands back what became of the row - the writer's outcome
+    // (aud-a28u) - through an out parameter rather than a return value, so the telemetry call stays its last statement
+    // (UsageTelemetryServiceTests pins both) and the methods that ignore it are untouched (the overload below).
+    private void WriteAuditEvent(Dictionary<string, object?> evt, out JsonlWriteOutcome outcome)
     {
         OperationTraceService.OperationScope? implicitScope = null;
         if (!_operationTrace.HasCurrentOperation)
@@ -478,7 +488,6 @@ public class AuditService
                 details: new Dictionary<string, object?> { ["source"] = "AuditService" });
         }
 
-        JsonlWriteOutcome outcome;
         try
         {
             evt["eventType"] = "audit";
@@ -518,6 +527,9 @@ public class AuditService
                 GetString(evt, "action") ?? string.Empty,
                 IsSuccessfulAuditResult(GetString(evt, "result")));
     }
+
+    // The write for every audit method that does not ask what became of its row.
+    private void WriteAuditEvent(Dictionary<string, object?> evt) => WriteAuditEvent(evt, out _);
 
     // The "AuditWritten" step's details (aud-a28u): the audit's category, action and result, as before, and - when the row
     // was not written - why, in words, the writer's outcome being a category rather than a message.

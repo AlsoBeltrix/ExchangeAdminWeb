@@ -41,6 +41,10 @@ internal sealed record SelfGrantDirectoryObject(
 /// Every read is <c>Get-ADObject</c> under <c>-ErrorAction Stop</c>, and a cmdlet that wrote to its error stream is a failed
 /// read; so is a row without a DN, an objectGUID or a class. The validator reads "no rows" as an answer, so nothing here
 /// may report one for a read that did not complete.
+///
+/// aud-a52. Whether a group holds the operator is read through <see cref="Groups"/>: the protected-group evaluator's reads
+/// (<see cref="PowerShellProtectedGroupDirectory"/>, the same failed-read rule) in this session, under its identity and with
+/// its catalog. aud-a43's direct member-link read is gone; the evaluator reads nesting and the primary group.
 /// </remarks>
 internal sealed class SelfGrantDirectory : IDisposable
 {
@@ -56,7 +60,14 @@ internal sealed class SelfGrantDirectory : IDisposable
         _runspace = runspace;
         _ps = ps;
         _globalCatalog = globalCatalog;
+        Groups = PowerShellProtectedGroupDirectory.UnderSessionIdentity(ps, globalCatalog);
     }
+
+    /// <summary>
+    /// The reads <see cref="ProtectedGroupMembership.Evaluate"/> needs, over this session's runspace: no credential, the
+    /// catalog this session found (aud-a52).
+    /// </summary>
+    internal IProtectedGroupDirectory Groups { get; }
 
     /// <summary>The production session, built as every directory path here builds it; not yet opened.</summary>
     internal static Runspace DefaultRunspace()
@@ -109,28 +120,6 @@ internal sealed class SelfGrantDirectory : IDisposable
         Search(GranteeFilter(identity, canonicalAddress), _globalCatalog);
 
     /// <summary>
-    /// Whether <paramref name="member"/> is a direct member of <paramref name="group"/>, asked in the group's own domain.
-    /// </summary>
-    /// <remarks>
-    /// The group's own domain holds every one of its member links, whatever its scope; the catalog holds a universal
-    /// group's only, and the member's domain none of another domain's groups. The domain is the DNS name the DN's DC
-    /// components give (<c>GroupManagementService.ServerFromDn</c>). The group is read there first: a domain that does not
-    /// answer for it cannot say it holds nobody.
-    /// </remarks>
-    internal bool HasDirectMember(SelfGrantDirectoryObject group, SelfGrantDirectoryObject member)
-    {
-        var server = GroupManagementService.ServerFromDn(group.DistinguishedName)
-            ?? throw new InvalidOperationException($"the group '{group.DistinguishedName}' names no domain");
-
-        var read = Search(ProtectedGroupMembership.ExactDnFilter(group.DistinguishedName), server);
-        if (read.Count != 1)
-            throw new InvalidOperationException(
-                $"the group's own domain returned {read.Count} objects for '{group.DistinguishedName}'; exactly one was expected");
-
-        return Search(DirectMemberFilter(group.DistinguishedName, member.DistinguishedName), server).Count > 0;
-    }
-
-    /// <summary>
     /// Every object a grantee identity can name: the identities Exchange accepts for a grantee that the directory holds -
     /// userPrincipalName, mail, any SMTP proxy address, the alias (mailNickname), sAMAccountName (also the name half of
     /// <c>DOMAIN\name</c>), the name, and a DN - and Exchange's canonical address for it when it named one.
@@ -174,10 +163,6 @@ internal sealed class SelfGrantDirectory : IDisposable
 
         return "(|" + string.Concat(clauses) + ")";
     }
-
-    /// <summary>The group at <paramref name="groupDn"/>, only when <paramref name="memberDn"/> is on its member attribute.</summary>
-    internal static string DirectMemberFilter(string groupDn, string memberDn) =>
-        $"(&{ProtectedGroupMembership.ExactDnFilter(groupDn)}(member={Escape(memberDn)}))";
 
     private static string Escape(string value) => ProtectedPrincipalService.EscapeLdapFilter(value);
 

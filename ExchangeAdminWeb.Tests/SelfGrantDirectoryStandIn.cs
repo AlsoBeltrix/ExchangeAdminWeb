@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Security.Claims;
@@ -10,17 +11,23 @@ namespace ExchangeAdminWeb.Tests;
 /// <summary>
 /// aud-a43. A stand-in Active Directory forest for the self-grant check's directory reads
 /// (<c>Services/SelfGrantDirectory.cs</c>): objects, their member links and two domains, behind a runspace whose
-/// <c>Import-Module</c>, <c>Get-ADForest</c> and <c>Get-ADObject</c> are advanced functions. No directory is reached.
+/// <c>Import-Module</c>, <c>Get-ADForest</c>, <c>Get-ADObject</c> and <c>Get-ADGroup</c> are advanced functions. No
+/// directory is reached.
 /// </summary>
 /// <remarks>
-/// Each stub records the step it was asked to run in <see cref="Calls"/> ("Get-ADObject &lt;server&gt; &lt;filter&gt;"),
-/// then fails as <see cref="Failures"/> says - its message written as the cmdlet's error, so the caller's
-/// <c>-ErrorAction Stop</c> throws it - or answers. <c>Get-ADObject</c> evaluates the LDAP filter the code sends over the
-/// objects its <c>-Server</c> reaches: the catalog endpoint reaches every domain, a domain's DNS name that domain, anything
-/// else nothing ("Unable to contact the server"). As on a real global catalog, the catalog holds no member link of a group
-/// that is not universal, so a membership asked of the catalog rather than the group's own domain reads as no member. A
-/// filter naming an attribute the stand-in does not hold, or a construct it does not read, is an error, so no test can
-/// pass through a filter it did not evaluate.
+/// Each stub records the step it was asked to run in <see cref="Calls"/> ("Get-ADObject &lt;server&gt; &lt;filter&gt;",
+/// "Get-ADGroup &lt;server&gt; &lt;filter&gt;"), then fails as <see cref="Failures"/> says - its message written as the
+/// cmdlet's error, so the caller's <c>-ErrorAction Stop</c> throws it - or answers. A search evaluates the LDAP filter the
+/// code sends over the objects its <c>-Server</c> reaches: the catalog endpoint reaches every domain, a domain's DNS name
+/// that domain, anything else nothing ("Unable to contact the server"); <c>Get-ADGroup</c> answers with groups only, as
+/// the real cmdlet does. As on a real global catalog, the catalog holds no member link of a group that is not universal,
+/// so a membership asked of the catalog rather than the group's own domain reads as no member. aud-a52: the in-chain rule
+/// (<c>member:1.2.840.113556.1.4.1941:=</c>) follows only the links the server asked holds - its own domain's groups, or
+/// at the catalog the universal ones - and the bit-and rule reads <c>groupType</c>; every domain holds its Domain Users
+/// group, the primary group of its accounts. A filter naming an attribute the stand-in does not hold, or a construct it
+/// does not read, is an error, so no test can pass through a filter it did not evaluate. No stub declares a
+/// <c>Credential</c> parameter: the self-grant reads run under the session's own identity, and a credential passed is a
+/// binding error.
 /// </remarks>
 internal sealed class SelfGrantDirectoryStandIn
 {
@@ -33,16 +40,35 @@ internal sealed class SelfGrantDirectoryStandIn
     public const int DomainUsersRid = 513;
     public const string UnreachableServer = "Unable to contact the server. This may be because this server does not exist, it is currently down, or it does not have the Active Directory Web Services running.";
 
+    private const string InChainRule = "1.2.840.113556.1.4.1941";
+    private const string BitAndRule = "1.2.840.113556.1.4.803";
+
+    // The member chain as a pseudo-attribute: what the in-chain rule compares against.
+    private const string MemberChain = "member;chain";
+
     private readonly List<Entry> _objects = [];
     private int _nextRid = 2000;
+
+    public SelfGrantDirectoryStandIn()
+    {
+        DomainUsers = AddGroup("Domain Users", rid: DomainUsersRid);
+        OtherDomainUsers = AddGroup("Domain Users", domainDn: OtherDomainDn, domainSid: OtherDomainSid, rid: DomainUsersRid);
+    }
+
+    /// <summary>The primary group of the accounts of <see cref="DomainDn"/>.</summary>
+    public Entry DomainUsers { get; }
+
+    /// <summary>The primary group of the accounts of <see cref="OtherDomainDn"/>.</summary>
+    public Entry OtherDomainUsers { get; }
 
     /// <summary>Every step a stub was asked to run, in order.</summary>
     public IList Calls { get; } = ArrayList.Synchronized(new ArrayList());
 
     /// <summary>
-    /// How a step fails instead of answering: "Import-Module", "Get-ADForest", "Get-ADObject" (every search),
-    /// "Get-ADObject &lt;server&gt;" (every search sent there), "Get-ADObject member" (a membership read), or
-    /// "Get-ADObject &lt;fragment&gt;" for a search whose filter contains the fragment.
+    /// How a step fails instead of answering: "Import-Module", "Get-ADForest", "Get-ADObject" or "Get-ADGroup" (every
+    /// search by that cmdlet), "&lt;cmdlet&gt; &lt;server&gt;" (every search it sends there), "&lt;cmdlet&gt; member" (a
+    /// membership read: a filter on <c>member</c>), or "&lt;cmdlet&gt; &lt;fragment&gt;" for a search whose filter contains
+    /// the fragment.
     /// </summary>
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
@@ -52,8 +78,10 @@ internal sealed class SelfGrantDirectoryStandIn
     /// <summary>Opening the runspace throws this, when set.</summary>
     public string? RunspaceFailure { get; set; }
 
+    /// <summary>Every search a stub was asked to run, either cmdlet.</summary>
     public IReadOnlyList<string> Searches =>
-        Calls.Cast<string>().Where(call => call.StartsWith("Get-ADObject ", StringComparison.Ordinal)).ToList();
+        Calls.Cast<string>().Where(call => call.StartsWith("Get-ADObject ", StringComparison.Ordinal)
+            || call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)).ToList();
 
     public sealed class Entry
     {
@@ -69,13 +97,26 @@ internal sealed class SelfGrantDirectoryStandIn
         public List<string> Proxies { get; init; } = [];
         public List<string> Members { get; init; } = [];
 
+        /// <summary>A group's scope as Get-ADGroup reports it: Global, DomainLocal or Universal.</summary>
+        public string Scope { get; init; } = "Global";
+
         /// <summary>A universal group: the catalog holds its member links as well as its own domain does.</summary>
-        public bool Universal { get; init; }
+        public bool Universal => string.Equals(Scope, "Universal", StringComparison.Ordinal);
 
         /// <summary>Held by the catalog and not by its own domain - a domain that cannot answer for it.</summary>
         public bool CatalogOnly { get; init; }
 
         public string Name => Dn[3..Dn.IndexOf(',')];
+
+        /// <summary>A security group's groupType: the scope's flag and the security flag.</summary>
+        public int? GroupType => !string.Equals(Class, "group", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : unchecked((int)0x80000000) | (Scope switch
+            {
+                "DomainLocal" => 0x4,
+                "Universal" => 0x8,
+                _ => 0x2,
+            });
     }
 
     public static string DomainName(string domainDn) =>
@@ -101,9 +142,12 @@ internal sealed class SelfGrantDirectoryStandIn
         return entry;
     }
 
-    /// <summary>A security group of <paramref name="domainDn"/> holding <paramref name="members"/> as direct members.</summary>
+    /// <summary>
+    /// A security group of <paramref name="domainDn"/> holding <paramref name="members"/> - accounts or groups - as direct
+    /// members: global unless <paramref name="universal"/> or <paramref name="domainLocal"/>.
+    /// </summary>
     public Entry AddGroup(string name, string? mail = null, string domainDn = DomainDn, string domainSid = DomainSid,
-        int? rid = null, bool universal = false, bool catalogOnly = false, params Entry[] members)
+        int? rid = null, bool universal = false, bool catalogOnly = false, bool domainLocal = false, params Entry[] members)
     {
         var entry = new Entry
         {
@@ -114,7 +158,7 @@ internal sealed class SelfGrantDirectoryStandIn
             Sid = $"{domainSid}-{rid ?? Interlocked.Increment(ref _nextRid)}",
             Proxies = mail is null ? [] : [$"SMTP:{mail}"],
             Members = [.. members.Select(member => member.Dn)],
-            Universal = universal,
+            Scope = universal ? "Universal" : domainLocal ? "DomainLocal" : "Global",
             CatalogOnly = catalogOnly,
         };
         _objects.Add(entry);
@@ -161,7 +205,14 @@ internal sealed class SelfGrantDirectoryStandIn
             [void]$SelfGrantCalls.Add("Get-ADObject $Server $LDAPFilter")
             $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, $LDAPFilter)
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $false)) { $row }
+            """),
+        ("Get-ADGroup", """
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties)
+            [void]$SelfGrantCalls.Add("Get-ADGroup $Server $LDAPFilter")
+            $problem = $SelfGrantProblem.Invoke('Get-ADGroup', $Server, $LDAPFilter)
+            if ($problem) { Write-Error $problem; return }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $true)) { $row }
             """),
     ];
 
@@ -178,7 +229,7 @@ internal sealed class SelfGrantDirectoryStandIn
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCalls", Calls, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantProblem", (Func<string, string, string, string?>)Problem, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCatalogs", (Func<string[]>)(() => GlobalCatalogs), null));
-        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch", (Func<string, string, object[]>)Search, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch", (Func<string, string, bool, object[]>)Search, null));
         foreach (var (name, body) in Stubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, body));
         return RunspaceFactory.CreateRunspace(state);
@@ -188,15 +239,15 @@ internal sealed class SelfGrantDirectoryStandIn
     {
         if (Failures[command] is string all)
             return all;
-        if (command != "Get-ADObject")
+        if (command is not ("Get-ADObject" or "Get-ADGroup"))
             return null;
-        if (Failures[$"Get-ADObject {server}"] is string here)
+        if (Failures[$"{command} {server}"] is string here)
             return here;
-        if (filter.Contains("(member=", StringComparison.OrdinalIgnoreCase) && Failures["Get-ADObject member"] is string member)
+        if (filter.Contains("(member", StringComparison.OrdinalIgnoreCase) && Failures[$"{command} member"] is string member)
             return member;
         foreach (var key in Failures.Keys.Cast<string>())
         {
-            if (key.StartsWith("Get-ADObject (", StringComparison.Ordinal) && filter.Contains(key["Get-ADObject ".Length..], StringComparison.OrdinalIgnoreCase))
+            if (key.StartsWith(command + " (", StringComparison.Ordinal) && filter.Contains(key[(command.Length + 1)..], StringComparison.OrdinalIgnoreCase))
                 return (string)Failures[key]!;
         }
         return Reach(server) is null ? UnreachableServer : null;
@@ -215,17 +266,16 @@ internal sealed class SelfGrantDirectoryStandIn
         return null;
     }
 
-    private object[] Search(string filter, string server)
+    private object[] Search(string filter, string server, bool groupsOnly)
     {
         try
         {
             var reach = Reach(server) ?? throw new InvalidOperationException(UnreachableServer);
-            var atCatalog = reach == "forest";
             var match = LdapFilter.Parse(filter);
             return _objects
-                .Where(entry => atCatalog
-                    || (!entry.CatalogOnly && entry.Dn.EndsWith("," + reach, StringComparison.OrdinalIgnoreCase)))
-                .Where(entry => match(attribute => Values(entry, attribute, atCatalog)))
+                .Where(entry => !groupsOnly || string.Equals(entry.Class, "group", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => Holds(reach, entry))
+                .Where(entry => match(attribute => Values(entry, attribute, reach)))
                 .Select(Row)
                 .Cast<object>()
                 .ToArray();
@@ -237,7 +287,14 @@ internal sealed class SelfGrantDirectoryStandIn
         }
     }
 
-    private static IEnumerable<string> Values(Entry entry, string attribute, bool atCatalog) => attribute.ToLowerInvariant() switch
+    // The objects a server holds: every object at the catalog; a domain's own, unless only the catalog holds it.
+    private static bool Holds(string reach, Entry entry) =>
+        reach == "forest" || (!entry.CatalogOnly && entry.Dn.EndsWith("," + reach, StringComparison.OrdinalIgnoreCase));
+
+    // Whose member links a server holds: at the catalog a universal group's only; in a domain its own groups'.
+    private static bool LinksHeld(string reach, Entry group) => reach == "forest" ? group.Universal : Holds(reach, group);
+
+    private IEnumerable<string> Values(Entry entry, string attribute, string reach) => attribute.ToLowerInvariant() switch
     {
         "objectsid" => One(entry.Sid),
         "userprincipalname" => One(entry.Upn),
@@ -248,9 +305,32 @@ internal sealed class SelfGrantDirectoryStandIn
         "name" or "cn" => One(entry.Name),
         "distinguishedname" => One(entry.Dn),
         "objectclass" => One(entry.Class),
-        "member" => atCatalog && !entry.Universal ? [] : entry.Members,
+        "member" => LinksHeld(reach, entry) ? entry.Members : [],
+        MemberChain => LinksHeld(reach, entry) ? Chain(entry, reach) : [],
+        "grouptype" => entry.GroupType is int type ? [type.ToString(CultureInfo.InvariantCulture)] : [],
         _ => throw new InvalidOperationException($"stand-in: the filter names '{attribute}', which it does not hold"),
     };
+
+    // Every DN reached from the group through member links the server holds.
+    private List<string> Chain(Entry group, string reach)
+    {
+        var reached = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Dn };
+        var queue = new Queue<Entry>([group]);
+        while (queue.Count > 0)
+        {
+            foreach (var dn in queue.Dequeue().Members)
+            {
+                reached.Add(dn);
+                var nested = _objects.FirstOrDefault(candidate =>
+                    string.Equals(candidate.Class, "group", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(candidate.Dn, dn, StringComparison.OrdinalIgnoreCase));
+                if (nested is not null && seen.Add(dn) && LinksHeld(reach, nested))
+                    queue.Enqueue(nested);
+            }
+        }
+        return reached;
+    }
 
     private static IEnumerable<string> One(string? value) => value is null ? [] : [value];
 
@@ -266,10 +346,15 @@ internal sealed class SelfGrantDirectoryStandIn
         row.Properties.Add(new PSNoteProperty("proxyAddresses", entry.Proxies.ToArray()));
         row.Properties.Add(new PSNoteProperty("objectSid", entry.Sid is null ? null : new SecurityIdentifier(entry.Sid)));
         row.Properties.Add(new PSNoteProperty("primaryGroupID", entry.PrimaryGroupId));
+        if (entry.GroupType is not null)
+            row.Properties.Add(new PSNoteProperty("GroupScope", entry.Scope));
         return row;
     }
 
-    /// <summary>The LDAP filters the self-grant directory sends: and, or, not, and attribute equality with RFC 4515 escapes.</summary>
+    /// <summary>
+    /// The LDAP filters the self-grant directory sends: and, or, not, attribute equality with RFC 4515 escapes, and two
+    /// extensible matches - the in-chain rule on <c>member</c> and the bit-and rule on <c>groupType</c>.
+    /// </summary>
     private static class LdapFilter
     {
         public static Func<Func<string, IEnumerable<string>>, bool> Parse(string filter)
@@ -326,8 +411,20 @@ internal sealed class SelfGrantDirectoryStandIn
             if (equals < 0)
                 throw new InvalidOperationException($"stand-in: cannot read the filter '{s}'");
             var attribute = s[at..equals];
-            if (attribute.Contains(':') || attribute.EndsWith('~') || attribute.EndsWith('>') || attribute.EndsWith('<'))
+            var bitAnd = false;
+            if (string.Equals(attribute, $"member:{InChainRule}:", StringComparison.OrdinalIgnoreCase))
+            {
+                attribute = MemberChain;
+            }
+            else if (string.Equals(attribute, $"groupType:{BitAndRule}:", StringComparison.OrdinalIgnoreCase))
+            {
+                attribute = "groupType";
+                bitAnd = true;
+            }
+            else if (attribute.Contains(':') || attribute.EndsWith('~') || attribute.EndsWith('>') || attribute.EndsWith('<'))
+            {
                 throw new InvalidOperationException($"stand-in: does not evaluate '{attribute}=' in '{s}'");
+            }
             at = equals + 1;
 
             var value = new StringBuilder();
@@ -347,6 +444,12 @@ internal sealed class SelfGrantDirectoryStandIn
             }
 
             var wanted = value.ToString();
+            if (bitAnd)
+            {
+                var flags = int.Parse(wanted, CultureInfo.InvariantCulture);
+                return values => values(attribute).Any(v => (int.Parse(v, CultureInfo.InvariantCulture) & flags) == flags);
+            }
+
             return values => values(attribute).Any(v => string.Equals(v, wanted, StringComparison.OrdinalIgnoreCase));
         }
 

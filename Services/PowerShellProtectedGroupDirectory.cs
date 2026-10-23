@@ -5,7 +5,8 @@ namespace ExchangeAdminWeb.Services;
 
 /// <summary>
 /// Performs the protected-group membership reads against live Active Directory, in the runspace
-/// and under the credential the protected-principal check already holds.
+/// and under the credential the protected-principal check already holds - or, for the self-grant
+/// check (aud-a52), under the session's own identity (<see cref="UnderSessionIdentity"/>).
 /// </summary>
 /// <remarks>
 /// Nothing here decides anything. Every judgement - what an empty answer means, which domain a
@@ -22,7 +23,11 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     private static readonly string[] GroupProperties = ["objectSid", "GroupScope"];
 
     private readonly PowerShell _ps;
-    private readonly PSCredential _credential;
+    private readonly PSCredential? _credential;
+
+    // Set only by UnderSessionIdentity: no read passes a credential. A flag rather than a null credential, so the
+    // credentialed constructor's reads are exactly what they were whatever it is handed.
+    private readonly bool _underSessionIdentity;
     private string? _globalCatalog;
 
     internal PowerShellProtectedGroupDirectory(PowerShell ps, PSCredential credential)
@@ -30,6 +35,23 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
         _ps = ps;
         _credential = credential;
     }
+
+    private PowerShellProtectedGroupDirectory(PowerShell ps, string globalCatalog)
+    {
+        _ps = ps;
+        _underSessionIdentity = true;
+        _globalCatalog = globalCatalog;
+    }
+
+    /// <summary>
+    /// The same reads under the identity <paramref name="ps"/>'s session runs as, with the catalog that session already
+    /// found (<c>host:3268</c>): the self-grant check's (aud-a52), which reads as the app pool does and keeps the
+    /// directory-read secret where it is needed. The catalog is preset, so it is never discovered again with a credential.
+    /// </summary>
+    internal static PowerShellProtectedGroupDirectory UnderSessionIdentity(PowerShell ps, string globalCatalog) =>
+        string.IsNullOrWhiteSpace(globalCatalog)
+            ? throw new ArgumentException("A global catalog is required.", nameof(globalCatalog))
+            : new(ps, globalCatalog);
 
     public DirectoryTarget ReadTarget(string targetDn, string server)
     {
@@ -205,8 +227,10 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             var cmd = _ps.AddCommand(command);
             foreach (var (name, value) in parameters)
                 cmd.AddParameter(name, value);
-            cmd.AddParameter("Credential", _credential)
-               .AddParameter("ErrorAction", "Stop");
+            // The credential the caller holds, on every read; none under the session's identity (aud-a52).
+            if (!_underSessionIdentity)
+                cmd.AddParameter("Credential", _credential);
+            cmd.AddParameter("ErrorAction", "Stop");
 
             var rows = _ps.Invoke();
             if (_ps.HadErrors)
