@@ -161,6 +161,23 @@ self-grant check refuses when the operator presses Continue - say they joined th
 refused then with the validator's refusal, recorded as `SubmitSingle` records it, and nothing is written on-premises.
 Every on-premises grant pays one more self-grant check (a directory session and the Exchange lookups) just before it writes.
 
+### Part 3 - a bulk row that names no user is an invalid row
+
+- `Services/MailboxPermissionService.cs` `ProcessMailboxPermissionsCsvAsync` and `Services/CalendarPermissionService.cs`
+  `ProcessCalendarPermissionsCsvAsync`, first in each row's try: `string.IsNullOrWhiteSpace(row.User)` records
+  `Bulk{Add|Remove}_NoUser` (permission "Mailbox") / `Bulk{Set|Remove}Calendar_NoUser` (no access right), Failed, with
+  `MailboxPermissionService.BulkRowNamesNoUser` - "No user specified (the User column is empty)" - as its error; adds that
+  error and a FAILED entry "No user specified"; continues. Before the rights are parsed, the target check, the self-grant
+  check and the write, for grants and revocations alike.
+- Tests: `PermissionValidatorSelfGrantTests` +12 - `ABulkRowThatNamesNoUser_IsAnInvalidRow_RefusedBeforeAnyCheck` (both
+  loops x grant and revoke x an empty and a whitespace User: one `*_NoUser` record, the FAILED entry and error, Exchange
+  never asked, no directory session, nothing written or connected) and `ARowAfterOneThatNamesNoUser_IsStillProcessed`
+  (both loops x grant and revoke: the next row written).
+
+Caller-visible change, by design: a bulk row whose User is empty or blank is reported "No user specified" and audited as
+`*_NoUser`; a grant row used to be refused by the self-grant check after it asked Exchange and the directory about '' and
+was audited as `*_SelfGrantAttempt`, and a revocation row went to the target check and the write.
+
 ## Guard proof
 
 Protocol (session-local driver `mutate.ps1`, session scratchpad `a50`, log `a50-mutations.log`): the fix staged; per
@@ -185,3 +202,15 @@ Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~Permissio
 | E1 | extra, `SelfGrantRefusalRecord.Banner` without its catch | `D0232B6656BAB02CFEEAA03C2A45E0BB` | 3 of 422: both `TheOnPremRefusal_WhoseRecordCannotBeWritten_IsTheValidatorsRefusal_AndSaysSo` rows and `TheRefusalsBanner_WhenItsRecordThrows_SaysTheRowCouldNotBeWritten_AndLogsTheException` |
 
 Each page mutant kept its page's line count, so the ClickGate and ProgressRegistry suites ran under it and passed.
+
+### Part 3
+
+Filter `FullyQualifiedName~PermissionValidatorSelfGrant|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~BulkPermission|FullyQualifiedName~PermissionPagesSelfGrant`
+(146 tests). Fixed-file MD5s: `Services/MailboxPermissionService.cs` `9BBAE48216BFA259B38BCD8D7028B94B`,
+`Services/CalendarPermissionService.cs` `CA0F76AB9ACEC0173AF911B6C7AA75AA`. After the round, the restored tree rebuilt and
+the filter: 146/146 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M3 | Mailbox Permissions bulk loop: the blank-User check removed (the row as it stood; the unused constant left) | `EEE3F76921F4B18017F40F7988FD144F` | 6 of 146: the four `ABulkRowThatNamesNoUser_IsAnInvalidRow_RefusedBeforeAnyCheck(calendar: False, ...)` rows and both `ARowAfterOneThatNamesNoUser_IsStillProcessed(calendar: False, ...)` rows - no `_NoUser` record |
+| M3c | Calendar Permissions bulk loop: the blank-User check removed | `F88F9402D9DCE8C57E3FED7CB55BF040` | 6 of 146: the same rows with `calendar: True` |

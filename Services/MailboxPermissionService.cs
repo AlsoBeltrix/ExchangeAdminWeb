@@ -18,6 +18,8 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// </summary>
     private const string ServicerModuleId = "MailboxPermissions";
 
+    internal const string BulkRowNamesNoUser = "No user specified (the User column is empty)";
+
     public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MailboxPermissions", operationTrace) { }
 
@@ -219,6 +221,24 @@ public class MailboxPermissionService : ExchangeServiceBase
         {
             try
             {
+                if (string.IsNullOrWhiteSpace(row.User))
+                {
+                    audit.LogMailboxPermission(
+                        currentUser, ipAddress, $"Bulk{(isAdd ? "Add" : "Remove")}_NoUser",
+                        row.Target, row.User, "Mailbox", false, ticketNumber,
+                        errorDetail: BulkRowNamesNoUser);
+                    errors.Add($"{row.Target}/{row.User}: {BulkRowNamesNoUser}");
+                    entries.Add(new BulkOperationEntry
+                    {
+                        Target = row.Target,
+                        User = row.User,
+                        Permission = "Mailbox",
+                        Status = "FAILED",
+                        Message = "No user specified"
+                    });
+                    continue;
+                }
+
                 var fullAccess = ParseBool(row.FullAccess, "FullAccess");
                 var sendAs = ParseBool(row.SendAs, "SendAs");
                 var autoMap = ParseBool(string.IsNullOrWhiteSpace(row.AutoMapping) ? "True" : row.AutoMapping, "AutoMapping");

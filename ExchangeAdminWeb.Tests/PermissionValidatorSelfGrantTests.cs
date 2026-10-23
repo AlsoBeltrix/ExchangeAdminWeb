@@ -501,6 +501,85 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Equal(expected, Text(record, "error"));
     }
 
+    // aud-a50, part 3: a row that names no user is an invalid row, refused before any check.
+
+    private const string NoUser = "No user specified (the User column is empty)";
+
+    public static TheoryData<bool, bool, string> BlankUserRows => new()
+    {
+        { false, true, "" }, { false, true, "   " }, { false, false, "" }, { false, false, "   " },
+        { true, true, "" }, { true, true, "   " }, { true, false, "" }, { true, false, "   " },
+    };
+
+    private static string Row(bool calendar, string user) =>
+        calendar ? $"{Target},{user},Reviewer\n" : $"{Target},{user},True,False,False\n";
+
+    /// <summary>The Mailbox Permissions or Calendar Permissions bulk loop over <paramref name="rows"/>, run as the operator.</summary>
+    private async Task<BulkOperationResult> RunBulk(bool calendar, bool grant, string rows, IIdentityResolver resolver)
+    {
+        var validator = _h.NothingProtectedValidator(resolver);
+        if (calendar)
+        {
+            return await new CalendarPermissionService(_h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace)
+                .ProcessCalendarPermissionsCsvAsync(
+                    new MemoryStream(Encoding.UTF8.GetBytes("Target,User,AccessRight\n" + rows)), isSet: grant, validator, Logon,
+                    _h.Audit, Email(), "10.0.0.5", "INC100", Jdoe);
+        }
+
+        return await new MailboxPermissionService(_h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace)
+            .ProcessMailboxPermissionsCsvAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes("Target,User,FullAccess,SendAs,AutoMapping\n" + rows)), isAdd: grant, validator, Logon,
+                _h.Audit, Email(), "10.0.0.5", "INC100", Jdoe);
+    }
+
+    private static string NoUserAction(bool calendar, bool grant) => calendar
+        ? $"Bulk{(grant ? "Set" : "Remove")}Calendar_NoUser"
+        : $"Bulk{(grant ? "Add" : "Remove")}_NoUser";
+
+    [Theory]
+    [MemberData(nameof(BlankUserRows))]
+    public async Task ABulkRowThatNamesNoUser_IsAnInvalidRow_RefusedBeforeAnyCheck(bool calendar, bool grant, string user)
+    {
+        var resolver = ExchangeKnowsTheTarget();
+
+        var bulk = await RunBulk(calendar, grant, Row(calendar, user), resolver);
+
+        Assert.Equal(0, bulk.SuccessCount);
+        Assert.Equal(1, bulk.FailedCount);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(NoUserAction(calendar, grant), Text(record, "action"));
+        Assert.Equal(NoUser, Text(record, "error"));
+        Assert.Equal("Failed", Text(record, "result"));
+        var entry = Assert.Single(bulk.Entries);
+        Assert.Equal("FAILED", entry.Status);
+        Assert.Equal("No user specified", entry.Message);
+        Assert.Equal($"{Target}/{user}: {NoUser}", Assert.Single(bulk.Errors));
+        await resolver.DidNotReceive().ResolveRecipientAsync(Arg.Any<string>());
+        Assert.Empty(_h.Forest.Calls);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, _h.Connects);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task ARowAfterOneThatNamesNoUser_IsStillProcessed(bool calendar, bool grant)
+    {
+        // The control: the invalid row ends that row only.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+
+        var bulk = await RunBulk(calendar, grant, Row(calendar, "") + Row(calendar, Other), resolver);
+
+        Assert.Equal(1, bulk.SuccessCount);
+        Assert.Equal(1, bulk.FailedCount);
+        Assert.Equal(["FAILED", "SUCCESS"], bulk.Entries.Select(entry => entry.Status));
+        Assert.Single(_h.AuditRows(), row => Text(row, "action") == NoUserAction(calendar, grant));
+        Assert.NotEmpty(_h.Writes);
+    }
+
     /// <summary>
     /// "unreachable": Exchange cannot answer for the operator, so the check cannot be completed. "alias": Exchange names
     /// the grantee as the operator's own mailbox, a self-grant the string match misses. "no operator": the loop was handed
