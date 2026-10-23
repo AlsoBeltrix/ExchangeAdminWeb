@@ -2031,10 +2031,10 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                return;
+                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{singleMigrationDirection}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", singleTicketNumber, "MigrationCreate")); return; }
 
-            if (singleResult == null || singleResult.Status != MigrationStatus.Eligible || string.IsNullOrWhiteSpace(singleTicketNumber))
-                return;
+            if (MigrationService.RefusesSingleCreate(singleResult, singleTicketNumber, out var singleRefusal))
+                { singleCreateResult = PermissionResult.Fail(createFailure = singleRefusal); return; }
 
             await Task.Yield();
 
@@ -2172,10 +2172,10 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                return;
+                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{migrationDirection}", "create a migration batch", string.IsNullOrWhiteSpace(bulkBatchName) ? "(bulk batch)" : bulkBatchName.Trim(), bulkTicketNumber, "MigrationCreate")); return; }
 
-            if (bulkResult == null || bulkResult.EligibleUsers == 0 || string.IsNullOrWhiteSpace(bulkTicketNumber))
-                return;
+            if (MigrationService.RefusesBulkCreate(bulkResult, bulkTicketNumber, out var bulkRefusal))
+                { createResult = PermissionResult.Fail(createFailure = bulkRefusal); return; }
 
             await Task.Yield();
 
@@ -3299,7 +3299,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                return;
+                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; }
 
             var result = await action();
             batchActionResult = result;
@@ -3363,7 +3363,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                return;
+                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; }
 
             var result = await action();
             batchActionResult = result;

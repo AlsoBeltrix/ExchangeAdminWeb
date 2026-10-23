@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
@@ -897,6 +898,41 @@ https://admin.exchange.microsoft.com/#/migration";
             Changed = result.Changed,
             ServicedNote = result.ServicedNote,
         };
+
+    internal static string RecordDenial(AuditService audit, ILogger logger, string actor, string ipAddress,
+        string auditAction, string description, string target, string ticket, string policy)
+    {
+        try
+        {
+            audit.LogMigrationAction(actor, ipAddress, $"{auditAction}_Denied", target, false, ticket,
+                errorDetail: $"{policy} authorization denied",
+                extra: new Dictionary<string, object?> { ["mutationAttempted"] = false });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
+        }
+
+        return $"Not authorized to {description}; nothing was done.";
+    }
+
+    internal static bool RefusesSingleCreate([NotNullWhen(false)] MigrationEligibilityResult? check, string ticket, [NotNullWhen(true)] out string? refusal)
+    {
+        refusal = check is null ? "No eligibility check has been run for this mailbox; nothing was created."
+            : check.Status != MigrationStatus.Eligible ? $"{check.EmailAddress}'s eligibility check reads {check.Status}, and only an eligible mailbox can be migrated; nothing was created."
+            : string.IsNullOrWhiteSpace(ticket) ? "A ticket number is required; nothing was created."
+            : null;
+        return refusal is not null;
+    }
+
+    internal static bool RefusesBulkCreate([NotNullWhen(false)] MigrationBatchResult? check, string ticket, [NotNullWhen(true)] out string? refusal)
+    {
+        refusal = check is null ? "No eligibility check of a file has been run; nothing was created."
+            : check.EligibleUsers == 0 ? "No mailbox in the checked file is eligible; nothing was created."
+            : string.IsNullOrWhiteSpace(ticket) ? "A ticket number is required; nothing was created."
+            : null;
+        return refusal is not null;
+    }
 
     public async Task<MigrationBatchList> GetMigrationBatchesAsync()
     {

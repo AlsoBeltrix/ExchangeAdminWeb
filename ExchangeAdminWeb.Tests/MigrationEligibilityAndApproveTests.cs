@@ -246,7 +246,11 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
 
         await Call(page, "CreateSingleMigrationBatch");
 
-        Assert.Equal(goesThrough, Field("singleCreateResult").GetValue(page) != null);
+        // aud-a23q: the guard now says why it stopped ("nothing shown" was this test's sign of it), so an answer that does
+        // not go through is the guard's refusal, and one that does is the service's own result.
+        var shown = Assert.IsType<PermissionResult>(Field("singleCreateResult").GetValue(page));
+        var refusal = $"{Address}'s eligibility check reads {status}, and only an eligible mailbox can be migrated; nothing was created.";
+        Assert.Equal(goesThrough, shown.Message != refusal);
         Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("New-MigrationBatch", StringComparison.Ordinal));
     }
 

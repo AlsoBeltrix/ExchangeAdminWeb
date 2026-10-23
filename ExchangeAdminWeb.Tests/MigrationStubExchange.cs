@@ -599,7 +599,8 @@ internal sealed class MigrationStubExchange : IDisposable
         """;
 
     /// <summary>The Migration page over <paramref name="service"/>, its injected services set by hand.</summary>
-    public RenderableMigration Page(MigrationService service)
+    /// <param name="deny">aud-a23q. A policy the authorization stand-in refuses; every other policy is granted.</param>
+    public RenderableMigration Page(MigrationService service, string? deny = null)
     {
         var page = new RenderableMigration();
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "CONTOSO\\operator")], "test"));
@@ -607,7 +608,7 @@ internal sealed class MigrationStubExchange : IDisposable
         auth.GetAuthenticationStateAsync().Returns(new AuthenticationState(principal));
         var authorization = Substitute.For<IAuthorizationService>();
         authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
-            .Returns(AuthorizationResult.Success());
+            .Returns(call => call.ArgAt<string>(2) == deny ? AuthorizationResult.Failed() : AuthorizationResult.Success());
         Set(page, "MigrationSvc", service);
         Set(page, "Audit", Audit);
         Set(page, "Email", new EmailService(_config, NullLogger<EmailService>.Instance));
