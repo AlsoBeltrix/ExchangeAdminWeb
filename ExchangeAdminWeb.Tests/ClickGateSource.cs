@@ -361,25 +361,58 @@ public sealed class ClickGateSource
     /// scoped to a loop, a conditional or a finally rather than the whole method. Returns an empty
     /// string when the opener is absent, leaving the caller to decide whether that is a failure.
     /// </summary>
+    /// <remarks>
+    /// kd-3. Lexed, not counted. The opener is looked for, and the braces balanced, in
+    /// <see cref="RazorSyntax.CodeView"/> - the Roslyn view the progress guards read, in which every
+    /// comment and every string, char, verbatim, raw and interpolated string literal (holes
+    /// included) is blanked to the same length. So a "}" in a log message or a '{' char literal
+    /// neither closes nor opens the block, and the opener's text inside a literal or a comment is
+    /// not the opener. Counting raw characters ended a block at the first brace inside a string -
+    /// <see cref="Tags"/> was quote-aware and this was not - so an assertion scoped to the block read
+    /// the wrong code. The text returned is the source's own, literals and comments included,
+    /// because the code view keeps every offset. C# only: the code view blanks a component's markup,
+    /// so an opener in markup is not found.
+    /// </remarks>
     public static string ExtractBlock(string source, string opener)
     {
-        var start = source.IndexOf(opener, StringComparison.Ordinal);
+        var code = RazorSyntax.CodeView(source);
+
+        var start = IndexOfCode(source, code, opener);
         if (start < 0)
             return "";
 
-        var open = source.IndexOf('{', start + opener.Length);
+        var open = code.IndexOf('{', start + opener.Length);
         if (open < 0)
             return "";
 
         var depth = 0;
-        for (var i = open; i < source.Length; i++)
+        for (var i = open; i < code.Length; i++)
         {
-            if (source[i] == '{') depth++;
-            else if (source[i] == '}' && --depth == 0)
+            if (code[i] == '{') depth++;
+            else if (code[i] == '}' && --depth == 0)
                 return source[open..(i + 1)];
         }
 
         return "";
+    }
+
+    /// <summary>
+    /// The first occurrence of <paramref name="text"/> in <paramref name="source"/> that starts in
+    /// code: its first non-blank character survives in <paramref name="code"/>, the code view of
+    /// the same source, rather than having been blanked as part of a literal or a comment.
+    /// </summary>
+    private static int IndexOfCode(string source, string code, string text)
+    {
+        var lead = text.Length - text.TrimStart().Length;
+        for (var at = source.IndexOf(text, StringComparison.Ordinal); at >= 0;
+             at = source.IndexOf(text, at + 1, StringComparison.Ordinal))
+        {
+            var first = at + lead;
+            if (first >= source.Length || code[first] == source[first])
+                return at;
+        }
+
+        return -1;
     }
 
     public static string PagesDirectory()

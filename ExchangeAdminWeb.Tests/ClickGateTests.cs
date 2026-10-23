@@ -1200,6 +1200,48 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void ExtractBlockBalancesTheBracesOfCodeNotOfLiteralsOrComments()
+    {
+        // kd-3. ExtractBlock counted raw characters, so a brace inside a string closed the block early
+        // and an opener's text inside one started it in the wrong place - and
+        // EveryRegisteredFlagIsLoweredInAFinally, the suite's one caller, then read the wrong code: a
+        // finally cut short at a "}" in a log message loses the clear below it, and one started inside
+        // a string credits a clear that is not in the finally at all. Each marked line below breaks
+        // the raw count on its own; the clear at the end of the finally is what the block must still
+        // contain, and the statement after it is what it must not.
+        var body = string.Join("\n",
+            "private async Task Save()",
+            "{",
+            "    Logger.LogInformation(\"no finally { here\");",      // the opener and a brace in a string
+            "    try { busy = true; await Work(); }",
+            "    finally",
+            "    {",
+            "        Logger.LogInformation(\"closing } early\");",     // a string
+            "        var close = '}';",                                // a char
+            "        var path = @\"C:\\{verbatim}\";",                 // a verbatim string
+            "        var hole = $\"{(ok ? \"{\" : \"}\")} done\";",    // braces in an interpolation hole's strings
+            "        // a line comment }",
+            "        /* a block comment } */",
+            "        busy = false;",
+            "    }",
+            "    after = true;",
+            "}");
+
+        var block = ClickGateSource.ExtractBlock(body, "finally");
+
+        Assert.StartsWith("{", block, StringComparison.Ordinal);
+        Assert.EndsWith("}", block, StringComparison.Ordinal);
+        Assert.Contains("busy = false;", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("busy = true;", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("after = true;", block, StringComparison.Ordinal);
+        // The source's own text comes back, literals and all; only the reading was code-only.
+        Assert.Contains("\"closing } early\"", block, StringComparison.Ordinal);
+
+        // An opener that is only ever in a literal is absent, as an opener that is nowhere is.
+        Assert.Equal("", ClickGateSource.ExtractBlock("var s = \"finally { x }\";", "finally"));
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because
@@ -1525,8 +1567,8 @@ public class ClickGateTests
         // after it - not that the two are wired together.
         //
         // Not in this assertion's dependency path, deliberately: ClickGateSource.ExtractBlock,
-        // which counts braces without regard for quoting and so mis-ends a block containing an
-        // interpolated string. Every handler here is full of "$"{dns} ({ip})"". This works from
+        // which counted braces without regard for quoting until kd-3 and so mis-ended a block
+        // containing an interpolated string. Every handler here is full of "$"{dns} ({ip})"". This works from
         // MethodBody, which is delimited by the next member signature, and from index arithmetic.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
@@ -1616,8 +1658,8 @@ public class ClickGateTests
         //
         // Honest limitation: this is textual ordering within one method body, not control flow. It
         // cannot see a raise reached by a call, and it cannot prove the early return is reachable.
-        // It also does not use ClickGateSource.ExtractBlock, whose brace counting is not quote-aware
-        // and would mis-end any block in these interpolated-string-heavy handlers.
+        // It also does not use ClickGateSource.ExtractBlock, whose brace counting was not quote-aware
+        // until kd-3 and would have mis-ended any block in these interpolated-string-heavy handlers.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
 
@@ -1807,8 +1849,8 @@ public class ClickGateTests
     /// The condition pattern reads a bracketed expression two levels deep -
     /// <c>if (IsBusy || string.IsNullOrWhiteSpace(Trim(x)))</c> - which covers every guard shape on
     /// the converted pages. A third level is not read, and such an if is skipped rather than
-    /// half-matched. Deliberately not built on ClickGateSource.ExtractBlock, whose brace counting is
-    /// not quote-aware; this never counts a brace at all.
+    /// half-matched. Deliberately not built on ClickGateSource.ExtractBlock, whose brace counting was
+    /// not quote-aware until kd-3; this never counts a brace at all.
     /// </remarks>
     private static readonly Regex EarlyReturnGuard = new(
         @"\bif\s*\((?<cond>[^()]*(?:\((?:[^()]|\([^()]*\))*\)[^()]*)*)\)\s*(?:\{\s*)?return\b[^;{}]*;",
@@ -1843,9 +1885,10 @@ public class ClickGateTests
     /// <remarks>
     /// <para>
     /// Built on <see cref="ClickGateSource.Tags"/>, which is quote-aware, and deliberately NOT on
-    /// ClickGateSource.ExtractBlock, whose brace counting is not - a brace inside an interpolated
-    /// string ends its block in the wrong place, and Migration's placeholder at 324 is exactly such
-    /// a string. Recorded in .agents/state.md; fixing it is its own slice.
+    /// ClickGateSource.ExtractBlock, whose brace counting was not - a brace inside an interpolated
+    /// string ended its block in the wrong place, and Migration's placeholder at 324 is exactly such
+    /// a string. kd-3 fixed that by reading the C# code view, which blanks markup, so this markup
+    /// walk still could not use it.
     /// </para>
     /// <para>
     /// Tags() needs a name, so child components are found by harvesting PascalCase tag names first.
@@ -2096,7 +2139,8 @@ public class ClickGateTests
     /// <remarks>
     /// <para>
     /// The same shape as <see cref="ClickGateSource.Tags"/>, and deliberately NOT
-    /// ClickGateSource.ExtractBlock, whose brace counting is not quote-aware. Tags() itself cannot
+    /// ClickGateSource.ExtractBlock, which reads C# only (its code view blanks markup; before kd-3 its
+    /// brace counting was not quote-aware either). Tags() itself cannot
     /// be used here because it needs a tag name up front and a keyboard handler can sit on any
     /// element; this walk is generic for exactly that reason. It skips past each element's closing
     /// "&gt;", so a "&lt;" inside a quoted attribute value cannot open a second element inside the
