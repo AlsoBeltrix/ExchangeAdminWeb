@@ -8,9 +8,9 @@ connect failing) or the on-premises `ConnectOnPrem` failing before any `Invoke-C
 nothing could have applied. The Admin Event Log then hides a definite no-write failure from the Failed
 filter and sends the operator into needless reconciliation. The aud-a75 test even asserts no
 `Invoke-Command` while expecting Undetermined.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); in progress
+**Status**: Fixed on branch, not merged, not pushed; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM)
 **Branch**: `aud-a76-agent-a02bf3417cec8f3d3` (from master `a1eb8a3a`)
-**Commit**: -
+**Commit**: plan `537ccd2c`; fix `7ef600eb`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-9, 2026-10-23)
 
 ## Evidence
@@ -267,3 +267,26 @@ they stood (the borrow's or the connect's own exception let out).
 ## Comments after the round
 
 None: the comments were written with the fix, and every mutant ran with them in place, so there is no comments-only commit.
+
+## Gates - 2026-10-23 (branch tip `7ef600eb`: the plan and the fix)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors; 19 warnings - the baseline - none in a
+  touched file (GroupManagement, MessageTrace, RiskyUsers, SelfServiceGroups, Comms10kApprovedSetTests,
+  AccountLockoutRemediationService, HeaderAnalysisService, MigrationReportExportProcessor).
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug, as the gate is written): exit 0, 6,693
+  passed / 0 skipped / 0 failed, 6,693 total, 3m49s; nothing hung (the blame collector wrote no Sequence file).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0 (and
+  `git diff --check a1eb8a3a HEAD`, the branch's whole change: exit 0). `git add -A` then `tools/Test-AsciiOnly.ps1`: exit 0
+  ("ASCII lint passed"). The pages: 808 and 762 lines (`wc -l`).
+
+No AD, Exchange Online, Graph, DHCP or IIS call: Exchange Online is the harness's pool or a test pool over the harness's
+stand-in cmdlets, on-premises Exchange the harness's stand-in defined in the services' own runspace and its credential the
+services' own seam, the directory `SelfGrantDirectoryStandIn` read with the harness's stand-in credential, the unreadable
+settings a store that fails when told. No coder self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `aud-a76-agent-a02bf3417cec8f3d3`, not merged, not pushed. Due at merge: the base app version - the shared
+`PermissionChangeFailure` (`TheConnection`, `StageOf`, the banner) and the new shared `Services/PermissionWriteSubmission.cs` -
+and the Mailbox Permissions and Calendar Permissions module versions: what a write that failed before its command was sent is
+filed as, and how its banner reads.
