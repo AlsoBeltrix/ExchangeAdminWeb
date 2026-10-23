@@ -6,7 +6,7 @@ could not be confirmed..." but is written with `success: false`, so `AuditServic
 `LogCalendarPermission` file it as `result: "Failed"`; the Admin Event Log's Undetermined filter (aud-a28z
 part 5) does not find it, and a reviewer reconciling Exchange may treat a possibly-applied change as a
 failed one.
-**Status**: Merged `39afd9a1`; closed on guard proof; codex review pending
+**Status**: Complete; merged `39afd9a1`; codex perm-batch-9 raised one MEDIUM, admitted as aud-a76
 **Branch**: `worktree-agent-a22f2baf02d6abcdd` (from master `066ea1a2`)
 **Commit**: plan `f224dd22`; fix `75355a7b`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-8, 2026-10-23, candidate 1)

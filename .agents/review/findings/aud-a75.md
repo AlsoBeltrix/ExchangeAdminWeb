@@ -5,7 +5,7 @@
 (reachable: `AddMailboxPermissionsOnPremAsync` calls `ConnectOnPrem` inside a try with only a `finally`; the
 Calendar on-prem set and remove have no catch) is filed Failed while the banner says the outcome could not
 be confirmed; the Undetermined filter does not find it.
-**Status**: Merged `39afd9a1`; closed on guard proof; codex review pending
+**Status**: Complete; merged `39afd9a1`; codex perm-batch-9 raised one MEDIUM, admitted as aud-a76
 **Branch**: `worktree-agent-a22f2baf02d6abcdd` (from master `066ea1a2`, after aud-a73's `ff0b9ded`)
 **Commit**: plan `b8bad419`; fix `73af9fc8`
 **Reviewer**: implementer (surfaced by the aud-a73 agent, 2026-10-23, candidate 1 of its hand-back)
