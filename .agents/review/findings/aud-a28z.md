@@ -6,7 +6,7 @@ aud-a28q class), and in `ProcessQueueAsync` it would end the background consumer
 written to the extended log until a restart and no one is told. (2) Left from aud-a28q: a value whose
 `ToString` throws, in a field `WriteAuditEvent` reads before handing the record to the writer, still
 throws out of the audit call.
-**Status**: Fixed on branch, not merged, not pushed; closed on guard proof (parts 1-5); codex review pending
+**Status**: Merged `36da9789` (parts 1-5); closed on guard proof; codex review pending
 **Branch**: `worktree-agent-aca5b5b4f6295736c` (from `18530b58`)
 **Commit**: `1756aeb4` (parts 1-4: fix, tests, record); part 5 `d54da14e` (its plan `efbea61b`); comments `7698c096`; plan `5a6e5a5d`
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidates 1 and 5 of its hand-back)

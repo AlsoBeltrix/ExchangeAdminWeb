@@ -5,7 +5,7 @@
 `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 and `System.Security.Cryptography.Pkcs` 10.0.7 (as the aud-a28u/a26r
 agent saw them on 2026-10-22; the exact set is whatever the current restore reports). They sit inside the
 61-warning baseline, so no gate sees them.
-**Status**: Fixed on branch, not merged, not pushed; closed on guard proof (each downgrade fails the build); codex review pending
+**Status**: Merged `36da9789`; closed on guard proof (each downgrade fails the build); codex review pending
 **Branch**: `worktree-agent-aca5b5b4f6295736c` (from `18530b58`)
 **Commit**: `f42f23aa` (packages, audit settings and their comments, record); plan `5a6e5a5d`
 **Reviewer**: implementer (surfaced by the aud-a28u/a26r agent, 2026-10-22, candidate 6 of its hand-back)
