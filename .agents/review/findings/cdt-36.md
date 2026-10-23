@@ -1,7 +1,7 @@
 # cdt-36: deploy.ps1 -Force re-points an existing application to whatever -PublishPath / -AppPoolName it is given
 
 **Severity**: MEDIUM, design - `deploy.ps1` run with `-Force` over an existing deployment lands in the fresh-install branch and re-creates or re-points the IIS application to this run's `-PublishPath` and `-AppPoolName` with no cdt-15-style check that they still name the pool and folder serving the alias. A mistyped or defaulted value moves the live application (the cdt-15 / aud-a34 outage shape) while the run ends successfully.
-**Status**: Merged to master `72430407` (fix `493c270d`); codex defect review ops-batch-12 in flight
+**Status**: Merged to master `72430407` (fix `493c270d`); codex ops-batch-12 raised three candidates, admitted as cdt-44 (MEDIUM), cdt-45 and cdt-46 (LOW); closes when they land
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`, forked from `master` at `eb017102`)
 **Commit**: the `fix(cdt-36)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: implementer (recorded by the supervisor at the 2026-10-23 hand-over, from the cdt-15 agent's hand-back)
@@ -246,3 +246,13 @@ None yet.
 ## Closeout
 
 Pending: codex review, merge into `master`, branch deletion (local and remote).
+
+## Reviewer comments (supervisor, ops-batch-12)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base eb017102 head 493c270d (merged 72430407); 2026-10-23T19:06-19:13Z; capability proof: AGENTS.md read and git show --stat 493c270d both succeeded. Verdict: three candidate findings, all admitted - cdt-44 (-AllowRepoint backs up from the new path),
+cdt-45 (backup writes precede the check), cdt-46 (8.3 / junction normalisation). Codex confirmed: the tests stub the real
+`Get-WebApplication` name; the position test is structural; the module export list is intact; both scripts ASCII-clean.
+Codex could not live-probe `WebAdministration` missing-app behaviour (module absent, no IIS access); the code treats no
+output as fresh and a thrown read as fail-closed, the same assumption the cdt-15 installer check makes. Result and stream
+in `.agents/review/ops-batch-12.result.txt` and `.stream.log`; prompt `prompt-ops-batch-12.md` (it names the two
+follow-ons by their first, mistaken IDs cdt-38/39; they are cdt-42/43).
