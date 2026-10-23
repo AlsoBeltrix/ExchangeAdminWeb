@@ -1,7 +1,9 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -55,14 +57,31 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         // throws - the way a test reaches that step. Live it is not reached so: the module's PAM provider returns no
         // credential at all for a secret without a password (DelineaService), which the paths refuse as not configured.
         public string? IncompleteCredentialFor;
-        // aud-a2v. For a purpose containing this text, no credential at all - what the module's credential lookup returns live
-        // for no secret ID, a corrupt module config, or a PAM provider that fails or holds an incomplete secret.
+        // aud-a2v. For a purpose containing this text, no credential at all. Since aud-a2x the base reads it as no secret ID
+        // set, the one reason a lookup through this seam can give: with no credential service the service has nothing else
+        // to ask. A corrupt module config, or a PAM provider that fails, is CredentialFailureFor's.
         public string? NoCredentialFor;
+        // aud-a2x. For a purpose containing this text, no credential, and CredentialFailure the reason the lookup gives - as the
+        // module's credential service now says beside its none.
+        public string? CredentialFailureFor;
+        public ModuleCredentialFailure CredentialFailure = ModuleCredentialFailure.NotReturned;
         // aud-a2v. Each purpose the lookup was asked with, in order: the text a path's refusal line names beside the room.
         public List<string> CredentialPurposes { get; } = [];
 
-        public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
-            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
+        // aud-a2x. With a credential service, the base's lookup asks it, and neither seam below is reached.
+        public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null, ModuleCredentialService? credentials = null)
+            : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
+
+        protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
+        {
+            if (CredentialFailureFor is { } failing && purpose.Contains(failing, StringComparison.Ordinal))
+            {
+                CredentialRequests++;
+                CredentialPurposes.Add(purpose);
+                return Task.FromResult(new ModuleCredentialLookup(null, CredentialFailure));
+            }
+            return base.LookupDirectoryCredentialAsync(purpose);
+        }
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
         {
@@ -1722,5 +1741,133 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Equal(LogLevel.Warning, logged.Level);
         Assert.Equal($"Room Finder apply for {Typed}: reading the room failed; nothing was written: {thrown.Message}", logged.Message);
         Assert.Same(thrown, logged.Exception);
+    }
+
+    // ---- aud-a2x: a credential that could not be read does not send the operator to set the ID that is set ----
+    // Each of the four directory paths refused a lookup that returned no credential with "On-prem AD credential is not
+    // configured for Conference Rooms (set the AD Delinea Secret ID in Module Config)" - also when the ID was set, and the
+    // module's configuration could not be read or Delinea returned nothing for it. The credential service now says which,
+    // and each path says it, in the clause its refusal opens with.
+
+    private const string NotSetClause =
+        "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config)";
+    private const string NotReturnedClause =
+        "The on-prem AD credential for Conference Rooms could not be read from Delinea: the AD Delinea Secret ID is set, but Delinea returned no credential for it (the application log has its reason)";
+    private const string UnreadableClause =
+        "The on-prem AD credential for Conference Rooms could not be read: the module's configuration could not be read, so neither could its AD Delinea Secret ID (the application log records it)";
+
+    [Theory]
+    [InlineData("City/State/Country preflight", ModuleCredentialFailure.NotReturned)]
+    [InlineData("City/State/Country write", ModuleCredentialFailure.NotReturned)]
+    [InlineData("on-prem room-list preflight", ModuleCredentialFailure.NotReturned)]
+    [InlineData("on-prem room-list add", ModuleCredentialFailure.NotReturned)]
+    [InlineData("City/State/Country preflight", ModuleCredentialFailure.ConfigUnreadable)]
+    [InlineData("City/State/Country write", ModuleCredentialFailure.ConfigUnreadable)]
+    [InlineData("on-prem room-list preflight", ModuleCredentialFailure.ConfigUnreadable)]
+    [InlineData("on-prem room-list add", ModuleCredentialFailure.ConfigUnreadable)]
+    public async Task ACredentialThatCouldNotBeRead_IsRefusedWithoutSendingTheOperatorToSetTheId(string path, ModuleCredentialFailure failure)
+    {
+        // The lookup returning none for one path's purpose only, with the reason the credential service gives. Refused as
+        // aud-a2v's theory has it - a preflight while nothing is written, a write after Set-Place, inside the partial - the
+        // message opening with the clause for that reason and never naming the ID to set; one warning, the path's line.
+        var cityStateAndCountry = path.StartsWith("City/State/Country", StringComparison.Ordinal);
+        var preflight = path.EndsWith("preflight", StringComparison.Ordinal);
+        if (!cityStateAndCountry)
+            SyncedListTakingTheRoomOnPrem();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger)
+        {
+            CredentialFailureFor = path switch
+            {
+                "City/State/Country preflight" => "Set-ADUser preflight",
+                "City/State/Country write" => "Set-ADUser synced attributes",
+                "on-prem room-list preflight" => "membership preflight",
+                _ => "membership add",
+            },
+            CredentialFailure = failure,
+        };
+        var purpose = path switch
+        {
+            "City/State/Country preflight" => $"Set-ADUser preflight for {Typed}",
+            "City/State/Country write" => $"Set-ADUser synced attributes for {Typed}",
+            "on-prem room-list preflight" => $"on-prem room-list membership preflight for {Typed}",
+            _ => $"on-prem room-list membership add for {Typed}",
+        };
+        var clause = failure == ModuleCredentialFailure.NotReturned ? NotReturnedClause : UnreadableClause;
+        var refusal = path switch
+        {
+            "on-prem room-list preflight" => $"{clause}, and room list '{List}' is synchronized from on-premises, so the room cannot be added to it.",
+            "on-prem room-list add" => $"{clause}. The room could not be added to the on-prem room list.",
+            _ => $"{clause}. City/State/Country could not be written.",
+        };
+
+        var result = await Finder(service, Room(), city: cityStateAndCountry ? "Dublin" : "");
+
+        Assert.False(result.Success);
+        Assert.Equal(!preflight, result.Partial);
+        Assert.Equal(purpose, service.CredentialPurposes.Last());
+        var step = Assert.Single(result.Steps, s => !s.Success);
+        if (preflight)
+        {
+            Assert.Empty(_h.Writes);
+            Assert.Equal(refusal + NothingWritten, result.Message);
+            Assert.Equal(result.Message, step.Error);
+        }
+        else
+        {
+            Assert.Single(_h.CallsTo("Set-Place"));
+            Assert.Empty(_h.CallsTo(cityStateAndCountry ? "Set-ADUser" : "Set-ADGroup"));
+            Assert.Equal(refusal, step.Error);
+            Assert.Contains(refusal, result.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("Nothing was written", result.Message, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("set the AD Delinea Secret ID", result.Message, StringComparison.Ordinal);
+        AssertLoggedOnce(logger, path, $"no AD credential was returned for {purpose}: {refusal}");
+        Assert.Single(logger.Entries, e => e.Message.Contains(refusal, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("no secret ID")]
+    [InlineData("a secret ID Delinea returns no credential for")]
+    [InlineData("an unreadable module configuration")]
+    public async Task TheCredentialServicesOwnAnswer_ChoosesTheWords(string configured)
+    {
+        // Through a real credential service and the service's own lookup - neither seam - so the words come from what the
+        // credential service found: the City/State/Country preflight refuses, nothing written, in that reason's clause.
+        // Offline: its Delinea service has no bootstrap credential, so it refuses before any request.
+        var moduleConfig = _h.ModuleConfig;
+        switch (configured)
+        {
+            case "no secret ID":
+                break;
+            case "a secret ID Delinea returns no credential for":
+                var values = _h.ModuleConfig.GetModuleConfig("ConferenceRooms");
+                values["DelineaSecretId"] = "4242";
+                _h.ModuleConfig.SaveModuleConfig("ConferenceRooms", values);
+                break;
+            case "an unreadable module configuration":
+                moduleConfig = new ModuleConfigService(new ModuleCatalog(), ModuleCredentialLookupTests.Environment(_h.Dir),
+                    new ModuleConfigRepository(new UnreadableModuleConfigStore()), NullLogger<ModuleConfigService>.Instance);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(configured), configured, null);
+        }
+        using var offline = new OfflineCredentials(_h.Dir, _h.Config, moduleConfig);
+        var service = new Service(_h, credentials: offline.Service);
+
+        var result = await Finder(service, Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        Assert.Equal(0, offline.RequestsSent);
+        var clause = configured switch
+        {
+            "no secret ID" => NotSetClause,
+            "a secret ID Delinea returns no credential for" => NotReturnedClause,
+            _ => UnreadableClause,
+        };
+        Assert.Equal($"{clause}. City/State/Country could not be written.{NothingWritten}", result.Message);
     }
 }

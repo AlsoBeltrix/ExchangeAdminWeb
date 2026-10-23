@@ -1532,6 +1532,25 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return runspace;
     }
 
+    protected virtual async Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
+    {
+        if (_moduleCredentials is not null)
+            return await _moduleCredentials.LookupCredentialsAsync(ModuleId, purpose);
+
+        var credentials = await GetModuleCredentialsAsync(purpose);
+        return new ModuleCredentialLookup(
+            credentials, credentials is null ? ModuleCredentialFailure.SecretIdNotSet : ModuleCredentialFailure.None);
+    }
+
+    internal static string DirectoryCredentialRefusal(ModuleCredentialFailure failure) => failure switch
+    {
+        ModuleCredentialFailure.NotReturned =>
+            "The on-prem AD credential for Conference Rooms could not be read from Delinea: the AD Delinea Secret ID is set, but Delinea returned no credential for it (the application log has its reason)",
+        ModuleCredentialFailure.ConfigUnreadable =>
+            "The on-prem AD credential for Conference Rooms could not be read: the module's configuration could not be read, so neither could its AD Delinea Secret ID (the application log records it)",
+        _ => "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config)",
+    };
+
     // Refusal for an AD step with no validated object to write. A cloud-only room has none: the
     // gate found no on-premises object behind it, so there is nothing City/State/Country or an
     // on-prem list membership could be written to.
@@ -1613,10 +1632,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // purpose only for a missing secret ID: none named the room. So this path's line names the room beside the purpose it
         // asked with, which ties it to theirs. The refusal keeps its words.
         var purpose = $"Set-ADUser preflight for {roomEmail}";
-        var creds = await GetModuleCredentialsAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var creds = lookup.Credentials;
         if (creds is null)
         {
-            var refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+            var refusal = $"{DirectoryCredentialRefusal(lookup.Failure)}. City/State/Country could not be written.";
             _logger.LogWarning("Set-ADUser preflight for {Room} refused the row; nothing was written: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, purpose, refusal);
             return ($"{refusal} Nothing was written.", null);
         }
@@ -1713,10 +1733,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // aud-a2v. As the preflight's, in this write's words - after Set-Place, inside the row's partial. Reached when this
         // lookup returns none though the preflight's returned one: each asks the PAM provider again.
         var purpose = $"Set-ADUser synced attributes for {roomEmail}";
-        var creds = await GetModuleCredentialsAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var creds = lookup.Credentials;
         if (creds is null)
         {
-            var refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+            var refusal = $"{DirectoryCredentialRefusal(lookup.Failure)}. City/State/Country could not be written.";
             _logger.LogWarning("Set-ADUser City/State/Country write for {Room} refused before its write: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, purpose, refusal);
             return (refusal, null, null);
         }
@@ -1911,10 +1932,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // aud-a2v. As the City/State/Country preflight's: the line names the room, the list and the purpose asked with. The
         // refusal is built without its " Nothing was written.", as the three above, and the message is unchanged.
         var purpose = $"on-prem room-list membership preflight for {roomEmail}";
-        var creds = await GetModuleCredentialsAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var creds = lookup.Credentials;
         if (creds is null)
         {
-            var refusal = $"On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config), and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it.";
+            var refusal = $"{DirectoryCredentialRefusal(lookup.Failure)}, and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it.";
             _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, list.Name, purpose, refusal);
             return $"{refusal} Nothing was written.";
         }
@@ -2022,10 +2044,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // returns none though the preflight's returned one, or when the preflight asked for none - the room on the list in
         // Exchange then - and the cloud add no longer finds it there.
         var purpose = $"on-prem room-list membership add for {roomEmail}";
-        var creds = await GetModuleCredentialsAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var creds = lookup.Credentials;
         if (creds is null)
         {
-            var refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.";
+            var refusal = $"{DirectoryCredentialRefusal(lookup.Failure)}. The room could not be added to the on-prem room list.";
             _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, roomListName, purpose, refusal);
             return (refusal, null, null);
         }
