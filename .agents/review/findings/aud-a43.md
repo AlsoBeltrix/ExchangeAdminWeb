@@ -11,7 +11,7 @@ group expansion in the self-grant check. (4) The synchronous `ValidateSelfGrant`
 has no production caller; a future caller reopens what aud-a28y closed.
 **Status**: Fixed on branch, not merged; closed on guard proof below; review pending
 **Branch**: `worktree-agent-ac928f0732402c4c5`
-**Commit**: fix (this record's commit; SHA in the branch's records commit); plan `1272a8cf`
+**Commit**: `4cc5756b` (fix, tests, record); plan `1272a8cf`; comments `bce8d047`
 **Reviewer**: implementer (surfaced by the aud-a28y/a28x/a26t agent, 2026-10-22, candidates 1-4 of its hand-back)
 
 ## Evidence
@@ -256,6 +256,34 @@ The code comments are written after the round, in their own commit, so the MD5s 
 No AD, Exchange Online, Graph, DHCP or IIS call: the directory is `SelfGrantDirectoryStandIn`, Exchange a stand-in resolver
 or the real resolver over a pool whose connect seam throws, and the whole suite was run once with the production runspace
 made to throw (above). No coder self-review verdict is claimed.
+
+## Comments after the round
+
+Written after both rounds (aud-a43, aud-a44), in their own commit `bce8d047`, checked by `codelines.ps1` (session
+scratchpad `a43`): every added or removed line of the five code files is a whole-line `//` or `///` comment or blank (131
+lines), and each file's code lines - blanks and comments stripped - hash the same at the fix commits and after. A file with
+no change fails the check (control run on an untouched file). This record's files: `Services/PermissionValidator.cs` (65
+lines), `Services/SelfGrantDirectory.cs` (52), `Services/MailboxPermissionService.cs` (3), `Services/CalendarPermissionService.cs`
+(3); code-line MD5s `F9269D49F3605F7CF586F5A83119EAA2`, `8CD1761A78560DBB25CDA59FEDC10D4F`, `2E515480D485C5A562C70368B53846B8`,
+`1D98529C3B56EC49363DBD28F0A4E61D`, equal before and after. The pages are untouched by it.
+
+## Branch-tip gates - 2026-10-22 (`bce8d047`: both fixes and the comments)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 59 warnings, the baseline, none in a touched
+  file of the branch.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 6,078 passed / 3 skipped (the
+  three known AD skips) / 0 failed, 6,081 total, 5m11s; nothing hung, no Sequence file.
+- `ClickGate*` 316/316 and `ProgressRegistry*` 35/35, each run alone (Release).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. The pages: 808 and 762 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac928f0732402c4c5`, not merged, not pushed. Due at merge: the base app version (the shared
+`PermissionValidator`), and the Mailbox Permissions and Calendar Permissions module versions (what their grants refuse, and
+the Exchange identity their refusals name). The bumps are the supervisor's: `ExchangeAdminWeb.csproj` and
+`Modules/ModuleCatalog.cs` were outside this brief. This record starts from master's text (`df81c034`, with the folded-in
+section) and keeps that section byte-identical.
 
 ## Known gaps
 

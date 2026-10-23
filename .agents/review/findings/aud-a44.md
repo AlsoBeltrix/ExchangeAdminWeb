@@ -9,7 +9,7 @@ but audit logging failed: {ex.Message}": it says self-grant for a check that cou
 nearly dead, but the text is wrong where it can run.
 **Status**: Fixed on branch, not merged; closed on guard proof below; review pending
 **Branch**: `worktree-agent-ac928f0732402c4c5`
-**Commit**: fix (this record's commit; SHA in the branch's records commit); plan `1272a8cf`; after aud-a43 `4cc5756b`
+**Commit**: `8a90e8fa` (fix, tests, record); plan `1272a8cf`; comments `bce8d047`; after aud-a43 `4cc5756b`
 **Reviewer**: implementer (surfaced by the aud-a28y/a28x/a26t agent, 2026-10-22, candidates 5 and 6 of its hand-back)
 
 ## Evidence
@@ -151,6 +151,24 @@ The code comments are written after the round, in their own commit, so the MD5s 
 
 No AD, Exchange Online, Graph, DHCP or IIS call: the pool's connect seam throws, the pages run over the harness and its
 stand-ins. No coder self-review verdict is claimed.
+
+## Comments after the round
+
+In the branch's comments commit `bce8d047`, checked comment-only as aud-a43 records: `Services/ExoConnectionPool.cs` gains 8
+comment lines (the exception's summary, `UnreadableEnablement`, the borrow's enablement read); its code-line MD5
+`B0C1AA9E0BAAB10078381FAB387ACB21` is equal before and after. The pages are untouched by it: their two lines carry no comment.
+
+## Branch-tip gates - 2026-10-22 (`bce8d047`: both fixes and the comments)
+
+As aud-a43 records them: Release build 0 errors, 59 warnings (baseline, none in a touched file); `dotnet test` 6,078 passed /
+3 skipped / 0 failed, 6,081 total, 5m11s; `ClickGate*` 316/316 and `ProgressRegistry*` 35/35 alone; format, `git diff
+--check HEAD` and the ASCII lint exit 0; the pages 808 and 762 lines.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ac928f0732402c4c5`, not merged, not pushed. Due at merge: the base app version (the shared
+`ExoConnectionPool`), and the Mailbox Permissions and Calendar Permissions module versions (their banner). The bumps are the
+supervisor's.
 
 ## Known gaps
 
