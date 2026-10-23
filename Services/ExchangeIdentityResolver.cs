@@ -21,7 +21,9 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
         // caller may allow an operation on that basis. Collapsing a failure into null here would
         // let an EXO outage present as an affirmative absence and un-protect a principal. Only a
         // confirmed "not found" returns null; everything else propagates.
-        if (!_exoPool.IsConfigured)
+        if (!_exoPool.TryGetIsConfigured(out var configured))
+            throw new InvalidOperationException("Exchange Online's module enablement or its module_config rows could not be read - cannot resolve recipient.");
+        if (!configured)
             throw new InvalidOperationException("Exchange Online is not configured - cannot resolve recipient.");
 
         return await RunPooledQueryAsync<ResolvedRecipient?>((ps, tracker) =>

@@ -79,6 +79,10 @@ internal enum PoolFailurePolicy { Return, Discard }
 /// </summary>
 internal readonly record struct ExoConnectionConfig(string AppId, string Organization, string CertificateSubject);
 
+public sealed class ExoConfigUnreadableException(string message) : InvalidOperationException(message)
+{
+}
+
 public sealed class ExoConnectionPool : IDisposable
 {
     public const string ConfigModuleKey = "ExchangeOnline";
@@ -150,16 +154,7 @@ public sealed class ExoConnectionPool : IDisposable
     /// <summary>How many disconnects have failed over this pool's lifetime (aud-a6c).</summary>
     internal long FailedDisconnects => Interlocked.Read(ref _failedDisconnects);
 
-    public bool IsConfigured
-    {
-        get
-        {
-            if (!_enablement.IsModuleEnabled("ExchangeOnline"))
-                return false;
-            var (appId, org, _) = GetExoConfig();
-            return !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(org);
-        }
-    }
+    public bool IsConfigured => TryGetIsConfigured(out var configured) && configured;
 
     /// <summary>
     /// <see cref="IsConfigured"/> for a caller that must not take a store it cannot read for an Exchange Online that is
@@ -179,32 +174,37 @@ public sealed class ExoConnectionPool : IDisposable
             return false;
         if (!enabled)
             return true;
-        if (!_moduleConfig.TryGetModuleConfig(ConfigModuleKey, out var values))
+        if (!TryReadExoConfig(out var exo))
             return false;
 
-        var appId = values.GetValueOrDefault(ConfigAppIdKey) ?? _config["ExchangeOnline:AppId"];
-        var organization = values.GetValueOrDefault(ConfigOrganizationKey) ?? _config["ExchangeOnline:Organization"];
-        configured = !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(organization);
+        configured = !string.IsNullOrWhiteSpace(exo.AppId) && !string.IsNullOrWhiteSpace(exo.Organization);
         return true;
     }
 
-    private ExoConnectionConfig GetExoConfig()
+    private bool TryReadExoConfig(out ExoConnectionConfig config)
     {
-        var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey);
-        var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey);
-        var certSubject = _moduleConfig.GetValue(ConfigModuleKey, ConfigCertSubjectKey);
-
-        if (_moduleConfig.HasModuleConfigFile(ConfigModuleKey) && _moduleConfig.IsModuleCorrupt(ConfigModuleKey))
+        if (!_moduleConfig.TryGetModuleConfig(ConfigModuleKey, out var values))
         {
-            _logger.LogError("ExchangeOnline module config is corrupt - refusing to fall back to appsettings");
-            return new ExoConnectionConfig("", "", "");
+            config = default;
+            return false;
         }
 
-        appId ??= _config["ExchangeOnline:AppId"] ?? "";
-        organization ??= _config["ExchangeOnline:Organization"] ?? "";
-        certSubject ??= _config["ExchangeOnline:CertificateSubject"]
-            ?? "CN=EXO-Automation";
-        return new ExoConnectionConfig(appId, organization, certSubject);
+        config = new ExoConnectionConfig(
+            ExoConfigFallback.Resolve(_config, ConfigAppIdKey, values.GetValueOrDefault(ConfigAppIdKey)).Value,
+            ExoConfigFallback.Resolve(_config, ConfigOrganizationKey, values.GetValueOrDefault(ConfigOrganizationKey)).Value,
+            ExoConfigFallback.Resolve(_config, ConfigCertSubjectKey, values.GetValueOrDefault(ConfigCertSubjectKey)).Value);
+        return true;
+    }
+
+    private static string UnreadableRows => SettingsStoreText.ModuleConfig(ConfigModuleKey);
+
+    private ExoConnectionConfig GetExoConfig()
+    {
+        if (TryReadExoConfig(out var config))
+            return config;
+
+        _logger.LogError("Exchange Online settings could not be read, and appsettings is not read in their place. {Store}", UnreadableRows);
+        throw new ExoConfigUnreadableException("Exchange Online settings could not be read: " + UnreadableRows);
     }
 
     public Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)

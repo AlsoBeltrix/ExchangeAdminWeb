@@ -73,6 +73,35 @@ tripwire's new rule. Mutations at the call site: (1) the reload clause back in t
 "eaw-test-logs")` in `CreateValidator`). Extras: (E1) `Dispose` deletes nothing; (E2) the self-grant setting's log back
 on the page text; (E3) the pool's message back on the page text.
 
+## Fix
+
+`Services/SettingsStoreText.cs`: the fix's clause is one private constant; `DatabaseRemedy` is that clause and ", then reload
+this page.", byte for byte the text it was, and new `ServiceDatabaseRemedy` is the clause and "."; `ModuleConfig(moduleId)`
+is unchanged in its text, and new `ServiceModuleConfig(moduleId)` names the same rows with the service remedy. Every page
+caller is untouched.
+`Services/PermissionValidator.cs`: the corrupt-branch log (aud-a26q) and the unreadable self-grant setting's log (aud-a28t)
+use `ServiceModuleConfig`. `Services/ExoConnectionPool.cs`: the unreadable-rows message and its log line (aud-a28x) too.
+`ExchangeAdminWeb.Tests/PermissionValidatorTests.cs`: the class is `IDisposable` (and sealed; nothing derives from it). Its
+three helpers, instance methods now, make every directory through `NewTestDir`, which registers it; `CreateValidator`'s
+`Audit:LogRoot` is `logs` under its own directory (`CreateValidatorWithScriptedResolution`'s already was its directory);
+both register the `ExtendedLogService` and `ExoConnectionPool` they build. `Dispose` disposes those, clears the SQLite
+connection pool for each directory's database and deletes the directories.
+`ExchangeAdminWeb.Tests/SharedTempDatabaseTripwireTests.cs`: a third case - no test source sets `Audit:LogRoot` from the
+temp directory (an indexer assignment or a collection-initializer pair whose value names `GetTempPath()`); the source walk
+the two scans share is one helper.
+
+Tests: `PermissionValidatorTests.TheHelpers_KeepEveryDirectoryAndTheLogsTheirOwn_AndDisposeDeletesThem`;
+`SharedTempDatabaseTripwireTests.NoTestSource_SetsTheAuditLogRootFromTheTempDirectory`; new
+`ExchangeAdminWeb.Tests/StoreTextSurfaceTests.cs` (2: the page text as it was, the service text without its reload clause);
+`PermissionValidatorConfigReadTests.AModuleConfigThatCannotBeRead_LogsTheRowsAndTheirFix_WithNoPageToReload`; and the
+service-text assertions in `PermissionValidatorExclusionsReadTests.AStoreThatCannotBeRead_LogsTheRowsAndTheirFix_NotAFile`
+and the two `ExoConnectionPoolConfigReadTests` message cases. 5 cases added.
+
+Caller-visible change, by design: three service texts - the validator's two error lines and the pool's unreadable-rows
+refusal and its log line - end at the fix ("... with both application pools stopped.") instead of "then reload this page".
+Every admin page's text is as it was. The tests change no behaviour: the validator tests' logs no longer share a directory
+under the temp directory, and nothing they make is left behind.
+
 ## Guard proof
 
 Pending.
