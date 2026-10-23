@@ -630,7 +630,8 @@ public class PermissionValidator
     /// check that could not be completed is never a cleared grant (aud-a28y). aud-a52: a group holds the operator by any
     /// nesting the protected-group evaluator reads, or through their primary group; a group only Exchange Online holds is
     /// asked of Exchange. aud-a50: the on-premises write runs this again right before it writes. aud-a61: each call is its
-    /// own run of the check (<see cref="SelfGrantRun"/>), so it reads afresh.
+    /// own run of the check (<see cref="SelfGrantRun"/>), so it reads afresh. aud-a69: the grantee is looked up under the
+    /// protected-principal directory-read credential, and one neither Exchange nor the directory holds is refused.
     /// </remarks>
     public Task<string?> ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser) =>
         ValidateSelfGrantAsync(actingUser, affectedUser, new SelfGrantRun());
@@ -905,7 +906,10 @@ public class PermissionValidator
     /// check refuses. A read that cannot be made, or answers nothing, refuses; so does a member that cannot be told apart
     /// from the operator. A synced group among the members is not Exchange's to expand - the directory holds its whole
     /// membership, groups Exchange does not list included - so it is found there by its address and joins the evaluation;
-    /// one the directory does not hold refuses. A check that could not be completed is never a cleared grant (aud-a28y).
+    /// one the directory does not hold refuses. aud-a69: it is found under the directory-read credential the evaluation
+    /// reads under (<paramref name="credential"/>), and without that credential the check refuses, naming
+    /// <paramref name="credentialProblem"/>, before any lookup. aud-a72: a dynamic distribution group's members are the ones
+    /// Exchange calculated. A check that could not be completed is never a cleared grant (aud-a28y).
     /// </remarks>
     private async Task<(string? Refusal, IReadOnlyList<string> SyncedGroups)> CompareInExchangeGroupAsync(SelfGrantDirectory directory,
         SelfGrantDirectoryObject? account, ResolvedRecipient? actor, string exchangeIdentity, string affectedUser, ResolvedRecipient group,
