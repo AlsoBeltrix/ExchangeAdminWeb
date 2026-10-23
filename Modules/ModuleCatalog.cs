@@ -488,7 +488,11 @@ public sealed class ModuleCatalog
             // 1.7.0: the Received list has a ceiling (it bypassed every cap in the model),
             // and a truncated routing path or header list now SAYS so - the earliest hop shown
             // is not necessarily the origin (lower-priority Wave 4 header bounds).
-            Version = "1.7.0",
+            // 1.8.0: the Downloadable Reports sub-page lists and serves an operator only the detail
+            // exports they ran; an application administrator (AdminSettings) sees and downloads
+            // every operator's, and another operator's download is refused with an audited denial.
+            // The export-ready mail says who can download it (kd-1).
+            Version = "1.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -563,7 +567,10 @@ public sealed class ModuleCatalog
             // 1.4.0: CSV export of the blocked-sender list (docs/ModuleCsvExport-Plan.md).
             // 1.4.3: the unblock write reports to the status frame (the operator-reported gap,
             // docs/ProgressCoverage-Plan.md S2).
-            Version = "1.4.4",
+            // 1.5.0: the unblock is bounded (five minutes) and stops waiting when the operator leaves
+            // the page; one that was sent but not confirmed says so and is audited Undetermined, and
+            // one abandoned before it was sent says nothing was changed and is never sent (kd-6).
+            Version = "1.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1250,7 +1257,10 @@ public sealed class ModuleCatalog
             // 1.4.3: a device action's activity now completes below BOTH administrator
             // notifications, which is what the page's own comment always claimed it did
             // (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.4.3",
+            // 1.5.0: a wipe's typed device-name confirmation is re-checked by the handler against the
+            // device it is about to wipe, and a mismatch is refused with an audited denial before
+            // any write - not only by the confirm button's disabled state (kd-4).
+            Version = "1.5.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
