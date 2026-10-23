@@ -744,7 +744,7 @@
             var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The on-premises permission change on {Target} failed at {Step}", target, step);
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType,
-                false, ticket, errorDetail: failure), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord));
+                false, ticket, errorDetail: failure, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); // aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73)
         }
         finally
         {

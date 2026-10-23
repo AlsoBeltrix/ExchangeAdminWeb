@@ -252,27 +252,37 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     /// <summary>
     /// The on-premises Mailbox Permissions write, its credential and its session the harness's; over the pool and the settings
-    /// a test gives, else the harness's (aud-a73).
+    /// a test gives, else the harness's (aud-a73); its connect throwing the exception a test gives (aud-a75).
     /// </summary>
-    private sealed class OnPremMailboxService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null)
+    private sealed class OnPremMailboxService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null,
+        Exception? connectFailure = null)
         : MailboxPermissionService(pool ?? h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        {
+            if (connectFailure is not null)
+                throw connectFailure;
             h.DefineOnPremSession(ps);
+        }
     }
 
     /// <summary>The on-premises Calendar Permissions write, as <see cref="OnPremMailboxService"/>.</summary>
-    private sealed class OnPremCalendarService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null)
+    private sealed class OnPremCalendarService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null,
+        Exception? connectFailure = null)
         : CalendarPermissionService(pool ?? h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        {
+            if (connectFailure is not null)
+                throw connectFailure;
             h.DefineOnPremSession(ps);
+        }
     }
 
     /// <summary>The grant <c>SubmitSingle</c> stages before the operator's confirmation: the target, the grantee and the ticket.</summary>
@@ -287,11 +297,11 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// What the operator's Continue reaches: <paramref name="page"/>'s <c>ExecuteOnPrem</c>, over a staged Full Access
     /// (Mailbox Permissions) or Reviewer (Calendar Permissions) grant to <paramref name="grantee"/>; the result and the
     /// warnings the page logged; the mail service a test gives (aud-a53); the staged target a test gives, and an exception the
-    /// on-premises permission check throws (aud-a59).
+    /// on-premises permission check throws (aud-a59); an exception the write's on-premises connect throws (aud-a75).
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
         string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
-        string target = Target, Exception? onPremAuthorization = null)
+        string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -300,7 +310,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             var logger = new CapturingLogger<MailboxPermissions>();
             component = new MailboxPermissions();
             Wire(component, resolver, audit, logger, email);
-            Set(component, "MailboxService", new OnPremMailboxService(_h));
+            Set(component, "MailboxService", new OnPremMailboxService(_h, connectFailure: onPremConnect));
             SetField(component, "onPremFullAccess", true);
             SetField(component, "onPremSendAs", false);
             warnings = () => logger.Warnings;
@@ -310,7 +320,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             var logger = new CapturingLogger<CalendarPermissions>();
             component = new CalendarPermissions();
             Wire(component, resolver, audit, logger, email);
-            Set(component, "CalendarService", new OnPremCalendarService(_h));
+            Set(component, "CalendarService", new OnPremCalendarService(_h, connectFailure: onPremConnect));
             SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
             warnings = () => logger.Warnings;
         }
@@ -945,6 +955,33 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal(banner, Text(record, "error"));
         Assert.Same(failure, Assert.Single(warnings).Exception);
         Assert.NotEmpty(_h.CallsTo("Invoke-Command"));
+        Assert.Empty(_h.Writes);
+    }
+
+    // ---- aud-a75: the on-premises write's catch files by its step, as SubmitSingle's does --------------------------------
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText(string page)
+    {
+        // ExecuteOnPrem's catch said the change could not be confirmed and filed its row Failed, where the Admin Event Log's
+        // Undetermined filter did not find it. The throw here is the write's connect, which sits outside every catch of the
+        // write. A throw before the write stays Failed: aud-a59's AnOnPremStepThatThrowsBeforeTheWrite_... pins it.
+        var failure = new InvalidOperationException("raw-text-a75");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the on-premises session could not be opened" };
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremConnect: failure);
+
+        var banner = "Whether the change was made could not be confirmed: the write failed: the on-premises session could not be opened. Check the permissions before trying again.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        Assert.DoesNotContain("raw-text-a75", result.Message, StringComparison.Ordinal);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar", Text(record, "action"));
+        Assert.Equal("Undetermined", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
+        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
         Assert.Empty(_h.Writes);
     }
 
