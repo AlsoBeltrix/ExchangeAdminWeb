@@ -944,7 +944,14 @@ public sealed class ModuleCatalog
             // authorization re-check and any write, audited (kd-23).
             // 2.11.0: the page and the bulk processor judge presence by the shared TicketPresence
             // rule, which also refuses a ticket made only of control characters (kd-24).
-            Version = "2.11.0",
+            // 2.12.0: a room type is read by
+            // its name only - "4", "9" or "Video,Restricted" in a CSV or a request is refused, where
+            // Enum.TryParse applied CEO, an undefined type or Exception (kd-28). Cancelling or removing
+            // a bulk job re-checks the operator's access at the click, as the writes do; a refusal
+            // leaves the job alone and is audited (kd-27). The single room's refusal of a type that is
+            // no name is audited as a refusal (kd-29). A cancel that found the job finished or gone is
+            // audited as refused by the job's state, nothing changed (kd-32).
+            Version = "2.12.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1484,7 +1491,11 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.0.3: the page reports to the status frame at all - the job-list reload and the
             // per-row detail expansion were silent (docs/ProgressCoverage-Plan.md S4).
-            Version = "1.0.4",
+            // 1.1.0: a cancel's audit row says what the cancel did - cancelled, not cancelled because
+            // the job had already finished or gone, refused, or failed - where it said Success after
+            // any cancel; a refusal's row names its reason (kd-26), and a cancel that found the job
+            // finished or gone says nothing was changed (kd-32).
+            Version = "1.1.0",
             // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy

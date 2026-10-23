@@ -833,9 +833,9 @@
             Logger.LogWarning(ex, "Failed to refresh bulk job view on job change");
         }
     }
-    // kd-5. Audited as RemoveJob is, from the RENDERED row (so its ticket): refused and failed too - one line, so no line-keyed entry moves.
-    private void CancelJob(ExchangeAdminWeb.Services.Jobs.BulkJob job) { var cancelled = false; string? error = "The job was not cancelled: it had already finished, or it no longer exists."; try { cancelled = BulkJobs.CancelJob(job.Id); if (cancelled) error = null; } catch (Exception ex) { error = ex.Message; throw; } finally { try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_CancelBulkJob", target: job.Id, success: cancelled, ticketNumber: job.Ticket ?? "", errorDetail: error, oldValues: new Dictionary<string, object?> { ["JobType"] = job.JobType, ["Status"] = job.Status.ToString(), ["SubmittedBy"] = job.SubmittedBy, ["SubmittedAtUtc"] = job.SubmittedAtUtc, ["TotalRows"] = job.TotalRows }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); } } }
-
+    // kd-5: Cancel audited as Remove is, from the RENDERED row; kd-27: both re-check access first, the denial audited. One line each, so no line-keyed entry moves.
+    private async Task CancelJob(ExchangeAdminWeb.Services.Jobs.BulkJob job) { if (!await JobControlAllowedAsync("ConferenceRooms_CancelBulkJob", job)) return; var cancelled = false; string? error = "The job was not cancelled: it had already finished, or it no longer exists."; string? refusedAt = null; try { cancelled = BulkJobs.CancelJob(job.Id); if (cancelled) error = null; else refusedAt = "JobState"; } catch (Exception ex) { error = ex.Message; throw; } finally { AuditJobControl("ConferenceRooms_CancelBulkJob", job, cancelled, error, refusedAt); } }
+    private async Task<bool> JobControlAllowedAsync(string action, ExchangeAdminWeb.Services.Jobs.BulkJob job) { if (await ReauthorizeAsync()) return true; AuditJobControl(action, job, success: false, "Authorization denied.", refusedAt: "Authorization"); return false; }
     // One expanded row at a time; clicking the open one closes it.
     private string? detailsJobId;
     private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJobRow> detailsRows =
@@ -922,8 +922,8 @@
     // async Task so it can await the reporting reload; the markup lambda at :575 is unchanged.
     private async Task RemoveJob(ExchangeAdminWeb.Services.Jobs.BulkJob job)
     {
-        var removed = BulkJobs.DeleteJob(
-            ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id);
+        if (!await JobControlAllowedAsync("ConferenceRooms_RemoveBulkJob", job)) return;
+        var removed = BulkJobs.DeleteJob(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id);
 
         try
         {
@@ -943,7 +943,7 @@
 
         await RefreshJobs();
     }
-
+    private void AuditJobControl(string action, ExchangeAdminWeb.Services.Jobs.BulkJob job, bool success, string? error, string? refusedAt = null) { try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, action, target: job.Id, success: success, ticketNumber: job.Ticket ?? "", errorDetail: error, oldValues: new Dictionary<string, object?> { ["JobType"] = job.JobType, ["Status"] = job.Status.ToString(), ["SubmittedBy"] = job.SubmittedBy, ["SubmittedAtUtc"] = job.SubmittedAtUtc, ["TotalRows"] = job.TotalRows }, extra: refusedAt is null ? null : new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false }); } catch (Exception ex) { Logger.LogError(ex, "Audit failed"); } }
     private string JobDisplayStatus(ExchangeAdminWeb.Services.Jobs.BulkJob job)
         => BulkJobs.DisplayStatus(job, DateTime.UtcNow);
 
@@ -1395,10 +1395,10 @@
             // the banner carries the reason.
             if (!await ReauthorizeAsync()) return;
 
-            if (!Enum.TryParse<RoomType>(typeName, out var roomType))
+            if (!RoomTypeNames.TryParse(typeName, ignoreCase: false, out var roomType))
             {
                 result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}. Nothing was written." };
-                return;
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: completed.Message, extra: new Dictionary<string, object?> { ["refusedAt"] = "Validation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); } return; // kd-29: the refusal row
             }
 
             // Protected-principal gate: the write runs only inside onAllowed, so a protected or
@@ -1499,7 +1499,7 @@
                 var row = pr.Row!;
                 typeCsvData.Add(row);
 
-                if (!Enum.TryParse<RoomType>(row.Type, true, out var roomType))
+                if (!RoomTypeNames.TryParse(row.Type, ignoreCase: true, out var roomType))
                 {
                     typePreview.Add(new RoomTypePreviewRow
                     {

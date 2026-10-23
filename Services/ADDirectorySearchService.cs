@@ -613,14 +613,24 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
 
         _searchRunspace?.Dispose();
 
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        iss.ImportPSModule("ActiveDirectory");
-
-        var runspace = RunspaceFactory.CreateRunspace(iss);
+        var runspace = CreateSearchRunspace();
         runspace.Open();
         _searchRunspace = runspace;
         return runspace;
+    }
+
+    // psl-11. The session the searches and the existence checks open, CreateProbeRunspace's twin and shape (the class is
+    // sealed, so a property): a test hands back a session whose directory cmdlets are local functions, so the command each
+    // object kind runs is proven with no directory. Production builds the session this always built, which imports the
+    // ActiveDirectory module when it opens.
+    internal Func<Runspace> CreateSearchRunspace { get; init; } = SearchRunspace;
+
+    private static Runspace SearchRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        iss.ImportPSModule("ActiveDirectory");
+        return RunspaceFactory.CreateRunspace(iss);
     }
 
     // Forest global-catalog endpoint, "host:3268". Written only on a SUCCESSFUL probe, and only

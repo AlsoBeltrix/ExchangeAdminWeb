@@ -307,7 +307,9 @@
         if ((await AuthorizationService.AuthorizeAsync(authState.User, "AdminBulkJobs")).Succeeded)
             return true;
 
-        WriteAudit(action, job, success: false);
+        // kd-26. The refusal's row says it was one - the reason and the aud-a28 refusal fields - so it reads apart from a
+        // cancel that found the job already finished, which is Failed too.
+        WriteAudit(action, job, success: false, "Authorization denied.", refusedAt: "Authorization");
         actionMessage = "Your access to bulk job administration has been removed. Reload the page.";
         return false;
     }
@@ -317,9 +319,35 @@
         if (!await StillAuthorized("AdminBulkJobs_CancelJob", job))
             return;
 
-        BulkJobs.CancelJob(job.Id);
-        WriteAudit("AdminBulkJobs_CancelJob", job, success: true);
-        actionMessage = $"Cancellation requested for {job.ModuleId} job {job.JobType}.";
+        // kd-26. Audited with what the cancel did. The row said Success after any cancel, so a job that had finished a
+        // moment before was recorded as cancelled: BulkJobService.CancelJob says whether it took effect (kd-5) - a queued job
+        // finished as Cancelled, or a running job's cancellation requested. A throw from the store is audited as failed, in
+        // the finally, and still thrown. kd-32: a cancel that took no effect is a refusal by the job's state - its row says
+        // so, and that nothing was changed; a throw keeps no such field, the store having perhaps been reached.
+        var cancelled = false;
+        string? error = "The job was not cancelled: it had already finished, or it no longer exists.";
+        string? refusedAt = null;
+        try
+        {
+            cancelled = BulkJobs.CancelJob(job.Id);
+            if (cancelled)
+                error = null;
+            else
+                refusedAt = "JobState";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            throw;
+        }
+        finally
+        {
+            WriteAudit("AdminBulkJobs_CancelJob", job, cancelled, error, refusedAt);
+        }
+
+        actionMessage = cancelled
+            ? $"Cancellation requested for {job.ModuleId} job {job.JobType}."
+            : $"{job.ModuleId} job {job.JobType} was not cancelled - it had already finished, or it no longer exists.";
         await RefreshJobs();
     }
 
@@ -348,13 +376,16 @@
 
     // Audit failure must never make a completed action look failed (Constitution, Auditing And
     // Tracing), hence catch-and-log rather than surfacing.
-    private void WriteAudit(string action, BulkJob job, bool success)
+    // kd-26: the row's error, when there is one, and for a refusal the aud-a28 refusal fields - refusedAt, and
+    // mutationAttempted false, nothing having been handed to the job store.
+    private void WriteAudit(string action, BulkJob job, bool success, string? error = null, string? refusedAt = null)
     {
         try
         {
             Audit.LogConferenceRoomAction(
                 currentUser, clientIpAddress, action,
                 target: $"{job.ModuleId}/{job.Id}", success: success, ticketNumber: job.Ticket ?? "",
+                errorDetail: error,
                 oldValues: new Dictionary<string, object?>
                 {
                     ["ModuleId"] = job.ModuleId,
@@ -363,7 +394,8 @@
                     ["SubmittedBy"] = job.SubmittedBy,
                     ["SubmittedAtUtc"] = job.SubmittedAtUtc,
                     ["TotalRows"] = job.TotalRows
-                });
+                },
+                extra: refusedAt is null ? null : new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false });
         }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed for {Action}", action); }
     }

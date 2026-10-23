@@ -58,6 +58,57 @@ public sealed class ConferenceRoomPageTests : IDisposable
         Assert.Empty(_h.Calls);
     }
 
+    [Theory]
+    [InlineData("4")]
+    [InlineData("Video,Restricted")]
+    public async Task ARoomTypeGivenAsANumberOrACommaList_IsRefused_NotApplied(string typeName)
+    {
+        // kd-28. Enum.TryParse took "4" for CEO - which removes every existing calendar permission - and a comma list for the
+        // value its names OR to. The single room is parsed by name, as the CSV paths are: refused before the protection gate
+        // or the service, nothing sent to Exchange.
+        var page = BuildPage();
+        SetField(page, "typeRoomEmail", "room1@contoso.test");
+        SetField(page, "selectedRoomType", typeName);
+        SetField(page, "typeTicketNumber", "INC100");
+        SetField(page, "typeTimezone", "GMT Standard Time");
+
+        await (Task)Method("SetSingleRoomType").Invoke(page, null)!;
+
+        var result = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        Assert.False(result.Success);
+        Assert.Equal($"Invalid room type: {typeName}. Nothing was written.", result.Message);
+        Assert.Empty(_h.Calls);
+    }
+
+    // ---- kd-29: the page's refusal of a type that is no name files a refusal row ----
+
+    [Theory]
+    [InlineData("Boardroom")]
+    [InlineData("4")]
+    public async Task ARoomTypeThatIsNoName_IsAudited_AsARefusal(string typeName)
+    {
+        // The banner said nothing was written and nothing recorded the refusal. One ConferenceRooms_SetType row now does, as
+        // the page's other refusals do: Failed, the refusal as its error, and the aud-a28 fields - nothing was sent.
+        var page = BuildPage();
+        SetField(page, "typeRoomEmail", "room1@contoso.test");
+        SetField(page, "selectedRoomType", typeName);
+        SetField(page, "typeTicketNumber", "INC100");
+        SetField(page, "typeTimezone", "GMT Standard Time");
+
+        await (Task)Method("SetSingleRoomType").Invoke(page, null)!;
+
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetType");
+        Assert.Equal("operator", row.GetProperty("user").GetString());
+        Assert.Equal(OperatorIp, row.GetProperty("ip").GetString());
+        Assert.Equal("room1@contoso.test", row.GetProperty("target").GetString());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("INC100", row.GetProperty("ticket").GetString());
+        Assert.Equal($"Invalid room type: {typeName}. Nothing was written.", row.GetProperty("error").GetString());
+        Assert.Equal("Validation", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Empty(_h.Calls);
+    }
+
     // ---- kd-5: cancelling a bulk job writes the audit row removing one does ----
     // The jobs panel's Cancel stopped a queued or running job and recorded nothing, while Remove beside it audits. It now
     // writes RemoveJob's row - operator, IP, the job, its ticket, the job as rendered - with whether the cancel took effect:
@@ -95,7 +146,8 @@ public sealed class ConferenceRoomPageTests : IDisposable
         return (jobs, store);
     }
 
-    private static void Cancel(Page page, BulkJob job) => Method("CancelJob").Invoke(page, [job]);
+    // kd-27 made CancelJob async (it re-checks access first), so its outcome - a throw included - is the task it returns.
+    private static Task Cancel(Page page, BulkJob job) => (Task)Method("CancelJob").Invoke(page, [job])!;
 
     private List<JsonElement> CancelRows() =>
         _h.AuditRows().Where(r => r.GetProperty("action").GetString() == CancelAction).ToList();
@@ -120,16 +172,19 @@ public sealed class ConferenceRoomPageTests : IDisposable
     [Theory]
     [InlineData("queued")]
     [InlineData("running")]
-    public void CancellingAnActiveJob_IsAudited_AsDone(string state)
+    public async Task CancellingAnActiveJob_IsAudited_AsDone(string state)
     {
         var (jobs, store) = JobService();
         var job = Job("job-1", state == "queued" ? BulkJobStatus.Queued : BulkJobStatus.Running);
         store.Insert(job);
         var page = BuildPage(jobs);
 
-        Cancel(page, job);
+        await Cancel(page, job);
 
-        AssertTheRow(Assert.Single(CancelRows()), job, success: true, error: null);
+        var row = Assert.Single(CancelRows());
+        AssertTheRow(row, job, success: true, error: null);
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
         var after = store.Get(job.Id)!;
         if (state == "queued")
             Assert.Equal(BulkJobStatus.Cancelled, after.Status);
@@ -140,7 +195,7 @@ public sealed class ConferenceRoomPageTests : IDisposable
     [Theory]
     [InlineData("finished")]
     [InlineData("gone")]
-    public void ACancelThatTakesNoEffect_IsAudited_AsRefused(string state)
+    public async Task ACancelThatTakesNoEffect_IsAudited_AsRefused(string state)
     {
         // The row was rendered active; by the click the job had finished, or someone had removed it. Nothing is cancelled,
         // and the row says so rather than recording a cancel that did not happen.
@@ -150,9 +205,13 @@ public sealed class ConferenceRoomPageTests : IDisposable
             store.Insert(Job("job-2", BulkJobStatus.Completed));
         var page = BuildPage(jobs);
 
-        Cancel(page, job);
+        await Cancel(page, job);
 
-        AssertTheRow(Assert.Single(CancelRows()), job, success: false, error: NothingCancelled);
+        var row = Assert.Single(CancelRows());
+        AssertTheRow(row, job, success: false, error: NothingCancelled);
+        // kd-32. A refusal by the job's state, not a failed write: nothing was changed.
+        Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
         if (state == "finished")
             Assert.Equal(BulkJobStatus.Completed, store.Get(job.Id)!.Status);
         else
@@ -160,21 +219,69 @@ public sealed class ConferenceRoomPageTests : IDisposable
     }
 
     [Fact]
-    public void ACancelTheStoreFails_IsAudited_AsFailed_AndStillThrows()
+    public async Task ACancelTheStoreFails_IsAudited_AsFailed_AndStillThrows()
     {
         var (jobs, _) = JobService(migrated: false);
         var job = Job("job-3", BulkJobStatus.Queued);
         var page = BuildPage(jobs);
 
-        var thrown = Assert.Throws<TargetInvocationException>(() => Cancel(page, job)).InnerException;
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => Cancel(page, job));
 
-        Assert.NotNull(thrown);
-        AssertTheRow(Assert.Single(CancelRows()), job, success: false, error: thrown.Message);
+        var row = Assert.Single(CancelRows());
+        AssertTheRow(row, job, success: false, error: thrown.Message);
+        // kd-32. A throw keeps no refusal fields: the store may have been reached.
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
+    }
+
+    // ---- kd-27: the job controls re-check access at the click -------------------------------------
+    // Cancel and Remove acted on whatever the operator could do when the page loaded. They now re-check it as the four write
+    // handlers do (ReauthorizeAsync) before any store call; a refusal leaves the job as it was and is audited under the
+    // control's own action, with the aud-a28 refusal fields.
+
+    private const string RemoveAction = "ConferenceRooms_RemoveBulkJob";
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("remove")]
+    public async Task ARevokedOperator_NeitherCancelsNorRemovesAJob_AndTheRefusalIsAudited(string control)
+    {
+        var (jobs, store) = JobService();
+        var job = Job("job-4", control == "cancel" ? BulkJobStatus.Queued : BulkJobStatus.Completed);
+        store.Insert(job);
+        var page = BuildPage(jobs, authorized: false);
+
+        await (Task)Method(control == "cancel" ? "CancelJob" : "RemoveJob").Invoke(page, [job])!;
+
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == (control == "cancel" ? CancelAction : RemoveAction));
+        AssertTheRow(row, job, success: false, error: "Authorization denied.");
+        Assert.Equal("Authorization", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal(job.Status, store.Get(job.Id)!.Status);
+        Assert.False(store.Get(job.Id)!.CancelRequested);
+        Assert.Equal("Authorization denied.", Assert.IsType<RoomOperationResult>(GetField(page, "result")).Message);
+    }
+
+    [Fact]
+    public async Task AnAllowedOperatorsRemove_RemovesTheJob_AndAuditsIt()
+    {
+        var (jobs, store) = JobService();
+        var job = Job("job-5", BulkJobStatus.Completed);
+        store.Insert(job);
+        var page = BuildPage(jobs);
+
+        await (Task)Method("RemoveJob").Invoke(page, [job])!;
+
+        Assert.Null(store.Get(job.Id));
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == RemoveAction);
+        AssertTheRow(row, job, success: true, error: null);
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
     }
 
     // ---- the page ------------------------------------------------------------------------------
 
-    private Page BuildPage(BulkJobService? jobs = null)
+    private Page BuildPage(BulkJobService? jobs = null, bool authorized = true)
     {
         var page = new Page();
         if (jobs is not null)
@@ -185,7 +292,7 @@ public sealed class ConferenceRoomPageTests : IDisposable
         SetProperty(page, "Email", Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance));
         SetProperty(page, "ServiceNow", new ServiceNowService(_h.Config, NullLogger<ServiceNowService>.Instance, HttpClients()));
         SetProperty(page, "AuthStateProvider", Authentication());
-        SetProperty(page, "AuthorizationService", Authorization());
+        SetProperty(page, "AuthorizationService", Authorization(authorized));
         SetProperty(page, "OpTrace", _h.Trace);
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
         SetProperty(page, "Progress", _progress);
@@ -210,11 +317,12 @@ public sealed class ConferenceRoomPageTests : IDisposable
         return provider;
     }
 
-    private static IAuthorizationService Authorization()
+    // The page's policy answer for the operator: authorized, or - kd-27 - revoked since the page loaded.
+    private static IAuthorizationService Authorization(bool authorized = true)
     {
         var service = Substitute.For<IAuthorizationService>();
         service.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
-            .Returns(AuthorizationResult.Success());
+            .Returns(authorized ? AuthorizationResult.Success() : AuthorizationResult.Failed());
         return service;
     }
 

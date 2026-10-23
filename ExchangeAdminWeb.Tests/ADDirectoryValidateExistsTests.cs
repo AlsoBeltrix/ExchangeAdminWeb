@@ -253,6 +253,49 @@ public class ADDirectoryValidateExistsTests
         Assert.Empty(results);
     }
 
+    [Theory]
+    [InlineData("User")]
+    [InlineData("Group")]
+    [InlineData("OU")]
+    [InlineData("Any")]
+    public void Search_EachObjectKind_ReachesItsCommand(string objectKind)
+    {
+        // psl-11. The theory above proves the unavailable path only - Search returns at its availability guard - so a
+        // regression in the command each kind runs would ship green. Here the directory is AVAILABLE, on stand-ins
+        // (ADDirectorySearchServiceTests.AvailableStandInService, no directory): each kind runs its command and only its
+        // own - a group through the forest's global catalog, "Any" users and groups but never OUs - and maps the answer.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls);
+
+        var results = svc.Search("test search term", objectKind);
+
+        var catalog = $"Get-ADGroup|{ADDirectorySearchServiceTests.StandInGlobalCatalog}:3268";
+        Assert.Equal(objectKind switch
+        {
+            "User" => ["Get-ADUser"],
+            "Group" => ["Get-ADForest", catalog],
+            "OU" => ["Get-ADOrganizationalUnit"],
+            _ => new[] { "Get-ADUser", "Get-ADForest", catalog },
+        }, calls);
+        Assert.Equal(objectKind switch
+        {
+            "User" => ["User"],
+            "Group" => ["Group"],
+            "OU" => ["OU"],
+            _ => new[] { "Group", "User" },
+        }, results.Select(r => r.ObjectType).OrderBy(t => t, StringComparer.Ordinal));
+        if (objectKind == "OU")
+        {
+            // The OU's label is its Name - Get-ADOrganizationalUnit returns no DisplayName - as ADDirectoryLiveTests guards
+            // against the real cmdlet where a directory is reachable.
+            var ou = Assert.Single(results);
+            Assert.Equal("Test Rooms", ou.DisplayName);
+            Assert.Equal("OU=Test Rooms,DC=example,DC=test", ou.DistinguishedName);
+        }
+        if (objectKind is "Group" or "Any")
+            Assert.Equal("example.test", Assert.Single(results, r => r.ObjectType == "Group").DnsDomain);
+    }
+
     [Fact]
     public void Search_OuTermTooShort_ReturnsEmpty()
     {
