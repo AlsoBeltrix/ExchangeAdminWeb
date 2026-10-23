@@ -1,3 +1,5 @@
+using ExchangeAdminWeb.Services.Storage;
+
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
@@ -54,6 +56,50 @@ public static class SettingsSaveAudit
         string reason,
         IReadOnlyCollection<string>? sections = null) =>
         Write(audit, logger, performedBy, ip, section, reason, sections, null);
+
+    /// <summary>The <c>refusedAt</c> of a save refused because the settings store was busy (aud-a28v, aud-a40).</summary>
+    public const string StoreBusy = "StoreBusy";
+
+    /// <summary>Why a save that met a busy settings store was not made (aud-a40).</summary>
+    public const string StoreBusyCause =
+        "the settings store was busy - another save, on this instance or the other, held it for longer than this one could wait";
+
+    /// <summary>
+    /// What a save refused at a busy settings store tells the admin: that the store was busy, <paramref name="written"/>, and to
+    /// try again (aud-a40).
+    /// </summary>
+    public static string StoreBusyMessage(string written = "Nothing was written.") =>
+        $"Not saved: {StoreBusyCause}. {written} Try again in a moment; your changes are still on this page.";
+
+    /// <summary>
+    /// Records a settings save that ended in an exception and returns what the admin is told (aud-a40). A busy store
+    /// (<see cref="ConfigStoreBusy.IsBusy"/>) is a refusal: logged as a warning with the exception, recorded with
+    /// <c>refusedAt</c> <see cref="StoreBusy"/> and <c>mutationAttempted</c> false, and told with <paramref name="busy"/>, or
+    /// <see cref="StoreBusyMessage"/>. Anything else is the save's failure, recorded and returned as <paramref name="failure"/>.
+    /// Never throws.
+    /// </summary>
+    public static string LogSettingsSaveException(
+        this AuditService audit,
+        ILogger logger,
+        string performedBy,
+        string ip,
+        string section,
+        Exception exception,
+        string failure,
+        IReadOnlyCollection<string>? sections = null,
+        string? busy = null)
+    {
+        if (ConfigStoreBusy.IsBusy(exception))
+        {
+            var message = busy ?? StoreBusyMessage();
+            logger.LogWarning(exception, "Settings save not made: the settings store was busy ({Section})", section);
+            LogSettingsSaveRefused(audit, logger, performedBy, ip, section, StoreBusy, message, sections);
+            return message;
+        }
+
+        LogSettingsSaveFailed(audit, logger, performedBy, ip, section, failure, sections);
+        return failure;
+    }
 
     private static void Write(
         AuditService audit,

@@ -26,7 +26,7 @@ public class DefenderServiceRegistrationTests
     [Fact]
     public void EveryConstructorDependencyOfTheDefenderServiceIsRegistered()
     {
-        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs"));
+        var program = RazorSyntax.CodeView(File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs")));
 
         // The PUBLIC constructor is the one DI uses. The internal test seam beside it takes
         // factories and overrides and is deliberately not checked.
@@ -57,7 +57,7 @@ public class DefenderServiceRegistrationTests
     {
         // The page injects it. Without this the module 404s at runtime while everything else
         // keeps working, which is the quietest of the startup failures.
-        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs"));
+        var program = RazorSyntax.CodeView(File.ReadAllText(Path.Combine(RepoRoot(), "Program.cs")));
 
         Assert.Contains("AddSingleton<DefenderEndpointDeviceService>()", program, StringComparison.Ordinal);
     }

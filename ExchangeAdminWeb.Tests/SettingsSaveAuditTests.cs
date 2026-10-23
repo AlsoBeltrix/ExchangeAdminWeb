@@ -675,9 +675,11 @@ public sealed class SettingsSaveAuditTests : IDisposable
 
         Assert.True(unrecorded.Count == 0, $"{page} {signature}: refusal return(s) with no record above them");
 
+        // aud-a40: through the one helper, which tells a busy store from a failure, and never by hand.
         var caught = code.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
         Assert.True(caught > tryAt, $"{signature} has no catch - this guard is stale");
         var block = AuditCategoryFilingTests.MethodBody(code[caught..], "catch (Exception ex)");
-        Assert.Contains("Audit.LogSettingsSaveFailed(", block, StringComparison.Ordinal);
+        Assert.Contains("Audit.LogSettingsSaveException(", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("Audit.LogSettingsSaveFailed(", block, StringComparison.Ordinal);
     }
 }

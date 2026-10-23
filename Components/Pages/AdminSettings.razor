@@ -510,17 +510,6 @@
     internal static int SecretIdDelta(string current, string loaded) =>
         string.Equals((current ?? "").Trim(), (loaded ?? "").Trim(), StringComparison.Ordinal) ? 0 : 1;
 
-    /// <summary>Re-baselines the protected lists, after a load or a successful save.</summary>
-    /// <remarks>
-    /// Required after saving, not merely tidy: this save does not reload the page, so a stale
-    /// baseline would count the edits just persisted all over again on the next one.
-    /// </remarks>
-    private void SnapshotProtectedBaseline()
-    {
-        SnapshotProtectedRulesBaseline();
-        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
-    }
-
     /// <summary>Re-baselines the five rule lists only, leaving the directory-read secret id pending.</summary>
     private void SnapshotProtectedRulesBaseline()
     {
@@ -530,6 +519,42 @@
         ppPatternsBaseline = new List<string>(ppPatterns);
         ppTargetsBaseline = new List<string>(ppTargets);
     }
+
+    /// <summary>The five rule baselines become <paramref name="rules"/> - what the store holds after a save.</summary>
+    /// <remarks>
+    /// Required after saving, not merely tidy: this save does not reload the page, so a stale baseline would count the edits
+    /// just persisted all over again on the next one. What was saved, not the lists as they are now (aud-a41): the save's
+    /// store calls run off the circuit, and an edit made while they waited must still count as unsaved.
+    /// </remarks>
+    private void SetRulesBaseline(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData rules)
+    {
+        ppUsersBaseline = rules.Users.ToList();
+        ppGroupsBaseline = rules.Groups.ToList();
+        ppOusBaseline = rules.OrganizationalUnits.ToList();
+        ppPatternsBaseline = rules.SamAccountNamePatterns.ToList();
+        ppTargetsBaseline = rules.GroupTargets.ToList();
+    }
+
+    /// <summary>The five lists show <paramref name="rules"/>.</summary>
+    private void ShowRules(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData rules)
+    {
+        ppUsers = rules.Users.ToList();
+        ppGroups = rules.Groups.ToList();
+        ppOus = rules.OrganizationalUnits.ToList();
+        ppPatterns = rules.SamAccountNamePatterns.ToList();
+        ppTargets = rules.GroupTargets.ToList();
+    }
+
+    /// <summary>Whether the five lists still hold exactly <paramref name="config"/>'s entries, in order and casing.</summary>
+    private bool ListsHold(ProtectedPrincipalConfig config) =>
+        ppUsers.SequenceEqual(config.Users, StringComparer.Ordinal)
+        && ppGroups.SequenceEqual(config.Groups, StringComparer.Ordinal)
+        && ppOus.SequenceEqual(config.OrganizationalUnits, StringComparer.Ordinal)
+        && ppPatterns.SequenceEqual(config.SamAccountNamePatterns, StringComparer.Ordinal)
+        && ppTargets.SequenceEqual(config.GroupTargets, StringComparer.Ordinal);
+
+    private static ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData RulesOf(ProtectedPrincipalConfig config) =>
+        new(config.Users, config.Groups, config.OrganizationalUnits, config.SamAccountNamePatterns, config.GroupTargets);
 
     /// <summary>How many rules of the five kinds the page last loaded or saved.</summary>
     private int LoadedRuleCount() =>
@@ -633,6 +658,9 @@
         // a refused or failed attempt to change who can use a module, or who is protected, left no
         // trace. Read above the try, so the catch has the ip too.
         var ip = ClientInfo.GetIpForUser(currentUser);
+        // aud-a41. What this save writes, and what its records name, taken before anything waits: its write runs off the
+        // circuit, and a toggle switched while it waits is not part of this save - it stays unsaved.
+        var changes = ChangedToggles();
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -641,7 +669,7 @@
             {
                 statusMessage = "Authorization check failed.";
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "Authorization", statusMessage, PendingEnablementSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "Authorization", statusMessage, EnablementSections(changes));
                 return;
             }
 
@@ -650,7 +678,7 @@
                 enablementStoreCorrupt = true;
                 statusMessage = EnablementRefusal();
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, EnablementSections(changes));
                 return;
             }
 
@@ -660,19 +688,21 @@
             {
                 statusMessage = "Refusing to save: this page's toggles are not the stored module enablement state (the store could not be read), so saving them could switch modules off. Nothing was changed. Reload the page.";
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreUnreadable", statusMessage, PendingEnablementSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreUnreadable", statusMessage, EnablementSections(changes));
                 return;
             }
 
             // aud-a28k. Only the toggles the admin changed, each decided against its row under the write lock:
             // writing the whole loaded map switched back every toggle changed elsewhere since the page loaded.
-            var outcome = Enablement.SetModulesEnabled(ChangedToggles());
+            // aud-a41. Off the circuit, as every write on this page: a write waits up to the store's busy timeout for a lock
+            // held elsewhere - the other instance's save, or another admin's - and called on the circuit it froze the page.
+            var outcome = await Task.Run(() => Enablement.SetModulesEnabled(changes));
             if (outcome.StoreCorrupt)
             {
                 enablementStoreCorrupt = true;
                 statusMessage = EnablementRefusal();
                 statusIsError = true;
-                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, PendingEnablementSections());
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, EnablementSection, "StoreCorrupt", statusMessage, EnablementSections(changes));
                 return;
             }
 
@@ -689,8 +719,11 @@
 
             // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
             // the operator to confirm leaving a page they just saved.
-            dirty.ClearSection(SectionModules);
-            moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement, StringComparer.OrdinalIgnoreCase);
+            // aud-a41. The baseline takes the toggles this save wrote, and the recount keeps any switched while it waited:
+            // the guard then asks before the reload drops them, which is the one prompt it should give.
+            foreach (var (moduleId, enabled) in changes)
+                moduleEnablementBaseline[moduleId] = enabled;
+            RecountModules();
             statusMessage = "Module enablement saved. Refreshing...";
             statusIsError = false;
 
@@ -706,9 +739,8 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, EnablementSection, ex, $"Failed to save: {ex.Message}", EnablementSections(changes));
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, EnablementSection, statusMessage, PendingEnablementSections());
         }
         finally
         {
@@ -725,9 +757,9 @@
         "Refusing to save: saving now would overwrite the stored module enablement with the all-disabled fallback. Nothing was changed. "
         + SettingsStoreText.Enablement(Enablement.LegacyImportFailed);
 
-    /// <summary>The <c>Module:{id}</c> section of each toggle that differs from what the page loaded.</summary>
-    private string[] PendingEnablementSections() =>
-        ChangedToggles().Keys.Select(id => $"Module:{id}").ToArray();
+    /// <summary>The <c>Module:{id}</c> section of each toggle a save is changing.</summary>
+    private static string[] EnablementSections(IReadOnlyDictionary<string, bool> changes) =>
+        changes.Keys.Select(id => $"Module:{id}").ToArray();
 
     /// <summary>The toggles that differ from what the page loaded, and the state each was switched to.</summary>
     private Dictionary<string, bool> ChangedToggles() =>
@@ -756,9 +788,11 @@
             }
 
             var previousLevel = ExtendedLog.CurrentLevel;
-            ExtendedLog.SetLevel(selectedLogLevel);
+            // aud-a41. The level written and recorded is the one chosen when this save began; its write runs off the circuit.
+            var level = selectedLogLevel;
+            await Task.Run(() => ExtendedLog.SetLevel(level));
 
-            try { Audit.LogSettingsChange(currentUser, ip, section, new[] { previousLevel }, new[] { selectedLogLevel }); }
+            try { Audit.LogSettingsChange(currentUser, ip, section, new[] { previousLevel }, new[] { level }); }
             catch { }
 
             statusMessage = $"Extended log level set to {ExtendedLog.CurrentLevel}.";
@@ -768,9 +802,10 @@
         {
             // aud-a28k. SetLevel throws when the store refuses the level, and leaves the level in effect
             // unchanged; this used to report and record a level the store had not kept.
-            statusMessage = $"Failed to save log level: {ex.Message.TrimEnd('.')}. The extended log level is still {ExtendedLog.CurrentLevel}.";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex,
+                $"Failed to save log level: {ex.Message.TrimEnd('.')}. The extended log level is still {ExtendedLog.CurrentLevel}.",
+                busy: SettingsSaveAudit.StoreBusyMessage($"Nothing was written; the extended log level is still {ExtendedLog.CurrentLevel}."));
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {
@@ -1168,6 +1203,21 @@
                 return;
             }
 
+            // aud-a41. What this save writes, taken before its first store call. Each of its three calls runs off the circuit - a
+            // call can wait up to the store's busy timeout for a lock held elsewhere, and on the circuit that wait froze the page -
+            // so the admin can edit while it runs, and an edit made then is not part of this save.
+            var loadedSecretId = ppDirectoryReadSecretIdBaseline;
+            var newConfig = new ProtectedPrincipalConfig
+            {
+                Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                Groups = ppGroups.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                OrganizationalUnits = ppOus.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                SamAccountNamePatterns = ppPatterns.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
+            };
+            var pageLoadedRules = LoadedRuleCount() > 0;
+            var loadedVersion = ppRulesVersion;
+
             // aud-a28r. The secret's compare runs here, before the rules are written, and a conflict refuses the whole save.
             // It used to run only inside the secret's own write, after the rules had landed, so a secret changed elsewhere
             // left half of the one change the admin confirmed saved. Not one write for both: the rules and the secret are
@@ -1177,24 +1227,10 @@
             // and both halves are recorded.
             if (secretChanged)
             {
-                // aud-a28v. The compare holds the settings store's write lock, so a lock held elsewhere for longer than the
-                // store waits - about 35 seconds - fails it, and with it the whole save, before anything is written. That used to
-                // reach the save's catch as "Failed to save: SQLite Error 5", which said neither that the store was busy nor that
-                // a retry would work. Only the busy result is caught here, as a refusal; any other failure still reaches the
-                // save's catch as a failure.
-                ModuleConfigSaveOutcome secretCheck;
-                try
-                {
-                    secretCheck = ProtectedPrincipalService.CompareDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
-                }
-                catch (Exception busy) when (ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(busy))
-                {
-                    Logger.LogWarning(busy, "Protected-principals save not attempted: the settings store was busy when the Secret ID compare went to check it");
-                    statusMessage = "Not saved: the settings store was busy - another save, on this instance or the other, held it for longer than this one could wait - so the directory-read credential (Delinea Secret ID) could not be checked. Nothing was written, the protection rules included. Try again in a moment; your changes are still on this page.";
-                    statusIsError = true;
-                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreBusy", statusMessage);
-                    return;
-                }
+                // aud-a28v, aud-a40. The compare holds the settings store's write lock, so a lock held elsewhere for longer than
+                // the store waits fails it, and with it the whole save, before anything is written: the save's catch records
+                // that as a busy store, a refusal.
+                var secretCheck = await Task.Run(() => ProtectedPrincipalService.CompareDirectoryReadSecretId(loadedSecretId, secretId));
 
                 if (secretCheck.Status == ModuleConfigSaveStatus.StoreCorrupt)
                 {
@@ -1214,20 +1250,11 @@
                 }
             }
 
-            var newConfig = new ProtectedPrincipalConfig
-            {
-                Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
-                Groups = ppGroups.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
-                OrganizationalUnits = ppOus.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
-                SamAccountNamePatterns = ppPatterns.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
-                GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
-            };
-
             // Decided under the write lock from the rules as they are: a store that cannot be read, a save holding
             // no rules over rules this page never loaded, and rules changed since this page loaded them (its
             // version, aud-a28n) are refused there and write nothing. Rules already changed elsewhere to exactly
             // these come back as already applied, and nothing is written either.
-            var outcome = ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules: LoadedRuleCount() > 0, loadedVersion: ppRulesVersion);
+            var outcome = await Task.Run(() => ProtectedPrincipalService.ReplaceConfig(newConfig, pageLoadedRules, loadedVersion));
             if (outcome.Status == ProtectedPrincipalSaveStatus.StoreCorrupt)
             {
                 statusMessage = "Refusing to save: the protection rules could not be read when this save went to replace them. Nothing was changed. "
@@ -1263,7 +1290,7 @@
             {
                 var extra = new Dictionary<string, object?> { ["counts"] = RuleCounts(outcome.After) };
                 if (alreadyApplied)
-                    extra["alreadyApplied"] = ChangedRuleEntries();
+                    extra["alreadyApplied"] = ChangedRuleEntries(newConfig);
                 Audit.LogSettingsChange(currentUser, ip, section, RuleEntries(outcome.Before), RuleEntries(outcome.After), extra);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
@@ -1272,21 +1299,18 @@
             // lists: another save may have changed only an entry's casing. The lists become the rows under the lock -
             // the rows the version below is of - so the page shows them, and a later save, which passes the version
             // check, writes them rather than this page's stale casing.
-            if (alreadyApplied && outcome.After is { } held)
-            {
-                ppUsers = held.Users.ToList();
-                ppGroups = held.Groups.ToList();
-                ppOus = held.OrganizationalUnits.ToList();
-                ppPatterns = held.SamAccountNamePatterns.ToList();
-                ppTargets = held.GroupTargets.ToList();
-            }
+            // aud-a41. The lists take those rows only while they still hold what this save wrote: an edit made while it waited
+            // stays on the page. The baseline becomes what the store now holds, so the recount below still counts that edit.
+            var rulesNow = alreadyApplied && outcome.After is { } held ? held : RulesOf(newConfig);
+            if (ListsHold(newConfig))
+                ShowRules(rulesNow);
 
             ppRulesVersion = outcome.Version ?? "";
-            var secretFailure = secretChanged ? SaveDirectoryReadSecret(secretId, ip) : null;
+            SetRulesBaseline(rulesNow);
+            var secretFailure = secretChanged ? await SaveDirectoryReadSecretAsync(loadedSecretId, secretId, ip) : null;
+            RecountProtected();
             if (secretFailure is null)
             {
-                dirty.ClearSection(SectionProtected);
-                SnapshotProtectedBaseline();
                 statusMessage = alreadyApplied
                     ? "Protected principals saved: the rules already held these changes - made the same way elsewhere after this page loaded - so they were not written again. They are in effect."
                     : "Protected principals saved. Changes are effective immediately.";
@@ -1294,8 +1318,6 @@
             }
             else
             {
-                SnapshotProtectedRulesBaseline();
-                RecountProtected();
                 statusMessage = secretFailure;
                 statusIsError = true;
             }
@@ -1303,9 +1325,11 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            // aud-a40. Every store call this reaches is its own transaction, rolled back when it throws, and the secret's write -
+            // the one after the rules - catches its own; so a busy store here wrote nothing, the rules included.
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}",
+                busy: SettingsSaveAudit.StoreBusyMessage("Nothing was written, the protection rules and the directory-read credential (Delinea Secret ID) included."));
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -1322,7 +1346,7 @@
     /// to reach the save's catch, so the page said "Failed to save" over rules already in effect and the one
     /// record said nothing of what had landed.
     /// </remarks>
-    private string? SaveDirectoryReadSecret(string secretId, string ip)
+    private async Task<string?> SaveDirectoryReadSecretAsync(string loadedSecretId, string secretId, string ip)
     {
         try
         {
@@ -1332,7 +1356,7 @@
             // refusal here is the secret's alone: recorded under its own section, the message saying the rules saved. Since
             // aud-a28r a change made before the save is refused, whole, by the compare ahead of the rules; one refused here
             // landed during this save.
-            var outcome = ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretIdBaseline, secretId);
+            var outcome = await Task.Run(() => ProtectedPrincipalService.SaveDirectoryReadSecretId(loadedSecretId, secretId));
             if (outcome.Status is ModuleConfigSaveStatus.StoreCorrupt or ModuleConfigSaveStatus.ConcurrentChange)
             {
                 var concurrent = outcome.Status == ModuleConfigSaveStatus.ConcurrentChange;
@@ -1354,16 +1378,22 @@
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the directory-read secret id change"); }
 
             var stored = outcome.After.GetValueOrDefault(ProtectedPrincipalService.DirectoryReadSecretConfigKey) ?? "";
-            ppDirectoryReadSecretId = stored;
+            // aud-a41. The field takes the stored value only while it still holds what this save wrote; a value typed while the
+            // write waited stays, counted unsaved against the new baseline.
+            ppDirectoryReadSecretIdBaseline = stored;
+            if (string.Equals(ppDirectoryReadSecretId.Trim(), secretId, StringComparison.Ordinal))
+                ppDirectoryReadSecretId = stored;
             ppSecretFallbackId = ProtectedPrincipalService.DescribeDirectoryReadSecret(stored).FallbackInEffect;
             return null;
         }
         catch (Exception secretEx)
         {
-            Logger.LogError(secretEx, "The directory-read secret id was not saved; the protection rules were");
-            var message = $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.";
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, SecretSection, message);
-            return message;
+            // aud-a40. A busy store is the secret's refusal - its write was not made - and the message says what landed.
+            if (!ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(secretEx))
+                Logger.LogError(secretEx, "The directory-read secret id was not saved; the protection rules were");
+            return Audit.LogSettingsSaveException(Logger, currentUser, ip, SecretSection, secretEx,
+                $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.",
+                busy: $"The protection rules were saved and are in effect, but the directory-read credential (Delinea Secret ID) was not saved: {SettingsSaveAudit.StoreBusyCause}. Save again to retry it.");
         }
     }
 
@@ -1383,18 +1413,18 @@
                 .Concat(rules.GroupTargets.Select(v => "Targets:" + v))
                 .ToArray();
 
-    /// <summary>The entries the admin added or removed against what the page loaded, as <c>Kind:value</c>.</summary>
-    private string[] ChangedRuleEntries() =>
-        ChangedEntries("Users", ppUsers, ppUsersBaseline)
-            .Concat(ChangedEntries("Groups", ppGroups, ppGroupsBaseline))
-            .Concat(ChangedEntries("OUs", ppOus, ppOusBaseline))
-            .Concat(ChangedEntries("Patterns", ppPatterns, ppPatternsBaseline))
-            .Concat(ChangedEntries("Targets", ppTargets, ppTargetsBaseline))
+    /// <summary>The entries a save of <paramref name="saved"/> added or removed against what the page loaded, as <c>Kind:value</c>.</summary>
+    private string[] ChangedRuleEntries(ProtectedPrincipalConfig saved) =>
+        ChangedEntries("Users", saved.Users, ppUsersBaseline)
+            .Concat(ChangedEntries("Groups", saved.Groups, ppGroupsBaseline))
+            .Concat(ChangedEntries("OUs", saved.OrganizationalUnits, ppOusBaseline))
+            .Concat(ChangedEntries("Patterns", saved.SamAccountNamePatterns, ppPatternsBaseline))
+            .Concat(ChangedEntries("Targets", saved.GroupTargets, ppTargetsBaseline))
             .ToArray();
 
     // aud-a26s. Ordinal, as EntryDelta counts: an entry removed and added back in other casing, which the count shows as two
     // changes, is named as those two entries in an already-applied record, where it was named as nothing.
-    private static IEnumerable<string> ChangedEntries(string kind, List<string> current, List<string> loaded) =>
+    private static IEnumerable<string> ChangedEntries(string kind, IEnumerable<string> current, IEnumerable<string> loaded) =>
         current.Except(loaded, StringComparer.Ordinal)
             .Concat(loaded.Except(current, StringComparer.Ordinal))
             .Select(v => kind + ":" + v);

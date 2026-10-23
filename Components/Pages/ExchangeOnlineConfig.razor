@@ -319,7 +319,10 @@
             }
             else
             {
-                var outcome = Enablement.SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = moduleEnabled });
+                // aud-a41. The toggle written, and the baseline after it, are the one this save began with: the write runs off
+                // the circuit, since it can wait up to the store's busy timeout for a lock held elsewhere.
+                var wanted = moduleEnabled;
+                var outcome = await Task.Run(() => Enablement.SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = wanted }));
                 if (outcome.StoreCorrupt)
                 {
                     enablementStoreCorrupt = true;
@@ -340,8 +343,8 @@
                     catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ExchangeOnline status change"); }
                 }
 
-                moduleEnabledBaseline = moduleEnabled;
-                statusMessage = moduleEnabled
+                moduleEnabledBaseline = wanted;
+                statusMessage = wanted
                     ? "Exchange Online module enabled. Dependent modules with their own toggles on are now active."
                     : "Exchange Online module disabled. All dependent modules are now inactive.";
                 statusIsError = false;
@@ -349,9 +352,8 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
             statusIsError = true;
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally { saving = false; }
     }
@@ -491,10 +493,11 @@
             var changed = wanted.Keys
                 .Where(k => !string.Equals(wanted[k], (exoShown.GetValueOrDefault(k) ?? "").Trim(), StringComparison.Ordinal))
                 .ToList();
-            var outcome = ModuleConfigSvc.SaveChangedValues(
-                ExoConnectionPool.ConfigModuleKey,
-                changed.ToDictionary(k => k, k => exoStored.GetValueOrDefault(k) ?? "", StringComparer.OrdinalIgnoreCase),
-                changed.ToDictionary(k => k, k => wanted[k], StringComparer.OrdinalIgnoreCase));
+            // aud-a41. Built here, on the circuit, from this page's load; the write itself runs off the circuit, as it can wait up
+            // to the store's busy timeout for a lock held elsewhere. What it saved is the locals, so a field typed meanwhile stays.
+            var loadedValues = changed.ToDictionary(k => k, k => exoStored.GetValueOrDefault(k) ?? "", StringComparer.OrdinalIgnoreCase);
+            var wantedValues = changed.ToDictionary(k => k, k => wanted[k], StringComparer.OrdinalIgnoreCase);
+            var outcome = await Task.Run(() => ModuleConfigSvc.SaveChangedValues(ExoConnectionPool.ConfigModuleKey, loadedValues, wantedValues));
             if (outcome.Status == ModuleConfigSaveStatus.StoreCorrupt)
             {
                 configCorrupt = true;
@@ -578,10 +581,9 @@
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save: {ex.Message}";
+            statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
             statusIsError = true;
             completed = (false, statusMessage);
-            Audit.LogSettingsSaveFailed(Logger, currentUser, ip, section, statusMessage);
         }
         finally
         {

@@ -34,7 +34,7 @@ public class BulkJobProcessorWiringTests
         {
             var path = Path.Combine(dir.FullName, "Program.cs");
             if (File.Exists(path))
-                return File.ReadAllText(path);
+                return RazorSyntax.CodeView(File.ReadAllText(path));
 
             dir = dir.Parent;
         }

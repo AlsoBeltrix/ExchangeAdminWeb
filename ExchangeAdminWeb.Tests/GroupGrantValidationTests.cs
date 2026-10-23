@@ -136,7 +136,7 @@ public class GroupGrantValidationTests
         var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(newGrants);", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
         // aud-a28k: the save writes only the aliases it edited, decided under the write lock.
-        var iPersist = body.IndexOf("SectionAccess.SaveEditedAliases(loaded, edited);", StringComparison.Ordinal);
+        var iPersist = body.IndexOf("SectionAccess.SaveEditedAliases(loaded, edited)", StringComparison.Ordinal);
 
         Assert.True(iConfirm >= 0, "The access save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");
@@ -152,7 +152,7 @@ public class GroupGrantValidationTests
         var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
         // aud-a28n: the save writes the confirmed snapshot's additions and removals, decided under the write lock.
-        var iPersist = body.IndexOf("ModuleAdmin.ApplyAdminChanges(module.Id, added, removed)", StringComparison.Ordinal);
+        var iPersist = body.IndexOf("ModuleAdmin.ApplyAdminChanges(moduleId, added, removed)", StringComparison.Ordinal);
 
         Assert.True(iConfirm >= 0, "The module-admin save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");

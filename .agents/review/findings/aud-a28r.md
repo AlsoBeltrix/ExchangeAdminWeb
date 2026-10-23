@@ -49,7 +49,7 @@ connection and one transaction, and production hands every repository the one `I
 (`Program.cs` 72-79), so SQL inside one callback could reach both tables. No repository can take part in it:
 `ProtectedPrincipalRepository.Replace` (106-136) and `ModuleConfigRepository.UpdateModuleIf` (125-153) each open
 their own `_store.Write`, and a second write opened inside the first is a second connection's BEGIN IMMEDIATE
-waiting on the lock the first holds - the 5-second busy timeout, then SQLITE_BUSY. Spanning them is a new seam:
+waiting on the lock the first holds - the store's busy wait (about 35 seconds when this was written, the 5-second busy timeout inside the provider's 30-second retry; 5 seconds since aud-a41), then SQLITE_BUSY. Spanning them is a new seam:
 the protected-principal write reaching module_config's rows through ModuleConfigRepository's private helpers, past
 ModuleConfigService (its write lock; `ConfigSaved`, which only it can raise), with the atomicity resting on DI
 handing both repositories one database - which no type says, and which `SettingsPageHarness` deliberately does not
@@ -165,8 +165,9 @@ coder self-review verdict is claimed.
   the other instance, within that save's milliseconds - still leaves the rules saved and the secret refused, recorded as both;
   and a secret write that throws after the rules is aud-a28j's partial, unchanged. Closing either needs the two repositories in
   one transaction, which no repository supports today.
-- The compare takes the secret's write lock to read; a database whose write lock is held past the 5-second busy timeout fails
-  the save before anything is written, where it used to fail only the secret after the rules.
+- The compare takes the secret's write lock to read; a database whose write lock is held past the store's busy wait (about 35
+  seconds when this was written, not the 5 it said - aud-a41 measured it and made it 5) fails the save before anything is
+  written, where it used to fail only the secret after the rules.
 - Two in-process stores on one temp file stand in for the two instances; nothing ran against the shared database.
 
 ## Branch-tip gates - 2026-10-22 (`07ef4e8e`: both fixes and the comments)

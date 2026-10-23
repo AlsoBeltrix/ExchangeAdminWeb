@@ -8,8 +8,8 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// nothing else.
 /// </summary>
 /// <remarks>
-/// <para>The wait is about 35 seconds, measured: the connection factory's <c>busy_timeout=5000</c> inside each step of
-/// Microsoft.Data.Sqlite's own busy retry, which runs until the command's default 30-second timeout. A lock still held then
+/// <para>The wait is <see cref="SqliteConnectionFactory.BusyTimeout"/>, 5 seconds (aud-a41; it was about 35 before, the
+/// factory's 5-second busy timeout inside each step of Microsoft.Data.Sqlite's 30-second busy retry). A lock still held then
 /// surfaces from <c>BEGIN IMMEDIATE</c> as a <see cref="SqliteException"/> whose result code is SQLITE_BUSY (5) - "SQLite
 /// Error 5: 'database is locked'.", extended code 5, no inner exception.</para>
 /// <para>SQLITE_LOCKED (6) is not counted: with the private cache <see cref="SqliteConnectionFactory"/> opens, it is a
