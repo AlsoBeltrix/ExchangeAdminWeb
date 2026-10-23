@@ -132,6 +132,9 @@ public class RecipientLookupService : ExchangeServiceBase
         {
             try
             {
+                // aud-a23o. A size only when it was read; one that could not be is a warning naming why. An unparseable size
+                // showed 0 GB, a failed archive read 0 GB, and any failure "unavailable (connection not configured)", a cause
+                // it guessed.
                 var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
                 if (onPremSize.MailboxUnreadable is null)
                     result.MailboxSizeGB = onPremSize.MailboxGB;

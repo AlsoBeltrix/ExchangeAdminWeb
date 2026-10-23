@@ -428,7 +428,7 @@
 
             try
             {
-                string location; try { location = await CalendarService.GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result = PermissionResult.Fail(ExchangeServiceBase.LocationReadFailure(target, locationEx)); return; }
+                string location; try { location = await CalendarService.GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result = PermissionResult.Fail(ExchangeServiceBase.LocationReadFailure(target, locationEx)); return; } // aud-a23o: a failed location read is refused as such, before any write; it reached the catch below, "Operation may have succeeded but audit logging failed"
                 if (location == "Unknown")
                 {
                     result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");

@@ -195,14 +195,14 @@
                         @if (singleCreateResult.ExcludedTargets is { Count: > 0 } singleExcluded)
                         {
                             <div class="alert alert-warning mt-3">
-                                <strong>⚠ @MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)</strong>
+                                <strong>⚠ @MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)</strong> @* aud-a23p: each kind counted apart - a target whose check did not answer is not called a protected principal *@
                                 <ul class="mb-2 mt-2">
                                     @foreach (var item in singleExcluded)
                                     {
                                         <li>@item</li>
                                     }
                                 </ul>
-                                <p class="mb-0">@MigrationService.ExclusionAdvice(singleExcluded, singleCreateResult.UnverifiedTargets)</p>
+                                <p class="mb-0">@MigrationService.ExclusionAdvice(singleExcluded, singleCreateResult.UnverifiedTargets)</p> @* aud-a23p: the advice for the kinds present *@
                             </div>
                         }
                     }
@@ -365,14 +365,14 @@
                         @if (createResult.ExcludedTargets is { Count: > 0 } bulkExcluded)
                         {
                             <div class="alert alert-warning mt-3">
-                                <strong>⚠ @MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)</strong>
+                                <strong>⚠ @MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)</strong> @* aud-a23p: the same for the bulk create *@
                                 <ul class="mb-2 mt-2">
                                     @foreach (var item in bulkExcluded)
                                     {
                                         <li>@item</li>
                                     }
                                 </ul>
-                                <p class="mb-0">@MigrationService.ExclusionAdvice(bulkExcluded, createResult.UnverifiedTargets)</p>
+                                <p class="mb-0">@MigrationService.ExclusionAdvice(bulkExcluded, createResult.UnverifiedTargets)</p> @* aud-a23p: the same *@
                             </div>
                         }
                     }
@@ -1038,7 +1038,7 @@
                                     }
                                     else if (mailboxLoadFailed)
                                     {
-                                        <p class="text-danger text-center my-5" role="alert">@((mailboxLoadFailure ?? "Unable to load mailboxes").TrimEnd('.')). Refresh to try again.</p>
+                                        <p class="text-danger text-center my-5" role="alert">@((mailboxLoadFailure ?? "Unable to load mailboxes").TrimEnd('.')). Refresh to try again.</p> @* aud-a23p: the load's own failure, in the cmdlet's words; it reached only the activity *@
                                     }
                                     else if (batchUsers == null)
                                     {
@@ -1630,7 +1630,7 @@
     // batch change.
     private int batchUsersGeneration;
     private List<MigrationUserInfo>? batchUsers;
-    private bool mailboxLoadFailed; private string? mailboxLoadFailure;
+    private bool mailboxLoadFailed; private string? mailboxLoadFailure; // aud-a23p: why the last load failed, for the pane; shown only while mailboxLoadFailed is set
     private string? loadingBatchUsers;
     private string? actionInProgress;
     private string? loadingReport;
@@ -1884,7 +1884,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {batchName}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; if (generation == batchUsersGeneration) mailboxLoadFailure = loadFailure; // aud-a23l: the cmdlet's own words, without PowerShell's "The running command stopped ..." prefix
+            loadFailure = $"Unable to load mailboxes in {batchName}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; if (generation == batchUsersGeneration) mailboxLoadFailure = loadFailure; // aud-a23l: the cmdlet's own words, without PowerShell's "The running command stopped ..." prefix; aud-a23p: and the pane's, while this load still owns it
         }
         finally
         {
@@ -1947,7 +1947,7 @@
         {
             ReplaceBatchUsers(generation, new MigrationMailboxList([], []));
             mailboxLoadFailed |= generation == batchUsersGeneration;
-            loadFailure = $"Unable to load mailboxes in {requested}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; if (generation == batchUsersGeneration) mailboxLoadFailure = loadFailure; // aud-a23l: the same
+            loadFailure = $"Unable to load mailboxes in {requested}: {ExchangeServiceBase.ResolveFailure(ex).primary}"; if (generation == batchUsersGeneration) mailboxLoadFailure = loadFailure; // aud-a23l: the same; aud-a23p: and the pane's
         }
         finally
         {
@@ -2031,9 +2031,9 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{singleMigrationDirection}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", singleTicketNumber, "MigrationCreate")); return; }
+                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{singleMigrationDirection}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", singleTicketNumber, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            if (MigrationService.RefusesSingleCreate(singleResult, singleTicketNumber, out var singleRefusal))
+            if (MigrationService.RefusesSingleCreate(singleResult, singleTicketNumber, out var singleRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
                 { singleCreateResult = PermissionResult.Fail(createFailure = singleRefusal); return; }
 
             await Task.Yield();
@@ -2062,7 +2062,7 @@
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
                         $"CreateMigrationBatch_{singleMigrationDirection}_ProtectedExclusion", excluded,
-                        false, singleTicketNumber, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated");
+                        false, singleTicketNumber, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
                 }
             }
             catch (Exception ex)
@@ -2071,7 +2071,7 @@
             }
 
             var singleExclusionNote = singleExcluded.Count > 0
-                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)} {string.Join("; ", singleExcluded)}"
+                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)} {string.Join("; ", singleExcluded)}" // aud-a23p: each kind of exclusion counted apart
                 : "";
             try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
@@ -2172,9 +2172,9 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{migrationDirection}", "create a migration batch", string.IsNullOrWhiteSpace(bulkBatchName) ? "(bulk batch)" : bulkBatchName.Trim(), bulkTicketNumber, "MigrationCreate")); return; }
+                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{migrationDirection}", "create a migration batch", string.IsNullOrWhiteSpace(bulkBatchName) ? "(bulk batch)" : bulkBatchName.Trim(), bulkTicketNumber, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            if (MigrationService.RefusesBulkCreate(bulkResult, bulkTicketNumber, out var bulkRefusal))
+            if (MigrationService.RefusesBulkCreate(bulkResult, bulkTicketNumber, out var bulkRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
                 { createResult = PermissionResult.Fail(createFailure = bulkRefusal); return; }
 
             await Task.Yield();
@@ -2208,7 +2208,7 @@
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
                         $"CreateMigrationBatch_{migrationDirection}_ProtectedExclusion", excluded,
-                        false, bulkTicketNumber, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated");
+                        false, bulkTicketNumber, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
                 }
             }
             catch (Exception ex)
@@ -2217,7 +2217,7 @@
             }
 
             var bulkExclusionNote = bulkExcluded.Count > 0
-                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)} {string.Join("; ", bulkExcluded)}"
+                ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)} {string.Join("; ", bulkExcluded)}" // aud-a23p: each kind of exclusion counted apart
                 : "";
             try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
@@ -3299,7 +3299,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; }
+                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
             var result = await action();
             batchActionResult = result;
@@ -3363,7 +3363,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; }
+                { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
             var result = await action();
             batchActionResult = result;

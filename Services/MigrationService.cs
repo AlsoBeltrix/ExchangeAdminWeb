@@ -64,6 +64,8 @@ public class MigrationService : ExchangeServiceBase
             .ToArray();
     }
 
+    // aud-a23r. One check is one run of the excluded-group check's directory reads (DirectoryLookupRun); a bulk file is one
+    // run for all its rows (CheckBulkMigrationEligibilityAsync).
     public Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction) =>
         CheckEligibilityAsync(emailAddress, direction, new DirectoryLookupRun());
 
@@ -194,6 +196,10 @@ public class MigrationService : ExchangeServiceBase
             {
                 if (direction == MigrationDirection.ToCloud)
                 {
+                    // aud-a23o. A size that could not be read is not 0 and not a reason to refuse: an Eligible verdict becomes
+                    // Undetermined, in the base's words - no batch can be created from it - and a known reason (a size that was
+                    // read and is over the quota) stands. It read an unparseable size as 0, which passed any quota, and filed
+                    // every other failure as Ineligible "(on-prem connection unavailable)", a cause the base never reported.
                     var size = await GetOnPremMailboxSizeAsync(emailAddress);
                     result.MailboxSizeGB = size.MailboxGB;
                     result.ArchiveSizeGB = size.ArchiveGB;
@@ -239,6 +245,8 @@ public class MigrationService : ExchangeServiceBase
                 _logger.LogWarning(sizeEx, "Could not retrieve mailbox size for {Email}", emailAddress);
                 if (direction == MigrationDirection.ToCloud)
                 {
+                    // aud-a23o. A size read that failed as a whole - the throttle, a cancellation neither read's catch takes -
+                    // marks both sizes and is Undetermined, never Ineligible.
                     var unread = MailboxSizes.Unreadable(ResolveFailure(sizeEx).primary.TrimEnd('.'));
                     result.MailboxSizeUnreadable = unread.MailboxUnreadable;
                     result.ArchiveSizeUnreadable = unread.ArchiveUnreadable;
@@ -266,7 +274,7 @@ public class MigrationService : ExchangeServiceBase
     }
 
     // aud-a23j. The Active Directory session the excluded-group check opens, as ExchangeServiceBase.CheckAdGroupMembership
-    // built it (not the Exchange pool). Internal virtual as a test seam, the shape of GroupManagementService's: a test hands
+    // built it (that method is gone, aud-a23o; not the Exchange pool). Internal virtual as a test seam, the shape of GroupManagementService's: a test hands
     // back a session whose Import-Module and AD reads are stand-ins, so the check runs for real with no directory.
     internal virtual Runspace CreateDirectoryRunspace()
     {
@@ -283,8 +291,18 @@ public class MigrationService : ExchangeServiceBase
     // and that group's DN compared exactly, ignoring case as AD does, with the user's memberOf - the Constitution's "OU and
     // group checks must be based on resolved directory objects, not substring matches". Whatever keeps the check from
     // completing - the module, the lookup, no user or several, no memberOf, a group that does not resolve to one - throws
-    // to the caller, which makes the verdict Undetermined. Membership is direct (memberOf), as before. The user is found by
-    // UPN in the host's own domain, as before: one it does not find there cannot be checked, which is never Eligible.
+    // to the caller, which makes the verdict Undetermined. Membership is direct (memberOf), as before.
+    //
+    // aud-a23r. Across the forest, not the host's domain: without -Server, Get-ADUser was answered by a domain controller of
+    // the host's own domain, so a user of any other domain read "no directory user has the user principal name ..." -
+    // Undetermined, a valid mailbox blocked. The user is found on the forest's global catalog (discovered at runtime from the
+    // host's own forest, nothing named - Invariant 7) and read again on its own domain for memberOf, which a catalog holds
+    // only partly for another domain's user; one found nowhere in the forest is still Undetermined. Each configured group is
+    // resolved in each domain of the forest and must be one group across it (ResolveExcludedGroup). The catalog, the
+    // domains and each group are read once per run and kept, failures too. ASSUMPTION, unverified (no live call): a -Filter
+    // search on the catalog port spans the forest's domains, as the repo measured an -LDAPFilter one doing
+    // (ADDirectorySearchService.ResolveGlobalCatalog); and the app-pool identity can read the catalog and a domain
+    // controller of each domain. Either wrong, and the check is Undetermined - visible, never Eligible.
     private void CheckExcludedGroups(MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups, DirectoryLookupRun run)
     {
         using var runspace = CreateDirectoryRunspace();
@@ -341,6 +359,10 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
+    // aud-a23r. The forest's global catalog as "host:3268", from the host's own forest. AddScript with the projection inside
+    // PowerShell: GlobalCatalogs read off the returned object comes back empty in a fresh runspace (measured -
+    // ADDirectorySearchService.ResolveGlobalCatalog). Never a bare ":3268", which the AD cmdlets accept and quietly answer
+    // from the local domain - the one-domain search this replaces.
     private static string ForestGlobalCatalog(PowerShell ps)
     {
         ps.AddScript("(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1");
@@ -350,6 +372,8 @@ public class MigrationService : ExchangeServiceBase
             : $"{host}:3268";
     }
 
+    // aud-a23r. The forest's domain names, projected inside PowerShell for the reasons ADDirectorySearchService's
+    // GetForestDomains gives; blank entries dropped. None is no answer.
     private static IReadOnlyList<string> ForestDomains(PowerShell ps)
     {
         ps.AddScript("(Get-ADForest -ErrorAction Stop).Domains");
@@ -361,6 +385,12 @@ public class MigrationService : ExchangeServiceBase
         return domains.Count > 0 ? domains : throw new InvalidOperationException("the forest reported no domains");
     }
 
+    // aud-a23r. A configured group resolved in each domain of the forest with Get-ADGroup -Identity (its sAMAccountName, SID
+    // or objectGUID - what the cmdlet takes): the AD module's not-found there, by structure, is "not in that domain", and
+    // exactly one group across the forest is the group. None, several - a name two domains use, which its SID or objectGUID
+    // tells apart - or a domain that could not be asked cannot be checked: another domain might hold a second group by that
+    // name. aud-a23j asked the host's domain alone. ASSUMPTION, unverified (no live call): "not in this domain" is
+    // ADIdentityNotFoundException under ObjectNotFound, the shape IsNotFound reads.
     private static string ResolveExcludedGroup(PowerShell ps, string configured, DirectoryLookupRun run)
     {
         var domains = (run.Domains ??= DirectoryRead<IReadOnlyList<string>>.Of(() => ForestDomains(ps))).Get();
@@ -406,6 +436,9 @@ public class MigrationService : ExchangeServiceBase
             : found[0].Dn!;
     }
 
+    // aud-a23r. What one check run learns of the forest: the catalog, the domains, each configured group's DN - or why one
+    // could not be read, kept too, so every row of a run is told the same and the directory is not asked again. A new run
+    // asks again, so a group put right in the directory is seen.
     private sealed class DirectoryLookupRun
     {
         public DirectoryRead<string>? Catalog { get; set; }
@@ -415,6 +448,7 @@ public class MigrationService : ExchangeServiceBase
         public Dictionary<string, DirectoryRead<string>> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
+    // aud-a23r. A read made once: its value, or why there is none. A cancellation is not kept; it escapes.
     private sealed record DirectoryRead<T>(T? Value, string? Failure) where T : class
     {
         public T Get() => Value ?? throw new InvalidOperationException(Failure);
@@ -493,6 +527,7 @@ public class MigrationService : ExchangeServiceBase
         await foreach (var row in csv.GetRecordsAsync<MigrationCsvRow>())
             records.Add(row);
         var results = new List<MigrationEligibilityResult>();
+        // aud-a23r. The file is one run: the forest and each excluded group are read once for all its rows.
         var directoryRun = new DirectoryLookupRun();
 
         foreach (var row in records)
@@ -795,6 +830,8 @@ Auto-Complete: {autoComplete}";
 
             if (excludedTargets.Count > 0)
             {
+                // aud-a23p. Only protected: the header and the escalation line as before; otherwise each kind counted, and
+                // the advice for the kinds present. It said "protected principals" of every exclusion.
                 var (header, advice) = unverifiedTargets.Count == 0
                     ? ($"EXCLUDED - protected principals, NOT migrated ({excludedTargets.Count}):", "Escalate these to an administrator outside this tool if migration is required.")
                     : ($"EXCLUDED, NOT migrated ({excludedTargets.Count}) - {ExclusionSummary(excludedTargets, unverifiedTargets)}", ExclusionAdvice(excludedTargets, unverifiedTargets));
@@ -857,7 +894,9 @@ https://admin.exchange.microsoft.com/#/migration";
     /// <summary>
     /// The exclusion re-wrap: the result <c>RunAsync</c> built, with the batch's protected-principal
     /// exclusions attached, a NOTE on a success's message, and the batch's serviced overrides as its
-    /// <see cref="PermissionResult.ServicedNote"/>. Every other field is carried as it was.
+    /// <see cref="PermissionResult.ServicedNote"/>. Every other field is carried as it was. aud-a23p: and
+    /// the exclusions whose protection check did not answer, as <see cref="PermissionResult.UnverifiedTargets"/>,
+    /// which the NOTE counts apart (<see cref="ExclusionSummary"/>).
     /// </summary>
     /// <remarks>
     /// Audit finding aud-a23c. This was an initializer at the call site that named the fields it
@@ -883,6 +922,9 @@ https://admin.exchange.microsoft.com/#/migration";
             ServicedNote = servicedSummary,
         };
 
+    // aud-a23p. How many exclusions of each kind, for every site that names them - the NOTE, the Detail, the page's banners
+    // and its notification. A target whose protection check did not answer (UnverifiedTargets) is not known to be protected
+    // and is never called a protected principal; they all were. When every exclusion is protected the words are as before.
     internal static string ExclusionSummary(IReadOnlyList<string> excluded, IReadOnlyList<string>? unverified)
     {
         var notVerified = excluded.Count(entry => unverified?.Contains(entry) == true);
@@ -894,6 +936,8 @@ https://admin.exchange.microsoft.com/#/migration";
         return $"{excluded.Count} target(s) were excluded and NOT migrated: {protectedCount} protected principal(s) and {notVerified} that could not be verified as unprotected.";
     }
 
+    // aud-a23p. What to do with each kind: escalate a protected one; check an unverified one again once its check can
+    // answer. Only protected exclusions: the page's sentence as before.
     internal static string ExclusionAdvice(IReadOnlyList<string> excluded, IReadOnlyList<string>? unverified)
     {
         const string escalate = "Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.";
@@ -924,6 +968,12 @@ https://admin.exchange.microsoft.com/#/migration";
             ServicedNote = result.ServicedNote,
         };
 
+    // aud-a23q. A failed authorization on a single action or a create: the bulk executors' "_Denied" row - action, target,
+    // Failed, ticket, "<policy> authorization denied" - with mutationAttempted false (the aud-a28 refusal convention), and the
+    // text the page shows and ends the activity with. It returned in silence: no banner, no row, an activity that read
+    // "Nothing was done.". A failed audit write is logged and swallowed, as the bulk executors' is, so it cannot take the
+    // denial's place. Static, with the page's services passed in, so each page line stays one statement (the page is
+    // line-keyed by ClickGateRegistry).
     internal static string RecordDenial(AuditService audit, ILogger logger, string actor, string ipAddress,
         string auditAction, string description, string target, string ticket, string policy)
     {
@@ -941,6 +991,10 @@ https://admin.exchange.microsoft.com/#/migration";
         return $"Not authorized to {description}; nothing was done.";
     }
 
+    // aud-a23q. Why a create's guard stopped it, in the guard's own order: no check yet; a check that is not Eligible (or no
+    // eligible row); no ticket. It returned with nothing shown. Not audited: nothing was attempted (the bulk executors'
+    // "nothing to do" rule). NotNullWhen tells the page's null analysis what its inline test did: past the guard, the check
+    // is there.
     internal static bool RefusesSingleCreate([NotNullWhen(false)] MigrationEligibilityResult? check, string ticket, [NotNullWhen(true)] out string? refusal)
     {
         refusal = check is null ? "No eligibility check has been run for this mailbox; nothing was created."
@@ -1373,8 +1427,18 @@ https://admin.exchange.microsoft.com/#/migration";
     }
 
     // aud-a23n. Throws, before the first write, for a batch that reports no status - which state it is in is not known - or
-    // one in a state above; RunAsync makes that the row's failure, and "Nothing was changed." is true. Completed is its own
-    // outcome: the migration has finished, which is not a fault, so it is said as such rather than as a refused state.
+    // one the approval does not complete; RunAsync makes that the row's failure, and "Nothing was changed." is true.
+    // Completed is its own outcome: the migration has finished, which is not a fault, so it is said as such rather than as
+    // a refused state.
+    //
+    // aud-a23r. Every other status is refused unless the batch Complete action completes a batch from it -
+    // MigrationBatchActionPlanner.Applies(Complete, ...), the rule's one owner (Synced; owner ruling 2026-09-25: accepting an
+    // unanticipated status is the harmful direction), called here, not copied. aud-a23n refused a list of six, so a state the
+    // list did not name - Syncing, SyncedWithErrors, Corrupted, anything Exchange adds - ran Set-MigrationUser,
+    // Set-MigrationBatch -CompleteAfter, Set-MoveRequest and Resume-MoveRequest before Complete-MigrationBatch refused it:
+    // writes left behind a reported failure (Known Failure Class 1). Not split into "approve the mailbox, leave the batch":
+    // for the one mailbox of a batch named for it, telling it to complete and resuming its move is that batch's cutover by
+    // another route, which is what the rule refuses.
     private static void RefuseUnlessApprovable(string emailAddress, string? reportedStatus)
     {
         var status = reportedStatus?.Trim();
