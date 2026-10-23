@@ -178,6 +178,18 @@ Caller-visible change, by design: a bulk row whose User is empty or blank is rep
 `*_NoUser`; a grant row used to be refused by the self-grant check after it asked Exchange and the directory about '' and
 was audited as `*_SelfGrantAttempt`, and a revocation row went to the target check and the write.
 
+### Part 2 - a stored PreventSelfGrant value that is neither true nor false is named once
+
+- `Services/PermissionValidator.cs`: a static `StoredValuesNamed` (`ConcurrentDictionary<string, byte>`, ordinal) beside
+  aud-a43's `AppsettingsValuesNamed`; `GetPreventSelfGrant` writes its warning only when the value is added to it. The
+  refusal is unchanged: every check over such a value refuses.
+- Tests: `PermissionValidatorConfigReadTests.AStoredValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation` - a
+  value of the test's own, two validations and a second validator: one warning naming it, every check refused; a second
+  value stored, then two validations: named once in its turn.
+
+Caller-visible change, by design: a stored `PreventSelfGrant` that is neither true nor false is named in the log once per
+process for each value, not once per self-grant check (per bulk row); self-grants stay refused.
+
 ## Guard proof
 
 Protocol (session-local driver `mutate.ps1`, session scratchpad `a50`, log `a50-mutations.log`): the fix staged; per
@@ -214,3 +226,12 @@ the filter: 146/146 green.
 |---|---|---|---|
 | M3 | Mailbox Permissions bulk loop: the blank-User check removed (the row as it stood; the unused constant left) | `EEE3F76921F4B18017F40F7988FD144F` | 6 of 146: the four `ABulkRowThatNamesNoUser_IsAnInvalidRow_RefusedBeforeAnyCheck(calendar: False, ...)` rows and both `ARowAfterOneThatNamesNoUser_IsStillProcessed(calendar: False, ...)` rows - no `_NoUser` record |
 | M3c | Calendar Permissions bulk loop: the blank-User check removed | `F88F9402D9DCE8C57E3FED7CB55BF040` | 6 of 146: the same rows with `calendar: True` |
+
+### Part 2
+
+Filter `FullyQualifiedName~PermissionValidator` (144 tests). Fixed-file MD5: `Services/PermissionValidator.cs`
+`63FEFF64CC30B21F8CDA8A8E9017D36F`. After the round, the restored tree rebuilt and the filter: 144/144 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M2 | `GetPreventSelfGrant`: the once-guard removed - the warning on every check, as it stood (the unused set left) | `2831442629024F24B566E369185BB699` | 1 of 144: `PermissionValidatorConfigReadTests.AStoredValueThatIsNeitherTrueNorFalse_IsNamedOnce_NotOnEveryValidation` |

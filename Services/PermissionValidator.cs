@@ -41,6 +41,7 @@ public class PermissionValidator
     // A typo there is static and was named on every self-grant check - one warning per row of a bulk upload. Named once per
     // process for each value; every check still refuses on it.
     private static readonly ConcurrentDictionary<string, byte> AppsettingsValuesNamed = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, byte> StoredValuesNamed = new(StringComparer.Ordinal);
     private bool _initialized = false;
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
@@ -113,7 +114,8 @@ public class PermissionValidator
         if (bool.TryParse(val, out var result))
             return result;
 
-        _logger.LogWarning("The self-grant setting holds '{Value}', which is neither true nor false - self-grants are refused until it is corrected", val);
+        if (StoredValuesNamed.TryAdd(val, 0))
+            _logger.LogWarning("The self-grant setting holds '{Value}', which is neither true nor false - self-grants are refused until it is corrected", val);
         return true;
     }
 
