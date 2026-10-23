@@ -153,11 +153,10 @@ All listed modules get separate project/test directories, including grouped rows
 | AdminEventLog, AdminBulkJobs | respective pages and feature UI; shared audit/job engine stays Runtime |
 | TrueLastLogon (in progress) | existing TrueLastLogon/CloudSignIn services, aggregators and tests; its feature plan supplies remaining UI/definition |
 
-Resolve real coupling explicitly. For example,
-`ExchangeServiceBase.CheckAdGroupMembership` currently takes
-`MigrationEligibilityResult`. Move that Migration-specific method into the
-Migration implementation while preserving its behavior; do not make Runtime depend
-on Migration. Apply the same reference-based test to shared autocomplete components,
+Resolve real coupling explicitly. (The former example, a Migration-specific group
+check living in `ExchangeServiceBase`, was resolved on 2026-10-22: aud-a23j moved the
+check into `MigrationService` and aud-a23o removed the base method.) Do not make
+Runtime depend on Migration. Apply the same reference-based test to shared autocomplete components,
 lookup models, permission outcomes and job payloads. Physical file names alone do
 not establish ownership.
 

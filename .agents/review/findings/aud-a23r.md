@@ -11,7 +11,7 @@ SyncedWithErrors run every step. (2) aud-a23j's `Get-ADUser -Filter` runs with n
 forest/GC search, so a ToCloud user whose AD object is in another domain of the forest reads "no directory
 user has the user principal name ..." and is Undetermined - fail-closed, but a functional false block for a
 valid mailbox whenever excluded groups are configured.
-**Status**: Fixed on branch; closed on guard proof; not merged (admitted and approved under the owner's 2026-10-21 "EVERYTHING" go; folded into the aud-a23o/p/q agent's scope)
+**Status**: Merged `d690a6c1`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: `dd74db81` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23o, aud-a23q, aud-a23p)
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (mig-batch-7, 2026-10-22, candidates 1 and 2)

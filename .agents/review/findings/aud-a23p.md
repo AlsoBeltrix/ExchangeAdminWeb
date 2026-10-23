@@ -8,7 +8,7 @@ answer. (2) The `ExcludedADGroups` module setting description says "Comma-separa
 each value must be an identity `Get-ADGroup -Identity` resolves (aud-a23j), nor that a DN cannot be entered
 because the setting splits at commas. (3) The mailbox-load banner says "Unable to load mailboxes" with no
 reason; the reason reaches only the activity text.
-**Status**: Fixed on branch; closed on guard proof; not merged (approved under the owner's 2026-10-21 "EVERYTHING" go)
+**Status**: Merged `d690a6c1`; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac3fd1dd1db4f9c1d` (forked at `5eac8b25`)
 **Commit**: `2dba5725` (fix, tests, record); plan `2bf76220`; comments `9fa7664d` (shared with aud-a23r, aud-a23o, aud-a23q)
 **Reviewer**: implementer (surfaced by the aud-a23j-n agent, 2026-10-22, candidates 4, 7 and 8 of its hand-back)
