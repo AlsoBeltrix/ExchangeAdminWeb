@@ -902,7 +902,11 @@ public sealed class ModuleCatalog
             // 2.6.7: the bulk-jobs panel reports the unbounded reads it has to do. The three
             // store reads were split into a silent LoadJobsFromStore so the per-row JobChanged
             // path cannot strobe the frame (docs/ProgressCoverage-Plan.md S5).
-            Version = "2.6.8",
+            // 2.7.0: the room list a Room Finder row adds the room to is checked as a write
+            // target (Protected Group Targets) before anything is written and again before each
+            // write into it; a protected list refuses the row unless an authorised servicer acts
+            // on the page (aud-a2e).
+            Version = "2.7.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
