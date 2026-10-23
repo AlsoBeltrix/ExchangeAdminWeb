@@ -916,7 +916,9 @@ public sealed class ModuleCatalog
             // on the page (aud-a2e).
             // 2.8.0: a blank ticket is refused by all four write handlers, before their
             // authorization re-check; the dormant ServiceNow client passed one (kd-7).
-            Version = "2.8.0",
+            // 2.9.0: the bulk processor refuses each row of a job with no ticket, before the
+            // authorization re-check and any write, audited (kd-23).
+            Version = "2.9.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

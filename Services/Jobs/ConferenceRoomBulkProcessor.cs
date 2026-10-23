@@ -92,6 +92,27 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             return Failed(target, "Conference Rooms is currently disabled.");
         }
 
+        // kd-23. A job with no ticket is refused, row by row, before the authorization re-check, the
+        // protection gate and any write - the page's order. The page has refused a blank ticket since
+        // kd-7, but a job submitted before that, while ServiceNow was dormant and passed one, can still
+        // be queued or persisted, and this is the writer that runs it. Same check as the page
+        // (ConferenceRoomService.RequireTicket); the row's audit says nothing was attempted.
+        if (ConferenceRoomService.RequireTicket(job.Ticket) is { } missingTicket)
+        {
+            var refusal = $"Ticket validation failed: {missingTicket.Message}. Nothing was written.";
+            try
+            {
+                _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, actionAudit, target, false, ticket,
+                    errorDetail: refusal, extra: ConferenceRoomService.WithRefusal(null, ConferenceRoomService.TicketRefusalStep));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Audit failed for bulk job {Job} target {Target}", job.Id, target);
+            }
+
+            return Failed(target, refusal);
+        }
+
         var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
         var allowed = _sectionAccess.GetGroupsForSection(Section);
         if (snapshot is null || !snapshot.IsStillAuthorized(allowed))
