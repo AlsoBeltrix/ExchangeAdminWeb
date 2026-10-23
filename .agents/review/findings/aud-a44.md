@@ -7,9 +7,9 @@ misleading (aud-a28t added `TryGetModuleEnabled` for exactly this). (2) In `Mail
 but audit logging failed: {ex.Message}": it says self-grant for a check that could not be completed
 (aud-a28y) and shows a raw exception message; since aud-a28q the writers do not throw, so the branch is
 nearly dead, but the text is wrong where it can run.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; not started
-**Branch**: -
-**Commit**: -
+**Status**: Fixed on branch, not merged; closed on guard proof below; review pending
+**Branch**: `worktree-agent-ac928f0732402c4c5`
+**Commit**: fix (this record's commit; SHA in the branch's records commit); plan `1272a8cf`; after aud-a43 `4cc5756b`
 **Reviewer**: implementer (surfaced by the aud-a28y/a28x/a26t agent, 2026-10-22, candidates 5 and 6 of its hand-back)
 
 ## Evidence
@@ -74,6 +74,33 @@ Files: `Services/ExoConnectionPool.cs`, `Components/Pages/MailboxPermissions.raz
 `Components/Pages/CalendarPermissions.razor` (420-421), `ExchangeAdminWeb.Tests/ExoConnectionPoolConfigReadTests.cs`,
 `ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs`, this record.
 
+## Fix
+
+`Services/ExoConnectionPool.cs` `BorrowAsync`: `_enablement.TryGetModuleEnabled(ConfigModuleKey, out var enabled)`; false ->
+one error line and `ExoConfigUnreadableException("The Exchange Online enablement could not be read: " + UnreadableEnablement)`,
+before the rows are read and before a slot is asked for; readably disabled keeps "Exchange Online module is not
+enabled...". New `UnreadableEnablement`: `SettingsStoreText.Enablement(legacyImportFailed: true)` when the legacy file kept the
+store closed (`LegacyImportFailed`), else `SettingsStoreText.Enablement(false)` with `DatabaseRemedy` replaced by
+`ServiceDatabaseRemedy` - the table and its fix in the service's words.
+
+`Components/Pages/MailboxPermissions.razor` 450-451 and `Components/Pages/CalendarPermissions.razor` 420-421, the catch of the
+self-grant refusal's record: `Logger.LogWarning(ex, "Failed to write audit for the self-grant refusal on {Target}", target);`
+and `selfGrantError += " The audit row could not be written.";` - the handler falls through to its existing
+`result = PermissionResult.Fail(selfGrantError); return;`. Same-line edits: 808 and 762 lines; the registries untouched.
+
+Tests: `ExoConnectionPoolConfigReadTests` +3 - `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled`
+(the table unreadable; the legacy file unparseable) and `ExchangeOnlineReadablyDisabled_StillSaysTheModuleIsNotEnabled` (the
+control, the exact type and text); `PoolOver` takes an optional enablement store. `PermissionPagesSelfGrantTests` +4 - each page's
+banner for a self-grant and for a check that could not be completed, with an audit service whose writer is missing (the record
+throws): the validator's refusal plus "The audit row could not be written.", no exception text, no "Self-grant blocked", one
+warning with the exception, nothing written.
+
+Caller-visible change, by design: while Exchange Online's enablement cannot be read, every borrow - so every Exchange Online
+read and write - is refused with "The Exchange Online enablement could not be read: " and the store and its fix, where it said
+the module was not enabled; logged once per borrow. When the self-grant refusal's record throws, the Mailbox Permissions and
+Calendar Permissions banner is the refusal the validator gave followed by "The audit row could not be written.", and the
+exception goes to the page's log; it said "Self-grant blocked, but audit logging failed: <exception text>".
+
 ## Left for a follow-up (file owned by another agent)
 
 - `Services/AuditService.cs` 47-78 and 80-109 (`LogMailboxPermission`, `LogCalendarPermission`) and 463-517
@@ -87,4 +114,47 @@ Files: `Services/ExoConnectionPool.cs`, `Components/Pages/MailboxPermissions.raz
 
 ## Guard proof
 
-Pending.
+No separate pre-fix reproduction: M1 is the borrow's enablement read as it stood, and M2 / M3 each page's catch as it stood,
+each put back at its call site.
+
+The aud-a43 driver (`mutate.ps1`, session scratchpad `a43`, log `a44-mutations.log`): the fix staged; per mutant: MD5, one
+exact-text replacement that must match exactly once, MD5, a Debug build of the test project with 0 errors required,
+`dotnet test --no-build` filtered to
+`FullyQualifiedName~ExoConnection|FullyQualifiedName~ExoConfigFallback|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeServiceBase|FullyQualifiedName~RecipientLookup|FullyQualifiedName~DelegationReport|FullyQualifiedName~Migration|FullyQualifiedName~OutOfOffice|FullyQualifiedName~WriteIdentityTests|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~Settings|FullyQualifiedName~ModuleEnablement|FullyQualifiedName~ProtectedPrincipalExclusionsReadTests|FullyQualifiedName~SharedTempDatabaseTripwireTests|FullyQualifiedName~Comms10k|FullyQualifiedName~ConferenceRoom|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry`
+(2,413 tests: every class that builds a pool, the two pages and their registries), the file restored from the git index, its
+write time advanced, its MD5 re-checked. Fixed-file MD5s: `Services/ExoConnectionPool.cs` `B3497579FE1B24376CA8A1BD8B68BBEA`,
+`Components/Pages/MailboxPermissions.razor` `7B2C771C3B9ACD5E398F18F7B20E4060`, `Components/Pages/CalendarPermissions.razor`
+`1F953D7A79E5775A508B8B4C506140B9`. Every mutant built with 0 errors and its file was restored to that MD5 each time; each page
+mutant kept its page's line count, so ClickGateRegistry passed under it and only the named tests failed. After the round, the
+restored tree rebuilt and the same filter: 2,413/2,413 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | `BorrowAsync`: the enablement read through `IsModuleEnabled("ExchangeOnline")` again (the old two lines) | `F633D38CE2F27909414D65C3132E72B7` | both `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled` rows - "not enabled", the wrong type |
+| M2 | `MailboxPermissions.razor` 450-451: the old catch back ("Self-grant blocked, but audit logging failed: {ex.Message}"; return) | `AE9DDD598A4EE7CAC3A209789237035F` | both `TheMailboxPermissionsBanner_WhenTheRefusalsRecordCannotBeWritten_IsTheValidatorsRefusal_WithoutTheException` rows |
+| M3 | `CalendarPermissions.razor` 420-421: the same | `3CA1998D2D047AF1AD3DB0040038016E` | both `TheCalendarPermissionsBanner_WhenTheRefusalsRecordCannotBeWritten_IsTheValidatorsRefusal_WithoutTheException` rows |
+| E1 | extra, `MailboxPermissions.razor`: only the raw exception text appended to the new banner | `E7BE112841953E8322827209F6FE1A4A` | both Mailbox Permissions banner rows |
+| E2 | extra, `UnreadableEnablement`: the legacy-file text never chosen (`=> false ? ...`) | `5A327C3C03182D7D74AF4E682D55C72D` | `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled(legacyFile: True)` |
+| E3 | extra, `UnreadableEnablement`: the page's reload clause kept (the `Replace` removed) | `4BCEB7E0F30E46951A041C7808885E2C` | `AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled(legacyFile: False)` |
+
+The code comments are written after the round, in their own commit, so the MD5s above are this commit's bytes.
+
+## Gates - 2026-10-22 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors; 59 warnings, the baseline, none in a touched
+  file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug): exit 0, 6,078 passed / 3 skipped (the
+  three known AD skips) / 0 failed, 6,081 total, 5m15s; nothing hung, no Sequence file. The seven cases over aud-a43's tree
+  are this commit's.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. The pages: 808 and 762 lines.
+
+No AD, Exchange Online, Graph, DHCP or IIS call: the pool's connect seam throws, the pages run over the harness and its
+stand-ins. No coder self-review verdict is claimed.
+
+## Known gaps
+
+- Whether the self-grant refusal's row was written is still known to the pages only through a throw: the writer's outcome
+  (aud-a28u) does not reach them - the follow-up below.
+- A store-fault double and a corrupt legacy file stand in for an unreadable enablement; nothing ran against a damaged
+  database.

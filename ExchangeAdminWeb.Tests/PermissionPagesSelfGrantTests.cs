@@ -21,7 +21,8 @@ namespace ExchangeAdminWeb.Tests;
 /// </summary>
 /// <remarks>
 /// The pages are line-keyed by ClickGateRegistry, so their self-grant call changed on its own line only; this is what shows
-/// the line hands the check the signed-in principal end to end. Nothing here reaches Exchange or a directory.
+/// the line hands the check the signed-in principal end to end. aud-a44: when the refusal's record cannot be written the
+/// banner is the validator's own refusal and says so, with no exception text. Nothing here reaches Exchange or a directory.
 /// </remarks>
 public sealed class PermissionPagesSelfGrantTests : IDisposable
 {
@@ -154,5 +155,88 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Empty(_h.Writes);
         Assert.Equal(0, _h.Connects);
         Assert.Empty(_h.Forest.Errors);
+    }
+
+    // ---- aud-a44: the banner when the refusal's record cannot be written ---------------------------------------
+
+    /// <summary>An audit service with no writer: the record throws, as a writer that throws would.</summary>
+    private AuditService AuditWithoutAWriter() => new(null!, _h.Trace);
+
+    /// <summary>Exchange knows the target mailbox and cannot answer for the operator: the check cannot be completed.</summary>
+    private static IIdentityResolver ExchangeCannotAnswerForTheOperator()
+    {
+        var resolver = ExchangeWriteHarness.ExchangeKnows(Target, Target, TargetMailbox);
+        resolver.ResolveRecipientAsync(Upn).Returns(
+            Task.FromException<ResolvedRecipient?>(new InvalidOperationException("Exchange Online is unreachable")));
+        return resolver;
+    }
+
+    private static (IIdentityResolver resolver, string refusal) Refusal(string shape) => shape == "a self-grant"
+        ? (ExchangeNamesTheAliasAsTheOperator(), SelfGrantRefusal)
+        : (ExchangeCannotAnswerForTheOperator(), PermissionValidator.SelfGrantCheckIncomplete(Upn));
+
+    /// <summary>
+    /// The banner is the validator's own refusal - "self-grant" only when it was one - and says the record could not be
+    /// written, with no exception text in it; the exception goes to the page's log, once.
+    /// </summary>
+    private void AssertTheBanner(PermissionResult result, string refusal, IReadOnlyList<(string Message, Exception? Exception)> warnings)
+    {
+        Assert.False(result.Success);
+        Assert.Equal(refusal + " The audit row could not be written.", result.Message);
+        Assert.DoesNotContain("Self-grant blocked", result.Message, StringComparison.Ordinal);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.IsType<NullReferenceException>(exception);
+        Assert.DoesNotContain(exception!.Message, result.Message, StringComparison.Ordinal);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
+        Assert.Empty(_h.AuditRows());
+        Assert.Empty(_h.Writes);
+    }
+
+    [Theory]
+    [InlineData("a self-grant")]
+    [InlineData("a check that could not be completed")]
+    public async Task TheMailboxPermissionsBanner_WhenTheRefusalsRecordCannotBeWritten_IsTheValidatorsRefusal_WithoutTheException(string shape)
+    {
+        var (resolver, refusal) = Refusal(shape);
+        var logger = new CapturingLogger<MailboxPermissions>();
+
+        var result = await SubmitMailboxGrant(resolver, AuditWithoutAWriter(), logger);
+
+        AssertTheBanner(result, refusal, logger.Warnings);
+    }
+
+    [Theory]
+    [InlineData("a self-grant")]
+    [InlineData("a check that could not be completed")]
+    public async Task TheCalendarPermissionsBanner_WhenTheRefusalsRecordCannotBeWritten_IsTheValidatorsRefusal_WithoutTheException(string shape)
+    {
+        var (resolver, refusal) = Refusal(shape);
+        var logger = new CapturingLogger<CalendarPermissions>();
+
+        var result = await SubmitCalendarGrant(resolver, AuditWithoutAWriter(), logger);
+
+        AssertTheBanner(result, refusal, logger.Warnings);
+    }
+
+    /// <summary>Keeps every warning a page logs, with its exception.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        private readonly List<(string Message, Exception? Exception)> _warnings = [];
+
+        public IReadOnlyList<(string Message, Exception? Exception)> Warnings
+        {
+            get { lock (_warnings) return _warnings.ToList(); }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+                lock (_warnings) _warnings.Add((formatter(state, exception), exception));
+        }
     }
 }

@@ -215,6 +215,11 @@ public sealed class ExoConnectionPool : IDisposable
     // The rows and their fix, for the refusal and its log line: a service's text, with no page to reload (aud-a26t).
     private static string UnreadableRows => SettingsStoreText.ServiceModuleConfig(ConfigModuleKey);
 
+    private string UnreadableEnablement => _enablement.LegacyImportFailed
+        ? SettingsStoreText.Enablement(legacyImportFailed: true)
+        : SettingsStoreText.Enablement(legacyImportFailed: false)
+            .Replace(SettingsStoreText.DatabaseRemedy, SettingsStoreText.ServiceDatabaseRemedy, StringComparison.Ordinal);
+
     // aud-a28x. Three fail-open value reads used to be followed by a presence read and a probe, so a value read that failed
     // while those answered was taken for absent and given the appsettings value: a borrow could connect under another
     // tenant, app id or certificate than the module config's. One read now; a read that fails throws, before a borrow
@@ -246,7 +251,13 @@ public sealed class ExoConnectionPool : IDisposable
         // the pool.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopped), this);
 
-        if (!_enablement.IsModuleEnabled("ExchangeOnline"))
+        if (!_enablement.TryGetModuleEnabled(ConfigModuleKey, out var enabled))
+        {
+            _logger.LogError("The Exchange Online enablement could not be read, so no connection is opened. {Store}", UnreadableEnablement);
+            throw new ExoConfigUnreadableException("The Exchange Online enablement could not be read: " + UnreadableEnablement);
+        }
+
+        if (!enabled)
             throw new InvalidOperationException("Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.");
 
         // Read fresh on every borrow (ModuleConfigService has no cache; this is the shared
