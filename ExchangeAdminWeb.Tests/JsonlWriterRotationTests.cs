@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
 using Microsoft.Extensions.Configuration;
@@ -161,6 +162,109 @@ public sealed class JsonlWriterRotationTests : IDisposable
         Assert.Equal(["Next"], Rows(audit: true).Rows);
     }
 
+    // ---- aud-a65: a rotation that keeps failing is reported for as long as it lasts ----------------------------------
+
+    [Fact]
+    public void AFullFileThatStaysUnrotatable_IsReportedAgain_EachTimeItGrowsByAnotherLimit()
+    {
+        // The defect: one warning at the first failed write, then nothing while the file grew - for days, under a tailer
+        // that held it - until the volume filled.
+        var writer = Writer();
+        FillPastTheLimit(writer, audit: true);
+        var active = ActiveFile(writer, audit: true);
+
+        var sizes = new List<long>();
+        using (Hold(active))
+        {
+            while (_log.Warnings.Count < 3)
+            {
+                Assert.True(sizes.Count < 200, "the third report never came");
+                sizes.Add(new FileInfo(active).Length);
+                Assert.Equal(JsonlWriteOutcome.Written, Write(writer, audit: true, "Held-" + sizes.Count));
+            }
+        }
+
+        // A report at the first failure, then at the first write that finds the file grown by another limit since the last
+        // report. Each names the size that write found.
+        var expected = new List<long> { sizes[0] };
+        foreach (var size in sizes)
+        {
+            if (size - expected[^1] >= 1024)
+                expected.Add(size);
+        }
+
+        var warnings = _log.Warnings;
+        Assert.Equal(expected, warnings.Select(w => long.Parse(w.Value("Size")!, CultureInfo.InvariantCulture)));
+        Assert.All(warnings, w => Assert.Equal(active, w.Value("Path")));
+        Assert.All(warnings, w => Assert.Equal("1024", w.Value("Limit")));
+        Assert.All(warnings, w => Assert.Equal(
+            (long.Parse(w.Value("Size")!, CultureInfo.InvariantCulture) - 1024).ToString(CultureInfo.InvariantCulture), w.Value("Over")));
+        Assert.All(warnings.Skip(1), w => Assert.Contains("still cannot be rotated", w.Text, StringComparison.Ordinal));
+        Assert.Empty(_log.Errors);
+
+        // And every row is still there.
+        var (rows, unparsed) = Rows(audit: true);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(Enumerable.Range(1, sizes.Count).Select(i => "Held-" + i), rows.Where(r => r.StartsWith("Held-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void AFullFileThatStaysUnrotatable_IsReportedAgain_OnceAnHourHasPassed()
+    {
+        var since = new DateTimeOffset(2026, 10, 23, 9, 0, 0, TimeSpan.Zero);
+        var clock = new ManualClock(since);
+        var writer = Writer();
+        writer.Clock = clock;
+        FillPastTheLimit(writer, audit: true);
+        var active = ActiveFile(writer, audit: true);
+
+        using (Hold(active))
+        {
+            Assert.Equal(JsonlWriteOutcome.Written, Write(writer, audit: true, "AtNine"));
+            clock.Advance(TimeSpan.FromMinutes(59));
+            Assert.Equal(JsonlWriteOutcome.Written, Write(writer, audit: true, "AMinuteShort"));
+            Assert.Single(_log.Warnings);
+
+            clock.Advance(TimeSpan.FromMinutes(2));
+            Assert.Equal(JsonlWriteOutcome.Written, Write(writer, audit: true, "PastTheHour"));
+        }
+
+        Assert.Equal(2, _log.Warnings.Count);
+        var again = _log.Warnings[1];
+        Assert.Contains("still cannot be rotated", again.Text, StringComparison.Ordinal);
+        Assert.Equal(active, again.Value("Path"));
+        Assert.Contains(since.UtcDateTime.ToString("o", CultureInfo.InvariantCulture), again.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheStreak_IsShownWhileItLasts_AndGoneOnceTheRotationSucceeds()
+    {
+        var since = new DateTimeOffset(2026, 10, 23, 9, 0, 0, TimeSpan.Zero);
+        var writer = Writer();
+        writer.Clock = new ManualClock(since);
+        FillPastTheLimit(writer, audit: true);
+        var active = ActiveFile(writer, audit: true);
+        Assert.Empty(writer.RotationFailures);
+
+        using (Hold(active))
+        {
+            var size = new FileInfo(active).Length;
+            Assert.Equal(JsonlWriteOutcome.Written, Write(writer, audit: true, "Held"));
+
+            var failure = Assert.Single(writer.RotationFailures);
+            Assert.Equal("audit", failure.Log);
+            Assert.Equal(active, failure.Path);
+            Assert.Equal(since.UtcDateTime, failure.SinceUtc);
+            Assert.Equal(size, failure.SizeBytes);
+            Assert.Equal(1024, failure.LimitBytes);
+            Assert.Equal(size - 1024, failure.OverBytes);
+        }
+
+        Assert.Equal(JsonlWriteOutcome.Written, Write(writer, audit: true, "Rotates"));
+        Assert.True(File.Exists(RotatedFile(writer, audit: true, 1)), "the rotation did not succeed once the file was free");
+        Assert.Empty(writer.RotationFailures);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------
 
     private JsonlLogService Writer(int maxFiles = 5)
@@ -306,6 +410,16 @@ public sealed class JsonlWriterRotationTests : IDisposable
     internal sealed record LogEntry(LogLevel Level, string Text, Exception? Exception, IReadOnlyDictionary<string, object?> Values)
     {
         public string? Value(string name) => Values.TryGetValue(name, out var value) ? value?.ToString() : null;
+    }
+
+    /// <summary>A clock the test moves by hand (aud-a65): the writer's rotation streak reads it.</summary>
+    private sealed class ManualClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan by) => _now += by;
     }
 
     private sealed class CapturingLogger : ILogger<JsonlLogService>

@@ -204,6 +204,11 @@
     {
         <p class="text-muted small mb-2">@DroppedEntriesText</p>
     }
+    @* aud-a65. The log files this instance cannot rotate. Each grows past its limit until its rotation succeeds, so they are shown with diagnostics on or off. *@
+    @foreach (var failure in rotationFailures)
+    {
+        <div class="alert alert-warning py-2">@RotationFailureText(failure)</div>
+    }
     @* aud-a49. The lines each log held that could not be parsed: one muted line for all three, with diagnostics on or off. *@
     @if (UnparsedLinesText != null)
     {
@@ -471,6 +476,19 @@
     private string DroppedEntriesText =>
         $"This instance's extended log has dropped {extendedLogDropped:N0} entr{(extendedLogDropped == 1 ? "y" : "ies")} since it started: "
         + "ones it could not write, and ones its queue discarded when they came faster than the disk took them.";
+    // aud-a65. A rotation that keeps failing was one warning in the application log, then nothing while the file grew past
+    // its limit. Read in memory each load, with diagnostics on or off; this instance's, like the drop count.
+    private IReadOnlyList<LogRotationFailure> rotationFailures = [];
+
+    private static string RotationFailureText(LogRotationFailure failure) =>
+        $"This instance cannot rotate its {failure.Log} log file {Path.GetFileName(failure.Path)}, and has not since "
+        + $"{failure.SinceUtc.ToLocalTime():yyyy-MM-dd HH:mm}: the file is {SizeText(failure.SizeBytes)}, {SizeText(failure.OverBytes)} "
+        + $"past its limit of {SizeText(failure.LimitBytes)}. Every entry is still written to it, so it grows until the rotation "
+        + "succeeds. Whatever holds it open without delete sharing must let go of it, or this instance's account must be allowed "
+        + "to delete in the log folder.";
+
+    private static string SizeText(long bytes) =>
+        bytes >= 1024L * 1024L ? $"{bytes / (1024.0 * 1024.0):N1} MB" : $"{bytes:N0} bytes";
     // aud-a49. The lines each parser could not parse, by log, this load. They were dropped and counted nowhere - the cut
     // line a writer that died mid-write leaves among them. Only the parsers' catches count: a line outside the range, or
     // a record of another kind, is filtered, not dropped.
@@ -560,6 +578,7 @@
         emptyResultMessage = null;
         diagnosticsWarning = null;
         extendedLogDropped = 0;
+        rotationFailures = [];
         unparsedAuditLines = 0;
         unparsedTraceLines = 0;
         unparsedExtendedLines = 0;
@@ -695,6 +714,11 @@
                     + string.Join("; ", unreadableDiagnostics);
             extendedLogDropped = ExtendedLog.DroppedEntryCount;
         }
+
+        // aud-a65. The files this instance cannot rotate, in memory like the count, with diagnostics on or off.
+        rotationFailures = ExtendedLog.RotationFailure is { } extendedFailure
+            ? [.. JsonlLog.RotationFailures, extendedFailure]
+            : JsonlLog.RotationFailures;
 
         var anyFileFound = filesFound > 0;
         if (buffer.Count == 0 && diagnostics.Count == 0 && loadError == null)

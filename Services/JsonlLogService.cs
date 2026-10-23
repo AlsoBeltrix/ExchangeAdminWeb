@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -15,9 +16,10 @@ public class JsonlLogService
     private readonly ILogger<JsonlLogService> _logger;
     private readonly object _lock = new();
 
-    // aud-a56. The streams whose failed rotation has been reported, until a write to them finds no rotation to do or makes
-    // one: one report per failure streak, not one per row. Under _lock.
-    private readonly HashSet<LogStream> _rotationFailureReported = [];
+    // aud-a65 (aud-a56's set before it). The streams whose rotation is failing, each with its streak: since when, how far
+    // over, and when it was last reported. A streak ends when a write to its stream finds no rotation to do or makes one.
+    // Changed only under _lock; read by the Admin Event Log without it.
+    private readonly ConcurrentDictionary<LogStream, RotationFailureStreak> _rotationFailures = new();
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -142,9 +144,20 @@ public class JsonlLogService
     /// </summary>
     internal TimeSpan AccessRefusalGrace { get; set; } = JsonlFileAppender.DefaultAccessRefusalGrace;
 
+    /// <summary>Test seam (aud-a65): the clock a failed rotation's streak and its report schedule read.</summary>
+    internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    /// <summary>
+    /// The JSONL files this instance cannot rotate right now (aud-a65), one per stream at most. Each still takes every
+    /// event (aud-a56), so it grows past its limit until its rotation succeeds. Read without the writer's lock, for the
+    /// Admin Event Log; the other instance's are on its own page.
+    /// </summary>
+    public IReadOnlyList<LogRotationFailure> RotationFailures =>
+        _rotationFailures.Values.Select(streak => streak.State).OrderBy(failure => failure.Log, StringComparer.Ordinal).ToList();
+
     // aud-a28z part 3 and aud-a47: one record, one line or none, under the file's lock - see JsonlFileAppender. The two
     // reports are this writer's, word for word as they were before the append moved there.
-    // aud-a56. A rotation that fails is reported once per failure streak of its stream, and the event is still written.
+    // aud-a56. A rotation that fails does not cost the event. aud-a65: its streak is reported on a schedule, and shown.
     private void AppendLine(string logPath, string json, LogStream stream) =>
         JsonlFileAppender.Append(
             logPath,
@@ -154,17 +167,9 @@ public class JsonlLogService
             rotateIfFull: () =>
             {
                 RotateIfFull(logPath);
-                _rotationFailureReported.Remove(stream);
+                _rotationFailures.TryRemove(stream, out _);
             },
-            rotationFailed: ex =>
-            {
-                if (_rotationFailureReported.Add(stream))
-                {
-                    ReportSafely(logger => logger.LogWarning(ex,
-                        "Could not rotate the JSONL {Stream} file {Path}, which has reached its size limit: {Reason} The event was written to it, past the limit. Each write tries the rotation again; this is not reported again until a write finds the file rotated or under its limit",
-                        stream, logPath, ex.Message));
-                }
-            },
+            rotationFailed: ex => RotationFailed(stream, logPath, ex),
             writeLineBytes: WriteLineBytes,
             repaired: () => ReportSafely(logger => logger.LogWarning(
                 "The JSONL {Stream} file {Path} ended in a partial line, left by a write that did not finish; this event was started on a new line",
@@ -172,6 +177,45 @@ public class JsonlLogService
             truncationFailed: ex => ReportSafely(logger => logger.LogWarning(ex,
                 "Could not remove the partial JSONL {Stream} line a failed write left in {Path}; the next event will start on a new line",
                 stream, logPath)));
+
+    // aud-a65. A rotation that failed, under the file's lock and before the event is appended. aud-a56 reported a streak
+    // once, at its first failure, and never again however long it lasted, so a file another program held for days grew
+    // without a second word until the volume filled. It is reported at its first failure, then each time the file has
+    // grown by another limit or an hour has passed (RotationFailureStreak), naming its size and how far over it is. This
+    // runs in the appender's catch, so nothing here may throw: a throw would leave Append and cost the event.
+    private void RotationFailed(LogStream stream, string logPath, Exception ex)
+    {
+        try
+        {
+            var now = Clock.GetUtcNow().UtcDateTime;
+            if (!_rotationFailures.TryGetValue(stream, out var streak) || streak.State.Path != logPath)
+            {
+                streak = new RotationFailureStreak(stream == LogStream.Trace ? "trace" : "audit", logPath, _maxFileBytes, now);
+                _rotationFailures[stream] = streak;
+            }
+
+            if (!streak.Failed(RotationFailureStreak.SizeOf(logPath), now))
+                return;
+
+            var state = streak.State;
+            if (streak.Reports == 1)
+            {
+                ReportSafely(logger => logger.LogWarning(ex,
+                    "Could not rotate the JSONL {Stream} file {Path}, which has reached its size limit: {Reason} The event was written to it, past the limit: it is {Size} bytes, {Over} over its limit of {Limit}. Each write tries the rotation again; while it fails, this is reported again each time the file has grown by another limit, or once an hour, until a write finds the file rotated or under its limit",
+                    stream, logPath, ex.Message, state.SizeBytes, state.OverBytes, state.LimitBytes));
+            }
+            else
+            {
+                ReportSafely(logger => logger.LogWarning(ex,
+                    "The JSONL {Stream} file {Path} still cannot be rotated: it is {Size} bytes, {Over} over its limit of {Limit}, and its rotation has failed since {Since:o}: {Reason} Every event is still written to it, so it grows until the rotation succeeds. Whatever holds it open without delete sharing must let go of it, or this instance's account must be allowed to delete in the log folder",
+                    stream, logPath, state.SizeBytes, state.OverBytes, state.LimitBytes, state.SinceUtc, ex.Message));
+            }
+        }
+        catch (Exception)
+        {
+            // The event matters more than its report: whatever failed here, the appender writes it.
+        }
+    }
 
     // Every report the writer makes - the drop, a repair, a truncation that failed - goes through here (aud-a28u's guard,
     // one place since aud-a28z): a provider that throws while reporting must not fail the write.

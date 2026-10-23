@@ -97,6 +97,42 @@ public sealed class EventLogDiagnosticsTests : IDisposable
         Assert.DoesNotContain(Dropped, Rendered(hidden), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ALogFileThatCannotBeRotated_IsShown_WithHowFarPastItsLimitItIs(bool diagnostics)
+    {
+        // aud-a65. A rotation that kept failing was one warning in the application log. This page, where the audit log is
+        // read, said nothing while the file grew past its limit. It is shown whether diagnostics are on or not.
+        var small = new JsonlLogService(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Audit:LogRoot"] = _root,
+            ["Audit:MaxFileBytes"] = "1024",
+        }).Build(), NullLogger<JsonlLogService>.Instance);
+        var active = small.GetAuditLogPaths(DateTime.Now).Last();
+        while (!File.Exists(active) || new FileInfo(active).Length < 1024)
+            Assert.Equal(JsonlWriteOutcome.Written, small.WriteAudit(AuditRecord("Filler-" + Guid.NewGuid().ToString("N"))));
+
+        var page = PageWithDiagnostics(shown: diagnostics);
+        SetProperty(page, "JsonlLog", small);
+        long size;
+        using (new FileStream(active, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            size = new FileInfo(active).Length;
+            Assert.Equal(JsonlWriteOutcome.Written, small.WriteAudit(AuditRecord("Held")));
+            await LoadEvents(page);
+        }
+
+        var text = Rendered(page);
+        Assert.Contains($"cannot rotate its audit log file {Path.GetFileName(active)}", text, StringComparison.Ordinal);
+        Assert.Contains($"the file is {size:N0} bytes, {size - 1024:N0} bytes past its limit of {1024:N0} bytes", text, StringComparison.Ordinal);
+
+        // Once the rotation succeeds, the next load shows nothing.
+        Assert.Equal(JsonlWriteOutcome.Written, small.WriteAudit(AuditRecord("Rotates")));
+        await LoadEvents(page);
+        Assert.DoesNotContain("cannot rotate", Rendered(page), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ATraceFileThatCannotBeRead_IsShownAsUnreadable_NotAsNoDiagnostics()
     {

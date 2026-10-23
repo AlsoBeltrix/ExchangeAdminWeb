@@ -6,7 +6,7 @@ With rotation failing for days (a SIEM tailer holding the file without delete sh
 delete) there is no ceiling and no second warning until a rotation succeeds, so the active audit or trace
 file grows until the log volume fills, after which writes fail as ordinary file-write failures and
 visibility degrades anyway.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a62/a63 agent's scope; in progress, plan committed
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); folded into the aud-a62/a63 agent's scope; fixed on branch, closed on guard proof; not merged
 **Branch**: `worktree-agent-a4c254a086c7d1d55` (from `4a7a202e`)
 **Commit**: -
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (attr-batch-16, 2026-10-23)
@@ -160,6 +160,116 @@ Files:
 - `README.md`
 - this record
 
+## Fix
+
+- New `Services/RotationFailureStreak.cs`:
+  - `public sealed record LogRotationFailure(string Log, string Path, DateTime SinceUtc, long SizeBytes, long LimitBytes)`,
+    with `OverBytes` (`Math.Max(0, SizeBytes - LimitBytes)`).
+  - `internal sealed class RotationFailureStreak`:
+    - `ReportEvery`, one hour; `State`, a volatile `LogRotationFailure` replaced whole; `Reports`.
+    - `Failed(long? sizeBytes, DateTime nowUtc)` records the size, then takes `grown` (another whole limit since the last
+      report) and `due` (an hour since it). It reports the first failure, and after that when either holds.
+    - Static `SizeOf(path)`: the file's length, or null when it cannot be read. It never throws.
+- `Services/JsonlLogService.cs`:
+  - `_rotationFailureReported`, a `HashSet<LogStream>`, is replaced by `_rotationFailures`, a
+    `ConcurrentDictionary<LogStream, RotationFailureStreak>`, changed only under `_lock`.
+  - `rotateIfFull` removes the stream's streak once `RotateIfFull` returns.
+  - `rotationFailed` is new private `RotationFailed(stream, logPath, ex)`, all of it in a try whose catch takes any
+    exception. It reads the clock, starts a streak for a new stream or file, and asks `Failed(SizeOf(logPath), now)`.
+    - The first report is aud-a56's warning with "it is {Size} bytes, {Over} over its limit of {Limit}" added. Its last
+      sentence now says the warning is repeated each time the file has grown by another limit, or once an hour.
+    - A later report: "The JSONL {Stream} file {Path} still cannot be rotated: it is {Size} bytes, {Over} over its limit
+      of {Limit}, and its rotation has failed since {Since:o}: {Reason} Every event is still written to it, so it grows
+      until the rotation succeeds. Whatever holds it open without delete sharing must let go of it, or this instance's
+      account must be allowed to delete in the log folder".
+  - New `public IReadOnlyList<LogRotationFailure> RotationFailures`, and the test seam `internal TimeProvider Clock`.
+- `Services/ExtendedLogService.cs`: the same for its one file.
+  - `_rotationFailure`, a `volatile RotationFailureStreak?`, replaces the `bool`.
+  - `public LogRotationFailure? RotationFailure`, `Clock`, and `RotationFailed(logPath, ex)` with the extended file's two
+    messages.
+- `Components/Pages/AdminEventLog.razor`, 1,698 lines -> 1,722:
+  - New `rotationFailures`, reset at the top of `LoadEvents`. It is read after the drop count, from
+    `JsonlLog.RotationFailures` and `ExtendedLog.RotationFailure`, with diagnostics on or off.
+  - New `RotationFailureText` and `SizeText`. The diagnostics area shows one `alert-warning` line per failure, after the
+    drop count, under a Razor comment.
+  - NotYetConverted in `ClickGateRegistry`, so no key moves. `ProgressRegistry`'s pins in `LoadEvents` are unchanged: the
+    new read is in memory, after `ExtendedLog.GetEntries(`.
+- `README.md`, "Rotation": the bullet on a rotation that fails says how the warning is repeated, that the event log shows
+  the file, and that nothing bounds it while the rotation fails.
+
+Tests:
+- `ExchangeAdminWeb.Tests/JsonlWriterRotationTests.cs`, +3:
+  `AFullFileThatStaysUnrotatable_IsReportedAgain_EachTimeItGrowsByAnotherLimit`,
+  `AFullFileThatStaysUnrotatable_IsReportedAgain_OnceAnHourHasPassed` and
+  `TheStreak_IsShownWhileItLasts_AndGoneOnceTheRotationSucceeds`; a `ManualClock`.
+- `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`, +1:
+  `TheConsumer_GivenAFullFileItCannotRotate_ReportsItAgainAsItGrows_AndShowsTheStreak`; a `FixedClock`.
+- `ExchangeAdminWeb.Tests/EventLogDiagnosticsTests.cs`, +2:
+  `ALogFileThatCannotBeRotated_IsShown_WithHowFarPastItsLimitItIs`, with diagnostics on and off.
+- Unchanged, and still green: aud-a56's streak tests, whose held rows grow the file by less than a limit, inside the
+  hour.
+
+Caller-visible changes, by design:
+- A failed rotation's first warning names the file's size and how far over its limit it is, and says it will be repeated.
+- While the streak lasts, the warning is repeated with the size, the overage and since when. That happens at the first
+  write after the file has grown by another limit since the last report, or after an hour has passed since it, whichever
+  comes first.
+- The Admin Event Log shows each file this instance cannot rotate, with diagnostics on or off.
+- What is written does not change: every row is still appended to the full file (aud-a56).
+
 ## Guard proof
 
-Pending.
+Reproduction: M1 puts back aud-a56's schedule, a streak reported at its first failure only. The file held open grew by
+more than three limits with one warning, and the hour passed with no second one. That is the defect as the record states
+it.
+
+Driver: the aud-a62 round's (session scratchpad `w-a62a63a65/mutate.ps1`), spec `w-a62a63a65/round-a65.ps1`, log
+`w-a62a63a65/a65-mutations.log`. M1 to E4 are the plan's. E5 (the extended streak) and E6 (the end of a streak) were
+added for the two halves the plan's list did not reach.
+
+The filter (185 tests) covers both writers' suites, every `EventLog` suite, and the audit service and writer:
+`FullyQualifiedName~JsonlWriter|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~EventLog|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditServiceTests`
+
+Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the restored
+bytes and the filter: 185/185 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the re-warn schedule removed: `if (Reports > 0)` for `if (Reports > 0 && !grown && !due)` | `RotationFailureStreak.cs`, `860BBA60DD7163BA304B40EEF157D1E4` | `485624964B5E35580FBAB041E41C26E8` | 3 of 185: `AFullFileThatStaysUnrotatable_IsReportedAgain_EachTimeItGrowsByAnotherLimit` - "the third report never came" in 200 rows; `..._OnceAnHourHasPassed` - 1 warning where 2; `TheConsumer_GivenAFullFileItCannotRotate_ReportsItAgainAsItGrows_AndShowsTheStreak` - "1 warning(s) for a file that grew by more than three limits" |
+| extra E1 the size step removed (`var grown = false;`) | `RotationFailureStreak.cs`, `860BBA60DD7163BA304B40EEF157D1E4` | `E5F9C5BBE01C3B250317455ED440CAA9` | 2 of 185: `..._EachTimeItGrowsByAnotherLimit` and the extended test, as under M1. The hour test passes: it is the size step's alone |
+| extra E2 the hour removed (`var due = false;`) | `RotationFailureStreak.cs`, `860BBA60DD7163BA304B40EEF157D1E4` | `767EA74FD9098923FF628209FB8668B0` | 1 of 185: `..._OnceAnHourHasPassed` - 1 warning where 2 |
+| extra E3 the JSONL streaks not shown (`RotationFailures` always empty) | `JsonlLogService.cs`, `04F50809CFEB7D5B54934BB00F9DC334` | `EB6BC7D3078667D07CEFC9750508F9B4` | 3 of 185: `TheStreak_IsShownWhileItLasts_AndGoneOnceTheRotationSucceeds` - empty where one; `ALogFileThatCannotBeRotated_IsShown_WithHowFarPastItsLimitItIs`, diagnostics on and off - "cannot rotate its audit log file ..." not found |
+| extra E4 the page's line not rendered (`@foreach` over an empty array) | `AdminEventLog.razor`, `4D77DE32116C04CC3B663652485B58E4` | `93A0836A8F78AD8992C4FCBB355AD473` | 2 of 185: the page test, diagnostics on and off - the same |
+| extra E5 the extended streak not shown (`RotationFailure => null`) | `ExtendedLogService.cs`, `42FCC0E4027A1AF0BF8AAD0836BE9DFD` | `291E0976116A54048CCBDD0ABEF47B49` | 1 of 185: the extended test - "Assert.NotNull() Failure" |
+| extra E6 a JSONL streak never ended (`_rotationFailures.TryRemove(stream, out _);` removed) | `JsonlLogService.cs`, `04F50809CFEB7D5B54934BB00F9DC334` | `E5CCF2B99EAD03C6EAA080A12C044A88` | 4 of 185: `TheStreak_...` - still shown after the rotation; aud-a56's `AFailureStreak_EndsWhenARotationSucceeds_AndTheNextFailureIsReportedAgain` - 1 warning where 2; the page test, on and off - still shown after the rotation |
+
+Unchanged through the round:
+- `JsonlWriterRotationTests.cs` `1D345ED5E667F9295E76B5F663E11E3F`
+- `ExtendedLogServiceTests.cs` `8A77D88CF765B09810DA6CBBDB7EAB5B`
+- `EventLogDiagnosticsTests.cs` `5D39CF76002F1327F0C981D4883352CE`
+
+Before the round, the new tests (with aud-a56's streak test, 7 in all) ran three times on these bytes, 7/7 each time.
+They hold files open and wait on the extended log's consumer, so they were checked for flakes.
+
+`ClickGate*` and `ProgressRegistryTests`, run alone on these bytes before the round (Release): 351/351.
+
+Not run, by design:
+- A real SIEM tailer - the held handle is the one a tailer opens, as in aud-a56's tests.
+- A folder whose ACL denies delete - aud-a56's tests cover that cause for the write; the schedule is the same for both
+  causes.
+- An hour of wall-clock time - the clock seam moves it.
+
+## Comments after the round
+
+None were needed. The fix's comments were written before the round and are in the bytes measured above.
+
+## Known gaps
+
+- Nothing bounds the file, or the volume, while its rotation fails. The overflow files the record preferred were not
+  built; the Plan says why, and the supervisor can still rule for them.
+- The schedule is checked on writes. A file that is no longer written is not reported again, but it is not growing
+  either.
+- A streak and its schedule are this instance's. On a shared log root the other instance reports and shows its own.
+- "Since" is this instance's first failed write in the streak, not the moment the file reached its limit.
+- When the file's size cannot be read at a failure, the last size stands, and it is 0 at a streak's first failure.
+- The page shows this instance's streaks only, and only as of its last load.
