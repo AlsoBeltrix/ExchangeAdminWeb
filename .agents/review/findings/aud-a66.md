@@ -8,7 +8,7 @@ module). `SaveModuleAdminsAsync` reads `module.Id` and `moduleAdminGroupsBaselin
 `ApplyAdminChanges(module.Id, ...)`. `SaveSectionAccessAsync` has the same window. aud-a41's in-flight
 save wait closes the Save-button path as a side effect, but the directory-lookup window is not closed and
 no test pins it (the harness has no directory stand-in). Read from the code, not run.
-**Status**: Merged `579c0875` (with the folded-in MEDIUM); closed on guard proof; codex review pending
+**Status**: Complete; merged `579c0875` (with the folded-in MEDIUM); codex settings-batch-7 clean (one LOW held in aud-a67)
 **Branch**: `worktree-agent-a047027df146de3ac`
 **Commit**: `0267d70d` (plan `a8647062`; comments `653a800a`)
 **Reviewer**: implementer (surfaced by the aud-a41/a40/a42 agent, 2026-10-23, candidate 1 of its hand-back)

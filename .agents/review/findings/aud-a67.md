@@ -55,3 +55,9 @@ directory-refusal messages fall back to alias or SID labels. (12) A save that ou
 its worker thread and store connection until the store answers (the stores take no cancellation). (13) Item
 (4) above is corrected: a second save in flight combined with a route change caused the aud-a66 HIGH; the
 write is now closed there, the re-entrancy guard itself stays held.
+
+## Also held (codex, settings-batch-7, 2026-10-23) - LOW
+
+(14) `ModuleConfig.razor` around 1045: during the bounded route-change save drain no waiting state is shown
+for up to 10 s; show "Waiting for <module>'s save before opening <next module>" before the await, clear it on
+completion or replace it with the timeout notice.
