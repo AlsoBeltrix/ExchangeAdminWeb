@@ -5,7 +5,7 @@ to have failed. (1) The catch in `CheckSingleEligibility` wraps the audit write 
 well as the check, so a failed audit or notification turns a determined verdict into an error. (2) The
 Migration page's write actions (create, approve, stop, remove and the rest) still complete their progress
 activity `true` on failure; aud-a23i fixed only the loads.
-**Status**: Merged `09d3bacb`; closed on guard proof; codex review pending
+**Status**: Complete; merged `09d3bacb`; codex mig-batch-7 raised two candidates, admitted as aud-a23r
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
 **Commit**: `7e2ad045` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23j, aud-a23k, aud-a23l)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidates 5 and 6 of its hand-back)

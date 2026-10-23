@@ -4,7 +4,7 @@
 check throws (AD unreachable, the group unresolvable), the eligibility check only adds a warning and the
 user stays Eligible, so a batch can be created for a member of an excluded group. The match itself is a
 substring test on the group DN, so a group whose DN contains the configured DN as a substring matches too.
-**Status**: Merged `09d3bacb`; closed on guard proof; codex review pending
+**Status**: Complete; merged `09d3bacb`; codex mig-batch-7 raised two candidates, admitted as aud-a23r
 **Branch**: `worktree-agent-a03d6bd111b571e5a` (forked at `b16898dc`)
 **Commit**: `5cf71c1e` (fix, tests, record); plan `f62462b9`; comments `97ca9448` (shared with aud-a23n, aud-a23m, aud-a23k, aud-a23l)
 **Reviewer**: implementer (surfaced by the aud-a23h/a23i agent, 2026-10-22, candidate 1 of its hand-back)
