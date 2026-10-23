@@ -43,6 +43,10 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         _h.AddMailbox(Target, TargetMailbox);
         var account = _h.Forest.AddUser("jdoe", upn: Upn, mail: Upn, proxies: [$"SMTP:{Upn}"]);
         _jdoe = SelfGrantDirectoryStandIn.Principal(Logon, account.Sid);
+
+        // aud-a69: the someone else the grants below name is someone - the directory holds their account. A grantee neither
+        // Exchange nor the directory holds is refused as a check that could not be completed.
+        _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
     }
 
     public void Dispose() => _h.Dispose();

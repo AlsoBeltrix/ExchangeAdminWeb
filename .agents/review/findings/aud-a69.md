@@ -6,7 +6,7 @@ session identity; when Exchange Online does not name the grantee (a group only t
 holds) and that identity cannot see the group's object, `named` is empty, `groups` is empty, and the check
 returns null (allow) with no membership read - the safety rests on the deployment's read visibility
 (Invariant 7). The synced-nested lookup at line 953 already fails closed.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); planned
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on the branch below, not merged; closed on guard proof; codex review pending
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidate 1 of its hand-back)
@@ -116,6 +116,83 @@ nothing anywhere holds the grantee. A group hidden from the app pool's identity 
 missed or refused. With the credential configured every grant, not only one to a group, costs one secret fetch per run (a single
 grant; a bulk file once).
 
+## Fix
+
+- `Services/PermissionValidator.cs` `CompareInDirectoryAsync`: the credential first, `run.DirectoryReadCredentialAsync(DirectoryReadCredentialAsync)`
+  (once per run). No credential and no Exchange recipient for the grantee: refused, "the on-premises directory could not
+  resolve '<x>': <problem>", one warning, no lookup. No credential and an Exchange recipient: one warning that the lookup runs
+  as the session, then `FindNamedByUnderSessionIdentity`. A credential: `FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress,
+  credential)`. After the lookup, no Exchange recipient and nothing found: refused, "neither Exchange Online nor the on-premises
+  directory holds '<x>', so whether it is you could not be checked", one warning. The membership refusal without the credential
+  (aud-a60) reads the credential already had. `CompareInExchangeGroupAsync` takes the credential and its problem: a synced
+  group among the members, without the credential, refuses at once with the evaluation's own refusal naming the problem; with
+  it, is found by `FindNamedBy(address, address, credential)`. The method's remarks say where the lookup runs.
+- `Services/SelfGrantDirectory.cs`: `FindNamedBy(identity, canonicalAddress, credential)` (a null credential throws) and
+  `FindNamedByUnderSessionIdentity(identity, canonicalAddress)`; `Search` takes the credential and passes `-Credential` when it
+  has one; `FindBySid` and `FindByUserPrincipalName` pass none, as before. The class remarks say which lookups run as which
+  identity.
+
+Tests: `SelfGrantDirectoryStandIn` - `Entry.HiddenFromSession` (and `AddGroup(hiddenFromSession:)`): a search made with no
+credential returns no row for the object, and follows none of its links. `PermissionValidatorSelfGrantTests` +12 -
+`AGroupOnlyTheDirectoryHolds_HiddenFromTheSessionIdentity_IsFoundUnderTheDirectoryReadCredential` (the operator inside: refused;
+not: allowed; either way the lookup as `CONTOSO\svc-dirread`, every membership read as it, one fetch),
+`AGranteeNeitherExchangeNorTheDirectoryHolds_IsRefused_AsIncomplete` (the lookup as the credential's, no membership read),
+`AGranteeExchangeDoesNotName_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNotLookedUp` (aud-a60's five shapes,
+through `WithoutTheCredential`, now shared with aud-a60's group test: the problem named, no lookup of the grantee at all),
+`OneRun_HasTheDirectoryReadCredentialOnce_AndLooksEveryGranteeUpUnderIt` (three checks, two grantees: one fetch, three lookups
+as the credential's), `ASyncedGroupInACloudOnlyGroup_HiddenFromTheSessionIdentity_IsFoundUnderTheDirectoryReadCredential`
+(inside: refused; not: allowed; the nested lookup as the credential's),
+`ASyncedGroupInACloudOnlyGroup_WithoutTheDirectoryReadCredential_IsRefused_NamingIt_AndNotLookedUpAsTheSession`. Updated, not
+weakened: `ADirectoryObjectThatIsNotTheOperator_IsAllowed` pins the lookup as the credential's in place of its presence alone;
+`AMembershipTheSessionIdentityCannotSee_IsReadUnderTheDirectoryReadCredential_AndRefused` pins the grantee's lookup as the
+credential's beside the operator's as the session's; `AGrantToAPerson_NeedsNoDirectoryReadCredential` pins the session's lookup
+and says why it may stand.
+
+Fixtures that granted to a name neither Exchange nor the forest held, allowed on exactly the empty answer this closes - the
+first two found by reading every test that reaches the check before the fix was built, the bulk two by the full suite on the
+fixed tree (6,558 passed / 2 failed; no other failure):
+`PermissionPagesSelfGrantTests` (its constructor adds the `other` account its grants name), `PermissionValidatorTests.
+ValidateSelfGrant_DifferentUser_ReturnsNull` (Exchange names `jdoe@company.com` as a recipient of its own),
+`MailboxPermissionWriteIdentityTests.TheBulkLoop_WritesEachRowsOwnValidatedMailbox_AndRefusesARowWithNone` and
+`CalendarPermissionWriteIdentityTests.TheBulkLoop_WritesEachRowsOwnValidatedCalendar_AndRefusesARowWithNone` (the forest holds
+the trustee's account).
+
 ## Guard proof
 
-Pending.
+The aud-a71 driver and protocol (that record's Guard proof; log `a69-mutations.log`). Filter
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ProtectedGroupMembership|FullyQualifiedName~ResourceDomainDenies|FullyQualifiedName~GroupMemberNesting|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeIdentityResolver|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ValidatedWriteCallSite|FullyQualifiedName~BulkPermission|FullyQualifiedName~BulkAndOnPrem`
+(901 tests). Fixed-file MD5s: `Services/PermissionValidator.cs` `72438140F12AE68686B017DFBA83461E`,
+`Services/SelfGrantDirectory.cs` `40EE42B5FD3CB088E9C80333182EAEE2` (unmutated: `ExchangeAdminWeb.Tests/SelfGrantDirectoryStandIn.cs`
+`56B33BB82A7093A4B1736D4C7CB5F4F5`, `ExchangeAdminWeb.Tests/PermissionValidatorSelfGrantTests.cs` `EE72E8C967E964EA92AFB43D61D4DD4B`,
+`ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs` `DC02B29DD7443F6A863086CC8AE5BC71`,
+`ExchangeAdminWeb.Tests/PermissionValidatorTests.cs` `135E175AF6D744316CA5E928A710B37B`,
+`ExchangeAdminWeb.Tests/MailboxPermissionWriteIdentityTests.cs` `E13C2FC286F42AC89421F5390E44C867`,
+`ExchangeAdminWeb.Tests/CalendarPermissionWriteIdentityTests.cs` `68A0CDE031FAFD38F2CCC9B03B3A7C21`). Every mutant built with 0
+errors and every restore matched. After the round, the restored tree rebuilt and the filter: 901/901 green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | the grantee's lookup under the session identity again (`FindNamedByUnderSessionIdentity` at the call site) | `PermissionValidator.cs` `8C98A6F3793F3707298579A71046F796` | 7 of 901: both `AGroupOnlyTheDirectoryHolds_HiddenFromTheSessionIdentity_...` rows (the hidden group not found - refused as found nowhere, the operator inside or not), `AGranteeNeitherExchangeNorTheDirectoryHolds_IsRefused_AsIncomplete`, `ADirectoryObjectThatIsNotTheOperator_IsAllowed`, `OneRun_HasTheDirectoryReadCredentialOnce_AndLooksEveryGranteeUpUnderIt` and both `AMembershipTheSessionIdentityCannotSee_...` rows (the lookups as the session) |
+| M2 | the empty answer allowed again (the not-found refusal never taken) | `2AB70E4FA9A713CD59E8D64E85D7DC4B` | 1 of 901: `AGranteeNeitherExchangeNorTheDirectoryHolds_IsRefused_AsIncomplete` - allowed |
+| E1 | extra: the credential-absent refusal never taken (a grantee Exchange does not name looked up as the session) | `204051698F5DA2C36181D789007AEB16` | 5 of 901: every `AGranteeExchangeDoesNotName_WithoutTheDirectoryReadCredential_...` row - allowed on the session's read |
+| E2 | extra: the synced-nested lookup under the session identity again | `44DD0033BFA723B8C3D62280E816E819` | 2 of 901: both `ASyncedGroupInACloudOnlyGroup_HiddenFromTheSessionIdentity_...` rows - refused unevaluated |
+| E3 | extra: `SelfGrantDirectory.Search` passing no `-Credential` | `SelfGrantDirectory.cs` `034DE0A66D16BAB672A2E166F42DE39C` | 9 of 901: the seven of M1 and both `ASyncedGroupInACloudOnlyGroup_HiddenFromTheSessionIdentity_...` rows |
+| E4 | extra: without the credential, the synced nested group looked up as the session first (the early refusal removed) | `PermissionValidator.cs` `AB7B0A45AE813B88AF70EBE437F9E9DA` | 1 of 901: `ASyncedGroupInACloudOnlyGroup_WithoutTheDirectoryReadCredential_IsRefused_NamingIt_AndNotLookedUpAsTheSession` - the session's lookup made |
+
+No separate pre-fix reproduction: M1 is the lookup as it stood, at its call site, and M2 its empty answer as it stood.
+
+## Known gaps
+
+- Labelled assumption, aud-a60's: the protected-principal directory-read credential sees every object a grantee can name.
+  Nothing ran against a forest; the stand-in models what each identity can see.
+- Without the credential, a grantee Exchange names is still looked up as the session - refusal-only evidence beside Exchange's
+  own comparison. Where the typed name also names, in the directory, an object Exchange Online does not (a security group not
+  synced, say) that the app pool cannot see, and the on-premises write resolves the name to it, that object is not compared.
+  It needs the credential to be missing - a deployment the check already refuses every group grant on - and a name the two
+  directories resolve apart. A candidate in the hand-back (LOW); refusing every grant without the credential would close it.
+- The operator's own lookups (`FindBySid`, `FindByUserPrincipalName`) stay the session's. By the SID claim a hidden or doubled
+  account refuses; by a UPN claim alone - which the Negotiate sign-in never carries (aud-a43's labelled assumption) - an
+  account hidden from the session reads as no account, and no on-premises group is then asked about. A candidate in the
+  hand-back (LOW).
+- Every grant the check reaches the directory for now fetches the directory-read secret once per run (one HTTP call to the
+  secret store; the store keeps no cache), where only a grant to a group did.
