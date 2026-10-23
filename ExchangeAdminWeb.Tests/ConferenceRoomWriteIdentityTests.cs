@@ -69,8 +69,10 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         public List<string> CredentialPurposes { get; } = [];
 
         // aud-a2x. With a credential service, the base's lookup asks it, and neither seam below is reached.
+        // aud-a2e. With the harness's protection services - nothing protected - as the container supplies them.
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null, ModuleCredentialService? credentials = null)
-            : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
+            : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance,
+                h.ProtectedPrincipals, h.Servicers) => _h = h;
 
         protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
         {
@@ -100,7 +102,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     private ValidatedMailbox Room(string? directoryObject = CheckedObject) => ExchangeWriteHarness.Validated(Checked, directoryObject);
 
     private Task<RoomOperationResult> Finder(Service service, ValidatedMailbox? room, string city = "", string state = "", string country = "")
-        => service.SetRoomMetadataAndListAsync(Typed, room, city, "Building 1", 8, "2", "Second", "TV", "Polycom", country, state, "GMT Standard Time");
+        => service.SetRoomMetadataAndListAsync(Typed, room, actingUser: null, city, "Building 1", 8, "2", "Second", "TV", "Polycom", country, state, "GMT Standard Time");
 
     [Fact]
     public async Task TheFinderWrites_AreBoundToTheValidatedRoom_NotTheStringTyped()
@@ -1428,17 +1430,19 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Fact]
     public async Task TheOnPremAddsRefusalOfARoomWithNoDirectoryObject_IsLoggedOnce()
     {
-        // The on-prem add's own refusal of a room with no proven object. Through the row only a race reaches it - the
-        // preflight's membership read finding the room on its synced list, the add's no longer - so the add is called
-        // directly, as the row calls it after Set-Place (aud-a2p): it fails with nothing written on-prem and no credential
-        // asked for, and one warning names the room, the list and the refusal.
+        // The on-prem add's own refusal of a room with no proven object. Through the row only a race reached it - the
+        // preflight's membership read finding the room on its synced list, the add's no longer - and since aud-a2e not even
+        // that: no group was checked for such a list, so the add refuses its cloud write first. It stays the add's own guard,
+        // so the add is called directly, as the row calls it after Set-Place (aud-a2p), handed a list carrying a cleared
+        // group as if a check had run: it fails with nothing written on-prem and no credential asked for, and one warning
+        // names the room, the list and the refusal.
         SyncedListTakingTheRoomOnPrem();
         var logger = new CapturingLogger();
         var service = new Service(_h, logger);
         var list = new ConferenceRoomService.RoomListTarget(List, Exists: true, IsLegacy: false, IsDirSynced: true,
-            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
+            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid, DirectoryGroup: ExchangeWriteHarness.DirectoryGroupAsChecked());
 
-        var result = await service.AddToRoomListAsync(Room(directoryObject: null), "room1@contoso.test", Typed, list);
+        var result = await service.AddToRoomListAsync(Room(directoryObject: null), "room1@contoso.test", Typed, list, actingUser: null);
 
         Assert.False(result.Success);
         Assert.Null(result.WrittenDirectoryObject);
@@ -1482,7 +1486,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         var service = new Service(_h, logger);
 
         var result = await service.SetRoomMetadataAndListAsync(
-            Typed, room, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone);
+            Typed, room, actingUser: null, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone);
 
         Assert.False(result.Success);
         Assert.False(result.Partial);

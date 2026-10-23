@@ -116,6 +116,10 @@ protected principals, and ConferenceRooms already routes its mutations through t
 protected-principal check (2026-06-29 sweep, one of the 12 gated modules). No change to
 gating. We are not mutating the group's other members.
 
+**Correction (aud-a2e, 2026-10-23):** the add also writes INTO the room-list group, so the
+group is a write target as well. It is checked against Protected Group Targets before the
+row writes anything and again before each add; see `.agents/review/findings/aud-a2e.md`.
+
 ## Hard dependency the code cannot satisfy — VERIFY IN DEV
 
 The module's on-prem AD service account is proven to have **Set-ADUser** (attribute

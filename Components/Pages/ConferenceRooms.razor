@@ -1070,13 +1070,13 @@
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
 
                     var r = await RoomService.SetRoomMetadataAndListAsync(
-                        email, room, cityName, buildingName, seats,
+                        email, room, await CurrentUserAsync(), cityName, buildingName, seats,
                         floorName, floorText, display, video,
                         country, stateName, tz);
 
                     op.Complete(r.Success, r.Message);
 
-                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, GroupManagementService.CombineNotes(serviced, r.RoomListServicedNote), room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed);
                     return r;
                 });
