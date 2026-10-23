@@ -89,7 +89,7 @@ Read-only evidence: DLL FileVersion/LastWriteTime, the `ConfigStore:Path` field 
 both deployed appsettings files, and selected rows in the shared config database.
 No secret values or directory data were read.
 
-**Deployed base versions re-measured 2026-10-23 as of `d6003833`**, from FileVersion and
+**Deployed base versions re-measured 2026-10-23 as of `d881ea58`**, from FileVersion and
 LastWriteTime off each assembly and nothing else. The 2026-10-12 reading (both at `2.27.1.0`,
 written 2026-10-09) is archived verbatim in `docs/history/state-archive.md` (Archived
 2026-10-23).

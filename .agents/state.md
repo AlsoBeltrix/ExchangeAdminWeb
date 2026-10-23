@@ -25,7 +25,7 @@ xhigh) defect review of each merged group. The findings and their status live in
 `.agents/review/index.md` and `.agents/review/findings/`; this file does not copy their counts.
 Each slice's arrangement and cost go in `.agents/token-log.md`.
 
-**Master, as of `d6003833`:** base app 2.35.0 (was 2.34.0); sixteen module versions bumped in
+**Master, as of `d881ea58`:** base app 2.35.0 (was 2.34.0); sixteen module versions bumped in
 `Modules/ModuleCatalog.cs`, which owns which ones. The last gate results are in
 `## Verification`.
 
@@ -80,9 +80,9 @@ Labelled live assumptions, each named in its record and proven only in productio
 **Held LOW backlog, for after the first dev deploy:** the `.agents/review/index.md` rows whose
 Status reads "held by the 2026-10-23 stopping rule".
 
-**Open owner decisions:** the index rows whose Status reads "OWNER DECISION"; and whether
-`-NarrowPublishAcl` becomes the installer default (`aud-operational-hardening`), which needs a
-dev install that exercises the modules.
+**Open owner decisions:** whether `-NarrowPublishAcl` becomes the installer default
+(`aud-operational-hardening`), which needs a dev install that exercises the modules. No index row
+reads "OWNER DECISION" any more (the 2026-10-21 go approved them all; checked as of `d881ea58`).
 
 ## Carried forward
 
@@ -140,7 +140,7 @@ and earlier). Each line names its owner; the derivations are in the archive.
   `Components/Shared` (`ADGroupAutocomplete`, `ADIdentityAutocomplete`, `RecipientAutocomplete`,
   `TicketNumberInput`); raised with the owner 2026-10-02, unanswered. Only Message Trace's bulk
   detail download honours the progress cancellation token (`Components/Pages/MessageTrace.razor`
-  `:1189`). Both re-verified 2026-10-23 as of `d6003833`.
+  `:1189`). Both re-verified 2026-10-23 as of `d881ea58`.
 - **True Last Logon** (`docs/TrueLastLogon-Plan.md`, built and reviewed; its owner rulings live
   there). The cloud half has no recorded run against a real tenant; it needs `AuditLog.Read.All`
   consented behind its secret, and the module ships disabled. The live comparison is production
@@ -166,7 +166,7 @@ and earlier). Each line names its owner; the derivations are in the archive.
 - **Known defects recorded only in this file, not as index rows, so the fix-everything stream
   did not take them.** Each needs its own slice and guard; whether the 2026-10-21 go covers them,
   now bounded by the 2026-10-23 stopping rule, is the owner's call. Re-verified 2026-10-23 as of
-  `d6003833` unless marked:
+  `d881ea58` unless marked:
   - Message Trace exports: `Services/MessageTraceExportListing.cs` lists every operator's
     finished exports (`GetExports`, `:119`), and `TryDownloadAsync` (`:173`) checks the ticket
     and the export's state but no submitter, so any policy holder can download any operator's
@@ -240,7 +240,7 @@ and earlier). Each line names its owner; the derivations are in the archive.
   - Queue 4 is owner-marked DONE, yet `MessageTraceSearch` is still inert: declared at
     `Modules/ModuleCatalog.cs:500` and consulted by no page, handler or policy, while
     `docs/MessageTracePermissionSplit-Plan.md` reads APPROVED and IN PROGRESS with slices 2-4
-    unstarted. Re-verified 2026-10-23 as of `d6003833`.
+    unstarted. Re-verified 2026-10-23 as of `d881ea58`.
   - `ExchangeAdminWeb.Tests/ClickGateRegistry.cs:75` still says tiers 2-4 are "audited, NOT
     approved for conversion", though the owner approved them 2026-10-12. It is a code file, so
     correcting it is a code change.
@@ -248,9 +248,9 @@ and earlier). Each line names its owner; the derivations are in the archive.
   implementation uses the store's change token with a throttle. The additive-only rule has
   operative homes in the decision, guidance and test but not in the Constitution.
   `docs/SharedConfigDb-Plan.md` section 9; no ruling inferred.
-- **Doc and plan status drift, re-verified 2026-10-23 as of `d6003833`** (docs, outside a drift
-  sweep's reach; do not silently relabel): `docs/RepoAudit-Remediation-Plan.md` still reads
-  "APPROVED ... implementation unstarted" though every wave is closed;
+- **Doc and plan status drift, re-verified 2026-10-23 as of `d881ea58`** (docs, outside a drift
+  sweep's reach; do not silently relabel; `docs/RepoAudit-Remediation-Plan.md` was relabelled
+  IMPLEMENTED 2026-10-23 by the stream and is no longer in drift):
   `docs/BlockedSendersLoadTiming-Plan.md` and `docs/Comms10kReplaceUx-Plan.md` read Approved and
   `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` Approved / In progress, with completion
   unverified; `docs/AdminUIRedesign-Plan.md` reads In progress;
@@ -260,7 +260,7 @@ and earlier). Each line names its owner; the derivations are in the archive.
 - **Unscheduled M365 protection gap:** `Services/M365GroupManagementService.cs` calls
   `CheckProtectedAsync` only from the member and owner paths (`:255`, `:329`); `UpdateGroupAsync`
   (`:125`) and `DeleteGroupAsync` (`:143`) call neither, and protection configuration cannot
-  identify a cloud-only group. Re-verified 2026-10-23 as of `d6003833`. The owner excluded this
+  identify a cloud-only group. Re-verified 2026-10-23 as of `d881ea58`. The owner excluded this
   module from the on-prem target work; no work approved.
 - **Older questions:** `docs/MessageTraceNullRow-Plan.md` needs a live rerun (OQ-1, the upstream
   null-row cause undiagnosed); `docs/ProtectedPrincipalResolution-Plan.md` keeps OQ-2, whether the
@@ -280,16 +280,15 @@ cap, the pinned Pester and PSScriptAnalyzer versions) are in `.agents/machines.m
 Last results, each with its commit. The 2026-10-23 drift sweep changed records only and re-ran
 none of them.
 
-- Full suite as of `a1eb8a3a`: 6660 passed / 0 failed / 0 skipped, as the supervising session
-  reported it. The three former live-directory skips are stand-in passes since `psl-8`.
-- Release build, last recorded in the `aud-a73`, `aud-a74` and `aud-a75` gates: 0 errors,
-  19 warnings, down from 61 before `cdt-41`. The NuGet advisories are gone and NuGet audit is
-  now a build error (`cdt-41`).
+- Full suite as of `cfccec59`: 6693 passed / 0 failed / 0 skipped, as the supervising session
+  reported it; Release build 0 errors / 19 warnings; format, diff-check and ASCII lint clean. The
+  three former live-directory skips are stand-in passes since `psl-8`. The 19 warnings are down
+  from 61 before `cdt-41`; the NuGet advisories are gone and NuGet audit is now a build error
+  (`cdt-41`).
 - Pester as of `7698c096`, `cdt-41`'s branch tip: 478 passed / 0 failed / 0 skipped. No `.ps1`,
-  `.psm1` or `.psd1` file has changed since, as of `d6003833`.
+  `.psm1` or `.psd1` file has changed since, as of `d881ea58`.
 - PSScriptAnalyzer: 0 errors on each changed script in the ops-script slices; their records own
   the runs.
-- Full suite as of `cfccec59`: 6693 passed / 0 failed / 0 skipped; Release build 0 errors / 19 warnings; format, diff-check and ASCII lint clean.
 
 Not exercised by any gate: browser rendering (there is no bUnit harness; `.agents/decisions.md`
 2026-10-01, "Rendered is not visible"), live writes, and the live forest and tenant. Both deployed
