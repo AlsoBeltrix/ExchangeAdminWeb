@@ -147,6 +147,9 @@ internal sealed class SettingsPageHarness : IDisposable
     public RecordingNavigation Navigation { get; } = new();
     public ActivityProgressService Progress { get; } = new();
 
+    /// <summary>Module Configuration's directory: a stand-in that answers from the test and can hold a lookup (aud-a66).</summary>
+    public StandInDirectory GroupDirectory { get; } = new();
+
     /// <summary>The AdminSettings policy's answer; false refuses every save on these pages.</summary>
     public bool AdminAllowed { get; set; } = true;
 
@@ -197,8 +200,10 @@ internal sealed class SettingsPageHarness : IDisposable
             ["AttrEditorService"] = attributeEditor,
             ["Logger"] = NullLogger<ModuleConfigPage>.Instance,
             ["Progress"] = Progress,
-            // ADSearch and OUService are left unset on purpose: nothing driven here may reach the
-            // directory, and a call that tried would fail on null rather than leave the machine.
+            // The grant confirmation asks the stand-in, never a directory (aud-a66). OUService is left unset on
+            // purpose: nothing driven here may reach the directory, and a call that tried would fail on null
+            // rather than leave the machine.
+            ["ADSearch"] = GroupDirectory,
         });
         page.ModuleId = moduleId;
         Attach(page);
@@ -474,6 +479,7 @@ internal sealed class SettingsPageHarness : IDisposable
 
     public void Dispose()
     {
+        GroupDirectory.Dispose();
         _renderer.Dispose();
         Progress.Dispose();
         ExoPool.Dispose();
@@ -528,6 +534,84 @@ internal sealed class SettingsPageHarness : IDisposable
         {
             if (Markup)
                 base.BuildRenderTree(builder);
+        }
+    }
+
+    /// <summary>
+    /// The directory Module Configuration confirms new group grants with (aud-a66). Each SID it is asked about is
+    /// recorded and answered by <see cref="Answer"/>; <see cref="HoldNext"/> holds the next lookups on the worker
+    /// thread that asks, until the test releases them. It reaches no directory.
+    /// </summary>
+    internal sealed class StandInDirectory : IGroupGrantDirectory, IDisposable
+    {
+        private readonly object _gate = new();
+        private readonly List<string> _asked = [];
+        private readonly List<ManualResetEventSlim> _releases = [];
+        private int _toHold;
+        private ManualResetEventSlim? _release;
+
+        /// <summary>What <see cref="ADDirectorySearchService.IsAvailable"/> would say. False: the directory cannot be asked.</summary>
+        public bool IsAvailable { get; set; }
+
+        /// <summary>The answer to each lookup. Unavailable unless a test says otherwise, as a directory that cannot be asked.</summary>
+        public Func<string, DirectoryValidationResult> Answer { get; set; } = _ => new(DirectoryLookupOutcome.Unavailable, null);
+
+        /// <summary>Set when a held lookup has begun.</summary>
+        public ManualResetEventSlim Entered { get; } = new();
+
+        /// <summary>Every SID asked about, in order.</summary>
+        public IReadOnlyList<string> Asked
+        {
+            get { lock (_gate) return [.. _asked]; }
+        }
+
+        /// <summary>A directory that holds <paramref name="sid"/>, a group.</summary>
+        public static DirectoryValidationResult Group(string sid) =>
+            new(DirectoryLookupOutcome.Found, new ADSearchResult(sid, "CN=" + sid, null, null, null, "Group", sid));
+
+        /// <summary>Holds the next <paramref name="lookups"/> lookups until the returned event is set (or the harness is disposed).</summary>
+        public ManualResetEventSlim HoldNext(int lookups = 1)
+        {
+            var release = new ManualResetEventSlim();
+            lock (_gate)
+            {
+                _releases.Add(release);
+                _release = release;
+                _toHold = lookups;
+                Entered.Reset();
+            }
+            return release;
+        }
+
+        public DirectoryValidationResult ValidateGroupSid(string sid)
+        {
+            ManualResetEventSlim? release = null;
+            lock (_gate)
+            {
+                _asked.Add(sid);
+                if (_toHold > 0)
+                {
+                    _toHold--;
+                    release = _release;
+                }
+            }
+
+            if (release is not null)
+            {
+                Entered.Set();
+                release.Wait(TimeSpan.FromSeconds(60));
+            }
+
+            return Answer(sid);
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                foreach (var release in _releases)
+                    release.Set();
+            }
         }
     }
 
