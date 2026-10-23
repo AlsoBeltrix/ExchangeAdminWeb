@@ -259,7 +259,9 @@ function ConvertTo-ComparablePhysicalPath {
     # One spelling per folder: environment variables expanded, made absolute and normalised
     # (slashes, dot segments), trailing separators dropped. The callers compare the result
     # ordinal and case-insensitive, by equality or at a directory boundary
-    # (Test-PhysicalPathInside) - never by bare prefix. Not exported.
+    # (Test-PhysicalPathInside) - never by bare prefix. Exported for deploy.ps1 (cdt-36): its check
+    # that a run does not move an existing application compares folders with this, as
+    # Assert-AppPoolServesPath does later in the same run, so the two agree on what one folder is.
     param([string]$Path)
 
     if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
@@ -271,6 +273,8 @@ function ConvertTo-ComparablePhysicalPath {
     }
     return $full.TrimEnd('\', '/')
 }
+
+Export-ModuleMember -Function ConvertTo-ComparablePhysicalPath
 
 function Test-PhysicalPathInside {
     # aud-a38f. True when Path is Root or lies inside it: equal, or Root followed by a directory

@@ -679,6 +679,12 @@ environments; it is intentionally separate from the standalone installer.
 .\deploy.ps1
 ```
 
+`deploy.ps1` updates in place when the publish folder already holds `appsettings.json`.
+`-Force` (which regenerates `appsettings.json`) and `-ConfirmFreshInstall` take the fresh-install
+path, which points the IIS application at the run's `-PublishPath` and `-AppPoolName`: if the
+application already exists with another folder or pool, the run is refused before anything is
+configured, unless `-AllowRepoint` says the move is intended.
+
 The deploy/install scripts will:
 - Stop the application pool
 - Build and publish the application
