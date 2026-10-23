@@ -208,6 +208,45 @@ No AD, EXO, Graph, DHCP or IIS call, no real module, no Delinea, SMTP, push or d
 extended log over temp folders, a substitute config store where a store failure is the cause. No coder self-review
 verdict is claimed.
 
+## Part 5 - plan (approved by the owner's EVERYTHING go)
+
+Folded in from aud-a23l part 3 by the supervisor (`3a948129`; the last "Folded in" section below), under the owner's
+2026-10-21 go ("fix all the bugs ... EVERYTHING"). aud-a28z and aud-a26u had landed on this branch when it arrived, so
+it is its own commit after cdt-41 rather than in the aud-a28z commit. Evidence at `18530b58` (`b16898dc` is its
+ancestor, so the folded section's line numbers hold):
+
+1. `Services/AuditService.cs` `LogMigrationCheck` (111-136) files `["result"] = status == "Eligible" ? "Success" :
+   "Ineligible"` (127). Its callers are `Components/Pages/Migration.razor` 1989-1990 (`singleResult.Status.ToString()`:
+   Eligible, Ineligible or, since aud-a23h, Undetermined) and the catch's 2007-2008 (`"Error"`), so a check that could
+   not decide and a check that threw are both filed as an ineligibility.
+2. `Components/Pages/AdminEventLog.razor` 91-96: the Result filter offers All, Success, Failed and Ineligible;
+   `ApplyFilters` (879-889) compares each entry's Result with the choice; the badge (264) shows any result but Success
+   and Failed as a warning.
+
+**Rule.** An eligibility check's result says what the check found - Success for eligible, Ineligible for ineligible,
+Undetermined for anything else - so a check that could not decide, or threw, is never filed as a verdict against the
+mailbox, and the event log can filter for it.
+
+1. `LogMigrationCheck`: `["result"] = status switch { "Eligible" => "Success", "Ineligible" => "Ineligible", _ =>
+   "Undetermined" }`. The `status` field keeps the caller's word ("Undetermined", "Error"). The usage count's success
+   flag is unchanged: any result but "Failed" counts as a success, Ineligible and Undetermined alike.
+2. `AdminEventLog.razor`: `<option value="Undetermined">Undetermined</option>` after Ineligible. NotYetConverted in
+   ClickGateRegistry, so no key moves.
+3. `Components/Pages/Migration.razor` is not touched (another agent's file): both its calls already pass the status as
+   text.
+
+Tests, `ExchangeAdminWeb.Tests/EventLogSectionsTargetTests.cs` (its real audit writer, and the page's own ParseAuditLine
+and ApplyFilters by reflection): for "Undetermined" and "Error", the check's row carries result "Undetermined", and the
+page's Result filter finds it under Undetermined and not under Ineligible; and the Result select offers Undetermined - a
+source tripwire over the page's markup, comments blanked, as the undo panel's close buttons are pinned.
+
+Mutations at the call site (as the other rows): M5 the two-way ternary again; extra E6 the option removed.
+
+Files: `Services/AuditService.cs`, `Components/Pages/AdminEventLog.razor`,
+`ExchangeAdminWeb.Tests/EventLogSectionsTargetTests.cs`, this record. Versions: no new bump - AuditService is shared (the
+base app version this record already makes due) and the filter is the Admin Event Log's (its module version, due from
+aud-a26u).
+
 ## Known gaps
 
 - `DroppedEntryCount` is shown on no page yet: it is the counter a health surface or a later line reads, and the page
@@ -254,3 +293,14 @@ category and path but not who did what: no operation id, actor, IP, target, tick
 gap cannot be reconciled. Fix: the guarded recovery log includes those as string-only fields through
 `TextField` (never the payload, never a raw `ToString`). Test: the recovery log line for a dropped row
 contains the operation id and actor. Mutation at the call site: the identity fields dropped from the log.
+
+## Folded in: LogMigrationCheck files Undetermined under result "Ineligible" and the Admin Event Log filter has no Undetermined option (aud-a23l part 3, 2026-10-22) - LOW
+
+(5) `Services/AuditService.cs` `LogMigrationCheck` (around line 127 at `b16898dc`):
+`["result"] = status == "Eligible" ? "Success" : "Ineligible"` files every non-Eligible status - `Undetermined`
+(aud-a23h) and the page catch's "Error" - under result "Ineligible". Fix: a third result for an undetermined
+check (`status switch { "Eligible" => "Success", "Ineligible" => "Ineligible", _ => "Undetermined" }`), so
+neither "Undetermined" nor "Error" is filed as an ineligibility. `Components/Pages/AdminEventLog.razor` lines
+91-96 (the Result filter's options All, Success, Failed, Ineligible): add an "Undetermined" option; the badge
+at 264 already shows any result other than Success and Failed as warning. Test: an Undetermined check's row
+carries result "Undetermined" and the filter finds it. Mutation at the call site: the two-way ternary again.
