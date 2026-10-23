@@ -67,7 +67,8 @@ restores byte-exact from a copy outside the tree with a fresh mtime (session scr
 | K1 (the record's): the clear removed at `AdoptSelectionAsOpenBatch` | `7fd3115d...` / `41fb7a4c...` | 2: the row click and the tick boxes | md5 equal; 427/0 |
 | K2: the clear removed at `SyncOpenBatchFromUrl` | `7fd3115d...` / `213bae6f...` | 1: the address | md5 equal; 427/0 |
 
-With the fix: `Migration|ClickGate|ProgressRegistry`, 1107 passed / 0 failed.
+With the fix: `Migration|ClickGate|ProgressRegistry`, 1107 passed / 0 failed. On the kd-2 commit's tree (`14bf6a4f`):
+full suite 6720 passed / 0 failed / 0 skipped.
 
 ## Coder dispute
 

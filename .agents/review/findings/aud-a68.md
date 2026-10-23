@@ -199,6 +199,26 @@ class alone passed 19/19 straight after on the same tree.
 | --- | --- | --- | --- |
 | The stand-in's old answer back (no row for the archive) | `19306aa3...` / `fe4a8ab8...` | 14: every test through `LookedUp`, on the new `Warnings` assertion (the archive warning the no-row answer raises) | md5 equal; 52/0 |
 
+The part-6 commit (`6f0d6dfd`) was run on the filter above (the change is confined to that class); the next commit's tree
+(kd-2, `14bf6a4f`) carries it and ran the full suite: 6720 passed / 0 failed / 0 skipped.
+
+**Part 5** - new `ExchangeAdminWeb.Tests/MigrationBulkBatchActivityTests.cs`, 2 tests (7 cases), the page's own handlers
+over `MigrationStubExchange` with a recording progress channel: `EachBulkBatchAction_NamesItsActionInItsActivity` (each of
+the six callers - Delete, Complete, Schedule, Stop, Remove Completed, Resume - opens its activity as "<its cmdlet's
+action> on 1 batch(es)", never "Removing completed batches"); `TheBusyText_NamesTheRunUnderWay` (the batch list rendered
+from inside a run reads "StopMigrationBatch on 1 batch(es) and reloading...", and no busy text after it). And the two
+`MigrationVerdictAndWriteOutcomeTests` that pinned the old label now pin the run's name. Filter
+`MigrationBulkBatchActivityTests|MigrationVerdictAndWriteOutcomeTests|MigrationStatusPageTests|ClickGate`, 450 tests.
+
+| Round | md5 before / mutated | Failed (of 450) | Restored |
+| --- | --- | --- | --- |
+| The fix reverted (the page back to kd-2's `14bf6a4f`) | `a127f9be...` / `7fd3115d...` | 10: the 7 new cases and the 3 bulk-batch cases of `MigrationVerdictAndWriteOutcomeTests` | md5 equal; 450/0 |
+| M5 (the record's): the fixed label again | `a127f9be...` / `d6b70665...` | 9: the six callers and those 3 | md5 equal; 450/0 |
+| M5b: the busy text fixed again (`actionInProgress == "clearing"`) | `a127f9be...` / `5750f002...` | 1: `TheBusyText_NamesTheRunUnderWay` | md5 equal; 450/0 |
+
+With the fix: `Migration|ClickGate|ProgressRegistry`, 1114 passed / 0 failed; the page 4377 lines, nothing registered
+moved.
+
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 
 (6) `ExchangeAdminWeb.Tests/RecipientLookupReportedTimeTests.cs` 103: the stand-in's archive read answers no row,

@@ -471,7 +471,7 @@
                         @* spinner removed: the batch-list load reports to
                            the status bar, with its elapsed time.
                            Owner ruling 2026-10-02. *@
-                        <p class="mt-2 text-muted">@(actionInProgress == "clearing" ? "Removing completed batches and reloading..." : "Loading migration batches...")</p>
+                        <p class="mt-2 text-muted">@(bulkBatchActivity != null ? $"{bulkBatchActivity} and reloading..." : "Loading migration batches...")</p>
                     </div>
                 }
                 else if (!batchesLoaded)
@@ -1632,7 +1632,7 @@
     private List<MigrationUserInfo>? batchUsers;
     private bool mailboxLoadFailed; private string? mailboxLoadFailure; // aud-a23p: why the last load failed, for the pane; shown only while mailboxLoadFailed is set
     private string? loadingBatchUsers;
-    private string? actionInProgress;
+    private string? actionInProgress; private string? bulkBatchActivity; // aud-a68: the bulk batch run under way, as its activity names it, for the busy text over the batch list; null when none is
     private string? loadingReport;
     private string? reportUser;
     private string? userReport; private string? reportFailure; // aud-a23k: why the last fetch has no report; null when it has one, and cleared wherever userReport is
@@ -3517,12 +3517,12 @@
     {
         // Set before the first await - see CreateSingleMigrationBatch for why. The guards moved
         // inside the try so the existing finally clears both flags on every early return.
-        actionInProgress = "clearing";
+        var running = $"{auditAction} on {batchNames.Count} batch(es)"; actionInProgress = bulkBatchActivity = running; // aud-a68: named from its action, as a single action's activity is; the busy reason was "clearing" and the label "Removing completed batches" whichever of the six ran
         isLoadingStatus = true;
         batchActionResult = null;
 
         using var activity = Progress.Begin(
-            "Exchange Migration", "Removing completed batches", ActivitySize.Unknown);
+            "Exchange Migration", running, ActivitySize.Unknown);
         string? bulkFailure = "Nothing was done."; // aud-a23m: the run's outcome for its activity - "Nothing to do" is a success (D2(a)), any refused row a failure
 
         try
@@ -3661,7 +3661,7 @@
         }
         finally
         {
-            actionInProgress = null;
+            bulkBatchActivity = null; actionInProgress = null;
             activity.Complete(bulkFailure is null, bulkFailure);
             isLoadingStatus = false;
         }
