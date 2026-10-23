@@ -101,6 +101,8 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// principal. Bulk is where a servicer grant is MOST useful and it was the path that could not
     /// use it - the single-target form serviced a protected mailbox while the same mailbox in a CSV
     /// was refused (pps-1). Null refuses, so any caller without a principal is safe.
+    /// aud-a43: the self-grant check is handed it too, and finds the operator in the directory by it;
+    /// null refuses every set row there as a check that could not be completed.
     /// </param>
     public async Task<BulkOperationResult> ProcessCalendarPermissionsCsvAsync(Stream csvStream, bool isSet, PermissionValidator validator, string currentUser, AuditService audit, EmailService email, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
     {
@@ -159,7 +161,8 @@ public class CalendarPermissionService : ExchangeServiceBase
 
                 if (isSet)
                 {
-                    var selfGrantError = await validator.ValidateSelfGrantAsync(currentUser, row.User);
+                    // aud-a43: the signed-in principal, never currentUser - the logon name is the record's actor only.
+                    var selfGrantError = await validator.ValidateSelfGrantAsync(actingUser, row.User);
                     if (selfGrantError is not null)
                     {
                         // The record carries the validator's own refusal: a check that could not be completed is not a self-grant (aud-a28y).

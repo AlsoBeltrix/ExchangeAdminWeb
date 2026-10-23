@@ -83,13 +83,16 @@ public sealed class ExoConnectionPoolConfigReadTests : IDisposable
         new ModuleConfigRepository(TestConfigStore.Create(_dir)).UpdateModule(ExoConnectionPool.ConfigModuleKey, values);
     }
 
-    /// <summary>A real pool whose ExchangeOnline rows are read through <paramref name="rowsStore"/>.</summary>
-    private ExoConnectionPool PoolOver(IConfigStore rowsStore, ILogger<ExoConnectionPool>? logger = null)
+    /// <summary>
+    /// A real pool whose ExchangeOnline rows are read through <paramref name="rowsStore"/>, and its enablement through
+    /// <paramref name="enablementStore"/> when given (aud-a44).
+    /// </summary>
+    private ExoConnectionPool PoolOver(IConfigStore rowsStore, ILogger<ExoConnectionPool>? logger = null, IConfigStore? enablementStore = null)
     {
         var moduleConfig = new ModuleConfigService(
             new ModuleCatalog(), _env, new ModuleConfigRepository(rowsStore), NullLogger<ModuleConfigService>.Instance);
         var enablement = new ModuleEnablementService(
-            new ModuleCatalog(), _env, moduleConfig, new ModuleEnablementRepository(TestConfigStore.Create(_dir)), _config,
+            new ModuleCatalog(), _env, moduleConfig, new ModuleEnablementRepository(enablementStore ?? TestConfigStore.Create(_dir)), _config,
             NullLogger<ModuleEnablementService>.Instance);
         var pool = new ExoConnectionPool(_config, moduleConfig, enablement, logger ?? NullLogger<ExoConnectionPool>.Instance, _trace,
             connect: (config, _, _) =>
@@ -123,6 +126,65 @@ public sealed class ExoConnectionPoolConfigReadTests : IDisposable
         Assert.Empty(_connectedWith);
         var error = Assert.Single(logger.Errors);
         Assert.Contains(SettingsStoreText.ServiceModuleConfig(ExoConnectionPool.ConfigModuleKey), error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnEnablementThatCannotBeRead_RefusesTheBorrow_SayingSo_NotThatTheModuleIsDisabled(bool legacyFile)
+    {
+        // aud-a44. The borrow asked IsModuleEnabled, which takes a store it cannot read for every module disabled: closed,
+        // but the refusal sent an administrator to Admin Settings to enable a module that was enabled. It names the store
+        // and its fix now - the table, or the legacy file whose import failed - as a service says it, with no page to
+        // reload. Nothing is connected, and the rows are readable throughout.
+        SeedRows(RowsAppId, RowsOrganization, RowsCertificate);
+        IConfigStore enablementStore = new FaultyStore(TestConfigStore.Create(_dir), answered: 0);
+        if (legacyFile)
+        {
+            Directory.CreateDirectory(Path.Combine(_dir, "config"));
+            File.WriteAllText(Path.Combine(_dir, "config", "modules-enabled.json"), "{ not the enablement map");
+            enablementStore = TestConfigStore.Create(_dir);
+        }
+        var logger = new CapturingLogger();
+        var pool = PoolOver(TestConfigStore.Create(_dir), logger, enablementStore);
+
+        var refused = await Assert.ThrowsAsync<ExoConfigUnreadableException>(() => pool.BorrowAsync(TestContext.Current.CancellationToken));
+
+        const string Prefix = "The Exchange Online enablement could not be read: ";
+        Assert.StartsWith(Prefix, refused.Message, StringComparison.Ordinal);
+        if (legacyFile)
+        {
+            Assert.Equal(Prefix + SettingsStoreText.Enablement(legacyImportFailed: true), refused.Message);
+        }
+        else
+        {
+            Assert.Contains("The module_enablement table in the config database cannot be read", refused.Message, StringComparison.Ordinal);
+            Assert.EndsWith(SettingsStoreText.ServiceDatabaseRemedy, refused.Message, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("reload this page", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("not enabled", refused.Message, StringComparison.Ordinal);
+        Assert.Empty(_connectedWith);
+        var error = Assert.Single(logger.Errors);
+        Assert.Contains(refused.Message[Prefix.Length..], error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExchangeOnlineReadablyDisabled_StillSaysTheModuleIsNotEnabled()
+    {
+        // The control: an enablement that reads, and says off.
+        SeedRows(RowsAppId, RowsOrganization, RowsCertificate);
+        new ModuleEnablementService(new ModuleCatalog(), _env,
+                new ModuleConfigService(new ModuleCatalog(), _env, new ModuleConfigRepository(TestConfigStore.Create(_dir)), NullLogger<ModuleConfigService>.Instance),
+                new ModuleEnablementRepository(TestConfigStore.Create(_dir)), _config, NullLogger<ModuleEnablementService>.Instance)
+            .SaveEnablement(new Dictionary<string, bool> { [ExoConnectionPool.ConfigModuleKey] = false });
+        var pool = PoolOver(TestConfigStore.Create(_dir));
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => pool.BorrowAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(
+            "Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.",
+            refused.Message);
+        Assert.Empty(_connectedWith);
     }
 
     [Fact]

@@ -428,7 +428,7 @@
             // Validate self-grant (only for Add operations)
             if (isAdd)
             {
-                var selfGrantError = await Validator.ValidateSelfGrantAsync(currentUser, user);
+                var selfGrantError = await Validator.ValidateSelfGrantAsync(validationAuthState.User, user);
                 if (selfGrantError is not null)
                 {
                     // The record carries the validator's own refusal: a check that could not be completed is not a self-grant (aud-a28y).
@@ -447,8 +447,8 @@
                     }
                     catch (Exception ex)
                     {
-                        result = PermissionResult.Fail($"Self-grant blocked, but audit logging failed: {ex.Message}");
-                        return;
+                        Logger.LogWarning(ex, "Failed to write audit for the self-grant refusal on {Target}", target);
+                        selfGrantError += " The audit row could not be written.";
                     }
 
                     result = PermissionResult.Fail(selfGrantError);
