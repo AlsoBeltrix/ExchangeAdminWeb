@@ -345,7 +345,10 @@ Gates for the addition, on its final (commented) tree:
   that check - nothing in it initializes, renders or responds to a click until the directory has
   answered, and a circuit the check does not confirm is never initialized. The server-rendered
   page is unchanged: it runs no event handler (there is no circuit), but its initialization runs
-  and its output is shown.
+  and its output is shown. **Narrowed again by aud-a29g:** the page request is now checked by the
+  same revalidation before anything renders, and a refused one gets no page. It may be confirmed by
+  a directory answer read for the account within one interval, so a removal inside that window can
+  still have one page rendered (see that record).
 - **Not consulted:** the Self-Service Groups DACL gate's groups (arbitrary groups read from AD
   ACLs), and the off-circuit bulk-job snapshot (already documented as not observing mid-job
   revocation in `GroupMembershipChecker`).

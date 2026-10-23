@@ -863,7 +863,8 @@ Each application feature is independently gated by AD group membership via its s
 
 An open tab keeps its Windows sign-in for as long as it stays connected, so the app re-checks
 it against Active Directory: once when the tab connects, then every
-`Authentication:RevalidationInterval` (aud-a29b).
+`Authentication:RevalidationInterval` (aud-a29b) - and every page request before the page is
+rendered (aud-a29g).
 
 ```json
 "Authentication": {
@@ -907,6 +908,20 @@ it against Active Directory: once when the tab connects, then every
   runs. If the check ends the session there, nothing in the tab was ever started: it shows the
   app's error banner ("An unhandled error has occurred") with its Reload link instead of the
   notice, and the audit line says why.
+- **Before a page is shown** the request itself is checked the same way (aud-a29g), because a
+  page's first, server-side render runs its initialization before the tab connects. A refused
+  request gets a short "This page was not shown" page (HTTP 403) instead of the page - nothing of
+  the page, its menu or its initialization runs - with the reason and a Reload link, and writes one
+  audit line (trigger `PageRequest`). If the check cannot be completed the page is refused (fail
+  closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
+  status frame shows it loading. The directory is not read for every page: an answer read for the
+  same account within `RevalidationInterval` - by an earlier page request or by one of its open
+  tabs' checks - confirms the request, while a refusal is always decided by a fresh read, so
+  restored access works at the next request. So page loads cost at most one extra directory read
+  per account per interval, made by the first page load after a quiet interval. An operator
+  removed from a group within one interval of their account's last check can therefore still have
+  one page rendered; the tab it opens is ended by its own check on connect, and every later page
+  request is refused. The off-switch turns this check off too.
 - Under Kerberos a reload brings back the same group list until Windows renews its ticket, so an
   operator who keeps being signed out after their access was restored should sign out of Windows
   and back in.

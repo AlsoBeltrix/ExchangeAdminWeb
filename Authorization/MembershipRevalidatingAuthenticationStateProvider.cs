@@ -40,6 +40,7 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     internal const string TriggerInterval = "Interval";
     internal const string TriggerCircuitOpened = "CircuitOpened";
     internal const string TriggerStartup = "Startup";
+    internal const string TriggerPageRequest = "PageRequest";
     internal const string ReasonDisabled = "Disabled";
     internal const string SystemActor = "System";
     internal const string SystemAddress = "localhost";
@@ -290,6 +291,21 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
             "Session for {User} ended by access revalidation ({Trigger}): {Reason}. {Detail}",
             account, trigger, result.Reason, result.Detail);
 
+        WriteAuditLine(_audit, _logger, account, _clientInfo.IpAddress, result, trigger);
+    }
+
+    /// <summary>
+    /// The one audit line for access revalidation refusing an operator - a circuit it ended, or a page
+    /// request it refused (aud-a29g). One writer, so the trail reads the same whichever refused.
+    /// </summary>
+    /// <remarks>
+    /// Names the operator, the reason, what triggered the check and, for a membership change, the
+    /// removed group SIDs - SIDs only, never a group name. An audit failure is logged and never undoes
+    /// the refusal it records.
+    /// </remarks>
+    internal static void WriteAuditLine(
+        AuditService audit, ILogger logger, string account, string ipAddress, MembershipRevalidationResult result, string trigger)
+    {
         try
         {
             var extra = new Dictionary<string, object?>
@@ -301,13 +317,13 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
             if (result.RemovedGroupSids.Count > 0)
                 extra["removedGroupSids"] = result.RemovedGroupSids.ToArray();
 
-            _audit.LogModuleAction(
-                account, _clientInfo.IpAddress, AuditAction, AuditCategory, account,
+            audit.LogModuleAction(
+                account, ipAddress, AuditAction, AuditCategory, account,
                 success: false, errorDetail: result.Detail, extra: extra);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Audit failed for a session ended by access revalidation");
+            logger.LogError(ex, "Audit failed for an access revalidation refusal ({Trigger})", trigger);
         }
     }
 }

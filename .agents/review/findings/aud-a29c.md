@@ -261,6 +261,9 @@ and the gate tests.
   now does nothing until the check answers. Closing it would need a directory read in the request
   pipeline, per page load and per enhanced navigation - a different cost and availability profile
   (a directory outage would refuse every page), so it is the owner's call, not taken here.
+  **Closed by aud-a29g** (released by the owner's 2026-10-23 evening ruling), within one interval:
+  the request is checked before it renders, confirmed by a directory answer read for the account
+  within the revalidation interval or by a fresh read.
 - **Held activities are released together.** When nothing holds, the framework posts a
   connection's activities to the dispatcher in arrival order; activities held while a circuit is
   pending are released when the verdict arrives, and their order among themselves is that of their

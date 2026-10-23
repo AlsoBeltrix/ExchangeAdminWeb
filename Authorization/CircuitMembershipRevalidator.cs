@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Security.Principal;
 
@@ -66,15 +67,30 @@ public sealed record MembershipRevalidationResult(
 /// the running directory command.
 /// </para>
 /// <para>
+/// Page requests are checked too (aud-a29g, <see cref="RevalidatePageRequestAsync"/>), by this same
+/// check, before the page is prerendered. Every successful directory read is recorded per account,
+/// and a page request may be confirmed by a recorded answer whose read started less than
+/// <see cref="CircuitRevalidationOptions.Interval"/> ago - the window an open circuit already has -
+/// but never refused by one: an answer that would refuse is read again. A read that fails forgets the
+/// account's answer. The circuit's own checks never use a recorded answer; they read every time.
+/// </para>
+/// <para>
 /// Throws only <see cref="OperationCanceledException"/>, and only for the caller's own token (the
-/// circuit is going away). Everything else is a verdict.
+/// circuit is going away, or the browser abandoned the page request). Everything else is a verdict.
 /// </para>
 /// </remarks>
 public sealed class CircuitMembershipRevalidator
 {
+    private static readonly IReadOnlySet<AuthorizationGrant> NothingCaptured = new HashSet<AuthorizationGrant>();
+
     private readonly IOperatorMembershipDirectory _directory;
     private readonly AuthorizationGroupInventory _inventory;
     private readonly CircuitRevalidationOptions _options;
+
+    // The directory's latest answer per account SID, and when its read started (aud-a29g). Facts about
+    // the account, never verdicts: a page request still recomputes its verdict from the settings as they
+    // are now and from its own token. One entry per operator, replaced by every later read.
+    private readonly ConcurrentDictionary<string, RecordedAnswer> _answers = new(StringComparer.OrdinalIgnoreCase);
 
     public CircuitMembershipRevalidator(
         IOperatorMembershipDirectory directory,
@@ -86,8 +102,34 @@ public sealed class CircuitMembershipRevalidator
         _options = options;
     }
 
-    public async Task<MembershipRevalidationResult> RevalidateAsync(
+    /// <summary>
+    /// The monotonic clock a recorded answer's age is measured on. A test sets its own; nothing else
+    /// does (the <see cref="Services.OperatorMembershipDirectory.WorkerScheduler"/> pattern).
+    /// </summary>
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>The circuit's check: the open check and the interval loop. Always reads the directory.</summary>
+    public Task<MembershipRevalidationResult> RevalidateAsync(
         ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, CancellationToken cancellationToken)
+        => CheckAsync(user, captured, acceptRecordedAnswer: false, cancellationToken);
+
+    /// <summary>
+    /// The page-request check (aud-a29g): run before a page is rendered, so a page's prerender - its
+    /// <c>OnInitialized</c> included - never runs for a principal this check refuses.
+    /// </summary>
+    /// <remarks>
+    /// The circuit's check with nothing captured (there is no circuit yet), so every rule is the same.
+    /// The one difference is the recorded answer: one whose read started within the interval may
+    /// confirm the request without a directory read, so repeated page loads and enhanced navigations
+    /// cost nothing while an account is being read anyway. It never refuses: an answer that would
+    /// refuse is read again, and the refusal is the fresh read's. The caller owns the off-switch, as
+    /// the circuit's provider does.
+    /// </remarks>
+    public Task<MembershipRevalidationResult> RevalidatePageRequestAsync(ClaimsPrincipal user, CancellationToken cancellationToken)
+        => CheckAsync(user, NothingCaptured, acceptRecordedAnswer: true, cancellationToken);
+
+    private async Task<MembershipRevalidationResult> CheckAsync(
+        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, bool acceptRecordedAnswer, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(captured);
@@ -101,7 +143,7 @@ public sealed class CircuitMembershipRevalidator
 
         // Off the caller's thread: the compared set reads SQLite and may translate names through
         // LSA, which can block, and the circuit-open check must not hold up a circuit's first render.
-        var check = Task.Run(() => RevalidateCoreAsync(user, captured, lookup.Token), CancellationToken.None);
+        var check = Task.Run(() => RevalidateCoreAsync(user, captured, acceptRecordedAnswer, lookup.Token), CancellationToken.None);
         _ = check.ContinueWith(task =>
         {
             _ = task.Exception;
@@ -132,7 +174,7 @@ public sealed class CircuitMembershipRevalidator
     }
 
     private async Task<MembershipRevalidationResult> RevalidateCoreAsync(
-        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, CancellationToken cancellationToken)
+        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, bool acceptRecordedAnswer, CancellationToken cancellationToken)
     {
         var userSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
         if (!IsAccountSid(userSid))
@@ -193,13 +235,27 @@ public sealed class CircuitMembershipRevalidator
         if (held.Count == 0)
             return MembershipRevalidationResult.Valid("The principal holds no group an authorization gate consults.");
 
-        var membership = await _directory
-            .GetMembershipAsync(userSid!, SectionAccessDirectoryReading.NetBiosFromNTAccount(user.Identity?.Name), cancellationToken)
-            .ConfigureAwait(false);
+        // A page request may be confirmed by an answer read within the interval (aud-a29g), never
+        // refused by one: a recorded answer that would refuse is read again below, so a refusal is
+        // always the directory's current word.
+        if (acceptRecordedAnswer && RecordedAnswerFor(userSid!) is { } recorded)
+        {
+            var fromRecorded = Compare(recorded, held, confirmed);
+            if (fromRecorded.IsValid)
+                return fromRecorded;
+        }
+
+        var membership = await ReadDirectoryAsync(userSid!, user, cancellationToken).ConfigureAwait(false);
 
         if (membership?.GroupSids is null)
             return MembershipRevalidationResult.LookupFailed("The directory lookup returned no answer.");
 
+        return Compare(membership, held, confirmed);
+    }
+
+    private static MembershipRevalidationResult Compare(
+        OperatorDirectoryMembership membership, IReadOnlyList<string> held, IReadOnlySet<AuthorizationGrant> confirmed)
+    {
         // A disabled account keeps its group memberships, and disabling is the usual way someone
         // leaves: comparing groups alone would let exactly that operator keep working.
         if (!membership.AccountEnabled)
@@ -221,6 +277,61 @@ public sealed class CircuitMembershipRevalidator
         return MembershipRevalidationResult.Valid($"The account still holds all {held.Count} consulted group(s).", confirmed);
     }
 
+    // One directory read, whoever asked for it. A successful answer is recorded for the page-request
+    // check (aud-a29g); a read that fails, answers nothing or is cancelled forgets the account's
+    // recorded answer - unless a read that started later recorded one meanwhile - so a directory that
+    // has stopped answering does not go on confirming pages from an old answer. The read's START is
+    // what is recorded: the answer is at least that fresh, and no fresher can be claimed for it.
+    private async Task<OperatorDirectoryMembership?> ReadDirectoryAsync(
+        string userSid, ClaimsPrincipal user, CancellationToken cancellationToken)
+    {
+        var started = Clock.GetTimestamp();
+        OperatorDirectoryMembership? membership;
+        try
+        {
+            membership = await _directory
+                .GetMembershipAsync(userSid, SectionAccessDirectoryReading.NetBiosFromNTAccount(user.Identity?.Name), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            Forget(userSid, started);
+            throw;
+        }
+
+        if (membership?.GroupSids is null)
+            Forget(userSid, started);
+        else
+            Record(userSid, membership, started);
+
+        return membership;
+    }
+
+    private void Record(string userSid, OperatorDirectoryMembership membership, long started)
+    {
+        var answer = new RecordedAnswer(membership, started);
+        _answers.AddOrUpdate(userSid, answer, (_, existing) => existing.Started > started ? existing : answer);
+    }
+
+    private void Forget(string userSid, long started)
+    {
+        if (_answers.TryGetValue(userSid, out var existing) && existing.Started <= started)
+            _answers.TryRemove(new KeyValuePair<string, RecordedAnswer>(userSid, existing));
+    }
+
+    // The account's recorded answer if its read started less than one interval ago, else nothing.
+    private OperatorDirectoryMembership? RecordedAnswerFor(string userSid)
+    {
+        if (!_answers.TryGetValue(userSid, out var answer))
+            return null;
+
+        if (Clock.GetElapsedTime(answer.Started) < _options.Interval)
+            return answer.Membership;
+
+        _answers.TryRemove(new KeyValuePair<string, RecordedAnswer>(userSid, answer));
+        return null;
+    }
+
     private MembershipRevalidationResult TimedOut() =>
         MembershipRevalidationResult.LookupFailed(
             $"The directory did not answer within {_options.LookupTimeout.TotalSeconds:0} seconds.");
@@ -238,5 +349,14 @@ public sealed class CircuitMembershipRevalidator
         {
             return false;
         }
+    }
+
+    // A class, not a record: removal compares by reference, so only the very answer that was read is
+    // ever removed, never one a later read put in its place.
+    private sealed class RecordedAnswer(OperatorDirectoryMembership membership, long started)
+    {
+        public OperatorDirectoryMembership Membership { get; } = membership;
+
+        public long Started { get; } = started;
     }
 }
