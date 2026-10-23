@@ -961,7 +961,12 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
 
-        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{DynamicGroup}' could not be read"), result);
+        // aud-a70 (11): no member reported is still a refusal, and it now says so - the group and why - where it read as the
+        // same "could not be read" as an outage.
+        Assert.Equal(shape == "no member is reported"
+                ? IncompleteBecause($"Exchange Online reports no member of the dynamic distribution group '{DynamicGroup}', and an empty membership cannot be told from one it has not calculated yet, so whether you are a member of '{DynamicGroup}' could not be checked")
+                : IncompleteBecause($"whether you are a member of the group '{DynamicGroup}' could not be read"),
+            result);
         Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember"));
     }
 

@@ -956,6 +956,13 @@ public class PermissionValidator
             _logger.LogWarning(ex, "The self-grant check stopped reading the members of {Affected}: more than {Bound} nested groups - failing closed", affectedUser, ex.Bound);
             return (SelfGrantCheckIncompleteBecause($"the group '{affectedUser}' holds more than {ex.Bound} nested groups, more than the check reads"), []);
         }
+        catch (ExchangeDynamicGroupEmptyException ex)
+        {
+            // aud-a70 (11). No member is no answer for a dynamic group (aud-a72); the refusal says which group and why, so the
+            // operator can tell it from an outage - and it is still a refusal, never "not a member".
+            _logger.LogWarning(ex, "The self-grant check found no calculated member of the dynamic distribution group {Group} in {Affected} - failing closed", ex.Group, affectedUser);
+            return (SelfGrantCheckIncompleteBecause(DynamicGroupReadEmpty(ex.Group, affectedUser)), []);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "The self-grant check could not read the members of {Affected} from Exchange Online - failing closed", affectedUser);
@@ -1073,6 +1080,13 @@ public class PermissionValidator
     // RecipientTypeDetails (GroupMailbox) says it is a group.
     private static bool IsGroupRecipient(ResolvedRecipient recipient) =>
         recipient.IsGroup;
+
+    /// <summary>
+    /// aud-a70 (11). Why a grant to <paramref name="affectedUser"/> could not be checked when Exchange Online reports no member of
+    /// the dynamic distribution group <paramref name="group"/> - the grantee itself or a group nested in it.
+    /// </summary>
+    internal static string DynamicGroupReadEmpty(string group, string affectedUser) =>
+        $"Exchange Online reports no member of the dynamic distribution group '{group}', and an empty membership cannot be told from one it has not calculated yet, so whether you are a member of '{affectedUser}' could not be checked";
 
     /// <summary>The credential's problem when its setting cannot be read (aud-a60).</summary>
     internal const string DirectoryReadCredentialUnreadable =

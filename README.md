@@ -524,6 +524,10 @@ permission that could. Disabled by default and fail-closed.
 - **Windows Authentication** — Seamless SSO with Active Directory
 - **Group-based Authorization** — Restrict access to specific AD groups per module
 - **Self-grant Prevention** — Users cannot grant themselves permissions
+  - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
+    refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient
+    its filter matches only since then is not compared. One Exchange reports no member of is refused as incomplete,
+    naming it: an empty calculated membership cannot be told from one Exchange has not calculated yet
 - **Protected User Lists** — Block modifications to C-suite/executive mailboxes (with AD group expansion)
 - **Audit Logging** — JSONL format logs with full operation details (always active)
 - **Extended Diagnostic Logging** — Configurable log level (None/Error/Warning/Info/Debug) with separate log file, viewable in Event Log page

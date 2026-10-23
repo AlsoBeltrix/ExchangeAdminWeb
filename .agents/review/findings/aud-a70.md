@@ -129,6 +129,18 @@ signed-in operator '<x>' could not be looked up in the on-premises directory by 
 SID lookup stays the session's: none or several there already refuse. No sign-in the app takes today carries a UPN claim
 without a SID (Negotiate), so nothing a deployment does now changes.
 
+(11) `Services/ExchangeGroupMembers.cs` 140-143: an empty dynamic membership throws as a membership that could not be read,
+and the check's refusal reads like an outage. Exchange Online documents no signal that tells an empty calculated membership
+from one not yet calculated: a group whose first calculation is still running "has no members", and
+`Get-DynamicDistributionGroup`'s `CalculatedMembershipUpdateTime` says when the group was last refreshed, not whether it has
+been calculated (Microsoft Learn, "Troubleshoot dynamic distribution group membership issues"; "Modern dynamic distribution
+groups in Exchange Online" - read, not probed). So the record's "else document the refusal": the refusal stays, typed
+(`ExchangeDynamicGroupEmptyException`, naming the group read empty, root or nested), the self-grant check says which group
+and why (`PermissionValidator.CompareInExchangeGroupAsync`, beside aud-a61's bound refusal), and the README says so.
+(8) A dynamic group's members are as of Exchange's last calculation: nothing in the app can see later - it does not
+evaluate the filter, by aud-a72's design - so the README says so, with Exchange's documented refresh (about every 24 hours;
+within about two hours of a filter change). No code change.
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -268,6 +280,21 @@ tests). Fixed-file MD5s: `Services/SelfGrantDirectory.cs` `DC8279156F7F6906F828B
 | E7 | extra: no refusal without the credential (the lookup made with none) | `PermissionValidator.cs` `B7E0D2B4B04293BD13F27DED8A5193C2` | 5 of 410: every `AnOperatorKnownOnlyByTheirUpnClaim_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete` row |
 
 M7 is the lookup as it stood at `eb017102`.
+
+### (11) and (8) - commit `fix(aud-a70): (11), (8) ...`
+
+Filter `FullyQualifiedName~PermissionValidator|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~SelfGrantDocumentation|FullyQualifiedName~ExchangeIdentityResolver`
+(281 tests). Fixed-file MD5s: `Services/PermissionValidator.cs` `6FD31108171C506095E4CBBF7FB545FE`,
+`Services/ExchangeGroupMembers.cs` `62EDB50DF299A38570812CE7A30BAC9F`, `README.md` `43B9F1FAFD9EEA639F21ED3A2EEB4A53`. Every
+restore matched; reruns 281/281.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M11 | the validator's catch for the empty dynamic group removed (the general refusal again) | `PermissionValidator.cs` `BE3B955EC3C97072B3826BEC7FA58708` | 1 of 281: `ADynamicDistributionGroupWhoseMembersCannotBeRead_IsRefused_AsIncomplete(shape: "no member is reported")` |
+| M11b | the read throws an untyped exception again | `ExchangeGroupMembers.cs` `06C89D236A50ECA0A14B5664D6A49D19` | 2 of 281: the same row, `ADynamicGroupThatReportsNoMember_ThrowsNamingIt_AtTheRootOrNested` |
+| M8 | the README's dynamic-group sentence dropped (a source check) | `README.md` `47D5D22027E9F71F33D04CA74DCE69DB` | 1 of 281: `SelfGrantDocumentationTests.TheReadme_SaysADynamicGroupIsCheckedAsExchangeLastCalculatedIt_AndAnEmptyOneIsRefused` |
+
+M11b is the throw as it stood at `eb017102`; M8 the README as it stood.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 
