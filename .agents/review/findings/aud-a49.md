@@ -126,6 +126,96 @@ Files:
 - `README.md`
 - this record
 
+## Fix
+
+- `Components/Pages/AdminEventLog.razor` (1,645 lines -> 1,673; NotYetConverted in `ClickGateRegistry`, so no key moves):
+  - `LoadEvents`' trace catch adds "<file name>: <exception message>" to `unreadableDiagnostics` before its log line.
+  - The warning reads "Some of the diagnostic logs could not be read, so diagnostic entries may be missing: ...".
+  - New fields `unparsedAuditLines`, `unparsedTraceLines` and `unparsedExtendedLines`, reset at the top of `LoadEvents`.
+    Each parser's outer catch increments its own before `return null`.
+  - New `UnparsedLinesText`, from new static `UnparsedLinesNotice(audit, trace, extended)`. It is null when all three
+    are zero, and otherwise names the logs above zero: "N line(s) in the audit log, ... and ... could not be parsed and
+    is/are not shown."
+  - The notice is rendered as `text-muted small` after the dropped-entry line, above the table.
+  - The pins hold: `ReadLinesShared(` twice in `LoadEvents`, `diagnostics.Enqueue(entry);` twice, `buffer.Enqueue(entry);`
+    once.
+- `Services/ExtendedLogService.cs`:
+  - `Dispose` closes the queue, reads its `Count`, and waits `max(DisposeFloor, DisposeAllowancePerEntry x Count)`.
+  - If the consumer has not finished, it takes every entry still queued (`TryRead`) and adds them to `_droppedEntries`.
+    If there were any, it reports once through `ReportSafely`: "The extended log was disposed with {Count} entries it had
+    not written within {Milliseconds} ms; they are dropped and counted".
+  - A faulted consumer is reported as before, and the queue is then drained and counted the same way.
+  - New `internal DisposeFloor` (5 s) and `internal DisposeAllowancePerEntry` (25 ms).
+  - The queue's `SingleReader` is false.
+- `README.md`:
+  - The Admin Event Log section says unparseable lines are counted per log.
+  - The extended diagnostics paragraph says an unreadable trace file is named too, and that shutdown waits in proportion
+    to the queue and counts what it could not write.
+
+Tests:
+- `ExchangeAdminWeb.Tests/EventLogDiagnosticsTests.cs` +2:
+  - `ATraceFileThatCannotBeRead_IsShownAsUnreadable_NotAsNoDiagnostics`
+  - `LinesThatCannotBeParsed_AreCountedPerLog_AndShownInOneMutedLine`, in four stages:
+    - every line whole: no notice;
+    - one cut audit line, diagnostics off: "1 line in the audit log could not be parsed and is not shown.";
+    - two audit, one trace and one extended, diagnostics on: all three named, "are";
+    - the same, diagnostics off: the audit log only.
+  - Helpers `AuditRecord`, `TraceRecord`, `AppendCutLine`, `AuditFile` and `TraceFile`.
+- `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs` +2:
+  - `Dispose_GivesTheQueueTimeInProportionToItsLength`: 101 written, none counted.
+  - `Dispose_CountsWhatItCouldNotWriteInItsBound_BeforeItReturns`: 50 counted and one warning before `Dispose` returned;
+    then the held entry written, and the count still 50.
+
+Caller-visible changes, by design:
+- With **Show diagnostics** on, a trace file the page cannot read is named in the warning with the extended ones. The
+  warning now says "the diagnostic logs".
+- A line the page cannot parse is still not shown, and the page now says so: one muted line naming each log with such
+  lines and how many. The audit log is counted with diagnostics off too, since it is always read.
+- `ExtendedLogService.Dispose` waits up to `max(5 s, 25 ms x the entries queued)`, 25.6 s for a full queue, instead of a
+  fixed 5 s. What it still could not write is counted in `DroppedEntryCount` and reported once, before it returns.
+
 ## Guard proof
 
-Pending.
+Reproduction: each failure below is the defect as the record states it.
+- M1 is the trace catch as at `132d6e97`, log-only: the page says nothing of a trace file it could not read.
+- M2 drops one parser's count: that log's unparseable line is not counted, as none was before.
+- M3 is `Dispose` as at `132d6e97`, the fixed 5 s wait: 0 counted where 50 entries were left unwritten.
+
+Same driver as aud-a51's (session scratchpad `mutate/mutate.ps1`, spec `mutate/round-a49.json`, log
+`mutate/a49-mutations.log`). The filter (511 tests) is aud-a46's - the extended log's, the event log's, the writer's and
+the page registries' - plus the two source pins on `LoadEvents`:
+`FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~EventLog|FullyQualifiedName~JsonlWriterLockTests|FullyQualifiedName~AuditWriterThrowFreeTests|FullyQualifiedName~AuditFirstMergeTests|FullyQualifiedName~ReversedOperationsTests|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ClickGate`
+
+Every mutant built with 0 errors, and each restore matched its original MD5. After the round, a rebuild on the restored
+bytes and the filter: 511/511 green.
+
+| Mutation (call site) | File, original MD5 | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 the trace catch back to log-only | `AdminEventLog.razor`, `FDA7E9CFCDE3845C999320A414F0AAB9` | `0A49FE3F82244FF2474F074FDD9978F2` | 1 of 511: `ATraceFileThatCannotBeRead_IsShownAsUnreadable_...` - "could not be read" not on the page |
+| M2 one parser's count dropped (`ParseTraceLine`'s increment) | `AdminEventLog.razor`, `FDA7E9CFCDE3845C999320A414F0AAB9` | `2FBAEEB0ECD89C31EA819A8C28DFA589` | 1 of 511: `LinesThatCannotBeParsed_AreCountedPerLog_...` - the three-log line not on the page |
+| M3 the fixed 5 s wait again (`Dispose`'s old body) | `ExtendedLogService.cs`, `0CC372ADB3FE3F15C31888D3BAE5E5B1` | `54D206218A45F9C4851A63636F1B9432` | 1 of 511: `Dispose_CountsWhatItCouldNotWriteInItsBound_...` - 0 counted where 50 |
+| extra E1 the bound without its per-entry term (the floor only) | `ExtendedLogService.cs`, `0CC372ADB3FE3F15C31888D3BAE5E5B1` | `C3B14CB727EA16F70F764FF028247711` | 1 of 511: `Dispose_GivesTheQueueTimeInProportionToItsLength` - 96 counted where 0 |
+
+Unchanged through the round:
+- `EventLogDiagnosticsTests.cs` `C993E9D52A5FE26F9E19039C5483436C`
+- `ExtendedLogServiceTests.cs` `6ABDE3BB60C67814F03730864D233D00`
+
+`ProgressRegistryTests` and `ClickGate*` are in the filter, green under every mutant and on the restored bytes. They are
+run alone again at the branch tip. The code comments are written after all three findings' rounds, in their own commit, so
+the MD5s above are this commit's bytes.
+
+Not run, by design: the page in a browser. The notices are read from the compiled page's render tree, with `LoadEvents`
+driven by reflection, as aud-a46's are. An IIS recycle with a full queue was not run either; the bound and the count are
+driven through the seams.
+
+## Known gaps
+
+- The unparsed count is the page's own, per load. It counts lines in the files it read: for the extended log, only the
+  newest 2,000 lines `GetEntries` hands it, and the trace and extended logs only with diagnostics on.
+- A line counted as unparseable is still not shown. The page says how many, not which. The file holds it, and it is
+  readable there.
+- `Dispose`'s bound can now reach 25.6 s, for a full queue. A host that ends the process sooner - the IIS module's own
+  shutdown limit, for one - still loses what is left, uncounted and unreported, as before, but only past that point. The
+  count lives in memory either way; the report is the one trace that outlives the process.
+- The trace catch's log line, like the audit catch's, still calls the page's logger unguarded (aud-a28q's class, in the
+  page). It is listed as a candidate in the hand-back.

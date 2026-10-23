@@ -96,7 +96,84 @@ public sealed class EventLogDiagnosticsTests : IDisposable
         Assert.DoesNotContain(Dropped, Rendered(hidden), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ATraceFileThatCannotBeRead_IsShownAsUnreadable_NotAsNoDiagnostics()
+    {
+        // aud-a49. The trace files' read only logged a failure, so with diagnostics on the page looked complete.
+        Assert.Equal(JsonlWriteOutcome.Written, _jsonl.WriteTrace(TraceRecord("a trace step")));
+        var page = PageWithDiagnostics(shown: true);
+
+        using (HoldExclusively(TraceFile()))
+            await LoadEvents(page);
+
+        var text = Rendered(page);
+        Assert.Contains("could not be read", text, StringComparison.Ordinal);
+        Assert.Contains(Path.GetFileName(TraceFile()), text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LinesThatCannotBeParsed_AreCountedPerLog_AndShownInOneMutedLine()
+    {
+        // aud-a49. Each parser dropped a line it could not parse and counted nothing - among them the cut line a writer
+        // that died mid-write leaves, which the aud-a28z repair keeps on a line of its own.
+        const string Notice = "could not be parsed and";
+        Assert.Equal(JsonlWriteOutcome.Written, _jsonl.WriteAudit(AuditRecord("an audit row")));
+        Assert.Equal(JsonlWriteOutcome.Written, _jsonl.WriteTrace(TraceRecord("a trace step")));
+        WriteOneDiagnostic();
+
+        var whole = PageWithDiagnostics(shown: true);
+        await LoadEvents(whole);
+        Assert.DoesNotContain(Notice, Rendered(whole), StringComparison.Ordinal);
+
+        AppendCutLine(AuditFile());
+        var auditOnly = PageWithDiagnostics(shown: false);
+        await LoadEvents(auditOnly);
+        Assert.Contains("1 line in the audit log could not be parsed and is not shown.", Rendered(auditOnly), StringComparison.Ordinal);
+
+        AppendCutLine(AuditFile());
+        AppendCutLine(TraceFile());
+        AppendCutLine(ExtendedFile());
+        var everyLog = PageWithDiagnostics(shown: true);
+        await LoadEvents(everyLog);
+        Assert.Contains(
+            "2 lines in the audit log, 1 line in the trace log and 1 line in the extended diagnostic log could not be parsed and are not shown.",
+            Rendered(everyLog), StringComparison.Ordinal);
+
+        var withoutDiagnostics = PageWithDiagnostics(shown: false);
+        await LoadEvents(withoutDiagnostics);
+        Assert.Contains("2 lines in the audit log could not be parsed and are not shown.", Rendered(withoutDiagnostics), StringComparison.Ordinal);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------
+
+    private static Dictionary<string, object?> AuditRecord(string action) => new()
+    {
+        ["eventType"] = "audit",
+        ["ts"] = DateTime.UtcNow.ToString("O"),
+        ["action"] = action,
+        ["category"] = "Test",
+        ["result"] = "Success",
+    };
+
+    private static Dictionary<string, object?> TraceRecord(string stage) => new()
+    {
+        ["eventType"] = "operation.step",
+        ["ts"] = DateTime.UtcNow.ToString("O"),
+        ["module"] = "Test",
+        ["stage"] = stage,
+        ["result"] = "Success",
+    };
+
+    /// <summary>A line a writer that died mid-write leaves: the start of a record, ended by the next write's repair.</summary>
+    private static void AppendCutLine(string path)
+    {
+        using var file = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        file.Write(Encoding.UTF8.GetBytes("{\"eventType\":\"audit\",\"action\":\"cut off" + Environment.NewLine));
+    }
+
+    private string AuditFile() => _jsonl.GetAuditLogPaths(DateTime.Now).Last();
+
+    private string TraceFile() => _jsonl.GetTraceLogPaths(DateTime.Now).Last();
 
     private void WriteOneDiagnostic()
     {

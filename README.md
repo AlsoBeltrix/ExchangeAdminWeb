@@ -95,6 +95,8 @@ A read-only JSONL audit log viewer, also gated by `Security:AdminGroups`.
 - Filter by category, user, IP address, and result (Success/Failed).
 - Displays full event detail in an expandable JSON view.
 - Download CSV includes a `Ticket` column carrying the stored audit/trace ticket field.
+- A line in a log file that cannot be parsed is not shown, and the page says how many such lines
+  each log had. One example is the cut line a writer that stopped mid-write leaves.
 
 **Usage telemetry.** An "Events | Usage" toggle above the filters switches the page to an
 anonymous usage view: per module, how many times it was opened, how many audited actions ran,
@@ -969,7 +971,7 @@ Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`,
 - `monthly`: New file each month
 - `Audit:MaxFileMB` and `Audit:MaxFilesPerPeriod` cap both audit and trace file growth
 
-**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Every entry it drops is counted - one it could not write, or one the full queue discarded - and with **Show diagnostics** on, the Admin Event Log shows that count and names any extended log file it could not read. Keep Admin Event Log access tightly scoped.
+**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Every entry it drops is counted - one it could not write, or one the full queue discarded - and with **Show diagnostics** on, the Admin Event Log shows that count and names any trace or extended log file it could not read. At shutdown it waits for its queue in proportion to the queue's length - about 26 seconds for a full one, and never less than 5 - and counts as dropped whatever it still could not write. Keep Admin Event Log access tightly scoped.
 
 ### Delinea Secret Server
 

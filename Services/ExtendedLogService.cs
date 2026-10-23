@@ -58,7 +58,7 @@ public class ExtendedLogService : IDisposable
         _writeQueue = Channel.CreateBounded<PendingLogEntry>(new BoundedChannelOptions(MaxQueuedWrites)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false
         }, _ => Interlocked.Increment(ref _droppedEntries));
         _writerTask = Task.Run(ProcessQueueAsync);
@@ -257,16 +257,35 @@ public class ExtendedLogService : IDisposable
     public void Dispose()
     {
         _writeQueue.Writer.TryComplete();
+        var queued = _writeQueue.Reader.Count;
+        var bound = TimeSpan.FromTicks(Math.Max(DisposeFloor.Ticks, DisposeAllowancePerEntry.Ticks * queued));
         try
         {
-            _writerTask.Wait(TimeSpan.FromSeconds(5));
+            if (_writerTask.Wait(bound))
+                return;
         }
         catch (Exception ex)
         {
             // Reached only if the consumer faulted, which since aud-a28z its catch prevents; guarded all the same.
             ReportSafely(logger => logger.LogError(ex, "Failed to flush extended log queue during shutdown"));
         }
+
+        var left = 0;
+        while (_writeQueue.Reader.TryRead(out _))
+            left++;
+
+        if (left == 0)
+            return;
+
+        Interlocked.Add(ref _droppedEntries, left);
+        ReportSafely(logger => logger.LogWarning(
+            "The extended log was disposed with {Count} entries it had not written within {Milliseconds} ms; they are dropped and counted",
+            left, (long)bound.TotalMilliseconds));
     }
+
+    internal TimeSpan DisposeFloor { get; set; } = TimeSpan.FromSeconds(5);
+
+    internal TimeSpan DisposeAllowancePerEntry { get; set; } = TimeSpan.FromMilliseconds(25);
 
     private async Task ProcessQueueAsync()
     {

@@ -204,6 +204,10 @@
     {
         <p class="text-muted small mb-2">@DroppedEntriesText</p>
     }
+    @if (UnparsedLinesText != null)
+    {
+        <p class="text-muted small mb-2">@UnparsedLinesText</p>
+    }
     @if (loadError != null)
     {
         <div class="alert alert-danger">@loadError</div>
@@ -466,6 +470,10 @@
     private string DroppedEntriesText =>
         $"This instance's extended log has dropped {extendedLogDropped:N0} entr{(extendedLogDropped == 1 ? "y" : "ies")} since it started: "
         + "ones it could not write, and ones its queue discarded when they came faster than the disk took them.";
+    private int unparsedAuditLines;
+    private int unparsedTraceLines;
+    private int unparsedExtendedLines;
+    private string? UnparsedLinesText => UnparsedLinesNotice(unparsedAuditLines, unparsedTraceLines, unparsedExtendedLines);
     private int currentPage = 1;
     private int expandedRow = -1;
     private const int PageSize = 50;
@@ -548,6 +556,9 @@
         emptyResultMessage = null;
         diagnosticsWarning = null;
         extendedLogDropped = 0;
+        unparsedAuditLines = 0;
+        unparsedTraceLines = 0;
+        unparsedExtendedLines = 0;
         allEvents = new List<MergedLogEntry>();
         expandedRow = -1;
         currentPage = 1;
@@ -643,6 +654,7 @@
                     }
                     catch (Exception ex)
                     {
+                        unreadableDiagnostics.Add($"{Path.GetFileName(filePath)}: {ex.Message}");
                         Logger.LogError(ex, "Failed to read trace log file {Path}", filePath);
                     }
                 }
@@ -673,7 +685,7 @@
         if (showDiagnostics)
         {
             if (unreadableDiagnostics.Count > 0)
-                diagnosticsWarning = "Some of the extended diagnostic log could not be read, so diagnostic entries may be missing: "
+                diagnosticsWarning = "Some of the diagnostic logs could not be read, so diagnostic entries may be missing: "
                     + string.Join("; ", unreadableDiagnostics);
             extendedLogDropped = ExtendedLog.DroppedEntryCount;
         }
@@ -789,6 +801,7 @@
         }
         catch
         {
+            unparsedAuditLines++;
             return null;
         }
     }
@@ -849,6 +862,7 @@
         }
         catch
         {
+            unparsedTraceLines++;
             return null;
         }
     }
@@ -907,8 +921,22 @@
         }
         catch
         {
+            unparsedExtendedLines++;
             return null;
         }
+    }
+
+    private static string? UnparsedLinesNotice(int audit, int trace, int extended)
+    {
+        var parts = new[] { (Count: audit, Log: "the audit log"), (Count: trace, Log: "the trace log"), (Count: extended, Log: "the extended diagnostic log") }
+            .Where(part => part.Count > 0)
+            .Select(part => $"{part.Count:N0} line{(part.Count == 1 ? "" : "s")} in {part.Log}")
+            .ToList();
+        if (parts.Count == 0)
+            return null;
+
+        var named = parts.Count == 1 ? parts[0] : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1];
+        return $"{named} could not be parsed and {(audit + trace + extended == 1 ? "is" : "are")} not shown.";
     }
 
     private void ApplyFilters()
