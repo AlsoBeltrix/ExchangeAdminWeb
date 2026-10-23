@@ -366,12 +366,14 @@ public class MigrationStatusPageTests
     [Fact]
     public void TheBulkExecutorReChecksAuthorizationAndAuditsADenial()
     {
-        // Hiding the checkbox column is not a security control (Constitution, Never Do).
-        var body = GetMethodBody("ExecuteBulkBatchAction");
+        // Hiding the checkbox column is not a security control (Constitution, Never Do). aud-a68: the denial is audited
+        // through MigrationService.RecordDenial, as the single actions' are, so its "_Denied" row carries mutationAttempted
+        // false; the call is what is required now, comments stripped - the "_Denied" literal is RecordDenial's.
+        var body = StripLineComments(GetMethodBody("ExecuteBulkBatchAction"));
 
         Assert.Contains("AuthorizationService.AuthorizeAsync", body, StringComparison.Ordinal);
         Assert.Contains("MigrationManage", body, StringComparison.Ordinal);
-        Assert.Contains("_Denied", body, StringComparison.Ordinal);
+        Assert.Contains("MigrationService.RecordDenial(", body, StringComparison.Ordinal);
     }
 
     [Fact]

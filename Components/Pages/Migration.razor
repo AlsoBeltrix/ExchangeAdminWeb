@@ -3529,18 +3529,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-            {
-                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
-                try
-                {
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
-                }
-                return;
-            }
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, notificationAction, ticket, "MigrationManage")); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied."
 
             if (MigrationService.RefusesWithNoListLoaded(migrationBatches, "migration batch", out var noBatchList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noBatchList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 
@@ -3695,20 +3684,7 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-            {
-                batchActionResult = PermissionResult.Fail(bulkFailure = "Authorization denied.");
-                try
-                {
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied",
-                        notificationAction, false, ticket,
-                        errorDetail: "MigrationManage authorization denied");
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
-                }
-                return;
-            }
+                { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", notificationAction, ticket, "MigrationManage")); return; } // aud-a68: the same, for the mailbox run
 
             if (MigrationService.RefusesWithNoListLoaded(batchUsers, "mailbox", out var noMailboxList)) { batchActionResult = PermissionResult.Fail(bulkFailure = noMailboxList); return; } // aud-a55: the guard says why nothing was done, in the banner and the activity; it returned in silence. Not audited: nothing was attempted
 

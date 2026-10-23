@@ -217,7 +217,30 @@ from inside a run reads "StopMigrationBatch on 1 batch(es) and reloading...", an
 | M5b: the busy text fixed again (`actionInProgress == "clearing"`) | `a127f9be...` / `5750f002...` | 1: `TheBusyText_NamesTheRunUnderWay` | md5 equal; 450/0 |
 
 With the fix: `Migration|ClickGate|ProgressRegistry`, 1114 passed / 0 failed; the page 4377 lines, nothing registered
-moved.
+moved. On the part-5 commit's tree (`ffe2d99b`): full suite 6727 passed / 0 failed / 0 skipped. (A first run of it read
+1 failed - `ClickGateTests.TheRegisteredLineCountStillMatchesTheFile(Migration.razor)` - because part 7's page edit was
+made while it ran and the page-reading tests read the file from disk; it was re-run on the exact tree, part 7's files
+set aside and restored byte-exact after, nothing edited during the run.)
+
+**Part 7** - `MigrationDenialTests`' two new cases, `ADeniedBulkAction_IsShown_AuditedAsNotAttempted_AndNothingRuns`
+(`ExecuteBulkBatchAction` and `ExecuteBulkMailboxAction` with MigrationManage refused: the banner and the activity
+exactly "Not authorized to StopMigrationBatch on 1 batch(es); nothing was done." / "... StopMigrationUser on 1
+mailbox(es) ..."; nothing run; one `<action>_Denied` row, Failed, `mutationAttempted` false, its target the run's
+notification action, the ticket, "MigrationManage authorization denied"; rendered on the status tab); and
+`MigrationStatusPageTests.TheBulkExecutorReChecksAuthorizationAndAuditsADenial`, now requiring the `RecordDenial` call.
+Filter `MigrationDenialTests|MigrationStatusPageTests|ClickGate`, 441 tests. The reverted round puts back the page and
+`ClickGateRegistry.cs` together (the line count is part of the fix).
+
+| Round | md5 before / mutated | Failed (of 441) | Restored |
+| --- | --- | --- | --- |
+| The fix reverted (page and registry back to part 5's) | page `db977314...` / `a127f9be...`, registry `483a950d...` / `d0f44ecf...` | 3: both new cases and the tripwire | md5 equal; 441/0 |
+| M7a: the batch executor's denial back to its old inline row (no `extra`), on its one line | `db977314...` / `7c9b3603...` | 2: the batch case and the tripwire | md5 equal; 441/0 |
+| M7b: the mailbox executor's the same | `db977314...` / `b8394eea...` | 1: the mailbox case | md5 equal; 441/0 |
+
+Re-anchor (`.agents/playbooks/clickgate-reanchor.md`): `git diff -U0` gives two hunks, at old lines 3532 and 3698, so
+every line up to 3531 maps to itself and every registered line (the highest is 1540) is unchanged; `ExpectedLineCount`
+4377 -> 4353, and the ClickGate filter is green. With the fix: `Migration|ClickGate|ProgressRegistry`, 1116 passed / 0
+failed.
 
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 

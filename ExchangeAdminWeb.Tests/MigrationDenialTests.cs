@@ -10,7 +10,8 @@ namespace ExchangeAdminWeb.Tests;
 /// nothing shown and no audit row - the bulk executors audit a "_Denied" row - and its activity ended "Nothing was done." /
 /// "Nothing was created."; a create's guard return showed nothing either. The Constitution: every denied mutating attempt is
 /// audited, and UI hiding is not security, so a direct event invocation must be refused visibly. aud-a55: the two bulk
-/// executors' "no list loaded" guard returns showed nothing either.
+/// executors' "no list loaded" guard returns showed nothing either. aud-a68: the two bulk executors' own denials audited a
+/// row with no mutationAttempted, and said only "Authorization denied.".
 /// </summary>
 /// <remarks>
 /// The page's own handlers over <see cref="MigrationStubExchange"/>, its authorization stand-in denying one policy, its
@@ -236,6 +237,38 @@ public sealed class MigrationDenialTests : IDisposable
         Assert.Equal((false, expected), (shown.Success, shown.Message));
         Assert.False(ran);
         Assert.Empty(_exchange.AuditEvents());
+        Assert.Equal((false, expected), Outcome());
+
+        Field("tabIndex").SetValue(page, 2);
+        Assert.Contains(expected, page.RenderText(), StringComparison.Ordinal);
+    }
+
+    // ---- aud-a68 (7): a bulk executor's denial, through RecordDenial -------------------------------
+
+    // Before: the "_Denied" row had no mutationAttempted - the single actions' and the creates' denials, through
+    // RecordDenial, carry false - and the banner and the activity said only "Authorization denied.".
+    [Theory]
+    [InlineData("ExecuteBulkBatchAction", "StopMigrationBatch", "Migration_StopSelected", "StopMigrationBatch on 1 batch(es)")]
+    [InlineData("ExecuteBulkMailboxAction", "StopMigrationUser", "Migration_PauseMailboxes", "StopMigrationUser on 1 mailbox(es)")]
+    public async Task ADeniedBulkAction_IsShown_AuditedAsNotAttempted_AndNothingRuns(string handler, string auditAction, string notificationAction, string described)
+    {
+        var page = Page(deny: "MigrationManage");
+        var ran = false;
+        Func<string, Task<PermissionResult>> action = _ => { ran = true; return Task.FromResult(PermissionResult.Ok()); };
+
+        if (handler == "ExecuteBulkBatchAction")
+            await Call(page, handler, (IReadOnlyList<string>)[Batch], (IReadOnlyList<MigrationBatchSkip>)[], action, auditAction, notificationAction, "Queued stop of", Ticket);
+        else
+            await Call(page, handler, new MigrationUserActionPlan([Address], []), action, auditAction, notificationAction, "Queued pause of", Ticket);
+
+        var expected = $"Not authorized to {described}; nothing was done.";
+        var shown = Assert.IsType<PermissionResult>(Field("batchActionResult").GetValue(page));
+        Assert.Equal((false, expected), (shown.Success, shown.Message));
+        Assert.False(ran);
+        var row = OneDeniedRow(auditAction);
+        Assert.Equal(notificationAction, row.GetProperty("target").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+        Assert.Equal("MigrationManage authorization denied", row.GetProperty("error").GetString());
         Assert.Equal((false, expected), Outcome());
 
         Field("tabIndex").SetValue(page, 2);
