@@ -32,4 +32,26 @@ public class SelfGrantDocumentationTests
         Assert.Contains("a recipient its filter matches only since then is not compared", section, StringComparison.Ordinal);
         Assert.Contains("One Exchange reports no member of is refused as incomplete", section, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void TheReadme_SaysTheCheckNeedsTheDirectoryReadCredential_AndWhatItRefusesWithoutIt()
+    {
+        // aud-a70 (2): since aud-a60 and aud-a69 a grant to a group, or to a grantee only the directory holds, needs it.
+        var section = ReadmeSelfGrantSection();
+
+        Assert.Contains("**Needs the Directory Read Credential** (Admin Settings, Protected principals)", section, StringComparison.Ordinal);
+        Assert.Contains("Without it, a grant to a group the on-premises directory holds, or to a grantee only that directory holds, is refused as incomplete, naming the setting", section, StringComparison.Ordinal);
+        Assert.Contains("With it configured, each check fetches it once", section, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminSettings_SaysTheDirectoryReadCredentialIsWhatPermissionGrantsToGroupsNeed()
+    {
+        // aud-a70 (3): the credential's placeholder and hint named the protected-principal rules only.
+        var page = OneSpaced(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminSettings.razor")));
+
+        Assert.Contains("placeholder=\"Required for group and OU rules, and for permission grants to groups\"", page, StringComparison.Ordinal);
+        Assert.Contains("Mailbox Permissions and Calendar Permissions also need it to grant to a group, or to a grantee only the on-premises directory holds: without it such a grant is refused.", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("Required when groups or OUs are configured", page, StringComparison.Ordinal);
+    }
 }

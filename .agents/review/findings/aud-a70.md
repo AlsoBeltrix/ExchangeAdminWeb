@@ -141,6 +141,14 @@ and why (`PermissionValidator.CompareInExchangeGroupAsync`, beside aud-a61's bou
 evaluate the filter, by aud-a72's design - so the README says so, with Exchange's documented refresh (about every 24 hours;
 within about two hours of a filter change). No code change.
 
+(2) `README.md` 526 (Self-grant Prevention) is one line and says nothing of what the check needs. It gains what the check
+compares, that it needs the Directory Read Credential (Admin Settings, Protected principals), what is refused without it -
+aud-a60's grants to a group the directory holds, aud-a69's to a grantee only the directory holds, (7)'s operator known by a
+UPN alone - and what it costs when configured (one fetch per check, once per bulk file). (3)
+`Components/Pages/AdminSettings.razor` 282 (the credential's placeholder) and 289 (its hint) named the protected-principal
+rules only; they now say Mailbox and Calendar Permissions need it to grant to a group or to a grantee only the on-premises
+directory holds, and that such a grant is refused without it. In place (1,436 lines). Neither text names an environment.
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -295,6 +303,21 @@ restore matched; reruns 281/281.
 | M8 | the README's dynamic-group sentence dropped (a source check) | `README.md` `47D5D22027E9F71F33D04CA74DCE69DB` | 1 of 281: `SelfGrantDocumentationTests.TheReadme_SaysADynamicGroupIsCheckedAsExchangeLastCalculatedIt_AndAnEmptyOneIsRefused` |
 
 M11b is the throw as it stood at `eb017102`; M8 the README as it stood.
+
+### (2) and (3) - commit `fix(aud-a70): (2), (3) ...`
+
+Filter `FullyQualifiedName~SelfGrantDocumentation|FullyQualifiedName~SettingsStoreText|FullyQualifiedName~AdminPageDirtyState|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ClickGate`
+(404 tests). Fixed-file MD5s: `README.md` `F91C4EC5AF40070345B4E8C1EBD887C3`, `Components/Pages/AdminSettings.razor`
+`412A3EB35D9FC7593149D53CE9A28359`. Every restore matched; reruns 404/404.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M2 | the README's credential sentence dropped (a source check) | `README.md` `62F0A48A4A05120AF46672DECE797E6E` | 1 of 404: `SelfGrantDocumentationTests.TheReadme_SaysTheCheckNeedsTheDirectoryReadCredential_AndWhatItRefusesWithoutIt` |
+| M3 | the Admin Settings hint back to its old text | `AdminSettings.razor` `1CB718A6C48F122E7715ADBFB211CCF9` | 1 of 404: `SelfGrantDocumentationTests.AdminSettings_SaysTheDirectoryReadCredentialIsWhatPermissionGrantsToGroupsNeed` |
+| E3 | extra: the placeholder back to its old text | `56E2DF505FE07AFE2F8823DDFD44B98F` | 1 of 404: the same test |
+
+M2, M3 and E3 are the texts as they stood at `eb017102`. The full suite before this commit found the placeholder is also how
+`SettingsNoOpAndUnreadableSecretTests` finds the credential's input (2 tests); its locator constant follows the new text.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 
