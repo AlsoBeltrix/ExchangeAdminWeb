@@ -1,7 +1,7 @@
 # aud-a29g: prerendered pages still render and run OnInitialized under a stale ticket
 
 **Severity**: MEDIUM, design - the aud-a29b/c/d/e revalidation closes the circuit when an operator's authorization changes, and no handler can run under a stale ticket. But the prerender pass of a page request still renders the page and runs `OnInitialized` / `OnInitializedAsync` against the request's cached principal before the circuit's revalidation runs, so a revoked operator who requests a page still sees it rendered (reads in `OnInitialized` included) once. Closing it costs a directory read per page request, which is why the aud-a29b record left it for an owner cost decision; the 2026-10-23 evening ruling resolves everything open, so it is dispatched.
-**Status**: Merged to master `a5d12cc8` (fix `2678735e`); codex defect review auth-batch-1 in flight
+**Status**: Merged to master `a5d12cc8` (fix `2678735e`); codex auth-batch-1 raised two LOW candidates, admitted as aud-a29i and aud-a29j; closes when they land
 **Branch**: `fix/a29g` (worktree `ExchangeAdminWeb-wt/a29g`), base `eb017102`
 **Commit**: the `fix(aud-a29g)` commit on `fix/a29g` that carries this record (code and record together)
 **Reviewer**: implementer (recorded by the supervisor from the aud-a29b record's hand-back)
@@ -366,3 +366,13 @@ None yet.
 
 Pending: codex review of the commit, merge to `master` by the supervisor (with the base version bump -
 app-wide - and the index row), and the live dev check in Known gaps.
+
+## Reviewer comments (supervisor, auth-batch-1)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier=standard pair (grade fallback, owner 2026-08-03) [escalated: T1 Authorization/* paths]; codex-cli 0.163.0; base eb017102 head 2678735e (merged a5d12cc8); 2026-10-23T19:33-19:5xZ; capability proof: AGENTS.md read and git show --stat 2678735e both succeeded. Verdict: two LOW candidates, both admitted - aud-a29i (no path in the refusal audit row) and aud-a29j
+(expired cache entries retained for operators who never return). Codex confirmed: the middleware reaches authenticated
+component page endpoints after UseAuthorization (full loads and enhanced navigation); static files, the db mode and the
+_blazor transport bypass it by design; fail-closed is intact (directory errors, timeouts, missing lookups and unreadable
+grant stores become LookupFailed and a neutral 403 page; the catch-all does the same); the 403 body carries no group
+names, SIDs or exception text; the loopback tests use a hand-built probe host, with Program.cs order covered by a
+source-text tripwire. Artefacts: `.agents/review/auth-batch-1.result.txt`, `.stream.log`, `prompt-auth-batch-1.md`.
