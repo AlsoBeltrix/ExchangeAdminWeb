@@ -179,7 +179,11 @@ None. The finding's 8.3 half is corrected in Evidence, not disputed: the fix cov
 
 - CI treats a skipped test as a failure. The 8.3 test skips only when neither the temp volume nor
   `$env:ProgramFiles` has a short name. On such a runner the powershell job would fail on that skip,
-  and the message would say why.
+  and the message would say why. **Resolved by cdt-50** (`fix/cdt36`, after `e999ddda`): the test no
+  longer skips. It can also set its fixture's short name with `fsutil`, and it always asserts the
+  synthetic case. It is renamed "takes an 8.3 short spelling for the folder it names, and never a
+  short-looking spelling that is not on disk (cdt-50: no skip path)". `TestSuiteIntegrity` now refuses
+  any skip path in the suite. See `.agents/review/findings/cdt-50.md`.
 - `tools/Install-ExchangeAdminWeb.ps1` keeps its own lexical cdt-15 comparison, so a junction-spelled
   IIS path is refused there early (fail-closed). Its later `Assert-AppPoolServesPath` call has the new
   rule.

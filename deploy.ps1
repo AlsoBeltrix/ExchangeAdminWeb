@@ -330,12 +330,21 @@ if (-not $isUpgrade -and $AllowRepoint -and $null -ne $existingApplication) {
     }
 }
 $servingConfigPath = Join-Path $servingFolder "appsettings.json"
-if ($movesFolder -and (Test-Path -LiteralPath $servingConfigPath)) {
+# cdt-51: asked on every folder move, appsettings.json or not. Without the file nothing names a
+# ConfigStore:Path either, and Resolve-ConfigDbPath answers with the default config\exchangeadmin.db -
+# the database the application has been running on - so a missing file is treated as one that names
+# no ConfigStore:Path. With neither a file nor that database the move proceeds: nothing is stranded.
+if ($movesFolder) {
+    $servingHasSettings = Test-Path -LiteralPath $servingConfigPath
     $servingDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
     if (-not (Get-ConfigStorePathSetting -PublishPath $servingFolder) -and (Test-IsSqliteConfigDbPresent -DbPath $servingDbPath)) {
-        Write-Fail "IIS application $ParentSite/$AppAlias keeps its config database inside the folder it is being moved from ('$servingDbPath'): its appsettings.json names no ConfigStore:Path, so after the move it would open a new, empty database under '$PublishPath\config' and leave that one behind. Move the database to a shared path first (tools\Move-ConfigDbToShared.ps1), so that appsettings.json names it, or move the application in IIS by hand. Nothing was deployed."
+        $unnamedBecause = 'it has no appsettings.json to name one'
+        if ($servingHasSettings) { $unnamedBecause = 'its appsettings.json names no ConfigStore:Path' }
+        Write-Fail "IIS application $ParentSite/$AppAlias keeps its config database inside the folder it is being moved from ('$servingDbPath'): $unnamedBecause, so after the move it would open a new, empty database under '$PublishPath\config' and leave that one behind, with no verified backup taken. Restore the appsettings.json that names it, or move the database to a shared path first (tools\Move-ConfigDbToShared.ps1) so that appsettings.json names it, or move the application in IIS by hand. Nothing was deployed."
     }
-    Write-Warn "-AllowRepoint: the configuration is backed up from '$servingFolder', the folder IIS serves the application from now, and its ConfigStore:Path is carried into the appsettings.json generated in '$PublishPath'."
+    if ($servingHasSettings) {
+        Write-Warn "-AllowRepoint: the configuration is backed up from '$servingFolder', the folder IIS serves the application from now, and its ConfigStore:Path is carried into the appsettings.json generated in '$PublishPath'."
+    }
 }
 
 # --- Backups taken before anything is configured ---
@@ -979,8 +988,10 @@ try {
         # install (no appsettings.json) has nothing to back up. The gate is the serving folder's
         # appsettings.json (cdt-44): outside a move that is the old gate - a -ConfirmFreshInstall run
         # has none there, or it would be an upgrade - and a -AllowRepoint move, -Force or not, backs up
-        # the configuration it is moving the application off.
-        if (Test-Path -LiteralPath $servingConfigPath) {
+        # the configuration it is moving the application off. Or the database it resolves to (cdt-51): a
+        # folder whose appsettings.json is gone but whose config\exchangeadmin.db remains is backed up
+        # too, verified, before the deploy, as Invariant 3 asks.
+        if ((Test-Path -LiteralPath $servingConfigPath) -or (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
             Write-Step "Backing up the existing runtime configuration"
             $configDirBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
             New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
@@ -1000,6 +1011,18 @@ try {
             } else {
                 Write-Warn "No runtime config directory at $runtimeConfigDir -- only the config DB backup was taken"
             }
+        }
+
+        # cdt-49. A -AllowRepoint move takes the instance IIS runs today down when the application is
+        # re-pointed just below - IIS unloads an application whose pool or folder changes - which is
+        # before any pool is stopped. So that instance's active bulk jobs are reported here, naming it;
+        # the check before the stop further down then reads the instance the stop acts on.
+        $movedOffPool = "$($existingApplication.applicationPool)"
+        $movesApplication = $AllowRepoint -and $null -ne $existingApplication -and
+            ($movesFolder -or -not [string]::Equals($movedOffPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase))
+        if ($movesApplication) {
+            Write-Host "       Active bulk jobs of the instance IIS runs today, under app pool '$movedOffPool' with its files at '$servingFolder': re-pointing the application interrupts them." -ForegroundColor DarkGray
+            Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
         }
 
         # Web application
@@ -1044,8 +1067,15 @@ try {
 
         # Stop pool before file swap
         Write-Step "Stopping app pool for file deployment"
-        # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
+        # Warn (do not block) if a durable bulk job is active - recycling interrupts it. The jobs read
+        # are those of the instance the stop acts on: -AppPoolName, which now serves -PublishPath
+        # (cdt-49). Outside a move that is the serving folder, as before; in a move whose folder stays,
+        # it is the folder just reported above, so it is not read twice.
+        $stoppedConfigDir = Join-Path $PublishPath "config"
+        if (-not $movesApplication -or -not (Test-SamePhysicalFolder -Path $stoppedConfigDir -Other $runtimeConfigDir)) {
+            Write-Host "       Active bulk jobs of app pool '$AppPoolName', with its files at '$PublishPath', which is stopped next:" -ForegroundColor DarkGray
+            Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $stoppedConfigDir -AppPath $StagingPath | Out-Null
+        }
         # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
         # application being mirrored is served by a DIFFERENT pool. A mistyped -AppPoolName
         # creates and stops that wrong pool, and robocopy /MIR then replaces the binaries of an
