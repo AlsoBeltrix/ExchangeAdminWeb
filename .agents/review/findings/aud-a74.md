@@ -8,9 +8,9 @@ at `579c0875` (`ModuleConfigServiceTests.ACommittedWrite_WithALoggerThatThrows_I
 failed; the class passes alone). Callers: `ConfigBooleanTests` 42, `ConfigChangeWatcherTests` 240,
 `ConfigDbCliTests` 178 and 228, `ConfigValueTests` 34, `EventLogDiagnosticsTests` 57. The per-database
 `ClearPool(connection)` the other classes use is safe.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); in progress
+**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go within the 2026-10-23 stopping rule (MEDIUM); fixed on branch, closed on guard proof; not merged
 **Branch**: `worktree-agent-ad56ea6ad87844ffa` (from `944b8c72`)
-**Commit**: -
+**Commit**: the branch's fix commit (plan `7e4c042e`)
 **Reviewer**: supervisor (observed on the merged-tree gate, 2026-10-23)
 
 ## Evidence
@@ -100,6 +100,92 @@ Files: `ExchangeAdminWeb.Tests/ConfigBooleanTests.cs`, `ConfigChangeWatcherTests
 `ConfigValueTests.cs`, `EventLogDiagnosticsTests.cs` and `SharedTempDatabaseTripwireTests.cs`; this record. No file another
 agent owns.
 
+## Fix
+
+- `ExchangeAdminWeb.Tests/ConfigBooleanTests.cs` `Dispose`: `SqliteConnection.ClearPool` over a connection to each of the
+  test's two files, `_dir/exchangeadmin.db` and `_dir/usage.db`, in a loop (46), before the folder is deleted.
+- `ExchangeAdminWeb.Tests/ConfigChangeWatcherTests.cs`, the `finally` of
+  `AReader_GivenALoggerThatThrows_AndAnUnreadableToken_StillAnswers`: the same for `dir/exchangeadmin.db` and `dir/usage.db`
+  (244).
+- `ExchangeAdminWeb.Tests/ConfigDbCliTests.cs`, the two `ActiveJobs_` cases: in place, after the migration, the clear of the
+  jobs file alone (181, 237).
+- `ExchangeAdminWeb.Tests/ConfigValueTests.cs` `Dispose`: the clear of `_root/app/exchangeadmin.db` (36).
+- `ExchangeAdminWeb.Tests/EventLogDiagnosticsTests.cs` `Dispose`: the clear of `_root/app/exchangeadmin.db` (60), after the
+  extended log and the progress service are disposed, as before.
+- `ExchangeAdminWeb.Tests/SharedTempDatabaseTripwireTests.cs`: new `NoTestSource_ClearsEveryConnectionPoolInTheProcess` (75),
+  `\bClearAllPools\b` over every test source with comments blanked, the class itself the one file skipped; each hit is named
+  "`<file>:<line>` clears every connection pool in the process". `ScannedSources` takes the files it skips as `params`; the
+  two temp-directory scans pass `NameTheTempDirectory` (24), the two files they skipped before. The class summary and remarks
+  name the new rule.
+
+Each clear is the `AttributeEditorHarness` shape: a connection, never opened, over `Data Source=<file>;Mode=ReadWriteCreate`
+- the string `SqliteConnectionFactory` builds - handed to `SqliteConnection.ClearPool`. Each carries a comment naming aud-a74
+and why only the test's own pools. No departure from the plan. No caller-visible change: no app code changed; each test still
+releases the files it made, and no longer anything another class holds.
+
 ## Guard proof
 
-Pending.
+Driver: session scratchpad `a74-mutate.ps1`.
+- For each mutant: the file must equal its staged version (`git diff --quiet`), its MD5 and the tripwire file's are taken,
+  and one literal replacement must match exactly once.
+- A Release build of the solution with 0 errors is required. The filter then runs with a TRX logger, and the failing tests
+  are read from the TRX. The filtered runs get a temp directory of their own (TEMP and TMP), so the folders E3 counts are the
+  driver's and no other session's.
+- In a `finally`, the file is restored from the index (`git checkout --`), its mtime advanced so MSBuild rebuilds, and its
+  MD5 re-checked. Then the restored tree is rebuilt (0 errors) and the filter must be green.
+
+Filter: `FullyQualifiedName~SharedTempDatabaseTripwireTests` (4 tests); E3 `FullyQualifiedName~ConfigBooleanTests` (20). The
+tripwire file, `SharedTempDatabaseTripwireTests.cs`, was `85EA939EC9BD13646B6C8F23DB8C7825` before and after every row.
+
+| # | Mutation | File, original MD5 | Mutant MD5 | Named test failing |
+|---|---|---|---|---|
+| M1 | at the call site: `ConfigBooleanTests.Dispose`'s clear back to `SqliteConnection.ClearAllPools();` | `ConfigBooleanTests.cs`, `9F81EED0F2F4916C30C70C5CFD4D06C4` | `4B9A5FB30CA9E584D43CF412BF6401C2` | 1 of 4: `NoTestSource_ClearsEveryConnectionPoolInTheProcess` - "ConfigBooleanTests.cs:44 clears every connection pool in the process" |
+| E1 | extra: `ConfigValueTests.Dispose`'s clear as a method group, `Action clearAll = SqliteConnection.ClearAllPools; clearAll();` | `ConfigValueTests.cs`, `1AD3382F310A8692AED3D58EE7F4B1B9` | `C6241F9C138361775FD1FA0FA33FB0D9` | 1 of 4: the same case - "ConfigValueTests.cs:36 clears every connection pool in the process" |
+| E2 | extra: in `TestConfigStore.cs`, which the temp-directory scans skip, an unused `internal static void ClearEveryPool() => Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();` | `TestConfigStore.cs`, `2865DC20F3BBFA838F0253CB1655528C` | `5D94F70B27DF286341F861306D15C274` | 1 of 4: the same case - "TestConfigStore.cs:34 clears every connection pool in the process" |
+| E3 | a check, not a test: `ConfigBooleanTests.Dispose`'s clear without `Mode` in its string, a key that misses the factory's pool | `ConfigBooleanTests.cs`, `9F81EED0F2F4916C30C70C5CFD4D06C4` | `2845BC647A2E0CA6E6C299FAC0407049` | none, as expected (20/20; no test watches the folder). The one case that builds the Home page, `TheHomePage_GivenANotificationSwitchThatIsNotABoolean_Renders_WithoutClaimingNotifications`, left its `eaw-a58-` folder behind: 1 folder. The restored tree's run left 0. |
+
+Every mutant built with 0 errors and each restore matched its original MD5. After each row the restored tree rebuilt with 0
+errors and its filter was green: 4/4 (E3: 20/20, no folder left). E3 shows the folder count sees a clear that misses its
+file; on the fixed bytes, the five classes and the tripwire run alone (Release, the shared temp directory) passed 123/123,
+and no `eaw-a58-`, `eaw-a45-`, `eaw-a62-` or `eaw-a46-` folder, and no `ExchangeAdminWebTests` folder, created during that
+run was left after it.
+
+The flake is not reproduced: it needs another class opening a connection at the instant of a call, and was seen once. The
+tripwire is the guard; the three full-suite runs below are consistent with the fix, not a proof that the flake is gone.
+
+## Known gaps
+
+- The scan sees the name `ClearAllPools` in the test project's code - a call, a call through `using static`, a method group, a
+  string handed to reflection. A name built from pieces at run time is not seen. The tripwire class itself, whose pattern
+  names it, is not scanned.
+- A per-file clear is safe because no other test uses that file: each of these tests makes its databases under a folder of its
+  own (a GUID name, the aud-a26q rule). Nothing checks that a cleared path is the clearing test's own.
+- `Comms10kOwnedJobTests`'s fixture `Dispose` (260) clears `Data Source=<jobs.db>` with no `Mode`, a key that misses its
+  factory's pool (the E3 shape). Run alone in a temp directory of its own, the class passed 23/23 and left 23 folders, one per
+  case, each holding its `jobs.db`. Per-file, so it reaches no other class: not this finding; listed in the hand-back as a
+  candidate (LOW).
+
+## Gates - 2026-10-23 (this commit's tree)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors, 19 warnings.
+  - The baseline: a Release build at `944b8c72` before any change, 19 warnings and 0 errors.
+  - CS8604, CS8602, CS0649 and CS0414 in `AccountLockoutRemediationService.cs`, `GroupManagement.razor`,
+    `SelfServiceGroups.razor`, `MigrationReportExportProcessor.cs`, `HeaderAnalysisService.cs`, `RiskyUsers.razor`,
+    `MessageTrace.razor` and `Comms10kApprovedSetTests.cs`; none in a touched file.
+- `dotnet test ExchangeAdminWeb.slnx --blame-hang --blame-hang-timeout 10m` (Debug), three times in a row on the staged fix:
+  - run 1: exit 0, 6,647 passed / 0 skipped / 0 failed, 6,647 total, 3m50s;
+  - run 2: exit 0, 6,647 / 0 / 0, 4m19s;
+  - run 3: exit 0, 6,647 / 0 / 0, 3m37s.
+  - No hang: each run's blame collector wrote "All tests finished running, Sequence file will not be generated". The one new
+    case is this commit's; the base was not run on its own, 6,646 expected at `944b8c72`.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0. The plan commit, the record alone, had `git diff --check`.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell changed.
+
+No AD, EXO, Graph, SMTP, ServiceNow, Delinea, push or deployment: real SQLite stores over temp folders only. No coder
+self-review verdict is claimed.
+
+## Closeout
+
+Fixed on branch `worktree-agent-ad56ea6ad87844ffa`, not merged, not pushed. Test project only, so no version bump is due at
+merge.
