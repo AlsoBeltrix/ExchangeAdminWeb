@@ -1,6 +1,10 @@
 using System.Management.Automation;
+using System.Reflection;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using static ExchangeAdminWeb.Tests.MigrationStubExchange;
+using Page = ExchangeAdminWeb.Components.Pages.RecipientLookup;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -9,11 +13,14 @@ namespace ExchangeAdminWeb.Tests;
 /// <c>ex.Message</c>, so it carried PowerShell's "The running command stopped because the preference variable ..." prefix
 /// (the aud-a23l class); its catch took a cancellation too; and a statistics read that answered no row showed "N/A" for
 /// every figure with nothing said. (3) The lookup's own error was <c>ex.Message</c> as well: a missing recipient read in
-/// that prefix, and the lookup's "Recipient '&lt;x&gt;' not found." was reached only by an empty answer.
+/// that prefix, and the lookup's "Recipient '&lt;x&gt;' not found." was reached only by an empty answer. (4) The page's
+/// <c>RunLookup</c> caught a lookup that threw with no audit row - though the page says all lookups are logged - and left
+/// its activity to end "This did not finish."; and its one catch also took a failed audit write as the lookup's error.
 /// </summary>
 /// <remarks>
-/// The real <see cref="ExchangeAdminWeb.Services.RecipientLookupService"/> over <see cref="MigrationStubExchange"/>'s
-/// Exchange Online stand-ins (Get-Recipient, Get-Mailbox, Get-MailboxStatistics). No Exchange.
+/// The real <see cref="RecipientLookupService"/> over <see cref="MigrationStubExchange"/>'s Exchange Online stand-ins
+/// (Get-Recipient, Get-Mailbox, Get-MailboxStatistics), and for part 4 the page's own handler with its injected services
+/// set by hand, a progress channel recording how the activity ended, and the audit file read back. No Exchange.
 /// </remarks>
 public sealed class RecipientLookupFailureTests : IDisposable
 {
@@ -125,5 +132,126 @@ public sealed class RecipientLookupFailureTests : IDisposable
 
         Assert.Equal($"Recipient '{Address}' not found.", result.Error);
         Assert.Equal([$"Get-Recipient {Address}"], _exchange.CallList());
+    }
+
+    // ---- part 4: the page's own lookup -----------------------------------------------------------
+
+    private readonly RecordingProgress _progress = new();
+
+    private Page LookupPage(RecipientLookupService service)
+    {
+        var page = new Page();
+        Inject(page, "LookupService", service);
+        Inject(page, "Audit", _exchange.Audit);
+        Inject(page, "Progress", _progress);
+        Inject(page, "Logger", NullLogger<Page>.Instance);
+        PageField("emailAddress").SetValue(page, $" {Address} ");
+        PageField("currentUser").SetValue(page, "CONTOSO\\operator");
+        PageField("clientIpAddress").SetValue(page, "192.0.2.10");
+        return page;
+    }
+
+    private static void Inject(Page page, string property, object? value) =>
+        typeof(Page).GetProperty(property, Members)!.SetValue(page, value);
+
+    private static FieldInfo PageField(string name) => typeof(Page).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+    private static Task RunLookup(Page page) =>
+        (Task)typeof(Page).GetMethod("RunLookup", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+
+    private static RecipientInfoResult Shown(Page page) => Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
+
+    // The finding. The Exchange Online connection cannot be opened, so the lookup throws before any cmdlet runs. Before: no
+    // audit row, though the page says all lookups are logged, and the activity ended "This did not finish.".
+    [Fact]
+    public async Task ALookupThatThrows_IsAuditedAsFailed_AndItsActivityEndsWithTheError()
+    {
+        var page = LookupPage(_exchange.RecipientLookup(connects: false));
+
+        await RunLookup(page);
+
+        const string failure = "the Exchange Online sign-in could not be completed";
+        Assert.Equal(failure, Shown(page).Error);
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal("RecipientLookup", row.GetProperty("action").GetString());
+        Assert.Equal("Lookup", row.GetProperty("category").GetString());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal(Address, row.GetProperty("target").GetString());
+        Assert.Equal(failure, row.GetProperty("error").GetString());
+        Assert.Equal((false, failure), Assert.Single(_progress.Handles).Outcome);
+        Assert.False((bool)PageField("isLoading").GetValue(page)!);
+    }
+
+    // The third wording. A live Connect-ExchangeOnline that fails under -ErrorAction Stop reaches this catch as PowerShell's
+    // ActionPreferenceStopException (the pool rethrows it as it is); before, the page showed and audited "The running command
+    // stopped because the preference variable ... is set to Stop: " in front of the error.
+    [Fact]
+    public async Task ALookupThatThrowsUnderStop_IsShownInTheCmdletsOwnWords()
+    {
+        const string failure = "the certificate is not in the store";
+        _exchange.ConnectFailure = AStopFailure(failure);
+        var page = LookupPage(_exchange.RecipientLookup(connects: false));
+
+        await RunLookup(page);
+
+        Assert.Equal(failure, Shown(page).Error);
+        Assert.Equal(failure, Assert.Single(_exchange.AuditEvents()).GetProperty("error").GetString());
+        Assert.Equal((false, failure), Assert.Single(_progress.Handles).Outcome);
+    }
+
+    // What a cmdlet's error under -ErrorAction Stop is, made the way PowerShell makes one: a stand-in that writes the error,
+    // called with Stop.
+    private static Exception AStopFailure(string message)
+    {
+        using var ps = PowerShell.Create();
+        ps.AddScript("""
+            param([string] $Text)
+            function Connect-StandIn {
+                [CmdletBinding()]
+                param([string] $Text)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.InvalidOperationException]::new($Text), 'StubConnect', [System.Management.Automation.ErrorCategory]::NotSpecified, $null))
+            }
+            Connect-StandIn -Text $Text -ErrorAction Stop
+            """).AddArgument(message);
+        var failure = Assert.ThrowsAny<RuntimeException>(() => ps.Invoke());
+        Assert.StartsWith("The running command stopped", failure.Message, StringComparison.Ordinal);
+        return failure;
+    }
+
+    // The controls: a lookup that answers - with the recipient, or with Exchange saying there is none - is audited and ends
+    // its activity with that outcome, as before.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ALookupThatAnswers_IsAuditedWithItsOutcome(bool found)
+    {
+        if (found)
+            ACloudMailbox();
+        var page = LookupPage(_exchange.RecipientLookup());
+
+        await RunLookup(page);
+
+        var error = found ? null : $"Recipient '{Address}' not found.";
+        Assert.Equal(error, Shown(page).Error);
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal(found ? "Success" : "Failed", row.GetProperty("result").GetString());
+        Assert.Equal((found, error), Assert.Single(_progress.Handles).Outcome);
+    }
+
+    // An audit write that throws is logged, and the lookup that was made keeps its result; before, the shared catch made the
+    // audit's exception the lookup's error (the Constitution: an audit failure must not make a completed operation read as
+    // failed). The audit service's methods are not virtual and its writer swallows its own failures (aud-a28q), so a
+    // throwing audit is stood in for by none at all, as the Migration tests do.
+    [Fact]
+    public async Task AnAuditWriteThatThrows_LeavesTheLookupsResult()
+    {
+        ACloudMailbox();
+        var page = LookupPage(_exchange.RecipientLookup());
+        Inject(page, "Audit", null);
+
+        await RunLookup(page);
+
+        Assert.Null(Shown(page).Error);
+        Assert.Equal((true, (string?)null), Assert.Single(_progress.Handles).Outcome);
     }
 }

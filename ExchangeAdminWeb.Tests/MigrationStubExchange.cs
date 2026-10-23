@@ -240,6 +240,13 @@ internal sealed class MigrationStubExchange : IDisposable
 
     public OperationTraceService Trace => _trace;
 
+    /// <summary>
+    /// aud-a68. What opening the connection throws when a pool is built not to connect; unset, "the Exchange Online sign-in
+    /// could not be completed". The live connect runs Connect-ExchangeOnline under -ErrorAction Stop and rethrows what it
+    /// throws, so a test can hand it PowerShell's own ActionPreferenceStopException.
+    /// </summary>
+    public Exception? ConnectFailure { get; set; }
+
     /// <param name="connects">False: opening the connection throws, before any cmdlet runs.</param>
     public ExoConnectionPool Pool(bool connects = true)
     {
@@ -247,7 +254,7 @@ internal sealed class MigrationStubExchange : IDisposable
             NullLogger<ExoConnectionPool>.Instance, _trace, (_, generation, _) =>
             {
                 if (!connects)
-                    throw new InvalidOperationException("the Exchange Online sign-in could not be completed");
+                    throw ConnectFailure ?? new InvalidOperationException("the Exchange Online sign-in could not be completed");
                 return StandIn(generation);
             });
         _pools.Add(pool);
@@ -280,10 +287,11 @@ internal sealed class MigrationStubExchange : IDisposable
     }
 
     /// <summary>aud-a23o. The real Recipient Lookup service over the same stand-ins: Exchange Online in the pool, on-premises in its seams.</summary>
-    public RecipientLookupService RecipientLookup() => new StubRecipientLookupService(this);
+    /// <param name="connects">aud-a68. False: opening the Exchange Online connection throws, before any cmdlet runs.</param>
+    public RecipientLookupService RecipientLookup(bool connects = true) => new StubRecipientLookupService(this, connects);
 
-    internal sealed class StubRecipientLookupService(MigrationStubExchange exchange)
-        : RecipientLookupService(exchange.Pool(), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), null!, exchange._trace)
+    internal sealed class StubRecipientLookupService(MigrationStubExchange exchange, bool connects)
+        : RecipientLookupService(exchange.Pool(connects), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), null!, exchange._trace)
     {
         protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
             exchange.DefineOnPremSession(ps);

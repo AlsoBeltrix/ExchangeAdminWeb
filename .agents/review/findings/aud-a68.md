@@ -80,8 +80,12 @@ module bumps are in their own commit; `ExchangeAdminWeb.csproj` is not edited.
    cannot turn a lookup that was made into a failed one (the Constitution's audit rule; before, the shared catch would
    have shown it as the lookup's error). The page is not line-keyed (`ClickGateRegistry.NotYetConverted`, tier 4).
    Test stand-in: `MigrationStubExchange.RecipientLookup(bool connects = true)` - false, the Exchange Online connection
-   cannot be opened, so the service call throws before any cmdlet. Mutation: the thrown path's audit row dropped (the
-   record's); extras: its activity left to end "This did not finish."; raw `ex.Message` again.
+   cannot be opened, so the service call throws before any cmdlet - and `MigrationStubExchange.ConnectFailure`, what that
+   connect throws: the live connect runs Connect-ExchangeOnline under -ErrorAction Stop and the pool rethrows its
+   exception as it is (`Services/ExoConnectionPool.cs` 791-796, 829-835, 374-379), so a failed sign-in reaches this catch
+   as PowerShell's ActionPreferenceStopException, "The running command stopped because ..." - the third wording, and the
+   one the service's own catch never sees. Mutation: the audit row dropped (the record's); extras: the activity left to
+   end "This did not finish."; raw `ex.Message` again.
 6. **The ReportedTime tests' stand-in** (`ExchangeAdminWeb.Tests/RecipientLookupReportedTimeTests.cs` 104 and 149;
    test-only, no module behaviour): the stand-in's archive read writes Exchange's own not-found (category
    ObjectNotFound) where it answered no row - since aud-a54 no row is "could not be read", so the mailbox those tests
@@ -139,6 +143,23 @@ Get-Recipient asked). Same filter, 85 tests.
 | The fix reverted (the service back to part 2's) | `0172a003...` / `2032c29d...` | 4: every part-3 case | md5 equal; 85/0 |
 | M3 (the record's): raw `ex.Message` again | `0172a003...` / `7694e901...` | 1: `ARecipientReadThatFails...` | md5 equal; 85/0 |
 | M3b: the not-found reading dropped | `0172a003...` / `f32e1788...` | 3: the three not-found shapes | md5 equal; 85/0 |
+
+On the part-3 commit's tree (`28256d97`): full suite 6710 passed / 0 failed / 0 skipped.
+
+**Part 4** - `RecipientLookupFailureTests`' part-4 tests, the page's own `RunLookup` with its services set by hand, a
+recording progress channel and the audit file read back: `ALookupThatThrows_IsAuditedAsFailed_AndItsActivityEndsWithTheError`
+(the connection cannot be opened: the error, one Lookup row Failed with it, the activity (false, the error), not left
+loading); `ALookupThatThrowsUnderStop_IsShownInTheCmdletsOwnWords` (a real ActionPreferenceStopException from a stand-in
+writing an error under Stop: shown, audited and ended in the error's own words); `ALookupThatAnswers_IsAuditedWithItsOutcome`
+(found, not found: the controls); `AnAuditWriteThatThrows_LeavesTheLookupsResult` (no audit service: the lookup keeps its
+result). Filter `RecipientLookup|ExchangeServiceBaseOnPremRead|ProgressRegistry`, 125 tests.
+
+| Round | md5 before / mutated | Failed (of 125) | Restored |
+| --- | --- | --- | --- |
+| The fix reverted (the page back to `eb017102`'s) | `3e9ecada...` / `45c8ccf3...` | 3: both thrown cases, and the audit one (the NullReferenceException shown as the lookup's error) | md5 equal; 125/0 |
+| M4 (the record's): the audit row dropped | `3e9ecada...` / `1e64502f...` | 4: both thrown cases, both controls | md5 equal; 125/0 |
+| M4b: the activity not completed ("This did not finish.") | `3e9ecada...` / `e2390964...` | 5: every part-4 case | md5 equal; 125/0 |
+| M4c: raw `ex.Message` again | `3e9ecada...` / `3d2ecd65...` | 1: `ALookupThatThrowsUnderStop...` | md5 equal; 125/0 |
 
 ## Also held (codex, mig-batch-9, 2026-10-23) - LOW
 
