@@ -40,3 +40,13 @@ close it (an owner call). (7) The operator's own lookups still run as the app po
 (which Negotiate never produces) a hidden account reads as "no account" and no group is checked. (8) A
 dynamic group's members are as of Exchange's last calculation. (9) Latent: an `activity.Complete` that
 throws inside `SubmitSingle`'s catch still escapes the handler (the result and the audit row are set first).
+
+## Also held (codex, perm-batch-8, 2026-10-23) - LOW
+
+(10) `Services/PermissionValidator.cs` 793 and `Services/SelfGrantRun.cs` 45: with the directory-read credential
+configured, every single grant to a person Exchange names fetches the secret before the code knows it needs
+credentialed visibility; acquire it lazily for directory-only grantees, group evaluation and synced nested
+groups. (11) `Services/ExchangeGroupMembers.cs` 140: a dynamic distribution group whose filter currently
+matches nobody returns zero rows and is refused as incomplete, so an empty dynamic group can never be granted
+while empty; distinguish "not calculated/unavailable" from an empty calculated membership if Exchange offers a
+signal, else document the refusal.

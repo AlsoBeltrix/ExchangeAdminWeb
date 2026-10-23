@@ -6,7 +6,7 @@ no dynamic-group expansion path, so the membership read throws and `PermissionVa
 as incomplete. Exchange Online exposes a dynamic group's current membership through
 `Get-DynamicDistributionGroupMember` (and the filter preview), so the operator's membership can be
 compared without evaluating the filter in the app.
-**Status**: Merged `6a971048`; closed on guard proof; codex review pending
+**Status**: Complete; merged `6a971048`; codex perm-batch-8 raised one MEDIUM (admitted as aud-a73) and two LOWs (held in aud-a70)
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
 **Commit**: plan `8391a40a`; fix `6a9f3fe7`; one sentence in the comments commit `a9ce01f5`
 **Reviewer**: codex / gpt-5.5-dzs / xhigh / standard (perm-batch-7, 2026-10-23, candidate 2)

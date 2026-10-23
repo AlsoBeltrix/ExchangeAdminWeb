@@ -6,7 +6,7 @@ session identity; when Exchange Online does not name the grantee (a group only t
 holds) and that identity cannot see the group's object, `named` is empty, `groups` is empty, and the check
 returns null (allow) with no membership read - the safety rests on the deployment's read visibility
 (Invariant 7). The synced-nested lookup at line 953 already fails closed.
-**Status**: Merged `6a971048`; closed on guard proof; codex review pending
+**Status**: Complete; merged `6a971048`; codex perm-batch-8 raised one MEDIUM (admitted as aud-a73) and two LOWs (held in aud-a70)
 **Branch**: `worktree-agent-ac701914283a170ea` (from master `15eb1449`)
 **Commit**: plan `5d120fbc`; fix `828fc33a`; comments `a9ce01f5`
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidate 1 of its hand-back)
