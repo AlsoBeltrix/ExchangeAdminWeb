@@ -1254,6 +1254,38 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal("granted The audit row could not be written.", said.Message);
     }
 
+    // ---- aud-a70 (4): the on-premises write's failure row carries what the write was bound to -----------------------------
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChangeThatFails_IsRecordedWithTheIdentityItWasBoundTo(string page)
+    {
+        // ExecuteOnPrem's catch recorded a failed change with neither the identity written nor the servicer note, which its
+        // success rows and SubmitSingle's catch row carry: the row did not say which mailbox the failed change was bound to.
+        // Both ride one dictionary, built from the write-time re-check, so the identity here is the note's carrier too.
+        var failure = new InvalidOperationException("the on-premises session could not be opened");
+
+        await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremConnect: failure);
+
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(TargetMailbox.ToString("D"), Text(record, ValidatedMailbox.AuditKey));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChangeThatFailsBeforeItsReCheck_IsRecordedWithNoIdentity(string page)
+    {
+        // A throw before the write-time re-check has nothing validated to name, and the row carries none.
+        var failure = new InvalidOperationException("the policy store cannot be read");
+
+        await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, onPremAuthorization: failure);
+
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.False(record.TryGetProperty(ValidatedMailbox.AuditKey, out _));
+    }
+
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
     private sealed class CapturingLogger<T> : ILogger<T>
     {

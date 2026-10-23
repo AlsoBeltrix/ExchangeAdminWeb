@@ -673,7 +673,7 @@
         // reads the field back, and the finally below did. A local cannot be nulled from the UI, so
         // the progress panel reports THIS operation's outcome by construction rather than because
         // no await happens to sit between the last write and the read.
-        PermissionResult? outcome = null;
+        PermissionResult? outcome = null; Dictionary<string, object?>? onPremExtra = null; // aud-a70 (4): what the write is bound to and the servicer note, for the catch's row as for the success rows
         var step = PermissionChangeFailure.BeforeTheWrite; // aud-a59: the stage a throw in the try below came from
         try
         {
@@ -702,7 +702,7 @@
                 return;
             }
             if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttemptAtWrite", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
-            var onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
+            onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
             step = PermissionChangeFailure.TheWrite;
             var opResult = isAdd
                 ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs)
@@ -744,7 +744,7 @@
             step = PermissionChangeFailure.StageOf(step, ex); var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The on-premises permission change on {Target} failed at {Step}", target, step); // aud-a76: a write the service says was never sent is the connection's failure - Failed, nothing written
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType,
-                false, ticket, errorDetail: failure, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); // aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73)
+                false, ticket, errorDetail: failure, extra: onPremExtra, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); // aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73); aud-a70 (4): with the identity written and the servicer note
         }
         finally
         {

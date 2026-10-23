@@ -627,7 +627,7 @@
         // reads the field back, and the finally below did. A local cannot be nulled from the UI, so
         // the progress panel reports THIS operation's outcome by construction rather than because
         // no await happens to sit between the last write and the read.
-        PermissionResult? outcome = null;
+        PermissionResult? outcome = null; Dictionary<string, object?>? onPremExtra = null; // aud-a70 (4): what the write is bound to and the servicer note, for the catch's row as for the success row
         var step = PermissionChangeFailure.BeforeTheWrite; // aud-a59: the stage a throw in the try below came from
         try
         {
@@ -656,7 +656,7 @@
                 return;
             }
             if (isSet && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogCalendarPermission(currentUser, clientIpAddress, "SetCalendar_SelfGrantAttemptAtWrite", target, user, level, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
-            step = PermissionChangeFailure.TheWrite; PermissionResult opResult;
+            onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox); step = PermissionChangeFailure.TheWrite; PermissionResult opResult;
             if (isSet)
                 opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, access.ToString());
             else
@@ -665,7 +665,7 @@
             var rowWritten = SelfGrantRefusalRecord.Recorded(() => Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
                 opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message,
-                extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox)), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord); // aud-a70 (1): in its own guard - a throw is logged, the change's result stands, a row not written is said
+                extra: onPremExtra), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord); // aud-a70 (1): in its own guard - a throw is logged, the change's result stands, a row not written is said
 
             try { await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, action, target, user,
@@ -687,7 +687,7 @@
             step = PermissionChangeFailure.StageOf(step, ex); var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The on-premises permission change on {Target} failed at {Step}", target, step); // aud-a76: a write the service says was never sent is the connection's failure - Failed, nothing written
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(failure, () => Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
-                false, ticket, errorDetail: failure, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); // aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73)
+                false, ticket, errorDetail: failure, extra: onPremExtra, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); // aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73); aud-a70 (4): with the identity written and the servicer note
         }
         finally
         {

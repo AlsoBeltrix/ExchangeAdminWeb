@@ -42,6 +42,15 @@ writer's answer, so a dropped row was said nowhere: it takes the same helper, wi
 permission change"), and its result the same `Said` (Mailbox 523, Calendar 500) - the Approach's "a dropped row is said" on
 both handlers, so their success records read alike.
 
+(4) `Components/Pages/MailboxPermissions.razor` 745-747 and `Components/Pages/CalendarPermissions.razor` 688-690 (`ExecuteOnPrem`'s
+catch row) carry no `extra`, where the success rows carry the identity written and the servicer note
+(`ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox)`,
+Mailbox 705, Calendar 668) - but that dictionary is built inside the try, out of the catch's reach. It is now declared
+beside `outcome` above the try (`onPremExtra`, Mailbox 676, Calendar 630), set right after the write-time re-check
+(Mailbox 705; Calendar 659, ahead of the step's move to the write), read by the success rows as before (Calendar 668 now
+names it), and handed to the catch's row as its `extra`. A throw before the re-check leaves it null: that row names no
+identity, there being none validated yet.
+
 ## Guard proof
 
 Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
@@ -67,6 +76,20 @@ Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate
 
 No separate pre-fix reproduction: M1 and M1c are each row as it stood at `eb017102`, so each failure is also the finding's
 reproduction on that page.
+
+### (4) - commit `fix(aud-a70): (4) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry` (443
+tests). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor` `4673304C9F774E409822258A01F49BD6`,
+`Components/Pages/CalendarPermissions.razor` `8FED9365B2A44F94C02A0B997C4D7077`. Every restore matched; reruns 443/443.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M4 | Mailbox `ExecuteOnPrem`'s catch row without `extra: onPremExtra` | `14A0E700BB6DF7F51B65688995BFB013` | 1 of 443: `AnOnPremChangeThatFails_IsRecordedWithTheIdentityItWasBoundTo(page: "Mailbox Permissions")` |
+| M4c | the same on Calendar Permissions | `E0364FE5DED57D99C8E40CFD6AABC9CA` | 1 of 443: the same test's `(page: "Calendar Permissions")` row |
+
+M4 and M4c are the catch rows as they stood at `eb017102`. `AnOnPremChangeThatFailsBeforeItsReCheck_IsRecordedWithNoIdentity`
+pins the other side: a throw before the re-check names nothing.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 
