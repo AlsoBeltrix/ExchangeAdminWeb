@@ -1,7 +1,7 @@
 # psl-11: the validate-exists object-kind theory now proves only the unavailable stand-in path
 
 **Severity**: LOW - coverage false confidence. `ExchangeAdminWeb.Tests/ADDirectoryValidateExistsTests.cs` about 245: `Search_AllObjectKindsIncludingOu_DoNotThrow` uses `ADDirectorySearchServiceTests.CreateService()`, whose helper asserts AD is unavailable, so `Search` returns at the availability guard before `ExecuteSearch`; a live-only regression in the User/Group/OU command path (the `Get-ADOrganizationalUnit` branch especially) ships green.
-**Status**: Merged to master `c3af5bd4`; codex defect review cr-batch-9 in flight
+**Status**: Closed - merged to master `c3af5bd4`; codex cr-batch-9 clean. Complete once fix/psl10-a2y is deleted
 **Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, from `f7b794cb`, no merge of master)
 **Commit**: the commit that adds this line (SHA in the implementer's hand-back)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 3e43b35b head f7b794cb (merged 07f2d371); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat f7b794cb)
@@ -87,3 +87,7 @@ services), so `CreateSearchRunspace` was added in the probe seam's shape. No oth
 
 Fixed on branch `fix/psl10-a2y`, not merged, not pushed: the commit that adds this section (its SHA in the implementer's
 hand-back). No module version moves (no behaviour changed). Pending: the merge and codex review.
+
+## Reviewer comments (supervisor, cr-batch-9)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base f7b794cb head 4c7a0bbc (merged c3af5bd4); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 4c7a0bbc). Clean across the six-finding range: name-only parsing with every enum name reachable and no remaining Enum.TryParse on the type; the job controls re-check the same policy source and audit once; the four Admin Bulk Jobs outcomes distinct; one refusal row on the invalid-type path; production builds the same search runspace by default; the catalog has one Version per entry with matching notes. Artefacts: `.agents/review/cr-batch-9.result.txt`, `.stream.log`, `prompt-cr-batch-9.md`.
