@@ -1083,7 +1083,11 @@ public class SelfServiceGroupService
     /// when the group cannot be resolved (e.g. deleted since the caller loaded it) so the caller fails
     /// closed rather than writing to a stale target.
     /// </summary>
-    private static PSObject? ResolveGroupByGuid(PowerShell ps, PSCredential credential, string groupObjectGuid)
+    /// <remarks>
+    /// Internal for the tests (psl-8): it is the first read after <see cref="PrepareAdRunspace"/> on the member listing and
+    /// the membership change, and its HadErrors check is where an import's leftover record used to read as a vanished group.
+    /// </remarks>
+    internal static PSObject? ResolveGroupByGuid(PowerShell ps, PSCredential credential, string groupObjectGuid)
     {
         try
         {
@@ -1228,10 +1232,21 @@ public class SelfServiceGroupService
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
-        var credential = CreateCredential(creds.username, creds.password, creds.domain);
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        return GroupWithIdentityExists(ps, CreateCredential(creds.username, creds.password, creds.domain), memberIdentity);
+    }
+
+    /// <summary>
+    /// The probe's sequence on a caller-supplied PowerShell (psl-8) - internal as a TEST SEAM, psl-2's shape, so it runs
+    /// against local stand-in functions without a directory; the overload above owns the runspace.
+    /// </summary>
+    /// <remarks>
+    /// The import goes through ActiveDirectoryModuleImport. It cleared only the commands, so a record the import wrote past
+    /// -ErrorAction Stop stayed in the stream and the probe's own HadErrors check took it: no group answered, and a typed
+    /// group was refused as a typo instead of by the scope rule.
+    /// </remarks>
+    internal static bool GroupWithIdentityExists(PowerShell ps, PSCredential credential, string memberIdentity)
+    {
+        ActiveDirectoryModuleImport.Import(ps);
 
         ps.AddCommand("Get-ADObject")
           .AddParameter("LDAPFilter", AdOwnershipFilter.BuildGroupProbeFilter(memberIdentity.Trim()))
@@ -1254,12 +1269,14 @@ public class SelfServiceGroupService
     /// drive for Get-Acl reads; that read returned an empty DACL here and was replaced by
     /// Get-ADGroup -Properties nTSecurityDescriptor - see <see cref="CallerCanManageMembers"/>.)
     /// </summary>
-    private static void PrepareAdRunspace(PowerShell ps)
-    {
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-    }
+    /// <remarks>
+    /// psl-8. Through ActiveDirectoryModuleImport, so the import's error is the one it throws and it leaves nothing in the
+    /// stream. It cleared only the commands, and four of its callers check HadErrors at their first read after it: the
+    /// member listing and the membership change at the group's re-read (a leftover record read as "That group no longer
+    /// exists"), the owned-groups list and the single-group search at the first group's DACL check (that group excluded).
+    /// Internal for the tests.
+    /// </remarks>
+    internal static void PrepareAdRunspace(PowerShell ps) => ActiveDirectoryModuleImport.Import(ps);
 
     /// <summary>
     /// Resolves the caller ONCE to their DN via the immutable SID (bound -Identity, no interpolation).

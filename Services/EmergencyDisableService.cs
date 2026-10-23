@@ -463,7 +463,26 @@ public class EmergencyDisableService
         return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
-    private async Task<bool> ReadAdEnabledState(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds)
+    /// <summary>
+    /// The session each of the four directory steps below opens (psl-8): the pre-state read, the disable, the lockdown
+    /// move and the password reset.
+    /// </summary>
+    /// <remarks>
+    /// Internal virtual as a TEST SEAM, GroupManagementService's shape (psl-7): a test hands back a session whose
+    /// Import-Module and directory cmdlets are local functions, and calls the four steps - internal for that reason -
+    /// directly. Production builds exactly the session each step used to build inline. Each step imports the module through
+    /// ActiveDirectoryModuleImport: they cleared only the commands, so a record the import wrote past -ErrorAction Stop stayed
+    /// in the stream and the step's own check took it - the pre-state read threw it as its error, the lockdown move refused
+    /// as if its OU could not be read, and the disable and the reset reported FAILED after their write had been made.
+    /// </remarks>
+    internal virtual Runspace CreateDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
+    internal async Task<bool> ReadAdEnabledState(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds)
     {
         if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             throw new TimeoutException("AD throttle timeout while reading pre-state.");
@@ -472,16 +491,12 @@ public class EmergencyDisableService
         {
             return await Task.Run(() =>
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                using var runspace = CreateDirectoryRunspace();
                 runspace.Open();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                ps.Commands.Clear();
+                ActiveDirectoryModuleImport.Import(ps);
 
                 var credential = CreatePSCredential(creds.username, creds.password, creds.domain);
 
@@ -639,7 +654,7 @@ public class EmergencyDisableService
         return new LockdownStampResult(true, combined, null);
     }
 
-    private async Task<DisableStepResult> ExecuteDisableAD(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
+    internal async Task<DisableStepResult> ExecuteDisableAD(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
     {
         if (!adSlotHeld && !await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             return new DisableStepResult("DisableAD", "FAILED", "AD throttle timeout.");
@@ -648,16 +663,12 @@ public class EmergencyDisableService
         {
             return await Task.Run(() =>
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                using var runspace = CreateDirectoryRunspace();
                 runspace.Open();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                ps.Commands.Clear();
+                ActiveDirectoryModuleImport.Import(ps);
 
                 var credential = CreatePSCredential(creds.username, creds.password, creds.domain);
 
@@ -707,7 +718,7 @@ public class EmergencyDisableService
     /// authoritatively in the snapshot and the audit, so a stamp failure is reported loudly in
     /// the step detail while the move itself still counts as done.
     /// </summary>
-    private async Task<(List<DisableStepResult> Steps, LockdownOutcome Outcome, LockdownStampOutcome Stamp)> ExecuteMoveToLockdownOu(
+    internal async Task<(List<DisableStepResult> Steps, LockdownOutcome Outcome, LockdownStampOutcome Stamp)> ExecuteMoveToLockdownOu(
         ResolvedDirectoryPrincipal target,
         (string username, string password, string domain) creds,
         string lockdownOuDn,
@@ -720,16 +731,12 @@ public class EmergencyDisableService
         {
             return await Task.Run(() =>
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                using var runspace = CreateDirectoryRunspace();
                 runspace.Open();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                ps.Commands.Clear();
+                ActiveDirectoryModuleImport.Import(ps);
 
                 var credential = CreatePSCredential(creds.username, creds.password, creds.domain);
 
@@ -878,7 +885,7 @@ public class EmergencyDisableService
         }
     }
 
-    private async Task<DisableStepResult> ExecuteResetPassword(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
+    internal async Task<DisableStepResult> ExecuteResetPassword(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
     {
         if (!adSlotHeld && !await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             return new DisableStepResult("ResetPassword", "FAILED", "AD throttle timeout.");
@@ -887,16 +894,12 @@ public class EmergencyDisableService
         {
             return await Task.Run(() =>
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                using var runspace = CreateDirectoryRunspace();
                 runspace.Open();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-                ps.Invoke();
-                ps.Commands.Clear();
+                ActiveDirectoryModuleImport.Import(ps);
 
                 var credential = CreatePSCredential(creds.username, creds.password, creds.domain);
 

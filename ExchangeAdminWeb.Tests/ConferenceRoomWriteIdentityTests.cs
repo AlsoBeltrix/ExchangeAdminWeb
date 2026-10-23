@@ -1,7 +1,9 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -55,14 +57,31 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         // throws - the way a test reaches that step. Live it is not reached so: the module's PAM provider returns no
         // credential at all for a secret without a password (DelineaService), which the paths refuse as not configured.
         public string? IncompleteCredentialFor;
-        // aud-a2v. For a purpose containing this text, no credential at all - what the module's credential lookup returns live
-        // for no secret ID, a corrupt module config, or a PAM provider that fails or holds an incomplete secret.
+        // aud-a2v. For a purpose containing this text, no credential at all. Since aud-a2x the base reads it as no secret ID
+        // set, the one reason a lookup through this seam can give: with no credential service the service has nothing else
+        // to ask. A corrupt module config, or a PAM provider that fails, is CredentialFailureFor's.
         public string? NoCredentialFor;
+        // aud-a2x. For a purpose containing this text, no credential, and CredentialFailure the reason the lookup gives - as the
+        // module's credential service now says beside its none.
+        public string? CredentialFailureFor;
+        public ModuleCredentialFailure CredentialFailure = ModuleCredentialFailure.NotReturned;
         // aud-a2v. Each purpose the lookup was asked with, in order: the text a path's refusal line names beside the room.
         public List<string> CredentialPurposes { get; } = [];
 
-        public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
-            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
+        // aud-a2x. With a credential service, the base's lookup asks it, and neither seam below is reached.
+        public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null, ModuleCredentialService? credentials = null)
+            : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
+
+        protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
+        {
+            if (CredentialFailureFor is { } failing && purpose.Contains(failing, StringComparison.Ordinal))
+            {
+                CredentialRequests++;
+                CredentialPurposes.Add(purpose);
+                return Task.FromResult(new ModuleCredentialLookup(null, CredentialFailure));
+            }
+            return base.LookupDirectoryCredentialAsync(purpose);
+        }
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
         {
@@ -373,11 +392,12 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
 
     private sealed class CapturingLogger : ILogger<ConferenceRoomService>
     {
-        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+        // aud-a2w. The exception logged with an entry, too: the row's room read logs the throw it rethrows.
+        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            Entries.Enqueue((logLevel, formatter(state, exception)));
+            Entries.Enqueue((logLevel, formatter(state, exception), exception));
     }
 
     // The calls recorded before the Set-Place - the preflight's - and after it - the write's.
@@ -1286,11 +1306,12 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
 
     private const string NothingWritten = " Nothing was written.";
 
-    // The line each path logs for a refusal - aud-a2t's two room-list lines among them, and since aud-a2v the row's own - for
-    // the room as it was typed.
+    // The line each path logs for a refusal - aud-a2t's two room-list lines among them, since aud-a2v the row's own, and since
+    // aud-a2w the Type path's - for the room as it was typed.
     private static string RefusalLine(string path, string refusal) => path switch
     {
         "Room Finder apply" => $"Room Finder apply for {Typed} refused the row; nothing was written: {refusal}",
+        "Room Type apply" => $"Room Type apply for {Typed} refused the row; nothing was written: {refusal}",
         "City/State/Country preflight" => $"Set-ADUser preflight for {Typed} refused the row; nothing was written: {refusal}",
         "City/State/Country write" => $"Set-ADUser City/State/Country write for {Typed} refused before its write: {refusal}",
         "room-list preflight" => $"Room-list preflight for {Typed} on {List} refused the row; nothing was written: {refusal}",
@@ -1445,8 +1466,9 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     public async Task TheRowsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason(string refusal)
     {
         // Each refusal the row makes before its preflights, with every field set so that a row past it would ask for a
-        // credential and write: refused in no step, nothing written, nothing asked for, its message as before to the byte -
-        // and one warning, the row's, naming the room as typed and the refusal.
+        // credential and write: refused in no step, nothing written, nothing asked for, its message the refusal - since
+        // aud-a2w ending " Nothing was written." but for the validated-mailbox one, which says so in its own words - and one
+        // warning, the row's, naming the room as typed and the refusal.
         ValidatedMailbox? room = Room();
         var timezone = "GMT Standard Time";
         switch (refusal)
@@ -1467,13 +1489,15 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Empty(result.Steps);
         Assert.Empty(_h.Writes);
         Assert.Equal(0, service.CredentialRequests);
-        Assert.Equal(refusal switch
+        var reason = refusal switch
         {
             "no validated room" => ValidatedMailbox.Refusal(Typed),
             "an invalid time zone" => "Invalid timezone: 'Mars Standard Time'.",
             _ => $"'{Typed}' is a EquipmentMailbox, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.",
-        }, result.Message);
-        AssertLoggedOnce(logger, "Room Finder apply", result.Message);
+        };
+        Assert.Equal(refusal == "no validated room" ? reason : reason + NothingWritten, result.Message);
+        AssertSaysNothingWasWrittenOnce(result.Message);
+        AssertLoggedOnce(logger, "Room Finder apply", reason);
     }
 
     [Theory]
@@ -1638,5 +1662,212 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.EndsWith(NothingWritten, result.Message, StringComparison.Ordinal);
         Assert.EndsWith(".", result.Message[..^NothingWritten.Length], StringComparison.Ordinal);
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(result.Message, "Nothing was written"));
+    }
+
+    // ---- aud-a2w: the Type path's refusals are logged, the row's room read that throws is logged, one rule for the module ----
+    // SetRoomTypeAsync refused a row with no validated room, an invalid time zone, a recipient that is not a room mailbox or
+    // the module's groups unconfigured, and logged none of them. A throw from the Finder row's room read left the service
+    // unlogged: the page's catch audits and notifies, and writes no log line. And the row's and the Type path's refusals
+    // said only what was wrong, not that nothing was written, as both preflights' do since aud-a2v.
+
+    // That nothing was written is said once - by the suffix, or by the validated-mailbox refusal's own words.
+    private static void AssertSaysNothingWasWrittenOnce(string message) =>
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(
+            message, "nothing was written", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+
+    [Theory]
+    [InlineData("no validated room")]
+    [InlineData("an invalid time zone")]
+    [InlineData("a recipient that is not a room mailbox")]
+    [InlineData("the module's groups unconfigured")]
+    public async Task TheTypePathsOwnRefusal_IsLoggedOnce_NamingTheRoomAndTheReason(string refusal)
+    {
+        // Each refusal the Type path makes before any write, with everything else in place: refused in no step, nothing
+        // written, nothing asked for, the message the refusal - ending " Nothing was written." but for the validated-mailbox
+        // one - and one warning, the Type path's, naming the room as typed and the refusal.
+        ValidatedMailbox? room = Room();
+        var timezone = "GMT Standard Time";
+        switch (refusal)
+        {
+            case "no validated room": room = null; break;
+            case "an invalid time zone": timezone = "Mars Standard Time"; break;
+            case "a recipient that is not a room mailbox": _h.AddMailbox("room1@contoso.test", Checked, recipientTypeDetails: "EquipmentMailbox"); break;
+            case "the module's groups unconfigured": _h.ModuleConfig.SaveModuleConfig("ConferenceRooms", new Dictionary<string, string>()); break;
+            default: throw new ArgumentOutOfRangeException(nameof(refusal), refusal, null);
+        }
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var result = await service.SetRoomTypeAsync(Typed, room, RoomType.Standard, timezone);
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(result.Steps);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        var reason = refusal switch
+        {
+            "no validated room" => ValidatedMailbox.Refusal(Typed),
+            "an invalid time zone" => "Invalid timezone: 'Mars Standard Time'.",
+            "a recipient that is not a room mailbox" => $"'{Typed}' is a EquipmentMailbox, not a room mailbox. Conference Room operations require RoomMailbox or RemoteRoomMailbox.",
+            _ => $"Conference Rooms module is not configured. Set {string.Join(", ", ConferenceRoomService.RequiredGroupConfigKeys)} in Module Config.",
+        };
+        Assert.Equal(refusal == "no validated room" ? reason : reason + NothingWritten, result.Message);
+        AssertSaysNothingWasWrittenOnce(result.Message);
+        AssertLoggedOnce(logger, "Room Type apply", reason);
+    }
+
+    [Theory]
+    [InlineData("another mailbox")]
+    [InlineData("no mailbox")]
+    public async Task TheRowsRoomRead_ThatThrows_IsLoggedOnce_AndStillThrows(string answer)
+    {
+        // The Finder row's read of the validated room throws when Exchange answers with another mailbox or none. It still
+        // throws, with its message as before - the page's catch and the bulk row's audit and notify on it as they did - and
+        // one warning names the room as typed and the message, with the exception. Nothing is written, nothing asked for.
+        if (answer == "another mailbox")
+            _h.Mailboxes[Identity(Checked)] = _h.Mailboxes["execroom@contoso.test"];
+        else
+            _h.Mailboxes.Remove(Identity(Checked));
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => Finder(service, Room(), city: "Dublin"));
+
+        Assert.Contains(answer == "another mailbox" ? "to a different mailbox" : "couldn't be found", thrown.Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(thrown.Message, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"Room Finder apply for {Typed}: reading the room failed; nothing was written: {thrown.Message}", logged.Message);
+        Assert.Same(thrown, logged.Exception);
+    }
+
+    // ---- aud-a2x: a credential that could not be read does not send the operator to set the ID that is set ----
+    // Each of the four directory paths refused a lookup that returned no credential with "On-prem AD credential is not
+    // configured for Conference Rooms (set the AD Delinea Secret ID in Module Config)" - also when the ID was set, and the
+    // module's configuration could not be read or Delinea returned nothing for it. The credential service now says which,
+    // and each path says it, in the clause its refusal opens with.
+
+    private const string NotSetClause =
+        "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config)";
+    private const string NotReturnedClause =
+        "The on-prem AD credential for Conference Rooms could not be read from Delinea: the AD Delinea Secret ID is set, but Delinea returned no credential for it (the application log has its reason)";
+    private const string UnreadableClause =
+        "The on-prem AD credential for Conference Rooms could not be read: the module's configuration could not be read, so neither could its AD Delinea Secret ID (the application log records it)";
+
+    [Theory]
+    [InlineData("City/State/Country preflight", ModuleCredentialFailure.NotReturned)]
+    [InlineData("City/State/Country write", ModuleCredentialFailure.NotReturned)]
+    [InlineData("on-prem room-list preflight", ModuleCredentialFailure.NotReturned)]
+    [InlineData("on-prem room-list add", ModuleCredentialFailure.NotReturned)]
+    [InlineData("City/State/Country preflight", ModuleCredentialFailure.ConfigUnreadable)]
+    [InlineData("City/State/Country write", ModuleCredentialFailure.ConfigUnreadable)]
+    [InlineData("on-prem room-list preflight", ModuleCredentialFailure.ConfigUnreadable)]
+    [InlineData("on-prem room-list add", ModuleCredentialFailure.ConfigUnreadable)]
+    public async Task ACredentialThatCouldNotBeRead_IsRefusedWithoutSendingTheOperatorToSetTheId(string path, ModuleCredentialFailure failure)
+    {
+        // The lookup returning none for one path's purpose only, with the reason the credential service gives. Refused as
+        // aud-a2v's theory has it - a preflight while nothing is written, a write after Set-Place, inside the partial - the
+        // message opening with the clause for that reason and never naming the ID to set; one warning, the path's line.
+        var cityStateAndCountry = path.StartsWith("City/State/Country", StringComparison.Ordinal);
+        var preflight = path.EndsWith("preflight", StringComparison.Ordinal);
+        if (!cityStateAndCountry)
+            SyncedListTakingTheRoomOnPrem();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger)
+        {
+            CredentialFailureFor = path switch
+            {
+                "City/State/Country preflight" => "Set-ADUser preflight",
+                "City/State/Country write" => "Set-ADUser synced attributes",
+                "on-prem room-list preflight" => "membership preflight",
+                _ => "membership add",
+            },
+            CredentialFailure = failure,
+        };
+        var purpose = path switch
+        {
+            "City/State/Country preflight" => $"Set-ADUser preflight for {Typed}",
+            "City/State/Country write" => $"Set-ADUser synced attributes for {Typed}",
+            "on-prem room-list preflight" => $"on-prem room-list membership preflight for {Typed}",
+            _ => $"on-prem room-list membership add for {Typed}",
+        };
+        var clause = failure == ModuleCredentialFailure.NotReturned ? NotReturnedClause : UnreadableClause;
+        var refusal = path switch
+        {
+            "on-prem room-list preflight" => $"{clause}, and room list '{List}' is synchronized from on-premises, so the room cannot be added to it.",
+            "on-prem room-list add" => $"{clause}. The room could not be added to the on-prem room list.",
+            _ => $"{clause}. City/State/Country could not be written.",
+        };
+
+        var result = await Finder(service, Room(), city: cityStateAndCountry ? "Dublin" : "");
+
+        Assert.False(result.Success);
+        Assert.Equal(!preflight, result.Partial);
+        Assert.Equal(purpose, service.CredentialPurposes.Last());
+        var step = Assert.Single(result.Steps, s => !s.Success);
+        if (preflight)
+        {
+            Assert.Empty(_h.Writes);
+            Assert.Equal(refusal + NothingWritten, result.Message);
+            Assert.Equal(result.Message, step.Error);
+        }
+        else
+        {
+            Assert.Single(_h.CallsTo("Set-Place"));
+            Assert.Empty(_h.CallsTo(cityStateAndCountry ? "Set-ADUser" : "Set-ADGroup"));
+            Assert.Equal(refusal, step.Error);
+            Assert.Contains(refusal, result.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("Nothing was written", result.Message, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("set the AD Delinea Secret ID", result.Message, StringComparison.Ordinal);
+        AssertLoggedOnce(logger, path, $"no AD credential was returned for {purpose}: {refusal}");
+        Assert.Single(logger.Entries, e => e.Message.Contains(refusal, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("no secret ID")]
+    [InlineData("a secret ID Delinea returns no credential for")]
+    [InlineData("an unreadable module configuration")]
+    public async Task TheCredentialServicesOwnAnswer_ChoosesTheWords(string configured)
+    {
+        // Through a real credential service and the service's own lookup - neither seam - so the words come from what the
+        // credential service found: the City/State/Country preflight refuses, nothing written, in that reason's clause.
+        // Offline: its Delinea service has no bootstrap credential, so it refuses before any request.
+        var moduleConfig = _h.ModuleConfig;
+        switch (configured)
+        {
+            case "no secret ID":
+                break;
+            case "a secret ID Delinea returns no credential for":
+                var values = _h.ModuleConfig.GetModuleConfig("ConferenceRooms");
+                values["DelineaSecretId"] = "4242";
+                _h.ModuleConfig.SaveModuleConfig("ConferenceRooms", values);
+                break;
+            case "an unreadable module configuration":
+                moduleConfig = new ModuleConfigService(new ModuleCatalog(), ModuleCredentialLookupTests.Environment(_h.Dir),
+                    new ModuleConfigRepository(new UnreadableModuleConfigStore()), NullLogger<ModuleConfigService>.Instance);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(configured), configured, null);
+        }
+        using var offline = new OfflineCredentials(_h.Dir, _h.Config, moduleConfig);
+        var service = new Service(_h, credentials: offline.Service);
+
+        var result = await Finder(service, Room(), city: "Dublin");
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, service.CredentialRequests);
+        Assert.Equal(0, offline.RequestsSent);
+        var clause = configured switch
+        {
+            "no secret ID" => NotSetClause,
+            "a secret ID Delinea returns no credential for" => NotReturnedClause,
+            _ => UnreadableClause,
+        };
+        Assert.Equal($"{clause}. City/State/Country could not be written.{NothingWritten}", result.Message);
     }
 }
