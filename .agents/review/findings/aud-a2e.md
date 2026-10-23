@@ -1,7 +1,7 @@
 # aud-a2e: Conference Rooms writes to a room-list group that is never checked against Protected Group Targets
 
 **Severity**: MEDIUM - an authorization gap (Known Failure Class 3). Conference Rooms adds a room mailbox to a room-list distribution group chosen through the Building field (`ConferenceRoomService.AddToRoomListAsync`, on-prem fallback included); that group write is never routed through `ProtectedPrincipalService.CheckWriteTarget`. `docs/ProtectedGroupWriteTarget-Plan.md` scoped the module out as "its write target is a mailbox", which is true of `Set-Place` but not of the room-list membership write. A room list configured as a Protected Group Target can therefore be written by any Conference Rooms operator.
-**Status**: Merged to master `3e43b35b` (fix `ebd66b91`); codex defect review cr-batch-7 in flight. Owner calls raised by the agent are in its hand-back notes below and in the supervisor's report; the Constitution:94 vs ProtectedPrincipalEntryValidator:90 conflict (cloud-only principals protectable or not) is an open owner question.
+**Status**: Merged to master `3e43b35b` (fix `ebd66b91`); codex cr-batch-7 raised aud-a2ab (HIGH: a created list is checked only after Set-Place and New-DistributionGroup) and aud-a2ac (MEDIUM: ambiguous lookup read as missing); closes when they land. The Constitution:94 vs ProtectedPrincipalEntryValidator:90 conflict stays an open owner question.
 **Branch**: `fix/a2e` (worktree `D:\source\ExchangeAdminWeb-wt\a2e`, forked from master at `eb017102`)
 **Commit**: the one commit on `fix/a2e` that adds this record (its SHA is in the implementer's hand-back)
 **Reviewer**: implementer (recorded by the supervisor at the 2026-10-23 hand-over)
@@ -277,3 +277,12 @@ warnings, none in a file this change touches; `dotnet test ExchangeAdminWeb.slnx
 passed, 0 failed, 0 skipped; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` clean;
 `git diff --check HEAD` clean; `tools/Test-AsciiOnly.ps1` passed. An earlier full Release run failed only
 `SettingsStoreBusyTests`' wall-clock bound under host load (Known gaps), green on reruns.
+
+## Reviewer comments (supervisor, cr-batch-7)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base eb017102 head ebd66b91 (merged 3e43b35b); 2026-10-23 ~20:0xZ; capability proof: AGENTS.md read and git show --stat ebd66b91 both succeeded. Verdict: two candidates, both admitted - aud-a2ab (HIGH) and aud-a2ac (MEDIUM). Codex confirmed clean:
+synced-list writes are checked on the on-prem group snapshot that later supplies `Set-ADGroup -Identity`; cloud-only
+existing lists are checked from the Exchange object's address / Entra id before preflight success and again before the
+add; bulk passes `actingUser: null` through its only Finder path; the page line count still matches ClickGate;
+`sAMAccountName` is in `Get-ADGroup`'s default group shape and fails closed if absent. Artefacts:
+`.agents/review/cr-batch-7.result.txt`, `.stream.log`, `prompt-cr-batch-7.md`.
