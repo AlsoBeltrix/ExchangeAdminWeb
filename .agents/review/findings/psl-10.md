@@ -183,3 +183,23 @@ test and the `internal`: `71d19cac3fd08cc5c6d14d3766411a76`).
 
 On the fix, before the round: `DirectoryModuleImportTests`, `SelfService*`, `GroupMember*`, `ResourceDomainDenies*`,
 `GroupCredentialRefusal*`, `ProtectedGroupWriteTarget*`, `GroupBulk*` 450 of 450 (before the third test).
+
+**(3) The DHCP remote script** - in `DhcpAuthorizationPowerShellLifecycleTests`, a `RemoteSession` whose stand-in
+`Invoke-Command` runs the script block it is handed in a second runspace (the remote session: `Import-Module` and
+`Add-/Remove-DhcpServerInDC` as advanced functions, autoloading off) and writes that session's error records into its own
+stream, a terminating error as one record:
+- `ARemoteImportThatLeavesARecord_DoesNotFailTheChangeAfterIt` (authorize, deauthorize): success, "Successfully ...d DHCP
+  server ...", the local import, the discovery, the `Invoke-Command`, the remote import and the remote change the calls.
+- `ARemoteImportThatFails_FailsTheChange_AndTheChangeIsNotMade` (both): failed, "Failed to <op>: " and the import's error;
+  the remote import the last call - the change not made.
+- `TheRemoteChangesOwnError_StillFailsIt` (both): "Failed to <op>: remote change refused", psl-3's control on the remote side.
+
+Filter `DhcpAuthorizationPowerShellLifecycleTests` (18); md5 fixed = restored `d786609b16ffd798ed6d295b6137a9b0`.
+
+| # | Mutation | md5 mutated | Failing (of 18) | Restored |
+| --- | --- | --- | --- | --- |
+| 3 | the fix reverted - `DhcpAuthorizationService.cs` as at `370e32f3` | `b3fb7c14f949565e31bfcd3ce7fadf6c` | 2: both noise cases, "Failed to authorize: A record the DhcpServer import wrote past the callers ErrorAction." (and deauthorize); the failing-import and control cases pass, as they should - behaviour the fix keeps | PASS 18 |
+| 3a | the record's first option on the authorize script - `Import-Module DhcpServer -ErrorAction Stop; $Error.Clear();` in place of the redirection | `8abff3f442e2f1aed7203b9444fb5474` | 1: the authorize noise case, the same failure - `$Error.Clear()` leaves the record in the stream | PASS 18 |
+| 3b | the same, the deauthorize script | `3d2eb52e0a17fa6c8ffbd26cf04297f4` | 1: the deauthorize noise case | PASS 18 |
+
+On the fix, before the round: `DhcpAuthorization*` 21 of 21.

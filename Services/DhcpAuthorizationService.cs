@@ -98,7 +98,12 @@ public class DhcpAuthorizationService
         if (dc == null)
             return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
 
-        var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+        // psl-10. The import's error stream is redirected (2>$null): the script imports and changes in one Invoke-Command,
+        // whose records come back in the one stream the HadErrors check below reads, so a record the import wrote past Stop
+        // failed a change that had been made. No clear can come between them from here, and $Error.Clear() in the script
+        // would not help - the record has already been written to the stream (measured). Under Stop the import's own failure
+        // is still thrown, stopping the script before the change: the import's error is the one it throws.
+        var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop 2>$null; Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
         ps.AddCommand("Invoke-Command")
           .AddParameter("ComputerName", dc)
           .AddParameter("Credential", credential)
@@ -162,7 +167,8 @@ public class DhcpAuthorizationService
         if (dc == null)
             return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
 
-        var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+        // psl-10. The import's error stream redirected, as in AuthorizeServer and for the same reason.
+        var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop 2>$null; Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
         ps.AddCommand("Invoke-Command")
           .AddParameter("ComputerName", dc)
           .AddParameter("Credential", credential)
