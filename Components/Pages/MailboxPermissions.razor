@@ -525,8 +525,8 @@
             }
             catch (Exception ex)
             {
-                var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); var failedPermType = string.Join("+", new[] { fullAccess ? "FullAccess" : null, sendAs ? "SendAs" : null }.OfType<string>()); // aud-a71: recorded as ExecuteOnPrem's catch records - a write that threw may have applied
-                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{failedPermType}", target, user, failedPermType, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); activity.Complete(false, failed);
+                var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); var failedPermType = string.Join("+", new[] { fullAccess ? "FullAccess" : null, sendAs ? "SendAs" : null }.OfType<string>()); // aud-a71: recorded as ExecuteOnPrem's catch records - a write that threw may have applied, so its row is filed Undetermined, a throw before or after it Failed (aud-a73)
+                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{failedPermType}", target, user, failedPermType, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox), filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); activity.Complete(false, failed);
             }
         }
         finally

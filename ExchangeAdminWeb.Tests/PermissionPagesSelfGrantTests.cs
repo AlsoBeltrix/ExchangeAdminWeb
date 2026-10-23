@@ -9,6 +9,7 @@ using ExchangeAdminWeb.Services.Progress;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -249,9 +250,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     public static TheoryData<string> Pages => [MailboxPage, CalendarPage];
 
-    /// <summary>The on-premises Mailbox Permissions write, its credential and its session the harness's.</summary>
-    private sealed class OnPremMailboxService(ExchangeWriteHarness h)
-        : MailboxPermissionService(h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, h.Config, null!, h.Trace)
+    /// <summary>
+    /// The on-premises Mailbox Permissions write, its credential and its session the harness's; over the pool and the settings
+    /// a test gives, else the harness's (aud-a73).
+    /// </summary>
+    private sealed class OnPremMailboxService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null)
+        : MailboxPermissionService(pool ?? h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
@@ -260,9 +264,9 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             h.DefineOnPremSession(ps);
     }
 
-    /// <summary>The on-premises Calendar Permissions write, its credential and its session the harness's.</summary>
-    private sealed class OnPremCalendarService(ExchangeWriteHarness h)
-        : CalendarPermissionService(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, null!, h.Trace)
+    /// <summary>The on-premises Calendar Permissions write, as <see cref="OnPremMailboxService"/>.</summary>
+    private sealed class OnPremCalendarService(ExchangeWriteHarness h, ExoConnectionPool? pool = null, IConfiguration? config = null)
+        : CalendarPermissionService(pool ?? h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, config ?? h.Config, null!, h.Trace)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
@@ -770,9 +774,10 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Pages))]
-    public async Task ACloudWriteThatThrows_IsRecordedAsFailed_WithTheBannersText(string page)
+    public async Task ACloudWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText(string page)
     {
         // The catch said the change could not be confirmed and recorded nothing: a write that may have applied left no row.
+        // aud-a73: and the row it then wrote was filed Failed, where the Admin Event Log's Undetermined filter did not find it.
         var failure = LostSession();
         using var pool = PoolWhoseWriteBorrowThrows(failure);
         var (progress, activity) = WatchedProgress();
@@ -785,7 +790,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var record = Assert.Single(_h.AuditRows());
         Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
         Assert.Equal(page == MailboxPage ? "FullAccess" : "Reviewer", Text(record, page == MailboxPage ? "permissionType" : "accessRight"));
-        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal("Undetermined", Text(record, "result"));
         Assert.Equal(WriteNotConfirmed, Text(record, "error"));
         Assert.Equal(Target, Text(record, "target"));
         Assert.Equal(Other, Text(record, "affectedUser"));
@@ -832,6 +837,114 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.IsType<NullReferenceException>(warnings[1].Exception);
         Assert.Contains("the failed permission change", warnings[1].Message, StringComparison.Ordinal);
         Assert.Contains(Target, warnings[1].Message, StringComparison.Ordinal);
+        Assert.Empty(_h.Writes);
+    }
+
+    // ---- aud-a73: a write whose outcome is unknown is filed Undetermined; a step before or after it, Failed --------------
+
+    [Theory]
+    [InlineData(PermissionChangeFailure.BeforeTheWrite, AuditResult.Failed)]
+    [InlineData(PermissionChangeFailure.TheWrite, AuditResult.Undetermined)]
+    [InlineData(PermissionChangeFailure.AfterTheWrite, AuditResult.Failed)]
+    public void TheStepsAuditResult_IsUndetermined_OnlyAtTheWrite(string step, AuditResult filed) =>
+        Assert.Equal(filed, PermissionChangeFailure.AuditResultOf(step));
+
+    /// <summary>
+    /// A pool for the page's own service whose Exchange Online answers, as Exchange does, that it holds no such mailbox: an
+    /// ObjectNotFound error, which the location read takes as an answer, so it asks on-premises Exchange next.
+    /// </summary>
+    private ExoConnectionPool PoolWhereExchangeOnlineHoldsNoMailbox() =>
+        new(_h.Config, _h.ModuleConfig, _h.Enablement, NullLogger<ExoConnectionPool>.Instance, _h.Trace,
+            (_, generation, _) =>
+            {
+                var runspace = _h.OpenExchangeRunspace();
+                using (var define = PowerShell.Create())
+                {
+                    define.Runspace = runspace;
+                    define.AddScript("""
+                        function global:Get-Mailbox {
+                            [CmdletBinding()] param([Parameter(Position = 0)] $Identity)
+                            Write-StandInCall 'Get-Mailbox' $PSBoundParameters
+                            Write-Error -Message "The operation couldn't be performed because object '$Identity' couldn't be found." -Category ObjectNotFound
+                        }
+                        """).Invoke();
+                }
+                var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+                return new PooledRunspace(runspace, ps, generation, "stand-in");
+            });
+
+    /// <summary>The harness's settings and an on-premises server, so the page service's location read can ask it.</summary>
+    private IConfiguration WithAnOnPremServer() => new ConfigurationBuilder()
+        .AddConfiguration(_h.Config)
+        .AddInMemoryCollection(new Dictionary<string, string?> { ["OnPremExchange:ServerUri"] = "https://exchange.contoso.test/PowerShell/" })
+        .Build();
+
+    /// <summary>
+    /// <paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to someone else on a mailbox only
+    /// on-premises Exchange holds - Exchange Online answers that it has none, the harness's stand-in on-premises finds it -
+    /// whose on-premises permission check throws <paramref name="failure"/>; the result, the page's warnings, and whether the
+    /// change was staged for the operator's confirmation.
+    /// </summary>
+    private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings, bool Staged)> SubmitToAMailboxOnlyOnPremisesHolds(
+        string page, Exception failure)
+    {
+        using var pool = PoolWhereExchangeOnlineHoldsNoMailbox();
+        ComponentBase component;
+        Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
+        if (page == MailboxPage)
+        {
+            var logger = new CapturingLogger<MailboxPermissions>();
+            component = new MailboxPermissions();
+            Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+            Set(component, "MailboxService", new OnPremMailboxService(_h, pool, WithAnOnPremServer()));
+            SetField(component, "grantFullAccess", true);
+            SetField(component, "grantSendAs", false);
+            warnings = () => logger.Warnings;
+        }
+        else
+        {
+            var logger = new CapturingLogger<CalendarPermissions>();
+            component = new CalendarPermissions();
+            Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger);
+            Set(component, "CalendarService", new OnPremCalendarService(_h, pool, WithAnOnPremServer()));
+            SetField(component, "accessRight", CalendarAccessRight.Reviewer);
+            warnings = () => logger.Warnings;
+        }
+        SetField(component, "affectedUser", Other);
+        var authorization = (IAuthorizationService)component.GetType().GetProperty("AuthorizationService", Members)!.GetValue(component)!;
+        authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(),
+                page == MailboxPage ? "MailboxPermissionsOnPrem" : "CalendarPermissionsOnPrem")
+            .Returns(Task.FromException<AuthorizationResult>(failure));
+
+        await Call(component, "SubmitSingle");
+
+        Assert.False(GetField<bool>(component, "isLoading"));
+        return (Assert.IsType<PermissionResult>(GetField<PermissionResult>(component, "result")), warnings(),
+            GetField<bool>(component, "onPremConfirmPending"));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ASingleChangeThatThrowsBeforeTheWrite_IsRecordedAsFailed(string page)
+    {
+        // SubmitSingle's one step before the write that can throw: the on-premises permission check, asked once the location
+        // read finds the mailbox on-premises. Nothing was written, so the row is Failed - never Undetermined.
+        var failure = new InvalidOperationException("raw-text-a73");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { "the policy store cannot be read" };
+
+        var (result, warnings, staged) = await SubmitToAMailboxOnlyOnPremisesHolds(page, failure);
+
+        var banner = "The change was not made: a step before the write failed: the policy store cannot be read. Nothing was written.";
+        Assert.False(result.Success);
+        Assert.Equal(banner, result.Message);
+        Assert.False(staged);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess" : "SetCalendar", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
+        Assert.Same(failure, Assert.Single(warnings).Exception);
+        Assert.NotEmpty(_h.CallsTo("Invoke-Command"));
         Assert.Empty(_h.Writes);
     }
 

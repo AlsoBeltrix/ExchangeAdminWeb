@@ -179,6 +179,29 @@ public class AuditServiceTests : IDisposable
         Assert.Equal("Success", root.GetProperty("result").GetString());
     }
 
+    [Theory]
+    [InlineData("MailboxPermission", false)]
+    [InlineData("MailboxPermission", true)]
+    [InlineData("CalendarPermission", false)]
+    [InlineData("CalendarPermission", true)]
+    public void APermissionRow_FiledUndetermined_CarriesThatResult_AndKeepsItsError_WhateverItsBool(string category, bool success)
+    {
+        // aud-a73. The row of a change whose write threw was filed from its bool, "Failed", so the event log's Undetermined
+        // filter could not find it. The explicit result is the row's, and its error stays: it says why the outcome is unknown.
+        const string banner = "Whether the change was made could not be confirmed: the write failed: the session was lost. Check the permissions before trying again.";
+        if (category == "MailboxPermission")
+            _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "target@co.com", "user@co.com", "FullAccess",
+                success, "INC003", errorDetail: banner, filedAs: AuditResult.Undetermined);
+        else
+            _audit.LogCalendarPermission("admin", "10.0.0.1", "SetCalendar", "target@co.com", "user@co.com", "Reviewer",
+                success, "INC003", errorDetail: banner, filedAs: AuditResult.Undetermined);
+
+        var root = Assert.Single(ReadAuditEvents()).RootElement;
+        Assert.Equal(category, root.GetProperty("category").GetString());
+        Assert.Equal("Undetermined", root.GetProperty("result").GetString());
+        Assert.Equal(banner, root.GetProperty("error").GetString());
+    }
+
     [Fact]
     public void MultipleWrites_AppendToSameFile()
     {

@@ -105,6 +105,83 @@ Caller-visible change, by design: a single permission change whose write threw i
 error still the "could not be confirmed" banner, shown with the warning badge and found by the Admin Event Log's
 Undetermined filter; a throw before or after the write is filed Failed as before.
 
+## Fix
+
+- New `Services/AuditResult.cs`: `public enum AuditResult { Success, Failed, Undetermined }`, each name the text a row
+  carries.
+- `Services/AuditService.cs`: `LogMailboxPermission` and `LogCalendarPermission` take a last optional
+  `AuditResult? filedAs = null`. The row's result is the new private `ResultText(success, filedAs)` - the explicit result
+  when one is given, else Success or Failed from the bool as before (a value outside the enum is no explicit result) - and
+  its error is kept unless the row is filed Success (`result == "Success" ? null : errorDetail`). Nothing else in the file
+  changes: `WriteAuditEvent`, its out parameter and its last-statement telemetry call stand.
+- `Services/PermissionChangeFailure.cs`: `AuditResultOf(step)`, Undetermined at `TheWrite`, Failed at the other two stages.
+- `Components/Pages/MailboxPermissions.razor` 529 and `Components/Pages/CalendarPermissions.razor` 506, in place (808 and
+  762 lines, no registry entry moved): the catch's audit call gains `filedAs: PermissionChangeFailure.AuditResultOf(step)`
+  after its `extra`, and the line-end comment above it (528, 505) names aud-a73. `success: false`, `errorDetail: failure`,
+  the `extra` and the record's guard are as aud-a71 left them.
+
+Tests: 11 new cases and one test renamed.
+- `PermissionPagesSelfGrantTests` (+5). `ACloudWriteThatThrows_IsRecordedAsFailed_WithTheBannersText` is renamed
+  `ACloudWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText`, its row's result Undetermined (each page).
+  `TheStepsAuditResult_IsUndetermined_OnlyAtTheWrite` (each stage). `ASingleChangeThatThrowsBeforeTheWrite_IsRecordedAsFailed`
+  (each page) - "single change", not the plan's "cloud change": the throw is in `SubmitSingle`'s on-premises branch. Its
+  driver, `SubmitToAMailboxOnlyOnPremisesHolds`, runs the page over `OnPremMailboxService` / `OnPremCalendarService` (which
+  now take an optional pool and settings), a pool whose Get-Mailbox writes an ObjectNotFound error as Exchange does
+  (`PoolWhereExchangeOnlineHoldsNoMailbox`, the harness's stand-ins otherwise), and settings naming an on-premises server
+  (`WithAnOnPremServer`), so the location read asks on-premises, where the harness's stand-in holds the mailbox; then the
+  on-premises permission check throws the test's exception. aud-a53's `AThrowAfterTheWrite_IsNamedAsSuch_...` is unchanged:
+  its second row stays Failed.
+- `AuditServiceTests` (+4): `APermissionRow_FiledUndetermined_CarriesThatResult_AndKeepsItsError_WhateverItsBool` (each
+  method, its bool false and true).
+- `EventLogSectionsTargetTests` (+2): `APermissionChangeThatCouldNotBeConfirmed_IsFiledUndetermined_AndTheResultFilterFindsItThere`
+  (each method): parsed by the page's `ParseAuditLine`, found under Undetermined and under All, not under Failed.
+- `AuditWriterThrowFreeTests`: the argument builder hands an `AuditResult?` parameter Undetermined; its counts (13 methods,
+  15 taking a dictionary) stand.
+
 ## Guard proof
 
-Pending.
+Session-local driver `a73-mutate.ps1` (session scratchpad, log `a73-mutations.log`), the aud-a60 protocol: the fix staged;
+per mutant the MD5 of the file it touches, the edit (an exact-text replacement that must match exactly once), the MD5 and
+the line count again, a Debug build of the test project with 0 errors required, `dotnet test --no-build` filtered to
+`FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~PermissionValidator|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ExchangeGroupMembers|FullyQualifiedName~BulkPermission|FullyQualifiedName~BulkAndOnPrem|FullyQualifiedName~AuditWriterThrowFree|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~EventLogSectionsTarget|FullyQualifiedName~AuditExtraChannel|FullyQualifiedName~UsageTelemetryService|FullyQualifiedName~ValidatedWriteCallSite`
+(890 tests), the failing names taken from the run, then the file restored from the git index (`git checkout --`), its
+write time advanced so MSBuild rebuilds it, and its MD5 checked equal to the one before. Fixed-file MD5s:
+`Components/Pages/MailboxPermissions.razor` `A9B58BB864502CB360F0F5AC83A06574`, `Components/Pages/CalendarPermissions.razor`
+`2B328E4103A0DB7108A93CAB5BE668C2`, `Services/PermissionChangeFailure.cs` `1CC6067A547F661042F320E0BAB9D057`,
+`Services/AuditService.cs` `73875020D8E994D960EF964EB141EF6D` (unmutated: `Services/AuditResult.cs`
+`FFCE002953763765BAEBE7D523FBC362`, `ExchangeAdminWeb.Tests/PermissionPagesSelfGrantTests.cs`
+`0FF13DCAF11C43FF4792F4B623C28C0A`, `ExchangeAdminWeb.Tests/AuditServiceTests.cs` `9C2687BF1721108D4C84FF460DBD0DF8`,
+`ExchangeAdminWeb.Tests/EventLogSectionsTargetTests.cs` `0ABF05B3F096F974B990461AE3DB6B90`,
+`ExchangeAdminWeb.Tests/AuditWriterThrowFreeTests.cs` `096DEF87D29A31F9F3E6C313F41465EA`). Every mutant built with 0
+errors and every restore matched; each page mutant kept its page's line count (808, 762), so ClickGate and
+ProgressRegistry ran under it and passed. After the round, the restored tree rebuilt with 0 errors and the filter: 890/890
+green.
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | `success: false` again at the write step: the Mailbox Permissions catch's `filedAs` argument removed | `MailboxPermissions.razor` `B189445F2662B7DD36F09CEFF53F9A13` | 1 of 890: `ACloudWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText(page: "Mailbox Permissions")` - the row filed Failed |
+| M1c | the same on Calendar Permissions | `CalendarPermissions.razor` `422BD93513078C42FC0D4405D4205CDB` | 1 of 890: the same test's `(page: "Calendar Permissions")` row |
+| E1 | extra: `AuditResultOf` Undetermined at every step | `PermissionChangeFailure.cs` `A9E41C8A6FFD652F6C5D2EA046BF63D9` | 6 of 890: `TheStepsAuditResult_IsUndetermined_OnlyAtTheWrite` (the before and after rows); `AThrowAfterTheWrite_IsNamedAsSuch_InTheCausesOwnWords_NotItsRawText` (each page: no Failed row beside the success row); `ASingleChangeThatThrowsBeforeTheWrite_IsRecordedAsFailed` (each page) |
+| E2 | extra: `LogMailboxPermission` files from its bool alone (`filedAs` ignored) | `AuditService.cs` `80004EF88E94D5469C314E0D56191BEB` | 4 of 890: `APermissionChangeThatCouldNotBeConfirmed_IsFiledUndetermined_AndTheResultFilterFindsItThere(category: "MailboxPermission")`; `APermissionRow_FiledUndetermined_CarriesThatResult_AndKeepsItsError_WhateverItsBool(category: "MailboxPermission", ...)`, both bools; `ACloudWriteThatThrows_IsRecordedAsUndetermined_WithTheBannersText(page: "Mailbox Permissions")` |
+| E3 | extra: `LogMailboxPermission`'s error dropped by its bool again (`success ? null : errorDetail`) | `AuditService.cs` `935999DD9C074C2FD61B520EE54E581E` | 1 of 890: `APermissionRow_FiledUndetermined_CarriesThatResult_AndKeepsItsError_WhateverItsBool(category: "MailboxPermission", success: True)` |
+
+No separate pre-fix reproduction: M1 and M1c are each catch's audit call as it stood at `066ea1a2`, byte for byte (only
+the line-end comment above it is the fix's), so each failure is also the finding's reproduction.
+
+## Known gaps
+
+- `ExecuteOnPrem`'s catch (aud-a59; Mailbox 744-747, Calendar 687-690) files a throw at its own write step Failed under
+  the same "could not be confirmed" banner - out of this record's scope (Plan), a candidate in the hand-back. It is reached:
+  `MailboxPermissionService.AddMailboxPermissionsOnPremAsync`'s connect sits in a try with only a `finally`, and
+  `CalendarPermissionService.SetCalendarPermissionOnPremAsync` lets every failure of its write out.
+- `IsSuccessfulAuditResult` reads any result but "Failed" as a success, so an Undetermined row counts as a non-failure in
+  the usage count and completes the audit's implicit trace operation as succeeded (the rule aud-a28z part 5 kept for an
+  undetermined eligibility check); filed Failed, this row counted as a failure there. The audit row, its trace step's
+  `auditResult` and the event log say Undetermined. A candidate in the hand-back.
+- Rows already written stay as written: a write that threw, logged before this build, reads "Failed"; its error, "Whether
+  the change was made could not be confirmed...", is the way to tell it apart.
+- The stage names the step, not what threw in it (aud-a53): at the write, the row is Undetermined whatever threw there -
+  a borrow the pool refused before anything reached Exchange included, which the handler cannot tell apart, as its banner
+  cannot.
+- Nothing ran against Exchange: the stand-in cmdlets behind the harness's pool or a test pool, the harness's on-premises
+  stand-in through the services' own seam, the harness's validator, a substitute progress service.

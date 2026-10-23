@@ -34,4 +34,11 @@ internal static class PermissionChangeFailure
             _ => $"The change was written, but {step} failed: {cause}. Check the permissions to confirm the result.",
         };
     }
+
+    /// <summary>
+    /// aud-a73. The result the record of a throw at <paramref name="step"/> is filed under: Undetermined at
+    /// <see cref="TheWrite"/>, which may or may not have taken, as its banner says; Failed before the write, when nothing
+    /// was written, and after it, when the written change has its own row and this one says a later step failed.
+    /// </summary>
+    internal static AuditResult AuditResultOf(string step) => step == TheWrite ? AuditResult.Undetermined : AuditResult.Failed;
 }

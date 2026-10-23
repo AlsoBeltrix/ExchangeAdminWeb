@@ -44,6 +44,11 @@ public class AuditService
             evt[kvp.Key] = kvp.Value;
     }
 
+    /// <param name="filedAs">
+    /// aud-a73. The result the row is filed under when the caller knows more than <paramref name="success"/> says:
+    /// Undetermined for a change whose outcome could not be confirmed. The row keeps <paramref name="errorDetail"/> unless
+    /// it is filed Success. Null, the default, files Success or Failed from <paramref name="success"/>, as every row was.
+    /// </param>
     /// <returns>
     /// What became of the row (aud-a50): the Mailbox Permissions page says when a refusal's row was not written. Every
     /// other caller may ignore it.
@@ -59,8 +64,10 @@ public class AuditService
         string ticketNumber,
         bool? autoMapping = null,
         string? errorDetail = null,
-        Dictionary<string, object?>? extra = null)
+        Dictionary<string, object?>? extra = null,
+        AuditResult? filedAs = null)
     {
+        var result = ResultText(success, filedAs);
         var evt = new Dictionary<string, object?>
         {
             ["ts"] = DateTime.UtcNow.ToString("O"),
@@ -68,13 +75,13 @@ public class AuditService
             ["ip"] = ipAddress,
             ["action"] = action,
             ["category"] = "MailboxPermission",
-            ["result"] = success ? "Success" : "Failed",
+            ["result"] = result,
             ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
             ["target"] = targetMailbox,
             ["affectedUser"] = affectedUser,
             ["permissionType"] = permissionType,
             ["autoMapping"] = autoMapping,
-            ["error"] = success ? null : errorDetail
+            ["error"] = result == "Success" ? null : errorDetail
         };
 
         MergeExtra(evt, extra);
@@ -82,6 +89,7 @@ public class AuditService
         return outcome;
     }
 
+    /// <param name="filedAs">aud-a73. As <see cref="LogMailboxPermission"/>'s.</param>
     /// <returns>What became of the row (aud-a50), as <see cref="LogMailboxPermission"/> hands it back.</returns>
     public JsonlWriteOutcome LogCalendarPermission(
         string performedBy,
@@ -93,8 +101,10 @@ public class AuditService
         bool success,
         string ticketNumber,
         string? errorDetail = null,
-        Dictionary<string, object?>? extra = null)
+        Dictionary<string, object?>? extra = null,
+        AuditResult? filedAs = null)
     {
+        var result = ResultText(success, filedAs);
         var evt = new Dictionary<string, object?>
         {
             ["ts"] = DateTime.UtcNow.ToString("O"),
@@ -102,12 +112,12 @@ public class AuditService
             ["ip"] = ipAddress,
             ["action"] = action,
             ["category"] = "CalendarPermission",
-            ["result"] = success ? "Success" : "Failed",
+            ["result"] = result,
             ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
             ["target"] = targetMailbox,
             ["affectedUser"] = affectedUser,
             ["accessRight"] = accessRight,
-            ["error"] = success ? null : errorDetail
+            ["error"] = result == "Success" ? null : errorDetail
         };
 
         MergeExtra(evt, extra);
@@ -579,6 +589,16 @@ public class AuditService
 
     private static bool IsSuccessfulAuditResult(string? result)
         => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);
+
+    // aud-a73. A permission row's result: the caller's explicit one when it gives one, else Success or Failed from its bool,
+    // as every row was filed before. A value outside the enum is no explicit result.
+    private static string ResultText(bool success, AuditResult? filedAs) => filedAs switch
+    {
+        AuditResult.Success => "Success",
+        AuditResult.Failed => "Failed",
+        AuditResult.Undetermined => "Undetermined",
+        _ => success ? "Success" : "Failed",
+    };
 
     // aud-a28q. A null actor is "unknown", the name the trace gives an actor it does not have. Dereferenced, it threw
     // out of every public method here before the record was built.
