@@ -8,8 +8,8 @@ the write failed..." with `Success=false` and records a Failed row beside the su
 credential (aud-a60). (3) `Components/Pages/AdminSettings.razor` 282 and 289 (the credential's placeholder
 and hint: "Required when groups or OUs are configured" / "Read-only AD credential for group membership and
 OU checks") should say it is also needed for Mailbox and Calendar Permissions grants to groups.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; held by the 2026-10-23 stopping rule (LOW) for after the first dev deploy
-**Branch**: -
+**Status**: In progress - released by the owner's 2026-10-23 evening ruling (everything open is fixed before any deploy); implemented one sub-item per commit
+**Branch**: `fix/a70` (from master `eb017102`)
 **Commit**: -
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidates 2-4 and its follow-up)
 
@@ -24,9 +24,49 @@ At `c89f639c`: `Components/Pages/MailboxPermissions.razor` 717-724; `Components/
 - The README section and the two hint texts name the credential dependency and what is refused without it.
 - Mutations at the call site: one guard removed; the README sentence dropped (a source check).
 
+### Per sub-item (the implementing agent, 2026-10-23; lines at `eb017102`, re-located there)
+
+The two pages stay line-keyed (ClickGateRegistry, ProgressRegistry): every page edit below is in place, on the lines named,
+and each page keeps 808 and 762 lines unless a sub-item says otherwise.
+
+(1) `Components/Pages/MailboxPermissions.razor` 717-718 and 723-724 (`ExecuteOnPrem`'s FullAccess and SendAs rows) and
+`Components/Pages/CalendarPermissions.razor` 665-668 (its row) call the writer in no guard, and drop its answer. Each row now
+goes through new `SelfGrantRefusalRecord.Recorded(write, logger, target, record)` - aud-a53's guard as one helper: a throw is
+logged ("Failed to write audit for the on-premises permission change on <target>; the change stands") and never reaches the
+catch, so the change's result stands - and its answer is kept (`rowsWritten`, declared on Mailbox 711; `rowWritten`, Calendar
+665). The result is published through new `SelfGrantRefusalRecord.Said(result, written)` (Mailbox 740, Calendar 683): as it
+is when every row was written, else with "The audit row could not be written." after its message and its outcome unchanged,
+through new `PermissionResult.WithMessage` (every other field carried; `PermissionResultCopyTests` holds each one).
+`SubmitSingle`'s success record (Mailbox 501-506, Calendar 477-481) already sat in aud-a53's try/catch but dropped the
+writer's answer, so a dropped row was said nowhere: it takes the same helper, with the log text it always had ("the
+permission change"), and its result the same `Said` (Mailbox 523, Calendar 500) - the Approach's "a dropped row is said" on
+both handlers, so their success records read alike.
+
 ## Guard proof
 
-Pending.
+Protocol, every round: session-local driver `mutate.py` (session scratchpad, log `a70-mutations.log`, TRX per run). Per
+mutant: the MD5 of each file it touches; the edit - an exact-text replacement that must match exactly once, reverting the
+fix at its call site; the MD5 and the line count again (each page mutant kept 808 / 762 lines, so ClickGate and
+ProgressRegistry ran under it); a Debug build of the test project with 0 errors required; `dotnet test --no-build` over the
+round's filter, the failing names taken from the TRX; then the original bytes restored, the write time advanced, the MD5
+checked equal, the test project rebuilt with 0 errors and the filter run again green.
+
+### (1) - commit `fix(aud-a70): (1) ...`
+
+Filter `FullyQualifiedName~PermissionPagesSelfGrant|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~PermissionResultCopy`
+(440 tests; E1b over the first and the last, 89). Fixed-file MD5s: `Components/Pages/MailboxPermissions.razor`
+`2A05C357D741C6AEF7B355D647413409`, `Components/Pages/CalendarPermissions.razor` `1F8C348AB4808F05ACF0920730B7B1E8`,
+`Models/PermissionResult.cs` `95BE8569E6CCAF980D0206F64BE191E0`. Every restore matched and its rerun was green (440/440, 89/89).
+
+| # | Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M1 | Mailbox `ExecuteOnPrem`'s FullAccess row back to the bare writer call (no guard, its answer dropped) | `AEF17122B11D920055B30B41BEDD468A` | 2 of 440: `AnOnPremChange_WhoseRecordThrows_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(page: "Mailbox Permissions")` (the written change shown as failed), `AnOnPremChange_WhoseRowTheWriterDrops_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(page: "Mailbox Permissions")` (the dropped row not said) |
+| M1c | the same on Calendar Permissions (the row and its `Said`) | `C3A5C24C76088380EBE06AAEA4ECE258` | 2 of 440: the same two tests' `(page: "Calendar Permissions")` rows |
+| E1 | extra: Mailbox `SubmitSingle` publishes its result without `Said` | `73EA2D2705F7E03CEDD70543F815E8D0` | 2 of 440: `AWrittenChange_WhenItsRecordThrows_StandsAsWritten(page: "Mailbox Permissions")`, `AWrittenChange_WhoseRowTheWriterDrops_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(page: "Mailbox Permissions")` |
+| E1b | extra: `PermissionResult.WithMessage` drops `AppliedRights` | `PermissionResult.cs` `CBA687A42DCB02F6F99ADE33414F6F84` | 1 of 89: `PermissionResultCopyTests.WithMessage_CarriesEveryFieldButTheMessage` |
+
+No separate pre-fix reproduction: M1 and M1c are each row as it stood at `eb017102`, so each failure is also the finding's
+reproduction on that page.
 
 ## Also held (aud-a71/a69/a72 agent, 2026-10-23) - LOW
 

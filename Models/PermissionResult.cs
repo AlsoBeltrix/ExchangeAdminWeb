@@ -99,4 +99,20 @@ public class PermissionResult
                 Changed = Changed,
                 ServicedNote = servicedNote,
             };
+
+    /// <summary>
+    /// aud-a70. The same result with <paramref name="message"/> in place of its message: its outcome and every other field
+    /// carried as they are (<c>PermissionResultCopyTests</c> holds each one, so a field the model gains later is carried too).
+    /// </summary>
+    public PermissionResult WithMessage(string message) => new()
+    {
+        Success = Success,
+        Message = message,
+        Detail = Detail,
+        ExcludedTargets = ExcludedTargets,
+        UnverifiedTargets = UnverifiedTargets,
+        AppliedRights = AppliedRights,
+        Changed = Changed,
+        ServicedNote = ServicedNote,
+    };
 }

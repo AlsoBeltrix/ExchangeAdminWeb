@@ -584,6 +584,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (_, exception) = Assert.Single(warnings);
         Assert.IsType<NullReferenceException>(exception);
         Assert.NotEmpty(_h.Writes);
+        // aud-a70 (1): the banner says the row was not written.
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -1166,6 +1168,90 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal(result.Message, Text(record, "error"));
         Assert.Empty(warnings);
         Assert.Single(_h.CallsTo("Invoke-Command"));
+    }
+
+    // ---- aud-a70 (1): a written change's own record sits in a guard, and a row not written is said ------------------------
+
+    /// <summary>The write each page's grant to someone else makes, on-premises or in Exchange Online alike.</summary>
+    private static string TheWrite(string page) => page == MailboxPage ? "Add-MailboxPermission" : "Set-MailboxFolderPermission";
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AWrittenChange_WhoseRowTheWriterDrops_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(string page)
+    {
+        // The writer hands back that it dropped the row (aud-a28u) and logs it; the change's banner said nothing of it.
+        var email = EmailWhere(null);
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChange_WhoseRecordThrows_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(string page)
+    {
+        // ExecuteOnPrem's success records sat in no guard: a throw went to the catch, which said "The change was written, but a
+        // step after the write failed" and showed the written change as failed.
+        var email = EmailWhere(null);
+
+        var (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), AuditWithoutAWriter(), email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("a step after the write failed", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.IsType<NullReferenceException>(exception);
+        Assert.Contains("the on-premises permission change", message, StringComparison.Ordinal);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremChange_WhoseRowTheWriterDrops_StandsAsWritten_AndSaysTheRowCouldNotBeWritten(string page)
+    {
+        var email = EmailWhere(null);
+        PermissionResult result;
+        IReadOnlyList<(string Message, Exception? Exception)> warnings;
+        using (HoldTheAuditFile())
+            (result, warnings) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, email);
+
+        Assert.True(result.Success, result.Message);
+        Assert.EndsWith(" The audit row could not be written.", result.Message, StringComparison.Ordinal);
+        AssertEveryNotificationWasSent(email);
+        Assert.Empty(warnings);
+        Assert.Empty(_h.AuditRows());
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    [Fact]
+    public void AChangesOwnRecord_SaysWhetherItsRowWasWritten_AndAThrowNeverLeavesIt()
+    {
+        var logger = new CapturingLogger<MailboxPermissions>();
+        var failure = new InvalidOperationException("the disk is full - payload-a70");
+        var ok = PermissionResult.Ok("granted");
+
+        Assert.True(SelfGrantRefusalRecord.Recorded(() => JsonlWriteOutcome.Written, logger, Target, SelfGrantRefusalRecord.OnPremChangeRecord));
+        Assert.False(SelfGrantRefusalRecord.Recorded(() => JsonlWriteOutcome.FileWriteFailed, logger, Target, SelfGrantRefusalRecord.OnPremChangeRecord));
+        Assert.Empty(logger.Warnings);
+        Assert.False(SelfGrantRefusalRecord.Recorded(() => throw failure, logger, Target, SelfGrantRefusalRecord.OnPremChangeRecord));
+        var (message, exception) = Assert.Single(logger.Warnings);
+        Assert.Same(failure, exception);
+        Assert.Equal($"Failed to write audit for the on-premises permission change on {Target}; the change stands", message);
+
+        Assert.Same(ok, SelfGrantRefusalRecord.Said(ok, written: true));
+        var said = SelfGrantRefusalRecord.Said(ok, written: false);
+        Assert.True(said.Success);
+        Assert.Equal("granted The audit row could not be written.", said.Message);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

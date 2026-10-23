@@ -498,12 +498,12 @@
                 // The serviced note rides `extra`: this is the SUCCESS path, and LogMailboxPermission
                 // drops errorDetail on success, so the field explaining why a protected mailbox could
                 // be modified would vanish. So does the identity written (aud-a2d); target stays typed.
-                try { Audit.LogMailboxPermission(
+                var rowWritten = SelfGrantRefusalRecord.Recorded(() => Audit.LogMailboxPermission(
                     currentUser, ipAddress, action, target, user, permType,
                     opResult.Success, ticket,
                     autoMapping: isAdd && fullAccess ? autoMap : null,
                     errorDetail: opResult.Success ? null : opResult.Message,
-                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)); } catch (Exception auditEx) { Logger.LogWarning(auditEx, "Failed to write audit for the permission change on {Target}; the change stands", target); }
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.SingleChangeRecord); // aud-a53: in its own guard, the change's result standing; aud-a70 (1): a row not written is said in the banner
 
                 // Send admin notification
                 try { await Email.SendAdminNotificationAsync(
@@ -520,7 +520,7 @@
                     try { await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isAdd); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
                 }
 
-                result = opResult;
+                result = SelfGrantRefusalRecord.Said(opResult, rowWritten);
                 activity.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
             }
             catch (Exception ex)
@@ -708,20 +708,20 @@
                 ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs)
                 : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs);
             step = PermissionChangeFailure.AfterTheWrite;
-            var actionVerb = isAdd ? "Add" : "Remove";
+            var actionVerb = isAdd ? "Add" : "Remove"; var rowsWritten = true; // aud-a70 (1): whether every row of the change was written
             // aud-a23b: rights come from AppliedRights, never from Detail (on a cloud grant, Detail is the OWA link).
             var applied = opResult.AppliedRights ?? [];
             if (fullAccess)
             {
                 var faSuccess = opResult.Success || applied.Contains("FullAccess");
-                Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}FullAccess", target, user, "FullAccess",
-                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message, extra: onPremExtra);
+                rowsWritten &= SelfGrantRefusalRecord.Recorded(() => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}FullAccess", target, user, "FullAccess",
+                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message, extra: onPremExtra), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord); // aud-a70 (1): in its own guard - a throw is logged and the change's result stands
             }
             if (sendAs)
             {
                 var saSuccess = opResult.Success || applied.Contains("SendAs");
-                Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}SendAs", target, user, "SendAs",
-                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message, extra: onPremExtra);
+                rowsWritten &= SelfGrantRefusalRecord.Recorded(() => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}SendAs", target, user, "SendAs",
+                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message, extra: onPremExtra), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord);
             }
 
             var isPartial = !opResult.Success && applied.Count > 0;
@@ -737,7 +737,7 @@
                 try { await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
             }
 
-            result = outcome = opResult;
+            result = outcome = SelfGrantRefusalRecord.Said(opResult, rowsWritten);
         }
         catch (Exception ex)
         {

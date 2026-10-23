@@ -474,11 +474,11 @@
 
                 // Serviced note in `extra`, not errorDetail: this is the SUCCESS path and the error
                 // field is dropped on success. The identity written rides beside it (aud-a2d).
-                try { Audit.LogCalendarPermission(
+                var rowWritten = SelfGrantRefusalRecord.Recorded(() => Audit.LogCalendarPermission(
                     currentUser, ipAddress, action, target, user, level,
                     opResult.Success, ticket,
                     errorDetail: opResult.Success ? null : opResult.Message,
-                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)); } catch (Exception auditEx) { Logger.LogWarning(auditEx, "Failed to write audit for the permission change on {Target}; the change stands", target); }
+                    extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.SingleChangeRecord); // aud-a53: in its own guard, the change's result standing; aud-a70 (1): a row not written is said in the banner
 
                 // Send admin notification
                 try { await Email.SendAdminNotificationAsync(
@@ -497,7 +497,7 @@
                     try { await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
                 }
 
-                result = opResult;
+                result = SelfGrantRefusalRecord.Said(opResult, rowWritten);
                 activity.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
             }
             catch (Exception ex)
@@ -662,10 +662,10 @@
             else
                 opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user);
             step = PermissionChangeFailure.AfterTheWrite;
-            Audit.LogCalendarPermission(
+            var rowWritten = SelfGrantRefusalRecord.Recorded(() => Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
                 opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message,
-                extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox));
+                extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox)), Logger, target, SelfGrantRefusalRecord.OnPremChangeRecord); // aud-a70 (1): in its own guard - a throw is logged, the change's result stands, a row not written is said
 
             try { await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, action, target, user,
@@ -680,7 +680,7 @@
                 try { await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
             }
 
-            result = outcome = opResult;
+            result = outcome = SelfGrantRefusalRecord.Said(opResult, rowWritten);
         }
         catch (Exception ex)
         {
