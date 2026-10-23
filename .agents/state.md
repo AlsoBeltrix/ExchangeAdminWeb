@@ -285,7 +285,7 @@ none of them.
   `.psm1` or `.psd1` file has changed since, as of `d6003833`.
 - PSScriptAnalyzer: 0 errors on each changed script in the ops-script slices; their records own
   the runs.
-- Still owed: the final full suite after `aud-a76` lands (`## Now`).
+- Full suite as of `cfccec59`: 6693 passed / 0 failed / 0 skipped; Release build 0 errors / 19 warnings; format, diff-check and ASCII lint clean.
 
 Not exercised by any gate: browser rendering (there is no bUnit harness; `.agents/decisions.md`
 2026-10-01, "Rendered is not visible"), live writes, and the live forest and tenant. Both deployed
