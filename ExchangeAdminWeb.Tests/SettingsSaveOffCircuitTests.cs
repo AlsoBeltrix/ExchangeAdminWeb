@@ -234,6 +234,50 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
             Field<Dictionary<string, string>>(page, typeof(ExchangeOnlineConfigPage), "exoShown")[ExoConnectionPool.ConfigOrganizationKey]);
     }
 
+    /// <summary>
+    /// aud-a67 item 3: the connection save's pool drain still ran on the circuit. DrainPool empties the pool one runspace
+    /// at a time, each a synchronous Disconnect-ExchangeOnline against the service - up to five round trips - and then
+    /// re-reads the connection from the shared config database, so it held the whole page for as long as the service took.
+    /// </summary>
+    [Fact]
+    public async Task ExchangeOnlineConfig_AConnectionSavesPoolDrain_LeavesTheCircuitFree()
+    {
+        var page = _h.OpenExchangeOnlineConfig();
+        Set(page, typeof(ExchangeOnlineConfigPage), "exoAppId", AppId);
+        Set(page, typeof(ExchangeOnlineConfigPage), "exoOrganization", "contoso.onmicrosoft.com");
+        Set(page, typeof(ExchangeOnlineConfigPage), "exoCertSubject", "CN=EXO-Automation");
+
+        var cancel = TestContext.Current.CancellationToken;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        // The drain is the first read after the save's write: it re-reads the three connection values.
+        _h.ModuleConfigStore.BeforeWrite = () => _h.ModuleConfigStore.BeforeRead = () =>
+        {
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+        };
+
+        var saving = Task.Run(() => _h.RunAsync(page, "SaveExoConfig"), cancel);
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10), cancel), "the save never reached its pool drain");
+
+            var editing = _h.OnDispatcherAsync(() => Set(page, typeof(ExchangeOnlineConfigPage), "exoOrganization", "fabrikam.onmicrosoft.com"));
+            var first = await Task.WhenAny(editing, Task.Delay(TimeSpan.FromSeconds(5), cancel));
+            Assert.True(ReferenceEquals(first, editing), "an edit on the page waited for the pool drain: the drain held the circuit");
+            await editing;
+            Assert.False(saving.IsCompleted, "the save completed while its drain was held");
+        }
+        finally
+        {
+            release.Set();
+            await Task.WhenAny(saving, Task.Delay(TimeSpan.FromSeconds(30), cancel));
+        }
+
+        await saving;
+        Assert.Contains("contoso.onmicrosoft.com", _h.StoredModuleConfig(ExoConnectionPool.ConfigModuleKey), StringComparison.Ordinal);
+    }
+
     // ---- Module Configuration ------------------------------------------------------------------
 
     [Fact]

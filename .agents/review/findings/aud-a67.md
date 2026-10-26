@@ -63,6 +63,9 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (3): `Components/Pages/ExchangeOnlineConfig.razor`, `Modules/ModuleCatalog.cs` (Exchange Online 1.0.4 -> 1.0.5);
+  `ExchangeAdminWeb.Tests/SettingsSaveOffCircuitTests.cs`, `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs` (a
+  `BeforeRead` hook beside the store stand-in's `BeforeWrite`, so a test can hold a read).
 - (2): `Services/Storage/ConfigDbMaintenance.cs`, `Services/BitLockerRecoveryService.cs`, `Modules/ModuleCatalog.cs`
   (BitLocker Recovery 1.2.2 -> 1.2.3); `ExchangeAdminWeb.Tests/ConfigDbMaintenanceTests.cs`,
   `ExchangeAdminWeb.Tests/BitLockerRecoveryTests.cs`.
@@ -119,6 +122,17 @@ process measurement above.
 |---|---|---|
 | B1 `ConfigDbMaintenance.OpenReadOnly`'s command timeout removed | `e0c3f4304fe3b7431439e77a66c29103` | 2 of 161: `OpenReadOnly_TakesTheOneBusyWait_AsBothItsBusyTimeoutAndItsCommandTimeout` (`DefaultTimeout` 30 where 5 was expected) and `Check_OfADatabaseHeldByAnotherConnection_GivesUp_WithoutTheProvidersThirtySecondRetry` ("the check waited 30.3 s") |
 | B2 `BitLockerRecoveryService`'s archive command timeout removed | `defb8e71c7c2246457a743e40aab7625` | 1 of 161: `BitLockerRecoveryTests.A_held_archive_is_reported_without_the_providers_thirty_second_retry` ("the search waited 30.3 s") |
+
+(3). Filter `FullyQualifiedName~SettingsSaveOffCircuitTests|FullyQualifiedName~SettingsStoreTextTests|FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~ProgressRegistryTests|FullyQualifiedName~ClickGate|FullyQualifiedName~ModuleCatalogTests|FullyQualifiedName~ExoConnectionPool`
+(551 tests). `ExchangeOnlineConfig.razor` MD5 `c4375890674270d8d7b2e046a2cf5457`, matched after the row; 551/551 green
+after the restore. The mutant is the call as it was at `5d89d3a3`, so its failure is the reproduction. The existing
+drain tests were the constraint and all pass unchanged: `ProgressRegistry` pins `ExoPool.DrainPool(`, which the awaited
+call still carries, and `SettingsStoreTextTests.ExchangeOnlineConfig_AFailingDrainAfterASavedConnection_...` still gets
+its own warning and its own audit action. A wider run over every settings-page and pool suite was green at 843/843.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| C1 `SaveExoConfig`'s drain back on the circuit (`ExoPool.DrainPool();`) | `7dcc7c11d68cb12021be7f280f332a48` | 1 of 551: `SettingsSaveOffCircuitTests.ExchangeOnlineConfig_AConnectionSavesPoolDrain_LeavesTheCircuitFree` - "an edit on the page waited for the pool drain: the drain held the circuit" |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 

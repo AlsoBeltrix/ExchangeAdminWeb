@@ -132,7 +132,9 @@ public sealed class ModuleCatalog
             IsConfigOnly = true,
             // 1.0.3: the connection save reports to the status frame, including the pooled
             // runspace drain (docs/ProgressCoverage-Plan.md S2).
-            Version = "1.0.4",
+            // 1.0.5: that drain runs off the circuit, so the page stays live while the pooled
+            // connections are disconnected (aud-a67).
+            Version = "1.0.5",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",

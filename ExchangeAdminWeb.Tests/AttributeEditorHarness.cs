@@ -366,10 +366,23 @@ internal sealed class AttributeEditorHarness : IDisposable
         /// </summary>
         public Action? BeforeWrite { get; set; }
 
+        /// <summary>
+        /// Run once, as the next read opens: where a test can hold a read the way <see cref="BeforeWrite"/> holds a write
+        /// (aud-a67). Armed from inside <see cref="BeforeWrite"/> to catch the first read AFTER a save's write - the
+        /// Exchange Online pool drain's re-read of the connection.
+        /// </summary>
+        public Action? BeforeRead { get; set; }
+
         public long GetChangeToken() => inner.GetChangeToken();
 
-        public T Read<T>(Func<SqliteConnection, T> read) =>
-            ReadsFail ? throw new InvalidOperationException("config store unreadable") : inner.Read(read);
+        public T Read<T>(Func<SqliteConnection, T> read)
+        {
+            if (ReadsFail)
+                throw new InvalidOperationException("config store unreadable");
+
+            RunBeforeRead();
+            return inner.Read(read);
+        }
 
         public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write)
         {
@@ -393,6 +406,13 @@ internal sealed class AttributeEditorHarness : IDisposable
         {
             var hook = BeforeWrite;
             BeforeWrite = null;
+            hook?.Invoke();
+        }
+
+        private void RunBeforeRead()
+        {
+            var hook = BeforeRead;
+            BeforeRead = null;
             hook?.Invoke();
         }
     }

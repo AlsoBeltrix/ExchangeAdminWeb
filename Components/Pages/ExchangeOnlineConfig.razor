@@ -559,7 +559,12 @@
             // hold connections opened before a change saved on the other instance.
             try
             {
-                ExoPool.DrainPool();
+                // aud-a67. Off the circuit, as every write on this page already is (aud-a41): DrainPool empties the bag one
+                // runspace at a time and DestroyRunspace runs a synchronous Disconnect-ExchangeOnline against the service for
+                // each - up to five Exchange Online round trips - and then re-reads the three connection values from the
+                // shared config database. On the circuit that held the whole page, this operator's and every other render on
+                // it, for as long as the service took to answer five disconnects.
+                await Task.Run(() => ExoPool.DrainPool());
                 if (!allEmpty)
                 {
                     statusMessage = written.Count > 0
