@@ -816,6 +816,7 @@ public static class ProgressRegistry
                     "Email.SendAdminNotificationAsync(",
                     "Email.SendUserNotificationAsync(",
                     "Email.SendOwnerNotificationAsync(",
+                    "PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(",
                 ],
                 "the fourth of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3) and "
                 + "the near-twin of MailboxPermissions.SubmitSingle - read rather than assumed, "
@@ -823,7 +824,7 @@ public static class ProgressRegistry
                 + "diverge. On the reporting question they do not: the same preamble, the same "
                 + "Begin below it, the same Complete already past all three notification mails, "
                 + "so the same fix. The Begin now opens above the try and the refusals end the "
-                + "activity by disposing the using. NINE calls are named, every remote call in "
+                + "activity by disposing the using. TEN calls are named (kd-44 added the tenth), every remote call in "
                 + "the handler's own body. ServiceNow.ValidateTicketAsync is named first and is "
                 + "NOT what makes this handler slow: it returns a local true without leaving the "
                 + "machine when ServiceNow:Enabled is false. Validator"
@@ -839,7 +840,9 @@ public static class ProgressRegistry
                 + "against the cloud and, on a miss, a fresh on-prem runspace behind the Delinea "
                 + "credential fetch. The Set and Remove writes are named separately because an "
                 + "if/else picks between them - the one structural difference from the twin, "
-                + "which uses a ternary. Email.SendOwnerNotificationAsync is the CLOSING pin, "
+                + "which uses a ternary. Email.SendOwnerNotificationAsync closes the success branch; since kd-44 "
+                + "PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync - the user and owner notices of a write whose "
+                + "outcome could not be confirmed - follows it as the CLOSING pin, "
                 + "the last remote call in the handler's own body. GetAuthenticationStateAsync "
                 + "and AuthorizationService.AuthorizeAsync were read and deliberately NOT named: "
                 + "both decide from the Windows token's group SIDs plus a cached section-access "
@@ -1626,6 +1629,7 @@ public static class ProgressRegistry
                     "Email.SendAdminNotificationAsync(",
                     "Email.SendUserNotificationAsync(",
                     "Email.SendOwnerNotificationAsync(",
+                    "PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(",
                 ],
                 "the third of the survey's nine PARTIALs (docs/ProgressCoverage-Plan.md S3), and "
                 + "the MIRROR of IntuneDevices and RiskyUsers rather than another of them: there "
@@ -1634,7 +1638,7 @@ public static class ProgressRegistry
                 + "is the opening end. The Begin now opens above the try, so the ticket and "
                 + "protected-target refusals are inside the window too, and they end the activity "
                 + "by disposing the using - the shape BlockedSenders.ConfirmUnblock settled on "
-                + "for the same preamble. NINE calls are named, every remote call in the "
+                + "for the same preamble. TEN calls are named (kd-44 added the tenth), every remote call in the "
                 + "handler's own body, each measured by reading the callee. "
                 + "ServiceNow.ValidateTicketAsync is named first and is NOT what makes this "
                 + "handler slow: it returns a local true and never leaves the machine when "
@@ -1652,8 +1656,10 @@ public static class ProgressRegistry
                 + "Get-Mailbox against the cloud and, on a miss, a fresh on-prem runspace behind "
                 + "the Delinea credential fetch. The Add and Remove writes are named separately "
                 + "because the handler picks between them in a ternary. The three mails are the "
-                + "tail, and Email.SendOwnerNotificationAsync is the CLOSING pin: it is the last "
-                + "remote call in the handler's own body, inside the success branch, and the "
+                + "tail, Email.SendOwnerNotificationAsync the last inside the success branch; since kd-44 "
+                + "PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync - the user and owner notices of a right "
+                + "whose outcome could not be confirmed - follows that branch as the CLOSING pin: it is the last "
+                + "remote call in the handler's own body, and the "
                 + "Complete follows it. Two calls were read and deliberately NOT named: "
                 + "GetAuthenticationStateAsync and AuthorizationService.AuthorizeAsync decide "
                 + "from the Windows token's group SIDs plus a cached section-access read and make "

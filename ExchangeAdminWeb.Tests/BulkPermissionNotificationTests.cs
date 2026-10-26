@@ -129,6 +129,22 @@ public class BulkPermissionNotificationTests
     }
 
     [Theory]
+    [InlineData("MailboxPermissionService.cs", "ProcessMailboxPermissionsCsvAsync", "result.UnconfirmedRights ?? []")]
+    [InlineData("CalendarPermissionService.cs", "ProcessCalendarPermissionsCsvAsync", "result.Unconfirmed ? [notifyPermType] : []")]
+    public void TheBulkLoopsTellTheAffectedOfARowThatCouldNotBeConfirmed(string file, string method, string rights)
+    {
+        // kd-44. A row whose outcome is unknown tells the trustee and the owner it may have changed: once, on what is
+        // unconfirmed, and before the success branch - such a row is not a success.
+        var body = Body(file, method);
+
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, "NotifyAffectedOfUnconfirmedAsync"));
+        var notifyAt = body.IndexOf("PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync", StringComparison.Ordinal);
+        Assert.True(notifyAt > 0, "the bulk loop must tell the affected of an unconfirmed row");
+        Assert.True(body.IndexOf(rights, notifyAt, StringComparison.Ordinal) > notifyAt, "on what is unconfirmed");
+        Assert.True(body.IndexOf("if (result.Success)", notifyAt, StringComparison.Ordinal) > notifyAt, "before the success branch");
+    }
+
+    [Theory]
     [InlineData("MailboxPermissions.razor", "ProcessMailboxPermissionsCsvAsync")]
     [InlineData("CalendarPermissions.razor", "ProcessCalendarPermissionsCsvAsync")]
     public void ThePagesHandTheProcessorAnEmailService(string page, string call)

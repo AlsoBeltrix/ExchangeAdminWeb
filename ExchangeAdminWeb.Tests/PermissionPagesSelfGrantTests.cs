@@ -565,6 +565,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         if (which == "owner")
             email.SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>())
                 .Returns(refused);
+        if (which == "unconfirmed user")
+            email.SendUnconfirmedUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>())
+                .Returns(refused);
+        if (which == "unconfirmed owner")
+            email.SendUnconfirmedOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>())
+                .Returns(refused);
         return email;
     }
 
@@ -1576,10 +1582,11 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             .ToList();
 
     [Fact]
-    public async Task ASingleChangeItsCatchFilesUndetermined_TellsTheAdministrators_AndNoOneElse()
+    public async Task ASingleChangeItsCatchFilesUndetermined_TellsTheAdministrators_AndTheUserAndOwnerItCouldNotBeConfirmed()
     {
         // The Calendar removal whose retry could not connect once its command was sent (aud-a76's case) is filed Undetermined -
-        // it may have been made - and sent no notification at all.
+        // it may have been made - and sent no notification at all. aud-a70 (15) told the administrators; kd-44, revising it,
+        // tells the user and the owner too - that it could not be confirmed, never that it was made.
         using var pool = PoolWhoseWriteBorrowFails(_ => { }, LostSession());
         _h.Failures["Remove-MailboxFolderPermission"] = "You must call Connect-ExchangeOnline before calling any other cmdlet.";
         var email = EmailWhere(null);
@@ -1595,8 +1602,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         await email.Received(1).SendAdminNotificationAsync(Logon, Arg.Any<string>(), "RemoveCalendar_UNCONFIRMED", Target, Other, "Remove",
             false, "INC100", WriteNotConfirmed);
         Assert.Single(AdminActions(email));
-        await email.DidNotReceive().SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
-        await email.DidNotReceive().SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        AssertToldItCouldNotBeConfirmed(email, CalendarPage, isGrant: false, permission: "Calendar Access");
     }
 
     [Theory]
@@ -1645,23 +1651,142 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     [Fact]
-    public async Task TheUnconfirmedNotification_IsSentOnlyForAnUndeterminedChange_AndAThrowIsLogged()
+    public async Task TheUnconfirmedNotifications_AreSentOnlyForAnUndeterminedChange_AndAThrowIsLogged()
     {
         var email = EmailWhere(null);
         var logger = new CapturingLogger<MailboxPermissions>();
 
         foreach (var filed in new[] { AuditResult.Success, AuditResult.Failed })
-            await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(filed, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+            await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(filed, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", Target, "FullAccess", true, logger);
         Assert.Empty(AdminActions(email));
+        _ = email.DidNotReceive().SendUnconfirmedUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        _ = email.DidNotReceive().SendUnconfirmedOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
 
-        await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(AuditResult.Undetermined, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(AuditResult.Undetermined, email, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", Target, "FullAccess", true, logger);
         await email.Received(1).SendAdminNotificationAsync(Logon, "10.0.0.5", "AddFullAccess_UNCONFIRMED", Target, Other, "FullAccess", false, "INC100", "the banner");
+        AssertToldItCouldNotBeConfirmed(email, MailboxPage, isGrant: true); // kd-44
         Assert.Empty(logger.Warnings);
 
-        await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(AuditResult.Undetermined, EmailWhere("admin"), Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", logger);
+        var adminRefused = EmailWhere("admin");
+        await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(AuditResult.Undetermined, adminRefused, Logon, "10.0.0.5", "AddFullAccess", Target, Other, "FullAccess", "INC100", "the banner", Target, "FullAccess", true, logger);
         var (message, exception) = Assert.Single(logger.Warnings);
         Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
         Assert.Contains(Target, message, StringComparison.Ordinal);
+        AssertToldItCouldNotBeConfirmed(adminRefused, MailboxPage, isGrant: true); // kd-44: the administrators' notice failing does not silence theirs
+    }
+
+    // ---- kd-44: a change whose outcome could not be confirmed tells the user and the owner it may have changed --------------
+
+    /// <summary>
+    /// kd-44. <paramref name="email"/> told <see cref="Other"/> and the owner of <see cref="Target"/> that a change of
+    /// <paramref name="permission"/> could not be confirmed - once each - and never sent either the notice that it was made.
+    /// </summary>
+    private static void AssertToldItCouldNotBeConfirmed(EmailService email, string page, bool isGrant, string? permission = null)
+    {
+        permission ??= page == MailboxPage ? "FullAccess" : "Calendar Reviewer";
+        email.Received(1).SendUnconfirmedUserNotificationAsync(Other, page == MailboxPage ? Target : $"{Target} (Calendar)", Logon, permission, isGrant);
+        email.Received(1).SendUnconfirmedOwnerNotificationAsync(Target, Other, Logon, permission, isGrant);
+        email.DidNotReceive().SendUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        email.DidNotReceive().SendOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACloudWriteWhoseOutcomeIsUnknown_TellsTheUserAndTheOwnerItCouldNotBeConfirmed(string page)
+    {
+        // aud-a70 (15) left them untold: the grant notice says access changed, which nobody can say here - but it may have.
+        const string lost = "the session to Exchange Online was lost";
+        _h.Failures["Add-MailboxPermission"] = lost;
+        _h.Failures["Set-MailboxFolderPermission"] = lost;
+        _h.Failures["Add-MailboxFolderPermission"] = lost;
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.True(result.Unconfirmed, result.Message);
+        AssertToldItCouldNotBeConfirmed(email, page, isGrant: true);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AnOnPremWriteWhoseOutcomeIsUnknown_TellsTheUserAndTheOwnerItCouldNotBeConfirmed(string page)
+    {
+        _h.OnPremTransportFailures[TheWrite(page)] = "Processing data from remote server failed";
+        var email = EmailWhere(null);
+
+        var (result, _) = await ConfirmOnPrem(page, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, email);
+
+        Assert.True(result.Unconfirmed, result.Message);
+        AssertToldItCouldNotBeConfirmed(email, page, isGrant: true);
+    }
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task AChangeExchangeRefused_SendsNoUnconfirmedNotice(string page)
+    {
+        // Exchange's own refusal is known: nothing was written by it, so nobody is told it may have changed.
+        _h.Failures["Add-MailboxPermission"] = "The user isn't valid for this mailbox.";
+        _h.Failures["Set-MailboxFolderPermission"] = "The user isn't valid for this folder.";
+        var email = EmailWhere(null);
+
+        var (result, _) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, email: email);
+
+        Assert.False(result.Success);
+        Assert.False(result.Unconfirmed);
+        _ = email.DidNotReceive().SendUnconfirmedUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        _ = email.DidNotReceive().SendUnconfirmedOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+    }
+
+    [Fact]
+    public async Task TheUnconfirmedNotices_NameEveryUnconfirmedRight_AndNoneIsSentForNone()
+    {
+        var email = EmailWhere(null);
+        var logger = new CapturingLogger<MailboxPermissions>();
+
+        await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(email, [], Target, Target, Other, Logon, true, logger);
+        _ = email.DidNotReceive().SendUnconfirmedUserNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        _ = email.DidNotReceive().SendUnconfirmedOwnerNotificationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+
+        await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(email, ["FullAccess", "SendAs"], Target, Target, Other, Logon, false, logger);
+        AssertToldItCouldNotBeConfirmed(email, MailboxPage, isGrant: false, permission: "FullAccess+SendAs");
+        Assert.Empty(logger.Warnings);
+    }
+
+    [Theory]
+    [InlineData("unconfirmed user")]
+    [InlineData("unconfirmed owner")]
+    public async Task AnUnconfirmedNoticeThatThrows_IsLogged_AndTheOtherIsStillSent(string which)
+    {
+        var email = EmailWhere(which);
+        var logger = new CapturingLogger<MailboxPermissions>();
+
+        await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(email, ["FullAccess"], Target, Target, Other, Logon, true, logger);
+
+        _ = email.Received(1).SendUnconfirmedUserNotificationAsync(Other, Target, Logon, "FullAccess", true);
+        _ = email.Received(1).SendUnconfirmedOwnerNotificationAsync(Target, Other, Logon, "FullAccess", true);
+        var (message, exception) = Assert.Single(logger.Warnings);
+        Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
+        Assert.Contains(Target, message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, "Calendar Reviewer", "Your access may or may not have changed", "following calendar")]
+    [InlineData(true, "FullAccess", "Their access may or may not have changed", "to your mailbox")]
+    public void TheUnconfirmedNotice_SaysWhatMayHaveChangedAndWhomToContact_NeverThatItChanged(bool toOwner, string permission, string mayHave, string what)
+    {
+        // kd-44's wording: neutral - what was attempted and may have changed, by whom, and whom to contact.
+        var body = EmailService.BuildUnconfirmedChangeBody(toOwner, toOwner ? Target : $"{Target} (Calendar)", Other, permission, isGrant: true, Logon);
+
+        Assert.Contains(EmailService.UnconfirmedSubject, body, StringComparison.Ordinal);
+        Assert.Contains("was attempted, and whether it took effect could not be confirmed", body, StringComparison.Ordinal);
+        Assert.Contains(mayHave, body, StringComparison.Ordinal);
+        Assert.Contains(what, body, StringComparison.Ordinal);
+        Assert.Contains(toOwner ? Other : $"{Target} (Calendar)", body, StringComparison.Ordinal);
+        Assert.Contains(permission, body, StringComparison.Ordinal);
+        Assert.Contains("CONTOSO\\jdoe", body, StringComparison.Ordinal);
+        Assert.Contains("please contact the IT Service Desk", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("has been granted", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("has been removed", body, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- kd-18 (second half), kd-40: a ticket is required, and a refusal before the target is checked is recorded ----------
@@ -1674,13 +1799,14 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             .Returns(Task.FromResult(AuthorizationResult.Failed()));
     }
 
-    /// <summary>The pages these refusals are fixed on so far.</summary>
-    public static TheoryData<string> RefusalPages => [MailboxPage];
+    /// <summary>The pages these refusals are fixed on: both.</summary>
+    public static TheoryData<string> RefusalPages => [MailboxPage, CalendarPage];
 
     /// <summary>A ticket with nothing in it that identifies a ticket: blank, white space, and control characters only.</summary>
     public static TheoryData<string, string> RefusalPagesAndMissingTickets => new()
     {
         { MailboxPage, "" }, { MailboxPage, "   " }, { MailboxPage, "\u0001\u0000" },
+        { CalendarPage, "" }, { CalendarPage, "   " }, { CalendarPage, "\u0001\u0000" },
     };
 
     /// <summary>A refused change's row: Failed, its error the banner, refused at <paramref name="step"/>, nothing attempted.</summary>

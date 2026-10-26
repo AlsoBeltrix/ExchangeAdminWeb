@@ -57,12 +57,17 @@ public class CalendarPermissionService : ExchangeServiceBase
               .AddParameter("AccessRights", level)
               .AddParameter("ErrorAction", "Stop");
             submission.Submitting(); // aud-a76: the write command is invoked next
+            // kd-43. The Set and its Add fallback each read their own failure, on a tracker of their own, carried to the
+            // attempt's tracker - which the pool reads to discard the connection, and Unanswered to read the outcome.
+            var set = new ConnectionErrorTracker();
             try
             {
-                Invoke(ps, tracker);
+                Invoke(ps, set);
             }
-            catch
+            catch (Exception setFailure) when (!OutcomeUnknown(setFailure, set) && NamesNoPermissionEntry(setFailure))
             {
+                // Exchange answered that the user holds no entry on the folder to set: add one. The one refusal an Add
+                // follows - any other is the write's own answer.
                 ps.Commands.Clear();
                 ps.Streams.Error.Clear();
                 ps.AddCommand("Add-MailboxFolderPermission")
@@ -70,7 +75,21 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("User", user)
                   .AddParameter("AccessRights", level)
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps, tracker);
+                var add = new ConnectionErrorTracker();
+                try
+                {
+                    Invoke(ps, add);
+                }
+                finally
+                {
+                    Carry(add, tracker);
+                }
+            }
+            finally
+            {
+                // A Set whose session failed once it was sent is not followed by anything on that session: it may have
+                // taken, and an Add sent there met the pre-flight error, which read as "nothing ran" (kd-43).
+                Carry(set, tracker);
             }
         }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null)));
         return Unanswered(result, submission, attempt, $"Whether {user} was granted {accessRight} on the calendar of {resolvedMailbox ?? targetMailbox} could not be confirmed");
@@ -108,6 +127,35 @@ public class CalendarPermissionService : ExchangeServiceBase
             Invoke(ps, tracker);
         }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true));
         return Unanswered(result, submission, attempt, $"Whether the calendar permission of {user} on the calendar of {resolvedMailbox ?? targetMailbox} was removed could not be confirmed");
+    }
+
+    /// <summary>kd-43. What <paramref name="from"/> - one command's tracker - flagged, carried to <paramref name="to"/>, the attempt's.</summary>
+    private static void Carry(ConnectionErrorTracker from, ConnectionErrorTracker to)
+    {
+        to.HasConnectionError |= from.HasConnectionError;
+        to.HasRetriablePrecheckError |= from.HasRetriablePrecheckError;
+    }
+
+    /// <summary>
+    /// kd-43. Whether a failed <c>Set-MailboxFolderPermission</c> is Exchange's answer that the user holds no entry on the
+    /// folder to set - the one refusal an <c>Add-MailboxFolderPermission</c> follows. Read from the error's words or its
+    /// identifier anywhere in the chain (labelled assumption, not probed: Exchange Online says "There is no existing
+    /// permission entry found for user" and names <c>UserNotFoundInPermissionEntryException</c>).
+    /// </summary>
+    internal static bool NamesNoPermissionEntry(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (Says(e.Message) || (e.Data[PsErrorsDataKey] is string[] errors && errors.Any(Says)))
+                return true;
+            if ((e as IContainsErrorRecord)?.ErrorRecord is { } record
+                && (Says(record.ToString()) || record.FullyQualifiedErrorId?.Contains("UserNotFoundInPermissionEntry", StringComparison.OrdinalIgnoreCase) == true))
+                return true;
+        }
+
+        return false;
+
+        static bool Says(string? text) => text?.Contains("no existing permission entry", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     /// <summary>aud-a70 (14). The right a calendar write's <see cref="PermissionResult.UnconfirmedRights"/> names: its one folder permission.</summary>
@@ -292,6 +340,9 @@ public class CalendarPermissionService : ExchangeServiceBase
                 await PermissionChangeNotifier.NotifyAffectedAsync(
                     email, result.Success ? [notifyPermType] : [], $"{row.Target} (Calendar)",
                     row.Target, row.User, currentUser, isSet, _logger);
+                // kd-44: and a write whose outcome is unknown tells them it may have changed.
+                await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(
+                    email, result.Unconfirmed ? [notifyPermType] : [], $"{row.Target} (Calendar)", row.Target, row.User, currentUser, isSet, _logger);
 
                 if (result.Success)
                 {

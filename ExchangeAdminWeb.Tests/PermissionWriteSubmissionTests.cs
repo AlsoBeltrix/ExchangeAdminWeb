@@ -247,6 +247,97 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
         Assert.Contains($"could not be confirmed: {SessionLost}. Check the permissions before trying again.", result.Message, StringComparison.Ordinal);
     }
 
+    // ---- kd-43: a cloud Calendar set adds only after Exchange answers that there is no entry to set ------------------------
+
+    private const string NoEntry = "There is no existing permission entry found for user: jdoe@contoso.test.";
+    private const string PreFlight = "You must call Connect-ExchangeOnline before calling any other cmdlet.";
+
+    [Fact]
+    public async Task ACloudCalendarSet_WhoseSessionDropsOnceSent_IsUnconfirmed_AndNoAddIsSent()
+    {
+        // The Set was sent and its session dropped before Exchange answered. The catch sent the Add fallback on the dead
+        // session, which met the pre-flight error, and the outcome read that as "nothing ran": filed Failed.
+        _h.Failures["Set-MailboxFolderPermission"] = SessionLost;
+        _h.Failures["Add-MailboxFolderPermission"] = PreFlight;
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.Equal(new[] { CalendarPermissionService.CalendarRight }, result.UnconfirmedRights!);
+        Assert.Contains($"could not be confirmed: {SessionLost}", result.Message, StringComparison.Ordinal);
+        Assert.Single(_h.CallsTo("Set-MailboxFolderPermission"));
+        Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    [Fact]
+    public async Task ACloudCalendarSet_ThatExchangeAnswersHasNoEntry_AddsOne()
+    {
+        _h.Failures["Set-MailboxFolderPermission"] = NoEntry;
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Single(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    [Fact]
+    public async Task ACloudCalendarSet_ThatExchangeRefusesOtherwise_IsFailed_AndNoAddIsSent()
+    {
+        // Any refusal but "no entry" is the write's own answer: an Add would meet it too.
+        _h.Failures["Set-MailboxFolderPermission"] = "The user isn't valid for this folder.";
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.False(result.Unconfirmed);
+        Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    [Fact]
+    public async Task ACloudCalendarSet_WhoseSessionDrops_IsNeverFollowedByAnAdd_WhateverItsWords()
+    {
+        // The session's failure is read first: one the attempt reads as its session's stops the write even when its words
+        // also name no entry - whether the Set took is unknown, and an Add would be sent on a session that failed.
+        _h.Failures["Set-MailboxFolderPermission"] = $"{NoEntry} {SessionLost}";
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.True(result.Unconfirmed, result.Message);
+        Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    [Theory]
+    [InlineData(SessionLost, true)]
+    [InlineData(PreFlight, false)]
+    public async Task ACloudCalendarSetsAddFallback_ReadsItsOwnFailure(string addFailure, bool unconfirmed)
+    {
+        // After Exchange's "no entry": an Add whose session drops may have taken; one that meets the pre-flight error ran not
+        // at all, and the Set had been refused - nothing was written.
+        _h.Failures["Set-MailboxFolderPermission"] = NoEntry;
+        _h.Failures["Add-MailboxFolderPermission"] = addFailure;
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.Equal(unconfirmed, result.Unconfirmed);
+        Assert.Single(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    [Theory]
+    [InlineData("There is no existing permission entry found for user: jdoe.", true)]
+    [InlineData("THERE IS NO EXISTING PERMISSION ENTRY FOUND FOR USER: JDOE.", true)]
+    [InlineData("The user isn't valid for this folder.", false)]
+    [InlineData("the session to Exchange Online was lost", false)]
+    public void OnlyExchangesNoEntryAnswer_NamesNoPermissionEntry(string message, bool named)
+    {
+        var failure = new InvalidOperationException("raw-text-kd43");
+        failure.Data[ExchangeServiceBase.PsErrorsDataKey] = new[] { message };
+
+        Assert.Equal(named, CalendarPermissionService.NamesNoPermissionEntry(failure));
+        Assert.Equal(named, CalendarPermissionService.NamesNoPermissionEntry(new InvalidOperationException("wrapped", new InvalidOperationException(message))));
+    }
+
     [Theory]
     [InlineData("SetCalendarPermission")]
     [InlineData("RemoveCalendarPermission")]

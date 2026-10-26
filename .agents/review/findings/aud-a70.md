@@ -115,7 +115,8 @@ Invoke-Command runs the script, then writes a `PSRemotingTransportException` as 
 notification - its action marked `_UNCONFIRMED`, not a success, the banner as its detail; a throw logged, the result
 standing. A result left unconfirmed through (14) reaches the success path's administrator notification already: its action
 takes the same mark there (Mailbox 510 and 729, Calendar 485 and 671). No user or owner notification in either case: those
-say access changed, which nobody can say. A change that wrote nothing (Failed) is unchanged. Through a helper rather than a
+say access changed, which nobody can say (revised by kd-44, `kd-44.md`: a distinct, neutral notice now tells them it could
+not be confirmed). A change that wrote nothing (Failed) is unchanged. Through a helper rather than a
 second `Email.SendAdminNotificationAsync(` in `SubmitSingle`: ProgressRegistry holds every such call ahead of the handler's
 first `Complete`, which a call in the catch is not. After (12) and (14) no failure the services let out reaches
 `ExecuteOnPrem`'s catch at the write step - the call there is kept for the shape, and is not proven by a test (Known gaps).
@@ -369,7 +370,8 @@ Planning Rules). Recommendation: decline (10), or route it with (6) to the owner
   `PSRemotingTransportException` (the harness models it so).
 - (14) on the bulk paths: the row's audit record is Undetermined and its message says not confirmed, but its CSV entry keeps
   the status FAILED and counts among the run's failures - the report's statuses are unchanged.
-- (15): no user or owner notification for an unconfirmed change (they say access changed). After (12) and (14) no failure the
+- (15): no user or owner notification for an unconfirmed change (they say access changed) - revised by kd-44 (`kd-44.md`): they
+  now get a distinct, neutral notice that it could not be confirmed. After (12) and (14) no failure the
   services let out reaches `ExecuteOnPrem`'s catch at the write step, so its Undetermined notification is kept for the shape
   and unproven by any test; `SubmitSingle`'s is proven (the Calendar removal whose retry cannot connect).
 - (4): the servicer note rides the same dictionary as the identity written, which the tests pin; no serviced fixture drives

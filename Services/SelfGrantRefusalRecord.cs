@@ -72,16 +72,6 @@ internal static class SelfGrantRefusalRecord
     internal static Dictionary<string, object?> RefusalExtra(string step) =>
         new() { ["refusedAt"] = step, ["mutationAttempted"] = false };
 
-    /// <summary>
-    /// kd-18. The refusal of a ticket with nothing in it that identifies one - null, blank, white space or control characters
-    /// only - in the words <see cref="ServiceNowService"/> refuses a blank ticket with when it is enabled; null when one is
-    /// present. Asked before ServiceNow, which passes every ticket while it is switched off, a blank one included.
-    /// </summary>
-    internal static TicketValidationResult? MissingTicket(string? ticket) =>
-        ticket is not null && ticket.Any(c => !char.IsWhiteSpace(c) && !char.IsControl(c))
-            ? null
-            : new TicketValidationResult { IsValid = false, Message = "Ticket number is required" };
-
     /// <summary>kd-40. A ticket refusal as its banner and its row say it: the check's own words, and that nothing was written.</summary>
     internal static string TicketRefused(string? message) =>
         $"Ticket validation failed: {(message ?? "").Trim().TrimEnd('.')}. Nothing was written.";
