@@ -1674,13 +1674,14 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             .Returns(Task.FromResult(AuthorizationResult.Failed()));
     }
 
-    /// <summary>The pages these refusals are fixed on so far.</summary>
-    public static TheoryData<string> RefusalPages => [MailboxPage];
+    /// <summary>The pages these refusals are fixed on: both.</summary>
+    public static TheoryData<string> RefusalPages => [MailboxPage, CalendarPage];
 
     /// <summary>A ticket with nothing in it that identifies a ticket: blank, white space, and control characters only.</summary>
     public static TheoryData<string, string> RefusalPagesAndMissingTickets => new()
     {
         { MailboxPage, "" }, { MailboxPage, "   " }, { MailboxPage, "\u0001\u0000" },
+        { CalendarPage, "" }, { CalendarPage, "   " }, { CalendarPage, "\u0001\u0000" },
     };
 
     /// <summary>A refused change's row: Failed, its error the banner, refused at <paramref name="step"/>, nothing attempted.</summary>

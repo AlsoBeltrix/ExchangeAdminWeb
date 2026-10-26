@@ -391,7 +391,7 @@
             if (await ReauthorizeAsync() is { } denied)
             { result = PermissionResult.Fail(RefusedAt(denied, SelfGrantRefusalRecord.AuthorizationRefusalStep)); return; } // kd-40: recorded
 
-            var ticketValidation = SelfGrantRefusalRecord.MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket); // kd-18: presence first - a dormant ServiceNow passes every ticket, a blank one included
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket); // kd-18: presence first, on the app's one rule (kd-24) - a dormant ServiceNow passes every ticket, a blank one included
             if (!ticketValidation.IsValid)
             {
                 result = PermissionResult.Fail(RefusedAt(SelfGrantRefusalRecord.TicketRefused(ticketValidation.Message), SelfGrantRefusalRecord.TicketRefusalStep)); // kd-40: recorded
@@ -584,7 +584,7 @@
             if (await ReauthorizeAsync() is { } denied)
             { result = PermissionResult.Fail(RefusedAt(denied, SelfGrantRefusalRecord.AuthorizationRefusalStep)); return; } // kd-40: recorded
 
-            var ticketValidation = SelfGrantRefusalRecord.MissingTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket); // kd-18: presence first, as SubmitSingle's
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket); // kd-18: presence first, as SubmitSingle's
             if (!ticketValidation.IsValid)
             {
                 result = PermissionResult.Fail(RefusedAt(SelfGrantRefusalRecord.TicketRefused(ticketValidation.Message), SelfGrantRefusalRecord.TicketRefusalStep)); // kd-40: recorded
