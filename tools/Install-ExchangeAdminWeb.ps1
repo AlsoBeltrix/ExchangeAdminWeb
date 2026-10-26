@@ -687,6 +687,37 @@ function Assert-ApplicationTargetUnchanged {
     }
 }
 
+function Assert-ExistingApplicationConfigKnown {
+    # cdt-57, the cdt-55 rule in this installer's terms. An existing application whose folder has lost
+    # its appsettings.json is not deployed over. Nothing on disk then says which config database its
+    # running process opened: it may have started on a ConfigStore:Path naming a shared one. The run
+    # would generate an appsettings.json naming no key, and the restarted instance would open a new
+    # database of its own under config\ and leave the one it was using behind, with no verified backup
+    # of that one taken.
+    #
+    # The folder is -PublishPath, not a separate serving folder: the check above has just refused any
+    # run whose -PublishPath is not the folder IIS serves this application from, so for an existing
+    # application the two are the same folder.
+    #
+    # -ConfigStorePath answers the refusal, and is the reason it is actionable here. Supplying it
+    # states which database the instance opens: Resolve-ConfigStorePlan writes that key into the
+    # generated file, and cdt-21 then refuses if no database exists there. So the decision is explicit
+    # and verified rather than silently defaulted. Whitespace is not a path.
+    param(
+        [string]$Location,
+        [bool]$Exists,
+        [string]$PublishPath,
+        [string]$SuppliedConfigStorePath
+    )
+
+    if (-not $Exists) { return }
+    $appSettings = Join-Path $PublishPath "appsettings.json"
+    if (Test-Path -LiteralPath $appSettings -PathType Leaf) { return }
+    if (-not [string]::IsNullOrWhiteSpace($SuppliedConfigStorePath)) { return }
+
+    Write-Fail "IIS application $Location already exists, but there is no appsettings.json at '$appSettings'. Its running process may have been started with a ConfigStore:Path naming a shared config database: nothing on disk now says which database it opened, and this run would generate an appsettings.json naming none, so the instance would open a new database of its own under '$PublishPath\config' and leave the one it was using behind, with no verified backup of that one taken. Re-run with -ConfigStorePath naming the database this instance opens, restore its appsettings.json, or remove the application from IIS first if it has no configuration to keep. Nothing was changed."
+}
+
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 $defaultPublishPath = Join-Path $env:SystemDrive "inetpub\$AppAlias"
 $defaultLogRoot = Join-Path $env:ProgramData "ExchangeAdminWeb\Logs"
@@ -823,6 +854,10 @@ if ($applicationLookupFailed) {
     }
 }
 Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath
+# cdt-57. The check above has just proved that IIS serves this application from -PublishPath, so that
+# folder's appsettings.json is the configuration it runs on. Read-only, in plan and apply mode alike,
+# and before anything is written.
+Assert-ExistingApplicationConfigKnown -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -PublishPath $PublishPath -SuppliedConfigStorePath $ConfigStorePath
 
 # Read it in both modes - see the plan-mode note above. Guarded because the IIS provider
 # may not exist on a machine that is only producing a plan.
