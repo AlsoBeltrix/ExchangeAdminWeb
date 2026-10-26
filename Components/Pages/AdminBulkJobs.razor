@@ -136,6 +136,12 @@
 </div>
 
 @code {
+    /// <summary>
+    /// kd-53/kd-63. The category a row is filed under when the job carries no module of its own - this page's own, so no
+    /// row is left uncategorised. Internal because the Event Log's filter must offer it and a guard reads it from here.
+    /// </summary>
+    internal const string FallbackCategory = "AdminBulkJobs";
+
     private bool authChecked;
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
@@ -435,7 +441,7 @@
 
             Audit.LogModuleAction(
                 currentUser, clientIpAddress, action,
-                category: string.IsNullOrWhiteSpace(job.ModuleId) ? "AdminBulkJobs" : job.ModuleId,
+                category: string.IsNullOrWhiteSpace(job.ModuleId) ? FallbackCategory : job.ModuleId,
                 target: $"{job.ModuleId}/{job.Id}", success: success, ticketNumber: job.Ticket ?? "",
                 errorDetail: error,
                 extra: fields);
