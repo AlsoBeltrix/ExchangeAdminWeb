@@ -1138,6 +1138,104 @@ Describe 'cdt-21: a ConfigStore:Path naming a missing database is refused before
     }
 }
 
+Describe 'cdt-57: an application IIS already serves is not deployed over while its folder has no appsettings.json' {
+    # The cdt-21 check refuses a CONFIGURED key whose database is missing; a MISSING appsettings.json
+    # was simply "no key", so the run generated one naming none and the instance opened a fresh
+    # per-instance database, leaving the shared one it had been running on behind and unbacked-up.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt57Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Fail', 'Assert-ExistingApplicationConfigKnown') {
+            $fn = $script:Cdt57Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+    }
+
+    It 'refuses only an existing application whose folder has lost the file, and takes -ConfigStorePath as the answer (real files)' {
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt57_' + [guid]::NewGuid().ToString('N'))
+        $gone = Join-Path $root 'Publish Folder'
+        $kept = Join-Path $root 'Another Publish Folder'
+        $shared = Join-Path $root 'shared\exchangeadmin.db'
+        $refusal = {
+            param([bool]$Exists, [string]$Folder, [string]$Supplied)
+            $thrown = $null
+            try { Assert-ExistingApplicationConfigKnown -Location 'Site/App' -Exists $Exists -PublishPath $Folder -SuppliedConfigStorePath $Supplied } catch { $thrown = $_.Exception.Message }
+            $thrown
+        }
+        try {
+            New-Item -ItemType Directory -Path (Join-Path $gone 'config'), $kept -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $kept 'appsettings.json') -Value '{ "AllowedHosts": "*" }' -Encoding UTF8
+            # The folder it lost the file from still holds a per-instance database: that must not excuse
+            # the run, because nothing says the process was opening THAT one.
+            Set-Content -LiteralPath (Join-Path $gone 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8
+
+            & $refusal $true $gone '' |
+                Should -BeLike "IIS application Site/App already exists, but there is no appsettings.json at '$gone\appsettings.json'. Its running process may have been started with a ConfigStore:Path naming a shared config database*would open a new database of its own under '$gone\config' and leave the one it was using behind, with no verified backup of that one taken. Re-run with -ConfigStorePath naming the database this instance opens, restore its appsettings.json, or remove the application from IIS first if it has no configuration to keep. Nothing was changed." -Because 'nothing on disk says which database the running process opened'
+
+            & $refusal $true $gone '   ' |
+                Should -BeLike '*no appsettings.json*Nothing was changed.' -Because 'whitespace is not a supplied path'
+
+            foreach ($case in @(
+                    @{ Case = 'the operator names the database the instance opens'; Exists = $true; Folder = $gone; Supplied = $shared }
+                    @{ Case = 'the folder has its appsettings.json'; Exists = $true; Folder = $kept; Supplied = '' }
+                    @{ Case = 'the folder has its appsettings.json and a path is supplied too'; Exists = $true; Folder = $kept; Supplied = $shared }
+                    @{ Case = 'a fresh install: IIS serves no application here'; Exists = $false; Folder = $gone; Supplied = '' }
+                )) {
+                & $refusal $case.Exists $case.Folder $case.Supplied |
+                    Should -BeNullOrEmpty -Because "this run is not refused here ($($case.Case))"
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'is asked once, right after the move check, before anything is written (AST)' {
+        $statements = @($script:Cdt57Ast.EndBlock.Statements)
+        $moveCheck = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Assert-ApplicationTargetUnchanged *') { $i } })
+        $moveCheck.Count | Should -Be 1
+        $call = $statements[$moveCheck[0] + 1]
+        $call.Extent.Text | Should -BeExactly 'Assert-ExistingApplicationConfigKnown -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -PublishPath $PublishPath -SuppliedConfigStorePath $ConfigStorePath' -Because 'the folder is known to be the one IIS serves only once the move check has passed'
+        @($script:Cdt57Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-ExistingApplicationConfigKnown' }, $true)).Count |
+            Should -Be 1 -Because 'it is asked once, at script level, on every run'
+        $firstChange = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Invoke-PlanOrAction *' -or $statements[$i].Extent.Text -like 'Set-DirectoryAcl *') { $i } })[0]
+        ($moveCheck[0] + 1) | Should -BeLessThan $firstChange -Because 'a refused run must leave the host untouched'
+    }
+
+    It 'raises no false refusal on a -PlanOnly run with no appsettings.json and no application to read (Windows PowerShell 5.1)' {
+        # A plan on a host without the IIS provider cannot read the application, so $existingApplication
+        # is $null and this check must not fire - the cdt-15 warning already says the plan could not
+        # check. The run must still complete, and write nothing.
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt57_' + [guid]::NewGuid().ToString('N'))
+        $publish = Join-Path $root 'publish'
+        New-Item -ItemType Directory -Path (Join-Path $publish 'config') -Force | Out-Null
+        $alias = 'cdt57' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $snapshot = {
+            param($Root)
+            @(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                    if ($_.PSIsContainer) { '{0}|dir' -f $_.FullName.Substring($Root.Length) }
+                    else { '{0}|{1}|{2}' -f $_.FullName.Substring($Root.Length), $_.Length, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+                }) -join "`n"
+        }
+        try {
+            $before = & $snapshot $root
+            $out = & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Resolve-Path $script:InstallerPath).Path `
+                -PlanOnly -NonInteractive -SkipConfigBackup -PublishPath $publish -LogRoot (Join-Path $root 'logs') `
+                -AppAlias $alias -AppPoolName $alias -AdminGroups 'CONTOSO\Exchange Admins' 2>&1
+            $exitCode = $LASTEXITCODE
+            $text = @($out | ForEach-Object { "$_" }) -join "`n"
+            $exitCode | Should -Be 0 -Because "the plan must complete; it said: $text"
+            $text | Should -Match 'Plan only\. No changes were made\.'
+            ($text -replace '\s+', '') | Should -Not -Match 'thereisnoappsettings\.jsonat' -Because 'no application was read, so there is nothing to refuse'
+            & $snapshot $root | Should -BeExactly $before -Because 'a plan writes nothing'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 Describe 'cdt-22: the shared database folder is granted from the decided key, not only when -ConfigStorePath is re-stated' {
     # The grant on the shared database's folder (SQLite writes -wal/-shm beside it) followed the
     # parameter, so an update that kept the key and changed the pool identity left the new identity
