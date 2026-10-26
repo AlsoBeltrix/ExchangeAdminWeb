@@ -126,8 +126,11 @@ public sealed class SettingsStoreBusyTests : IDisposable
         }
 
         // aud-a41: the documented wait, once - not the provider's 30-second retry around it.
-        Assert.True(waited.Elapsed < SqliteConnectionFactory.BusyTimeout * 2 - TimeSpan.FromSeconds(1),
-            $"the save waited {waited.Elapsed.TotalSeconds:F2} s for the busy store");
+        // aud-a67 item 7: a ceiling that fails that retry loop and nothing else. One second under two busy waits (9 s) is
+        // a timing, not a signal, and a loaded host has crossed it with nothing wrong; the wait's shape is pinned
+        // structurally by SqliteBusyWaitTests instead.
+        Assert.True(waited.Elapsed < TimeSpan.FromSeconds(25),
+            $"the save waited {waited.Elapsed.TotalSeconds:F2} s for the busy store: the provider's retry loop, not one busy wait");
         Assert.Equal("777", StoredSecret());
         Assert.Equal(new[] { "user:" + Cfo }, StoredRules());
         var record = Assert.Single(_h.AuditEvents());

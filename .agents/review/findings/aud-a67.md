@@ -63,6 +63,7 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (7): `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs`, `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
 - (6): `Services/ADAttributeEditorService.cs`, `Modules/ModuleCatalog.cs` (AD Attribute Editor 1.7.2 -> 1.7.3);
   `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
 - (5): `ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs`.
@@ -195,6 +196,24 @@ after the restore. The mutant is the catch as it was at `44d99f3e`, so its failu
 | Mutation (call site) | Mutant MD5 | Named test failing |
 |---|---|---|
 | F1 `SaveAllowlistAndAudit`'s busy branch removed | `3e80d5e67efb1fd328fc0054253ef5ac` | 1 of 312: `SettingsStoreBusyTests.ModuleConfig_AnAllowlistSaveThatFindsTheStoreBusy_IsRefusedAsBusy_AndWritesNothing` - the record's `refusedAt` missing where `StoreBusy` was expected (and the admin shown "Failed to save: SQLite Error 5") |
+
+(7). Confirmed by the supervisor, not speculative: these two ceilings failed repeatedly on this host over the weekend,
+with several agents building and testing at once. Both were one second under two busy waits - 9 s - which is a timing
+rather than a signal, since a 5-second wait plus scheduling can cross it with nothing wrong. Each is now 25 s, which
+still fails the thing the assertion exists for (the provider's retry loop, measured at 30 to 35 s) and nothing else;
+the structural assertions that cannot drift with load are kept and are named in the comment as what actually pins the
+wait's shape - `AFactoryConnection_WaitsTheBusyTimeout_AndTheProviderRetriesNoLonger` reads back `busy_timeout` and
+`DefaultTimeout`.
+
+Proof the loosened ceilings still bite: the aud-a41 defect itself was put back - `SqliteConnectionFactory.Open`'s
+`DefaultTimeout` removed - and both still fail, at 34.4 s. Filter
+`FullyQualifiedName~SqliteBusyWaitTests|FullyQualifiedName~SettingsStoreBusyTests` (25 tests);
+`SqliteConnectionFactory.cs` MD5 `42ed78d643da6fe413171bb262fe7dfb`, matched after the row; 25/25 green after the
+restore.
+
+| Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|
+| G1 `SqliteConnectionFactory.Open`'s `DefaultTimeout` removed (the aud-a41 defect back) | `c2595784ca4c5bd2492540b81f093a3d` | 3 of 25: `SqliteBusyWaitTests.AWriteThatMeetsAHeldLock_FailsBusy_AfterTheDocumentedWait` ("the write waited 34.38 s"), `SettingsStoreBusyTests.AdminSettings_ASecretIdCompareThatFindsTheStoreBusy_...` ("the save waited 34.39 s"), and the structural `AFactoryConnection_WaitsTheBusyTimeout_AndTheProviderRetriesNoLonger` (`DefaultTimeout` 30 where 5 was expected), which fails in 11 ms whatever the load |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 
