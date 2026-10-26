@@ -469,9 +469,9 @@ public class ExtendedLogServiceTests
         service.SetLevel("Error");
         service.Write(LogEventLevel.Error, "while the folder cannot be made", "Test");
 
-        // Two minutes for the consumer - another thread - to count the entry it could not write: a signal, not a timing, so
-        // only a consumer that never does its part fails it (master's kd-16 ConsumerWait, which this branch forked before).
-        Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, TimeSpan.FromMinutes(2)),
+        // The shared bound for the consumer - another thread - to count the entry it could not write: a signal, not a
+        // timing, so only a consumer that never does its part fails it (kd-16, kd-22, kd-25).
+        Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, ConsumerWait),
             "the entry the folder refused was not dropped and counted");
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
 
