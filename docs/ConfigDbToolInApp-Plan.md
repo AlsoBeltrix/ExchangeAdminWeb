@@ -122,13 +122,32 @@ beyond `Path.GetFullPath`):
 
 | Verb | Args | Does | stdout on success | Exit |
 | --- | --- | --- | --- | --- |
-| `backup` | `--source <db> --dest <file>` | Open source `Mode=ReadOnly`, `PRAGMA busy_timeout=5000`, `VACUUM INTO '<dest>'`. Then open dest `ReadOnly`, `PRAGMA integrity_check`. Dest must not already exist. On any failure delete a partial dest. | `ok` then the dest path on line 2 | 0 ok; 2 failure (source missing, dest exists, VACUUM error, integrity not "ok") |
+| `backup` | `--source <db> --dest <file>` | Open source `Mode=ReadOnly`, the one busy wait as its `busy_timeout` AND its command timeout (see below), `VACUUM INTO '<dest>'`. Then open dest `ReadOnly`, `PRAGMA integrity_check`. Dest must not already exist. On any failure delete a partial dest. | `ok` then the dest path on line 2 | 0 ok; 2 failure (source missing, dest exists, VACUUM error, integrity not "ok") |
 | `check` | `<db>` | Open `ReadOnly`, `PRAGMA integrity_check`. | `ok` | 0 ok; 2 not ok or unreadable |
 | `active-jobs` | `<jobsdb>` | Open `ReadOnly`, the exact query JobStateWarning runs today. | pipe-delimited rows, same five columns, no header; nothing when none | 0; 2 on any error |
 | `init` | `<db>` | Create an empty database file (open `ReadWriteCreate`, `PRAGMA user_version`). Refuses if the file exists. | the path | 0; 2 |
 
 Any other argument shape: usage to stderr, exit 1. Exit codes are the only success signal
 the PowerShell side trusts; stdout is parsed only after exit 0.
+
+**How long a verb waits for a database another process holds (corrected 2026-10-26, cons-3).** The table's
+`PRAGMA busy_timeout=5000` was read as "the verb waits five seconds". It did not. `busy_timeout` is SQLite's own wait
+inside each step, and Microsoft.Data.Sqlite then runs a statement that came back busy again - each run another full
+`busy_timeout` - until the connection's command timeout has passed, which is 30 seconds when it is not set, and it was
+not. Measured with the Release executable against a database another process held exclusively, `db check` took
+**30.5 s**. aud-a67 item 2 set the command timeout from `SqliteConnectionFactory.BusyTimeout`, the same five seconds,
+so the retry has run out by the time SQLite's own wait gives up, and the same measurement gives **7.8 to 9.4 s**.
+
+It is about twice the configured timeout, not once, and that is structural rather than a leftover: `busy_timeout` is a
+PRAGMA, so it can only be set on a connection that is already open. During the open itself SQLite's wait is zero and
+only the provider's retry applies, bounded by the command timeout - about five seconds - and the statement that
+follows then waits its own five. A caller that meets a held database therefore waits up to about two busy waits, where
+it used to wait up to six. The command timeout bounds only that retry, not how long a statement may run, so a long
+`VACUUM INTO` or `integrity_check` is not cut short.
+
+(The measurement's fixture is worth keeping: a plain `BEGIN IMMEDIATE` takes a RESERVED lock, which a reader passes,
+so a database held that way does not block `check` at all. It needs the writer's page cache to spill - a large update
+with `PRAGMA cache_size=1` - before SQLite takes the EXCLUSIVE lock that readers wait on.)
 
 Rules the implementation must keep:
 

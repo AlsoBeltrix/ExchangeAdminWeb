@@ -78,3 +78,15 @@ restore. N2 is the page as merged at `fe67668d`, so its failures are the finding
   It writes nothing and says nothing, by design - the operator sees the module they asked for, with no notice that an
   earlier one was dropped.
 - Nothing bounds how many loads can be in flight; each costs its own authorization reads and ends silently.
+
+## Branch-tip gates - 2026-10-26 (`fix/a64-a67`, the cons-2/3/4/5 round)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 19 warnings - the same count as the fork, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: 6,745 passed / 0 failed / 0 skipped, 4m40s. The
+  previous tip of this branch was 6,742; these four records add 3 cases net (cons-4 adds three and retargets one,
+  cons-5 extends an existing theory rather than adding cases, cons-2 and cons-3 add none).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell file changed. No directory, Exchange
+  Online, Graph, DHCP, IIS, Delinea or SMTP call; nothing deployed.

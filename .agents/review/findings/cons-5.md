@@ -54,3 +54,15 @@ Each mutant is that page's guard as it was at `64365a78`, so each failure is the
 - `SaveModuleStatus` on Exchange Online Config shares the constant and the shape, but the case drives the connection
   save on that page; the status handler's guard is covered by aud-a67 (4)'s write-count assertion only.
 - No page was rendered in a browser; the banner is asserted as the field the markup binds.
+
+## Branch-tip gates - 2026-10-26 (`fix/a64-a67`, the cons-2/3/4/5 round)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 19 warnings - the same count as the fork, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: 6,745 passed / 0 failed / 0 skipped, 4m40s. The
+  previous tip of this branch was 6,742; these four records add 3 cases net (cons-4 adds three and retargets one,
+  cons-5 extends an existing theory rather than adding cases, cons-2 and cons-3 add none).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell file changed. No directory, Exchange
+  Online, Graph, DHCP, IIS, Delinea or SMTP call; nothing deployed.
