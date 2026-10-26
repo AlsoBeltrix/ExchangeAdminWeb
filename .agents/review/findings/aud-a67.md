@@ -432,3 +432,7 @@ Named for the owner as the one thing in this record left undone.
 - No directory, Exchange Online, Graph, DHCP, IIS, Delinea or SMTP call, and nothing was deployed. The one process run
   outside the test host is the Release build's own `ExchangeAdminWeb.exe db check` against a temp fixture, for the
   measurement in aud-a67 item 2.
+
+## Reviewer comments (supervisor, settings-batch-8)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 620e9d5a head f08a664a (merged fe67668d, with d0fc4c70); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat f08a664a). Two candidates, admitted as cons-4 (MEDIUM, a stale module load landing after a newer route) and cons-5 (LOW, a dropped second save). Codex found nothing in the log-folder start-up construction and recovery, the telemetry streak reset, the bulk-job range defaults, the Config DB and BitLocker busy-timeout surfacing, or the Exchange Online drain's failure handling. Artefacts: `.agents/review/settings-batch-8.result.txt`, `.stream.log`, `prompt-settings-batch-8.md`.
