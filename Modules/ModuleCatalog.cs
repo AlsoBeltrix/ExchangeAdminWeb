@@ -910,7 +910,10 @@ public sealed class ModuleCatalog
             // list that does not exist cannot be checked against Protected Group Targets, so the
             // module no longer creates one (aud-a2ab). One step past master's 2.13.0, which already
             // carries this branch's 2.7.0 and the kd-* bumps made while the branch was stopped.
-            Version = "2.14.0",
+            // 2.15.0: only Exchange's affirmative "no such object" means a building has no room
+            // list; an ambiguous name or a failed lookup refuses the row before any write, where
+            // it used to arrive as an empty answer and read as absence (aud-a2ac).
+            Version = "2.15.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

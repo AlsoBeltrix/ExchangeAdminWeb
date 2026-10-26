@@ -396,28 +396,55 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     // The canonical name first, then the legacy form: the order the preview has always used, so the
     // preview and the apply name the same list.
+    //
+    // aud-a2ac. Each name is read by ReadRoomList, which takes only Exchange's affirmative "no such object" for absence.
+    // Both reads used to be made with -ErrorAction SilentlyContinue through InvokeOptional, whose finally clears the error
+    // stream, so every failure - an ambiguous identity, a throttled or failed lookup, a permission error - arrived as an
+    // empty collection and was read as "this list does not exist". The row then tried the legacy name, and could write to
+    // a legacy list because the canonical read had failed rather than answered, or report Exists=false and refuse with the
+    // wrong reason. A throw from either read reaches the row before any write, which refuses the row there.
     private static RoomListTarget FindRoomList(PowerShell ps, ConnectionErrorTracker tracker, string building)
     {
         var canonicalName = BuildRoomListName(building);
-        ps.AddCommand("Get-DistributionGroup")
-          .AddParameter("Identity", canonicalName)
-          .AddParameter("ErrorAction", "SilentlyContinue");
-        var canonical = InvokeOptional(ps, tracker);
+        var canonical = ReadRoomList(ps, tracker, canonicalName);
         if (canonical.Count > 0)
             return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]), ReadPrimarySmtpAddress(canonical[0]), ReadListGuid(canonical[0]),
                 ReadExternalDirectoryObjectId(canonical[0]));
 
         var legacyName = BuildLegacyRoomListName(building);
-        ps.AddCommand("Get-DistributionGroup")
-          .AddParameter("Identity", legacyName)
-          .AddParameter("ErrorAction", "SilentlyContinue");
-        var legacy = InvokeOptional(ps, tracker);
+        var legacy = ReadRoomList(ps, tracker, legacyName);
         if (legacy.Count > 0)
             return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]), ReadPrimarySmtpAddress(legacy[0]), ReadListGuid(legacy[0]),
                 ReadExternalDirectoryObjectId(legacy[0]));
 
         return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null, Guid: null);
     }
+
+    /// <summary>
+    /// aud-a2ac. The one object Exchange Online holds under <paramref name="name"/>, or nothing when it affirmatively says
+    /// there is no such object - the only failure that is an answer, decided from the error record's structure by the base's
+    /// <c>IsNotFound</c> (aud-a23h), never from its text. Every other outcome throws: a lookup that could not be made says
+    /// nothing about whether the list exists, and more than one answer is not a list - Exchange refuses an ambiguous
+    /// <c>-Identity</c> with an error rather than answering twice, so the count is the defensive half of the same rule.
+    /// </summary>
+    private static System.Collections.ObjectModel.Collection<PSObject> ReadRoomList(PowerShell ps, ConnectionErrorTracker tracker, string name)
+    {
+        ps.AddCommand("Get-DistributionGroup")
+          .AddParameter("Identity", name)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ReadUnlessNotFound(ps, tracker);
+        if (found.Count > 1)
+            throw new InvalidOperationException($"'{name}' matches {found.Count} recipients in Exchange Online, so it does not name one room list.");
+        return found;
+    }
+
+    /// <summary>
+    /// aud-a2ac. Why a row was refused before anything was written when its room list could not be resolved: the lookup did
+    /// not answer, or answered with more than one recipient. It carries Exchange's own words, because what to put right -
+    /// a duplicate recipient, a throttle, a permission - is in them.
+    /// </summary>
+    internal static string RoomListNotResolvedRefusal(string roomListName, string reason) =>
+        $"Room list '{roomListName}' could not be resolved in Exchange Online, so it cannot be established which list the room would be added to: {Sentence(reason)}";
 
     // aud-a2m. The Guid of a list object Exchange returned - this read's, or New-DistributionGroup's for a
     // list the row creates. The name the Building derives is a search: between this read and the add, a
@@ -677,7 +704,23 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         RoomListTarget? roomList = null;
         if (!string.IsNullOrWhiteSpace(building))
         {
-            roomList = await ResolveRoomListTargetAsync(building);
+            // aud-a2ac. A lookup that did not answer, or answered with more than one recipient, refuses the row here - before
+            // Set-Place and every other write. It used to be swallowed by the read's own -ErrorAction SilentlyContinue and
+            // read as "this list does not exist", which sent the row to the legacy name or on as if the building had none.
+            try
+            {
+                roomList = await ResolveRoomListTargetAsync(building);
+            }
+            catch (Exception ex)
+            {
+                var refusal = RoomListNotResolvedRefusal(BuildRoomListName(building), ex.Message);
+                _logger.LogWarning(ex, "Room-list resolution for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, BuildRoomListName(building), refusal);
+                result.Success = false;
+                result.Message = $"{refusal} Nothing was written.";
+                result.Steps.Add(new RoomOperationStep { Stage = "Room list resolution", Success = false, Error = result.Message });
+                return result;
+            }
+
             var (listPreflightError, checkedList, listServicedNote) = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList, actingUser);
             if (listPreflightError != null)
             {
