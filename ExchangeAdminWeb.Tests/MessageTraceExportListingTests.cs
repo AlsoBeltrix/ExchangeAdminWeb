@@ -349,6 +349,8 @@ public sealed class MessageTraceExportListingTests : IDisposable
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
+    [InlineData("\u0001")] // kd-45: control only - IsNullOrWhiteSpace let this through
+    [InlineData("\u200B")] // kd-45: zero-width only
     public async Task BlankTicket_DoesNotDownload_AndNeverReadsTheFile(string? ticket)
     {
         var id = SeedExport();

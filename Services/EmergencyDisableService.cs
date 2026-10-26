@@ -183,7 +183,7 @@ public class EmergencyDisableService
 
         var steps = new List<DisableStepResult>();
 
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (!TicketPresence.IsPresent(ticket))
         {
             const string msg = "Ticket number is required for emergency disable operations.";
             _operationTrace.Step("TicketValidation", "Failed");

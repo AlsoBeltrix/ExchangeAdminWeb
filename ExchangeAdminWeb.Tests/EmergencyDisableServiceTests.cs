@@ -25,12 +25,15 @@ public class EmergencyDisableServiceTests : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
-    [Fact]
-    public async Task DisableAsync_BlankTicket_FailsBeforeCredentialLookup()
+    [Theory]
+    [InlineData("  ")]
+    [InlineData("\u0001")] // kd-45: control only - IsNullOrWhiteSpace let this through
+    [InlineData("\u200B")] // kd-45: zero-width only
+    public async Task DisableAsync_BlankTicket_FailsBeforeCredentialLookup(string ticket)
     {
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "  ", "DOMAIN\\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
+        var result = await service.DisableAsync(MakePrincipal(), ticket, "DOMAIN\\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -116,7 +119,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.4.0: every refusal path writes an audit record (aud-a28).
         // 1.5.0: the notice goes to the configured NotifySecurityTeam address rather than the
         // global admin list, and the page states the outcome instead of claiming one (aud-a27).
-        Assert.Equal("1.5.1", module.Version);
+        Assert.Equal("1.6.0", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

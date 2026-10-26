@@ -410,7 +410,9 @@ public sealed class ModuleCatalog
             // is open can never widen what it removes - the count in the label is a bound, which
             // is what makes this different from the standalone sweep the owner removed on
             // 2026-08-10 (docs/MigrationRemoveCompleted-Plan.md).
-            Version = "1.23.3",
+            // 1.24.0: both create refusals judge the ticket by the shared TicketPresence rule, so one
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.24.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -488,7 +490,9 @@ public sealed class ModuleCatalog
             // 1.7.0: the Received list has a ceiling (it bypassed every cap in the model),
             // and a truncated routing path or header list now SAYS so - the earliest hop shown
             // is not necessarily the origin (lower-priority Wave 4 header bounds).
-            Version = "1.7.0",
+            // 1.8.0: a detail export's download requires a ticket by the shared TicketPresence rule,
+            // so one with nothing visible in it no longer passes (kd-45).
+            Version = "1.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1008,7 +1012,9 @@ public sealed class ModuleCatalog
             // docs/EmergencyDisableLockdownOU-Plan.md.
             // 1.3.2: the lookup reports the directory resolve and the protection check instead
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.5.1",
+            // 1.6.0: the disable's mandatory ticket is judged by the shared TicketPresence rule, so one
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
