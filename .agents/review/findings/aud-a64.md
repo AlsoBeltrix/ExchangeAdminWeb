@@ -115,6 +115,7 @@ At `3da510cb`: `Components/Pages/AdminEventLog.razor` 1263, 1050, 1644; `Service
   `ExchangeAdminWeb.Tests/EventLogDiagnosticsTests.cs`.
 - (4): `Services/ModuleConfigService.cs`, `Services/Storage/LegacyConfigImport.cs`;
   `ExchangeAdminWeb.Tests/ModuleConfigServiceTests.cs`.
+- (6): `Services/UsageTelemetryService.cs`; `ExchangeAdminWeb.Tests/UsageTelemetryServiceTests.cs`.
 - (5): `Services/JsonlLogService.cs`, `Services/ExtendedLogService.cs`; `ExchangeAdminWeb.Tests/JsonlWriterRotationTests.cs`,
   `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`, `ExchangeAdminWeb.Tests/AuditServiceTests.cs` (the test that pinned
   the defect, rewritten to the new contract).
@@ -173,6 +174,14 @@ The round was run twice: first on 2026-10-23, then again on 2026-10-26 after the
 mutant MD5s and the same failures. The second round's test bytes: `ExtendedLogServiceTests.cs`
 `020357d5f5479bf573b7bd036709ca55`, `JsonlWriterRotationTests.cs` `4e2c7ec8407de43c6014679bb1439c6f`,
 `AuditServiceTests.cs` `5d8cfc7509ffae200ecb9eaa56659de6`.
+
+(6). Filter `FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~UsageTrackerWiringTests|FullyQualifiedName~UsageEventRepositoryTests|FullyQualifiedName~ConfigChangeWatcherTests|FullyQualifiedName~ConfigBooleanTests`
+(97 tests). `UsageTelemetryService.cs` MD5 `2bf77f42aaca15db0d34e6459c87ad3e`, matched after the row; 97/97 green after
+the restore. The mutant is the method as it was at `d42e146c` (no reset at all), so its failure is the reproduction.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| M6 `Readable`'s `Interlocked.Exchange(ref _switchReadFailureLogged, 0)` removed | `a5a843f11e24308301ec9c9b5c2c7f0a` | 1 of 97: `UsageTelemetryServiceTests.ASwitchThatFailsAgainAfterARecovery_IsReportedOncePerFailureStreak` - one warning where two were expected: the second failure streak was never reported |
 
 **Merge note (this branch forked at `eb017102`; master is ahead).** `Services/JsonlLogService.cs`,
 `Services/ExtendedLogService.cs` and `JsonlWriterRotationTests.cs` are untouched on master, so those merge clean.
