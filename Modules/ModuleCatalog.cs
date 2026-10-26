@@ -165,7 +165,10 @@ public sealed class ModuleCatalog
             // owner; before, only the operator's administrators were told (aud-a24).
             // 1.5.0: aud-a70 - every row of a change in a guard of its own, a row not written said; refusals before the
             // write recorded; a right whose session failed once sent filed Undetermined and its administrators told so.
-            Version = "1.5.0",
+            // 1.6.0: a grant or revoke requires a ticket of its own, before ServiceNow, which passes
+            // one while it is dormant; a refusal at the ticket or at the access re-check is audited before
+            // the target is bound (kd-18, kd-40). Calendar Permissions does not do this yet.
+            Version = "1.6.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -414,7 +417,11 @@ public sealed class ModuleCatalog
             // is open can never widen what it removes - the count in the label is a bound, which
             // is what makes this different from the standalone sweep the owner removed on
             // 2026-08-10 (docs/MigrationRemoveCompleted-Plan.md).
-            Version = "1.24.0",
+            // 1.25.0: a write whose action throws is audited - Failed when nothing was sent, Undetermined
+            // when it may have been (kd-33); nine more catches give a failed sign-in in the error's own words
+            // (kd-34); a search that opens another batch withdraws a row action staged on the last one (kd-35);
+            // a denied bulk run's audit row carries its count and only its first fifty names (kd-36).
+            Version = "1.25.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1467,7 +1474,10 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.3.2",
+            // 1.4.0: the undo, preview and usage catches set their error state and then report through
+            // the guarded logger, so a failing log provider no longer hides the failure or escapes the
+            // handler, and the Usage view says why it is empty (aud-a64).
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "EventLog",
