@@ -362,10 +362,14 @@ public class ADDirectoryValidateExistsTests
     public void ValidateExists_MoreThanOneMatch_IsFoundAndAmbiguous()
     {
         // pgwt-4: several matches still answer "it exists", and the caller that must store exactly one object is told.
-        var svc = ADDirectorySearchServiceTests.AvailableStandInService([], answers: "two");
+        // kd-64: with the calls captured, as the cases above capture them - passing an empty list threw the one piece of
+        // evidence away, so the case would have passed just as well had the query never run.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls, answers: "two");
 
         var result = svc.ValidateExists("Finance Approvers", "Group");
 
+        Assert.Equal(["Get-ADGroup|"], calls);
         Assert.Equal(DirectoryLookupOutcome.Found, result.Outcome);
         Assert.True(result.Ambiguous);
     }

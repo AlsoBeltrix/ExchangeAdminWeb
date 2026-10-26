@@ -1495,7 +1495,11 @@ public sealed class ModuleCatalog
             // 1.4.0: the undo, preview and usage catches set their error state and then report through
             // the guarded logger, so a failing log provider no longer hides the failure or escapes the
             // handler, and the Usage view says why it is empty (aud-a64).
-            Version = "1.4.0",
+            // 1.5.0: the category filter offers
+            // MessageTrace and Migration, whose jobs Admin Bulk Jobs now files under their own module
+            // (kd-53), and AdminBulkJobs, which a job carrying no module falls back to (kd-63) - a row
+            // filed under a category the filter does not list can be found only under All (kd-65).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "EventLog",

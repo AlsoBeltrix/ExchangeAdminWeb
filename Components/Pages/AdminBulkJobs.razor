@@ -136,6 +136,12 @@
 </div>
 
 @code {
+    /// <summary>
+    /// kd-53/kd-63. The category a row is filed under when the job carries no module of its own - this page's own, so no
+    /// row is left uncategorised. Internal because the Event Log's filter must offer it and a guard reads it from here.
+    /// </summary>
+    internal const string FallbackCategory = "AdminBulkJobs";
+
     private bool authChecked;
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
@@ -358,17 +364,39 @@
 
         // DeleteJob keeps its module argument; this page passes the job's own module, which it
         // knows. No id-only overload exists, so the guard cannot be skipped by a future caller.
-        var removed = BulkJobs.DeleteJob(job.ModuleId, job.Id);
-
-        // kd-54. A removal that did not happen says why. DeleteJob answers false for a job that is gone and for one the
-        // repository will not delete - every job not in a terminal state - and the row recorded neither, while the banner
-        // guessed "it may still be running". The job is read back on this path only, so the reason is the one that applies,
-        // and the row carries kd-32's refusal fields: the job's state refused it and nothing was changed.
-        var because = removed
-            ? null
-            : BulkJobs.GetJob(job.Id) is null ? "it no longer exists." : "it has not finished.";
-        WriteAudit("AdminBulkJobs_RemoveJob", job, removed,
-            because is null ? null : $"The job was not removed: {because}", removed ? null : "JobState");
+        //
+        // kd-54. A removal that did not happen says why, and the row carries kd-32's refusal fields: the job's state
+        // refused it and nothing was changed. kd-62. The reason comes back WITH the bool, from the one call: the page used
+        // to read the job back to work it out, so a store that failed that second read left no row and no banner at all,
+        // and the answer described the moment after the refusal rather than the refusal. The call is wrapped so a store
+        // failure is audited too - Failed with its message, no refusal fields, the exception thrown on as before.
+        var removed = false;
+        BulkJobRemoval outcome = default;
+        string? error = null;
+        string? because = null;
+        try
+        {
+            removed = BulkJobs.DeleteJob(job.ModuleId, job.Id, out outcome);
+            if (!removed)
+            {
+                because = outcome switch
+                {
+                    BulkJobRemoval.NotFound => "it no longer exists.",
+                    BulkJobRemoval.NotThisModule => "it belongs to another module.",
+                    _ => "it has not finished."
+                };
+                error = $"The job was not removed: {because}";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            throw;
+        }
+        finally
+        {
+            WriteAudit("AdminBulkJobs_RemoveJob", job, removed, error, because is null ? null : "JobState");
+        }
 
         actionMessage = removed
             ? $"Removed {job.ModuleId} job {job.JobType}."
@@ -413,7 +441,7 @@
 
             Audit.LogModuleAction(
                 currentUser, clientIpAddress, action,
-                category: string.IsNullOrWhiteSpace(job.ModuleId) ? "AdminBulkJobs" : job.ModuleId,
+                category: string.IsNullOrWhiteSpace(job.ModuleId) ? FallbackCategory : job.ModuleId,
                 target: $"{job.ModuleId}/{job.Id}", success: success, ticketNumber: job.Ticket ?? "",
                 errorDetail: error,
                 extra: fields);

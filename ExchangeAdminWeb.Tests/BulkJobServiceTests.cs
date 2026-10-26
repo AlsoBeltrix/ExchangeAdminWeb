@@ -295,6 +295,54 @@ public class BulkJobServiceTests
             Assert.Equal(Enum.Parse<BulkJobStatus>(status), after!.Status);
     }
 
+    [Theory]
+    [InlineData("Completed", true, BulkJobRemoval.Removed)]
+    [InlineData("Cancelled", true, BulkJobRemoval.Removed)]
+    [InlineData("Interrupted", true, BulkJobRemoval.Removed)]
+    [InlineData("Running", false, BulkJobRemoval.NotFinished)]
+    [InlineData("Queued", false, BulkJobRemoval.NotFinished)]
+    [InlineData(null, false, BulkJobRemoval.NotFound)]
+    public void DeleteJob_SaysWhyItDidNotHappen(string? status, bool expected, BulkJobRemoval outcome)
+    {
+        // kd-62. A caller that audits the removal has to name the refusal, and this method knows it: the page read the job
+        // back to work it out, which left no row at all when that second read threw.
+        using var h = new Harness();
+        if (status is not null)
+            h.Repository.Insert(h.NewJob("j1", "S", status));
+
+        Assert.Equal(expected, h.Service.DeleteJob("Test", "j1", out var reported));
+
+        Assert.Equal(outcome, reported);
+        // Still there exactly when it existed and was not removed.
+        Assert.Equal(status is not null && !expected, h.Repository.Get("j1") is not null);
+    }
+
+    [Fact]
+    public void DeleteJob_AnotherModulesJob_IsRefusedAsSuch_AndKept()
+    {
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("j1", "S", "Completed", moduleId: "MessageTrace"));
+
+        Assert.False(h.Service.DeleteJob("Test", "j1", out var outcome));
+
+        Assert.Equal(BulkJobRemoval.NotThisModule, outcome);
+        Assert.NotNull(h.Repository.Get("j1"));
+    }
+
+    [Theory]
+    [InlineData("Completed", true)]
+    [InlineData("Running", false)]
+    [InlineData(null, false)]
+    public void DeleteJob_TheOldOverload_AnswersWhatItAlwaysDid(string? status, bool expected)
+    {
+        // kd-62. ConferenceRooms' own Remove and every existing caller keep the bool-only call.
+        using var h = new Harness();
+        if (status is not null)
+            h.Repository.Insert(h.NewJob("j1", "S", status));
+
+        Assert.Equal(expected, h.Service.DeleteJob("Test", "j1"));
+    }
+
     [Fact]
     public async Task CancelJob_Queued_FinishesAsCancelled_NeverRuns()
     {

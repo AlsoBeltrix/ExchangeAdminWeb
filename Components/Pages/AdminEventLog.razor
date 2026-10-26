@@ -77,9 +77,11 @@
                 <option value="OutOfOffice">OutOfOffice</option>
                 <option value="ConferenceRooms">ConferenceRooms</option>
                 @* kd-53: a bulk job cancelled or removed from Admin Bulk Jobs files under its own module, so every module
-                   that can own a job must be offered here (AuditCategoryFilingTests' rule). *@
+                   that can own a job must be offered here (AuditCategoryFilingTests' rule). kd-63: and the page's own
+                   category, which a job carrying no module falls back to. *@
                 <option value="MessageTrace">MessageTrace</option>
                 <option value="Migration">Migration</option>
+                <option value="AdminBulkJobs">AdminBulkJobs</option>
             </select>
         </div>
         <div class="col-auto">

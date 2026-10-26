@@ -153,6 +153,10 @@ public class AuditCategoryFilingTests
         Assert.NotEmpty(processors);
         foreach (var module in processors)
             Assert.Contains($"<option value=\"{module}\">", text);
+
+        // kd-63. And the category a job carrying no module falls back to, read from the page that files it rather than
+        // repeated here.
+        Assert.Contains($"<option value=\"{ExchangeAdminWeb.Components.Pages.AdminBulkJobs.FallbackCategory}\">", text);
     }
 }
 

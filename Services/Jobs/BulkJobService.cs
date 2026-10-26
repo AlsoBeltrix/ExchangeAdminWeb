@@ -22,6 +22,22 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// fresh DI scope per job, so scoped module services (e.g. ConferenceRoomService) live and die with
 /// the job even though this runner is a singleton.
 /// </summary>
+/// <summary>What a removal did, or why it did not happen (kd-62) - what an auditing caller files as its reason.</summary>
+public enum BulkJobRemoval
+{
+    /// <summary>The job and its rows were deleted.</summary>
+    Removed,
+
+    /// <summary>No job with that id: it was removed already, or pruned.</summary>
+    NotFound,
+
+    /// <summary>The job belongs to another module than the caller named.</summary>
+    NotThisModule,
+
+    /// <summary>The job is still queued or running, and only a finished job is deleted.</summary>
+    NotFinished,
+}
+
 public sealed class BulkJobService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -260,16 +276,37 @@ public sealed class BulkJobService
     /// Callers MUST write an audit event - this destroys a durable record, and the audit log is a
     /// separate store, so it is what preserves who removed what.
     /// </summary>
-    public bool DeleteJob(string moduleId, string jobId)
+    public bool DeleteJob(string moduleId, string jobId) => DeleteJob(moduleId, jobId, out _);
+
+    /// <summary>
+    /// The same removal, saying why it did not happen (kd-62).
+    /// </summary>
+    /// <remarks>
+    /// A caller that audits the removal has to say which refusal it was, and this method already knows: it reads the job,
+    /// checks the module and then deletes, and the delete takes only a terminal status. Admin Bulk Jobs read the job back
+    /// itself to work it out, which asked the store a second question after one it had just refused - no row at all if that
+    /// read threw - and answered from the moment after the refusal rather than the refusal.
+    /// </remarks>
+    public bool DeleteJob(string moduleId, string jobId, out BulkJobRemoval outcome)
     {
         var job = _repository.Get(jobId);
-        if (job is null || !string.Equals(job.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase))
+        if (job is null)
+        {
+            outcome = BulkJobRemoval.NotFound;
             return false;
+        }
+
+        if (!string.Equals(job.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase))
+        {
+            outcome = BulkJobRemoval.NotThisModule;
+            return false;
+        }
 
         var deleted = _repository.Delete(jobId);
         if (deleted)
             RaiseChanged(jobId);
 
+        outcome = deleted ? BulkJobRemoval.Removed : BulkJobRemoval.NotFinished;
         return deleted;
     }
 
