@@ -1437,7 +1437,11 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Administration,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.3.2",
+            // 1.5.0 (1.4.0 is master's, for aud-a64's guarded reporting): the category filter offers
+            // MessageTrace and Migration, whose jobs Admin Bulk Jobs now files under their own module
+            // (kd-53), and AdminBulkJobs, which a job carrying no module falls back to (kd-63) - a row
+            // filed under a category the filter does not list can be found only under All (kd-65).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "EventLog",
