@@ -5,6 +5,36 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-26 - Owner rulings on the stream's open decisions (four settled, four pending clarification)
+
+Owner answers of 2026-10-26, verbatim where quoted, to the eight decisions the supervisor listed:
+
+1. **kd-1 - "no."** Message Trace detail exports stay listable and downloadable by any policy holder; D2 and D4 of
+   `docs/MessageTraceDownloadLink-Plan.md` stand. The merged fix `c139a31b` is reverted at `708770ef`; kd-1 is
+   closed as declined. The other thirteen fixes on `fix/kd-misc` are merged at `5ea424d5`.
+2. **aud-a2ab - "no, functionality CANNOT change. this is a top tier module and the stakeholders fought hard to get
+   it where it was. resolve this without removing anything or causing undue extra work."** Room Finder apply MUST
+   keep creating a building's room list. The removal landed at `3bfdc1af` is to be reversed (new row `aud-a2ad`),
+   and kd-66's preview wording with it. The HIGH it closed - a protected-target rule matching a list the row creates
+   cannot be checked before Exchange assigns the list's address - is resolved instead as a **scoped, owner-ruled
+   exception**: the created list is checked before the room is ADDED to it (the check aud-a2e put there), and the
+   metadata write and the list's creation stand before that check. The residual is a Protected Group Targets rule
+   registered against a list that does not yet exist, which the owner rules is not a case this module serves
+   ("protected principals are not rooms"). Recorded as the third scoped exception beside Self-Service Groups and
+   Comms-10k; a tripwire test pins it so no later agent "fixes" it back out. Invariant 7 is respected by stating the
+   exception as a rule, not by resting on this environment's configuration.
+3. **aud-a70 (6) - "yes."** Every permission grant is refused while the directory-read credential cannot be had,
+   not only grants to groups. Approved for implementation.
+4. **aud-a70 (13) - "how is ineligible a success"** - pending. The supervisor's answer is in the session; the
+   proposed shape (three outcome classes, with Ineligible, Undetermined and Cancelled outside Success) awaits a yes.
+5. **aud-a70 (10) - "yes"** to upholding the coder's dispute: the lazy credential fetch is declined and the row closes.
+6. **psl-10 (5) - owner asked what CI is and whether it affects production** - pending. Answer: it does not; the
+   change is test hygiene so the default `dotnet test` and GitHub's hosted build stop touching the live directory.
+7. **aud-a2e Constitution conflict - owner objects: "protected principals are out of scope as no rooms are protected
+   and protected principals are not rooms"** - pending. The conflict is between a Constitution sentence and the entry
+   validator, independent of rooms; the supervisor's proposal is a one-sentence Constitution correction.
+8. **aud-a29g - owner asked what accepting means** - pending; the three properties restated as choices in the session.
+
 ### 2026-10-26 - One agent, one compile at a time; agents are Opus 5.5; the one review runs through codex-commercial.ps1
 
 Owner rulings 2026-10-26, verbatim: "agents need to be Opus 5.5, not Opus 5. codex is out of the loop permanently.
