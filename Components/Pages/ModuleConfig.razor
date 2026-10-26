@@ -989,6 +989,20 @@
         return null;
     }
 
+    /// <summary>The modules whose saves of the load now shown have not finished, each named once (aud-a67 item 14).</summary>
+    private List<string> SavesStillRunningOnThisLoad() =>
+        savesInFlight
+            .Where(s => s.Load == load && !s.Save.IsCompleted)
+            .Select(s => s.Module)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    // aud-a67 item 14. What the page shows WHILE it waits for those saves, where it used to show nothing for up to ten
+    // seconds. It is replaced by the next module's own state when the load lands, or by UnfinishedSaveNotice when the
+    // bound runs out first.
+    private static string WaitingForSaveNotice(List<string> waitingFor, string next) =>
+        $"Waiting for {string.Join(", ", waitingFor)}'s save to finish before opening {next}.";
+
     // aud-a66 (codex settings-batch-6). What a route change shows when it stopped waiting for a save: which module's save is
     // still running, and that it cannot change the module now shown. Seconds in the invariant culture, as the bound is fixed.
     private string UnfinishedSaveNotice(List<string> unfinished, AdminModuleDescriptor next)
@@ -1072,6 +1086,17 @@
         // pair one module's check with another module's page. It also made this call load the newer module and the call
         // the router made for it find nothing to do - one route change's work done twice, the other's not at all.
         var requested = ModuleId;
+
+        // aud-a67 item 14. Say what the page is waiting for, before it waits. The wait below is up to saveWaitBound -
+        // ten seconds - and nothing was shown for any of it: the operator clicked another module and the page sat on the
+        // one they left, with no sign that it had heard them. Rendered here, so the message is out before the await.
+        var waitingFor = SavesStillRunningOnThisLoad();
+        if (waitingFor.Count > 0)
+        {
+            statusMessage = WaitingForSaveNotice(waitingFor, Catalog.GetById(requested)?.DisplayName ?? requested);
+            statusIsError = false;
+            StateHasChanged();
+        }
 
         // aud-a41, aud-a66. The saves on the module shown finish before another module is loaded over it - for at most
         // saveWaitBound (see savesInFlight and WaitForThisLoadsSavesAsync).

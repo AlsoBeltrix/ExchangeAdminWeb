@@ -63,6 +63,8 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (14): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (12): nothing changed; see the section at the end.
 - (11): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`,
   `ExchangeAdminWeb.Tests/GroupGrantValidationTests.cs` (one anchor re-anchored, intent unchanged).
 - (10): `Components/Pages/ModuleConfig.razor`, `Services/IOrganizationalUnitDirectory.cs` (new),
@@ -350,3 +352,33 @@ Filter as above, 507 tests. `ModuleConfig.razor` MD5 `e6c9db8dd26a9f766557429697
 
 A first version of this case was vacuous and the mutant passed: it moved the page inside the bound, so the route
 change waited for the save and the message was built while the page still held its own labels.
+
+(14). The route change waits up to `saveWaitBound` - ten seconds - for the saves on the module shown, and showed
+nothing for any of it: the operator clicked another module and the page sat on the one they left, with no sign that it
+had heard them. It now names what it is waiting for and what it is waiting to open, rendered before the await so the
+message is out while the wait runs, and that message is replaced either by the next module's page or by
+`UnfinishedSaveNotice` when the bound runs out first.
+
+Filter as above, 508 tests. `ModuleConfig.razor` MD5 `e125bacb33213c64e443bbe7b279f5aa`, matched after the row;
+508/508 green after the restore.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| L1 the waiting notice removed (the page silent through the wait again) | `2f737be2374c091b09b24a70cb99c48f` | 1 of 508: `AnotherModuleOpenedWhileASaveRuns_SaysWhatItIsWaitingFor_UntilItOpens` - nothing shown where the wait was expected to be named |
+
+### (12) is not fixed, and why - for the owner
+
+The item is a statement of fact rather than a defect with a fix inside this record's scope: a save that outlasts the
+bound keeps its worker thread and its store connection until the store answers, because the stores take no
+cancellation. Closing it means threading cancellation through `IConfigStore` and every repository on it, and cancelling
+a synchronous SQLite statement needs `SqliteCommand.Cancel()` from another thread - a persistence change, which the
+Constitution's Planning Rules put behind a written plan, and well outside what this record describes. This agent did
+not start it.
+
+What is true today, after this record: the resource is bounded, not unbounded. Item 4 refuses a second save from the
+button while one is in flight, so a load has at most one; `LoadState` clears `saving`, so a route change past the bound
+can start one more; and each ends when its store answers - the store's own busy wait is five seconds (item 2 and
+aud-a41), so the thread is held for a hung store, not for a contended one. Nothing is written by the late save that
+should not be (aud-a66 closed that, and items 9, 10 and 11 close what it still said on the next module's page).
+
+Named for the owner as the one thing in this record left undone.

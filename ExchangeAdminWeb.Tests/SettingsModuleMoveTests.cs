@@ -572,6 +572,39 @@ public sealed class SettingsModuleMoveTests : IDisposable
             : [];
     }
 
+    /// <summary>
+    /// aud-a67 item 14: the route change waits up to saveWaitBound - ten seconds - for the saves on the module shown,
+    /// and showed nothing for any of it. The operator clicked another module and the page sat on the one they left,
+    /// with no sign it had heard them. It says what it is waiting for now, and that message is replaced either by the
+    /// next module's page or by the notice that the bound ran out.
+    /// </summary>
+    [Fact]
+    public async Task AnotherModuleOpenedWhileASaveRuns_SaysWhatItIsWaitingFor_UntilItOpens()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the save never asked the directory");
+
+        var loading = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+
+        Assert.False(loading.IsCompleted, "the route change did not wait - this fixture is stale");
+        var waiting = Status(page) ?? "";
+        Assert.Contains("Waiting for", waiting, StringComparison.Ordinal);
+        Assert.Contains(DisplayName(First), waiting, StringComparison.Ordinal);
+        Assert.Contains(DisplayName(Second), waiting, StringComparison.Ordinal);
+        Assert.False(Field<bool>(page, "statusIsError"));
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+        await loading.WaitAsync(Long, Cancel);
+
+        // The module opened, so the waiting message is gone rather than left over its page.
+        Assert.Equal(Second, Shown(page));
+        Assert.DoesNotContain("Waiting for", Status(page) ?? "", StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheWait_IsTheStoresBusyTimeoutPlusFiveSeconds()
     {
