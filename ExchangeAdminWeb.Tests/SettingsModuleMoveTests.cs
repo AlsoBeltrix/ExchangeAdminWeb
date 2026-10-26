@@ -521,6 +521,57 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.False(Field<bool>(page, "ouLoading"));
     }
 
+    /// <summary>
+    /// aud-a67 item 11: a save names what it refused from the page's own labels - the alias through the page's
+    /// descriptor, the group through the page's display names - and both are replaced by the next module's load. A
+    /// refusal whose directory lookup outlasted a route change therefore reached the admin naming a bare SID, which
+    /// is the one part of that message they read. Each save takes its labels before its first await now.
+    /// </summary>
+    [Fact]
+    public async Task AnAccessSaveRefusedAfterAMove_StillNamesTheGroupItRefused()
+    {
+        var alias = _h.Catalog.GetById(First)!.MainPermission.PolicyAlias;
+        var page = _h.OpenModuleConfig(First);
+        Set(page, "tab", "Section Access");
+
+        // A group added on this page, with the display name this load holds for it and no other.
+        Field<Dictionary<string, string>>(page, "accessDisplayNames")[Added] = "EXAMPLE\\Directory-Admins";
+        await _h.OnDispatcherAsync(() => Field<Dictionary<string, List<string>>>(page, "accessState")[alias].Add(Added));
+
+        // The directory refuses it, and the lookup is held until the page has moved to another module.
+        _h.GroupDirectory.Answer = _ => new DirectoryValidationResult(DirectoryLookupOutcome.NotFound, null);
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the access save never asked the directory");
+
+        // Past the bound, so the next module LOADS while the lookup is still held: that load replaces the page display
+        // names and its descriptor, which is the window this item is about. Inside the bound the route change waits and
+        // the message is built before anything is replaced.
+        Set(page, "saveWaitBound", Short);
+        var loading = await Open(page, Second);
+        await loading.WaitAsync(Long, Cancel);
+        Assert.Equal(Second, Shown(page));
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+
+        // The audit record, not the banner: the route change clears statusMessage as it loads, so the refusal the
+        // admin can still read is the recorded one - and it is the same text the banner would have carried.
+        var refusal = Assert.Single(_h.AuditEvents(), r => Text(r, "refusedAt") == "GroupGrantCheck");
+        var shown = Text(refusal, "error");
+        Assert.Contains("Directory-Admins", shown, StringComparison.Ordinal);
+        Assert.DoesNotContain(Added + ":", shown, StringComparison.Ordinal);
+        Assert.Empty(StoredSectionAccess(alias));
+    }
+
+    private string[] StoredSectionAccess(string alias)
+    {
+        var repository = new SectionAccessRepository(TestConfigStore.Create(_h.Root));
+        return repository.TryGetAll(out var access) && access.TryGetValue(alias, out var groups)
+            ? [.. groups.Order(StringComparer.Ordinal)]
+            : [];
+    }
+
     [Fact]
     public void TheWait_IsTheStoresBusyTimeoutPlusFiveSeconds()
     {

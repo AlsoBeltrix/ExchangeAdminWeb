@@ -817,14 +817,17 @@
     /// renders in its own section below - and returning the alias for it would be correct anyway,
     /// which is why this cannot produce a blank heading.
     /// </remarks>
-    private string PermissionLabelFor(string alias)
+    private string PermissionLabelFor(string alias) => PermissionLabelOf(module, alias);
+
+    /// <summary>The same, by a NAMED descriptor rather than the page current one (aud-a67 item 11).</summary>
+    private static string PermissionLabelOf(AdminModuleDescriptor? saved, string alias)
     {
-        if (module == null) return alias;
+        if (saved == null) return alias;
 
-        if (string.Equals(module.MainPermission.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
-            return module.MainPermission.DisplayName ?? alias;
+        if (string.Equals(saved.MainPermission.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
+            return saved.MainPermission.DisplayName ?? alias;
 
-        foreach (var gp in module.GranularPermissions)
+        foreach (var gp in saved.GranularPermissions)
         {
             if (string.Equals(gp.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
                 return gp.DisplayName ?? alias;
@@ -1590,6 +1593,10 @@
         var snapshot = aliases.ToDictionary(a => a, a => accessState[a].ToArray());
         var baseline = accessBaseline.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
         var picked = new Dictionary<string, string>(pickedDisplayNames, StringComparer.OrdinalIgnoreCase);
+        // aud-a67 item 11. The names this save reads its refusals by, taken with everything else before the first await:
+        // the page own set is replaced by the next module load, so a refusal that arrived after a route change named
+        // its groups by their bare SIDs.
+        var names = new Dictionary<string, string>(accessDisplayNames, StringComparer.OrdinalIgnoreCase);
         var pending = PendingAccessSections();
         saving = true;
         statusMessage = null;
@@ -1631,7 +1638,7 @@
             var newGrants = snapshot
                 .SelectMany(kv => kv.Value.Except(baseline.GetValueOrDefault(kv.Key) ?? new List<string>(), StringComparer.OrdinalIgnoreCase))
                 .ToList();
-            var refused = await ConfirmNewGroupGrantsAsync(newGrants);
+            var refused = await ConfirmNewGroupGrantsAsync(newGrants, sid => DisplayNameFrom(names, sid));
             if (refused is not null)
             {
                 statusMessage = refused;
@@ -1675,7 +1682,7 @@
 
             if (outcome.Status == SectionAccessSaveStatus.ConcurrentChange)
             {
-                statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(AliasName))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(a => AliasNameOf(saved, a)))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage, pending);
                 return;
@@ -1693,8 +1700,8 @@
                 var writtenAliases = edited
                     .Where(kv => !outcome.AlreadyApplied.Contains(kv.Key, StringComparer.OrdinalIgnoreCase))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var names = DisplayNamesToStore(writtenAliases, baseline, picked);
-                await Task.Run(() => SectionAccess.SaveGroupDisplayNames(names));
+                var toStore = DisplayNamesToStore(writtenAliases, baseline, picked);
+                await Task.Run(() => SectionAccess.SaveGroupDisplayNames(toStore));
             }
 
             foreach (var (alias, curr) in edited)
@@ -1757,9 +1764,16 @@
             .ToArray();
 
     /// <summary>An alias as the admin reads it on the Access tab: its label, with the alias when they differ.</summary>
-    private string AliasName(string alias)
+    private string AliasName(string alias) => AliasNameOf(module, alias);
+
+    /// <summary>
+    /// The same, by a NAMED descriptor rather than the page current one (aud-a67 item 11): a save names its aliases
+    /// from the module it took before its first await, so a refusal that arrived after a route change no longer falls
+    /// back to the bare alias because the next module descriptor has no label for it.
+    /// </summary>
+    private static string AliasNameOf(AdminModuleDescriptor? saved, string alias)
     {
-        var label = PermissionLabelFor(alias);
+        var label = PermissionLabelOf(saved, alias);
         return string.Equals(label, alias, StringComparison.Ordinal) ? alias : $"{label} ({alias})";
     }
 
@@ -1779,6 +1793,8 @@
         var loadedUnreadable = moduleAdminsUnreadable;
         var snapshot = moduleAdminGroups.ToArray();
         var baseline = moduleAdminGroupsBaseline.ToArray();
+        // aud-a67 item 11, as the access save: the names this save reads its refusals by.
+        var names = new Dictionary<string, string>(accessDisplayNames, StringComparer.OrdinalIgnoreCase);
         saving = true;
         statusMessage = null;
         await Task.Yield();
@@ -1806,7 +1822,7 @@
             }
 
             var refused = await ConfirmNewGroupGrantsAsync(
-                snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToList());
+                snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToList(), sid => DisplayNameFrom(names, sid));
             if (refused is not null)
             {
                 statusMessage = refused;
@@ -1901,7 +1917,7 @@
     /// per new grant, each waiting up to 30 seconds on the directory service's shared runspace
     /// lock - hence the activity, opened before the Task.Run that wraps the loop.
     /// </remarks>
-    private async Task<string?> ConfirmNewGroupGrantsAsync(IReadOnlyList<string> newGrants)
+    private async Task<string?> ConfirmNewGroupGrantsAsync(IReadOnlyList<string> newGrants, Func<string, string> label)
     {
         if (newGrants.Count == 0)
             return null;
@@ -1925,7 +1941,7 @@
 
         return refusals.Count == 0
             ? null
-            : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, DisplayNameFor);
+            : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, label);
     }
 
     // aud-a66. By the descriptor the save took, never the page's: after a move the page's is another module's, whose fields
@@ -2060,9 +2076,19 @@
         }
     }
 
-    private string DisplayNameFor(string groupValue)
+    private string DisplayNameFor(string groupValue) => DisplayNameFrom(accessDisplayNames, groupValue);
+
+    /// <summary>
+    /// A group as the admin reads it, by a NAMED set of display names rather than the page current one (aud-a67 item 11).
+    /// </summary>
+    /// <remarks>
+    /// A save takes the names it loaded before its first await and names its refusals from those: the page own set is
+    /// replaced by the next module load, so a save whose directory lookup outlasted a route change used to name the
+    /// groups it refused by their bare SIDs - the one part of that refusal the admin reads.
+    /// </remarks>
+    private string DisplayNameFrom(IReadOnlyDictionary<string, string> names, string groupValue)
     {
-        if (!accessDisplayNames.TryGetValue(groupValue, out var name) || string.IsNullOrWhiteSpace(name))
+        if (!names.TryGetValue(groupValue, out var name) || string.IsNullOrWhiteSpace(name))
             return groupValue;
 
         // Qualify at render time as well as at write time. Rows migrated before the display names

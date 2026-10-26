@@ -63,6 +63,8 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (11): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`,
+  `ExchangeAdminWeb.Tests/GroupGrantValidationTests.cs` (one anchor re-anchored, intent unchanged).
 - (10): `Components/Pages/ModuleConfig.razor`, `Services/IOrganizationalUnitDirectory.cs` (new),
   `Services/ADOrganizationalUnitService.cs`, `Program.cs`; `ExchangeAdminWeb.Tests/SettingsPageHarness.cs` (a stand-in
   that answers and can hold an enumeration), `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
@@ -318,3 +320,33 @@ Filter as above, 506 tests. `ModuleConfig.razor` MD5 `de06d5ce8ba6229609b258c950
 |---|---|---|
 | J1 `LoadOUsAsync` applies its answer whatever the page shows (the `Holds` return removed) | `671812eed488cd0b836a6e56fb7d83c5` | 1 of 506: `AnOuEnumerationThatOutlastsARouteChange_LeavesTheNextModulesBrowserAlone` - the next module's `ouAllEntries` holding the first module's two OUs |
 | J2 `ToggleOUBrowser` opens the browser whatever the page shows (its `Holds` return removed) | `5b94da38f195255bbb6df42cbe790aa6` | 1 of 506: the same case - "the browser opened over the module the page had moved to" |
+
+(11). A save named what it refused from the page's own labels: the alias through `PermissionLabelFor`, which reads the
+page's descriptor, and the group through `DisplayNameFor`, which reads the page's display names. Both are replaced by
+the next module's load, so a save whose directory lookup outlasted the route change's bound reached the admin - and
+the audit record - naming a bare SID, which is the one part of that refusal they can act on. Each save now takes the
+display names with everything else before its first await, and names its aliases from the descriptor it captured; the
+grant confirmation takes the label function from its caller.
+
+Two things this turned up, both handled rather than worked around:
+- The first draft added `AliasName` and `PermissionLabelFor` overloads, which `ProgressRegistryTests` refuses on a
+  covered page - that registry is keyed by method name, so an overload cannot be described by it. The descriptor-taking
+  ones are `AliasNameOf` and `PermissionLabelOf`.
+- `GroupGrantValidationTests.TheAccessSave_ConfirmsNewGrantsBeforeItPersists_AndPersistsTheSnapshot` anchors on the
+  confirmation's call text, which now carries the label argument. Re-anchored to `ConfirmNewGroupGrantsAsync(newGrants,`
+  with its intent unchanged - the access save confirms before it writes - as aud-a66 re-anchored its neighbours.
+
+The case drives the window past `saveWaitBound`, which is where the labels are actually stale: inside the bound the
+route change waits, so the message is built before anything is replaced. It reads the AUDIT record rather than the
+banner, because the load clears `statusMessage` as it runs - the recorded refusal is what survives, and it carries the
+same text.
+
+Filter as above, 507 tests. `ModuleConfig.razor` MD5 `e6c9db8dd26a9f766557429697338206`, matched after the row;
+507/507 green after the restore.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| K1 the access save names its refusals by the page's current display names again (the captured map dropped, `DisplayNameFor` passed) | `8272b5b6c3754b5b5c4c2401536eb9b9` | 1 of 507: `AnAccessSaveRefusedAfterAMove_StillNamesTheGroupItRefused` - the recorded refusal naming the bare SID where the group's name was expected |
+
+A first version of this case was vacuous and the mutant passed: it moved the page inside the bound, so the route
+change waited for the save and the message was built while the page still held its own labels.
