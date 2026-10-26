@@ -359,11 +359,20 @@
         // DeleteJob keeps its module argument; this page passes the job's own module, which it
         // knows. No id-only overload exists, so the guard cannot be skipped by a future caller.
         var removed = BulkJobs.DeleteJob(job.ModuleId, job.Id);
-        WriteAudit("AdminBulkJobs_RemoveJob", job, removed);
+
+        // kd-54. A removal that did not happen says why. DeleteJob answers false for a job that is gone and for one the
+        // repository will not delete - every job not in a terminal state - and the row recorded neither, while the banner
+        // guessed "it may still be running". The job is read back on this path only, so the reason is the one that applies,
+        // and the row carries kd-32's refusal fields: the job's state refused it and nothing was changed.
+        var because = removed
+            ? null
+            : BulkJobs.GetJob(job.Id) is null ? "it no longer exists." : "it has not finished.";
+        WriteAudit("AdminBulkJobs_RemoveJob", job, removed,
+            because is null ? null : $"The job was not removed: {because}", removed ? null : "JobState");
 
         actionMessage = removed
             ? $"Removed {job.ModuleId} job {job.JobType}."
-            : $"Could not remove {job.ModuleId} job {job.JobType} - it may still be running.";
+            : $"Could not remove {job.ModuleId} job {job.JobType} - {because}";
 
         if (detailsJobId == job.Id)
         {
@@ -378,24 +387,36 @@
     // Tracing), hence catch-and-log rather than surfacing.
     // kd-26: the row's error, when there is one, and for a refusal the aud-a28 refusal fields - refusedAt, and
     // mutationAttempted false, nothing having been handed to the job store.
+    // kd-53: filed under the category of the module whose job it is - this page crosses every module, and the row went
+    // under ConferenceRooms whatever it cancelled, so a query by category missed it. LogModuleAction, the generic one the
+    // earlier misfiling fix moved three modules to, takes the category; it has no oldValues parameter, so the job's six
+    // fields keep their old_ names here and the row is otherwise the one this page always wrote. A job carrying no module
+    // files under this page's own category rather than a blank one.
     private void WriteAudit(string action, BulkJob job, bool success, string? error = null, string? refusedAt = null)
     {
         try
         {
-            Audit.LogConferenceRoomAction(
+            var fields = new Dictionary<string, object?>
+            {
+                ["old_ModuleId"] = job.ModuleId,
+                ["old_JobType"] = job.JobType,
+                ["old_Status"] = job.Status.ToString(),
+                ["old_SubmittedBy"] = job.SubmittedBy,
+                ["old_SubmittedAtUtc"] = job.SubmittedAtUtc,
+                ["old_TotalRows"] = job.TotalRows
+            };
+            if (refusedAt is not null)
+            {
+                fields["refusedAt"] = refusedAt;
+                fields["mutationAttempted"] = false;
+            }
+
+            Audit.LogModuleAction(
                 currentUser, clientIpAddress, action,
+                category: string.IsNullOrWhiteSpace(job.ModuleId) ? "AdminBulkJobs" : job.ModuleId,
                 target: $"{job.ModuleId}/{job.Id}", success: success, ticketNumber: job.Ticket ?? "",
                 errorDetail: error,
-                oldValues: new Dictionary<string, object?>
-                {
-                    ["ModuleId"] = job.ModuleId,
-                    ["JobType"] = job.JobType,
-                    ["Status"] = job.Status.ToString(),
-                    ["SubmittedBy"] = job.SubmittedBy,
-                    ["SubmittedAtUtc"] = job.SubmittedAtUtc,
-                    ["TotalRows"] = job.TotalRows
-                },
-                extra: refusedAt is null ? null : new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false });
+                extra: fields);
         }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed for {Action}", action); }
     }

@@ -16,7 +16,8 @@ namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
 /// kd-26: Admin Bulk Jobs audits a cancel with what the cancel did - cancelled, not cancelled because the job had already
-/// finished or gone, refused, or failed - where it recorded Success after any cancel.
+/// finished or gone, refused, or failed - where it recorded Success after any cancel. kd-53: under the category of the
+/// module whose job it is. kd-54: and a removal that did not happen says why.
 /// </summary>
 /// <remarks>
 /// The real page, its injected services set through reflection (<see cref="ConferenceRoomPageTests"/>' idiom), its
@@ -108,6 +109,23 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobCarryingNoModule_IsFiledUnderThisPagesOwnCategory_NotABlankOne()
+    {
+        // kd-53. The category comes from the job; a job with none would leave the row uncategorised, which no filter and no
+        // compliance query can reach.
+        var (jobs, store) = JobService();
+        var job = Job(BulkJobStatus.Queued, moduleId: "");
+        store.Insert(job);
+        var page = BuildPage(jobs);
+
+        await Cancel(page, job);
+
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == Action);
+        Assert.Equal("AdminBulkJobs", row.GetProperty("category").GetString());
+        Assert.Equal("Success", row.GetProperty("result").GetString());
+    }
+
+    [Fact]
     public async Task ACancelTheStoreFails_IsAuditedAsFailed_AndStillThrows()
     {
         var (jobs, _) = JobService(migrated: false);
@@ -121,13 +139,66 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
         Assert.False(row.TryGetProperty("mutationAttempted", out _));
     }
 
+    // ---- kd-54: a removal that did not happen says why --------------------------------------------
+    // RemoveJob filed Failed with no error and no refusal fields when DeleteJob answered false, and the banner guessed "it
+    // may still be running". DeleteJob refuses a job that is gone and one that has not finished; the row now names which.
+
+    private const string RemoveAction = "AdminBulkJobs_RemoveJob";
+
+    private static Task Remove(Page page, BulkJob job) =>
+        (Task)typeof(Page).GetMethod("RemoveJob", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [job])!;
+
+    [Fact]
+    public async Task ARemovalThatHappens_IsAuditedAsDone()
+    {
+        var (jobs, store) = JobService();
+        var job = Job(BulkJobStatus.Completed);
+        store.Insert(job);
+        var page = BuildPage(jobs);
+
+        await Remove(page, job);
+
+        Assert.Null(store.Get(job.Id));
+        var row = TheRow(job, success: true, error: null, action: RemoveAction);
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
+        Assert.Equal($"Removed {Module} job T.", GetField(page, "actionMessage"));
+    }
+
+    [Theory]
+    [InlineData("running", "it has not finished.")]
+    [InlineData("queued", "it has not finished.")]
+    [InlineData("gone", "it no longer exists.")]
+    public async Task ARemovalThatDoesNotHappen_IsAuditedWithItsReason(string state, string because)
+    {
+        var (jobs, store) = JobService();
+        var job = Job(state == "running" ? BulkJobStatus.Running : BulkJobStatus.Queued);
+        if (state != "gone")
+            store.Insert(job);
+        var page = BuildPage(jobs);
+
+        await Remove(page, job);
+
+        var row = TheRow(job, success: false, error: $"The job was not removed: {because}", action: RemoveAction);
+        Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal($"Could not remove {Module} job T - {because}", GetField(page, "actionMessage"));
+        if (state == "gone")
+            Assert.Null(store.Get(job.Id));
+        else
+            Assert.Equal(job.Status, store.Get(job.Id)!.Status);
+    }
+
     // ---- the row -------------------------------------------------------------------------------
 
     // The one cancel row, as the page always wrote it - operator, IP, module/job, ticket, the job as rendered - with the
     // outcome and its reason.
-    private JsonElement TheRow(BulkJob job, bool success, string? error)
+    private JsonElement TheRow(BulkJob job, bool success, string? error, string action = Action)
     {
-        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == Action);
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == action);
+        // kd-53. Filed under the job's own module: this fixture's job is a Comms-10k one, and every row went under
+        // ConferenceRooms whatever module the job belonged to.
+        Assert.Equal(Module, row.GetProperty("category").GetString());
         Assert.Equal("admin", row.GetProperty("user").GetString());
         Assert.Equal(OperatorIp, row.GetProperty("ip").GetString());
         Assert.Equal($"{Module}/{job.Id}", row.GetProperty("target").GetString());
@@ -142,10 +213,10 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
 
     // ---- the page and its job store --------------------------------------------------------------
 
-    private static BulkJob Job(BulkJobStatus status) => new()
+    private static BulkJob Job(BulkJobStatus status, string moduleId = Module) => new()
     {
         Id = "job-1",
-        ModuleId = Module,
+        ModuleId = moduleId,
         JobType = "T",
         Status = status,
         SubmittedBy = "jdoe",

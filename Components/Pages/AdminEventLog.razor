@@ -76,6 +76,10 @@
                 <option value="DhcpAuthorization">DhcpAuthorization</option>
                 <option value="OutOfOffice">OutOfOffice</option>
                 <option value="ConferenceRooms">ConferenceRooms</option>
+                @* kd-53: a bulk job cancelled or removed from Admin Bulk Jobs files under its own module, so every module
+                   that can own a job must be offered here (AuditCategoryFilingTests' rule). *@
+                <option value="MessageTrace">MessageTrace</option>
+                <option value="Migration">Migration</option>
             </select>
         </div>
         <div class="col-auto">
