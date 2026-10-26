@@ -63,6 +63,7 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (8): `ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs`.
 - (7): `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs`, `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
 - (6): `Services/ADAttributeEditorService.cs`, `Modules/ModuleCatalog.cs` (AD Attribute Editor 1.7.2 -> 1.7.3);
   `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
@@ -214,6 +215,34 @@ restore.
 | Mutation (call site) | Mutant MD5 | Named tests failing |
 |---|---|---|
 | G1 `SqliteConnectionFactory.Open`'s `DefaultTimeout` removed (the aud-a41 defect back) | `c2595784ca4c5bd2492540b81f093a3d` | 3 of 25: `SqliteBusyWaitTests.AWriteThatMeetsAHeldLock_FailsBusy_AfterTheDocumentedWait` ("the write waited 34.38 s"), `SettingsStoreBusyTests.AdminSettings_ASecretIdCompareThatFindsTheStoreBusy_...` ("the save waited 34.39 s"), and the structural `AFactoryConnection_WaitsTheBusyTimeout_AndTheProviderRetriesNoLonger` (`DefaultTimeout` 30 where 5 was expected), which fails in 11 ms whatever the load |
+
+(8). The tripwire listed nine handlers in `InlineData` and looked at the FIRST catch of each, so a save added to one of
+these pages - or renamed - was simply absent from it, and a second or nested catch escaped it. It now discovers every
+`Task Save*(` declaration in the three pages' source and checks every `catch (Exception ...)` in each: 13 handlers
+instead of 9, and every catch instead of one. Three exemptions are named with their reason, and each is held to what
+the exemption is for rather than waved through:
+
+- a catch named `auditEx` - the audit write that follows a completed save, which must not make it look failed
+  (Constitution, Auditing And Tracing): it must log and record nothing;
+- `catch (Exception drainEx)` in `SaveExoConfig` - a failed pool drain is not a failed save, so it has its own audit
+  action (aud-a26k): it must use `Audit.LogConnectionPoolDrainFailed(`;
+- `SaveAllowlistAsync` - its records are the attribute-editor service's (aud-a28l and item 6 above), refusals included.
+
+The marker for the first is the variable name, not the log line: these scans read `ProgressScan.CodeView`, which blanks
+string literals. Two of the three exemptions were found BY the widened guard, not assumed: the drain catch and the
+allowlist save's refusal returns both failed it on the first run, and each was read and admitted on its own reasons.
+A save with neither try nor catch - `SaveCurrentTabAsync` since item 4, and `StartSaveAsync` - is required to have no
+catch and to write no record by hand.
+
+Filter `FullyQualifiedName~SettingsSaveAuditTests` (52 cases, up from 48). `AdminSettings.razor` MD5
+`f43b9b413ebb98947002eb0c6176137f`, `ExchangeOnlineConfig.razor` `25138a2776cb02b2b1baaca8889bd9ba`, each matched after
+its row; 52/52 green after each restore. Both mutants are defects the OLD tripwire would have passed, which is the
+point of the item.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| H1 `SaveDirectoryReadSecretAsync` (a handler the old list did not name) writes its failure by hand | `92816b21219cb34b9e7b85750a3d75d9` | 1 of 52: `EveryRefusalAndCatchInASettingsSave_WritesItsRecord(AdminSettings.razor, SaveDirectoryReadSecretAsync)` - no `Audit.LogSettingsSaveException(` in its catch |
+| H2 `SaveExoConfig`'s drain catch (a SECOND catch in a handler the old list did name) stops using its own audit action | `5b0323e9c65007b16d8726ab763c02d5` | 1 of 52: the same case for `SaveExoConfig` - no `Audit.LogConnectionPoolDrainFailed(` in the drain's catch |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 

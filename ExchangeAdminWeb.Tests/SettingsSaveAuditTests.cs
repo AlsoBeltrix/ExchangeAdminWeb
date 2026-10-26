@@ -650,25 +650,79 @@ public sealed class SettingsSaveAuditTests : IDisposable
 
     // ---- Tripwire: no refusal or catch in these handlers goes unrecorded -----------------------
 
+    /// <summary>The three settings pages' save handlers, found in their source rather than listed here (aud-a67 item 8).</summary>
+    /// <remarks>
+    /// The list was nine <c>InlineData</c> rows, so a save added to one of these pages - or renamed - was simply absent
+    /// from the guard, and only the FIRST catch of each handler was looked at, so a second or a nested one escaped it
+    /// too. Both are discovered now: every <c>Task Save*(</c> declaration on the three pages, and every
+    /// <c>catch (Exception ...)</c> inside each.
+    /// </remarks>
+    public static TheoryData<string, string> SettingsSaves()
+    {
+        var found = new TheoryData<string, string>();
+        foreach (var page in new[] { "AdminSettings.razor", "ExchangeOnlineConfig.razor", "ModuleConfig.razor" })
+        {
+            foreach (var declaration in SaveDeclarations(PageCode(page)))
+                found.Add(page, declaration);
+        }
+
+        Assert.True(found.Count >= 11, $"only {found.Count} settings saves were found in the three pages - this guard is stale");
+        return found;
+    }
+
+    private static string PageCode(string page) =>
+        ProgressScan.CodeView(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page)));
+
+    private static readonly System.Text.RegularExpressions.Regex SaveDeclaration = new(
+        @"(?:private|internal|public|protected)\s+(?:async\s+)?Task(?:<[^>\r\n]+>)?\s+Save\w*\s*\([^)\r\n]*\)",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static IEnumerable<string> SaveDeclarations(string code) =>
+        SaveDeclaration.Matches(code).Select(m => m.Value).Distinct(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What marks a catch that may report its own failure instead of going through the settings-save helper: the audit
+    /// writes that follow a completed save, which this app names <c>auditEx</c> everywhere. An audit sink that fails
+    /// must not make the save look failed (Constitution, Auditing And Tracing), so they log and swallow rather than
+    /// record a second time - and this guard holds them to exactly that, below.
+    /// </summary>
+    /// <remarks>
+    /// The marker is the variable, not the message: these scans read <see cref="ProgressScan.CodeView"/>, which blanks
+    /// string literals, so the wording of the log line is not there to match on.
+    /// </remarks>
+    private const string AuditFailureCatch = "catch (Exception auditEx)";
+
+    /// <summary>
+    /// The one save whose records are the attribute-editor service's rather than this helper's: the service writes the
+    /// refusal or the failure for everything it does (aud-a28l, aud-a67 item 6), and the page's catch covers its own
+    /// authorization re-check. Named here with its reason, so a NEW catch anywhere else is still caught by this guard.
+    /// </summary>
+    private const string AllowlistSave = "SaveAllowlistAsync";
+
+    /// <summary>
+    /// The connection save's second catch, around the pooled-connection drain that follows a connection already
+    /// written. A failed drain is not a failed save - under the settings-change action it read as one - so it has its
+    /// own audit action (aud-a26k) and must use it. Found by this guard once it began reading every catch rather than
+    /// the first (aud-a67 item 8).
+    /// </summary>
+    private const string PoolDrainCatch = "catch (Exception drainEx)";
+
     [Theory]
-    [InlineData("ModuleConfig.razor", "private async Task SaveConfigAsync()")]
-    [InlineData("ModuleConfig.razor", "private async Task SaveModuleEnablementAsync()")]
-    [InlineData("ModuleConfig.razor", "private async Task SaveSectionAccessAsync()")]
-    [InlineData("ModuleConfig.razor", "private async Task SaveModuleAdminsAsync()")]
-    [InlineData("AdminSettings.razor", "private async Task SaveEnablement()")]
-    [InlineData("AdminSettings.razor", "private async Task SaveLogLevel()")]
-    [InlineData("AdminSettings.razor", "private async Task SaveProtectedPrincipals()")]
-    [InlineData("ExchangeOnlineConfig.razor", "private async Task SaveModuleStatus()")]
-    [InlineData("ExchangeOnlineConfig.razor", "private async Task SaveExoConfig()")]
+    [MemberData(nameof(SettingsSaves))]
     public void EveryRefusalAndCatchInASettingsSave_WritesItsRecord(string page, string signature)
     {
         // The behavioural cases above drive every refusal these handlers have today; this fails
         // the next one added without a record, and names it.
-        var code = AuditCategoryFilingTests.MethodBody(
-            ProgressScan.CodeView(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page))),
-            signature);
+        var code = AuditCategoryFilingTests.MethodBody(PageCode(page), signature);
         var tryAt = System.Text.RegularExpressions.Regex.Match(code, @"\btry\b").Index;
-        Assert.True(tryAt > 0, $"{signature} has no try - this guard is stale");
+        if (tryAt <= 0)
+        {
+            // A save that neither tries nor catches decides nothing and records nothing - the Save button's
+            // one-at-a-time guard and the hand-off are all it is (aud-a67 item 4). It must still not write by hand.
+            Assert.DoesNotContain("Audit.LogSettingsSaveFailed(", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("catch (Exception", code, StringComparison.Ordinal);
+            return;
+        }
 
         var lines = code[tryAt..].Split('\n');
         var unrecorded = new List<string>();
@@ -677,18 +731,57 @@ public sealed class SettingsSaveAuditTests : IDisposable
             if (!lines[i].Contains("return;", StringComparison.Ordinal))
                 continue;
 
+            // The allowlist save's refusals are the attribute-editor service's records, as its catch is (below).
+            var records = signature.Contains(AllowlistSave, StringComparison.Ordinal)
+                ? "AttrEditorService.LogAllowlistSaveRefused("
+                : "Audit.LogSettingsSaveRefused(";
             var above = lines.Skip(Math.Max(0, i - 3)).Take(i - Math.Max(0, i - 3) + 1);
-            if (!above.Any(l => l.Contains("Audit.LogSettingsSaveRefused(", StringComparison.Ordinal)))
+            if (!above.Any(l => l.Contains(records, StringComparison.Ordinal)))
                 unrecorded.Add(lines[i].Trim());
         }
 
         Assert.True(unrecorded.Count == 0, $"{page} {signature}: refusal return(s) with no record above them");
 
         // aud-a40: through the one helper, which tells a busy store from a failure, and never by hand.
-        var caught = code.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
-        Assert.True(caught > tryAt, $"{signature} has no catch - this guard is stale");
-        var block = AuditCategoryFilingTests.MethodBody(code[caught..], "catch (Exception ex)");
-        Assert.Contains("Audit.LogSettingsSaveException(", block, StringComparison.Ordinal);
-        Assert.DoesNotContain("Audit.LogSettingsSaveFailed(", block, StringComparison.Ordinal);
+        // aud-a67 item 8: EVERY catch in the handler, not only the first one found.
+        var catches = CatchBlocks(code).ToList();
+        Assert.True(catches.Count > 0, $"{signature} has no catch - this guard is stale");
+        foreach (var block in catches)
+        {
+            if (block.StartsWith(AuditFailureCatch, StringComparison.Ordinal))
+            {
+                // Held to what the exemption is for: it reports the audit failure and does nothing else. A record
+                // written here would be the second one for an operation that completed.
+                Assert.Contains("Logger.LogError(auditEx", block, StringComparison.Ordinal);
+                Assert.DoesNotContain("Audit.LogSettingsSave", block, StringComparison.Ordinal);
+                continue;
+            }
+
+            if (block.StartsWith(PoolDrainCatch, StringComparison.Ordinal))
+            {
+                Assert.Contains("Audit.LogConnectionPoolDrainFailed(", block, StringComparison.Ordinal);
+                Assert.DoesNotContain("Audit.LogSettingsSave", block, StringComparison.Ordinal);
+                continue;
+            }
+
+            if (signature.Contains(AllowlistSave, StringComparison.Ordinal))
+            {
+                Assert.Contains("AttrEditorService.LogAllowlistSave", block, StringComparison.Ordinal);
+                continue;
+            }
+
+            Assert.Contains("Audit.LogSettingsSaveException(", block, StringComparison.Ordinal);
+            Assert.DoesNotContain("Audit.LogSettingsSaveFailed(", block, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>Every <c>catch (Exception ...)</c> block in <paramref name="code"/>, each from its brace to its match.</summary>
+    private static IEnumerable<string> CatchBlocks(string code)
+    {
+        foreach (System.Text.RegularExpressions.Match match in
+                 System.Text.RegularExpressions.Regex.Matches(code, @"catch \(Exception \w+\)"))
+        {
+            yield return AuditCategoryFilingTests.MethodBody(code[match.Index..], match.Value);
+        }
     }
 }
