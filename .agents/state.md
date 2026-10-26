@@ -8,6 +8,48 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### THE PLAN TO CLOSE THE STREAM - written 2026-10-26 evening for the owner's approval, in plain terms
+
+Owner rulings this evening, which this plan carries out: a fix is not a functionality change; nothing about the
+deploy pipeline's behaviour was asked for; protected principals and protected groups are out of scope for the
+Conference Rooms module; one agent and one compile at a time; agents are Opus 5.5; codex is gone and one
+codex-commercial review runs at the very end.
+
+**Step 1 - undo the deploy-pipeline changes.** Put `deploy.ps1`, `tools/Install-ExchangeAdminWeb.ps1`,
+`tools/AppPoolControl.psm1`, `tools/JobStateWarning.psm1` and their test files back to exactly what they were when
+the weekend began (commit `eb017102`), and remove the paragraph the weekend added to the README's deploy section.
+Keep only the three documentation edits that corrected stale line-number pointers. Then run the PowerShell checks.
+Supervisor does this; no agent.
+
+**Step 2 - take every protected-principal and protected-group check out of Conference Rooms that the weekend
+added, and put room-list creation back.** The module creates a building's room list again when none exists, and
+the preview says so again. Keep the weekend's genuine fixes in that module: an ambiguous room-list lookup refuses
+instead of being read as "no list"; cancelling or removing a bulk job is audited and re-checks the operator's
+access; refusal messages say nothing was written. One agent, briefed to remove by name and keep by name.
+
+**Step 3 - merge the module-configuration page fix** (done and verified on its branch: rapid navigation between
+modules can no longer leave the page blank or overwrite unsaved edits). Supervisor; then the full build and test.
+
+**Step 4 - the remaining genuine bug fixes, one agent at a time, in this order:** the two permission-page guards
+(a notification or progress call that throws no longer shows a finished bulk run as failed or escapes the
+handler) and one copied field; Self-Service Groups no longer locks up when a member load hangs and the operator
+goes back; the cancel button reaches the credential read in the other modules the way it now does in Recipient
+Lookup; the other audit-category and wording fixes already open.
+
+**Step 5 - two things the supervisor does without an agent:** the test stand-in bug that makes "zero items"
+return two; and stopping the two test classes that read the live directory from running by default.
+
+**Step 6 - gates, then the one review, then close.** Full build, full test suite, format, PowerShell checks all
+green. One codex-commercial review over everything merged since Thursday that no reviewer has seen, aimed at
+authorization, audit and the places parallel branches touched the same files. Fix what it raises. Then one base
+app version bump, this file rewritten to the closed state, the token log, and a deployable master handed over.
+
+**Waiting on the owner, one word each, nothing done until answered:**
+- The new "outcome could not be confirmed" email to the affected person and mailbox owner: keep or remove.
+- Refusing a ticket with nothing visible in it while the ServiceNow check is switched off: keep or remove.
+- Counting an Ineligible permission change as a success in the usage counters: yes to counting only applied
+  changes as successes, or no to leave it.
+- Refusing a number where a room type name belongs in the bulk CSV: keep or remove.
 ### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
