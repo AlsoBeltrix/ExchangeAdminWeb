@@ -442,7 +442,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
     }
 
     /// <summary>
-    /// aud-a67 item 9: the load read the ModuleId parameter after its awaits - the descriptor with one read, the
+    /// aud-a67 item 9, with cons-4: the load read the ModuleId parameter after its awaits - the descriptor with one read, the
     /// delegated-admin grant with another, on either side of the authorization await - so a route change in one of
     /// those windows made the load fetch the newer module's descriptor, or decide this page with another module's
     /// grant. It takes the module it was asked for before its first await now, and uses that for all of it.
@@ -484,8 +484,36 @@ public sealed class SettingsModuleMoveTests : IDisposable
         release.SetResult();
         await loadingSecond.WaitAsync(Long, Cancel);
 
-        Assert.Equal(Second, Shown(page));
+        // cons-4 decided what this ends as: the route asks for the third module, so the load for the second applies
+        // nothing at all - not its descriptor, and not a navigation from checking a grant for the wrong module. The
+        // page keeps what it had until the route change for the third module runs its own load.
+        Assert.Equal(First, Shown(page));
         Assert.DoesNotContain("access-denied", _h.Navigation.Navigations);
+    }
+
+    /// <summary>
+    /// aud-a67 (9)'s mechanism, pinned where behaviour no longer can: since cons-4 a load whose module the route has
+    /// moved past applies nothing, so reading the parameter again mid-flight is invisible in the outcome - the abort
+    /// hides it. What must stay true is that there is one read. Every later use goes through the captured local, or
+    /// through StillRequested, which is the only other place the parameter may be read.
+    /// </summary>
+    [Fact]
+    public void TheLoad_ReadsItsModuleParameterOnce_AndNeverAgainAfterAnAwait()
+    {
+        var body = AuditCategoryFilingTests.MethodBody(
+            ProgressScan.CodeView(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "ModuleConfig.razor"))),
+            "protected override async Task OnParametersSetAsync()");
+
+        const string capture = "var requested = ModuleId;";
+        var captured = body.IndexOf(capture, StringComparison.Ordinal);
+        Assert.True(captured > 0, "OnParametersSetAsync no longer captures its module before its first await - this guard is stale");
+
+        // The parameter itself, not a field whose name ends in it (loadedModuleId is the load's own bookkeeping).
+        var after = body[(captured + capture.Length)..];
+        var reread = System.Text.RegularExpressions.Regex.Match(after, @"(?<![A-Za-z0-9_])ModuleId(?![A-Za-z0-9_])");
+        Assert.False(
+            reread.Success,
+            $"OnParametersSetAsync reads ModuleId again after capturing it: {Line(after, reread.Index)}");
     }
 
     /// <summary>
@@ -603,6 +631,75 @@ public sealed class SettingsModuleMoveTests : IDisposable
         // The module opened, so the waiting message is gone rather than left over its page.
         Assert.Equal(Second, Shown(page));
         Assert.DoesNotContain("Waiting for", Status(page) ?? "", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// cons-4: two loads can be in flight at once, and the one that resumes LAST used to win. Open B, route to C while
+    /// B waits for its authorization read, let C finish, then let B resume: B applied its descriptor and its state over
+    /// C, so a privileged module's configuration could be shown - and edited - after the route had moved to another.
+    /// aud-a67 (9) and (10) closed the orderings where the NEWER work went astray; this is the one where the older
+    /// load does. A load whose module the route no longer asks for now ends silently.
+    /// </summary>
+    [Fact]
+    public async Task AnOlderLoadThatResumesAfterANewerOneFinished_AppliesNothing()
+    {
+        var page = _h.OpenModuleConfig(First);
+        var authorizeSecond = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(authorizeSecond.Task, Task.FromResult(AuthorizationResult.Success()));
+
+        // B is held at its authorization read.
+        var loadingSecond = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(loadingSecond.IsCompleted, "the second module's load did not wait at its authorization - this fixture is stale");
+
+        // C is routed to and runs to completion while B is still held.
+        var loadingThird = await Open(page, Third);
+        await loadingThird.WaitAsync(Long, Cancel);
+        Assert.Equal(Third, Shown(page));
+        var tabAfterThird = Field<string>(page, "tab");
+
+        // B resumes last, and must apply nothing.
+        authorizeSecond.SetResult(AuthorizationResult.Success());
+        await loadingSecond.WaitAsync(Long, Cancel);
+
+        Assert.Equal(Third, Shown(page));
+        Assert.Equal(Third, Field<string?>(page, "loadedModuleId"));
+        Assert.Equal(tabAfterThird, Field<string>(page, "tab"));
+        Assert.DoesNotContain("access-denied", _h.Navigation.Navigations);
+    }
+
+    /// <summary>
+    /// cons-4's guard immediately before the state is applied, pinned in the source. Behaviour cannot pin it: the check
+    /// after the authorization read already aborts a stale load, and nothing between the two awaits, so removing this
+    /// one changes nothing today. It is there so that an await added above cannot reopen the window silently, and that
+    /// is a property of the text, not of a run.
+    /// </summary>
+    [Fact]
+    public void TheLoad_ChecksTheRouteHasNotMovedOn_ImmediatelyBeforeItAppliesTheModule()
+    {
+        var body = AuditCategoryFilingTests.MethodBody(
+            ProgressScan.CodeView(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "ModuleConfig.razor"))),
+            "protected override async Task OnParametersSetAsync()");
+
+        var applied = body.IndexOf("module = next;", StringComparison.Ordinal);
+        Assert.True(applied > 0, "OnParametersSetAsync no longer assigns the module it loaded - this guard is stale");
+
+        var before = body[..applied];
+        var guarded = before.LastIndexOf("if (!StillRequested(requested)) return;", StringComparison.Ordinal);
+        Assert.True(guarded > 0, "nothing checks the route before the module is applied");
+        Assert.DoesNotContain("await ", before[guarded..], StringComparison.Ordinal);
+    }
+
+    /// <summary>The line of <paramref name="text"/> that <paramref name="index"/> falls on, for a failure that names it.</summary>
+    private static string Line(string text, int index)
+    {
+        if (index <= 0 || index >= text.Length)
+            return "(nowhere)";
+
+        var start = text.LastIndexOf('\n', index) + 1;
+        var end = text.IndexOf('\n', index);
+        return text[start..(end < 0 ? text.Length : end)].Trim();
     }
 
     [Fact]
