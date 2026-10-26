@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### Fix-everything work stream - HALTED 2026-10-26 by the account spend limit
+### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
 more you find while doing so", then "ALL the bugs includes ALL the bugs. those too. all of them.
@@ -26,7 +26,51 @@ Each slice's arrangement and cost go in `.agents/token-log.md`.
 **Master's position and gates are in the halt block below, not here.** `Modules/ModuleCatalog.cs`
 owns which module versions moved; `ExchangeAdminWeb.csproj` owns the base version.
 
-**HALTED 2026-10-26: every implementation agent was killed mid-slice by the account's individual spend limit**
+**HALTED AGAIN, 2026-10-26 evening, by a different limit.** The first halt was the account's individual spend limit on
+`claude-opus-5-5` (HTTP 429); the owner cleared it, every agent resumed from its transcript and the stream ran a full
+round. All six agents still working then died within minutes of each other on **HTTP 412, "Portkey API Key Usage Limit
+Exceeded", on the gateway route for `anthropic.claude-opus-5`** - the gateway key's own cap, not the Anthropic spend
+limit. The supervising session (this one) still has requests, and so does codex through its separate route.
+
+**Master after the evening consolidation (`5b786996`); every gate re-run by the supervisor:**
+
+| Gate | Result |
+| --- | --- |
+| Release build | 0 errors, 0 warnings |
+| xUnit suite | 7347 passed, 0 failed, 0 skipped |
+| Pester | 508 passed, 0 failed, 0 skipped |
+| PSScriptAnalyzer | 0 errors |
+
+`dotnet format`, `git diff --check` and the ASCII lint are clean. The base app version is still 2.35.0 and **one base
+bump is owed at close**; the shared services that changed are named in the findings.
+
+**What the evening consolidation merged** (every slice each agent had committed when it died): kd-69; kd-62, kd-63,
+kd-64, kd-65; kd-66; kd-45, kd-46, kd-48, kd-49; kd-18, kd-40, kd-43, kd-44 (Calendar Permissions, completing both
+pages); cdt-57. **None of it has had a codex review of its own.** Four merge conflicts needed real judgement and each is
+recorded in its merge commit: five module version entries where parallel branches each bumped the same module (both note
+sets kept, versions renumbered), the Emergency Disable catalog test reconciled with its new version, and
+`Services/TicketPresence.cs`, where master already carried the stronger kd-48 rule and another branch still carried the
+kd-24 one it forked with - master's was kept.
+
+**Eight worktrees are kept** (`git worktree list`). `fix/kd-misc` is unmerged IN FULL - fourteen verified fixes - because
+its first commit is `kd-1`, which waits on an owner answer (below). The other seven are merged up to their last commit
+and hold uncommitted mid-slice work; do not delete any of them.
+
+**Still owed:** every `[ ]` and `[~]` row in `.agents/review/index.md`. The open MEDIUMs worth naming are `cons-7` (a
+duplicate same-target module load strands the page blank), `kd-68` (the missing-room-list refusal carries no refusal
+fields), `kd-52`'s descendants and `cdt-58`; aud-a67 **(12)** and `kd-58` are the two that need a written plan rather
+than code.
+
+**Owner decisions, unchanged and still unanswered** - the seven listed below, plus one added this evening: **aud-a2ab
+removed a feature.** Room Finder apply no longer creates a building's room list, because the list's identity cannot be
+known before Exchange assigns its address, so a protected-target rule cannot be checked against it. The operator now
+creates the list in Exchange Online and re-runs. Reversing it means accepting a write before the check.
+
+**NEXT ACTION: the owner's.** Either clear the gateway key's cap and say to resume - the agents resume from their
+transcripts, and each needs its queue re-sent - or name a smaller scope. Nothing deploys: the 2026-10-23 evening ruling
+stands that every open LOW, MEDIUM and HIGH is fixed first.
+
+**The first halt, 2026-10-26 morning: every implementation agent was killed mid-slice by the account's individual spend limit**
 (HTTP 429 on `claude-opus-5-5`, eight agents within minutes of each other). Nothing was lost: each agent's
 committed slices were merged in a consolidation pass and master is green, but **no agent finished its queue and
 the merged consolidation has had no codex review of its own until `.agents/review/consolidation-1.result.txt`
