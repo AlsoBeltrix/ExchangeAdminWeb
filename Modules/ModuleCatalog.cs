@@ -1134,7 +1134,9 @@ public sealed class ModuleCatalog
             // a ticket made only of control characters (kd-24).
             // 1.7.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "1.7.0",
+            // 1.8.0: a deauthorize refused for its ticket records the ticket as submitted and says where
+            // it refused and that nothing was attempted, as authorize already did (kd-49).
+            Version = "1.8.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",

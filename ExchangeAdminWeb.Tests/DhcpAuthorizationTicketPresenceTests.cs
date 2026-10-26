@@ -106,6 +106,7 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
     [Theory]
     [InlineData("")]
     [InlineData("\u0001")]
+    [InlineData("\u200B")]
     public async Task ADeauthorizeWithNoTicket_IsRefusedBeforeAnythingElseRuns(string ticket)
     {
         // RemoveServer always checked presence itself; since kd-24 by the shared rule, so a
@@ -113,8 +114,7 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         // refused there as well.
         var page = PageFor(ticket, DormantServiceNow());
 
-        await (Task)typeof(Page).GetMethod("RemoveServer", PrivateInstance)!.Invoke(
-            page, [new DhcpServerEntry { DnsName = Server, IpAddress = Address }])!;
+        await Deauthorize(page);
 
         Assert.Empty(_authorization.ReceivedCalls());
         var row = Assert.Single(AuditRows());
@@ -122,7 +122,53 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         Assert.Equal("Failed", row.GetProperty("result").GetString());
         Assert.Equal("Ticket number not provided", row.GetProperty("error").GetString());
         Assert.False(Shown(page).Success);
+
+        // kd-49: the row says where it refused and that nothing was attempted, as authorize's does,
+        // and it carries the ticket as submitted - it used to log an empty string, so a row could not
+        // say what was sent. A blank ticket is still recorded as none, the writer dropping a null field.
+        Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        if (string.IsNullOrWhiteSpace(ticket))
+            Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
+        else
+            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
     }
+
+    [Fact]
+    public async Task ADeauthorizeRefusedByServiceNow_SaysNothingWasAttemptedToo()
+    {
+        // kd-49, the other refusal in the same handler: it kept its ticket but carried neither field.
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(Ticket, serviceNow);
+
+        await Deauthorize(page);
+
+        var row = Assert.Single(AuditRows());
+        Assert.Equal("DHCP_Deauthorize", row.GetProperty("action").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+        Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Single(requests);
+        Assert.Empty(_authorization.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task ADeauthorizeWithATicket_GoesOnToTheAuthorizationCheck()
+    {
+        // The control for both: past both ticket gates, so the rows above are those gates refusing and
+        // not a fixture that never gets that far. This row is the authorization denial, which carries
+        // no refusal fields - the distinction the two above are for.
+        var page = PageFor(Ticket, DormantServiceNow());
+
+        await Deauthorize(page);
+
+        Assert.Single(_authorization.ReceivedCalls());
+        Assert.DoesNotContain(AuditRows(), row => row.TryGetProperty("refusedAt", out _));
+    }
+
+    private static Task Deauthorize(Page page) =>
+        (Task)typeof(Page).GetMethod("RemoveServer", PrivateInstance)!.Invoke(
+            page, [new DhcpServerEntry { DnsName = Server, IpAddress = Address }])!;
 
     // ---- assertions ---------------------------------------------------------------------------
 

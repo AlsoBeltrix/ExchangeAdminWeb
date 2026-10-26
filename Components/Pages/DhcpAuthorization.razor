@@ -387,7 +387,9 @@
             if (!TicketPresence.IsPresent(ticket))
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = "A ticket number is required for deauthorization. Enter one in the Authorize form." };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, "", "Ticket number not provided"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize missing ticket"); }
+                // kd-49: the ticket as submitted, not an empty string - a row that drops it cannot say what
+                // was sent - and the aud-a28 refusal fields, so this is told apart from a write that failed.
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticket, "Ticket number not provided", new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize missing ticket"); }
                 return;
             }
 
@@ -395,7 +397,7 @@
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize ticket validation"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize ticket validation"); }
                 return;
             }
 
