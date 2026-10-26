@@ -106,7 +106,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
         public OnPremService(ExchangeWriteHarness h)
             : base(h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, h.Config, null!, h.Trace) => _h = h;
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken)
         {
             CredentialRequests++;
             return Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));

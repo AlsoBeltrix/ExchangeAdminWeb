@@ -436,7 +436,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         public Service(ExchangeWriteHarness h)
             : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
         protected override Runspace OpenDirectoryRunspace() => _h.OpenDirectoryRunspace();

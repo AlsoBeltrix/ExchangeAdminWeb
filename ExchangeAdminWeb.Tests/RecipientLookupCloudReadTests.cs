@@ -75,7 +75,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
         ACloudMailbox();
         _exchange.Failures[$"Get-Mailbox {Address}"] = Failing(how);
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Null(result.Error);
         Assert.Equal($"Get-Mailbox failed: {Refusal}", result.MailboxUnreadable);
@@ -103,7 +103,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
         _exchange.NotFound = NotFoundIn(shape);
         _exchange.OnPremConfigured = true;
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Null(result.Error);
         Assert.Null(result.MailboxUnreadable);
@@ -127,7 +127,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
         ACloudMailbox();
         _exchange.Failures["Get-MailboxStatistics -Archive"] = Failing(how);
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Null(result.Error);
         Assert.False(result.ArchiveEnabled);
@@ -149,7 +149,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
         ACloudMailbox();
         _exchange.Behaviour["ArchiveSize"] = null;
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.False(result.ArchiveEnabled);
         Assert.Equal("Exchange returned no archive statistics", result.ArchiveUnreadable);
@@ -168,7 +168,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
         _exchange.NotFound = NotFoundIn(shape);
         _exchange.Behaviour["NoArchive"] = true;
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.False(result.ArchiveEnabled);
         Assert.Null(result.ArchiveUnreadable);
@@ -182,7 +182,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
     {
         ACloudMailbox();
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal("Cloud", result.MailboxLocation);
         Assert.True(result.ArchiveEnabled);

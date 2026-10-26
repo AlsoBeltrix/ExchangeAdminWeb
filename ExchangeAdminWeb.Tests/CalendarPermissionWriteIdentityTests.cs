@@ -111,7 +111,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         public OnPremService(ExchangeWriteHarness h)
             : base(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, null!, h.Trace) => _h = h;
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken)
         {
             CredentialRequests++;
             return Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));

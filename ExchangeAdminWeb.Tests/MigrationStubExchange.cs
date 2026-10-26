@@ -312,22 +312,34 @@ internal sealed class MigrationStubExchange : IDisposable
         protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
             exchange.DefineOnPremSession(ps);
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             exchange.OnPremCredentialsFor(purpose);
     }
 
     /// <summary>aud-a23o. The real Recipient Lookup service over the same stand-ins: Exchange Online in the pool, on-premises in its seams.</summary>
     /// <param name="connects">aud-a68. False: opening the Exchange Online connection throws, before any cmdlet runs.</param>
-    public RecipientLookupService RecipientLookup(bool connects = true) => new StubRecipientLookupService(this, connects);
+    /// <param name="credentials">
+    /// kd-37. The on-premises credentials through this module credential lookup, as the live service fetches them; unset, the
+    /// stand-in's (<see cref="OnPremCredentials"/>, <see cref="Failures"/>).
+    /// </param>
+    public RecipientLookupService RecipientLookup(bool connects = true, ModuleCredentialService? credentials = null) =>
+        new StubRecipientLookupService(this, connects, credentials);
 
-    internal sealed class StubRecipientLookupService(MigrationStubExchange exchange, bool connects)
-        : RecipientLookupService(exchange.Pool(connects), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), null!, exchange._trace)
+    internal sealed class StubRecipientLookupService(MigrationStubExchange exchange, bool connects, ModuleCredentialService? credentials)
+        : RecipientLookupService(exchange.Pool(connects), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), credentials!, exchange._trace)
     {
         protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
             exchange.DefineOnPremSession(ps);
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
-            exchange.OnPremCredentialsFor(purpose);
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
+            _moduleCredentials is null ? exchange.OnPremCredentialsFor(purpose) : base.GetModuleCredentialsAsync(purpose, cancellationToken); // the base holds what was passed, so nothing is captured twice
+    }
+
+    /// <summary>kd-37. A module credential lookup over this stand-in's module settings, the module's secret ID saved first.</summary>
+    public ModuleCredentialService Credentials(string moduleId, DelineaService vault, int secretId)
+    {
+        _moduleConfig.SaveModuleConfig(moduleId, new Dictionary<string, string> { ["DelineaSecretId"] = secretId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        return new ModuleCredentialService(_moduleConfig, vault, NullLogger<ModuleCredentialService>.Instance);
     }
 
     // aud-a23o. The configuration a service is built with: the stand-in's, plus an on-premises server only when asked for.
@@ -729,7 +741,8 @@ internal sealed class MigrationStubExchange : IDisposable
     }
 
     /// <summary>aud-a23i. A progress channel that keeps how each activity ended: the first Complete wins, as the real one's does.</summary>
-    internal sealed class RecordingProgress : IActivityProgress
+    /// <param name="cancellation">kd-37. The token every activity hands out; unset, one that is never cancelled.</param>
+    internal sealed class RecordingProgress(CancellationToken cancellation = default) : IActivityProgress
     {
         private readonly List<RecordingHandle> _handles = [];
 
@@ -740,7 +753,7 @@ internal sealed class MigrationStubExchange : IDisposable
 
         public IActivityHandle Begin(string moduleId, string label, ActivitySize size)
         {
-            var handle = new RecordingHandle(label);
+            var handle = new RecordingHandle(label, cancellation);
             lock (_handles) _handles.Add(handle);
             return handle;
         }
@@ -756,7 +769,7 @@ internal sealed class MigrationStubExchange : IDisposable
         public event Action? Changed { add { } remove { } }
     }
 
-    internal sealed class RecordingHandle(string label) : IActivityHandle
+    internal sealed class RecordingHandle(string label, CancellationToken cancellation = default) : IActivityHandle
     {
         public string Label { get; } = label;
 
@@ -764,7 +777,7 @@ internal sealed class MigrationStubExchange : IDisposable
 
         public string Id { get; } = Guid.NewGuid().ToString("N");
 
-        public CancellationToken CancellationToken => CancellationToken.None;
+        public CancellationToken CancellationToken => cancellation;
 
         public void Report(int done, string? detail = null) { }
 

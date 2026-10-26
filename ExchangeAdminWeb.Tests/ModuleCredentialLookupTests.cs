@@ -67,8 +67,8 @@ public sealed class ModuleCredentialLookupTests : IDisposable
         var logger = new CapturingLogger();
         using var offline = new OfflineCredentials(_dir, config, moduleConfig, logger);
 
-        var lookup = await offline.Service.LookupCredentialsAsync(Module, Purpose);
-        var old = await offline.Service.GetCredentialsAsync(Module, Purpose);
+        var lookup = await offline.Service.LookupCredentialsAsync(Module, Purpose, TestContext.Current.CancellationToken);
+        var old = await offline.Service.GetCredentialsAsync(Module, Purpose, TestContext.Current.CancellationToken);
 
         Assert.Null(lookup.Credentials);
         Assert.Equal(expected, lookup.Failure);

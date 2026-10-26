@@ -71,7 +71,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
             : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken)
         {
             CredentialRequests++;
             if (IncompleteCredentialFor is { } incomplete && purpose.Contains(incomplete, StringComparison.Ordinal))
