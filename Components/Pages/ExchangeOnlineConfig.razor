@@ -273,8 +273,14 @@
         // aud-a67. One save at a time: this page wires its two Save buttons straight at their handlers, and a click the
         // browser sent before the disabled button rendered ran a second save beside the first, whose finally then cleared
         // `saving` while the other still ran.
+        // cons-5. The refusal is said, not silent: the other button on this page saves something else, and its press
+        // disappeared with its fields still dirty.
         if (saving)
+        {
+            statusMessage = SaveAlreadyRunning;
+            statusIsError = false;
             return;
+        }
 
         saving = true;
         statusMessage = null;
@@ -366,9 +372,14 @@
 
     private async Task SaveExoConfig()
     {
-        // aud-a67, as SaveModuleStatus above: one save at a time, whichever button started it.
+        // aud-a67, as SaveModuleStatus above: one save at a time, whichever button started it; cons-5, said rather
+        // than silent.
         if (saving)
+        {
+            statusMessage = SaveAlreadyRunning;
+            statusIsError = false;
             return;
+        }
 
         saving = true;
         statusMessage = null;
@@ -606,6 +617,9 @@
             activity.Complete(completed?.success ?? false, completed?.message);
         }
     }
+
+    /// <summary>cons-5. What a second Save press is told while the first is still running.</summary>
+    internal const string SaveAlreadyRunning = ExchangeAdminWeb.Components.Pages.ModuleConfig.SaveAlreadyRunning;
 
     private const string PoolSection = "ExchangeOnlineConfig:ConnectionPool";
 

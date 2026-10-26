@@ -878,7 +878,14 @@
         // that outlasts its bound loads the next module and LoadState clears `saving`, so a new save can begin while the
         // old one is still running - and it is what makes a late save harmless whatever started it.
         if (saving)
+        {
+            // cons-5. Say so, rather than dropping the click: the second press can be for a different section of this
+            // page, and it stayed dirty with nothing on screen to say it had not been saved. Nothing is cleared and
+            // nothing is recorded - no save was attempted, and the running one writes its own record.
+            statusMessage = SaveAlreadyRunning;
+            statusIsError = false;
             return;
+        }
 
         await StartSaveAsync();
     }
@@ -996,6 +1003,9 @@
             .Select(s => s.Module)
             .Distinct(StringComparer.Ordinal)
             .ToList();
+
+    /// <summary>cons-5. What a second Save press is told while the first is still running.</summary>
+    internal const string SaveAlreadyRunning = "A save is already running; wait for it to finish.";
 
     // aud-a67 item 14. What the page shows WHILE it waits for those saves, where it used to show nothing for up to ten
     // seconds. It is replaced by the next module's own state when the load lands, or by UnfinishedSaveNotice when the
