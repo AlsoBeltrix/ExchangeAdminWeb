@@ -556,8 +556,9 @@ public abstract class ExchangeServiceBase
         throw new InvalidOperationException($"Failed to connect to on-prem Exchange at {_onPremServerUri} after {maxRetries} attempts");
     }
 
-    // virtual: the same test seam as ConnectOnPrem (aud-a2d). No behaviour change.
-    protected virtual async Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+    // virtual: the same test seam as ConnectOnPrem (aud-a2d). No behaviour change. kd-37: the caller's token goes on to the vault,
+    // which throws when it is cancelled; a request that times out with nobody cancelling is still no credential (kd-14's rule).
+    protected virtual async Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken = default)
     {
         if (_moduleCredentials is null || string.IsNullOrWhiteSpace(_moduleId))
         {
@@ -565,7 +566,7 @@ public abstract class ExchangeServiceBase
             return null;
         }
 
-        return await _moduleCredentials.GetCredentialsAsync(_moduleId, purpose);
+        return await _moduleCredentials.GetCredentialsAsync(_moduleId, purpose, cancellationToken);
     }
 
     // -------------------------------------------------------------------------
@@ -624,7 +625,7 @@ public abstract class ExchangeServiceBase
     // takes a cancellation. ASSUMPTION, unverified (no live call): on-premises Exchange reports a mailbox with no archive,
     // through remoting, in a shape IsNotFound reads; if not, the check of such a mailbox is Undetermined - visible, never a
     // guess, and one dev check of that error record settles it.
-    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress)
+    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress, CancellationToken cancellationToken = default) // kd-37: the token for its credential read
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
         {
@@ -633,7 +634,7 @@ public abstract class ExchangeServiceBase
         }
 
         _operationTrace?.Step("OnPremMailboxSizeRequested", backend: "OnPremExchange", target: emailAddress);
-        var creds = await GetModuleCredentialsAsync("on-prem mailbox size check");
+        var creds = await GetModuleCredentialsAsync("on-prem mailbox size check", cancellationToken);
         if (creds is null)
         {
             _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
@@ -726,7 +727,7 @@ public abstract class ExchangeServiceBase
     // aud-a23o. Where a mailbox is, or why that could not be told: a cloud read that fails is reported as such, not as "no
     // cloud mailbox" - under Ignore it was, and on-premises was then asked about a mailbox Exchange Online had not answered
     // for. "Unknown" means both sides answered that they hold no such mailbox.
-    public async Task<string> GetMailboxLocationAsync(string identity)
+    public async Task<string> GetMailboxLocationAsync(string identity, CancellationToken cancellationToken = default) // kd-37: the same, for the on-premises read's
     {
         bool inTheCloud;
         try
@@ -741,7 +742,7 @@ public abstract class ExchangeServiceBase
         if (inTheCloud)
             return "Cloud";
 
-        return await GetOnPremMailboxLocationAsync(identity) ?? "Unknown";
+        return await GetOnPremMailboxLocationAsync(identity, cancellationToken) ?? "Unknown";
     }
 
     // aud-a23o. What a page refuses with when the location read fails, before any write. On the two permissions pages it
@@ -776,7 +777,7 @@ public abstract class ExchangeServiceBase
     // aud-a23o. A side that could not be asked - no server, no credentials, a session or a read that fails - throws, naming
     // why. Each was null, which GetMailboxLocationAsync made "Unknown". Null now only when both reads answered that there is
     // no such recipient.
-    private async Task<string?> GetOnPremMailboxLocationAsync(string identity)
+    private async Task<string?> GetOnPremMailboxLocationAsync(string identity, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
         {
@@ -784,7 +785,7 @@ public abstract class ExchangeServiceBase
             throw new InvalidOperationException($"on-premises Exchange could not be asked: {OnPremNotConfigured}");
         }
 
-        var creds = await GetModuleCredentialsAsync("on-prem mailbox location check");
+        var creds = await GetModuleCredentialsAsync("on-prem mailbox location check", cancellationToken);
         if (creds is null)
         {
             _logger.LogError("Cannot determine on-prem mailbox location for {Identity}: failed to retrieve credentials from Delinea", identity);

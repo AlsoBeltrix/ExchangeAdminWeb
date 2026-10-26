@@ -226,7 +226,7 @@
             RecipientInfoResult lookup;
             try
             {
-                lookup = await LookupService.GetRecipientInfoAsync(target);
+                lookup = await LookupService.GetRecipientInfoAsync(target, activity.CancellationToken); // kd-37: the token the navigation guard cancels, down to the vault request
             }
             catch (Exception ex)
             {

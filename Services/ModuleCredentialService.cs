@@ -37,9 +37,10 @@ public class ModuleCredentialService
         _logger = logger;
     }
 
-    // aud-a2x. The lookup every caller has used, unchanged for them: the same credential or null, the same lines.
-    public async Task<(string username, string password, string domain)?> GetCredentialsAsync(string moduleId, string purpose) =>
-        (await LookupCredentialsAsync(moduleId, purpose)).Credentials;
+    // aud-a2x. The lookup every caller has used, unchanged for them: the same credential or null, the same lines. kd-37: and the
+    // caller's token, which goes on to the vault request; none, the default, is every caller's but Recipient Lookup's.
+    public async Task<(string username, string password, string domain)?> GetCredentialsAsync(string moduleId, string purpose, CancellationToken cancellationToken = default) =>
+        (await LookupCredentialsAsync(moduleId, purpose, cancellationToken)).Credentials;
 
     // aud-a2x. The same lookup, saying why it returned none. GetCredentialsAsync returned null alike for an unreadable
     // module config, for no secret ID, and for a configured ID the PAM provider answered with nothing, so a caller could
@@ -47,7 +48,7 @@ public class ModuleCredentialService
     // lookup's own, from the reads it made, not a second read of the config that an edit in between could contradict.
     // Delinea's finer reasons - no bootstrap credential, an HTTP status, a secret missing a field, an exception - stay in
     // DelineaService's log lines, one for each null it returns: carrying them out would change a service every module uses.
-    public async Task<ModuleCredentialLookup> LookupCredentialsAsync(string moduleId, string purpose)
+    public async Task<ModuleCredentialLookup> LookupCredentialsAsync(string moduleId, string purpose, CancellationToken cancellationToken = default)
     {
         if (_moduleConfig.IsModuleCorrupt(moduleId))
         {
@@ -62,7 +63,7 @@ public class ModuleCredentialService
             return new ModuleCredentialLookup(null, ModuleCredentialFailure.SecretIdNotSet);
         }
 
-        var credentials = await _delineaService.GetCredentialsBySecretIdAsync(secretId);
+        var credentials = await _delineaService.GetCredentialsBySecretIdAsync(secretId, cancellationToken); // kd-37: a cancelled token throws there
         return new ModuleCredentialLookup(
             credentials, credentials is null ? ModuleCredentialFailure.NotReturned : ModuleCredentialFailure.None);
     }

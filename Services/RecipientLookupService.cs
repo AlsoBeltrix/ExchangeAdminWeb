@@ -8,7 +8,9 @@ public class RecipientLookupService : ExchangeServiceBase
     public RecipientLookupService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<RecipientLookupService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "RecipientLookup", operationTrace) { }
 
-    public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
+    // kd-37. The page's activity token, for the two on-premises reads' credentials: a cancel during either leaves the lookup as a
+    // cancellation (neither catch takes one), where it finished with a warning. The Exchange Online reads take none.
+    public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress, CancellationToken cancellationToken = default)
     {
         // Read-only: safe to retry on a dead pooled session.
         var result = await RunPooledQueryAsync((ps, tracker) =>
@@ -156,7 +158,7 @@ public class RecipientLookupService : ExchangeServiceBase
         {
             try
             {
-                result.MailboxLocation = await GetMailboxLocationAsync(emailAddress) switch
+                result.MailboxLocation = await GetMailboxLocationAsync(emailAddress, cancellationToken) switch
                 {
                     "OnPrem" => "On-Premises",
                     "Cloud" => "Cloud",
@@ -179,7 +181,7 @@ public class RecipientLookupService : ExchangeServiceBase
                 // aud-a23o. A size only when it was read; one that could not be is a warning naming why. An unparseable size
                 // showed 0 GB, a failed archive read 0 GB, and any failure "unavailable (connection not configured)", a cause
                 // it guessed.
-                var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
+                var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress, cancellationToken);
                 if (onPremSize.MailboxUnreadable is null)
                     result.MailboxSizeGB = onPremSize.MailboxGB;
                 // aud-a68. An on-premises mailbox's archive is the on-premises read's to say: found, it is shown with its size;

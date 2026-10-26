@@ -85,7 +85,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
             return base.LookupDirectoryCredentialAsync(purpose);
         }
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken)
         {
             CredentialRequests++;
             CredentialPurposes.Add(purpose);

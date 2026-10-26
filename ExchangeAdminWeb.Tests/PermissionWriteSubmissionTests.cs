@@ -103,7 +103,7 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
     private sealed class OnPremMailbox(ExchangeWriteHarness h, Exception? connectFailure)
         : MailboxPermissionService(h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, h.Config, null!, h.Trace)
     {
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
         protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
@@ -118,7 +118,7 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
     private sealed class OnPremCalendar(ExchangeWriteHarness h, Exception? connectFailure)
         : CalendarPermissionService(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, null!, h.Trace)
     {
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
         protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)

@@ -208,7 +208,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     {
         _exchange.Mailboxes[Address] = CloudMailbox(Address);
 
-        var location = await _exchange.Service().GetMailboxLocationAsync(Address);
+        var location = await _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal("Cloud", location);
         Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("OnPrem", StringComparison.Ordinal));
@@ -223,7 +223,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     {
         _exchange.Failures[$"Get-Mailbox {Address}"] = how == "thrown" ? "the directory is busy" : Refused("the directory is busy");
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address));
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken));
 
         Assert.Equal("Exchange Online could not be asked: the directory is busy", failure.Message);
         Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("OnPrem", StringComparison.Ordinal));
@@ -242,7 +242,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         if (held == "remote mailbox")
             _exchange.OnPremRemoteMailboxes[Address] = Row(("Identity", Address));
 
-        var location = await _exchange.Service().GetMailboxLocationAsync(Address);
+        var location = await _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal(expected, location);
     }
@@ -258,7 +258,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     {
         _exchange.Failures[$"OnPrem {cmdlet}"] = how == "thrown" ? "the recipient service is unavailable" : Refused("the recipient service is unavailable");
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address));
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken));
 
         Assert.Equal($"on-premises Exchange could not be asked: {cmdlet} failed: the recipient service is unavailable", failure.Message);
     }
@@ -269,7 +269,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     {
         _exchange.Missing.Add("OnPrem Get-RemoteMailbox");
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address));
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken));
 
         Assert.StartsWith("on-premises Exchange could not be asked: Get-RemoteMailbox failed: ", failure.Message, StringComparison.Ordinal);
     }
@@ -285,7 +285,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         if (how == "the session cannot be opened")
             exchange.Failures["OnPrem Connect"] = "the remote session could not be opened";
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => exchange.Service().GetMailboxLocationAsync(Address));
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken));
 
         var reason = how switch
         {
@@ -328,7 +328,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         OnPremRecipient();
         _exchange.Behaviour["OnPremMailboxSize"] = "Unlimited";
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal("On-Premises", result.MailboxLocation);
         Assert.Null(result.MailboxSizeGB);
@@ -342,7 +342,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         OnPremRecipient();
         _exchange.Failures["OnPrem Get-MailboxStatistics -Archive"] = Refused("the archive database is offline");
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal(2.5, result.MailboxSizeGB);
         Assert.Null(result.ArchiveSizeGB);
@@ -354,7 +354,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     {
         OnPremRecipient();
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal((2.5, 0.5), (result.MailboxSizeGB, result.ArchiveSizeGB));
         Assert.DoesNotContain(result.Warnings, warning => warning.Contains("size", StringComparison.OrdinalIgnoreCase));
@@ -367,7 +367,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         OnPremRecipient();
         _exchange.Failures[$"Get-Mailbox {Address}"] = Refused("the directory is busy");
 
-        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address);
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal("Unknown", result.MailboxLocation);
         Assert.Contains("Could not determine mailbox location: Exchange Online could not be asked: the directory is busy", result.Warnings);
