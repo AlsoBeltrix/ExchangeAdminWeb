@@ -62,6 +62,52 @@ At `3da510cb`: `Components/Pages/AdminEventLog.razor` 1263, 1050, 1644; `Service
     construction with a logger that throws (an unparseable per-module file, an unparseable single file, a legacy file
     whose archive fails). Mutations: the remap's catch unguarded again; the per-file catch unguarded again; the helper's
     guard removed; extras for the summary and the single-file catch. App-wide (the shared config store): no module bump.
+- (5) At `620e9d5a`: `Services/JsonlLogService.cs` 40 and `Services/ExtendedLogService.cs` 72 - each constructor's last
+  folder step, `Directory.CreateDirectory(_logFolder)`, unguarded. Since aud-a56 `JsonlFileAppender.Append` (76) creates
+  the folder before every write (`EnsureFolder`, 230-243), and a folder that cannot be created is that write's refusal,
+  reported at once (`JsonlLockRefusedException`: the JSONL writer's `FileWriteFailed` and its error; the extended log's
+  consumer drops, counts and reports the entry). Each constructor's call is now best effort: in a try whose catch reports
+  a warning through the class's `ReportSafely` and carries on, so a folder that cannot be made at start-up no longer
+  stops either singleton being built, and each write then makes it or is refused and reported.
+  - Departure from the record's bullet ("the two constructors stop creating the folder"), taken after a full run of that
+    shape: 32 tests in 8 classes (`PermissionPagesSelfGrantTests`, `JsonlWriterLockTests`, `AuditWriterThrowFreeTests`,
+    `ExtendedLogServiceTests`, `JsonlWriterRotationTests`, `PermissionValidatorTests`, `AuditServiceTests`) open or
+    delete files in the log folder right after building a writer, before any write. The best-effort call keeps the folder
+    there from start-up whenever it can be made - what those fixtures and an operator looking for the folder rely on -
+    and closes the defect the same way, with a start-up warning that names the folder as a gain. No reader depends on
+    the folder existing (`GetAuditLogPaths` and `GetTraceLogPaths` build paths, the Admin Event Log checks `File.Exists`
+    at 626 and 659, the extended log's reads at 228 and 266, the export store `Directory.Exists`).
+  - One test pinned the defect: `AuditServiceTests.LogMailboxPermission_ThrowsOnWriteFailure` asserted that building the
+    audit writer under a log root that cannot be made throws. It now asserts the new contract - the writer is built and a
+    mailbox-permission record under it comes back `FileWriteFailed` - renamed to say so.
+  - Tests: `JsonlWriterRotationTests` +1 and `ExtendedLogServiceTests` +1 - a log folder that cannot be created at
+    start-up: the writer is built and warns once naming the folder, a row or entry is refused and reported (or dropped and
+    counted), and once the obstacle goes the next one is written. Mutations: each constructor's guard removed. App-wide.
+- (6) `Services/UsageTelemetryService.cs` `LogSwitchUnreadableOnce` (266-288 at `620e9d5a`): the report is gated by
+  `Interlocked.Exchange(ref _switchReadFailureLogged, 1) == 0` and nothing sets the flag back, so it is once per process -
+  a store that failed, recovered and failed again later was never reported the second time (aud-a57's known gap). A read
+  that answers - blank, the documented default (on), or a Boolean (`ReadSwitch` 151-160) - now resets it, so the report
+  is once per failure streak; an unreadable store and a value that is not a Boolean are both failures, and both still
+  read off. Test: `UsageTelemetryServiceTests` +1 - a switch whose store fails, recovers and fails again is reported once
+  per streak, not on the reads inside one. Mutation: the reset removed. App-wide (shared telemetry): no module bump.
+- (7)-(9), one cluster: `Services/Jobs/BulkJobService.cs` 66-68 at `620e9d5a` read the three settings through
+  `ConfigValue.ReadDouble` / `ReadInt` (`Services/ConfigValue.cs`), which refuse only what does not parse or is not
+  finite. So a finite value out of range still reached `TimeSpan.FromMinutes` / `FromDays` and threw `OverflowException`
+  in the constructor (7); a negative or zero retention put the start-up prune's cutoff (`InitializeAsync` 88) at or after
+  now, so `BulkJobRepository.PruneFinishedBefore` (281-300) deleted every finished job record (8); and a negative limit
+  reached `GetRecentFinished` (439-450) and its siblings as `LIMIT -n`, which SQLite reads as no limit (9).
+  - `ConfigValue.ReadInt` and `ReadDouble` take an optional inclusive `min` and `max`; a value that parses but is outside
+    them is the default, named once per setting and value like any other unreadable value, the warning naming the range.
+    Callers that pass no range read as before.
+  - `BulkJobService` passes a range per setting, as named constants: `StaleHeartbeatMinutes` 1 to 1440 (a minute to a
+    day), `RecentJobLimit` 1 to 1000, `RetentionDays` 1 to 3650 (a day to ten years). The bounds are this agent's choice
+    of sane operating values - the record gives the shape, not the numbers - each well inside what `TimeSpan`,
+    `DateTime.UtcNow - retention` and `(int)TotalDays` hold. README's paragraph on number settings names them.
+  - Tests: `ConfigValueTests` - a range kept and refused for each reader; the runner given values out of range on both
+    sides (one too large for `TimeSpan`) is built with its defaults and names each; `BulkJobServiceTests` - a start-up with
+    a negative retention keeps a day-old finished job (8), and a negative limit shows the default 25 of 30 finished jobs
+    (9). Mutations: `BulkJobService` with no ranges again (all three cases); `ReadDouble`'s range check removed. App-wide
+    (the shared runner): no module bump.
 
 ## Files changed
 
@@ -69,6 +115,9 @@ At `3da510cb`: `Components/Pages/AdminEventLog.razor` 1263, 1050, 1644; `Service
   `ExchangeAdminWeb.Tests/EventLogDiagnosticsTests.cs`.
 - (4): `Services/ModuleConfigService.cs`, `Services/Storage/LegacyConfigImport.cs`;
   `ExchangeAdminWeb.Tests/ModuleConfigServiceTests.cs`.
+- (5): `Services/JsonlLogService.cs`, `Services/ExtendedLogService.cs`; `ExchangeAdminWeb.Tests/JsonlWriterRotationTests.cs`,
+  `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`, `ExchangeAdminWeb.Tests/AuditServiceTests.cs` (the test that pinned
+  the defect, rewritten to the new contract).
 
 ## Guard proof
 
@@ -109,6 +158,32 @@ Under M4c a second test failed in that run, `ExtendedLogServiceTests.Dispose_Giv
 sleep 5 ms each - and the machine was shared with other agents' builds and test runs; it passed on the restored tree and
 in every other run, and the mutant does not reach it (the extended log's legacy file is absent there, so its import never
 archives). Recorded as an incidental timing failure, not a result of the mutant.
+
+(5). Filter `FullyQualifiedName~JsonlWriterRotationTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~AuditServiceTests|FullyQualifiedName~JsonlWriterLockTests|FullyQualifiedName~AuditWriterThrowFreeTests`
+(148 tests). Each mutant is that constructor's call as it was at `620e9d5a`: bare and unguarded. `JsonlLogService.cs` MD5
+`9acc151fc92459da77f39e38047749a7`, `ExtendedLogService.cs` `71edf225678dd7c9b8818b7e3803f335`, each matched after its
+row; 148/148 green after each restore. The full suite on this tree: 6,703 passed, 0 failed.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| M5a `JsonlLogService`'s constructor: the folder created unguarded again | `2a28a9bfd3ca5be84dc6d53bd57f8540` | 2 of 148: `JsonlWriterRotationTests.ALogFolderThatCannotBeCreatedAtStartUp_StillBuildsTheWriter_AndEachRowIsTheFoldersRefusal` and `AuditServiceTests.LogMailboxPermission_UnderALogRootThatCannotBeCreated_IsBuilt_AndHandsBackTheRowNotWritten` - `System.IO.IOException: Cannot create '...' because a file or directory with the same name already exists.` out of the constructor |
+| M5b `ExtendedLogService`'s constructor: the same | `c0f6d93f64d66d4ebbd137c6ae1b9590` | 1 of 148: `ExtendedLogServiceTests.ALogFolderThatCannotBeCreatedAtStartUp_StillBuildsTheService_AndTheEntryItRefusesIsDroppedAndCounted` - the same `IOException` out of the constructor |
+
+The round was run twice: first on 2026-10-23, then again on 2026-10-26 after the test moved (below), with the same
+mutant MD5s and the same failures. The second round's test bytes: `ExtendedLogServiceTests.cs`
+`020357d5f5479bf573b7bd036709ca55`, `JsonlWriterRotationTests.cs` `4e2c7ec8407de43c6014679bb1439c6f`,
+`AuditServiceTests.cs` `5d8cfc7509ffae200ecb9eaa56659de6`.
+
+**Merge note (this branch forked at `eb017102`; master is ahead).** `Services/JsonlLogService.cs`,
+`Services/ExtendedLogService.cs` and `JsonlWriterRotationTests.cs` are untouched on master, so those merge clean.
+`ExtendedLogServiceTests.cs` is not: kd-16, kd-22 and kd-25 raised its waits to a shared `ConsumerWait` of 2 minutes and
+kd-47 replaced its local `TryDelete` with `TestFolders.TryDelete`. Two things follow, both deliberate:
+- This record's new case was first written just above `GetEntries_WhenAFileCannotBeRead_...`, which is inside kd-47's
+  hunk; it was moved above `TheConsumer_InAFolderThatLetsItWriteButNotDelete_WritesEveryEntry` instead, between two
+  master hunks and clear of both, so the merge has no conflict to resolve.
+- Its wait for the consumer to count the dropped entry is `TimeSpan.FromMinutes(2)` written out, with a comment naming
+  kd-16's `ConsumerWait`: the same value, since the constant does not exist on this branch. At merge it can become
+  `ConsumerWait` like the rest of the file.
 
 ## Also held (aud-a62/a63/a65 agent, 2026-10-23) - LOW
 

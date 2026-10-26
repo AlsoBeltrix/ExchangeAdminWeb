@@ -69,7 +69,17 @@ public class ExtendedLogService : IDisposable
             SingleWriter = false
         }, _ => Interlocked.Increment(ref _droppedEntries));
         _writerTask = Task.Run(ProcessQueueAsync);
-        Directory.CreateDirectory(_logFolder);
+        // aud-a64. Best effort, and reported: the appender creates the folder before every entry (aud-a56), and one it cannot
+        // create is that entry dropped, counted and reported. Created here unguarded, a log root unavailable at start-up
+        // stopped this singleton being built, with its consumer already running.
+        try
+        {
+            Directory.CreateDirectory(_logFolder);
+        }
+        catch (Exception ex)
+        {
+            ReportSafely(l => l.LogWarning(ex, "The extended log folder {Folder} could not be created at start-up; each entry's write will create it, or drop and count the entry", _logFolder));
+        }
         ImportLegacyLevelIfPresent();
         LoadLevel();
     }

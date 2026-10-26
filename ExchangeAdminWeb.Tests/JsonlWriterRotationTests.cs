@@ -162,6 +162,29 @@ public sealed class JsonlWriterRotationTests : IDisposable
         Assert.Equal(["Next"], Rows(audit: true).Rows);
     }
 
+    [Fact]
+    public void ALogFolderThatCannotBeCreatedAtStartUp_StillBuildsTheWriter_AndEachRowIsTheFoldersRefusal()
+    {
+        // aud-a64. The constructor still created the folder, with no guard, after aud-a56 moved that into every write: a log
+        // root the folder could not be made in at start-up stopped the writer being built, and every page and service that
+        // audits with it, instead of each row being refused and reported.
+        File.WriteAllBytes(Folder, []);
+
+        JsonlLogService? writer = null;
+        Assert.Null(Record.Exception(() => writer = Writer()));
+        var warning = Assert.Single(_log.Warnings);
+        Assert.Equal(Folder, warning.Value("Folder"));
+
+        Assert.Equal(JsonlWriteOutcome.FileWriteFailed, Write(writer!, audit: true, "Refused"));
+        var report = Assert.Single(_log.Errors);
+        Assert.Equal("Refused", report.Value("Action"));
+        Assert.IsType<JsonlLockRefusedException>(report.Exception);
+
+        File.Delete(Folder);
+        Assert.Equal(JsonlWriteOutcome.Written, Write(writer!, audit: true, "Next"));
+        Assert.Equal(["Next"], Rows(audit: true).Rows);
+    }
+
     // ---- aud-a65: a rotation that keeps failing is reported for as long as it lasts ----------------------------------
 
     [Fact]

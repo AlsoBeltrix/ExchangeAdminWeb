@@ -37,7 +37,17 @@ public class JsonlLogService
         _maxFileBytes = GetMaxFileBytes(config, logger);
         _maxFilesPerPeriod = Math.Clamp(ConfigValue.ReadInt(config, "Audit:MaxFilesPerPeriod", DefaultMaxFilesPerPeriod, logger), 2, 50);
 
-        Directory.CreateDirectory(_logFolder);
+        // aud-a64. Best effort, and reported: the appender creates the folder before every write (aud-a56), and a folder that
+        // cannot be created is that write's refusal, reported. Created here unguarded, a log root unavailable at start-up
+        // stopped this writer being built - and every page and service that audits with it.
+        try
+        {
+            Directory.CreateDirectory(_logFolder);
+        }
+        catch (Exception ex)
+        {
+            ReportSafely(l => l.LogWarning(ex, "The audit log folder {Folder} could not be created at start-up; each write will create it, or be refused and reported", _logFolder));
+        }
     }
 
     public JsonlWriteOutcome Write(Dictionary<string, object?> evt)
