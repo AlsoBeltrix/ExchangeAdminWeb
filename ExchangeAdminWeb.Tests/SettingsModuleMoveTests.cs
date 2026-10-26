@@ -686,7 +686,9 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.True(applied > 0, "OnParametersSetAsync no longer assigns the module it loaded - this guard is stale");
 
         var before = body[..applied];
-        var guarded = before.LastIndexOf("if (!StillRequested(requested)) return;", StringComparison.Ordinal);
+        // The call, not its whole argument list: cons-6 added the generation to it, and this guard is about WHERE the
+        // check sits, not what it compares.
+        var guarded = before.LastIndexOf("if (!StillRequested(", StringComparison.Ordinal);
         Assert.True(guarded > 0, "nothing checks the route before the module is applied");
         Assert.DoesNotContain("await ", before[guarded..], StringComparison.Ordinal);
     }
@@ -700,6 +702,48 @@ public sealed class SettingsModuleMoveTests : IDisposable
         var start = text.LastIndexOf('\n', index) + 1;
         var end = text.IndexOf('\n', index);
         return text[start..(end < 0 ? text.Length : end)].Trim();
+    }
+
+    /// <summary>
+    /// cons-6: route to A and suspend its load, route to B, route back to A and let the newer A load finish, edit
+    /// something, then let the older A load resume. Its module id matches the route again, so identity alone let it
+    /// through to LoadState(), which read the store afresh and dropped the edit - no save, no refusal, no
+    /// unsaved-changes prompt. cons-4 closed A then B; only a generation closes A, B, A.
+    /// </summary>
+    [Fact]
+    public async Task AnOlderLoadOfTheSameModule_DoesNotOverwriteTheNewerPage_NorDropItsEdits()
+    {
+        new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).SetForModule(Second, [Kept]);
+        var page = _h.OpenModuleConfig(First);
+        var holdFirstA = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(holdFirstA.Task, Task.FromResult(AuthorizationResult.Success()));
+
+        // A, suspended at its authorization read after it has claimed the page.
+        var loadingFirstA = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(loadingFirstA.IsCompleted, "the first load of A did not wait at its authorization - this fixture is stale");
+
+        // B, then back to A: the newer A load runs to completion and is the page the operator is looking at.
+        await (await Open(page, Third)).WaitAsync(Long, Cancel);
+        await (await Open(page, Second)).WaitAsync(Long, Cancel);
+        Assert.Equal(Second, Shown(page));
+
+        // An edit on that newer A page.
+        Set(page, "tab", "Module Admins");
+        await _h.OnDispatcherAsync(() => Set(page, "newAdminGroup", Added));
+        await _h.RunAsync(page, "AddModuleAdmin");
+        var dirty = Field<AdminPageDirtyState>(page, "dirty");
+        Assert.True(dirty.IsDirty, "the edit left nothing unsaved - this fixture is stale");
+
+        // The older A load resumes last. Its module is the one on screen, so only the generation stops it.
+        holdFirstA.SetResult(AuthorizationResult.Success());
+        await loadingFirstA.WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(page));
+        Assert.Equal([Kept, Added], Field<List<string>>(page, "moduleAdminGroups"));
+        Assert.True(dirty.IsDirty, "the older load of the same module reloaded the page and dropped the edit");
+        Assert.Equal([Kept], StoredAdmins(Second));
     }
 
     [Fact]
