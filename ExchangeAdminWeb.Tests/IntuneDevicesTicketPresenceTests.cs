@@ -59,8 +59,8 @@ public sealed class IntuneDevicesTicketPresenceTests : IDisposable
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("\u0001")] // kd-24: control only
-    [InlineData("​")] // kd-48: zero-width only
-    [InlineData("‎‏")] // bidi marks only
+    [InlineData("\u200B")] // kd-48: zero-width only
+    [InlineData("\u200E\u200F")] // bidi marks only
     public async Task ATicketWithNothingVisibleInIt_IsRefusedAndAudited_AndNeverReachesGraph(string ticket)
     {
         var device = Laptop();
