@@ -5,6 +5,24 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-26 - One agent, one compile at a time; agents are Opus 5.5; the one review runs through codex-commercial.ps1
+
+Owner rulings 2026-10-26, verbatim: "agents need to be Opus 5.5, not Opus 5. codex is out of the loop permanently.
+codex-commercial.ps1 can take ONE review total once everything is done." and "multiple compiles were running and
+bogging down the server. restrict to ONE at a time. don't let multiple agents run wild."
+
+Rules from here, superseding the up-to-seven-concurrent arrangement of the fix-everything stream:
+
+- **Serial dispatch.** One implementation agent runs at a time. The supervisor dispatches the next only after the
+  previous has handed back and its slice is merged and gate-checked. The supervisor runs no build or test of its
+  own while an agent is working.
+- **Implementation agents are Opus 5.5** (the Agent tool's `opus`), never Opus 5. Agents resumed after the first
+  halt ran as Opus 5 through the parent's route; that is the model the owner is correcting.
+- **The single review** (the 2026-10-26 one-review ruling above) is dispatched through
+  `C:\Users\mcoelho\.local\bin\codex-commercial.ps1`, the wrapper retired on 2026-10-20 and now the only review
+  transport the owner allows. It is a stdin-prompt wrapper (its archived notes say argument text is dropped);
+  re-probe its incantation once before the dispatch, since nothing has run through it since 2026-10-20.
+
 ### 2026-10-26 - codex is out of credit; one codex-commercial review, saved for the end
 
 Owner ruling 2026-10-26, verbatim: "codex is legitimately out of credit and will remain so. we will use
