@@ -261,37 +261,37 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
         switch (page)
         {
             case "Admin Settings":
-            {
-                var p = _h.OpenAdminSettings();
-                Set(p, typeof(AdminSettingsPage), "tab", "Module Enablement");
-                var enablement = Field<Dictionary<string, bool>>(p, typeof(AdminSettingsPage), "moduleEnablement");
-                var module = TogglableModules().First(enablement.ContainsKey);
-                await _h.RunAsync(p, "ToggleModule", module, !enablement[module]);
-                press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
-                store = _h.EnablementStore;
-                break;
-            }
+                {
+                    var p = _h.OpenAdminSettings();
+                    Set(p, typeof(AdminSettingsPage), "tab", "Module Enablement");
+                    var enablement = Field<Dictionary<string, bool>>(p, typeof(AdminSettingsPage), "moduleEnablement");
+                    var module = TogglableModules().First(enablement.ContainsKey);
+                    await _h.RunAsync(p, "ToggleModule", module, !enablement[module]);
+                    press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
+                    store = _h.EnablementStore;
+                    break;
+                }
 
             case "Exchange Online Config":
-            {
-                var p = _h.OpenExchangeOnlineConfig();
-                Set(p, typeof(ExchangeOnlineConfigPage), "exoAppId", AppId);
-                Set(p, typeof(ExchangeOnlineConfigPage), "exoOrganization", "contoso.onmicrosoft.com");
-                Set(p, typeof(ExchangeOnlineConfigPage), "exoCertSubject", "CN=EXO-Automation");
-                press = () => _h.RunAsync(p, "SaveExoConfig");
-                store = _h.ModuleConfigStore;
-                break;
-            }
+                {
+                    var p = _h.OpenExchangeOnlineConfig();
+                    Set(p, typeof(ExchangeOnlineConfigPage), "exoAppId", AppId);
+                    Set(p, typeof(ExchangeOnlineConfigPage), "exoOrganization", "contoso.onmicrosoft.com");
+                    Set(p, typeof(ExchangeOnlineConfigPage), "exoCertSubject", "CN=EXO-Automation");
+                    press = () => _h.RunAsync(p, "SaveExoConfig");
+                    store = _h.ModuleConfigStore;
+                    break;
+                }
 
             default:
-            {
-                var p = _h.OpenModuleConfig(Module);
-                Set(p, typeof(ModuleConfigPage), "tab", "Configuration");
-                await _h.RunAsync(p, "SetConfigValue", "DelineaSecretId", "4242");
-                press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
-                store = _h.ModuleConfigStore;
-                break;
-            }
+                {
+                    var p = _h.OpenModuleConfig(Module);
+                    Set(p, typeof(ModuleConfigPage), "tab", "Configuration");
+                    await _h.RunAsync(p, "SetConfigValue", "DelineaSecretId", "4242");
+                    press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
+                    store = _h.ModuleConfigStore;
+                    break;
+                }
         }
 
         store.BeforeWrite = Hold;

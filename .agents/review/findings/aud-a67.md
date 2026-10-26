@@ -154,6 +154,12 @@ module and `LoadState` clears `saving`, so a new save can begin while the older 
 Proof that nothing was weakened: aud-a66's E1 and E2 mutants were re-run on this tree, and both still fail their own
 cases (the last two rows below).
 
+The commit that landed this (`b1661786`) was made with `dotnet format` failing: its new case's `switch` blocks were
+indented one level short, and the gate's result was read after the commit rather than before it. `b6b7a3d2` is the
+whitespace fix, the formatter's own, no code line changed; the gate, the build and the case pass on it. The two
+commits are one sub-item. This agent does not amend without the owner's authority, so the mistake stands in the
+history with its correction behind it.
+
 (4). Filter as above, 497 tests. `ModuleConfig.razor` MD5 `583eb30f590dff56f2996d1205ddf022`, `AdminSettings.razor`
 `f43b9b413ebb98947002eb0c6176137f`, `ExchangeOnlineConfig.razor` `25138a2776cb02b2b1baaca8889bd9ba`, each matched after
 its rows; 497/497 green after every restore. D1 to D3 are each page as it was at `0fc3dad5`.
