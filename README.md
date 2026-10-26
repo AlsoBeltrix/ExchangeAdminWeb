@@ -1069,6 +1069,7 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 **User Notifications (optional):**
 - Set `NotifyUsersOnPermissionGrant: true` to enable
 - Sent when permissions are granted or removed
+- Sent, too, when a permission change was attempted but whether it took effect could not be confirmed (its connection failed once the change was sent): the user and the owner are told their access may or may not have changed, and to contact the IT Service Desk
 - Friendly email with mailbox details and security notice
 
 **Boolean settings:** `Email:SmtpUseSsl`, `Email:NotifyUsersOnPermissionGrant` and `ServiceNow:Enabled`
