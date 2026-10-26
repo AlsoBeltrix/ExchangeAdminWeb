@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Reflection;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Models;
@@ -11,6 +12,7 @@ using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
@@ -121,7 +123,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// </summary>
     private async Task<PermissionResult> SubmitMailboxGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
         string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
-        ExoConnectionPool? pool = null)
+        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false)
     {
         var page = new MailboxPermissions();
         Wire(page, resolver, audit, logger, email, progress);
@@ -130,6 +132,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         SetField(page, "grantSendAs", false);
         if (grantee is not null) SetField(page, "affectedUser", grantee);
         if (target is not null) SetField(page, "targetMailbox", target);
+        if (ticket is not null) SetField(page, "ticketNumber", ticket);
+        if (reauthorizationDenied) DenyThePage(page, MailboxPage);
 
         await Call(page, "SubmitSingle");
 
@@ -140,7 +144,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// <summary>Calendar Permissions' <c>SubmitSingle</c> over a Reviewer grant, as <see cref="SubmitMailboxGrant"/>.</summary>
     private async Task<PermissionResult> SubmitCalendarGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
         string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
-        ExoConnectionPool? pool = null)
+        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false)
     {
         var page = new CalendarPermissions();
         Wire(page, resolver, audit, logger, email, progress);
@@ -148,6 +152,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         SetField(page, "accessRight", CalendarAccessRight.Reviewer);
         if (grantee is not null) SetField(page, "affectedUser", grantee);
         if (target is not null) SetField(page, "targetMailbox", target);
+        if (ticket is not null) SetField(page, "ticketNumber", ticket);
+        if (reauthorizationDenied) DenyThePage(page, CalendarPage);
 
         await Call(page, "SubmitSingle");
 
@@ -476,16 +482,17 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Submit(
         string page, IIdentityResolver resolver, AuditService audit, string? grantee = null, EmailService? email = null,
-        IActivityProgress? progress = null, string? target = null, ExoConnectionPool? pool = null)
+        IActivityProgress? progress = null, string? target = null, ExoConnectionPool? pool = null, string? ticket = null,
+        bool reauthorizationDenied = false)
     {
         if (page == MailboxPage)
         {
             var logger = new CapturingLogger<MailboxPermissions>();
-            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target, pool), logger.Warnings);
+            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target, pool, ticket, reauthorizationDenied), logger.Warnings);
         }
 
         var calendarLogger = new CapturingLogger<CalendarPermissions>();
-        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target, pool), calendarLogger.Warnings);
+        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target, pool, ticket, reauthorizationDenied), calendarLogger.Warnings);
     }
 
     [Theory]
@@ -1655,6 +1662,156 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (message, exception) = Assert.Single(logger.Warnings);
         Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
         Assert.Contains(Target, message, StringComparison.Ordinal);
+    }
+
+    // ---- kd-18 (second half), kd-40: a ticket is required, and a refusal before the target is checked is recorded ----------
+
+    /// <summary>The page's own policy refused at its per-click re-authorization: the operator may no longer use the module.</summary>
+    private static void DenyThePage(object page, string which)
+    {
+        var authorization = (IAuthorizationService)page.GetType().GetProperty("AuthorizationService", Members)!.GetValue(page)!;
+        authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), which == MailboxPage ? "MailboxPermissions" : "CalendarPermissions")
+            .Returns(Task.FromResult(AuthorizationResult.Failed()));
+    }
+
+    /// <summary>The pages these refusals are fixed on so far.</summary>
+    public static TheoryData<string> RefusalPages => [MailboxPage];
+
+    /// <summary>A ticket with nothing in it that identifies a ticket: blank, white space, and control characters only.</summary>
+    public static TheoryData<string, string> RefusalPagesAndMissingTickets => new()
+    {
+        { MailboxPage, "" }, { MailboxPage, "   " }, { MailboxPage, "\u0001\u0000" },
+    };
+
+    /// <summary>A refused change's row: Failed, its error the banner, refused at <paramref name="step"/>, nothing attempted.</summary>
+    private static void AssertTheRefusalRow(JsonElement record, string action, string banner, string step)
+    {
+        Assert.Equal(action, Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(banner, Text(record, "error"));
+        Assert.Equal(step, Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+    }
+
+    /// <summary>The banner of a ticket refused at its presence check.</summary>
+    private const string NoTicket = "Ticket validation failed: Ticket number is required. Nothing was written.";
+
+    /// <summary>
+    /// <paramref name="page"/>'s <c>ProcessBulk</c> over a one-row grant file to someone else - the ticket a test gives, its mail,
+    /// its progress service, and its page's own policy refused when a test says so; the result banner, the bulk summary, the
+    /// warnings and the file.
+    /// </summary>
+    private async Task<(PermissionResult? Result, BulkOperationResult? Bulk, IReadOnlyList<(string Message, Exception? Exception)> Warnings, IBrowserFile File)> ProcessBulkGrant(
+        string page, string ticket = "INC100", EmailService? email = null, IActivityProgress? progress = null, bool reauthorizationDenied = false)
+    {
+        ComponentBase component;
+        Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
+        var file = Substitute.For<IBrowserFile>();
+        file.Name.Returns("grants.csv");
+        string csv;
+        if (page == MailboxPage)
+        {
+            var logger = new CapturingLogger<MailboxPermissions>();
+            component = new MailboxPermissions();
+            Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger, email, progress);
+            Set(component, "MailboxService", new MailboxPermissionService(_h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace));
+            SetField(component, "bulkIsAdd", true);
+            csv = $"Target,User,FullAccess,SendAs,AutoMapping\n{Target},{Other},True,False,False\n";
+            warnings = () => logger.Warnings;
+        }
+        else
+        {
+            var logger = new CapturingLogger<CalendarPermissions>();
+            component = new CalendarPermissions();
+            Wire(component, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, logger, email, progress);
+            Set(component, "CalendarService", new CalendarPermissionService(_h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
+            SetField(component, "bulkIsSet", true);
+            csv = $"Target,User,AccessRight\n{Target},{Other},Reviewer\n";
+            warnings = () => logger.Warnings;
+        }
+        file.OpenReadStream(Arg.Any<long>(), Arg.Any<CancellationToken>()).Returns(_ => new MemoryStream(Encoding.UTF8.GetBytes(csv)));
+        SetField(component, "csvFile", file);
+        SetField(component, "bulkTicketNumber", ticket);
+        if (reauthorizationDenied) DenyThePage(component, page);
+
+        await Call(component, "ProcessBulk");
+
+        Assert.False(GetField<bool>(component, "isLoading"));
+        return (GetField<PermissionResult>(component, "result"), GetField<BulkOperationResult>(component, "bulkResult"), warnings(), file);
+    }
+
+    [Theory]
+    [MemberData(nameof(RefusalPagesAndMissingTickets))]
+    public async Task ASingleChangeWithNoTicket_IsRefusedAndRecorded_BeforeAnythingElseRuns(string page, string ticket)
+    {
+        // kd-18. ServiceNow - switched off here, as it is on this deployment - passes every ticket, a blank one included, so
+        // the Submit button's disabled state was the ticket's only enforcement. kd-40: the refusal left no row.
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, ticket: ticket);
+
+        Assert.False(result.Success);
+        Assert.Equal(NoTicket, result.Message);
+        AssertTheRefusalRow(Assert.Single(_h.AuditRows()), page == MailboxPage ? "AddFullAccess" : "SetCalendar", NoTicket, "TicketValidation");
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(RefusalPages))]
+    public async Task ASingleChangeWhoseReauthorizationIsRefused_IsRecorded(string page)
+    {
+        // kd-40. The per-click re-authorization's refusal showed its banner and left no row.
+        var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, reauthorizationDenied: true);
+
+        Assert.False(result.Success);
+        Assert.Equal("Authorization denied. Nothing was written.", result.Message);
+        AssertTheRefusalRow(Assert.Single(_h.AuditRows()), page == MailboxPage ? "AddFullAccess" : "SetCalendar", result.Message, "Authorization");
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(RefusalPagesAndMissingTickets))]
+    public async Task ABulkRunWithNoTicket_IsRefusedAndRecorded_BeforeTheFileIsRead(string page, string ticket)
+    {
+        var (result, bulk, warnings, file) = await ProcessBulkGrant(page, ticket);
+
+        Assert.Null(bulk);
+        Assert.Equal(NoTicket, Assert.IsType<PermissionResult>(result).Message);
+        var record = Assert.Single(_h.AuditRows());
+        AssertTheRefusalRow(record, page == MailboxPage ? "BulkAdd" : "BulkSetCalendar", NoTicket, "TicketValidation");
+        Assert.Equal("Bulk", Text(record, "target"));
+        Assert.Equal("grants.csv", Text(record, "affectedUser"));
+        file.DidNotReceive().OpenReadStream(Arg.Any<long>(), Arg.Any<CancellationToken>());
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(RefusalPages))]
+    public async Task ABulkRunWhoseReauthorizationIsRefused_IsRecorded(string page)
+    {
+        var (result, bulk, warnings, file) = await ProcessBulkGrant(page, reauthorizationDenied: true);
+
+        Assert.Null(bulk);
+        Assert.Equal("Authorization denied. Nothing was written.", Assert.IsType<PermissionResult>(result).Message);
+        AssertTheRefusalRow(Assert.Single(_h.AuditRows()), page == MailboxPage ? "BulkAdd" : "BulkSetCalendar", result!.Message, "Authorization");
+        file.DidNotReceive().OpenReadStream(Arg.Any<long>(), Arg.Any<CancellationToken>());
+        Assert.Empty(warnings);
+        Assert.Empty(_h.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(RefusalPages))]
+    public async Task ABulkRunWithATicket_GoesAhead(string page)
+    {
+        // The control: a present ticket reaches the file and the write, and nothing is refused.
+        var (result, bulk, warnings, _) = await ProcessBulkGrant(page);
+
+        Assert.Null(result);
+        Assert.Equal(1, Assert.IsType<BulkOperationResult>(bulk).SuccessCount);
+        Assert.DoesNotContain(_h.AuditRows(), row => row.TryGetProperty("refusedAt", out _));
+        Assert.Empty(warnings);
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
