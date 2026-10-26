@@ -1106,6 +1106,13 @@
         load++;
         saving = false;
 
+        // aud-a67. And no unsaved edits: everything below is read from the store, so every baseline this load sets is the
+        // state it has just read and nothing on the page differs from it yet. Only ReloadAsync and the saves cleared the
+        // counts, so a move to another module on this page instance carried the previous module's: its counts in the save
+        // bar, its dots on tabs whose lists had been replaced, and the unsaved-changes guard warning about edits that were
+        // no longer anywhere on the page.
+        dirty.Clear();
+
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
         sectionAccessCorrupt = SectionAccess.IsFragmentCorrupt();

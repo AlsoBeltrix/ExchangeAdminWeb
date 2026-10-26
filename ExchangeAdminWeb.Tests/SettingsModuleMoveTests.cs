@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
@@ -409,6 +410,25 @@ public sealed class SettingsModuleMoveTests : IDisposable
     }
 
     // ---- the bound and the seam ------------------------------------------------------------------
+
+    /// <summary>
+    /// aud-a67 item 1: only ReloadAsync and the saves cleared the unsaved-edit counts, so opening another module on this
+    /// page instance carried the previous module's - its count in the save bar, its dot on a tab whose list had just been
+    /// replaced, and the unsaved-changes guard warning about edits no longer anywhere on the page.
+    /// </summary>
+    [Fact]
+    public async Task AnotherModuleOpenedAfterAnEdit_LoadsClean_WithNoCountFromTheModuleLeft()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var dirty = Field<AdminPageDirtyState>(page, "dirty");
+        Assert.True(dirty.IsDirty, "the edit left no unsaved count - this fixture is stale");
+
+        await (await Open(page, Second)).WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(page));
+        Assert.False(dirty.IsDirty, $"the next module's page still counts unsaved edits: {dirty.Summary()}");
+        Assert.Equal(0, dirty.DirtyCount);
+    }
 
     [Fact]
     public void TheWait_IsTheStoresBusyTimeoutPlusFiveSeconds()
