@@ -63,6 +63,9 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (10): `Components/Pages/ModuleConfig.razor`, `Services/IOrganizationalUnitDirectory.cs` (new),
+  `Services/ADOrganizationalUnitService.cs`, `Program.cs`; `ExchangeAdminWeb.Tests/SettingsPageHarness.cs` (a stand-in
+  that answers and can hold an enumeration), `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
 - (9): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
 - (8): `ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs`.
 - (7): `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs`, `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
@@ -291,3 +294,27 @@ write is now closed there, the re-entrancy guard itself stays held.
 (14) `ModuleConfig.razor` around 1045: during the bounded route-change save drain no waiting state is shown
 for up to 10 s; show "Waiting for <module>'s save before opening <next module>" before the await, clear it on
 completion or replace it with the timeout notice.
+
+(10). The OU browser's enumeration is a directory read on a worker, and every line after it applied to whatever module
+the page was showing when the answer arrived: the entries, the filtered list, the availability flag, the minimum depth,
+and - from `ToggleOUBrowser` - the browser opening at all. The browser renders only on AD Attribute Editor and writes
+nothing, so the cost was one module's organizational units shown in another module's browser. The aud-a66 rule applies:
+the answer lands only on the load that asked for it (`Holds`), in `LoadOUsAsync`, `ToggleOUBrowser` and `RefreshOUs`.
+
+Two things were decided while doing it, both deliberate:
+- `ouLoading` is NOT guarded, and the first draft guarded it. That left the spinner raised on the next module's page -
+  a page whose own load lowers it only when it has a browser (AD Attribute Editor) - which is worse than the defect.
+  The flag belongs to the enumeration, which has stopped whichever module is shown, so it is cleared either way. The
+  case asserts it.
+- The page's OU service is now behind `IOrganizationalUnitDirectory`, implemented by `ADOrganizationalUnitService` and
+  registered as that same singleton: exactly what aud-a66 did with `IGroupGrantDirectory`, and for the same reason -
+  the service is sealed, and the case has to hold an enumeration while the route changes without reaching a directory.
+  The page's calls are unchanged, so `ProgressRegistry`'s `OUService.GetOrganizationalUnits` pin stands.
+
+Filter as above, 506 tests. `ModuleConfig.razor` MD5 `de06d5ce8ba6229609b258c9501df7df`, matched after both rows;
+506/506 green after each restore.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| J1 `LoadOUsAsync` applies its answer whatever the page shows (the `Holds` return removed) | `671812eed488cd0b836a6e56fb7d83c5` | 1 of 506: `AnOuEnumerationThatOutlastsARouteChange_LeavesTheNextModulesBrowserAlone` - the next module's `ouAllEntries` holding the first module's two OUs |
+| J2 `ToggleOUBrowser` opens the browser whatever the page shows (its `Holds` return removed) | `5b94da38f195255bbb6df42cbe790aa6` | 1 of 506: the same case - "the browser opened over the module the page had moved to" |

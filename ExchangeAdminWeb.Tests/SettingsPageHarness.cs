@@ -147,6 +147,9 @@ internal sealed class SettingsPageHarness : IDisposable
     public RecordingNavigation Navigation { get; } = new();
     public ActivityProgressService Progress { get; } = new();
 
+    /// <summary>Module Configuration's organizational units: a stand-in that answers and can hold an enumeration (aud-a67 item 10).</summary>
+    public StandInOrganizationalUnits OrganizationalUnits { get; } = new();
+
     /// <summary>Module Configuration's directory: a stand-in that answers from the test and can hold a lookup (aud-a66).</summary>
     public StandInDirectory GroupDirectory { get; } = new();
 
@@ -200,10 +203,10 @@ internal sealed class SettingsPageHarness : IDisposable
             ["AttrEditorService"] = attributeEditor,
             ["Logger"] = NullLogger<ModuleConfigPage>.Instance,
             ["Progress"] = Progress,
-            // The grant confirmation asks the stand-in, never a directory (aud-a66). OUService is left unset on
-            // purpose: nothing driven here may reach the directory, and a call that tried would fail on null
-            // rather than leave the machine.
+            // The grant confirmation asks the stand-in, never a directory (aud-a66), and so does the OU browser
+            // (aud-a67 item 10, through IOrganizationalUnitDirectory). Nothing driven here reaches a directory.
             ["ADSearch"] = GroupDirectory,
+            ["OUService"] = OrganizationalUnits,
         });
         page.ModuleId = moduleId;
         Attach(page);
@@ -480,6 +483,7 @@ internal sealed class SettingsPageHarness : IDisposable
     public void Dispose()
     {
         GroupDirectory.Dispose();
+        OrganizationalUnits.Dispose();
         _renderer.Dispose();
         Progress.Dispose();
         ExoPool.Dispose();
@@ -603,6 +607,77 @@ internal sealed class SettingsPageHarness : IDisposable
             }
 
             return Answer(sid);
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                foreach (var release in _releases)
+                    release.Set();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The stand-in behind Module Configuration's OU browser (aud-a67 item 10): it answers from the test, records that
+    /// it was asked, and can hold an enumeration while a route change loads another module. It reaches no directory.
+    /// </summary>
+    internal sealed class StandInOrganizationalUnits : IOrganizationalUnitDirectory, IDisposable
+    {
+        private readonly object _gate = new();
+        private readonly List<ManualResetEventSlim> _releases = [];
+        private ManualResetEventSlim? _release;
+
+        public bool IsAvailable { get; set; } = true;
+
+        /// <summary>What an enumeration answers.</summary>
+        public List<OUEntry> Entries { get; set; } = [];
+
+        /// <summary>Set when a held enumeration has begun.</summary>
+        public ManualResetEventSlim Entered { get; } = new();
+
+        public int Enumerations { get; private set; }
+
+        public int CacheDrops { get; private set; }
+
+        /// <summary>Holds the next enumeration until the returned event is set (or the harness is disposed).</summary>
+        public ManualResetEventSlim HoldNext()
+        {
+            var release = new ManualResetEventSlim();
+            lock (_gate)
+            {
+                _releases.Add(release);
+                _release = release;
+                Entered.Reset();
+            }
+
+            return release;
+        }
+
+        public List<OUEntry> GetOrganizationalUnits()
+        {
+            ManualResetEventSlim? release;
+            lock (_gate)
+            {
+                Enumerations++;
+                release = _release;
+                _release = null;
+            }
+
+            if (release is not null)
+            {
+                Entered.Set();
+                release.Wait(TimeSpan.FromSeconds(60));
+            }
+
+            return [.. Entries];
+        }
+
+        public void InvalidateCache()
+        {
+            lock (_gate)
+                CacheDrops++;
         }
 
         public void Dispose()

@@ -488,6 +488,39 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.DoesNotContain("access-denied", _h.Navigation.Navigations);
     }
 
+    /// <summary>
+    /// aud-a67 item 10: the OU browser's enumeration runs off the circuit, and every line after it applied to whatever
+    /// module the page was showing when the answer came back - its entries, its filter, the availability flag and the
+    /// spinner. The browser renders only on AD Attribute Editor and writes nothing, so what it cost was one module's
+    /// organizational units in another module's browser. The answer lands only on the load that asked for it now.
+    /// </summary>
+    [Fact]
+    public async Task AnOuEnumerationThatOutlastsARouteChange_LeavesTheNextModulesBrowserAlone()
+    {
+        _h.OrganizationalUnits.Entries =
+        [
+            new OUEntry("Staff", "OU=Staff,DC=example,DC=test", 1),
+            new OUEntry("Contractors", "OU=Contractors,DC=example,DC=test", 1),
+        ];
+        var page = _h.OpenModuleConfig("ADAttributeEditor", _h.CreateAttributeEditor());
+        var release = _h.OrganizationalUnits.HoldNext();
+
+        var browsing = Task.Run(() => _h.RunAsync(page, "ToggleOUBrowser"), Cancel);
+        Reached(_h.OrganizationalUnits.Entered, "the browser never asked for the organizational units");
+
+        // The page moves while the enumeration is held, and the next module's load starts the browser clean.
+        await (await Open(page, First)).WaitAsync(Long, Cancel);
+        Assert.Equal(First, Shown(page));
+
+        release.Set();
+        await browsing.WaitAsync(Long, Cancel);
+
+        Assert.Empty(Field<List<OUEntry>>(page, "ouAllEntries"));
+        Assert.Empty(Field<List<OUEntry>>(page, "ouFilteredEntries"));
+        Assert.False(Field<bool>(page, "showOUBrowser"), "the browser opened over the module the page had moved to");
+        Assert.False(Field<bool>(page, "ouLoading"));
+    }
+
     [Fact]
     public void TheWait_IsTheStoresBusyTimeoutPlusFiveSeconds()
     {

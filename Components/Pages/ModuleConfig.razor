@@ -15,7 +15,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ADAttributeEditorService AttrEditorService
-@inject ADOrganizationalUnitService OUService
+@inject ExchangeAdminWeb.Services.IOrganizationalUnitDirectory OUService
 @inject ILogger<ModuleConfig> Logger
 @inject IActivityProgress Progress
 
@@ -2379,6 +2379,11 @@
             return;
         }
 
+        // aud-a67 item 10. The load this click belongs to: the enumeration below runs off the circuit, so the page can
+        // move to another module while it waits, and opening the browser over that module would be this click's answer
+        // on someone else's page.
+        var started = load;
+
         // Load OUs when opening the browser for the first time
         if (ouAllEntries.Count == 0)
         {
@@ -2386,13 +2391,27 @@
             if (!ouBrowseAvailable) return;
         }
 
+        if (!Holds(started)) return;
+
         // Pre-select OUs already in the config value
         SyncSelectedFromConfig();
         showOUBrowser = true;
     }
 
+    /// <summary>
+    /// Reads the organizational units off the circuit and shows them, on the load that asked for them.
+    /// </summary>
+    /// <remarks>
+    /// aud-a67 item 10. The enumeration is a directory read on a worker, and the page is reused across
+    /// <c>/module-config/{ModuleId}</c>, so its answer could arrive after a route change had loaded another module -
+    /// and every line below used to apply it to that one: its entries, its filter, the availability flag and the
+    /// spinner. The browser renders only on AD Attribute Editor and none of this is written anywhere, so what it cost
+    /// was a browser full of one page's OUs on another, and a spinner cleared under a load that never started one.
+    /// The aud-a66 rule, which this page already follows for every save: the state lands only on the load it began on.
+    /// </remarks>
     private async Task LoadOUsAsync()
     {
+        var started = load;
         ouLoading = true;
         await Task.Yield();
 
@@ -2401,9 +2420,16 @@
 
         try
         {
-            ouAllEntries = await Task.Run(() => OUService.GetOrganizationalUnits());
-            ouBrowseAvailable = OUService.IsAvailable;
-            activity.Complete(ouBrowseAvailable);
+            var entries = await Task.Run(() => OUService.GetOrganizationalUnits());
+            var available = OUService.IsAvailable;
+            activity.Complete(available);
+
+            // The activity is this call's own and is completed either way; the page's state is not.
+            if (!Holds(started))
+                return;
+
+            ouAllEntries = entries;
+            ouBrowseAvailable = available;
 
             if (!ouBrowseAvailable)
             {
@@ -2418,20 +2444,25 @@
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "OU browser load failed");
-            ouBrowseAvailable = false;
+            if (Holds(started)) ouBrowseAvailable = false;
         }
         finally
         {
+            // Not guarded, unlike the answer above: this flag is THIS enumeration spinner, and it has stopped whichever
+            // module the page is showing. Guarded, a move left it raised on a page whose own load never lowers it - the
+            // next module reinitialises the browser only when it has one (AD Attribute Editor).
             ouLoading = false;
         }
     }
 
     private async Task RefreshOUs()
     {
+        // aud-a67 item 10, as ToggleOUBrowser above.
+        var started = load;
         OUService.InvalidateCache();
         ouAllEntries = new();
         await LoadOUsAsync();
-        if (ouBrowseAvailable)
+        if (ouBrowseAvailable && Holds(started))
         {
             SyncSelectedFromConfig();
         }
