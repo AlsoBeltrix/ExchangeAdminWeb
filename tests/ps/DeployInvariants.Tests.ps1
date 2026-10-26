@@ -1429,6 +1429,9 @@ Describe 'deploy.ps1' {
             ${function:Set-WebConfigurationProperty} = { $script:cdt49Calls.Add('auth') }
             ${function:Remove-WebConfigurationProperty} = { $script:cdt49Calls.Add('auth') }
             ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $null = $AppPath; $script:cdt49Calls.Add("jobs($ConfigDir)"); 0 }
+            # Since cdt-54 the stop step opens with the report of the pool's other applications. It has
+            # its own tests, so here it records nothing.
+            ${function:Write-AppPoolSharingReport} = { param($AppPoolName, $PublishPath, $StagingPath) $null = $AppPoolName, $PublishPath, $StagingPath }
 
             $run = {
                 param([string]$OldPool, [string]$OldFolder, [string]$Pool, [bool]$Allow, [bool]$Exists)
@@ -1477,6 +1480,93 @@ Describe 'deploy.ps1' {
         }
     }
 
+    It 'names every other application the stopped pool serves and reads their bulk jobs, as a warning and never a refusal (cdt-54)' {
+        # The checks before each stop looked only at this instance, so an application elsewhere under the
+        # same pool went down with it unannounced and its bulk jobs were never read. deploy.ps1's real
+        # report, lifted, with the real module, IIS answered through the module's probe parameter, and
+        # the jobs check stubbed. A script block value in $PSDefaultParameterValues is evaluated to produce
+        # the default, so each case hands over a block that returns its probe ({ { ... } }), and each probe
+        # records that it was consulted: one handed over bare is run, not passed, and the real IIS read
+        # runs instead.
+        foreach ($name in 'Write-Warn', 'Write-AppPoolSharingReport') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $script:cdt54Printed.Add("$ForegroundColor|$Object") }
+            ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $script:cdt54Jobs.Add("jobs($ConfigDir|$AppPath)"); 0 }
+            $report = {
+                param([scriptblock]$ProbeDefault)
+                $script:cdt54Printed = New-Object System.Collections.Generic.List[string]
+                $script:cdt54Jobs = New-Object System.Collections.Generic.List[string]
+                $script:cdt54Probed = 0
+                $PSDefaultParameterValues = @{ 'Get-AppPoolOtherApplication:ApplicationsProbe' = $ProbeDefault }
+                $thrown = $null
+                try {
+                    Write-AppPoolSharingReport -AppPoolName 'ExamplePool' -PublishPath 'D:\example\publish' -StagingPath 'D:\example\staging'
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt54Printed -join "`n"); Jobs = ($script:cdt54Jobs -join ','); Probed = $script:cdt54Probed }
+            }
+            $instance = [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish' }
+            $otherPool = [pscustomobject]@{ Location = 'Example Site/'; ApplicationPool = 'SitePool'; PhysicalPath = 'D:\example\site' }
+
+            $alone = & $report { { $script:cdt54Probed++; $instance; $otherPool } }
+            $alone.Probed | Should -Be 1 -Because 'the test''s probe is the one consulted'
+            $alone.Thrown | Should -BeNullOrEmpty
+            $alone.Printed | Should -BeExactly "DarkGray|       App pool 'ExamplePool' serves no IIS application other than this instance at 'D:\example\publish': stopping it stops nothing else." -Because 'a pool that serves only this instance says so, and nothing is read'
+            $alone.Jobs | Should -BeExactly ''
+
+            $env:CDT54_ROOT = 'D:\example'
+            try {
+                $shared = & $report {
+                    {
+                        $script:cdt54Probed++
+                        $instance
+                        $otherPool
+                        [pscustomobject]@{ Location = 'Other Site/'; ApplicationPool = 'examplepool'; PhysicalPath = '%CDT54_ROOT%\other' }
+                        [pscustomobject]@{ Location = 'Example Site/Static'; ApplicationPool = 'ExamplePool'; PhysicalPath = '' }
+                    }
+                }
+            } finally {
+                Remove-Item Env:\CDT54_ROOT -ErrorAction SilentlyContinue
+            }
+            $shared.Probed | Should -Be 1
+            $shared.Thrown | Should -BeNullOrEmpty -Because 'other applications in the pool are a warning, never a refusal'
+            $shared.Printed | Should -BeLike "*Yellow|  !  App pool 'ExamplePool' also serves 2 other IIS application(s), which stop with it: Other Site/ with its files at '%CDT54_ROOT%\other'; Example Site/Static with its files at ''.*"
+            $shared.Printed | Should -BeLike "*DarkGray|       Active bulk jobs of IIS application Other Site/, with its files at '%CDT54_ROOT%\other', which stops with the pool:*"
+            $shared.Printed | Should -Not -BeLike '*Active bulk jobs of IIS application Example Site/Static*' -Because 'an application with no folder has no jobs database to read'
+            $shared.Jobs | Should -BeExactly 'jobs(D:\example\other\config|D:\example\staging)' -Because 'each other application''s jobs are read from its own config folder, its environment variables expanded, with the staged build''s tool'
+
+            $unreadable = & $report { { $script:cdt54Probed++; throw 'Access is denied' } }
+            $unreadable.Probed | Should -Be 1
+            $unreadable.Thrown | Should -BeNullOrEmpty -Because 'an unreadable listing is a warning here; the check that the pool serves the folder refuses it before the stop'
+            $unreadable.Printed | Should -BeLike "Yellow|  !  Stopping app pool 'ExamplePool' may stop other IIS applications too, and their active bulk jobs are not read: Cannot read the IIS sites and applications*Access is denied"
+            $unreadable.Jobs | Should -BeExactly ''
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'reports the pool''s other applications once in each branch, first in its stop step, before the binding read and the stop (cdt-54, AST)' {
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2, 'Stopping app pool'), @('-Force', $modeIf.ElseClause, 'Stopping app pool for file deployment'))) {
+            $statements = @($entry[1].Statements)
+            $reports = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Write-AppPoolSharingReport *') { $i } })
+            $reports.Count | Should -Be 1 -Because "the $($entry[0]) branch reports the pool's other applications once, unconditionally"
+            $statements[$reports[0]].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -AppPoolName $AppPoolName -PublishPath $PublishPath -StagingPath $StagingPath'
+            $statements[$reports[0] - 1].Extent.Text | Should -BeExactly "Write-Step `"$($entry[2])`"" -Because 'it opens the stop step'
+            $lookupAt = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like '$boundPool = try { (Get-WebApplication*') { $i } })
+            $stopAt = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $i } })
+            $lookupAt.Count | Should -Be 1
+            $stopAt.Count | Should -Be 1
+            $reports[0] | Should -BeLessThan $lookupAt[0]
+            $reports[0] | Should -BeLessThan $stopAt[0] -Because "the $($entry[0]) run names what the stop takes down before it stops anything"
+        }
+        $calls = @($s.Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true))
+        $calls.Count | Should -Be 2 -Because 'one call per stop, and no other'
+    }
     It 'refuses a -AllowRepoint move off a folder whose appsettings.json is gone but whose own config database remains, and lets one with neither go (cdt-51, real files)' {
         # The stranded-database guard asked only when the old folder still had an appsettings.json, so a
         # folder that had lost it moved without a word, leaving its config\exchangeadmin.db behind
@@ -1713,12 +1803,14 @@ Describe 'deploy.ps1' {
                 }, $true))
         # The upgrade's check and, since cdt-49, the fresh-install path's two: the report of the instance a
         # -AllowRepoint move takes down (the serving folder's, $runtimeConfigDir) and the check before the
-        # stop, of the instance the stop acts on ($stoppedConfigDir, -PublishPath's config\).
-        $jobChecks.Count | Should -Be 3 -Because 'the upgrade recycles; the fresh-install path reports a moved instance and checks the stopped one'
+        # stop, of the instance the stop acts on ($stoppedConfigDir, -PublishPath's config\). Since cdt-54,
+        # one more, in Write-AppPoolSharingReport, which both branches call before their stop: each other
+        # application the pool serves ($otherConfigDir, that application's config\).
+        $jobChecks.Count | Should -Be 4 -Because 'the upgrade recycles; the fresh-install path reports a moved instance and checks the stopped one; the report before each stop checks the pool''s other applications'
         $configDirs = @($jobChecks | ForEach-Object { if ($_.Extent.Text -match '-ConfigDir (\$\w+)\b') { $Matches[1] } })
-        ($configDirs | Sort-Object) -join ',' | Should -BeExactly '$runtimeConfigDir,$runtimeConfigDir,$stoppedConfigDir'
+        ($configDirs | Sort-Object) -join ',' | Should -BeExactly '$otherConfigDir,$runtimeConfigDir,$runtimeConfigDir,$stoppedConfigDir'
         foreach ($call in $jobChecks) {
-            $call.Extent.Text | Should -Match '-ConfigDir \$(runtimeConfigDir|stoppedConfigDir)\b'
+            $call.Extent.Text | Should -Match '-ConfigDir \$(runtimeConfigDir|stoppedConfigDir|otherConfigDir)\b'
         }
     }
 

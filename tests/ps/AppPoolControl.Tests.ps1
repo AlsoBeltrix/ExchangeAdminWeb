@@ -1320,3 +1320,108 @@ Describe 'cdt-46: one folder however the filesystem spells it - an 8.3 short nam
         } | Should -Throw -ExpectedMessage '*IIS serves content from inside*Other/Reports*' -Because 'its files are the folder''s reports, which the mirror replaces'
     }
 }
+
+Describe 'cdt-54: Get-AppPoolOtherApplication lists what else a stop of the pool takes down' {
+
+    # Stopping a pool stops every application it serves, and deploy.ps1's checks before its stop looked
+    # only at the instance being deployed. Driven through -ApplicationsProbe, with one case against a
+    # real folder and a junction to it, and the default probe through in-module stand-ins.
+
+    BeforeAll {
+        function Get-PoolNode {
+            param([string]$Location, [string]$ApplicationPool, [string]$PhysicalPath)
+            [pscustomobject]@{ Location = $Location; ApplicationPool = $ApplicationPool; PhysicalPath = $PhysicalPath }
+        }
+    }
+
+    It 'lists the pool''s applications elsewhere, one with no folder among them, and nothing of another pool' {
+        $others = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                Get-PoolNode -Location 'Web/' -ApplicationPool 'SitePool' -PhysicalPath 'D:\sites'
+                Get-PoolNode -Location 'Web/App' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:\sites\App'
+                Get-PoolNode -Location 'Web/Reports' -ApplicationPool 'examplepool' -PhysicalPath 'D:\sites\Reports'
+                Get-PoolNode -Location 'Other/' -ApplicationPool 'ExamplePool' -PhysicalPath ''
+                Get-PoolNode -Location 'Web/AppOther' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:\sites\AppOther'
+                Get-PoolNode -Location 'Web/Billing' -ApplicationPool 'BillingPool' -PhysicalPath 'D:\sites\Billing'
+            })
+        ($others | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/Reports,Other/,Web/AppOther' -Because 'pool names match case-insensitively, a folder that only starts with the instance''s is elsewhere, and an application with no folder is listed rather than assumed to be the instance'
+    }
+
+    It 'leaves out the instance itself, however IIS spells its folder, and anything inside it' {
+        $env:CDT54_ROOT = 'D:\sites'
+        try {
+            $others = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe {
+                    Get-PoolNode -Location 'Web/App' -ApplicationPool 'ExamplePool' -PhysicalPath 'd:\SITES\app\'
+                    Get-PoolNode -Location 'Web2/App' -ApplicationPool 'ExamplePool' -PhysicalPath '%CDT54_ROOT%\App'
+                    Get-PoolNode -Location 'Web3/App' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:/sites/App'
+                    Get-PoolNode -Location 'Web/App/api' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:\sites\App\api'
+                })
+        } finally {
+            Remove-Item Env:\CDT54_ROOT -ErrorAction SilentlyContinue
+        }
+        $others.Count | Should -Be 0 -Because 'the folder''s own nodes are the instance being deployed, and a node inside it is refused before the stop'
+    }
+
+    It 'takes a junction to the instance''s folder for the instance, and lists a sibling (real files)' {
+        $script:Cdt54Root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt54_' + [guid]::NewGuid().ToString('N'))
+        $script:Cdt54Folder = Join-Path $script:Cdt54Root 'Publish Folder'
+        $script:Cdt54Sibling = Join-Path $script:Cdt54Root 'Another Publish Folder'
+        $script:Cdt54Link = Join-Path $script:Cdt54Root 'link'
+        try {
+            New-Item -ItemType Directory -Path $script:Cdt54Folder, $script:Cdt54Sibling -Force | Out-Null
+            $null = cmd /c "mklink /J `"$script:Cdt54Link`" `"$script:Cdt54Folder`""
+            Test-Path -LiteralPath $script:Cdt54Link | Should -BeTrue -Because 'the junction fixture exists'
+
+            $others = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath $script:Cdt54Folder -ApplicationsProbe {
+                    Get-PoolNode -Location 'Web/App' -ApplicationPool 'ExamplePool' -PhysicalPath $script:Cdt54Link
+                    Get-PoolNode -Location 'Web/Copy' -ApplicationPool 'ExamplePool' -PhysicalPath $script:Cdt54Sibling
+                })
+            ($others | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/Copy' -Because 'IIS at the junction is the instance''s folder; a sibling is another application'
+        } finally {
+            if (Test-Path -LiteralPath $script:Cdt54Link) { [System.IO.Directory]::Delete($script:Cdt54Link) }
+            Remove-Item -LiteralPath $script:Cdt54Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'throws, naming the pool and the folder, when IIS cannot be read' {
+        { Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { throw 'Access is denied' } } |
+            Should -Throw -ExpectedMessage "Cannot read the IIS sites and applications, so the applications app pool 'ExamplePool' serves besides the one at 'D:\sites\App' cannot be listed: Access is denied"
+    }
+
+    Context 'the default probe' {
+
+        # Stand-ins answer as WebAdministration's cmdlets do, in the module's own scope, where the
+        # default probe resolves commands first; removed again after this block.
+
+        BeforeAll {
+            InModuleScope AppPoolControl {
+                function script:Get-Website {
+                    [pscustomobject]@{ name = 'Web'; applicationPool = 'ExamplePool'; physicalPath = 'D:\sites' }
+                    [pscustomobject]@{ name = 'Other'; applicationPool = 'OtherPool'; physicalPath = 'D:\other' }
+                }
+                function script:Get-WebApplication {
+                    param([string]$Site)
+                    if ($Site -eq 'Web') {
+                        [pscustomobject]@{ path = '/App'; applicationPool = 'ExamplePool'; PhysicalPath = 'D:\apps\App' }
+                        [pscustomobject]@{ path = '/Reports'; applicationPool = 'ExamplePool'; PhysicalPath = 'D:\apps\Reports' }
+                    }
+                    if ($Site -eq 'Other') {
+                        [pscustomobject]@{ path = '/Tools'; applicationPool = 'ExamplePool'; PhysicalPath = 'D:\other\Tools' }
+                    }
+                }
+                function script:Get-WebConfiguration { throw 'the default probe read virtual directories' }
+            }
+        }
+
+        AfterAll {
+            InModuleScope AppPoolControl {
+                Remove-Item -Path 'function:Get-Website', 'function:Get-WebApplication', 'function:Get-WebConfiguration' -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'reads every site root and application, and no virtual directory' {
+            $others = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\apps\App')
+            ($others | ForEach-Object { "$($_.Location)|$($_.PhysicalPath)" }) -join ',' |
+                Should -BeExactly 'Web/|D:\sites,Web/Reports|D:\apps\Reports,Other/Tools|D:\other\Tools' -Because 'a site root is an application too, an application of another site under the pool is listed, and the instance and the other pool''s site are not'
+        }
+    }
+}

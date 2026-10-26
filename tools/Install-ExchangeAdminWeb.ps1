@@ -671,11 +671,19 @@ function Assert-ApplicationTargetUnchanged {
     # never the same; or both spellings exist and resolve to one final path, so a junction is taken for
     # its target (cdt-46). The installer imports tools\AppPoolControl.psm1 below, before this runs, and
     # its Assert-AppPoolServesPath uses the same rule, so its two checks cannot disagree.
+    # cdt-52: a spelling that does not exist on disk has no final path, so it is never matched that
+    # way; the refusal names it, in cdt-46's words. The note only explains a refusal; it decides nothing.
+    $spellingNote = ''
     if (-not (Test-SamePhysicalFolder -Path $ExistingPhysicalPath -Other $PublishPath)) {
         $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
+        $missing = @(foreach ($spelling in @($ExistingPhysicalPath, $PublishPath)) {
+                $comparable = ConvertTo-ComparablePhysicalPath $spelling
+                if ($comparable -and -not [System.IO.Directory]::Exists($comparable)) { "'$spelling'" }
+            })
+        if ($missing.Count -gt 0) { $spellingNote = " A spelling that cannot be resolved on disk is not taken as the same folder: $($missing -join ', ')." }
     }
     if ($differences.Count -gt 0) {
-        Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). An update must name the pool and folder it was installed with - -AppPoolName and -PublishPath default to fixed values when omitted - or this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$ExistingPhysicalPath', or move the application in IIS first if that is intended. Nothing was changed."
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote An update must name the pool and folder it was installed with - -AppPoolName and -PublishPath default to fixed values when omitted - or this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$ExistingPhysicalPath', or move the application in IIS first if that is intended. Nothing was changed."
     }
 }
 

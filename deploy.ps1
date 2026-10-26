@@ -257,6 +257,43 @@ function Assert-ApplicationTargetUnchanged {
     Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote -Force and -ConfirmFreshInstall point an existing application at this run's -AppPoolName and -PublishPath, so this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$existingFolder' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
 }
 
+# cdt-54. Stopping a pool stops every application it serves, and the checks before each stop below
+# look only at this instance: its jobs, its binding, and the IIS nodes at or inside -PublishPath.
+# Another application under the same pool went down with it unannounced, and its bulk jobs were never
+# read. So before each stop, name every other application the pool serves and read the bulk jobs of
+# each. A warning, never a refusal: tools\JobStateWarning.psm1 records the owner's policy for what a
+# recycle interrupts - warn, do not hard-block - and nothing of theirs is replaced, since a node inside
+# -PublishPath is refused before the stop whatever its pool (aud-a38i). Read-only; it says what it
+# found either way, as this script has no plan mode. An unreadable IIS listing is a warning here: the
+# check that the pool serves -PublishPath reads the same listing, and refuses it, before the stop.
+function Write-AppPoolSharingReport {
+    param(
+        [string]$AppPoolName,
+        [string]$PublishPath,
+        [string]$StagingPath
+    )
+
+    try {
+        $others = @(Get-AppPoolOtherApplication -Name $AppPoolName -PhysicalPath $PublishPath)
+    } catch {
+        Write-Warn "Stopping app pool '$AppPoolName' may stop other IIS applications too, and their active bulk jobs are not read: $($_.Exception.Message)"
+        return
+    }
+    if ($others.Count -eq 0) {
+        Write-Host "       App pool '$AppPoolName' serves no IIS application other than this instance at '$PublishPath': stopping it stops nothing else." -ForegroundColor DarkGray
+        return
+    }
+    $named = @($others | ForEach-Object { "$($_.Location) with its files at '$($_.PhysicalPath)'" }) -join '; '
+    Write-Warn "App pool '$AppPoolName' also serves $($others.Count) other IIS application(s), which stop with it: $named."
+    foreach ($other in $others) {
+        $otherFolder = ConvertTo-ComparablePhysicalPath $other.PhysicalPath
+        if (-not $otherFolder) { continue }
+        $otherConfigDir = Join-Path $otherFolder 'config'
+        Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $StagingPath | Out-Null
+    }
+}
+
 $ProjectRoot = $PSScriptRoot
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 
@@ -733,6 +770,9 @@ try {
         $preAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
 
         Write-Step "Stopping app pool"
+        # cdt-54: the stop takes down every application the pool serves. Name the others and read their
+        # active bulk jobs - a warning, as for this instance's own, next.
+        Write-AppPoolSharingReport -AppPoolName $AppPoolName -PublishPath $PublishPath -StagingPath $StagingPath
         # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
         Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir -AppPath $StagingPath | Out-Null
         # Review of A35: confirming that $AppPoolName stopped proves nothing if the IIS
@@ -1067,6 +1107,9 @@ try {
 
         # Stop pool before file swap
         Write-Step "Stopping app pool for file deployment"
+        # cdt-54: the stop takes down every application the pool serves. Name the others and read their
+        # active bulk jobs - a warning, as for this instance's own, next.
+        Write-AppPoolSharingReport -AppPoolName $AppPoolName -PublishPath $PublishPath -StagingPath $StagingPath
         # Warn (do not block) if a durable bulk job is active - recycling interrupts it. The jobs read
         # are those of the instance the stop acts on: -AppPoolName, which now serves -PublishPath
         # (cdt-49). Outside a move that is the serving folder, as before; in a move whose folder stays,
