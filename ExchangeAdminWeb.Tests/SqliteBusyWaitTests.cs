@@ -124,8 +124,16 @@ public sealed class SqliteBusyWaitTests
         watch.Stop();
         await release;
 
+        // The floor stays: it is what proves the write WAITED for the lock rather than finding it free, and a loaded
+        // host only ever pushes a wait up, never below the hold.
         Assert.True(watch.Elapsed >= TimeSpan.FromSeconds(0.8), $"the write did not wait for the lock ({watch.Elapsed.TotalSeconds:F2} s)");
-        Assert.True(watch.Elapsed < SqliteConnectionFactory.BusyTimeout, $"the write waited {watch.Elapsed.TotalSeconds:F2} s for a lock held 1 s");
+
+        // cons-2, the aud-a67 (7) class. The ceiling was one busy wait (5 s) for a lock held 1 s, which is a timing
+        // rather than a signal: the write has to be scheduled, and on a host running several builds and test runs at
+        // once that can take seconds with nothing wrong. What the assertion is for is the provider's retry loop -
+        // measured at 30 to 35 s - and 25 s still fails that and nothing else. What the write did, rather than how
+        // long it took, is pinned below: the row it wrote is read back.
+        Assert.True(watch.Elapsed < NotTheRetryLoop, $"the write waited {watch.Elapsed.TotalSeconds:F2} s for a lock held 1 s: the provider's retry loop");
         Assert.Equal("written", store.Read(connection =>
         {
             using var command = connection.CreateCommand();
