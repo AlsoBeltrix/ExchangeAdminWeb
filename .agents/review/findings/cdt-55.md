@@ -1,7 +1,7 @@
 # cdt-55: with the serving appsettings.json missing and no old default database, a move still drops a live shared ConfigStore
 
 **Severity**: MEDIUM - the cdt-51 class, Architectural Invariant 3. `deploy.ps1` about 337 and 994, `Program.cs` about 59: an existing application whose process started with `ConfigStore:Path` on a shared database, whose `appsettings.json` was then deleted while it ran, and whose old folder has no default `config\exchangeadmin.db`, passes the cdt-51 guard ("nothing stranded"); the run skips backup and carry-forward, generates appsettings without `ConfigStore:Path`, and the restarted app opens a new default database. The shared one still exists but the app silently leaves it, with no verified pre-deploy backup of the store it was using.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from codex ops-batch-14 on cdt-47..51; inside the released scope
+**Status**: Merged to master `84a31608`; codex defect review ops-batch-15 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-54 commit `15066df8`
 **Commit**: the `fix(cdt-55)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 42c2690b head 7f1890f3 (merged fb2b288f); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 7f1890f3)

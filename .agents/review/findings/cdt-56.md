@@ -1,7 +1,7 @@
 # cdt-56: the 8.3 test's positive branch is bypassed by an if, not a skip, when no short name can be made
 
 **Severity**: LOW - guard weakness. `tests/ps/AppPoolControl.Tests.ps1` about 1236, 1241, 1276: when `fsutil file setshortname` fails (not elevated, 8.3 disabled) and Program Files has no short alias, `$script:Cdt46HasShortName` is false and the real-8.3 assertions are skipped by an `if`; the suite reports green with 0 skipped while only the synthetic case ran.
-**Status**: Verified on branch; awaiting merge and codex review - admitted 2026-10-23 evening from codex ops-batch-14 on cdt-47..51; inside the released scope
+**Status**: Merged to master `84a31608`; codex defect review ops-batch-15 in flight
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-55 commit `f348fabf`
 **Commit**: the `fix(cdt-56)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 42c2690b head 7f1890f3 (merged fb2b288f); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 7f1890f3)
