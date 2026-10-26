@@ -5,7 +5,7 @@
 with the captured one, so after A, B, A the FIRST A load passes the check although it is not the latest route. It
 reaches `module = next; LoadState();`, reloads from the store, clears `dirty`, increments `load` and drops the
 edits made on the newer A page. cons-4 closed the A-then-B case; identity alone cannot close this one.
-**Status**: Merged to master `d28c0d25`; codex defect review settings-batch-10 in flight
+**Status**: Merged to master `d28c0d25`; codex settings-batch-10 raised cons-7 (a duplicate same-target load strands the page); closes when it lands
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: see below
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base f08a664a head 554ad4da (merged 4afa745d); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat 554ad4da)
@@ -83,3 +83,7 @@ store.
   `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
 - Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell file changed. No directory, Exchange
   Online, Graph, DHCP, IIS, Delinea or SMTP call; nothing deployed.
+
+## Reviewer comments (supervisor, settings-batch-10)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 554ad4da head bcaabba7 (merged d28c0d25); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat bcaabba7). One MEDIUM candidate, admitted as cons-7. Codex upheld the three recorded decisions: a generation rather than cancellation is consistent with the load path and no token-bearing store operation is left cancellable; the re-anchored cons-4 source guard still fails if the check is removed or an await is introduced after it, with the behaviour test catching a check that compares nothing. Artefacts: `.agents/review/settings-batch-10.result.txt`, `.stream.log`, `prompt-settings-batch-10.md`.
