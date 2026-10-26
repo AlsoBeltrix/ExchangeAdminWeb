@@ -201,6 +201,13 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable DirectoryGroupSamAccountNames { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// aud-a2z. The <c>mail</c> a stand-in <c>Get-ADGroup -Identity</c> answers, when asked for it, for a group by
+    /// objectGUID: its own domain moved on from the address the catalog search still matches it by. A group not named here
+    /// answers the mail the search matches (<see cref="DirectoryGroupAttributes"/>); a null value answers none.
+    /// </summary>
+    public Hashtable DirectoryGroupMailInItsDomain { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
     /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
     public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
 
@@ -766,6 +773,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("ListExternalIds", ListExternalIds);
         rs.SessionStateProxy.SetVariable("ListMembersClearedAfterSetPlace", ListMembersClearedAfterSetPlace);
         rs.SessionStateProxy.SetVariable("DirectoryGroupSamAccountNames", DirectoryGroupSamAccountNames);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupMailInItsDomain", DirectoryGroupMailInItsDomain);
         rs.SessionStateProxy.SetVariable("ListNamesakes", ListNamesakes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupAttributes", DirectoryGroupAttributes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
@@ -1256,6 +1264,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($sam) { $row['SamAccountName'] = $sam }
             $name = Get-StandInGroupAttribute "$($group[0])" 'name'
             if ($name) { $row['Name'] = $name }
+            # aud-a2z. Its mail only when asked for (outside the real cmdlet's default set): DirectoryGroupMailInItsDomain,
+            # else the mail the catalog search matches it by.
+            if (@($Properties) -contains 'mail') {
+                $mail = if ($global:DirectoryGroupMailInItsDomain.ContainsKey("$($group[0])")) { $global:DirectoryGroupMailInItsDomain["$($group[0])"] } else { Get-StandInGroupAttribute "$($group[0])" 'mail' }
+                if ($mail) { $row['mail'] = "$mail" }
+            }
             if ($memberRead) { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
             New-Object psobject -Property $row
         }

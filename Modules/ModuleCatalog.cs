@@ -913,7 +913,9 @@ public sealed class ModuleCatalog
             // 2.15.0: only Exchange's affirmative "no such object" means a building has no room
             // list; an ambiguous name or a failed lookup refuses the row before any write, where
             // it used to arrive as an empty answer and read as absence (aud-a2ac).
-            Version = "2.15.0",
+            // 2.16.0: the synced room list's on-prem group is confirmed to still carry the list's
+            // address in its own domain, not only its objectGUID and DN (aud-a2z).
+            Version = "2.16.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
