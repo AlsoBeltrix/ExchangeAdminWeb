@@ -172,14 +172,29 @@ public static class ConfigDbMaintenance
         return path;
     }
 
-    private static SqliteConnection OpenReadOnly(string path)
+    /// <summary>
+    /// A read-only connection that waits the one busy wait for a lock another connection holds, and then fails.
+    /// </summary>
+    /// <remarks>
+    /// aud-a67. The busy timeout alone is half the setting (the aud-a41 shape, outside the factory because this tool must
+    /// not switch the file to WAL): it is SQLite's own wait inside each step, and Microsoft.Data.Sqlite then runs a busy
+    /// statement again, each run another full busy timeout, until the connection's command timeout has passed - 30 seconds
+    /// when unset. Measured against a database another process held: <c>db check</c> took 30.5 s, where
+    /// docs/ConfigDbToolInApp-Plan.md documents 5. Both come from <see cref="SqliteConnectionFactory.BusyTimeout"/> now,
+    /// so the retry has run out by the time SQLite's wait gives up. It bounds only that retry, not how long a statement may
+    /// run, so a long VACUUM INTO or integrity check is not cut short.
+    /// </remarks>
+    internal static SqliteConnection OpenReadOnly(string path)
     {
-        var connection = new SqliteConnection(ConnectionString(path, SqliteOpenMode.ReadOnly));
+        var connection = new SqliteConnection(ConnectionString(path, SqliteOpenMode.ReadOnly))
+        {
+            DefaultTimeout = (int)SqliteConnectionFactory.BusyTimeout.TotalSeconds,
+        };
         try
         {
             connection.Open();
             using var pragma = connection.CreateCommand();
-            pragma.CommandText = "PRAGMA busy_timeout=5000;";
+            pragma.CommandText = $"PRAGMA busy_timeout={(int)SqliteConnectionFactory.BusyTimeout.TotalMilliseconds};";
             pragma.ExecuteNonQuery();
             return connection;
         }

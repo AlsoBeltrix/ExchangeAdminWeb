@@ -562,6 +562,71 @@ public sealed class BitLockerRecoveryTests : IDisposable
         Assert.Empty(result.Keys);
     }
 
+    /// <summary>
+    /// aud-a67 item 2: the archive connection set busy_timeout and left the provider's command timeout at 30 s, so a
+    /// statement that met a lock was run again, each run another full busy wait - an operator's search sat for about 35
+    /// seconds before saying the archive could not be read. Both are the one busy wait now. The ceiling is loose on
+    /// purpose (item 7): it fails the retry loop and nothing else.
+    /// </summary>
+    [Fact]
+    public async Task A_held_archive_is_reported_without_the_providers_thirty_second_retry()
+    {
+        CreateArchive(("PC1", "111111-AAAAAA", null, null));
+        var service = CreateService(CreateArchiveConfig(_archivePath));
+
+        BitLockerSearchResult result;
+        using (HoldArchiveExclusively())
+        {
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            result = await service.SearchByComputerNameAsync("PC1", Ticket);
+            waited.Stop();
+
+            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(25),
+                $"the search waited {waited.Elapsed.TotalSeconds:F1} s: the provider's retry loop, not the one busy wait");
+        }
+
+        Assert.False(result.Success);
+        Assert.Contains("could not be read", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.Keys);
+
+        // Released, the same search answers.
+        var after = await service.SearchByComputerNameAsync("PC1", Ticket);
+        Assert.True(after.Success);
+        Assert.Single(after.Keys);
+    }
+
+    /// <summary>
+    /// Holds the archive so no other connection may even read it: a write transaction whose page cache is one page, so
+    /// SQLite spills to the file and takes an EXCLUSIVE lock for the rest of it. BEGIN IMMEDIATE alone takes RESERVED,
+    /// which a reader passes.
+    /// </summary>
+    private SqliteConnection HoldArchiveExclusively()
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _archivePath,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        Exec(connection, "PRAGMA cache_size=1;");
+        Exec(connection, "CREATE TABLE IF NOT EXISTS held (k TEXT PRIMARY KEY, v TEXT);");
+        Exec(connection, """
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 20000)
+            INSERT INTO held SELECT 'k' || i, 'v' || i FROM n;
+            """);
+        Exec(connection, "BEGIN IMMEDIATE;");
+        Exec(connection, "UPDATE held SET v = v || '-held';");
+        return connection;
+
+        static void Exec(SqliteConnection connection, string sql)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        }
+    }
+
     [Fact]
     public async Task Gives_every_result_row_a_distinct_id()
     {

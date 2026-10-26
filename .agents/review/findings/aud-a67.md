@@ -63,6 +63,9 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (2): `Services/Storage/ConfigDbMaintenance.cs`, `Services/BitLockerRecoveryService.cs`, `Modules/ModuleCatalog.cs`
+  (BitLocker Recovery 1.2.2 -> 1.2.3); `ExchangeAdminWeb.Tests/ConfigDbMaintenanceTests.cs`,
+  `ExchangeAdminWeb.Tests/BitLockerRecoveryTests.cs`.
 
 ## Guard proof
 
@@ -79,6 +82,43 @@ the restore. The mutant is the page as it was at `36245893`, so its failure is t
 | Mutation (call site) | Mutant MD5 | Named test failing |
 |---|---|---|
 | A1 `LoadState`'s `dirty.Clear()` removed | `47dbb2d07ccaa6a4bd3d368138e58cc3` | 1 of 493: `SettingsModuleMoveTests.AnotherModuleOpenedAfterAnEdit_LoadsClean_WithNoCountFromTheModuleLeft` - "the next module's page still counts unsaved edits: 1 unsaved change in Module Admins" |
+
+### The measured wait (2)
+
+Measured, not inferred, on this host on 2026-10-26, against the Release build of the app
+(`bin/Release/.../ExchangeAdminWeb.exe db check <path>`) as a process - the way `tools/SqliteConfigBackup.psm1` runs it.
+
+The fixture is a database another **process** holds so that no other connection may even read it: a `sqlite3` shell with
+`PRAGMA cache_size=1`, `BEGIN IMMEDIATE` and an `UPDATE` over 20,000 rows, so SQLite spills the page cache to the file
+and takes an EXCLUSIVE lock for the rest of the transaction. This matters and was found by measuring: a plain
+`BEGIN IMMEDIATE` takes RESERVED, which a reader passes - the first two attempts at this measurement returned `ok` in
+0.3 s because nothing was actually blocking the read.
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| before the fix (`busy_timeout=5000`, no command timeout) | 30.5 s | 30.6 s | - |
+| after (both from `SqliteConnectionFactory.BusyTimeout`) | 9.4 s | 7.8 s | 7.8 s |
+
+Both exited 2 with `error: SQLite Error 5: 'database is locked'.`
+
+So the docs' 5 s was wrong by about six times, and is now wrong by about one and a half. The remainder is structural and
+is left as it is: the connection's open and the statement after it are two phases, and each gets one wait. The busy
+timeout is a PRAGMA, so it can only be set once the connection is open; during the open itself SQLite's own wait is 0
+and only the provider's retry applies, bounded by the command timeout - about 5 s - and the `integrity_check` then waits
+its own 5 s. A caller that met a held database therefore waits up to about twice the one wait, not six times it.
+`docs/ConfigDbToolInApp-Plan.md`'s "5 s" is an `Implemented` plan's description of the shipped tool rather than a
+contract; this record does not edit it (see Known gaps).
+
+(2). Filter `FullyQualifiedName~ConfigDbMaintenanceTests|FullyQualifiedName~ConfigDbCliTests|FullyQualifiedName~SqliteBusyWaitTests|FullyQualifiedName~BitLockerRecovery|FullyQualifiedName~ModuleCatalogTests`
+(161 tests). `ConfigDbMaintenance.cs` MD5 `3c572241700e6932af484a85d44fa247`, `BitLockerRecoveryService.cs`
+`514bd4790bfd897cf152e53bdc5f777c`, each matched after its row; 161/161 green after each restore. Each mutant is that
+connection as it was at `2c52053f`, so each failure is the defect's reproduction - and the in-process number matches the
+process measurement above.
+
+| Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|
+| B1 `ConfigDbMaintenance.OpenReadOnly`'s command timeout removed | `e0c3f4304fe3b7431439e77a66c29103` | 2 of 161: `OpenReadOnly_TakesTheOneBusyWait_AsBothItsBusyTimeoutAndItsCommandTimeout` (`DefaultTimeout` 30 where 5 was expected) and `Check_OfADatabaseHeldByAnotherConnection_GivesUp_WithoutTheProvidersThirtySecondRetry` ("the check waited 30.3 s") |
+| B2 `BitLockerRecoveryService`'s archive command timeout removed | `defb8e71c7c2246457a743e40aab7625` | 1 of 161: `BitLockerRecoveryTests.A_held_archive_is_reported_without_the_providers_thirty_second_retry` ("the search waited 30.3 s") |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 
