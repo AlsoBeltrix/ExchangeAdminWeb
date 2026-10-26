@@ -189,6 +189,22 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
             Assert.Equal(job.Status, store.Get(job.Id)!.Status);
     }
 
+    [Fact]
+    public async Task ARemovalTheStoreFails_IsAuditedAsFailed_AndStillThrows()
+    {
+        // kd-62. The removal and its reason are one call now, and it is wrapped: a store that throws leaves the row it
+        // always owed - a mutation was attempted - instead of ending the handler with no record and no banner.
+        var (jobs, _) = JobService(migrated: false);
+        var job = Job(BulkJobStatus.Completed);
+        var page = BuildPage(jobs);
+
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => Remove(page, job));
+
+        var row = TheRow(job, success: false, error: thrown.Message, action: RemoveAction);
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
+    }
+
     // ---- the row -------------------------------------------------------------------------------
 
     // The one cancel row, as the page always wrote it - operator, IP, module/job, ticket, the job as rendered - with the
