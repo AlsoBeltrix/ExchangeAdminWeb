@@ -336,9 +336,12 @@ internal sealed class MigrationStubExchange : IDisposable
     }
 
     /// <summary>kd-37. A module credential lookup over this stand-in's module settings, the module's secret ID saved first.</summary>
-    public ModuleCredentialService Credentials(string moduleId, DelineaService vault, int secretId)
+    /// <param name="secretId">kd-61. Null saves none, so the lookup refuses before it reaches the vault.</param>
+    public ModuleCredentialService Credentials(string moduleId, DelineaService vault, int? secretId)
     {
-        _moduleConfig.SaveModuleConfig(moduleId, new Dictionary<string, string> { ["DelineaSecretId"] = secretId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        _moduleConfig.SaveModuleConfig(moduleId, secretId is { } id
+            ? new Dictionary<string, string> { ["DelineaSecretId"] = id.ToString(System.Globalization.CultureInfo.InvariantCulture) }
+            : []);
         return new ModuleCredentialService(_moduleConfig, vault, NullLogger<ModuleCredentialService>.Instance);
     }
 

@@ -86,6 +86,31 @@ public sealed class ModuleCredentialLookupTests : IDisposable
         Assert.All(logger.Entries, e => Assert.Equal(LogLevel.Error, e.Level));
     }
 
+    // Finding kd-61. The two configuration paths above answer before the vault is reached, and looked at no token: a caller
+    // whose operator had already cancelled was told its credentials could not be read, and carried on. They are the same two
+    // cases as the theory above, with the token cancelled.
+    [Theory]
+    [InlineData("an unreadable module configuration")]
+    [InlineData("no secret ID")]
+    public async Task ACancelledToken_EndsTheLookup_BeforeItAnswersFromTheConfiguration(string configured)
+    {
+        var moduleConfig = configured == "an unreadable module configuration"
+            ? new ModuleConfigService(new ModuleCatalog(), Environment(_dir), new ModuleConfigRepository(new UnreadableModuleConfigStore()),
+                NullLogger<ModuleConfigService>.Instance)
+            : new ModuleConfigService(new ModuleCatalog(), Environment(_dir), TestConfigStore.CreateModuleConfig(_dir),
+                NullLogger<ModuleConfigService>.Instance);
+        var logger = new CapturingLogger();
+        using var offline = new OfflineCredentials(_dir, Config(_dir), moduleConfig, logger);
+        using var cancel = new CancellationTokenSource();
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => offline.Service.LookupCredentialsAsync(Module, Purpose, cancel.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => offline.Service.GetCredentialsAsync(Module, Purpose, cancel.Token));
+
+        Assert.Empty(logger.Entries); // it did not read the configuration, so it has nothing to say about it
+        Assert.Equal(0, offline.RequestsSent);
+    }
+
     internal static IConfiguration Config(string dir) => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
     {
         ["Audit:LogRoot"] = dir,
