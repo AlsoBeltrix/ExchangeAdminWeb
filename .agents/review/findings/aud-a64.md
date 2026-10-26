@@ -10,9 +10,9 @@ singleton's construction. (5) `JsonlLogService` and `ExtendedLogService` constru
 folder unguarded; now that every write creates it, a log root unavailable at start-up breaks construction
 instead of each write being refused and reported. (6) `UsageTelemetryService.LogSwitchUnreadableOnce`'s
 flag never resets, so a failure after a recovery is never reported.
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; held by the 2026-10-23 stopping rule (LOW) for after the first dev deploy
-**Branch**: -
-**Commit**: -
+**Status**: Verified on branch; awaiting merge and codex review
+**Branch**: `fix/a64-a67` (from `eb017102`)
+**Commit**: `0b22d0e3` (1)-(3), `620e9d5a` (4), `d42e146c` (5), `93d4c6e0` (6), `36245893` (7)-(9)
 **Reviewer**: implementer (surfaced by the aud-a56/a57/a58 agent, 2026-10-23, candidates 2, 3, 4, 6, 10 and 11 of its hand-back)
 
 ## Evidence
@@ -226,3 +226,38 @@ every finished job record at start-up (the audit rows survive). (9) A negative `
 reaches SQLite as a negative `LIMIT`, which means no limit (`BulkJobRepository.GetRecentFinished` 439-450).
 Fix shape: range-check the three settings in `ConfigValue` (a minimum and maximum per setting) with the
 default and the once-per-value warning.
+
+## Known gaps
+
+- Nothing here ran against a real log root under IIS, a real shared config database, a second instance, or a real
+  bulk-job store: every case uses temp folders, substitute stores and the writers' own code. No directory, Exchange
+  Online, Graph, DHCP, Delinea or SMTP call is made by any of them.
+- (5) is best effort by design: the constructors still create the log folder when they can, and only stop *failing*
+  when they cannot. A folder that cannot be created at start-up is now reported once as a warning, and then once per
+  write as the write's own refusal - which is noisier than a single start-up failure, and deliberately so, because the
+  alternative was no audit writer at all.
+- (6) counts a streak by whether the last read answered. Two failure streaks either side of one successful read are
+  two reports; a store that fails on alternate reads reports on each failure. That is the intent ("once per streak"),
+  but it is not rate-limited beyond it.
+- (7)-(9): the three ranges are this agent's choice of sane operating bounds, not the owner's. They are recorded in
+  `README.md` and in the catalog-free constants on `BulkJobService`; if any of them is wrong for this environment the
+  value to change is one constant and one README line. Nothing enforces a range on the other number settings
+  (`Audit:*`, `ExtendedLog:*`, `Email:SmtpPort`), which keep their clamps or no bound at all, as before.
+- (7) is proved through the runner's constructor rather than through `Program.cs`: the start-up call itself has no
+  seam, as `ConfigValueTests`' own remarks already note for aud-a62.
+- The Admin Event Log page was not rendered in a browser for (1)-(3); its handlers are driven as the aud-a46, aud-a49
+  and aud-a63 cases drive them.
+
+## Branch-tip gates - 2026-10-26 (`fix/a64-a67`, from `eb017102`)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 19 warnings - master's own count at this fork, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: 6,742 passed / 0 failed / 0 skipped, 4m06s. The
+  base at `eb017102` was 6,693, so these two records add 49 cases.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps`. No `.ps1`, `.psm1` or deploy script changed on this
+  branch.
+- No directory, Exchange Online, Graph, DHCP, IIS, Delinea or SMTP call, and nothing was deployed. The one process run
+  outside the test host is the Release build's own `ExchangeAdminWeb.exe db check` against a temp fixture, for the
+  measurement in aud-a67 item 2.

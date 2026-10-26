@@ -12,9 +12,9 @@ under their locks). (5) `SettingsSaveAuditTests` 444-445 says `SetLevel` "swallo
 rethrown since aud-a28k. (6) `ADAttributeEditorService.SaveAllowlistAndAudit` (464-472) still reports a busy
 store as "Failed to save: SQLite Error 5" (the aud-a40 class inside the service; the exact change is in
 aud-a40.md's follow-up section).
-**Status**: Admitted; approved under the owner's 2026-10-21 "EVERYTHING" go; held by the 2026-10-23 stopping rule (LOW) for after the first dev deploy
-**Branch**: -
-**Commit**: -
+**Status**: Verified on branch; awaiting merge and codex review (item 12 not fixed - see the section at the end)
+**Branch**: `fix/a64-a67` (from `eb017102`)
+**Commit**: `2c52053f` (1), `5d89d3a3` (2), `0fc3dad5` (3), `b1661786` (4) and (13) with `51b2f7fa`, `44d99f3e` (5), `41d3320f` (6), `3cb50d2c` (7), `492725b5` (8), `16392c2a` (9), `ba77f21f` (10), `0a10b484` (11), `7af08914` (14)
 **Reviewer**: implementer (surfaced by the aud-a41/a40/a42 agent, 2026-10-23, candidates 2-6 and its follow-up)
 
 ## Evidence
@@ -299,6 +299,11 @@ write is now closed there, the re-entrancy guard itself stays held.
 for up to 10 s; show "Waiting for <module>'s save before opening <next module>" before the await, clear it on
 completion or replace it with the timeout notice.
 
+## Guard proof, continued: the items the sections above describe
+
+These rows belong to the Guard proof section and are written here, after the held lists they close, because each item
+reads beside the text that raised it. Same driver and same filter.
+
 (10). The OU browser's enumeration is a directory read on a worker, and every line after it applied to whatever module
 the page was showing when the answer arrived: the entries, the filtered list, the availability flag, the minimum depth,
 and - from `ToggleOUBrowser` - the browser opening at all. The browser renders only on AD Attribute Editor and writes
@@ -382,3 +387,48 @@ aud-a41), so the thread is held for a hung store, not for a contended one. Nothi
 should not be (aud-a66 closed that, and items 9, 10 and 11 close what it still said on the next module's page).
 
 Named for the owner as the one thing in this record left undone.
+
+## Known gaps
+
+- **(12) is not fixed.** Its own section above says why and what is true instead. It is the one item in this record
+  left for the owner.
+- (2)'s measurement is of `db check` as a process, against a database another process holds exclusively, on this host.
+  The remaining wait - about 8 s rather than the 5 s `docs/ConfigDbToolInApp-Plan.md` names - is structural: the open
+  and the statement each get one wait, because `busy_timeout` is a PRAGMA and cannot be set until the connection is
+  open. That plan is marked `Implemented` and describes the shipped tool, so its "5 s" is now imprecise; this record
+  does not edit it, and whoever next touches that plan should either correct the number or point it here.
+- (2) is not measured against the shared config database, a second instance, or the ops scripts that call the CLI
+  (`tools/SqliteConfigBackup.psm1`): no deploy, promote or cutover script was run, and no PowerShell file changed, so
+  the PowerShell gates were not run either.
+- (2)'s BitLocker half is a real archive file in a temp folder with a real held lock; no live archive, and no live
+  directory.
+- (3): the pool drain is awaited on a worker. The pool itself is unchanged, so a drain that never returns still holds
+  that worker - the same shape as (12), and bounded by the same thing: the pool's own disconnects.
+- (4): the guard is on the Save button, so a save started by any other path is unaffected by design - that is what
+  keeps aud-a66's defence meaningful, and its mutants were re-run here to prove it. The two aud-a66 cases that start a
+  second save now call `StartSaveAsync` directly; in production that window is reached through a route change past the
+  bound rather than a double click.
+- (8): the three exemptions are matched by code text - the catch variable's name, and the call each must make. A new
+  catch that happens to name its variable `auditEx` is exempted on that name alone, though it must then log and record
+  nothing. The scan reads `ProgressScan.CodeView`, which blanks string literals, so no exemption can key on wording.
+- (9), (10), (11): each case drives the window on the harness's dispatcher with a held stand-in. No browser, no live
+  circuit, and no directory - the OU browser's seam (`IOrganizationalUnitDirectory`) exists so that stays true.
+- (11) is proved through the audit record rather than the banner, because the route change clears `statusMessage` as
+  it loads. The banner carries the same text when the save finishes first.
+- (14)'s notice is not shown when the wait is instant, which is every route change with no save running - the common
+  case. Nothing times how long it is visible.
+- No settings page was rendered in a browser, and no manual operator check was run for any item here.
+
+## Branch-tip gates - 2026-10-26 (`fix/a64-a67`, from `eb017102`)
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 19 warnings - master's own count at this fork, none in a
+  touched file.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: 6,742 passed / 0 failed / 0 skipped, 4m06s. The
+  base at `eb017102` was 6,693, so these two records add 49 cases.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0.
+  `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
+- Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps`. No `.ps1`, `.psm1` or deploy script changed on this
+  branch.
+- No directory, Exchange Online, Graph, DHCP, IIS, Delinea or SMTP call, and nothing was deployed. The one process run
+  outside the test host is the Release build's own `ExchangeAdminWeb.exe db check` against a temp fixture, for the
+  measurement in aud-a67 item 2.
