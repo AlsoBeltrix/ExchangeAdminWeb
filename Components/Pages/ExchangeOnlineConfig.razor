@@ -270,6 +270,12 @@
 
     private async Task SaveModuleStatus()
     {
+        // aud-a67. One save at a time: this page wires its two Save buttons straight at their handlers, and a click the
+        // browser sent before the disabled button rendered ran a second save beside the first, whose finally then cleared
+        // `saving` while the other still ran.
+        if (saving)
+            return;
+
         saving = true;
         statusMessage = null;
         statusIsWarning = false;
@@ -360,6 +366,10 @@
 
     private async Task SaveExoConfig()
     {
+        // aud-a67, as SaveModuleStatus above: one save at a time, whichever button started it.
+        if (saving)
+            return;
+
         saving = true;
         statusMessage = null;
         statusIsWarning = false;

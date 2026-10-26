@@ -234,6 +234,87 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
             Field<Dictionary<string, string>>(page, typeof(ExchangeOnlineConfigPage), "exoShown")[ExoConnectionPool.ConfigOrganizationKey]);
     }
 
+    // ---- aud-a67 item 4: one save at a time from a Save button --------------------------------
+
+    /// <summary>
+    /// The button is disabled while a save runs, but a click the browser sent before that render arrived ran a second
+    /// save beside the first, and whichever finished first cleared `saving` in its finally, so the button came back
+    /// while the other was still running. Each page refuses the second press now.
+    /// </summary>
+    /// <remarks>
+    /// The second press is made while the first save is held at its store write, which is the window a double click
+    /// lands in. Each case counts the writes the store saw: one, not two.
+    /// </remarks>
+    [Theory]
+    [InlineData("Admin Settings")]
+    [InlineData("Exchange Online Config")]
+    [InlineData("Module Configuration")]
+    public async Task ASecondSavePressedWhileTheFirstRuns_IsRefused_AndTheStoreSeesOneWrite(string page)
+    {
+        var cancel = TestContext.Current.CancellationToken;
+        var writes = 0;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+
+        Func<Task> press;
+        AttributeEditorHarness.SwitchableStore store;
+        switch (page)
+        {
+            case "Admin Settings":
+            {
+                var p = _h.OpenAdminSettings();
+                Set(p, typeof(AdminSettingsPage), "tab", "Module Enablement");
+                var enablement = Field<Dictionary<string, bool>>(p, typeof(AdminSettingsPage), "moduleEnablement");
+                var module = TogglableModules().First(enablement.ContainsKey);
+                await _h.RunAsync(p, "ToggleModule", module, !enablement[module]);
+                press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
+                store = _h.EnablementStore;
+                break;
+            }
+
+            case "Exchange Online Config":
+            {
+                var p = _h.OpenExchangeOnlineConfig();
+                Set(p, typeof(ExchangeOnlineConfigPage), "exoAppId", AppId);
+                Set(p, typeof(ExchangeOnlineConfigPage), "exoOrganization", "contoso.onmicrosoft.com");
+                Set(p, typeof(ExchangeOnlineConfigPage), "exoCertSubject", "CN=EXO-Automation");
+                press = () => _h.RunAsync(p, "SaveExoConfig");
+                store = _h.ModuleConfigStore;
+                break;
+            }
+
+            default:
+            {
+                var p = _h.OpenModuleConfig(Module);
+                Set(p, typeof(ModuleConfigPage), "tab", "Configuration");
+                await _h.RunAsync(p, "SetConfigValue", "DelineaSecretId", "4242");
+                press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
+                store = _h.ModuleConfigStore;
+                break;
+            }
+        }
+
+        store.BeforeWrite = Hold;
+        var first = Task.Run(press, cancel);
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10), cancel), "the first save never reached its store write");
+
+        // The second press, while the first is still in its write: refused, and it must not even open a write.
+        await press();
+
+        release.Set();
+        await first.WaitAsync(TimeSpan.FromSeconds(30), cancel);
+        Assert.Equal(1, Volatile.Read(ref writes));
+
+        void Hold()
+        {
+            Interlocked.Increment(ref writes);
+            // Armed again, so a second write would be counted rather than passing unseen.
+            store.BeforeWrite = () => Interlocked.Increment(ref writes);
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+        }
+    }
+
     /// <summary>
     /// aud-a67 item 3: the connection save's pool drain still ran on the circuit. DrainPool empties the pool one runspace
     /// at a time, each a synchronous Disconnect-ExchangeOnline against the service - up to five round trips - and then

@@ -63,6 +63,9 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (4), with (13): `Components/Pages/ModuleConfig.razor`, `Components/Pages/AdminSettings.razor`,
+  `Components/Pages/ExchangeOnlineConfig.razor`; `ExchangeAdminWeb.Tests/SettingsSaveOffCircuitTests.cs`,
+  `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs` (two aud-a66 cases start their second save through the new seam).
 - (3): `Components/Pages/ExchangeOnlineConfig.razor`, `Modules/ModuleCatalog.cs` (Exchange Online 1.0.4 -> 1.0.5);
   `ExchangeAdminWeb.Tests/SettingsSaveOffCircuitTests.cs`, `ExchangeAdminWeb.Tests/AttributeEditorHarness.cs` (a
   `BeforeRead` hook beside the store stand-in's `BeforeWrite`, so a test can hold a read).
@@ -133,6 +136,35 @@ its own warning and its own audit action. A wider run over every settings-page a
 | Mutation (call site) | Mutant MD5 | Named test failing |
 |---|---|---|
 | C1 `SaveExoConfig`'s drain back on the circuit (`ExoPool.DrainPool();`) | `7dcc7c11d68cb12021be7f280f332a48` | 1 of 551: `SettingsSaveOffCircuitTests.ExchangeOnlineConfig_AConnectionSavesPoolDrain_LeavesTheCircuitFree` - "an edit on the page waited for the pool drain: the drain held the circuit" |
+
+### (4), and what it must not weaken (13)
+
+The guard is at the event, not inside each save: `ModuleConfig.SaveCurrentTabAsync`, `AdminSettings.SaveCurrentTabAsync`
+and Exchange Online Config's two handlers (that page wires its buttons straight at them) return at once while `saving`.
+Every save already set `saving` before its first await, so the second click of a double click reads it.
+
+Item (13) is the reason it is placed there. aud-a66 (HIGH) defends a save that is ALREADY in flight when a route change
+happens, and two of its cases start a second save deliberately; a guard inside the registration would have made that
+scenario unreachable and taken the bite out of aud-a66's E1 and E2 mutants. So `SaveCurrentTabAsync` keeps the guard and
+hands off to a new internal `StartSaveAsync`, which is the registration and the await exactly as they were. aud-a66's two
+cases start their second save through `StartSaveAsync` and are otherwise untouched. That window is still reachable in
+production, which is why the defence is still worth testing: a route change that outlasts its 10 s bound loads the next
+module and `LoadState` clears `saving`, so a new save can begin while the older one is still running.
+
+Proof that nothing was weakened: aud-a66's E1 and E2 mutants were re-run on this tree, and both still fail their own
+cases (the last two rows below).
+
+(4). Filter as above, 497 tests. `ModuleConfig.razor` MD5 `583eb30f590dff56f2996d1205ddf022`, `AdminSettings.razor`
+`f43b9b413ebb98947002eb0c6176137f`, `ExchangeOnlineConfig.razor` `25138a2776cb02b2b1baaca8889bd9ba`, each matched after
+its rows; 497/497 green after every restore. D1 to D3 are each page as it was at `0fc3dad5`.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| D1 `ModuleConfig.SaveCurrentTabAsync`'s guard removed | `91be35984e8927082e84057c983d2168` | 1 of 497: `ASecondSavePressedWhileTheFirstRuns_IsRefused_AndTheStoreSeesOneWrite(page: "Module Configuration")` - two writes where one was expected |
+| D2 `AdminSettings.SaveCurrentTabAsync`'s guard removed | `3247bb53c501e83d72096d6ae844483c` | 1 of 497: the same case for "Admin Settings" - two writes |
+| D3 `ExchangeOnlineConfig.SaveExoConfig`'s guard removed | `95d77fa2f2c7242d654271fb632a1ed1` | 1 of 497: the same case for "Exchange Online Config" - two writes |
+| aud-a66 E1 re-run (`savesInFlight.Clear()` before the add) | `d4d0a3efc8218684d687086fb63277c1` | 1 of 497: `SettingsModuleMoveTests.ASecondSaveThatFinishesFirst_DoesNotLetAnotherModuleLoadUnderTheFirst` - "the page loaded another module while the first of two saves still waited for the directory" |
+| aud-a66 E2 re-run (the route change's wait looks once, `if` not `while`) | `18bc49f26d57dbeac9d869f8d3271220` | 3 of 497: `ASaveStartedWhileAnotherModuleWaitsToLoad_IsWaitedForAsWell`, `AnAdminsSaveWhoseLookupOutlastsTheWait_...` and `ASaveThatNeverFinishes_...` (no notice) |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 

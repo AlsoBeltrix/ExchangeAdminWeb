@@ -865,6 +865,28 @@
     /// </summary>
     private async Task SaveCurrentTabAsync()
     {
+        // aud-a67. One save at a time from this button. The button is disabled while `saving`, but a click the browser sent
+        // before that render arrived - a double click - ran a second save beside the first, and whichever finished first
+        // cleared `saving` in its finally, so the button came back while the other was still running. Each save sets
+        // `saving` before its first await, so the second click reads it here (the aud-a28o shape, at the event).
+        //
+        // The guard is here and not in StartSaveAsync: it closes the way a second save is STARTED, and aud-a66's defence
+        // against one that is already in flight stays exactly as it was. That defence is still reachable - a route change
+        // that outlasts its bound loads the next module and LoadState clears `saving`, so a new save can begin while the
+        // old one is still running - and it is what makes a late save harmless whatever started it.
+        if (saving)
+            return;
+
+        await StartSaveAsync();
+    }
+
+    /// <summary>
+    /// Runs the visible tab's save, registered in <see cref="savesInFlight"/> for the load it began on until it completes
+    /// (aud-a66). Internal so a test can start a save the way one that is already in flight behaves, past the button's
+    /// one-at-a-time guard (aud-a67).
+    /// </summary>
+    internal async Task StartSaveAsync()
+    {
         // aud-a66. The load and the module the save is for, taken before it starts: a route change waits only for the saves
         // of the load it replaces, and its notice names the module of any save it stops waiting for.
         var started = load;

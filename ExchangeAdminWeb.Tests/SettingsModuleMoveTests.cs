@@ -87,6 +87,15 @@ public sealed class SettingsModuleMoveTests : IDisposable
     /// <summary>The Save button, pressed from another thread so a held save holds only the dispatcher.</summary>
     private Task Save(ModuleConfigPage page) => Task.Run(() => _h.RunAsync(page, "SaveCurrentTabAsync"), Cancel);
 
+    /// <summary>
+    /// A save that begins while another is already in flight, past the button's one-at-a-time guard (aud-a67): the page's
+    /// own StartSaveAsync, which is what the button runs once its guard has passed, registered in savesInFlight exactly as
+    /// a button press is. The window this stands for is a real one - a route change that outlasts its bound loads the next
+    /// module and LoadState clears `saving`, so a save can begin while an older one still runs - and these cases hold the
+    /// older save at the directory, which is where that happens.
+    /// </summary>
+    private Task SaveAlongside(ModuleConfigPage page) => Task.Run(() => _h.RunAsync(page, "StartSaveAsync"), Cancel);
+
     /// <summary>The router's move to <paramref name="moduleId"/>: the parameter set, then the page's parameter load.</summary>
     private async Task<Task> Open(ModuleConfigPage page, string moduleId)
     {
@@ -142,8 +151,9 @@ public sealed class SettingsModuleMoveTests : IDisposable
         var first = Save(page);
         Reached(_h.GroupDirectory.Entered, "the first save never asked the directory");
 
-        // A second Save before the first ends: a double click before the disabled button renders, or a direct event.
-        await Save(page).WaitAsync(Long, Cancel);
+        // A second save begun before the first ends (aud-a67: past the button's guard, as one begun after a route change
+        // that outlasted its bound would be).
+        await SaveAlongside(page).WaitAsync(Long, Cancel);
         Assert.Equal(Sorted(Kept, Added), StoredAdmins(First));
         Assert.False(first.IsCompleted, "the first save finished while its lookup was held");
 
@@ -175,7 +185,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
 
         // Held at its lookup, not its write: the admin service makes one write wait for another.
         var releaseSecond = _h.GroupDirectory.HoldNext();
-        var second = Save(page);
+        var second = SaveAlongside(page);
         Reached(_h.GroupDirectory.Entered, "the second save never asked the directory");
 
         releaseFirst.Set();
