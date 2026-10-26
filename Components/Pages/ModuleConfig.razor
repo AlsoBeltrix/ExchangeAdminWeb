@@ -1078,12 +1078,12 @@
     /// Whether the route still asks for the module this load took before its first await (cons-4).
     /// </summary>
     /// <remarks>
-    /// Not <c>loadedModuleId</c>: that is set early, by this load itself, so it says which load claimed the page and not
-    /// which module the router wants now. Two loads can be in flight at once - open B, route to C while B waits for its
-    /// authorization read, let C finish - and the one that resumes last used to apply its module over the newer one, so
-    /// a privileged module's configuration could be shown and edited after the route had moved to another. aud-a67 (9)
-    /// stopped a load reading the parameter again mid-flight and (10) stopped the OU answer landing on the next page;
-    /// this is the third ordering, and it is the one where the OLDER load wins.
+    /// Not <c>loadedModuleId</c>: that names the module the page has settled on (cons-7), not the one the router wants
+    /// now. Two loads can be in flight at once - open B, route to C while B waits for its authorization read, let C
+    /// finish - and the one that resumes last used to apply its module over the newer one, so a privileged module's
+    /// configuration could be shown and edited after the route had moved to another. aud-a67 (9) stopped a load reading
+    /// the parameter again mid-flight and (10) stopped the OU answer landing on the next page; this is the third
+    /// ordering, and it is the one where the OLDER load wins.
     /// </remarks>
     /// <remarks>
     /// cons-6. The identity is not enough on its own. Route to A and suspend its load, route to B, route back to A and
@@ -1098,11 +1098,20 @@
 
     /// <summary>
     /// The route changes this page has taken up, counted (cons-6). Incremented by the load that takes one up, after the
-    /// no-op return above it, so a parameter set for the module already shown never invalidates the load in flight for
-    /// it. Read only through <see cref="StillRequested"/>.
+    /// no-op return above it, so a parameter set for the module the page is settled on costs nothing and invalidates
+    /// nothing. Any other takes the next number - one for the module a load is still fetching included - and the load
+    /// it overtakes ends at its next check, leaving the newer one to finish the page (cons-7). Read only through
+    /// <see cref="StillRequested"/>.
     /// </summary>
     private int routeGeneration;
 
+    /// <summary>
+    /// The module the page has settled on - applied, or found not to exist - and null from the moment a load starts
+    /// replacing it until a load settles it again (cons-7). It is set beside <c>authChecked = true</c>, in the not-found
+    /// branch and at the end of the apply, and cleared beside <c>authChecked = false</c>, and only the newest load
+    /// reaches any of the three; so the no-op return at the top of the load fires only for a page that is showing the
+    /// module the route asks for.
+    /// </summary>
     private string? loadedModuleId;
     private bool moduleEnabled;
     private bool enablementStoreCorrupt;
@@ -1116,6 +1125,10 @@
 
     protected override async Task OnParametersSetAsync()
     {
+        // cons-7. The page is settled on the module the route asks for: nothing to do. loadedModuleId names a module only
+        // while the page shows it - a load clears it as it starts replacing the page - so a parameter set for any other
+        // module, or for the one a load is still fetching, goes on to a load of its own, and that load, being the
+        // newest, is the one that finishes the page.
         if (ModuleId == loadedModuleId) return;
 
         // aud-a67. The module this load is for, taken before its first await and used for all of it. ModuleId is a
@@ -1144,10 +1157,17 @@
         // aud-a41, aud-a66. The saves on the module shown finish before another module is loaded over it - for at most
         // saveWaitBound (see savesInFlight and WaitForThisLoadsSavesAsync).
         var unfinished = await WaitForThisLoadsSavesAsync();
-        if (requested == loadedModuleId) return;
 
-        loadedModuleId = requested;
+        // cons-7. A load the route has moved past ends here, before it tears the page down. That wait can be ten seconds
+        // long, so more than one load can be in it at once, and the stale one used to come out of it and clear
+        // `authChecked` and the status on its way to being abandoned - leaving the page blank, with no unsaved-changes
+        // guard rendered, whether or not a live load was still coming. Past this check this load is the newest, and
+        // nothing has settled the page since it passed the no-op return above, because only the newest load does that.
+        if (!StillRequested(requested, generation)) return;
 
+        // cons-7. From here the page is being replaced, so it is settled on nothing until a load settles it. A parameter
+        // set for the module that was shown must load that module again, not find it "loaded" on a page this has cleared.
+        loadedModuleId = null;
         authChecked = false;
         statusMessage = null;
 
@@ -1166,6 +1186,9 @@
         var next = Catalog.GetById(requested);
         if (next == null || next.IsSystemModule)
         {
+            // cons-7. Settled: "Module not found" is this page's answer for that module, so a later parameter set for it
+            // has nothing to do.
+            loadedModuleId = requested;
             authChecked = true;
             module = null;
             return;
@@ -1207,6 +1230,11 @@
             statusIsError = true;
         }
 
+        // cons-7. Settled, and only now claimed: the module is applied and the page renders it. Claimed as the load
+        // left the save drain, as it used to be, it meant only that a load for this module had got that far, and the
+        // no-op return read it as "on screen" - so a parameter set arriving after that load was overtaken found its
+        // module "loaded", did nothing, and nothing applied the module the route was asking for.
+        loadedModuleId = requested;
         authChecked = true;
     }
 

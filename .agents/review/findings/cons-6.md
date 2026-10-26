@@ -46,6 +46,12 @@ Three decisions worth stating:
   `await` after it; it is re-anchored from the whole call text to `if (!StillRequested(` so it asks about WHERE the
   check is rather than what it compares, and it passes unchanged otherwise.
 
+**cons-7 refined this on 2026-10-26**, on this branch. The save drain is an await as well, and nothing checked the
+route after it: a check sits there now, ahead of the teardown. And `loadedModuleId` is set only when the page settles
+and cleared when a load starts replacing it, so the first decision above holds for a settled page only - a parameter
+set that arrives during a load, for the same module included, takes a number of its own, and that load finishes the
+page. See `.agents/review/findings/cons-7.md`.
+
 ## Files changed
 
 - `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.

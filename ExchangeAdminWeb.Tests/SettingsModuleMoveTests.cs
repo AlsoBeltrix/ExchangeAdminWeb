@@ -746,6 +746,157 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.Equal([Kept], StoredAdmins(Second));
     }
 
+    /// <summary>
+    /// cons-7: with a save in flight on A, route to B - the first B load takes a generation and waits in the save
+    /// drain - and let the same B parameters arrive again before that wait ends, so a second B load takes a newer one.
+    /// The older B continuation resumed first, claimed `loadedModuleId`, cleared `authChecked` and the status, and
+    /// then failed its stale generation; the newer one saw its own module already claimed and returned at the no-op.
+    /// Nothing reached `LoadState()`, so the route was B and the page showed nothing - and with `authChecked` false the
+    /// unsaved-changes guard was not rendered either.
+    /// </summary>
+    /// <remarks>
+    /// The older load resumes first because its wait was registered on the save first, and the dispatcher runs the two
+    /// continuations in that order. The page as it was before this fix fails this case, and it can only do so in that
+    /// order: the other way round, that page had the newer load apply B and the older one return at its same-module
+    /// check.
+    /// </remarks>
+    [Fact]
+    public async Task ASecondLoadOfTheSameModuleDuringTheSaveDrain_StillLeavesThePageShowingIt()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the save never asked the directory");
+
+        // Both loads are for B, and both are in the save drain before either can go on.
+        var firstB = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(firstB.IsCompleted, "the first load of B did not wait for the save - this fixture is stale");
+        var secondB = _h.RunAsync(page, "OnParametersSetAsync");
+        await Task.Delay(Short, Cancel);
+        Assert.False(secondB.IsCompleted, "the duplicate load of B did not wait for the save - this fixture is stale");
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+        await firstB.WaitAsync(Long, Cancel);
+        await secondB.WaitAsync(Long, Cancel);
+
+        // One of the two applied B; neither may leave the page on nothing.
+        Assert.Equal(Second, Shown(page));
+        Assert.Equal(Second, Field<string?>(page, "loadedModuleId"));
+        Assert.True(Field<bool>(page, "authChecked"), "the page was left mid-load, so it renders neither the module nor its unsaved-changes guard");
+    }
+
+    /// <summary>
+    /// cons-7, in the same window: back to the module shown. A has a save in flight, the route moves to B - whose load
+    /// waits in the save drain - and comes back to A before that wait ends. The return to A finds A on screen and does
+    /// nothing, rightly; but the B load then came out of the drain and tore the page down - claimed B, cleared
+    /// `authChecked` and the status - on its way to failing its check, so the route was A and the page was blank. A load
+    /// the route has moved past ends at the drain now, before it touches anything.
+    /// </summary>
+    [Fact]
+    public async Task ARouteBackToTheModuleShown_DuringTheSaveDrain_LeavesThatModuleOnThePage()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the save never asked the directory");
+
+        var toSecond = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(toSecond.IsCompleted, "the load of B did not wait for the save - this fixture is stale");
+
+        // Back to A while B's load is still in the drain.
+        await (await Open(page, First)).WaitAsync(Long, Cancel);
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+        await toSecond.WaitAsync(Long, Cancel);
+
+        Assert.True(Field<bool>(page, "authChecked"), "the page was left torn down, so it renders neither the module nor its unsaved-changes guard");
+        Assert.Equal(First, Field<string?>(page, "loadedModuleId"));
+        Assert.Equal(First, Shown(page));
+        Assert.Equal("Module admins saved.", Status(page));
+    }
+
+    /// <summary>
+    /// cons-7: a claim that outlived its load. B's load gets through the drain on its bound - the save on A still
+    /// running - and waits at its authorization read; the route moves to C, whose load waits in the drain for the same
+    /// save, and comes back to B. B's load had claimed the page as it left the drain, so the return to B found B
+    /// "loaded" and did nothing; then B's load failed its check on generation and C's on identity, and nothing applied B.
+    /// Only a load that settles the page claims it now, so the return to B is a load of its own.
+    /// </summary>
+    /// <remarks>
+    /// The one order where the claim's placement alone decides the outcome: a stale load ending at the drain does not
+    /// help, because B's load was still current when it left the drain.
+    /// </remarks>
+    [Fact]
+    public async Task AReturnToAModuleWhoseLoadWasOvertaken_IsALoadOfItsOwn()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the save never asked the directory");
+
+        // B's load waits out the bound rather than the save, and is then held at its authorization read.
+        var authorizing = new ManualResetEventSlim();
+        var holdSecond = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(_ => { authorizing.Set(); return holdSecond.Task; }, _ => Task.FromResult(AuthorizationResult.Success()));
+        Set(page, "saveWaitBound", Short);
+        var toSecond = await Open(page, Second);
+        Reached(authorizing, "the load of B never reached its authorization read");
+
+        // C's load waits in the drain for the same save, for as long as the save runs.
+        Set(page, "saveWaitBound", Long);
+        var toThird = await Open(page, Third);
+        await Task.Delay(Short, Cancel);
+        Assert.False(toThird.IsCompleted, "the load of C did not wait for the save - this fixture is stale");
+
+        // Back to B while C's load is still in the drain.
+        var backToSecond = await Open(page, Second);
+
+        holdSecond.SetResult(AuthorizationResult.Success());
+        await toSecond.WaitAsync(Long, Cancel);
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+        await toThird.WaitAsync(Long, Cancel);
+        await backToSecond.WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(page));
+        Assert.Equal(Second, Field<string?>(page, "loadedModuleId"));
+        Assert.True(Field<bool>(page, "authChecked"), "the page was left torn down, so it renders neither the module nor its unsaved-changes guard");
+    }
+
+    /// <summary>
+    /// cons-7: the strand the first draft of this fix introduced, held so it cannot come back. Route from A to B, hold
+    /// B's load at its authorization read - by then it has torn the page down - and route back to A. With the claim
+    /// moved to the apply but not cleared at the teardown, `loadedModuleId` still named A, so the return to A did
+    /// nothing, B's load failed its check, and the page was blank. A page that has been torn down is settled on no
+    /// module, so the return to A loads A.
+    /// </summary>
+    [Fact]
+    public async Task AReturnToTheModuleShown_AfterAnotherModulesLoadClearedThePage_LoadsItAgain()
+    {
+        var page = _h.OpenModuleConfig(First);
+        var holdSecond = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(holdSecond.Task, Task.FromResult(AuthorizationResult.Success()));
+
+        var toSecond = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(toSecond.IsCompleted, "the load of B did not wait at its authorization read - this fixture is stale");
+        Assert.False(Field<bool>(page, "authChecked"), "the load of B had not torn the page down - this fixture is stale");
+
+        await (await Open(page, First)).WaitAsync(Long, Cancel);
+        holdSecond.SetResult(AuthorizationResult.Success());
+        await toSecond.WaitAsync(Long, Cancel);
+
+        Assert.True(Field<bool>(page, "authChecked"), "the page was left torn down, so it renders neither the module nor its unsaved-changes guard");
+        Assert.Equal(First, Field<string?>(page, "loadedModuleId"));
+        Assert.Equal(First, Shown(page));
+    }
+
     [Fact]
     public void TheWait_IsTheStoresBusyTimeoutPlusFiveSeconds()
     {

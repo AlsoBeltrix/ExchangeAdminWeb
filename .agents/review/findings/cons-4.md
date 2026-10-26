@@ -32,6 +32,10 @@ router wants now, and nothing compared the two again. So of two loads in flight 
 route to C while B waits for its authorization read, let C finish, then let B resume, and B's `module = next` and
 `LoadState()` landed over C.
 
+**cons-7 changed what `loadedModuleId` means on 2026-10-26**, on this branch: it is set only when the page settles -
+the module applied, or found not to exist - and cleared when a load starts replacing it, and a load is also checked as
+it leaves the save drain. See `.agents/review/findings/cons-7.md`.
+
 `StillRequested(requested)` compares the live `ModuleId` with the module this load is for, and the load returns
 silently when they differ. It is checked after each of the two awaits that can span a route change - the authentication
 state and the authorization re-check - which between them cover the descriptor branch, both navigations
