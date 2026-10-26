@@ -111,6 +111,34 @@ public sealed class ModuleCredentialLookupTests : IDisposable
         Assert.Equal(0, offline.RequestsSent);
     }
 
+    // Finding kd-69. The narrower window kd-61 left: the two configuration reads are synchronous and take as long as the
+    // store does, so a cancel can arrive while one of them runs. Before: the failure that read found was returned, the
+    // caller read it as a read it could not make, and a cancelled run finished, succeeded and was audited.
+    [Theory]
+    [InlineData("the read that says the configuration is unreadable")]
+    [InlineData("the read that answers with no secret ID")]
+    public async Task ACancelArrivingDuringAConfigurationRead_EndsTheLookup(string during)
+    {
+        var unreadable = during == "the read that says the configuration is unreadable";
+        using var cancel = new CancellationTokenSource();
+        var store = TestConfigStore.Create(_dir);
+        var cancelling = new CancellingStore(store, cancel, cancelAtRead: unreadable ? 1 : 2, thenUnreadable: unreadable);
+        // Saved so the module exists with no DelineaSecretId: the second read is the one that answers that, and the
+        // cancel lands inside it.
+        new ModuleConfigRepository(store).UpdateModule(Module, new Dictionary<string, string>());
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), Environment(_dir), new ModuleConfigRepository(cancelling),
+            NullLogger<ModuleConfigService>.Instance);
+        var logger = new CapturingLogger();
+        using var offline = new OfflineCredentials(_dir, Config(_dir), moduleConfig, logger);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => offline.Service.LookupCredentialsAsync(Module, Purpose, cancel.Token));
+
+        Assert.True(cancel.IsCancellationRequested); // the store cancelled from inside the read, where the operator's cancel lands
+        Assert.True(cancelling.Reads >= (unreadable ? 1 : 2));
+        Assert.Empty(logger.Entries); // the refusal it found is never reported: the lookup ended as a cancel
+        Assert.Equal(0, offline.RequestsSent);
+    }
+
     internal static IConfiguration Config(string dir) => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
     {
         ["Audit:LogRoot"] = dir,
@@ -142,6 +170,36 @@ internal sealed class UnreadableModuleConfigStore : IConfigStore
     public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("the store is unreadable");
     public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("the store is unreadable");
     public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("the store is unreadable");
+}
+
+/// <summary>
+/// kd-69. A config store that cancels the lookup's token from inside a read - the cancel arriving while the synchronous
+/// configuration read runs, which is the window the finding is about - and then fails that read, or answers it, as the case
+/// needs. Every other operation is the real store's.
+/// </summary>
+internal sealed class CancellingStore(IConfigStore inner, CancellationTokenSource cancel, int cancelAtRead, bool thenUnreadable) : IConfigStore
+{
+    private int _reads;
+
+    public int Reads => Volatile.Read(ref _reads);
+
+    public long GetChangeToken() => inner.GetChangeToken();
+
+    public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read)
+    {
+        if (Interlocked.Increment(ref _reads) >= cancelAtRead)
+        {
+            cancel.Cancel();
+            if (thenUnreadable)
+                throw new InvalidOperationException("the store could not be read");
+        }
+
+        return inner.Read(read);
+    }
+
+    public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => inner.Write(write);
+
+    public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => inner.Write(write);
 }
 
 /// <summary>
