@@ -112,13 +112,20 @@ public sealed class ConferenceRoomTicketPresenceTests : IDisposable
     {
         // The control: the same fixture with a ticket the dormant client passes. The handler goes on
         // to its authorization re-check - called once, refusing - so an uncalled check above is the
-        // ticket refusal, not a fixture that never gets that far.
+        // ticket refusal, not a fixture that never gets that far. Since kd-52 that refusal is itself
+        // audited, so the row here must be the access one, never the ticket one.
         var page = PageFor(write, Ticket, DormantServiceNow());
 
         await Run(page, write);
 
         Assert.Single(_authorization.ReceivedCalls());
-        Assert.DoesNotContain(AuditRows(), row => row.TryGetProperty("refusedAt", out _));
+        var row = Assert.Single(AuditRows());
+        Assert.Equal(IsType(write) ? "ConferenceRooms_SetType" : "ConferenceRooms_SetMetadata", row.GetProperty("action").GetString());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("Authorization", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal("Authorization denied.", row.GetProperty("error").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         var shown = Shown(page);
         Assert.False(shown.Success);
         Assert.Equal("Authorization denied.", shown.Message);
