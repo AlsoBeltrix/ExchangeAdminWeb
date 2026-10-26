@@ -334,6 +334,58 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.Equal(1, logger.Attempts);
     }
 
+    // ---- aud-a64: the event log's own record and the preview's failure report never throw ---------------------------
+
+    [Fact]
+    public async Task AnUndoNoModuleClaims_WhoseRecordCannotBeWritten_WithALoggerThatThrows_IsRefused_AndNothingEscapes()
+    {
+        // The defect: LogUndoNotRun, documented never to throw, reported its own failed record with no guard. A provider
+        // that threw there took its exception into ExecuteUndo's catch, which replaced the no-handler refusal with
+        // "Unexpected error", tried the record a second time, and threw out of the handler.
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var logger = new ThrowingLogger<Page>();
+        var progress = new RecordingProgress();
+        var page = PageConfirming(
+            AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"), new UndoRegistry([]), logger, progress);
+        // No audit writer at all stands in for one that throws, as ARefusalWhoseRecordCannotBeWritten_IsLogged_NotThrown's.
+        SetProperty(page, "Audit", null!);
+
+        var escaped = await Record.ExceptionAsync(() => ExecuteUndo(page));
+
+        const string NoHandler = "No undo handler available for this event.";
+        Assert.Null(escaped);
+        Assert.Equal(NoHandler, Field<string?>(page, "undoError"));
+        Assert.Null(Field<string?>(page, "undoSuccess"));
+        Assert.False(Field<bool>(page, "undoExecuting"));
+        Assert.Equal<(string Label, bool Success, string? Message)>([("Undoing the selected action", false, NoHandler)], progress.Completed);
+        Assert.Empty(_h.AuditEvents());
+        Assert.Equal(1, logger.Attempts);
+    }
+
+    [Fact]
+    public async Task APreviewThatFails_WithALoggerThatThrows_ShowsItsFailure_AndNothingEscapes()
+    {
+        // The defect: ShowUndoPreview's catch reported first, with no guard, so a provider that threw left the loading
+        // placeholder in the panel - no error said - and took its exception out of the handler.
+        var handler = new HeldPreviews();
+        var logger = new ThrowingLogger<Page>();
+        var page = Unattached(new UndoRegistry([handler]), logger);
+        await _renderer.Dispatcher.InvokeAsync(() => _renderer.Attach(page));
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+
+        var loading = ShowUndoPreview(page, Entry(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst")));
+        var (_, answer) = Assert.Single(handler.Requests);
+        answer.SetException(new InvalidOperationException(StoreUnreadable));
+
+        Assert.Null(await Record.ExceptionAsync(() => loading));
+        var preview = Field<UndoPreview?>(page, "undoPreview");
+        Assert.NotNull(preview);
+        Assert.False(preview.CanUndo);
+        Assert.Equal("Failed to load undo preview: " + StoreUnreadable, preview.Error);
+        Assert.False(Field<bool>(page, "undoLoading"));
+        Assert.Equal(1, logger.Attempts);
+    }
+
     [Fact]
     public async Task ACancelWhileTheUndoRuns_IsRefused_AndTheUndosOutcomeIsShownAndRecorded()
     {

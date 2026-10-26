@@ -190,6 +190,99 @@ public class ModuleConfigServiceTests
         Assert.Equal(1, logger.Attempts);
     }
 
+    /// <summary>
+    /// aud-a64: the start-up repair of the renamed Graph secret key reported with no guard, and Program.cs runs it once,
+    /// outside any try, so a provider that threw stopped the app starting - from a failed remap's report, or from the
+    /// summary of one that worked.
+    /// </summary>
+    [Theory]
+    [InlineData("a remap that writes")]
+    [InlineData("a remap whose write fails")]
+    public void TheGraphSecretKeyRemap_WithALoggerThatThrows_Returns(string cause)
+    {
+        using var temp = new TempDir();
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(temp.Path);
+        var store = TestConfigStore.Create(temp.Path);
+        new ModuleConfigRepository(store).SaveModule("MfaReset", new Dictionary<string, string> { ["DelineaSecretId"] = "123" });
+        var writesFail = cause == "a remap whose write fails";
+        var logger = new ThrowingLogger();
+        var service = new ModuleConfigService(new ModuleCatalog(), env,
+            new ModuleConfigRepository(writesFail ? new WritesFailStore(store) : store), logger);
+
+        IReadOnlyList<string>? migrated = null;
+        Assert.Null(Record.Exception(() => migrated = service.MigrateGraphSecretKeys()));
+
+        if (writesFail)
+        {
+            Assert.Empty(migrated!);
+            Assert.Equal("123", service.GetValue("MfaReset", "DelineaSecretId"));
+        }
+        else
+        {
+            Assert.Equal(["MfaReset"], migrated!);
+            Assert.Equal("123", service.GetValue("MfaReset", "GraphDelineaSecretId"));
+        }
+
+        Assert.Equal(1, logger.Attempts);
+    }
+
+    /// <summary>
+    /// aud-a64: the constructor's one-time legacy import reported with no guard. A provider that threw at a skipped file's
+    /// report reached the import's outer catch and threw again there, so the singleton could not be built; one that threw
+    /// at a failed archive's report - the shared helper's, documented never to throw - ended the import before the next
+    /// file. Each case is built, reports once, and imports what it can.
+    /// </summary>
+    [Theory]
+    [InlineData("an unparseable per-module file")]
+    [InlineData("an unparseable single file")]
+    [InlineData("a legacy file whose archive fails")]
+    public void Construction_WithALoggerThatThrows_IsBuilt_AndImportsWhatItCan(string cause)
+    {
+        using var temp = new TempDir();
+        var configDir = Path.Combine(temp.Path, "config");
+        Directory.CreateDirectory(configDir);
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(temp.Path);
+        File.WriteAllText(Path.Combine(configDir, "module-config-Migration.json"), "{\"OnPremTargetDatabases\":\"db-legacy\"}");
+        FileStream? held = null;
+        switch (cause)
+        {
+            case "an unparseable per-module file":
+                File.WriteAllText(Path.Combine(configDir, "module-config-Comms10k.json"), "{ not json");
+                break;
+            case "an unparseable single file":
+                File.WriteAllText(Path.Combine(configDir, "module-config.json"), "{ not json");
+                break;
+            case "a legacy file whose archive fails":
+                // Read sharing only, and read before the other file: the import can read it, its archive's move is refused.
+                var first = Path.Combine(configDir, "module-config-Comms10k.json");
+                File.WriteAllText(first, "{\"k\":\"v\"}");
+                held = new FileStream(first, FileMode.Open, FileAccess.Read, FileShare.Read);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(cause), cause, null);
+        }
+
+        var logger = new ThrowingLogger();
+        ModuleConfigService? service = null;
+        try
+        {
+            Assert.Null(Record.Exception(() =>
+                service = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(temp.Path), logger)));
+        }
+        finally
+        {
+            held?.Dispose();
+        }
+
+        Assert.NotNull(service);
+        Assert.Equal("db-legacy", service.GetValue("Migration", "OnPremTargetDatabases"));
+        if (cause == "a legacy file whose archive fails")
+            Assert.Equal("v", service.GetValue("Comms10k", "k"));
+        Assert.Equal(1, logger.Attempts);
+    }
+
     [Fact]
     public void Construction_ImportsPerModuleLegacyFile_ThenArchives()
     {
@@ -270,6 +363,15 @@ public class ModuleConfigServiceTests
             Interlocked.Increment(ref _attempts);
             throw new InvalidOperationException("the logging provider failed");
         }
+    }
+
+    /// <summary>A real store whose writes fail; its reads and its change token pass.</summary>
+    private sealed class WritesFailStore(IConfigStore inner) : IConfigStore
+    {
+        public long GetChangeToken() => inner.GetChangeToken();
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => inner.Read(read);
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("the store refused the write");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("the store refused the write");
     }
 
     private sealed class ThrowingStore : IConfigStore

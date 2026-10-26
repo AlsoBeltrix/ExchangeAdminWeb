@@ -268,12 +268,14 @@ public class ModuleConfigService
             {
                 // Best-effort repair; a write failure (locked store, etc.) must not abort startup.
                 // The service-side read still works on whichever key holds the value until then.
-                _logger.LogError(ex, "Graph secret key remap failed for {Module}", module.Id);
+                // aud-a64. Nor may its report: this runs once from Program.cs outside any try, so a provider that threw here
+                // stopped the app starting.
+                ReportSafely(logger => logger.LogError(ex, "Graph secret key remap failed for {Module}", module.Id));
             }
         }
 
         if (changed.Count > 0)
-            _logger.LogInformation("Migrated stranded Graph secret key for {Count} module(s): {Modules}", changed.Count, string.Join(", ", changed));
+            ReportSafely(logger => logger.LogInformation("Migrated stranded Graph secret key for {Count} module(s): {Modules}", changed.Count, string.Join(", ", changed)));
 
         return changed;
     }
@@ -304,7 +306,8 @@ public class ModuleConfigService
 
     // aud-a63. A committed write is reported through here (the aud-a28z shape): a provider that threw - inside the lock,
     // before ConfigSaved - made a saved change look failed to its caller, and this instance's ConfigSaved subscribers never
-    // heard of it. The write stands whatever the report does.
+    // heard of it. The write stands whatever the report does. aud-a64: the start-up remap's and the legacy import's
+    // reports too.
     private void ReportSafely(Action<ILogger> report)
     {
         try
@@ -347,7 +350,9 @@ public class ModuleConfigService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Skipping unparseable legacy module config {File}", Path.GetFileName(file));
+                    // aud-a64. Every report here goes through the guard: the constructor runs this, and a provider that threw
+                    // reached the outer catch, threw again there, and the singleton could not be built.
+                    ReportSafely(logger => logger.LogWarning(ex, "Skipping unparseable legacy module config {File}", Path.GetFileName(file)));
                     continue; // leave an unparseable file in place rather than archive it
                 }
 
@@ -370,13 +375,13 @@ public class ModuleConfigService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Skipping unparseable legacy module-config.json");
+                    ReportSafely(logger => logger.LogWarning(ex, "Skipping unparseable legacy module-config.json"));
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy module config");
+            ReportSafely(logger => logger.LogWarning(ex, "Failed to import legacy module config"));
         }
     }
 }

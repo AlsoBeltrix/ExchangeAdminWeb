@@ -773,7 +773,8 @@
 
     // aud-a57. LoadEvents reports a file it could not read through here (the aud-a28z shape): a logging provider that threw
     // in those catches ended the load with its exception, the rest of the range unread. The page says what it could not
-    // read either way; nothing is left to report the provider's own failure to.
+    // read either way; nothing is left to report the provider's own failure to. Since aud-a63 and aud-a64 the undo's, the
+    // undo preview's and the usage view's catches report through here too, after the state they set.
     private void ReportSafely(Action<ILogger> report)
     {
         try
@@ -1071,10 +1072,12 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Failed to load undo preview for operation {OperationId}", evt.OperationId);
             // A failure the same way (aud-a26o): a closed panel stays closed.
             if (ReferenceEquals(undoPreviewRequest, request))
                 undoPreview = new UndoPreview(false, $"Failed to load undo preview: {ex.Message}", "", "", "", null, null, false, null);
+            // aud-a64. The failure preview first and the report last, through the guard: a provider that threw here left the
+            // loading placeholder in the panel and took its exception out of the handler.
+            ReportSafely(logger => logger.LogError(ex, "Failed to load undo preview for operation {OperationId}", evt.OperationId));
         }
         finally
         {
@@ -1287,7 +1290,9 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Audit failed for an undo the event log did not hand to its module");
+            // aud-a64. Through the guard, so this never throws as documented: a provider that threw here replaced the
+            // no-handler refusal with "Unexpected error", tried the record again and took its exception out of ExecuteUndo.
+            ReportSafely(logger => logger.LogError(ex, "Audit failed for an undo the event log did not hand to its module"));
         }
     }
 
@@ -1668,8 +1673,10 @@
             usageModules = [];
             usageThemes = [];
             usageSessions = new SessionUsage(0, 0d, 0);
-            Logger.LogWarning(ex, "Failed to read usage telemetry for {Start} to {End}", startDate, endDate);
             usageError = "Could not read usage telemetry: " + ex.Message;
+            // aud-a64. The error first and the report last, through the guard: a provider that threw here left the empty
+            // tables with no error and took its exception out of the load.
+            ReportSafely(logger => logger.LogWarning(ex, "Failed to read usage telemetry for {Start} to {End}", startDate, endDate));
         }
     }
 

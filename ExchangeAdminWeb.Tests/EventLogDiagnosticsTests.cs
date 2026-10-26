@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Text;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Progress;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Hosting;
@@ -217,6 +219,26 @@ public sealed class EventLogDiagnosticsTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task AUsageReadThatFails_WithALoggerThatThrows_SaysSo_AndDoesNotEndTheLoad()
+    {
+        // aud-a64. LoadUsage's catch reported before it set the error, with no guard: a provider that threw left the Usage
+        // view's tables empty with no error shown, and took its exception out of the load.
+        var notADatabase = Path.Combine(_root, "usage-not-a-database.db");
+        File.WriteAllText(notADatabase, "This file is not a SQLite database, so every read of it fails as it opens.");
+        var logger = new ThrowingLogger();
+        var page = PageWithDiagnostics(shown: false, logger);
+        SetProperty(page, "UsageEvents", new UsageEventRepository(new SqliteConnectionFactory(notADatabase)));
+        SetProperty(page, "Catalog", new ModuleCatalog());
+
+        Assert.Null(await Record.ExceptionAsync(() => LoadUsage(page)));
+
+        var error = (string?)typeof(Page).GetField("usageError", PrivateInstance)!.GetValue(page);
+        Assert.NotNull(error);
+        Assert.StartsWith("Could not read usage telemetry: ", error, StringComparison.Ordinal);
+        Assert.Equal(1, logger.Attempts);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------------
 
     private static Dictionary<string, object?> AuditRecord(string action) => new()
@@ -291,6 +313,9 @@ public sealed class EventLogDiagnosticsTests : IDisposable
 
     private static Task LoadEvents(Page page) =>
         (Task)typeof(Page).GetMethod("LoadEvents", PrivateInstance)!.Invoke(page, null)!;
+
+    private static Task LoadUsage(Page page) =>
+        (Task)typeof(Page).GetMethod("LoadUsage", PrivateInstance)!.Invoke(page, null)!;
 
     private static void SetProperty(Page page, string name, object value) =>
         typeof(Page).GetProperty(name, PrivateInstance)!.SetValue(page, value);
