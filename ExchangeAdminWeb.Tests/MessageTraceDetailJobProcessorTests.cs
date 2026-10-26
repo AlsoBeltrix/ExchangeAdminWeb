@@ -392,6 +392,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
                     new Dictionary<string, string?> { ["Audit:LogRoot"] = _tempDir }).Build(),
                 NullLogger<BulkJobService>.Instance),
             f.Store,
+            Substitute.For<Microsoft.AspNetCore.Authorization.IAuthorizationService>(),
             NullLogger<MessageTraceExportListing>.Instance);
 
         Assert.Equal(MessageTraceExportState.Failed, listing.ClassifyState(stored, out _));

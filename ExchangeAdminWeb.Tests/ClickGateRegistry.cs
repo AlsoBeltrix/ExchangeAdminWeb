@@ -52,44 +52,46 @@ public static class ClickGateRegistry
     public static readonly IReadOnlyDictionary<string, string> NotYetConverted =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // All nine tier-1 pages - DhcpAuthorization.razor, NamedLocations.razor,
+            // Tier 1, approved 2026-09-18 and converted in the order of docs/ClickGatingAudit-Plan.md
+            // Revision 1: all nine pages - DhcpAuthorization.razor, NamedLocations.razor,
             // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor,
             // GroupManagement.razor, M365GroupManagement.razor, ConferenceRooms.razor and
-            // SelfServiceGroups.razor - are converted and live in Pages above. Nothing below this
-            // line is approved for conversion without an owner go.
+            // SelfServiceGroups.razor - live in Pages above. Tiers 2, 3 and 4 below - the remaining
+            // nineteen pages - were approved by the owner on 2026-10-12 (.agents/decisions.md; the
+            // plan's Status header) and are not started; read the plan's Revision 1 before converting one.
 
             // New module, landed 2026-09-23 with a preflight-only page. Declared here rather than
-            // converted: conversion is the nine-page tier-1 scope in docs/ClickGatingAudit-Plan.md
-            // and this page is not in it. Its one button is already gated on isBusy and on a
+            // converted: conversion was then the nine-page tier-1 scope in docs/ClickGatingAudit-Plan.md,
+            // and this page is in none of its four audited tiers. Its one button is already gated on isBusy and on a
             // non-blank UPN, and the write path it will gain is a later slice that must come with
             // its own gating review.
             ["CloudPasswordReset.razor"] = "new module 2026-09-23, not in the approved tier-1 conversion scope; preflight-only page, its single action gated on isBusy",
 
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
-            ["BlockedSenders.razor"] = "tier 3, not approved; slice 1 prerequisite done - ConfirmUnblock's "
+            ["BlockedSenders.razor"] = "tier 3, approved 2026-10-12, not started; slice 1 prerequisite done - ConfirmUnblock's "
                 + "preflight now fails closed in a catch, guarded by ClickGateStuckFlagTests",
-            ["MessageTrace.razor"] = "tier 4, not approved; slice 1 prerequisite done - ToggleDetail now "
+            ["MessageTrace.razor"] = "tier 4, approved 2026-10-12, not started; slice 1 prerequisite done - ToggleDetail now "
                 + "lowers detailLoading in a token-guarded finally, guarded by ClickGateStuckFlagTests",
 
-            // Tiers 2-4: audited, NOT approved for conversion. Do not convert without an owner go.
-            ["ADAttributeEditor.razor"] = "tier 2, not approved",
-            ["AdminSettings.razor"] = "tier 2, not approved",
-            ["ExchangeOnlineConfig.razor"] = "tier 2, not approved",
-            ["ModuleConfig.razor"] = "tier 2, not approved",
-            ["Comms10k.razor"] = "tier 3, not approved",
-            ["EmergencyDisable.razor"] = "tier 3, not approved",
-            ["LicensingUpdates.razor"] = "tier 3, not approved",
-            ["MfaReset.razor"] = "tier 3, not approved",
-            ["OutOfOffice.razor"] = "tier 3, not approved",
-            ["RiskyUsers.razor"] = "tier 3, not approved; has a partial ActionsDisabled already",
-            ["AdminBulkJobs.razor"] = "tier 4, not approved",
-            ["AdminEventLog.razor"] = "tier 4, not approved",
-            ["BitLockerRecovery.razor"] = "tier 4, not approved",
-            ["DelegationReport.razor"] = "tier 4, not approved",
-            ["MessageTraceReports.razor"] = "tier 4, not approved",
-            ["RecipientLookup.razor"] = "tier 4, not approved",
-            ["ServiceHealth.razor"] = "tier 4, not approved",
+            // Tiers 2-4: audited, and APPROVED for conversion (owner, 2026-10-12; docs/ClickGatingAudit-Plan.md).
+            // Not started. A page leaves this list when its conversion lands with its entry in Pages.
+            ["ADAttributeEditor.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["AdminSettings.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["ExchangeOnlineConfig.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["ModuleConfig.razor"] = "tier 2, approved 2026-10-12, not started",
+            ["Comms10k.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["EmergencyDisable.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["LicensingUpdates.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["MfaReset.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["OutOfOffice.razor"] = "tier 3, approved 2026-10-12, not started",
+            ["RiskyUsers.razor"] = "tier 3, approved 2026-10-12, not started; has a partial ActionsDisabled already",
+            ["AdminBulkJobs.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["AdminEventLog.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["BitLockerRecovery.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["DelegationReport.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["MessageTraceReports.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["RecipientLookup.razor"] = "tier 4, approved 2026-10-12, not started",
+            ["ServiceHealth.razor"] = "tier 4, approved 2026-10-12, not started",
 
             // Parked and out of scope entirely.
             ["AccountLockoutRemediation.razor"] = "module is disabled and parked; not in scope",
@@ -594,7 +596,7 @@ public static class ClickGateRegistry
                 ["string.IsNullOrWhiteSpace(ticketNumber)"],
                 RendersOnlyWhen:
                 "only while confirmRemove == server. RemoveServer re-checks the ticket itself, so "
-                + "this clause is not the sole enforcement the way IntuneDevices 403 is, but it is "
+                + "this clause is not the sole enforcement the way IntuneDevices 403 was, but it is "
                 + "still a precondition and not a busy condition"),
 
             new AnnotatedControl(121, "@onclick=\"AuthorizeServer\"",
@@ -1847,8 +1849,9 @@ public static class ClickGateRegistry
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Line 402's disabled expression carries the only enforcement of the wipe confirmation in
-    /// the whole codebase, and this conversion widened it rather than rewriting it.</b> Re-checked
+    /// <b>Line 402's disabled expression carried the only enforcement of the wipe confirmation in
+    /// the whole codebase when this page was converted, and the conversion widened it rather than
+    /// rewriting it.</b> Re-checked
     /// against the file before anything was touched, because the repo settles this kind of claim by
     /// reading: WipeNameConfirmed is declared at 685-687 (pre-conversion numbering) and named at
     /// exactly one site, the disabled attribute of the confirm button; wipeConfirmName is read at
@@ -1862,14 +1865,15 @@ public static class ClickGateRegistry
     /// assertion that fails if a later pass takes them out.
     /// </para>
     /// <para>
-    /// <b>A server-side re-check of the typed name is NOT in this slice and is recorded as an open
-    /// finding.</b> Adding one is a behaviour change, and the shape it would take is written down
-    /// here so the decision does not have to be re-derived: ExecuteActionAsync already captures every
-    /// other operator input at entry, so it would capture wipeConfirmName the same way and Refuse
-    /// with "The typed device name does not match." between the ticket gate and the
-    /// protected-principal check - a path that audits as it refuses, like every other refusal in that
-    /// method. Until then the markup clause is load-bearing and the PreserveClauses entry is the only
-    /// thing defending it.
+    /// <b>The server-side re-check of the typed name was not in this slice; kd-4 (2026-10-23) added
+    /// it, in the shape this paragraph recorded.</b> ExecuteActionAsync captures
+    /// WipeNameConfirmed(device, action) at entry with every other operator input, and between the
+    /// ticket gates and the protected-principal check Refuses "The typed device name does not match
+    /// this device" - a path that audits as it refuses, like every other refusal in that method
+    /// (ExchangeAdminWeb.Tests/IntuneDevicesWipeNameRecheckTests.cs drives it). The markup clause is
+    /// therefore no longer the only enforcement, and it stays registered all the same: it is still
+    /// the button's precondition, and a pass that replaced it with the predicate would make a
+    /// confirm button that is live before the name is typed.
     /// </para>
     /// <para>
     /// <b>The predicate was genuinely partial, and the missing flag was detailLoading.</b> Revision 1
@@ -1907,8 +1911,9 @@ public static class ClickGateRegistry
     /// <para>
     /// <b>ExecuteActionAsync needed no snapshot, and that is unusual enough to say plainly.</b> It
     /// already binds deviceId, deviceName, upn, ticket, auditAction, target, wipeOptions,
-    /// entraDeviceId, removeEntraObject, notifyRequested and notifyDefault into locals above its
-    /// first await, and reads nothing but locals and its own parameters afterwards. Falsification 6
+    /// entraDeviceId, removeEntraObject, notifyRequested and notifyDefault - and, since kd-4,
+    /// typedNameMatches - into locals above its first await, and reads nothing but locals and its own
+    /// parameters afterwards. Falsification 6
     /// bit on SearchAsync instead: it read searchTerm twice below await Task.Yield(), once for the
     /// audit target and once for the Graph call, on a box that binds on oninput - so a keystroke
     /// landing in the yield could audit one search and run another. One capture closes it.
@@ -1938,7 +1943,7 @@ public static class ClickGateRegistry
     private static PageGateEntry IntuneDevices => new()
     {
         Page = "IntuneDevices.razor",
-        ExpectedLineCount = 1668,
+        ExpectedLineCount = 1685,
 
         // Kept as ActionsDisabled rather than renamed to IsBusy, which is what the four pages before
         // it call their predicate. The name was already on the page and is quoted by
@@ -2158,11 +2163,11 @@ public static class ClickGateRegistry
                 + "confirmAction is set and the operator holds the grant for that action. The two "
                 + "clauses are NOT equivalent to each other. ExecuteActionAsync re-checks the ticket "
                 + "itself - twice, for presence and for validity - so the emptiness clause is belt "
-                + "and braces. It re-checks the typed device name NOWHERE, so "
-                + "!WipeNameConfirmed(device, confirmAction.Value) is the only enforcement of the "
-                + "wipe confirmation in the entire codebase. Both are OR-ed with ActionsDisabled and "
-                + "neither may be replaced by it; see this entry's remarks for the verification and "
-                + "for the server-side re-check that is NOT implemented"),
+                + "and braces. Since kd-4 it re-checks the typed device name too, on entry, so "
+                + "!WipeNameConfirmed(device, confirmAction.Value) is no longer the only enforcement "
+                + "of the wipe confirmation; it is still the button's precondition. Both are OR-ed "
+                + "with ActionsDisabled and neither may be replaced by it; see this entry's remarks "
+                + "for the verification and for the handler's re-check"),
 
             new AnnotatedControl(523, "@onclick=\"() => BeginAction(device, IntuneDeviceAction.EntraDelete)\"",
                 [],
@@ -5272,8 +5277,10 @@ public sealed record ExactlyOneGuardOf(
 
 /// <param name="PreserveClauses">
 /// Non-busy clauses that must remain in the disabled expression, OR-ed with the predicate rather
-/// than replaced by it. IntuneDevices line 403 is why this exists: its typed-device-name clause is
-/// the only enforcement of that confirmation anywhere, and a mechanical rewrite would delete it.
+/// than replaced by it. IntuneDevices line 403 is why this exists: its typed-device-name clause was
+/// then the only enforcement of that confirmation anywhere, and a mechanical rewrite would have
+/// deleted it. kd-4 has since added the handler's own re-check; "the IntuneDevices 403 shape", where
+/// an entry below names it, means that earlier state - a precondition enforced by markup alone.
 /// Each string is looked for in the control's disabled attribute VALUE, not anywhere in its tag, so
 /// a clause a tooltip also names is enforced against the gate and not against the tooltip. Writing
 /// the leading "|| " is optional and is the convention where a gate's clause is mirrored in prose;

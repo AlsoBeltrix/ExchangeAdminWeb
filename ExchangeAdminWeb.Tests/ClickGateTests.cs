@@ -1200,6 +1200,386 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void ExtractBlockBalancesTheBracesOfCodeNotOfLiteralsOrComments()
+    {
+        // kd-3. ExtractBlock counted raw characters, so a brace inside a string closed the block early
+        // and an opener's text inside one started it in the wrong place - and
+        // EveryRegisteredFlagIsLoweredInAFinally, the suite's one caller, then read the wrong code: a
+        // finally cut short at a "}" in a log message loses the clear below it, and one started inside
+        // a string credits a clear that is not in the finally at all. Each marked line below breaks
+        // the raw count on its own; the clear at the end of the finally is what the block must still
+        // contain, and the statement after it is what it must not.
+        var body = string.Join("\n",
+            "private async Task Save()",
+            "{",
+            "    Logger.LogInformation(\"no finally { here\");",      // the opener and a brace in a string
+            "    try { busy = true; await Work(); }",
+            "    finally",
+            "    {",
+            "        Logger.LogInformation(\"closing } early\");",     // a string
+            "        var close = '}';",                                // a char
+            "        var path = @\"C:\\{verbatim}\";",                 // a verbatim string
+            "        var hole = $\"{(ok ? \"{\" : \"}\")} done\";",    // braces in an interpolation hole's strings
+            "        // a line comment }",
+            "        /* a block comment } */",
+            "        busy = false;",
+            "    }",
+            "    after = true;",
+            "}");
+
+        var block = ClickGateSource.ExtractBlock(body, "finally");
+
+        Assert.StartsWith("{", block, StringComparison.Ordinal);
+        Assert.EndsWith("}", block, StringComparison.Ordinal);
+        Assert.Contains("busy = false;", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("busy = true;", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("after = true;", block, StringComparison.Ordinal);
+        // The source's own text comes back, literals and all; only the reading was code-only.
+        Assert.Contains("\"closing } early\"", block, StringComparison.Ordinal);
+
+        // An opener that is only ever in a literal is absent, as an opener that is nowhere is.
+        Assert.Equal("", ClickGateSource.ExtractBlock("var s = \"finally { x }\";", "finally"));
+    }
+
+    [Fact]
+    public void ExtractMarkupBlockBalancesTheBracesOfMarkupNotOfAttributeValuesOrComments()
+    {
+        // kd-11. MigrationStatusPageTests kept a private copy of the raw brace count for the blocks it
+        // scopes its markup assertions to - "@if (canManage && ...)" around an action bar - which
+        // ExtractBlock's code view cannot read, because it blanks markup. Each marked line below
+        // breaks the raw count on its own: the opener's text inside an attribute value starts it in
+        // the wrong place, a "}" in a value closes it early, and a "{" in a value runs it long.
+        var page = string.Join("\n",
+            "<div>",
+            "    <span title=\"@if (canManage) { decoy }\">x</span>",                      // the opener in a value
+            "    @if (canManage)",
+            "    {",
+            "        <button title=\"closes } early\" @onclick=\"() => { Go(); }\">Go</button>",
+            "        <input placeholder=\"{\" />",                                         // an unbalanced value
+            "        @* a } in a Razor comment *@",
+            "        <span>inside</span>",
+            "    }",
+            "    <p>after</p>",
+            "</div>",
+            "@code {",
+            "    private bool canManage;",
+            "}");
+
+        var block = ClickGateSource.ExtractMarkupBlock(page, "@if (canManage)");
+
+        Assert.StartsWith("{", block, StringComparison.Ordinal);
+        Assert.EndsWith("}", block, StringComparison.Ordinal);
+        Assert.Contains("<span>inside</span>", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("<p>after</p>", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("decoy", block, StringComparison.Ordinal);
+        // The source's own text comes back; only the reading skipped the values.
+        Assert.Contains("title=\"closes } early\"", block, StringComparison.Ordinal);
+
+        // C# openers are still ExtractBlock's: the markup view blanks the @code region.
+        Assert.Equal("", ClickGateSource.ExtractMarkupBlock(page, "private bool canManage"));
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksCommentsAndLeavesWhatIsInsideStringLiterals()
+    {
+        // kd-12. BlankComments matched "/\*.*?\*/" and "//" with regexes, so a "/*" inside a string
+        // blanked everything up to the next "*/" - real code included - and a line comment that
+        // followed a quote on its line was kept, readable as code. Lexed now: a C# comment is Roslyn
+        // trivia inside @code or inside a markup "@{ }" block, and a Razor comment is blanked in the
+        // markup. Every scan in this file reads the result, so code it loses is code no guard sees.
+        var page = string.Join("\n",
+            "<button @onclick=\"Go\" disabled=\"@IsBusy\">Go</button>",
+            "@* a Razor comment: isBusy = true; *@",
+            "@{ var hint = \"x\"; // a markup code block's comment: isBusy = true;",
+            "}",
+            "@code {",
+            "    private bool isBusy;",
+            "    private string glob = \"/*\";",                                       // opens nothing
+            "    private async Task Go()",
+            "    {",
+            "        isBusy = true;",
+            "        try { await Work(); }",
+            "        finally { isBusy = false; } // a trailing comment: isBusy = true;",
+            "    }",
+            "    private string close = \"*/\";",                                      // closes nothing
+            "    private string note = \"a quote\"; // after a quote: isBusy = true;",
+            "    /* a real block comment: isBusy = true; */",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.Equal(page.Split('\n').Length, text.Split('\n').Length);
+        // The code between the two literals survives, and it is the ONLY isBusy = true left.
+        Assert.Contains("finally { isBusy = false; }", text, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(text, @"isBusy = true;"));
+        Assert.Contains("\"/*\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"*/\"", text, StringComparison.Ordinal);
+        Assert.Contains("disabled=\"@IsBusy\"", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("comment", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("after a quote", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksTheCommentsOfMarkupControlFlowBodies()
+    {
+        // kd-21. kd-12's view lexes @code and markup "@{ }" blocks, but the body of an "@if" or an
+        // "@foreach" in the markup is code with markup in it, and its comments were read as text. The
+        // comments below each name isBusy = true; the markup, the literals and the code must stay.
+        var page = string.Join("\n",
+            "<div>",
+            "@if (canManage)",
+            "{",
+            "    // an if body's comment: isBusy = true;",
+            "    <button title=\"// not a comment\" disabled=\"@IsBusy\">Go</button>",
+            "    <p>// markup text, not a comment</p>",
+            "    <br />",
+            "}",
+            "else if (other)",
+            "{",
+            "    /* an else-if body's comment: isBusy = true; */",
+            "}",
+            "else",
+            "{",
+            "    @: a markup line // not a comment either",
+            "    <span>no</span> // an else body's comment: isBusy = true;",
+            "}",
+            "@foreach (var row in Rows(\"a)b\"))",
+            "{",
+            "    var label = \"// a string, not a comment\"; // a loop body's comment } with a brace",
+            "    var hole = $\"{row.Name} // inside an interpolated string\";",
+            "    // a second loop comment: isBusy = true;",
+            "    <tr><td>@label</td></tr>",
+            "    @if (row.Open)",
+            "    {",
+            "        <td>open</td>",
+            "    }",
+            "}",
+            "<p>after</p>",
+            "</div>",
+            "@code {",
+            "    private bool isBusy;",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("body's comment", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("second loop comment", text, StringComparison.Ordinal);
+        Assert.Contains("title=\"// not a comment\"", text, StringComparison.Ordinal);
+        Assert.Contains("<p>// markup text, not a comment</p>", text, StringComparison.Ordinal);
+        Assert.Contains("@: a markup line // not a comment either", text, StringComparison.Ordinal);
+        Assert.Contains("\"// a string, not a comment\";", text, StringComparison.Ordinal);
+        Assert.Contains("$\"{row.Name} // inside an interpolated string\";", text, StringComparison.Ordinal);
+        Assert.Contains("<tr><td>@label</td></tr>", text, StringComparison.Ordinal);
+        Assert.Contains("<p>after</p>", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsReadsAComparisonOrAGenericInABodyAsCodeNotAsATag()
+    {
+        // kd-31. The kd-21 walker took any "<" followed by a letter for a tag, so "List<string>" and
+        // "row.Count<limit" in a body opened an element that never closed, the walk stopped, and every
+        // comment after them stayed readable. Each comment below follows one of those and names
+        // isBusy = true; the markup around them must stay.
+        var page = string.Join("\n",
+            "@foreach (var row in Rows())",
+            "{",
+            "    var names = new List<string>();",
+            "    // after a generic: isBusy = true;",
+            "    var small = row.Count<limit;",
+            "    // after a comparison: isBusy = true;",
+            "    var cmp = row.Count<b ? 1 : 2;",
+            "    // after a comparison with a space: isBusy = true;",
+            "    if (row.Count<limit) { <td>small</td> }",
+            "    // after a comparison in a condition: isBusy = true;",
+            "    <b>@(row.Count<b ? \"a\" : \"b\")</b>",
+            "    // after an element holding a comparison: isBusy = true;",
+            "    RenderFragment cell = @<td>cell</td>;",
+            "    // after a template: isBusy = true;",
+            "}",
+            "<p>after</p>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private int limit;",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("after a", text, StringComparison.Ordinal);
+        Assert.Contains("var names = new List<string>();", text, StringComparison.Ordinal);
+        Assert.Contains("if (row.Count<limit) { <td>small</td> }", text, StringComparison.Ordinal);
+        Assert.Contains("<b>@(row.Count<b ? \"a\" : \"b\")</b>", text, StringComparison.Ordinal);
+        Assert.Contains("@<td>cell</td>;", text, StringComparison.Ordinal);
+        Assert.Contains("<p>after</p>", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksHtmlCommentsInTheMarkup()
+    {
+        // kd-31. An HTML comment is a comment to every scan here: its text is never a control, so a
+        // handler or a flag it names must not be read as one. Blanked in the markup, kept in a string.
+        var page = string.Join("\n",
+            "<div>",
+            "    <!-- a page comment: <button @onclick=\"StageDeleteSelected\">old</button> -->",
+            "    <button @onclick=\"Go\" disabled=\"@IsBusy\">Go</button>",
+            "    @if (open)",
+            "    {",
+            "        <!-- a body comment with a brace } and isBusy = true; -->",
+            "        // a C# comment after it: isBusy = true;",
+            "        <span>open</span>",
+            "    }",
+            "</div>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private bool open;",
+            "    private string html = \"<!-- not a comment -->\";",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("StageDeleteSelected", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("comment", text.Replace("\"<!-- not a comment -->\"", "", StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Contains("<button @onclick=\"Go\" disabled=\"@IsBusy\">Go</button>", text, StringComparison.Ordinal);
+        Assert.Contains("<span>open</span>", text, StringComparison.Ordinal);
+        Assert.Contains("\"<!-- not a comment -->\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsReadsAnElementAfterABraceLessHeaderAsMarkup()
+    {
+        // kd-42. After a brace-less control-flow header the statement is markup when it is a tag.
+        // Razor refuses that in a page (RZ1008), but read as C# the element's text was code: the
+        // brace in each one below ended its body early and the comment after it stayed readable.
+        // Each comment names isBusy = true. The last body is the control: a ")" that closes no
+        // header is not a statement start, so "(limit) <b ?" still compares.
+        var page = string.Join("\n",
+            "@if (open)",
+            "{",
+            "    if (rows > 0) <p>if } brace</p>",
+            "    // after a brace-less if: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    if (rows > 1) Count(); else <p>else } brace</p>",
+            "    // after a brace-less else: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    foreach (var cell in cells) <td>foreach } brace</td>",
+            "    // after a brace-less foreach: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    for (var i = 0; i < rows; i++) <span>for } brace</span>",
+            "    // after a brace-less for: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    while (Next()) <em>while } brace</em>",
+            "    // after a brace-less while: isBusy = true;",
+            "}",
+            "@if (open)",
+            "{",
+            "    var pick = (limit) <b ? 1 : 2;",
+            "    // after a parenthesised comparison: isBusy = true;",
+            "}",
+            "<p>after</p>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private bool open;",
+            "    private int rows;",
+            "    private int limit;",
+            "    private int b;",
+            "    private int[] cells = [];",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("after a", text, StringComparison.Ordinal);
+        Assert.Contains("if (rows > 0) <p>if } brace</p>", text, StringComparison.Ordinal);
+        Assert.Contains("else <p>else } brace</p>", text, StringComparison.Ordinal);
+        Assert.Contains("<td>foreach } brace</td>", text, StringComparison.Ordinal);
+        Assert.Contains("<span>for } brace</span>", text, StringComparison.Ordinal);
+        Assert.Contains("<em>while } brace</em>", text, StringComparison.Ordinal);
+        Assert.Contains("var pick = (limit) <b ? 1 : 2;", text, StringComparison.Ordinal);
+        Assert.Contains("<p>after</p>", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksHtmlCommentsInAnAtCodeTemplate()
+    {
+        // kd-42. A render-fragment template in @code is markup inside a code region, so an HTML
+        // comment in it is a comment: one holding a whole button, and one whose text has a "//" that
+        // the region's Roslyn view reads as C# and blanks to the end of its line, "-->" included.
+        // Elsewhere in @code a "<!--" is a string's text and stays, even in a string holding a
+        // template's text.
+        var page = string.Join("\n",
+            "<table>@Row</table>",
+            "@code {",
+            "    private bool isBusy;",
+            "    private string before = \"<!-- a string before -->\";",
+            "    private string quoted = \"@<b><!-- a string holding a template --></b>\";",
+            "    private RenderFragment Row => @<tr>",
+            "        <!-- a template comment: <button @onclick=\"StageDeleteSelected\">old</button> -->",
+            "        <td><button @onclick=\"Go\" disabled=\"@isBusy\">Go</button></td>",
+            "        <!-- see https://example.test/why -->",
+            "    </tr>;",
+            "    // after the template: isBusy = true;",
+            "    private string after = \"<!-- a string after -->\";",
+            "    private void Go() { }",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("StageDeleteSelected", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("template comment", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("see https", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("isBusy = true;", text, StringComparison.Ordinal);
+        Assert.Contains("<td><button @onclick=\"Go\" disabled=\"@isBusy\">Go</button></td>", text, StringComparison.Ordinal);
+        Assert.Contains("</tr>;", text, StringComparison.Ordinal);
+        Assert.Contains("\"<!-- a string before -->\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"@<b><!-- a string holding a template --></b>\"", text, StringComparison.Ordinal);
+        Assert.Contains("\"<!-- a string after -->\"", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BlankCommentsBlanksAnHtmlCommentThatStartsWhereAnotherEnds()
+    {
+        // kd-56. The search for the next comment resumed one character past the end of the comment it
+        // had just blanked, so a comment written straight after another was never seen - here one
+        // holding a whole button, in the markup and in an @code template.
+        var page = string.Join("\n",
+            "<div>",
+            "    <!-- a --><!-- b: <button @onclick=\"StageDeleteSelected\">old</button> -->",
+            "    <button @onclick=\"Go\">Go</button>",
+            "</div>",
+            "@Row",
+            "@code {",
+            "    private RenderFragment Row => @<p><!-- c --><!-- d: <button @onclick=\"StagePurge\">old</button> --></p>;",
+            "    private void Go() { }",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("<!--", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("StageDeleteSelected", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("StagePurge", text, StringComparison.Ordinal);
+        Assert.Contains("<button @onclick=\"Go\">Go</button>", text, StringComparison.Ordinal);
+        Assert.Contains("@<p>", text, StringComparison.Ordinal);
+        Assert.Contains("</p>;", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because
@@ -1525,8 +1905,8 @@ public class ClickGateTests
         // after it - not that the two are wired together.
         //
         // Not in this assertion's dependency path, deliberately: ClickGateSource.ExtractBlock,
-        // which counts braces without regard for quoting and so mis-ends a block containing an
-        // interpolated string. Every handler here is full of "$"{dns} ({ip})"". This works from
+        // which counted braces without regard for quoting until kd-3 and so mis-ended a block
+        // containing an interpolated string. Every handler here is full of "$"{dns} ({ip})"". This works from
         // MethodBody, which is delimited by the next member signature, and from index arithmetic.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
@@ -1616,8 +1996,8 @@ public class ClickGateTests
         //
         // Honest limitation: this is textual ordering within one method body, not control flow. It
         // cannot see a raise reached by a call, and it cannot prove the early return is reachable.
-        // It also does not use ClickGateSource.ExtractBlock, whose brace counting is not quote-aware
-        // and would mis-end any block in these interpolated-string-heavy handlers.
+        // It also does not use ClickGateSource.ExtractBlock, whose brace counting was not quote-aware
+        // until kd-3 and would have mis-ended any block in these interpolated-string-heavy handlers.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
 
@@ -1807,8 +2187,8 @@ public class ClickGateTests
     /// The condition pattern reads a bracketed expression two levels deep -
     /// <c>if (IsBusy || string.IsNullOrWhiteSpace(Trim(x)))</c> - which covers every guard shape on
     /// the converted pages. A third level is not read, and such an if is skipped rather than
-    /// half-matched. Deliberately not built on ClickGateSource.ExtractBlock, whose brace counting is
-    /// not quote-aware; this never counts a brace at all.
+    /// half-matched. Deliberately not built on ClickGateSource.ExtractBlock, whose brace counting was
+    /// not quote-aware until kd-3; this never counts a brace at all.
     /// </remarks>
     private static readonly Regex EarlyReturnGuard = new(
         @"\bif\s*\((?<cond>[^()]*(?:\((?:[^()]|\([^()]*\))*\)[^()]*)*)\)\s*(?:\{\s*)?return\b[^;{}]*;",
@@ -1843,9 +2223,10 @@ public class ClickGateTests
     /// <remarks>
     /// <para>
     /// Built on <see cref="ClickGateSource.Tags"/>, which is quote-aware, and deliberately NOT on
-    /// ClickGateSource.ExtractBlock, whose brace counting is not - a brace inside an interpolated
-    /// string ends its block in the wrong place, and Migration's placeholder at 324 is exactly such
-    /// a string. Recorded in .agents/state.md; fixing it is its own slice.
+    /// ClickGateSource.ExtractBlock, whose brace counting was not - a brace inside an interpolated
+    /// string ended its block in the wrong place, and Migration's placeholder at 324 is exactly such
+    /// a string. kd-3 fixed that by reading the C# code view, which blanks markup, so this markup
+    /// walk still could not use it.
     /// </para>
     /// <para>
     /// Tags() needs a name, so child components are found by harvesting PascalCase tag names first.
@@ -2096,7 +2477,8 @@ public class ClickGateTests
     /// <remarks>
     /// <para>
     /// The same shape as <see cref="ClickGateSource.Tags"/>, and deliberately NOT
-    /// ClickGateSource.ExtractBlock, whose brace counting is not quote-aware. Tags() itself cannot
+    /// ClickGateSource.ExtractBlock, which reads C# only (its code view blanks markup; before kd-3 its
+    /// brace counting was not quote-aware either). Tags() itself cannot
     /// be used here because it needs a tag name up front and a keyboard handler can sit on any
     /// element; this walk is generic for exactly that reason. It skips past each element's closing
     /// "&gt;", so a "&lt;" inside a quoted attribute value cannot open a second element inside the

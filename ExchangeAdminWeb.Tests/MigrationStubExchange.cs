@@ -92,7 +92,8 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>
     /// Switches: SetBatchChangesNothing - Set-MigrationBatch reports success and writes nothing; ReadBackRefused (a factory) -
     /// Get-MigrationBatch refuses a batch once it holds a completion time, so only a read-back fails;
-    /// NestedSuppressedError - Remove-BlockedSenderAddress suppresses an error of its own. aud-a23n: CompleteClearsSchedule -
+    /// NestedSuppressedError - Remove-BlockedSenderAddress suppresses an error of its own. kd-6: UnblockStalls (a
+    /// ManualResetEventSlim) - Remove-BlockedSenderAddress, once it has logged the call, waits on it. aud-a23n: CompleteClearsSchedule -
     /// Complete-MigrationBatch removes the batch's CompleteAfter, so a read-back has none; CompletionStatus (text) - it sets
     /// the batch's Status.
     /// </summary>
@@ -278,11 +279,13 @@ internal sealed class MigrationStubExchange : IDisposable
     private int _connects;
 
     /// <param name="connects">False: opening the connection throws, before any cmdlet runs.</param>
-    public ExoConnectionPool Pool(bool connects = true)
+    /// <param name="beforeConnect">kd-6. Runs first in every connect, so a test can hold a borrow there - before anything is sent.</param>
+    public ExoConnectionPool Pool(bool connects = true, Action? beforeConnect = null)
     {
         var pool = new ExoConnectionPool(_config, _moduleConfig, _enablement,
             NullLogger<ExoConnectionPool>.Instance, _trace, (_, generation, _) =>
             {
+                beforeConnect?.Invoke();
                 if (!connects || Interlocked.Increment(ref _connects) > (ConnectsAllowed ?? int.MaxValue))
                     throw ConnectFailure ?? new InvalidOperationException("the Exchange Online sign-in could not be completed");
                 return StandIn(generation);
@@ -652,6 +655,7 @@ internal sealed class MigrationStubExchange : IDisposable
         // a command inside it fails under -ErrorAction SilentlyContinue, which flags the call and writes no record.
         ("Remove-BlockedSenderAddress", "[string] $SenderAddress, [string] $Reason", """
             if ($Behaviour['NestedSuppressedError']) { Get-Item 'C:\definitely-not-here-a23i' -ErrorAction SilentlyContinue }
+            if ($null -ne $Behaviour['UnblockStalls']) { $null = $Behaviour['UnblockStalls'].Wait(120000) }
             """),
     ];
 

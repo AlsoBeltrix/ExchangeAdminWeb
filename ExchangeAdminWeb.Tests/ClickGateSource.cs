@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -52,23 +54,461 @@ public sealed class ClickGateSource
     /// <paramref name="source"/> with the body of every comment replaced by spaces.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Blanked rather than deleted, and newlines are preserved, so every offset and line number
     /// still refers to the real file. Deleting instead shifts every subsequent position, which
     /// matters here because <see cref="EnclosingMethodName"/> and the assertion messages both work
     /// from offsets - a stripped-but-shifted source reports defects at the wrong line, which is
     /// worse than reporting none.
+    /// </para>
+    /// <para>
+    /// kd-12. Lexed, not matched: <see cref="RazorSyntax.ComponentCommentsBlanked"/>, the comment
+    /// view the progress guards read. A C# comment is Roslyn trivia inside an @code block, so a
+    /// "/*" or "//" inside a string literal is text, and a comment after a string on the same line
+    /// is still a comment; a Razor comment is blanked in the markup. The regexes this replaced
+    /// blanked from a "/*" inside a string to the next "*/" wherever it was, and kept any line
+    /// comment that followed a quote on its line. In markup, "//" and "/* */" are text, as the code
+    /// view already treats them (review finding prog-4b). Every input is read as a component, so a
+    /// markup fixture with no @code block is all markup.
+    /// </para>
+    /// <para>
+    /// kd-21. The bodies of the markup's control-flow constructs ("@if", "@foreach" and the rest) are
+    /// code with markup in them, and their C# comments are blanked too; see
+    /// <see cref="BlankControlFlowComments"/>.
+    /// </para>
+    /// <para>
+    /// kd-31. So are the markup's HTML comments (<see cref="BlankHtmlComments"/>): what one holds is
+    /// never a control, so a handler or a flag it names must not be read as one.
+    /// </para>
+    /// <para>
+    /// kd-42. And so are the HTML comments in an @code block's render-fragment templates, which are
+    /// markup inside a code region; and in a control-flow body, an element after a brace-less header
+    /// ("if (x) &lt;p&gt;...&lt;/p&gt;") is read as markup, not as code.
+    /// </para>
     /// </remarks>
-    public static string BlankComments(string source)
-    {
-        // Razor comments, then C# block comments, then line comments. Line comments are only
-        // blanked when no quote opens earlier on the same line, so a "https://" inside an attribute
-        // value, or a "//" inside a string literal, survives intact.
-        var text = Regex.Replace(source, @"@\*.*?\*@", Blank, RegexOptions.Singleline);
-        text = Regex.Replace(text, @"/\*.*?\*/", Blank, RegexOptions.Singleline);
-        text = Regex.Replace(text, @"(?m)(?<=^[^""'\r\n]*)//[^\r\n]*", Blank);
-        return text;
+    public static string BlankComments(string source) =>
+        BlankControlFlowComments(source, BlankHtmlComments(source, RazorSyntax.ComponentCommentsBlanked(source)));
 
-        static string Blank(Match match) => Regex.Replace(match.Value, @"[^\r\n]", " ");
+    /// <summary>
+    /// kd-21. <paramref name="blanked"/> - <paramref name="source"/> as kd-12's component view left it -
+    /// with the C# comments of the markup's control-flow bodies blanked too: the bodies of
+    /// "@if", "@foreach", "@for", "@while", "@switch", "@lock", "@using", "@do" and "@try" between the
+    /// tags, and of their "else", "else if", "catch", "finally" and "while" continuations.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A body like that is code with markup elements in it, so neither the Roslyn region view (which
+    /// covers @code only) nor a regex reads it. Each body is walked from its brace: a markup element
+    /// at code level - a start tag through its matching end tag, or a self-closing or void one -
+    /// and a "@:" line are skipped as markup; a C# literal is skipped as one Roslyn token, so a "//"
+    /// inside a string is not a comment; a "//" or "/*" at code level is a comment and is blanked;
+    /// and the braces at code level are counted, so a brace inside a comment, a literal or an
+    /// element neither opens nor closes the body. A construct nested inside an element is found by
+    /// the same scan and walked on its own.
+    /// </para>
+    /// <para>
+    /// Not <see cref="ExtractMarkupBlock"/>: that balances raw braces over the markup view, which is
+    /// right for an assertion's block and wrong here, because the comments being looked for are the
+    /// text that can hold a stray brace.
+    /// </para>
+    /// </remarks>
+    private static string BlankControlFlowComments(string source, string blanked)
+    {
+        var buffer = blanked.ToCharArray();
+        var parsed = RazorSyntax.Parse(source);
+        var regions = parsed.IsRazor ? parsed.Regions.Select(r => r.Raw).ToList() : [];
+        var values = AttributeValueSpans(blanked);
+
+        foreach (Match construct in ControlFlowConstruct.Matches(source))
+        {
+            var at = construct.Index;
+            if ((at > 0 && source[at - 1] == '@') || blanked[at] != '@'
+                || regions.Any(r => r.Contains(at)) || values.Any(v => at >= v.Start && at < v.End))
+            {
+                continue;
+            }
+
+            var pos = SkipParenthesised(source, at + construct.Length);
+            while (true)
+            {
+                pos = SkipWhitespace(source, pos);
+                if (pos >= source.Length || source[pos] != '{')
+                    break;
+
+                pos = WalkCodeBody(source, blanked, buffer, pos);
+                if (pos < 0)
+                    break;
+
+                var next = SkipWhitespace(source, pos);
+                var continuation = ControlFlowContinuation.Match(source, next);
+                if (!continuation.Success || continuation.Index != next)
+                    break;
+
+                pos = SkipParenthesised(source, next + continuation.Length);
+            }
+        }
+
+        return new string(buffer);
+    }
+
+    private static readonly Regex ControlFlowConstruct =
+        new(@"@(?:if|foreach|for|while|switch|lock|using|do|try)\b", RegexOptions.Compiled);
+
+    private static readonly Regex ControlFlowContinuation =
+        new(@"\G(?:else\s+if|else|catch|finally|while)\b", RegexOptions.Compiled);
+
+    private static readonly Regex ControlFlowAt =
+        new(@"\G@(?:if|foreach|for|while|switch|lock|using|do|try)\b", RegexOptions.Compiled);
+
+    private static readonly Regex StatementKeyword =
+        new(@"\G(?:if|else|foreach|for|while|do|using|lock|fixed)\b", RegexOptions.Compiled);
+
+    private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+    };
+
+    /// <summary>
+    /// Walks one body from its opening brace, blanking its code-level comments into
+    /// <paramref name="buffer"/>; returns the index after its closing brace, or -1 if it never closes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// kd-31: a "&lt;" opens markup only where a statement can begin - at the body's start, after a
+    /// "{", "}", ";" or a label's ":", after a skipped element or "@:" line, or straight after a
+    /// template's "@" - and only when it has a tag's shape (<see cref="IsTagShape"/>). Elsewhere it
+    /// is C#: "count&lt;limit" compares and "List&lt;string&gt;" is generic, and reading either as a tag
+    /// lost the rest of the body.
+    /// </para>
+    /// <para>
+    /// kd-42: so can one after "else" or "do", or after the ")" that closes the header of an "if",
+    /// "for", "foreach", "while", "using", "lock" or "fixed" - a brace-less body. Razor refuses markup
+    /// there in a compiled page (RZ1008), so only text that is not one, a fixture, can hold it; read
+    /// as C#, the element's text was code and a brace in it ended the body early. Any other ")" is
+    /// not a statement start: "(a) &lt;b ? x : y" compares.
+    /// </para>
+    /// </remarks>
+    private static int WalkCodeBody(string source, string blanked, char[] buffer, int open)
+    {
+        var depth = 1;
+        var i = open + 1;
+        var statementStart = true;
+        var parens = 0;
+        var headers = new Stack<int>();
+        var headerPending = false;
+        while (i < source.Length)
+        {
+            var c = source[i];
+            if (blanked[i] != c || char.IsWhiteSpace(c))
+            {
+                // Already blanked (a Razor or HTML comment, kd-12's comments) or whitespace.
+                i++;
+                continue;
+            }
+
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+            if (c == '/' && next == '/')
+            {
+                var end = source.IndexOf('\n', i);
+                end = end < 0 ? source.Length : end;
+                BlankSpan(buffer, i, end);
+                i = end;
+            }
+            else if (c == '/' && next == '*')
+            {
+                var end = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                end = end < 0 ? source.Length : end + 2;
+                BlankSpan(buffer, i, end);
+                i = end;
+            }
+            else if (c == '@' && next == ':')
+            {
+                var end = source.IndexOf('\n', i);
+                i = end < 0 ? source.Length : end;
+                statementStart = true;
+            }
+            else if (c == '@' && next == '<')
+            {
+                // A Razor template, "@<p>...</p>": what follows is markup wherever it sits.
+                i++;
+                statementStart = true;
+            }
+            else if (c == '<' && statementStart && IsTagShape(blanked, i))
+            {
+                i = EndOfElement(blanked, i);
+                statementStart = true;
+            }
+            else if (c is '"' or '\'' || (c is '@' or '$' && next is '"' or '$' or '@'))
+            {
+                var literal = SyntaxFactory.ParseToken(source, i);
+                i += Math.Max(1, literal.Span.Length);
+                statementStart = false;
+            }
+            else if (c == '{')
+            {
+                depth++;
+                i++;
+                statementStart = true;
+            }
+            else if (c == '}')
+            {
+                i++;
+                if (--depth == 0)
+                    return i;
+                statementStart = true;
+            }
+            else if (statementStart && StatementKeyword.Match(source, i) is { Success: true } keyword)
+            {
+                // kd-42. "else" and "do" leave a statement start; a header keyword waits for its "(".
+                i += keyword.Length;
+                headerPending = keyword.Value is not ("else" or "do");
+                statementStart = !headerPending;
+            }
+            else
+            {
+                i++;
+                var closesHeader = false;
+                if (c == '(')
+                {
+                    parens++;
+                    if (headerPending)
+                        headers.Push(parens);
+                }
+                else if (c == ')')
+                {
+                    closesHeader = headers.Count > 0 && headers.Peek() == parens;
+                    if (closesHeader)
+                        headers.Pop();
+                    parens--;
+                }
+
+                headerPending = false;
+                statementStart = closesHeader || c is ';' or ':';
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// kd-31. Whether the "&lt;" at <paramref name="at"/> has a tag's shape: an end-tag slash or
+    /// none, a letter-led name, then whitespace, "&gt;" or "/". "&lt;b)" and "&lt;b;" are comparisons.
+    /// </summary>
+    private static bool IsTagShape(string text, int at)
+    {
+        var nameStart = at + 1 < text.Length && text[at + 1] == '/' ? at + 2 : at + 1;
+        if (nameStart >= text.Length || !char.IsLetter(text[nameStart]))
+            return false;
+
+        var nameEnd = nameStart;
+        while (nameEnd < text.Length && IsNameChar(text[nameEnd]))
+            nameEnd++;
+
+        return nameEnd < text.Length && (char.IsWhiteSpace(text[nameEnd]) || text[nameEnd] is '>' or '/');
+    }
+
+    private static bool IsNameChar(char c) => char.IsLetterOrDigit(c) || c is '-' or '.' or ':' or '_';
+
+    /// <summary>
+    /// The index after the markup element whose tag opens at <paramref name="start"/>: after its
+    /// matching end tag, or after the tag itself when it is an end tag, self-closing or void.
+    /// </summary>
+    /// <remarks>
+    /// kd-31: a nested tag of the same name counts only with a tag's shape, so "&lt;b&gt;@(a&lt;b)&lt;/b&gt;"
+    /// closes at its "&lt;/b&gt;" instead of reading "&lt;b)" as a second "&lt;b&gt;" that never closes.
+    /// </remarks>
+    private static int EndOfElement(string source, int start)
+    {
+        var nameStart = source[start + 1] == '/' ? start + 2 : start + 1;
+        var nameEnd = nameStart;
+        while (nameEnd < source.Length && IsNameChar(source[nameEnd]))
+            nameEnd++;
+
+        var tagEnd = IndexOfTagEnd(source, nameEnd);
+        if (tagEnd < 0)
+            return source.Length;
+
+        var name = source[nameStart..nameEnd];
+        if (nameStart == start + 2 || source[tagEnd - 1] == '/' || VoidElements.Contains(name))
+            return tagEnd + 1;
+
+        var depth = 1;
+        for (var at = tagEnd + 1; at < source.Length; at++)
+        {
+            if (source[at] == '@')
+            {
+                // A Razor expression or a construct's header in the content is C#: "@(a<b ? x : y)" and
+                // "@if (a<b && c)" compare, they do not open a tag.
+                var construct = ControlFlowAt.Match(source, at);
+                if (at + 1 < source.Length && source[at + 1] == '(')
+                    at = SkipParenthesised(source, at + 1) - 1;
+                else if (construct.Success)
+                    at = SkipParenthesised(source, at + construct.Length) - 1;
+                continue;
+            }
+
+            if (source[at] != '<')
+                continue;
+
+            var closing = at + 1 < source.Length && source[at + 1] == '/';
+            var candidate = closing ? at + 2 : at + 1;
+            if (string.Compare(source, candidate, name, 0, name.Length, StringComparison.OrdinalIgnoreCase) != 0)
+                continue;
+
+            var after = candidate + name.Length;
+            if (!IsTagShape(source, at) || (after < source.Length && IsNameChar(source[after])))
+                continue;
+
+            var end = IndexOfTagEnd(source, after);
+            if (end < 0)
+                return source.Length;
+
+            if (closing && --depth == 0)
+                return end + 1;
+
+            if (!closing && source[end - 1] != '/')
+                depth++;
+
+            at = end;
+        }
+
+        return source.Length;
+    }
+
+    /// <summary>
+    /// kd-31. <paramref name="blanked"/> with every HTML comment in the markup blanked as well - a
+    /// "&lt;!--" outside the @code regions, not already blanked, through its "--&gt;". One that never
+    /// closes is left alone rather than taken to the end of the file.
+    /// </summary>
+    /// <remarks>
+    /// kd-42. Inside an @code region a render-fragment template is markup too (<see cref="TemplatesIn"/>),
+    /// and an HTML comment in one is blanked through the first "--&gt;" before the template ends - found
+    /// in the source, because the region's Roslyn view reads a "//" in the comment's text as a C#
+    /// comment and has already blanked the rest of that line. Anywhere else in a region a "&lt;!--" is
+    /// C# text, a string's contents, and stays.
+    /// </remarks>
+    private static string BlankHtmlComments(string source, string blanked)
+    {
+        var buffer = blanked.ToCharArray();
+        var parsed = RazorSyntax.Parse(source);
+        var regions = parsed.IsRazor ? parsed.Regions.Select(r => r.Raw).ToList() : [];
+        var templates = regions.SelectMany(r => TemplatesIn(source, blanked, r.Start, r.End)).ToList();
+
+        // kd-56: the search resumes at at + 1. After a blanked comment "at" is its "-->", which holds
+        // no "<", so the next "<!--" is found from the comment's very end; at + 4 started one past it
+        // and missed a comment written straight after another ("<!-- a --><!-- b -->").
+        for (var at = blanked.IndexOf("<!--", StringComparison.Ordinal); at >= 0;
+             at = blanked.IndexOf("<!--", at + 1, StringComparison.Ordinal))
+        {
+            if (regions.Any(r => r.Contains(at)))
+            {
+                var template = templates.FindIndex(t => at >= t.Start && at < t.End);
+                if (template < 0)
+                    continue;
+
+                var end = templates[template].End;
+                var inTemplate = source.IndexOf("-->", at + 4, Math.Max(0, end - at - 4), StringComparison.Ordinal);
+                if (inTemplate >= 0)
+                {
+                    BlankSpan(buffer, at, inTemplate + 3);
+                    at = inTemplate;
+                }
+
+                continue;
+            }
+
+            var close = blanked.IndexOf("-->", at + 4, StringComparison.Ordinal);
+            if (close < 0)
+                break;
+
+            BlankSpan(buffer, at, close + 3);
+            at = close;
+        }
+
+        return new string(buffer);
+    }
+
+    /// <summary>
+    /// kd-42. The render-fragment templates in the @code region from <paramref name="start"/> to
+    /// <paramref name="end"/>: each "@&lt;" at code level - not in a comment or a literal - through the
+    /// end of the element it opens. One whose element does not end inside the region is not taken.
+    /// </summary>
+    private static List<(int Start, int End)> TemplatesIn(string source, string blanked, int start, int end)
+    {
+        var templates = new List<(int Start, int End)>();
+        var i = start;
+        while (i < end)
+        {
+            var c = source[i];
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+            if (blanked[i] != c || char.IsWhiteSpace(c))
+            {
+                i++;
+            }
+            else if (c == '@' && next == '<' && IsTagShape(blanked, i + 1))
+            {
+                var element = EndOfElement(blanked, i + 1);
+                if (element <= end)
+                    templates.Add((i + 1, element));
+                i = element <= end ? element : i + 2;
+            }
+            else if (c is '"' or '\'' || (c is '@' or '$' && next is '"' or '$' or '@'))
+            {
+                i += Math.Max(1, SyntaxFactory.ParseToken(source, i).Span.Length);
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        return templates;
+    }
+
+    /// <summary>After any whitespace, then a parenthesised header's matching ")" if one opens there.</summary>
+    private static int SkipParenthesised(string source, int from)
+    {
+        var at = SkipWhitespace(source, from);
+        if (at >= source.Length || source[at] != '(')
+            return at;
+
+        var depth = 0;
+        foreach (var token in SyntaxFactory.ParseTokens(source, offset: at, initialTokenPosition: at))
+        {
+            if (token.IsKind(SyntaxKind.OpenParenToken))
+                depth++;
+            else if ((token.IsKind(SyntaxKind.CloseParenToken) && --depth == 0) || token.IsKind(SyntaxKind.EndOfFileToken))
+                return token.Span.End;
+        }
+
+        return source.Length;
+    }
+
+    private static int SkipWhitespace(string source, int from)
+    {
+        var at = from;
+        while (at < source.Length && char.IsWhiteSpace(source[at]))
+            at++;
+        return at;
+    }
+
+    /// <summary>Every quoted attribute value of every tag in <paramref name="text"/>, as WalkTag records them.</summary>
+    private static List<(int Start, int End)> AttributeValueSpans(string text)
+    {
+        var spans = new List<(int Start, int End)>();
+        for (var at = text.IndexOf('<'); at >= 0; at = text.IndexOf('<', at + 1))
+        {
+            if (at + 1 >= text.Length || !char.IsLetter(text[at + 1]))
+                continue;
+
+            var end = WalkTag(text, at + 1, spans);
+            if (end < 0)
+                continue;
+
+            at = end;
+        }
+
+        return spans;
     }
 
     /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
@@ -361,25 +801,131 @@ public sealed class ClickGateSource
     /// scoped to a loop, a conditional or a finally rather than the whole method. Returns an empty
     /// string when the opener is absent, leaving the caller to decide whether that is a failure.
     /// </summary>
+    /// <remarks>
+    /// kd-3. Lexed, not counted. The opener is looked for, and the braces balanced, in
+    /// <see cref="RazorSyntax.CodeView"/> - the Roslyn view the progress guards read, in which every
+    /// comment and every string, char, verbatim, raw and interpolated string literal (holes
+    /// included) is blanked to the same length. So a "}" in a log message or a '{' char literal
+    /// neither closes nor opens the block, and the opener's text inside a literal or a comment is
+    /// not the opener. Counting raw characters ended a block at the first brace inside a string -
+    /// <see cref="Tags"/> was quote-aware and this was not - so an assertion scoped to the block read
+    /// the wrong code. The text returned is the source's own, literals and comments included,
+    /// because the code view keeps every offset. C# only: the code view blanks a component's markup,
+    /// so an opener in markup is not found - <see cref="ExtractMarkupBlock"/> reads that.
+    /// </remarks>
     public static string ExtractBlock(string source, string opener)
     {
-        var start = source.IndexOf(opener, StringComparison.Ordinal);
+        var code = RazorSyntax.CodeView(source);
+
+        return BalancedBlock(source, code, opener);
+    }
+
+    /// <summary>
+    /// The brace-balanced block a Razor construct in a component's MARKUP opens - an
+    /// "@if (...)" or "@foreach (...)" between the tags - which <see cref="ExtractBlock"/> cannot
+    /// read, because its code view blanks markup. Returns an empty string when the opener is absent.
+    /// </summary>
+    /// <remarks>
+    /// kd-11. Balanced over a markup view that is quote-aware the way <see cref="Tags"/> is: every
+    /// quoted attribute value of every tag (a quote directly after its "=") is blanked, so a brace in
+    /// a title, a placeholder or a lambda handler neither opens nor closes the block; comments are
+    /// blanked as <see cref="BlankComments"/> blanks them; and the component's @code regions are
+    /// blanked whole. Like the code view it keeps every offset, so the text returned is the
+    /// source's own. Honest limit, as <see cref="IndexOfTagEnd"/> has one: a brace inside a C#
+    /// string literal in a Razor expression in text content - @("}") - is still counted, and seeing
+    /// it would take Razor's own parser.
+    /// </remarks>
+    public static string ExtractMarkupBlock(string source, string opener) =>
+        BalancedBlock(source, MarkupView(source), opener);
+
+    /// <summary>
+    /// The block <paramref name="opener"/> introduces, found and balanced in <paramref name="view"/> -
+    /// the same source with what is not to be read blanked to the same length - and returned as the
+    /// source's own text.
+    /// </summary>
+    private static string BalancedBlock(string source, string view, string opener)
+    {
+        var start = IndexOfUnblanked(source, view, opener);
         if (start < 0)
             return "";
 
-        var open = source.IndexOf('{', start + opener.Length);
+        var open = view.IndexOf('{', start + opener.Length);
         if (open < 0)
             return "";
 
         var depth = 0;
-        for (var i = open; i < source.Length; i++)
+        for (var i = open; i < view.Length; i++)
         {
-            if (source[i] == '{') depth++;
-            else if (source[i] == '}' && --depth == 0)
+            if (view[i] == '{') depth++;
+            else if (view[i] == '}' && --depth == 0)
                 return source[open..(i + 1)];
         }
 
         return "";
+    }
+
+    /// <summary>
+    /// kd-11. The markup view <see cref="ExtractMarkupBlock"/> balances over: comments, quoted
+    /// attribute values and the component's @code regions blanked, newlines kept.
+    /// </summary>
+    private static string MarkupView(string source)
+    {
+        var blanked = BlankComments(source);
+        var buffer = blanked.ToCharArray();
+
+        for (var at = blanked.IndexOf('<'); at >= 0; at = blanked.IndexOf('<', at + 1))
+        {
+            if (at + 1 >= blanked.Length || !char.IsLetter(blanked[at + 1]))
+                continue;
+
+            var values = new List<(int Start, int End)>();
+            var end = WalkTag(blanked, at + 1, values);
+            if (end < 0)
+                continue;
+
+            foreach (var (valueStart, valueEnd) in values)
+                BlankSpan(buffer, valueStart, valueEnd);
+
+            at = end;
+        }
+
+        var parsed = RazorSyntax.Parse(source);
+        if (parsed.IsRazor)
+        {
+            foreach (var region in parsed.Regions)
+                BlankSpan(buffer, region.Raw.Start, region.Raw.End);
+        }
+
+        return new string(buffer);
+    }
+
+    private static void BlankSpan(char[] buffer, int from, int to)
+    {
+        for (var i = Math.Max(0, from); i < Math.Min(buffer.Length, to); i++)
+        {
+            if (buffer[i] != '\n')
+                buffer[i] = ' ';
+        }
+    }
+
+    /// <summary>
+    /// The first occurrence of <paramref name="text"/> in <paramref name="source"/> that starts in
+    /// what <paramref name="view"/> keeps: its first non-blank character survives in the view of
+    /// the same source, rather than having been blanked as part of a literal, a comment or an
+    /// attribute value.
+    /// </summary>
+    private static int IndexOfUnblanked(string source, string view, string text)
+    {
+        var lead = text.Length - text.TrimStart().Length;
+        for (var at = source.IndexOf(text, StringComparison.Ordinal); at >= 0;
+             at = source.IndexOf(text, at + 1, StringComparison.Ordinal))
+        {
+            var first = at + lead;
+            if (first >= source.Length || view[first] == source[first])
+                return at;
+        }
+
+        return -1;
     }
 
     public static string PagesDirectory()

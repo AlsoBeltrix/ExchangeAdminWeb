@@ -2465,24 +2465,108 @@ public class MigrationStatusPageTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void StripLineComments_BlanksCommentsAndKeepsWhatIsInsideAStringOrAnAttribute()
+    {
+        // kd-20. The helper every scan here reads through cut from any "//" to the end of the line,
+        // so a URL in a string lost its closing quote and the statements after it, and a markup
+        // "https://" took the rest of its tag - the handler included - while a block comment was
+        // read as code.
+        var body = string.Join("\n",
+            "private void Open()",
+            "{",
+            "    var help = \"http://help.contoso.test/migration\"; isBusy = true; // a comment: finally",
+            "    /* a block comment: finally */",
+            "    Go();",
+            "}");
+
+        var stripped = StripLineComments(body);
+
+        Assert.Contains("\"http://help.contoso.test/migration\"; isBusy = true;", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("finally", stripped, StringComparison.Ordinal);
+        Assert.Contains("Go();", stripped, StringComparison.Ordinal);
+        Assert.Equal(body.Length, stripped.Length); // blanked, not cut, so offsets hold
+
+        var page = string.Join("\n",
+            "<a href=\"https://help.contoso.test\" @onclick=\"Open\">Help</a>",
+            "@code {",
+            "    private void Open() { } // the handler",
+            "}");
+
+        var strippedPage = StripLineComments(page);
+
+        Assert.Contains("@onclick=\"Open\"", strippedPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("the handler", strippedPage, StringComparison.Ordinal);
+    }
+
     /// <summary>
-    /// <paramref name="source"/> with line comments removed. The scans below look for words that
+    /// <paramref name="source"/> with its comments blanked. The scans below look for words that
     /// also occur in prose - "await", "finally", the flag names themselves - so a comment
     /// explaining one of these rules would otherwise be read as code breaking it.
     /// </summary>
+    /// <remarks>
+    /// kd-20: lexed, no longer a "//" cut. The regex this replaced removed from any "//" to the end
+    /// of its line, so a string literal holding a URL lost its closing quote and every statement after
+    /// it on the line, and a markup "https://" took the rest of its tag. Now: a page (anything holding
+    /// an @code block) reads through ClickGateSource.BlankComments, the component view kd-12 made - C#
+    /// comment trivia in its C# spans, Razor comments in the markup; a method or member body reads
+    /// through RazorSyntax.CommentsBlanked as C#. Comments are blanked rather than deleted, so offsets
+    /// hold, and block and Razor comments go too. The name is kept so its 46 callers did not move.
+    /// </remarks>
     private static string StripLineComments(string source) =>
-        Regex.Replace(source, @"//[^\r\n]*", "");
+        RazorSyntax.Parse(source).IsRazor
+            ? ClickGateSource.BlankComments(source)
+            : RazorSyntax.CommentsBlanked(source);
+
+    [Fact]
+    public void StripRazorComments_BlanksRazorCommentsAndKeepsAStringThatHoldsTheirMarkers()
+    {
+        // kd-30. The helper 18 scans here read through removed from any "@*" to the next "*@" wherever
+        // they were, so a "@*" in a C# string took the code after it with it - here, a whole method.
+        var page = string.Join("\n",
+            "@* a markup comment: StageDeleteSelected *@",
+            "<button @onclick=\"StageDeleteSelected\" disabled=\"@IsBusy\">Delete</button>",
+            "@code {",
+            "    private string open = \"@*\";",
+            "    private bool isBusy;",
+            "    private void StageDeleteSelected() { isBusy = true; }",
+            "    private string close = \"*@\";",
+            "    @* a comment in the code block: isBusy = true; *@",
+            "}");
+
+        var stripped = StripRazorComments(page);
+
+        Assert.Contains("private void StageDeleteSelected() { isBusy = true; }", stripped, StringComparison.Ordinal);
+        Assert.Contains("\"@*\"", stripped, StringComparison.Ordinal);
+        Assert.Contains("\"*@\"", stripped, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(stripped, @"isBusy = true;"));
+        Assert.DoesNotContain("a markup comment", stripped, StringComparison.Ordinal);
+        Assert.DoesNotContain("a comment in the code block", stripped, StringComparison.Ordinal);
+        Assert.Equal(page.Length, stripped.Length); // blanked, not removed, so offsets hold
+
+        // A markup slice - a row, a render-fragment member - has no @code block and is read as markup.
+        var row = StripRazorComments("<tr>@* a row comment *@<td>x</td></tr>");
+        Assert.DoesNotContain("a row comment", row, StringComparison.Ordinal);
+        Assert.Contains("<td>x</td></tr>", row, StringComparison.Ordinal);
+    }
 
     /// <summary>
-    /// <paramref name="source"/> with Razor <c>@* *@</c> comments removed.
+    /// <paramref name="source"/> with its Razor <c>@* *@</c> comments blanked.
     /// </summary>
     /// <remarks>
     /// The markup's prose explains the very rules these guards assert - which phrase must not sit
     /// beside which - so a comment documenting a rule would otherwise be read as code breaking it.
     /// Same reasoning as <see cref="StripLineComments"/>, for the other comment syntax on the page.
+    /// <para>
+    /// kd-30: through the lexer-based view kd-20 routes a page to, ClickGateSource.BlankComments,
+    /// rather than a regex. The regex removed from any "@*" to the next "*@" wherever they were, so a
+    /// "@*" in a C# string took the code after it with it. The view reads its input as a component -
+    /// a page, a markup slice, a render-fragment member - blanks Razor comments in the markup only,
+    /// and blanks the C# comments of the page's code spans as well; blanked, not deleted, so offsets
+    /// hold.
+    /// </para>
     /// </remarks>
-    private static string StripRazorComments(string source) =>
-        Regex.Replace(source, @"@\*.*?\*@", "", RegexOptions.Singleline);
+    private static string StripRazorComments(string source) => ClickGateSource.BlankComments(source);
 
     /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
     private static string WholeWord(string identifier) =>
@@ -2576,24 +2660,20 @@ public class MigrationStatusPageTests
     /// The brace-balanced block introduced by <paramref name="opener"/>, so an assertion can be
     /// scoped to a loop or conditional rather than the whole method.
     /// </summary>
+    /// <remarks>
+    /// kd-11: read by the shared lexers, no longer by a private copy of the raw brace count kd-3
+    /// replaced in ClickGateSource. A Razor construct in the page's markup ("@if", "@foreach") goes
+    /// to ClickGateSource.ExtractMarkupBlock; C# - a method body, or a member of the page's @code -
+    /// to ClickGateSource.ExtractBlock. Still fails loudly, as the copy did, when the opener is not
+    /// found or its block does not balance.
+    /// </remarks>
     private static string ExtractBlock(string source, string opener)
     {
-        var start = source.IndexOf(opener, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"block '{opener}' not found");
-
-        var open = source.IndexOf('{', start + opener.Length);
-        Assert.True(open > 0, $"no opening brace after '{opener}'");
-
-        var depth = 0;
-        for (var i = open; i < source.Length; i++)
-        {
-            if (source[i] == '{') depth++;
-            else if (source[i] == '}' && --depth == 0)
-                return source[open..(i + 1)];
-        }
-
-        Assert.Fail($"unbalanced braces after '{opener}'");
-        return "";
+        var block = opener.StartsWith('@')
+            ? ClickGateSource.ExtractMarkupBlock(source, opener)
+            : ClickGateSource.ExtractBlock(source, opener);
+        Assert.True(block.Length > 0, $"block '{opener}' not found, or its braces do not balance");
+        return block;
     }
 
     /// <summary>

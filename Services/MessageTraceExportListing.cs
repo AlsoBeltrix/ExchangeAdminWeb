@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services.Jobs;
+using Microsoft.AspNetCore.Authorization;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -60,6 +62,16 @@ public sealed class MessageTraceExportDownloadResult
     /// <summary>The re-resolved row, when the job was found. Lets the page refresh a stale state.</summary>
     public MessageTraceExportListItem? Item { get; init; }
 
+    /// <summary>
+    /// kd-1. Fields the caller's audit row for this attempt carries, or null when there are none. A
+    /// download refused because the export is another operator's carries <c>refusedAt</c>,
+    /// <c>mutationAttempted</c> false (the aud-a28 refusal convention) and whose export it was; a
+    /// download of another operator's export through
+    /// <see cref="MessageTraceExportListing.EveryExportPolicy"/> carries whose export it was and the
+    /// grant that allowed it. The listing decides them so the page cannot forget one.
+    /// </summary>
+    public Dictionary<string, object?>? AuditExtra { get; init; }
+
     public bool Succeeded => Bytes is not null;
 }
 
@@ -104,22 +116,47 @@ public class MessageTraceExportListing
     public const string TicketRequiredMessage =
         "Enter a ticket number before downloading. It is recorded with the download for audit.";
 
+    /// <summary>
+    /// kd-1. The one policy that widens the page from the operator's own exports to every operator's:
+    /// the application administrators' (Security:AdminGroups). An existing alias, deliberately - this
+    /// page invents none, and MessageTrace and MessageTraceSearch are never renamed - and the one the
+    /// app already reads as "global admin" (ModuleConfig.razor). An administrator can grant themselves
+    /// any section's access, so seeing every export gives them nothing they could not take.
+    /// </summary>
+    public const string EveryExportPolicy = "AdminSettings";
+
+    /// <summary>kd-1. Refusal text for a download of an export the operator did not run.</summary>
+    public const string NotYourExportMessage =
+        "That export belongs to another operator. Only the operator who ran it, or an application administrator, can download it.";
+
+    /// <summary>kd-1. Where a download of another operator's export is refused, as the audit row's refusedAt.</summary>
+    public const string RefusedAtOwnership = "Ownership";
+
     private readonly BulkJobService _jobs;
     private readonly MessageTraceExportStore _store;
+    private readonly IAuthorizationService _authorization;
     private readonly ILogger<MessageTraceExportListing> _logger;
 
     public MessageTraceExportListing(BulkJobService jobs, MessageTraceExportStore store,
-        ILogger<MessageTraceExportListing> logger)
+        IAuthorizationService authorization, ILogger<MessageTraceExportListing> logger)
     {
         _jobs = jobs;
         _store = store;
+        _authorization = authorization;
         _logger = logger;
     }
 
-    public IReadOnlyList<MessageTraceExportListItem> GetExports()
+    /// <summary>
+    /// The exports <paramref name="viewer"/> may see (kd-1): the ones they submitted, or every
+    /// operator's when they hold <see cref="EveryExportPolicy"/>. A viewer with no authenticated name
+    /// owns nothing, and an administrator check that cannot be answered widens nothing.
+    /// </summary>
+    public async Task<IReadOnlyList<MessageTraceExportListItem>> GetExportsAsync(ClaimsPrincipal viewer)
     {
-        var jobs = _jobs.GetFinishedByType(
-            MessageTraceDetailJobProcessor.ModuleName, MessageTraceDetailJobPayload.JobType, ListLimit);
+        var jobs = await SeesEveryExportAsync(viewer)
+            ? _jobs.GetFinishedByType(
+                MessageTraceDetailJobProcessor.ModuleName, MessageTraceDetailJobPayload.JobType, ListLimit)
+            : OwnFinishedExports(viewer);
 
         var items = new List<MessageTraceExportListItem>(jobs.Count);
         foreach (var job in jobs)
@@ -145,42 +182,69 @@ public class MessageTraceExportListing
     /// state. Returns null when the job is not a Message Analysis export at all - a mismatched id
     /// must not be able to read some other module's job.
     /// </summary>
-    public MessageTraceExportListItem? Resolve(string jobId)
-    {
-        var job = _jobs.GetJob(jobId);
-        if (job is null
-            || !string.Equals(job.ModuleId, MessageTraceDetailJobProcessor.ModuleName, StringComparison.Ordinal)
-            || !string.Equals(job.JobType, MessageTraceDetailJobPayload.JobType, StringComparison.Ordinal))
-        {
-            return null;
-        }
-        return ToItem(job);
-    }
+    /// <remarks>
+    /// kd-1: answers for ANY operator's export and checks no ownership, so it is internal. The
+    /// download decision is <see cref="TryDownloadAsync"/>, which does check it.
+    /// </remarks>
+    internal MessageTraceExportListItem? Resolve(string jobId) =>
+        FindExport(jobId) is { } job ? ToItem(job) : null;
 
     /// <summary>
-    /// The whole download decision in one place: ticket presence, re-resolution, and the read.
+    /// The whole download decision in one place: ticket presence, re-resolution, ownership, and the
+    /// read.
     ///
     /// Ordering is load-bearing and is what the F2 test asserts - the ticket check runs BEFORE the
     /// job is resolved or the file is touched, so a blank ticket cannot reach the filesystem. The
     /// ticket is recorded by the caller's audit entry and never validated (plan D2): this is a
     /// presence check, not a ServiceNow lookup.
     ///
+    /// kd-1: ownership is checked next, before the export's state is classified or its file is
+    /// touched. Only the export's submitter, or a holder of <see cref="EveryExportPolicy"/>, may
+    /// download it; anyone else is refused with no bytes and no row, and the refusal's audit fields
+    /// say nothing was attempted. The submitter is the job record's SubmittedBy, the operator's
+    /// Identity.Name when the trace was enqueued.
+    ///
     /// Constitution note (plan, "Constitution Conflict To Record"): the export file is a convenience
     /// artifact, not durable state. The audit event and the job record are the authoritative durable
     /// records and neither depends on the file surviving, so its absence is rendered as an ordinary
     /// outcome here - never an error, and never as retention when the write is what failed.
     /// </summary>
-    public async Task<MessageTraceExportDownloadResult> TryDownloadAsync(string jobId, string? ticket)
+    public async Task<MessageTraceExportDownloadResult> TryDownloadAsync(string jobId, string? ticket, ClaimsPrincipal viewer)
     {
         if (!TicketPresence.IsPresent(ticket))
             return new MessageTraceExportDownloadResult { Error = TicketRequiredMessage };
 
-        var item = Resolve(jobId);
-        if (item is null)
+        var job = FindExport(jobId);
+        if (job is null)
             return new MessageTraceExportDownloadResult { Error = "That export is no longer listed." };
 
+        Dictionary<string, object?>? auditExtra = null;
+        if (!IsSubmitter(job, viewer))
+        {
+            if (!await SeesEveryExportAsync(viewer))
+            {
+                return new MessageTraceExportDownloadResult
+                {
+                    Error = NotYourExportMessage,
+                    AuditExtra = new Dictionary<string, object?>
+                    {
+                        ["refusedAt"] = RefusedAtOwnership,
+                        ["mutationAttempted"] = false,
+                        ["exportSubmittedBy"] = job.SubmittedBy,
+                    },
+                };
+            }
+
+            auditExtra = new Dictionary<string, object?>
+            {
+                ["exportSubmittedBy"] = job.SubmittedBy,
+                ["grantedBy"] = EveryExportPolicy,
+            };
+        }
+
+        var item = ToItem(job);
         if (!item.CanDownload)
-            return new MessageTraceExportDownloadResult { Item = item, Error = Describe(item.State) };
+            return new MessageTraceExportDownloadResult { Item = item, Error = Describe(item.State), AuditExtra = auditExtra };
 
         try
         {
@@ -192,7 +256,8 @@ public class MessageTraceExportListing
             {
                 Item = item,
                 Bytes = bytes,
-                FileName = Path.GetFileName(item.FullPath!)
+                FileName = Path.GetFileName(item.FullPath!),
+                AuditExtra = auditExtra
             };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -205,9 +270,79 @@ public class MessageTraceExportListing
                 Item = item,
                 Error = ex is FileNotFoundException or DirectoryNotFoundException
                     ? Describe(MessageTraceExportState.Expired)
-                    : $"The export could not be read: {ex.Message}"
+                    : $"The export could not be read: {ex.Message}",
+                AuditExtra = auditExtra
             };
         }
+    }
+
+    /// <summary>
+    /// kd-1. Whether <paramref name="viewer"/> submitted <paramref name="job"/>: its SubmittedBy and
+    /// the viewer's authenticated name, compared OrdinalIgnoreCase as the jobs store's ownership scope
+    /// compares them (BulkJobRepository.OwnerScope). A viewer with no authenticated name submitted
+    /// nothing.
+    /// </summary>
+    internal static bool IsSubmitter(BulkJob job, ClaimsPrincipal? viewer) =>
+        ViewerName(viewer) is { } name
+        && string.Equals(job.SubmittedBy, name, StringComparison.OrdinalIgnoreCase);
+
+    private static string? ViewerName(ClaimsPrincipal? viewer) =>
+        viewer?.Identity is { IsAuthenticated: true, Name: { } name } && !string.IsNullOrWhiteSpace(name)
+            ? name
+            : null;
+
+    /// <summary>
+    /// kd-1. Whether <paramref name="viewer"/> holds <see cref="EveryExportPolicy"/>. Fail closed (Known
+    /// Failure Class 3): a check that throws is no grant, so the viewer keeps exactly their own exports.
+    /// </summary>
+    private async Task<bool> SeesEveryExportAsync(ClaimsPrincipal viewer)
+    {
+        try
+        {
+            return (await _authorization.AuthorizeAsync(viewer, EveryExportPolicy)).Succeeded;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "The {Policy} check for the Message Analysis exports could not be evaluated; the operator's own exports only",
+                EveryExportPolicy);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// kd-1. The viewer's own finished exports, newest first, up to <see cref="ListLimit"/>. Filtered
+    /// in SQL before the ordering and the limit, through the jobs store's ownership scope, so other
+    /// operators' exports cannot use up this operator's window. That scope returns at most 100 rows a
+    /// call, so the limit is read in pages.
+    /// </summary>
+    private IReadOnlyList<BulkJob> OwnFinishedExports(ClaimsPrincipal viewer)
+    {
+        if (ViewerName(viewer) is not { } owner)
+            return [];
+
+        var jobs = new List<BulkJob>();
+        while (jobs.Count < ListLimit)
+        {
+            var page = _jobs.GetFinishedOwnedJobs(MessageTraceDetailJobProcessor.ModuleName,
+                MessageTraceDetailJobPayload.JobType, owner, ListLimit - jobs.Count, jobs.Count);
+            if (page.Count == 0)
+                break;
+            jobs.AddRange(page);
+        }
+
+        return jobs;
+    }
+
+    /// <summary>The job, when it is a Message Analysis export; null for another module's job or none.</summary>
+    private BulkJob? FindExport(string jobId)
+    {
+        var job = _jobs.GetJob(jobId);
+        return job is not null
+            && string.Equals(job.ModuleId, MessageTraceDetailJobProcessor.ModuleName, StringComparison.Ordinal)
+            && string.Equals(job.JobType, MessageTraceDetailJobPayload.JobType, StringComparison.Ordinal)
+            ? job
+            : null;
     }
 
     /// <summary>Reads the export bytes. Virtual purely as the seam the F2 non-read assertion needs.</summary>
