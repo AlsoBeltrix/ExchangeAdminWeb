@@ -1357,7 +1357,9 @@ public sealed class ModuleCatalog
             // UI appears at all.
             // 1.7.1: an exception during undo now writes the undo audit record and
             // notifies administrators; it did neither (review of aud-a26).
-            Version = "1.7.2",
+            // 1.7.3: an allowlist save that meets a busy settings store says so and is recorded as
+            // a refusal, where it showed the provider's error code (aud-a67).
+            Version = "1.7.3",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

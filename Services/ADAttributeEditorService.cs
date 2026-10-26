@@ -467,6 +467,18 @@ public class ADAttributeEditorService
         }
         catch (Exception ex)
         {
+            // aud-a67 (the aud-a40 class, inside this service). A store another writer holds past the wait is a refusal,
+            // not a failure: nothing was written - every decision above is made inside the one write a throw rolls back -
+            // so it is recorded with refusedAt StoreBusy and mutationAttempted false, and the admin is told the store was
+            // busy and to try again, where they used to be shown "Failed to save: SQLite Error 5: 'database is locked'."
+            if (ConfigStoreBusy.IsBusy(ex))
+            {
+                var busy = SettingsSaveAudit.StoreBusyMessage();
+                _logger.LogWarning(ex, "Allowlist save not made: the settings store was busy");
+                LogAllowlistSaveRefused(performedBy, ip, SettingsSaveAudit.StoreBusy, busy);
+                return new(false, busy);
+            }
+
             // No refusedAt and no mutationAttempted: the write may have been tried, and a failure
             // record must not claim otherwise.
             var failed = $"Failed to save: {ex.Message}";

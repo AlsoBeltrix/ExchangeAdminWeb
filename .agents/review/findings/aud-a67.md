@@ -63,6 +63,8 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (6): `Services/ADAttributeEditorService.cs`, `Modules/ModuleCatalog.cs` (AD Attribute Editor 1.7.2 -> 1.7.3);
+  `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
 - (5): `ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs`.
 - (4), with (13): `Components/Pages/ModuleConfig.razor`, `Components/Pages/AdminSettings.razor`,
   `Components/Pages/ExchangeOnlineConfig.razor`; `ExchangeAdminWeb.Tests/SettingsSaveOffCircuitTests.cs`,
@@ -184,6 +186,15 @@ restore.
 | Mutation (call site) | Mutant MD5 | Named tests failing |
 |---|---|---|
 | E5 `SetLevel` swallows the store's failure again (its `throw;` removed) - the world the stale comment described | `45b89105881f8e27ca84f067c8f70a23` | 3 of 95: the new row `AdminSettings_ALogLevelSaveThatThrows_IsRecordedAsAFailure(fails: "the settings store the level is written to")` (recorded Success where Failed was expected), `ExtendedLogServiceTests.SetLevel_WhenTheStoreRefusesIt_AndTheLoggerThrows_ThrowsTheStoresFailure`, and `SettingsStoreBusyTests.AdminSettings_ALogLevelSaveThatFindsTheStoreBusy_...` |
+
+(6). The exact change aud-a40's "Left for a follow-up" section specified, in the file it could not touch. Filter
+`FullyQualifiedName~SettingsStoreBusyTests|FullyQualifiedName~AttributeEditor|FullyQualifiedName~Allowlist|FullyQualifiedName~ModuleCatalogTests`
+(312 tests). `ADAttributeEditorService.cs` MD5 `3f99e333f43b35c941c71efd058573ee`, matched after the row; 312/312 green
+after the restore. The mutant is the catch as it was at `44d99f3e`, so its failure is the reproduction.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| F1 `SaveAllowlistAndAudit`'s busy branch removed | `3e80d5e67efb1fd328fc0054253ef5ac` | 1 of 312: `SettingsStoreBusyTests.ModuleConfig_AnAllowlistSaveThatFindsTheStoreBusy_IsRefusedAsBusy_AndWritesNothing` - the record's `refusedAt` missing where `StoreBusy` was expected (and the admin shown "Failed to save: SQLite Error 5") |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 
