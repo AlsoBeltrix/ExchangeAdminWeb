@@ -1,7 +1,7 @@
 # kd-1: Message Trace detail exports are listed and downloadable by any policy holder, not only their submitter
 
 **Severity**: MEDIUM - an authorization gap. `Services/MessageTraceExportListing.cs` `GetExports` lists every operator's finished exports and `TryDownloadAsync` checks the ticket and the export's state but never the submitter, so any operator holding the Message Trace policy can download any other operator's detail export (message metadata for addresses they never searched).
-**Status**: Verified on branch; awaiting merge and codex review
+**Status**: Declined by owner ruling 2026-10-26 ("1. no") - the fix reversed D2 and D4 of docs/MessageTraceDownloadLink-Plan.md, which stand. The fix commit `c139a31b` was merged with its branch at `5ea424d5` and reverted in the next commit; the Message Analysis 1.8.0 bump it carried is left as the catalog note now documents kd-45 at that number. Any policy holder may list and download any operator's detail export, by design.
 **Branch**: `fix/kd-misc` (worktree `D:\source\ExchangeAdminWeb-wt\kd-misc`, from master `eb017102`)
 **Commit**: fix `c139a31b`; module version in `d79e1b79`
 **Reviewer**: implementer (recorded in `.agents/state.md` "Known defects", re-verified 2026-10-23 as of `d881ea58`)

@@ -1823,7 +1823,7 @@ public static class ProgressRegistry
                 + "activity's label describes - it resolves the row again at click time, refuses "
                 + "a blank ticket, and reads the export's bytes off disk, so its cost is the same "
                 + "file size the transfer below it pays for. Naming it is what forbids a Begin "
-                + "pushed down between the read and the transfer. Exports.GetExportsAsync( on the "
+                + "pushed down between the read and the transfer. Exports.GetExports( on the "
                 + "failure branch is NOT named: it relists the store from disk, the same call the "
                 + "Refresh exemption below already records as carrying no remote hop, and it runs "
                 + "only where there is no file to send"),

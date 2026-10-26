@@ -1017,9 +1017,8 @@ public class EmailService
         <p>The delivery-detail export you requested is ready.</p>
         {where}
         <p>You will be asked for a ticket number when you download it; the ticket is recorded with
-           the download for audit. Only the operator who requested it, or an application
-           administrator, can download it, with their Windows sign-in and Message Analysis access -
-           the export is not attached to this email.</p>
+           the download for audit. Downloading requires your Windows sign-in and Message Analysis
+           access - the export is not attached to this email.</p>
         <table style=""border-collapse: collapse;"" cellpadding=""6"">
             <tr><td><strong>Messages</strong></td><td>{messageCount}</td></tr>
             <tr><td><strong>Ticket</strong></td><td>{h(ticket)}</td></tr>
