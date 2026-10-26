@@ -616,11 +616,11 @@
             {
                 result = PermissionResult.Fail($"Bulk operations completed ({bulk.Summary}) but summary audit logging failed: {ex.Message}");
             }
-
-            await Email.SendAdminNotificationAsync(
+            // kd-38: in its own guard - the writes are done, so a notification the relay refuses leaves the run standing and is said in its own words, never the catch's raw text
+            try { await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, action, "Bulk Operation", file.Name,
                 $"{bulk.TotalRows} rows", bulk.FailedCount == 0, ticket,
-                bulk.FailedCount > 0 ? $"{bulk.FailedCount} failures" : null);
+                bulk.FailedCount > 0 ? $"{bulk.FailedCount} failures" : null); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The administrator notification for the CSV run on {File} could not be sent; the run stands", file.Name); result = PermissionResult.Fail(SelfGrantRefusalRecord.BulkNotificationNotSent(bulk.Summary)); }
         }
         catch (Exception ex)
         {

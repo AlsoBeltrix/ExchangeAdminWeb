@@ -76,6 +76,13 @@ internal static class SelfGrantRefusalRecord
     internal static string TicketRefused(string? message) =>
         $"Ticket validation failed: {(message ?? "").Trim().TrimEnd('.')}. Nothing was written.";
 
+    /// <summary>
+    /// kd-38. What a CSV run says when its administrator notification could not be sent: the run as it stands, and that the
+    /// notification was dropped - never the relay's own words, which the handler's catch showed as a failed run.
+    /// </summary>
+    internal static string BulkNotificationNotSent(string summary) =>
+        $"Bulk operations completed ({summary}), but the administrator notification could not be sent.";
+
     /// <summary>aud-a70 (1). A single change's own record (<c>SubmitSingle</c>), in the words its guard has always logged.</summary>
     internal const string SingleChangeRecord = "the permission change";
 

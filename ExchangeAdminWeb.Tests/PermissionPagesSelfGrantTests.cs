@@ -1940,6 +1940,26 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
     }
 
+    // ---- kd-38: a CSV run whose administrator notification cannot be sent is a run that happened -------------------------
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ABulkRun_WhoseAdministratorNotificationCannotBeSent_StandsAndSaysSo(string page)
+    {
+        // The notification sat in no guard, after every row was written: the handler's catch showed the finished run as a
+        // failure, in the relay's own words, and the operator could not tell a failed run from an unsent mail.
+        var (result, bulk, warnings, _) = await ProcessBulkGrant(page, email: EmailWhere("admin"));
+
+        var run = Assert.IsType<BulkOperationResult>(bulk);
+        Assert.Equal(1, run.SuccessCount);
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+        Assert.Equal(SelfGrantRefusalRecord.BulkNotificationNotSent(run.Summary), Assert.IsType<PermissionResult>(result).Message);
+        Assert.DoesNotContain("payload-a53", result!.Message, StringComparison.Ordinal);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.Contains("payload-a53", exception!.Message, StringComparison.Ordinal);
+        Assert.Contains("could not be sent", message, StringComparison.Ordinal);
+    }
+
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
     private sealed class CapturingLogger<T> : ILogger<T>
     {
