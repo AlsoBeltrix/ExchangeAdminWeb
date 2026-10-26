@@ -247,13 +247,21 @@ public sealed class BitLockerRecoveryService
                 Pooling = false,
             };
 
-            await using var connection = new SqliteConnection(builder.ToString());
+            // aud-a67. The command timeout is half the setting (the aud-a41 shape): busy_timeout is SQLite's own wait inside
+            // each step, and the provider then runs a busy statement again, each run another full busy_timeout, until the
+            // command timeout has passed - 30 seconds when unset, so an operator's search sat for about 35. Both are the one
+            // busy wait now; it bounds the retry only, not how long a query may run.
+            await using var connection = new SqliteConnection(builder.ToString())
+            {
+                DefaultTimeout = (int)ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory.BusyTimeout.TotalSeconds,
+            };
             await connection.OpenAsync();
 
             await using (var pragma = connection.CreateCommand())
             {
                 // Wait out the scheduled export's write rather than failing.
-                pragma.CommandText = "PRAGMA busy_timeout = 5000;";
+                pragma.CommandText =
+                    $"PRAGMA busy_timeout = {(int)ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory.BusyTimeout.TotalMilliseconds};";
                 await pragma.ExecuteNonQueryAsync();
             }
 

@@ -216,15 +216,20 @@ public class AuditServiceTests : IDisposable
     }
 
     [Fact]
-    public void LogMailboxPermission_ThrowsOnWriteFailure()
+    public void LogMailboxPermission_UnderALogRootThatCannotBeCreated_IsBuilt_AndHandsBackTheRowNotWritten()
     {
         // A log root whose path contains an existing file fails directory
         // creation on every OS (the previous Z:\ path was only invalid on Windows).
+        // aud-a64: building the writer under it threw, so there was no audit writer at all - every page and service that
+        // audits failed with it. It is built now, and each record is refused and handed back as not written.
         var blocker = Path.Combine(_tempDir, "blocker");
         File.WriteAllText(blocker, "");
         var config = CreateConfig(Path.Combine(blocker, "logs"));
 
-        Assert.ThrowsAny<Exception>(() => CreateAudit(config));
+        AuditService? audit = null;
+        Assert.Null(Record.Exception(() => audit = CreateAudit(config).Audit));
+        Assert.Equal(JsonlWriteOutcome.FileWriteFailed, audit!.LogMailboxPermission(
+            "admin", "10.0.0.1", "AddFullAccess", "target@co.com", "user@co.com", "FullAccess", true, "REQ001"));
     }
 
     [Fact]

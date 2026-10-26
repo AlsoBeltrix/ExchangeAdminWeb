@@ -133,7 +133,9 @@ public class GroupGrantValidationTests
     {
         var body = Body(PageCode(), "private async Task SaveSectionAccessAsync()", "private async Task SaveModuleAdminsAsync()");
 
-        var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(newGrants);", StringComparison.Ordinal);
+        // aud-a67 item 11: the confirmation now takes the labels the save captured, so the anchor is the call, not its
+        // whole argument list. Its intent is unchanged - the access save confirms the new grants before it writes.
+        var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(newGrants,", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
         // aud-a28k: the save writes only the aliases it edited, decided under the write lock.
         var iPersist = body.IndexOf("SectionAccess.SaveEditedAliases(loaded, edited)", StringComparison.Ordinal);

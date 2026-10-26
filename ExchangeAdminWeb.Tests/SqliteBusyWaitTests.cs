@@ -15,7 +15,16 @@ namespace ExchangeAdminWeb.Tests;
 /// </remarks>
 public sealed class SqliteBusyWaitTests
 {
-    private static readonly TimeSpan SecondWait = SqliteConnectionFactory.BusyTimeout * 2;
+    /// <summary>
+    /// aud-a67 item 7. What a wait must stay under to show it is not the provider's retry loop: that loop ran the
+    /// statement again, each run another full busy timeout, until the command timeout had passed - about 30 to 35
+    /// seconds, measured. The ceiling used to be one second under two busy waits (9 s), which is a timing rather than a
+    /// signal: on a loaded host - several agents building and testing at once - a 5-second wait plus scheduling has
+    /// crossed it repeatedly with nothing wrong. The shape of the wait is pinned structurally instead, by
+    /// <see cref="AFactoryConnection_WaitsTheBusyTimeout_AndTheProviderRetriesNoLonger"/>, which reads back
+    /// <c>busy_timeout</c> and <c>DefaultTimeout</c> and cannot drift with load.
+    /// </summary>
+    private static readonly TimeSpan NotTheRetryLoop = TimeSpan.FromSeconds(25);
 
     private static SqliteConfigStore MigratedStore(string path)
     {
@@ -54,8 +63,8 @@ public sealed class SqliteBusyWaitTests
         Assert.True(ConfigStoreBusy.IsBusy(busy), $"not SQLITE_BUSY: {busy.SqliteErrorCode} {busy.Message}");
         Assert.True(watch.Elapsed >= SqliteConnectionFactory.BusyTimeout - TimeSpan.FromSeconds(0.5),
             $"the write gave up after {watch.Elapsed.TotalSeconds:F2} s, before the documented wait");
-        Assert.True(watch.Elapsed < SecondWait - TimeSpan.FromSeconds(1),
-            $"the write waited {watch.Elapsed.TotalSeconds:F2} s: more than one busy wait of {SqliteConnectionFactory.BusyTimeout.TotalSeconds:F0} s");
+        Assert.True(watch.Elapsed < NotTheRetryLoop,
+            $"the write waited {watch.Elapsed.TotalSeconds:F2} s: the provider's retry loop, not one busy wait of {SqliteConnectionFactory.BusyTimeout.TotalSeconds:F0} s");
     }
 
     [Fact]

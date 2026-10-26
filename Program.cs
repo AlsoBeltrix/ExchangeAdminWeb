@@ -274,6 +274,7 @@ try
     builder.Services.AddScoped<ExchangeAdminWeb.Services.SelfServiceGroups.SelfServiceGroupService>();
     builder.Services.AddScoped<ADAttributeEditorService>();
     builder.Services.AddSingleton<ADOrganizationalUnitService>();
+    builder.Services.AddSingleton<IOrganizationalUnitDirectory>(sp => sp.GetRequiredService<ADOrganizationalUnitService>());
     builder.Services.AddSingleton<ADDirectorySearchService>();
     // The operator-email resolver reads the same pooled AD runspace through a one-member seam,
     // so it never reaches the wildcard autocomplete search (OperatorEmailResolution-Plan).

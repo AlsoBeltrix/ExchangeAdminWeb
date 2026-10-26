@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using AdminSettingsPage = ExchangeAdminWeb.Components.Pages.AdminSettings;
@@ -125,8 +126,11 @@ public sealed class SettingsStoreBusyTests : IDisposable
         }
 
         // aud-a41: the documented wait, once - not the provider's 30-second retry around it.
-        Assert.True(waited.Elapsed < SqliteConnectionFactory.BusyTimeout * 2 - TimeSpan.FromSeconds(1),
-            $"the save waited {waited.Elapsed.TotalSeconds:F2} s for the busy store");
+        // aud-a67 item 7: a ceiling that fails that retry loop and nothing else. One second under two busy waits (9 s) is
+        // a timing, not a signal, and a loaded host has crossed it with nothing wrong; the wait's shape is pinned
+        // structurally by SqliteBusyWaitTests instead.
+        Assert.True(waited.Elapsed < TimeSpan.FromSeconds(25),
+            $"the save waited {waited.Elapsed.TotalSeconds:F2} s for the busy store: the provider's retry loop, not one busy wait");
         Assert.Equal("777", StoredSecret());
         Assert.Equal(new[] { "user:" + Cfo }, StoredRules());
         var record = Assert.Single(_h.AuditEvents());
@@ -426,6 +430,31 @@ public sealed class SettingsStoreBusyTests : IDisposable
         Assert.Equal(before, _h.StoredModuleAdmins(Module));
         AssertOneBusyRefusal($"ModuleAdmins:{Module}", StatusOf(page));
         AssertSaysBusy(StatusOf(page));
+    }
+
+    /// <summary>
+    /// aud-a67 item 6, the follow-up aud-a40 left in this service's file: the attribute allowlist save turned any
+    /// exception, a busy store included, into "Failed to save: SQLite Error 5: 'database is locked'." and a failure
+    /// record. Nothing is written in that case - every decision is made inside the one write a throw rolls back - so it
+    /// is the same refusal every other settings save makes.
+    /// </summary>
+    [Fact]
+    public async Task ModuleConfig_AnAllowlistSaveThatFindsTheStoreBusy_IsRefusedAsBusy_AndWritesNothing()
+    {
+        var page = _h.OpenModuleConfig("ADAttributeEditor", _h.CreateAttributeEditor());
+        await _h.RunAsync(page, "AddAttribute");
+        await _h.RunAsync(page, "UpdateAttrName", 0, new ChangeEventArgs { Value = "department" });
+        await _h.RunAsync(page, "UpdateAttrLabel", 0, new ChangeEventArgs { Value = "Department" });
+        var before = new AttributeEditorRepository(TestConfigStore.Create(_h.Root)).ReadAllowlistSnapshot().Rows.Count;
+        _h.AllowlistStore.BeforeWrite = () => throw Busy();
+
+        await _h.RunAsync(page, "SaveAllowlistAsync");
+
+        var shown = SettingsPageHarness.Field<string?>(page, typeof(ModuleConfigPage), "allowlistError") ?? "";
+        Assert.False(SettingsPageHarness.Field<bool>(page, typeof(ModuleConfigPage), "allowlistSaved"));
+        Assert.Equal(before, new AttributeEditorRepository(TestConfigStore.Create(_h.Root)).ReadAllowlistSnapshot().Rows.Count);
+        AssertOneBusyRefusal(ADAttributeEditorService.AllowlistAuditSection, shown);
+        AssertSaysBusy(shown);
     }
 
     [Fact]

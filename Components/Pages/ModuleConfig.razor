@@ -15,7 +15,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ADAttributeEditorService AttrEditorService
-@inject ADOrganizationalUnitService OUService
+@inject ExchangeAdminWeb.Services.IOrganizationalUnitDirectory OUService
 @inject ILogger<ModuleConfig> Logger
 @inject IActivityProgress Progress
 
@@ -817,14 +817,17 @@
     /// renders in its own section below - and returning the alias for it would be correct anyway,
     /// which is why this cannot produce a blank heading.
     /// </remarks>
-    private string PermissionLabelFor(string alias)
+    private string PermissionLabelFor(string alias) => PermissionLabelOf(module, alias);
+
+    /// <summary>The same, by a NAMED descriptor rather than the page current one (aud-a67 item 11).</summary>
+    private static string PermissionLabelOf(AdminModuleDescriptor? saved, string alias)
     {
-        if (module == null) return alias;
+        if (saved == null) return alias;
 
-        if (string.Equals(module.MainPermission.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
-            return module.MainPermission.DisplayName ?? alias;
+        if (string.Equals(saved.MainPermission.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
+            return saved.MainPermission.DisplayName ?? alias;
 
-        foreach (var gp in module.GranularPermissions)
+        foreach (var gp in saved.GranularPermissions)
         {
             if (string.Equals(gp.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
                 return gp.DisplayName ?? alias;
@@ -864,6 +867,28 @@
     /// partial result.
     /// </summary>
     private async Task SaveCurrentTabAsync()
+    {
+        // aud-a67. One save at a time from this button. The button is disabled while `saving`, but a click the browser sent
+        // before that render arrived - a double click - ran a second save beside the first, and whichever finished first
+        // cleared `saving` in its finally, so the button came back while the other was still running. Each save sets
+        // `saving` before its first await, so the second click reads it here (the aud-a28o shape, at the event).
+        //
+        // The guard is here and not in StartSaveAsync: it closes the way a second save is STARTED, and aud-a66's defence
+        // against one that is already in flight stays exactly as it was. That defence is still reachable - a route change
+        // that outlasts its bound loads the next module and LoadState clears `saving`, so a new save can begin while the
+        // old one is still running - and it is what makes a late save harmless whatever started it.
+        if (saving)
+            return;
+
+        await StartSaveAsync();
+    }
+
+    /// <summary>
+    /// Runs the visible tab's save, registered in <see cref="savesInFlight"/> for the load it began on until it completes
+    /// (aud-a66). Internal so a test can start a save the way one that is already in flight behaves, past the button's
+    /// one-at-a-time guard (aud-a67).
+    /// </summary>
+    internal async Task StartSaveAsync()
     {
         // aud-a66. The load and the module the save is for, taken before it starts: a route change waits only for the saves
         // of the load it replaces, and its notice names the module of any save it stops waiting for.
@@ -964,6 +989,20 @@
         return null;
     }
 
+    /// <summary>The modules whose saves of the load now shown have not finished, each named once (aud-a67 item 14).</summary>
+    private List<string> SavesStillRunningOnThisLoad() =>
+        savesInFlight
+            .Where(s => s.Load == load && !s.Save.IsCompleted)
+            .Select(s => s.Module)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    // aud-a67 item 14. What the page shows WHILE it waits for those saves, where it used to show nothing for up to ten
+    // seconds. It is replaced by the next module's own state when the load lands, or by UnfinishedSaveNotice when the
+    // bound runs out first.
+    private static string WaitingForSaveNotice(List<string> waitingFor, string next) =>
+        $"Waiting for {string.Join(", ", waitingFor)}'s save to finish before opening {next}.";
+
     // aud-a66 (codex settings-batch-6). What a route change shows when it stopped waiting for a save: which module's save is
     // still running, and that it cannot change the module now shown. Seconds in the invariant culture, as the bound is fixed.
     private string UnfinishedSaveNotice(List<string> unfinished, AdminModuleDescriptor next)
@@ -1040,12 +1079,31 @@
     {
         if (ModuleId == loadedModuleId) return;
 
+        // aud-a67. The module this load is for, taken before its first await and used for all of it. ModuleId is a
+        // parameter and the router sets it again on the next route change, so every read after an await could be a
+        // different module from the one before: the descriptor was fetched with one read and the delegated-admin check
+        // made with another, on either side of the authorization await, so a second route change in that window could
+        // pair one module's check with another module's page. It also made this call load the newer module and the call
+        // the router made for it find nothing to do - one route change's work done twice, the other's not at all.
+        var requested = ModuleId;
+
+        // aud-a67 item 14. Say what the page is waiting for, before it waits. The wait below is up to saveWaitBound -
+        // ten seconds - and nothing was shown for any of it: the operator clicked another module and the page sat on the
+        // one they left, with no sign that it had heard them. Rendered here, so the message is out before the await.
+        var waitingFor = SavesStillRunningOnThisLoad();
+        if (waitingFor.Count > 0)
+        {
+            statusMessage = WaitingForSaveNotice(waitingFor, Catalog.GetById(requested)?.DisplayName ?? requested);
+            statusIsError = false;
+            StateHasChanged();
+        }
+
         // aud-a41, aud-a66. The saves on the module shown finish before another module is loaded over it - for at most
         // saveWaitBound (see savesInFlight and WaitForThisLoadsSavesAsync).
         var unfinished = await WaitForThisLoadsSavesAsync();
-        if (ModuleId == loadedModuleId) return;
+        if (requested == loadedModuleId) return;
 
-        loadedModuleId = ModuleId;
+        loadedModuleId = requested;
 
         authChecked = false;
         statusMessage = null;
@@ -1056,7 +1114,7 @@
 
         // aud-a66. Into a local, and shown with its state after the awaits below: until then the page keeps the module it shows
         // and that module's state, so a save started while this load waits takes one module's id with that module's state.
-        var next = Catalog.GetById(ModuleId);
+        var next = Catalog.GetById(requested);
         if (next == null || next.IsSystemModule)
         {
             authChecked = true;
@@ -1074,7 +1132,7 @@
         var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
         isGlobalAdmin = adminResult.Succeeded;
 
-        if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdmin(ModuleId, user))
+        if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdmin(requested, user))
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
@@ -1105,6 +1163,13 @@
         // button: one that outlasted the route change's wait would otherwise keep this module's Save disabled.
         load++;
         saving = false;
+
+        // aud-a67. And no unsaved edits: everything below is read from the store, so every baseline this load sets is the
+        // state it has just read and nothing on the page differs from it yet. Only ReloadAsync and the saves cleared the
+        // counts, so a move to another module on this page instance carried the previous module's: its counts in the save
+        // bar, its dots on tabs whose lists had been replaced, and the unsaved-changes guard warning about edits that were
+        // no longer anywhere on the page.
+        dirty.Clear();
 
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
@@ -1553,6 +1618,10 @@
         var snapshot = aliases.ToDictionary(a => a, a => accessState[a].ToArray());
         var baseline = accessBaseline.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
         var picked = new Dictionary<string, string>(pickedDisplayNames, StringComparer.OrdinalIgnoreCase);
+        // aud-a67 item 11. The names this save reads its refusals by, taken with everything else before the first await:
+        // the page own set is replaced by the next module load, so a refusal that arrived after a route change named
+        // its groups by their bare SIDs.
+        var names = new Dictionary<string, string>(accessDisplayNames, StringComparer.OrdinalIgnoreCase);
         var pending = PendingAccessSections();
         saving = true;
         statusMessage = null;
@@ -1594,7 +1663,7 @@
             var newGrants = snapshot
                 .SelectMany(kv => kv.Value.Except(baseline.GetValueOrDefault(kv.Key) ?? new List<string>(), StringComparer.OrdinalIgnoreCase))
                 .ToList();
-            var refused = await ConfirmNewGroupGrantsAsync(newGrants);
+            var refused = await ConfirmNewGroupGrantsAsync(newGrants, sid => DisplayNameFrom(names, sid));
             if (refused is not null)
             {
                 statusMessage = refused;
@@ -1638,7 +1707,7 @@
 
             if (outcome.Status == SectionAccessSaveStatus.ConcurrentChange)
             {
-                statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(AliasName))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
+                statusMessage = $"Refusing to save: the groups for {string.Join(", ", outcome.ChangedAliases.Select(a => AliasNameOf(saved, a)))} were changed after this page loaded them - by another administrator, or on the other instance. Nothing was saved. Reload the page and re-apply your changes.";
                 statusIsError = true;
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage, pending);
                 return;
@@ -1656,8 +1725,8 @@
                 var writtenAliases = edited
                     .Where(kv => !outcome.AlreadyApplied.Contains(kv.Key, StringComparer.OrdinalIgnoreCase))
                     .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-                var names = DisplayNamesToStore(writtenAliases, baseline, picked);
-                await Task.Run(() => SectionAccess.SaveGroupDisplayNames(names));
+                var toStore = DisplayNamesToStore(writtenAliases, baseline, picked);
+                await Task.Run(() => SectionAccess.SaveGroupDisplayNames(toStore));
             }
 
             foreach (var (alias, curr) in edited)
@@ -1720,9 +1789,16 @@
             .ToArray();
 
     /// <summary>An alias as the admin reads it on the Access tab: its label, with the alias when they differ.</summary>
-    private string AliasName(string alias)
+    private string AliasName(string alias) => AliasNameOf(module, alias);
+
+    /// <summary>
+    /// The same, by a NAMED descriptor rather than the page current one (aud-a67 item 11): a save names its aliases
+    /// from the module it took before its first await, so a refusal that arrived after a route change no longer falls
+    /// back to the bare alias because the next module descriptor has no label for it.
+    /// </summary>
+    private static string AliasNameOf(AdminModuleDescriptor? saved, string alias)
     {
-        var label = PermissionLabelFor(alias);
+        var label = PermissionLabelOf(saved, alias);
         return string.Equals(label, alias, StringComparison.Ordinal) ? alias : $"{label} ({alias})";
     }
 
@@ -1742,6 +1818,8 @@
         var loadedUnreadable = moduleAdminsUnreadable;
         var snapshot = moduleAdminGroups.ToArray();
         var baseline = moduleAdminGroupsBaseline.ToArray();
+        // aud-a67 item 11, as the access save: the names this save reads its refusals by.
+        var names = new Dictionary<string, string>(accessDisplayNames, StringComparer.OrdinalIgnoreCase);
         saving = true;
         statusMessage = null;
         await Task.Yield();
@@ -1769,7 +1847,7 @@
             }
 
             var refused = await ConfirmNewGroupGrantsAsync(
-                snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToList());
+                snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToList(), sid => DisplayNameFrom(names, sid));
             if (refused is not null)
             {
                 statusMessage = refused;
@@ -1864,7 +1942,7 @@
     /// per new grant, each waiting up to 30 seconds on the directory service's shared runspace
     /// lock - hence the activity, opened before the Task.Run that wraps the loop.
     /// </remarks>
-    private async Task<string?> ConfirmNewGroupGrantsAsync(IReadOnlyList<string> newGrants)
+    private async Task<string?> ConfirmNewGroupGrantsAsync(IReadOnlyList<string> newGrants, Func<string, string> label)
     {
         if (newGrants.Count == 0)
             return null;
@@ -1888,7 +1966,7 @@
 
         return refusals.Count == 0
             ? null
-            : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, DisplayNameFor);
+            : ExchangeAdminWeb.Authorization.GroupGrantValidation.Message(refusals, label);
     }
 
     // aud-a66. By the descriptor the save took, never the page's: after a move the page's is another module's, whose fields
@@ -2023,9 +2101,19 @@
         }
     }
 
-    private string DisplayNameFor(string groupValue)
+    private string DisplayNameFor(string groupValue) => DisplayNameFrom(accessDisplayNames, groupValue);
+
+    /// <summary>
+    /// A group as the admin reads it, by a NAMED set of display names rather than the page current one (aud-a67 item 11).
+    /// </summary>
+    /// <remarks>
+    /// A save takes the names it loaded before its first await and names its refusals from those: the page own set is
+    /// replaced by the next module load, so a save whose directory lookup outlasted a route change used to name the
+    /// groups it refused by their bare SIDs - the one part of that refusal the admin reads.
+    /// </remarks>
+    private string DisplayNameFrom(IReadOnlyDictionary<string, string> names, string groupValue)
     {
-        if (!accessDisplayNames.TryGetValue(groupValue, out var name) || string.IsNullOrWhiteSpace(name))
+        if (!names.TryGetValue(groupValue, out var name) || string.IsNullOrWhiteSpace(name))
             return groupValue;
 
         // Qualify at render time as well as at write time. Rows migrated before the display names
@@ -2342,6 +2430,11 @@
             return;
         }
 
+        // aud-a67 item 10. The load this click belongs to: the enumeration below runs off the circuit, so the page can
+        // move to another module while it waits, and opening the browser over that module would be this click's answer
+        // on someone else's page.
+        var started = load;
+
         // Load OUs when opening the browser for the first time
         if (ouAllEntries.Count == 0)
         {
@@ -2349,13 +2442,27 @@
             if (!ouBrowseAvailable) return;
         }
 
+        if (!Holds(started)) return;
+
         // Pre-select OUs already in the config value
         SyncSelectedFromConfig();
         showOUBrowser = true;
     }
 
+    /// <summary>
+    /// Reads the organizational units off the circuit and shows them, on the load that asked for them.
+    /// </summary>
+    /// <remarks>
+    /// aud-a67 item 10. The enumeration is a directory read on a worker, and the page is reused across
+    /// <c>/module-config/{ModuleId}</c>, so its answer could arrive after a route change had loaded another module -
+    /// and every line below used to apply it to that one: its entries, its filter, the availability flag and the
+    /// spinner. The browser renders only on AD Attribute Editor and none of this is written anywhere, so what it cost
+    /// was a browser full of one page's OUs on another, and a spinner cleared under a load that never started one.
+    /// The aud-a66 rule, which this page already follows for every save: the state lands only on the load it began on.
+    /// </remarks>
     private async Task LoadOUsAsync()
     {
+        var started = load;
         ouLoading = true;
         await Task.Yield();
 
@@ -2364,9 +2471,16 @@
 
         try
         {
-            ouAllEntries = await Task.Run(() => OUService.GetOrganizationalUnits());
-            ouBrowseAvailable = OUService.IsAvailable;
-            activity.Complete(ouBrowseAvailable);
+            var entries = await Task.Run(() => OUService.GetOrganizationalUnits());
+            var available = OUService.IsAvailable;
+            activity.Complete(available);
+
+            // The activity is this call's own and is completed either way; the page's state is not.
+            if (!Holds(started))
+                return;
+
+            ouAllEntries = entries;
+            ouBrowseAvailable = available;
 
             if (!ouBrowseAvailable)
             {
@@ -2381,20 +2495,25 @@
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "OU browser load failed");
-            ouBrowseAvailable = false;
+            if (Holds(started)) ouBrowseAvailable = false;
         }
         finally
         {
+            // Not guarded, unlike the answer above: this flag is THIS enumeration spinner, and it has stopped whichever
+            // module the page is showing. Guarded, a move left it raised on a page whose own load never lowers it - the
+            // next module reinitialises the browser only when it has one (AD Attribute Editor).
             ouLoading = false;
         }
     }
 
     private async Task RefreshOUs()
     {
+        // aud-a67 item 10, as ToggleOUBrowser above.
+        var started = load;
         OUService.InvalidateCache();
         ouAllEntries = new();
         await LoadOUsAsync();
-        if (ouBrowseAvailable)
+        if (ouBrowseAvailable && Holds(started))
         {
             SyncSelectedFromConfig();
         }

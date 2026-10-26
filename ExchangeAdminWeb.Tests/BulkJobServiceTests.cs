@@ -83,7 +83,10 @@ public class BulkJobServiceTests
         public readonly ServiceProvider Provider;
         public readonly List<FakeProcessor> CreatedProcessors = new();
 
-        public Harness()
+        /// <param name="settings">
+        /// Configuration the runner is built over; empty unless a test is about a setting (aud-a64).
+        /// </param>
+        public Harness(params (string Key, string Value)[] settings)
         {
             var factory = new SqliteConnectionFactory(System.IO.Path.Combine(Temp.Path, "exchangeadmin-jobs.db"));
             new JobStoreMigrator(factory).Migrate();
@@ -101,7 +104,9 @@ public class BulkJobServiceTests
 
             var registry = new BulkJobProcessorRegistry(
                 new[] { new KeyValuePair<string, Type>("Test", typeof(FakeProcessor)) });
-            var config = new ConfigurationBuilder().Build();
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(settings.ToDictionary(s => s.Key, s => (string?)s.Value))
+                .Build();
             Service = new BulkJobService(
                 Provider.GetRequiredService<IServiceScopeFactory>(),
                 Repository, registry, config, NullLogger<BulkJobService>.Instance);
@@ -341,6 +346,45 @@ public class BulkJobServiceTests
         Assert.Equal(BulkJobStatus.Interrupted, h.Repository.Get("wasRunning")!.Status);
         Assert.Equal(BulkJobStatus.Interrupted, h.Repository.Get("wasQueued")!.Status);
         Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("wasDone")!.Status);
+    }
+
+    /// <summary>
+    /// aud-a64: a negative BulkJobs:RetentionDays put the start-up prune's cutoff in the future, so every finished job
+    /// record was deleted at start-up (the audit rows survive, but the operator's job history did not). A retention
+    /// outside its range is the default 30 days, so a job finished yesterday is kept.
+    /// </summary>
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("0")]
+    public void Initialize_GivenARetentionOutsideItsRange_KeepsAFinishedJob(string retention)
+    {
+        using var h = new Harness(("BulkJobs:RetentionDays", retention));
+        var done = h.NewJob("wasDone", "SS", "Completed");
+        done.FinishedAtUtc = DateTime.UtcNow.AddDays(-1);
+        h.Repository.Insert(done);
+
+        h.Service.InitializeAsync();
+
+        Assert.NotNull(h.Repository.Get("wasDone"));
+        Assert.Equal(30, h.Service.RetentionDays);
+    }
+
+    /// <summary>
+    /// aud-a64: a negative BulkJobs:RecentJobLimit reached SQLite as LIMIT -n, which means no limit, so the page listed
+    /// every finished job there had ever been. A limit outside its range is the default 25.
+    /// </summary>
+    [Fact]
+    public void GetRecentJobs_GivenALimitOutsideItsRange_ListsTheDefaultTwentyFive()
+    {
+        using var h = new Harness(("BulkJobs:RecentJobLimit", "-1"));
+        for (var i = 0; i < 30; i++)
+        {
+            var job = h.NewJob($"j{i:00}", "S", "Completed");
+            job.FinishedAtUtc = DateTime.UtcNow.AddMinutes(-i);
+            h.Repository.Insert(job);
+        }
+
+        Assert.Equal(25, h.Service.GetRecentJobs().Count);
     }
 
     [Fact]

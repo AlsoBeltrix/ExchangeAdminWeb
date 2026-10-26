@@ -270,6 +270,12 @@
 
     private async Task SaveModuleStatus()
     {
+        // aud-a67. One save at a time: this page wires its two Save buttons straight at their handlers, and a click the
+        // browser sent before the disabled button rendered ran a second save beside the first, whose finally then cleared
+        // `saving` while the other still ran.
+        if (saving)
+            return;
+
         saving = true;
         statusMessage = null;
         statusIsWarning = false;
@@ -360,6 +366,10 @@
 
     private async Task SaveExoConfig()
     {
+        // aud-a67, as SaveModuleStatus above: one save at a time, whichever button started it.
+        if (saving)
+            return;
+
         saving = true;
         statusMessage = null;
         statusIsWarning = false;
@@ -559,7 +569,12 @@
             // hold connections opened before a change saved on the other instance.
             try
             {
-                ExoPool.DrainPool();
+                // aud-a67. Off the circuit, as every write on this page already is (aud-a41): DrainPool empties the bag one
+                // runspace at a time and DestroyRunspace runs a synchronous Disconnect-ExchangeOnline against the service for
+                // each - up to five Exchange Online round trips - and then re-reads the three connection values from the
+                // shared config database. On the circuit that held the whole page, this operator's and every other render on
+                // it, for as long as the service took to answer five disconnects.
+                await Task.Run(() => ExoPool.DrainPool());
                 if (!allEmpty)
                 {
                     statusMessage = written.Count > 0

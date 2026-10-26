@@ -63,10 +63,26 @@ public sealed class BulkJobService
         // aud-a62. Read without a throw: GetValue<double?> and GetValue<int?> threw on a value that is not a number, and
         // this runner is resolved at start-up, so a typo stopped the app from starting. Such a value is the default, named
         // once; a value that is not finite is one too, since TimeSpan threw on it here.
-        _staleHeartbeat = TimeSpan.FromMinutes(ConfigValue.ReadDouble(config, "BulkJobs:StaleHeartbeatMinutes", 5, logger));
-        _recentJobLimit = ConfigValue.ReadInt(config, "BulkJobs:RecentJobLimit", 25, logger);
-        _pruneRetention = TimeSpan.FromDays(ConfigValue.ReadDouble(config, "BulkJobs:RetentionDays", 30, logger));
+        // aud-a64. And one outside the setting's range: a finite "1e300" still threw out of TimeSpan here, a negative or zero
+        // retention put the start-up prune's cutoff at or after now - every finished job record deleted - and a negative limit
+        // reached SQLite as LIMIT -n, which is no limit at all.
+        _staleHeartbeat = TimeSpan.FromMinutes(ConfigValue.ReadDouble(
+            config, "BulkJobs:StaleHeartbeatMinutes", 5, logger, MinStaleHeartbeatMinutes, MaxStaleHeartbeatMinutes));
+        _recentJobLimit = ConfigValue.ReadInt(config, "BulkJobs:RecentJobLimit", 25, logger, MinRecentJobLimit, MaxRecentJobLimit);
+        _pruneRetention = TimeSpan.FromDays(ConfigValue.ReadDouble(
+            config, "BulkJobs:RetentionDays", 30, logger, MinRetentionDays, MaxRetentionDays));
     }
+
+    // aud-a64. The three settings' ranges, inclusive; a value outside one is its default, named once. Sane operating bounds -
+    // a minute to a day for a job to go quiet before it shows Stalled, one to a thousand finished jobs listed, a day to ten
+    // years of finished job records kept - each well inside what TimeSpan, DateTime.UtcNow less the retention, and
+    // RetentionDays' whole days hold.
+    internal const double MinStaleHeartbeatMinutes = 1;
+    internal const double MaxStaleHeartbeatMinutes = 24 * 60;
+    internal const int MinRecentJobLimit = 1;
+    internal const int MaxRecentJobLimit = 1000;
+    internal const double MinRetentionDays = 1;
+    internal const double MaxRetentionDays = 3650;
 
     // -------------------------------------------------------------------------
     // Startup - explicit, one-shot. NOT a timer (see class remarks).

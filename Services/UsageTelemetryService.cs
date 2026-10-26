@@ -147,7 +147,7 @@ public class UsageTelemetryService
             // Absent or blank is not a mistype: the field was never configured, and the
             // documented default is on.
             if (string.IsNullOrWhiteSpace(configured))
-                return true;
+                return Readable(true);
 
             // A non-blank value that will not parse reads as OFF (review finding utei-2).
             // The module config page renders any unparseable Boolean as an UNCHECKED box, so
@@ -158,7 +158,7 @@ public class UsageTelemetryService
             if (!bool.TryParse(configured, out var enabled))
                 return LogSwitchUnreadableOnce(null, malformed: configured);
 
-            return enabled;
+            return Readable(enabled);
         }
         catch (Exception ex)
         {
@@ -259,7 +259,18 @@ public class UsageTelemetryService
     }
 
     /// <summary>
-    /// Reports the switch as OFF and logs why, at most once per process so a fault on a hot
+    /// aud-a64. A read that answers - blank, the documented default, or a Boolean - ends a failure streak, so the next
+    /// failure is reported again. The flag was set once per process and never reset: a store that failed, recovered and
+    /// failed again later was not reported the second time, though the switch read off each time.
+    /// </summary>
+    private bool Readable(bool enabled)
+    {
+        Interlocked.Exchange(ref _switchReadFailureLogged, 0);
+        return enabled;
+    }
+
+    /// <summary>
+    /// Reports the switch as OFF and logs why, at most once per failure streak (aud-a64) so a fault on a hot
     /// path cannot flood the log. <paramref name="malformed"/> is the stored value when the
     /// switch was readable but not parseable (utei-2); it is null when the read itself failed.
     /// </summary>

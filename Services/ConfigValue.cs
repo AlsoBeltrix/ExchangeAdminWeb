@@ -26,16 +26,21 @@ internal static class ConfigValue
     /// <paramref name="whenBlank"/>, the setting's documented default. Anything else that is not a whole number an
     /// <see cref="int"/> holds is <paramref name="whenBlank"/> too, and is named once. Never throws.
     /// </summary>
-    internal static int ReadInt(IConfiguration config, string key, int whenBlank, ILogger logger)
+    /// <remarks>
+    /// aud-a64. <paramref name="min"/> and <paramref name="max"/>, inclusive, are the setting's range: a whole number outside
+    /// them is read as one that cannot be read - <paramref name="whenBlank"/>, named once, the warning naming the range.
+    /// Without them every <see cref="int"/> is taken, as before.
+    /// </remarks>
+    internal static int ReadInt(IConfiguration config, string key, int whenBlank, ILogger logger, int min = int.MinValue, int max = int.MaxValue)
     {
         var text = config[key];
         if (string.IsNullOrWhiteSpace(text))
             return whenBlank;
 
-        if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= min && value <= max)
             return value;
 
-        NameOnce(key, text, "a whole number", Text(whenBlank), logger);
+        NameOnce(key, text, Ranged("a whole number", min, max, min == int.MinValue && max == int.MaxValue), Text(whenBlank), logger);
         return whenBlank;
     }
 
@@ -62,20 +67,32 @@ internal static class ConfigValue
     /// Absent or blank is <paramref name="whenBlank"/>; anything else that is not a finite number is too, and is named
     /// once. Never throws.
     /// </summary>
-    internal static double ReadDouble(IConfiguration config, string key, double whenBlank, ILogger logger)
+    /// <remarks>
+    /// aud-a64. <paramref name="min"/> and <paramref name="max"/>, inclusive, are the setting's range, as for
+    /// <see cref="ReadInt"/>: a finite number was all this asked, so "1e300" reached TimeSpan.FromDays and threw there, and
+    /// "-1" days put the bulk job runner's prune cutoff in the future.
+    /// </remarks>
+    internal static double ReadDouble(IConfiguration config, string key, double whenBlank, ILogger logger, double min = double.MinValue, double max = double.MaxValue)
     {
         var text = config[key];
         if (string.IsNullOrWhiteSpace(text))
             return whenBlank;
 
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && double.IsFinite(value))
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && double.IsFinite(value)
+            && value >= min && value <= max)
+        {
             return value;
+        }
 
-        NameOnce(key, text, "a finite number", Text(whenBlank), logger);
+        NameOnce(key, text, Ranged("a finite number", min, max, min == double.MinValue && max == double.MaxValue), Text(whenBlank), logger);
         return whenBlank;
     }
 
     private static string Text(IFormattable value) => value.ToString(null, CultureInfo.InvariantCulture);
+
+    // What a value must be, named in the warning: the kind alone for a setting with no range, else the kind and its range.
+    private static string Ranged(string kind, IFormattable min, IFormattable max, bool unbounded) =>
+        unbounded ? kind : $"{kind} from {Text(min)} to {Text(max)}";
 
     private static void NameOnce(string key, string value, string kind, string reading, ILogger logger)
     {

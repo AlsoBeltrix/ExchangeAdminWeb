@@ -441,6 +441,46 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         Assert.Single(logger.Warnings);
     }
 
+    /// <summary>
+    /// aud-a64: the unreadable-switch warning was once per process - its flag was never reset - so a store that failed,
+    /// recovered and failed again later was not reported the second time, though the switch read off each time. It is
+    /// once per failure streak now: reported when a streak begins, not on the reads inside it, and again after a read
+    /// that answered.
+    /// </summary>
+    [Fact]
+    public void ASwitchThatFailsAgainAfterARecovery_IsReportedOncePerFailureStreak()
+    {
+        var store = new ReadsFailAfterStore(TestConfigStore.Create(_dir));
+        var moduleConfig = ConfigOver(store);
+        moduleConfig.SaveModuleConfig(
+            UsageTelemetryService.ConfigModuleId,
+            new Dictionary<string, string> { [UsageTelemetryService.ConfigKey] = "true" });
+        var logger = new CapturingLogger<UsageTelemetryService>();
+        var service = new CapturingTelemetry(Repo(), moduleConfig, new ModuleCatalog(), logger);
+        var clock = DateTime.UtcNow;
+        service.UtcNow = () => clock;
+
+        // The first streak: two reads past the cache, one warning.
+        store.AllowReads(0);
+        Assert.False(service.Enabled());
+        clock = clock.AddSeconds(31);
+        Assert.False(service.Enabled());
+        Assert.Single(logger.Warnings);
+
+        // A read that answers ends it.
+        store.AllowReads(int.MaxValue);
+        clock = clock.AddSeconds(31);
+        Assert.True(service.Enabled());
+
+        // The second streak is reported too.
+        store.AllowReads(0);
+        clock = clock.AddSeconds(31);
+        Assert.False(service.Enabled());
+        clock = clock.AddSeconds(31);
+        Assert.False(service.Enabled());
+        Assert.Equal(2, logger.Warnings.Count);
+    }
+
     // --- AC3: a telemetry fault never reaches the caller -------------------
 
     [Fact]

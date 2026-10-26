@@ -2,8 +2,10 @@ using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json;
 using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components;
 using NSubstitute;
 using ModuleConfigPage = ExchangeAdminWeb.Components.Pages.ModuleConfig;
@@ -86,6 +88,15 @@ public sealed class SettingsModuleMoveTests : IDisposable
     /// <summary>The Save button, pressed from another thread so a held save holds only the dispatcher.</summary>
     private Task Save(ModuleConfigPage page) => Task.Run(() => _h.RunAsync(page, "SaveCurrentTabAsync"), Cancel);
 
+    /// <summary>
+    /// A save that begins while another is already in flight, past the button's one-at-a-time guard (aud-a67): the page's
+    /// own StartSaveAsync, which is what the button runs once its guard has passed, registered in savesInFlight exactly as
+    /// a button press is. The window this stands for is a real one - a route change that outlasts its bound loads the next
+    /// module and LoadState clears `saving`, so a save can begin while an older one still runs - and these cases hold the
+    /// older save at the directory, which is where that happens.
+    /// </summary>
+    private Task SaveAlongside(ModuleConfigPage page) => Task.Run(() => _h.RunAsync(page, "StartSaveAsync"), Cancel);
+
     /// <summary>The router's move to <paramref name="moduleId"/>: the parameter set, then the page's parameter load.</summary>
     private async Task<Task> Open(ModuleConfigPage page, string moduleId)
     {
@@ -141,8 +152,9 @@ public sealed class SettingsModuleMoveTests : IDisposable
         var first = Save(page);
         Reached(_h.GroupDirectory.Entered, "the first save never asked the directory");
 
-        // A second Save before the first ends: a double click before the disabled button renders, or a direct event.
-        await Save(page).WaitAsync(Long, Cancel);
+        // A second save begun before the first ends (aud-a67: past the button's guard, as one begun after a route change
+        // that outlasted its bound would be).
+        await SaveAlongside(page).WaitAsync(Long, Cancel);
         Assert.Equal(Sorted(Kept, Added), StoredAdmins(First));
         Assert.False(first.IsCompleted, "the first save finished while its lookup was held");
 
@@ -174,7 +186,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
 
         // Held at its lookup, not its write: the admin service makes one write wait for another.
         var releaseSecond = _h.GroupDirectory.HoldNext();
-        var second = Save(page);
+        var second = SaveAlongside(page);
         Reached(_h.GroupDirectory.Entered, "the second save never asked the directory");
 
         releaseFirst.Set();
@@ -409,6 +421,189 @@ public sealed class SettingsModuleMoveTests : IDisposable
     }
 
     // ---- the bound and the seam ------------------------------------------------------------------
+
+    /// <summary>
+    /// aud-a67 item 1: only ReloadAsync and the saves cleared the unsaved-edit counts, so opening another module on this
+    /// page instance carried the previous module's - its count in the save bar, its dot on a tab whose list had just been
+    /// replaced, and the unsaved-changes guard warning about edits no longer anywhere on the page.
+    /// </summary>
+    [Fact]
+    public async Task AnotherModuleOpenedAfterAnEdit_LoadsClean_WithNoCountFromTheModuleLeft()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var dirty = Field<AdminPageDirtyState>(page, "dirty");
+        Assert.True(dirty.IsDirty, "the edit left no unsaved count - this fixture is stale");
+
+        await (await Open(page, Second)).WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(page));
+        Assert.False(dirty.IsDirty, $"the next module's page still counts unsaved edits: {dirty.Summary()}");
+        Assert.Equal(0, dirty.DirtyCount);
+    }
+
+    /// <summary>
+    /// aud-a67 item 9: the load read the ModuleId parameter after its awaits - the descriptor with one read, the
+    /// delegated-admin grant with another, on either side of the authorization await - so a route change in one of
+    /// those windows made the load fetch the newer module's descriptor, or decide this page with another module's
+    /// grant. It takes the module it was asked for before its first await now, and uses that for all of it.
+    /// </summary>
+    /// <remarks>
+    /// One case per window, because each is held at a different await and only one of the two reads sits after each:
+    /// the authentication state comes before the descriptor, the authorization re-check before the grant check.
+    /// </remarks>
+    [Theory]
+    [InlineData("the authentication state")]
+    [InlineData("the authorization re-check")]
+    public async Task ARouteChangeDuringALoad_LeavesTheLoadOnTheModuleItWasAskedFor(string held)
+    {
+        var page = _h.OpenModuleConfig(First);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (held == "the authentication state")
+        {
+            var state = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity(
+                [new Claim(ClaimTypes.Name, _h.AdminName), new Claim(ClaimTypes.GroupSid, SettingsPageHarness.AdminSid)], "test")));
+            var heldState = release.Task.ContinueWith(_ => state, Cancel, TaskContinuationOptions.None, TaskScheduler.Default);
+            _h.AuthState.GetAuthenticationStateAsync().Returns(heldState, Task.FromResult(state));
+        }
+        else
+        {
+            // Only a module admin, and only of the module this load is for: the grant check then decides the page, and
+            // it is the read that sits after the authorization await.
+            new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).SetForModule(Second, [SettingsPageHarness.AdminSid]);
+            var heldAuth = release.Task.ContinueWith(_ => AuthorizationResult.Failed(), Cancel, TaskContinuationOptions.None, TaskScheduler.Default);
+            _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+                .Returns(heldAuth, Task.FromResult(AuthorizationResult.Failed()));
+        }
+
+        var loadingSecond = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(loadingSecond.IsCompleted, $"the load did not wait at {held} - this fixture is stale");
+
+        // A second route change while the first load is still waiting, as a second click in the nav makes.
+        await _h.OnDispatcherAsync(() => page.ModuleId = Third);
+        release.SetResult();
+        await loadingSecond.WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(page));
+        Assert.DoesNotContain("access-denied", _h.Navigation.Navigations);
+    }
+
+    /// <summary>
+    /// aud-a67 item 10: the OU browser's enumeration runs off the circuit, and every line after it applied to whatever
+    /// module the page was showing when the answer came back - its entries, its filter, the availability flag and the
+    /// spinner. The browser renders only on AD Attribute Editor and writes nothing, so what it cost was one module's
+    /// organizational units in another module's browser. The answer lands only on the load that asked for it now.
+    /// </summary>
+    [Fact]
+    public async Task AnOuEnumerationThatOutlastsARouteChange_LeavesTheNextModulesBrowserAlone()
+    {
+        _h.OrganizationalUnits.Entries =
+        [
+            new OUEntry("Staff", "OU=Staff,DC=example,DC=test", 1),
+            new OUEntry("Contractors", "OU=Contractors,DC=example,DC=test", 1),
+        ];
+        var page = _h.OpenModuleConfig("ADAttributeEditor", _h.CreateAttributeEditor());
+        var release = _h.OrganizationalUnits.HoldNext();
+
+        var browsing = Task.Run(() => _h.RunAsync(page, "ToggleOUBrowser"), Cancel);
+        Reached(_h.OrganizationalUnits.Entered, "the browser never asked for the organizational units");
+
+        // The page moves while the enumeration is held, and the next module's load starts the browser clean.
+        await (await Open(page, First)).WaitAsync(Long, Cancel);
+        Assert.Equal(First, Shown(page));
+
+        release.Set();
+        await browsing.WaitAsync(Long, Cancel);
+
+        Assert.Empty(Field<List<OUEntry>>(page, "ouAllEntries"));
+        Assert.Empty(Field<List<OUEntry>>(page, "ouFilteredEntries"));
+        Assert.False(Field<bool>(page, "showOUBrowser"), "the browser opened over the module the page had moved to");
+        Assert.False(Field<bool>(page, "ouLoading"));
+    }
+
+    /// <summary>
+    /// aud-a67 item 11: a save names what it refused from the page's own labels - the alias through the page's
+    /// descriptor, the group through the page's display names - and both are replaced by the next module's load. A
+    /// refusal whose directory lookup outlasted a route change therefore reached the admin naming a bare SID, which
+    /// is the one part of that message they read. Each save takes its labels before its first await now.
+    /// </summary>
+    [Fact]
+    public async Task AnAccessSaveRefusedAfterAMove_StillNamesTheGroupItRefused()
+    {
+        var alias = _h.Catalog.GetById(First)!.MainPermission.PolicyAlias;
+        var page = _h.OpenModuleConfig(First);
+        Set(page, "tab", "Section Access");
+
+        // A group added on this page, with the display name this load holds for it and no other.
+        Field<Dictionary<string, string>>(page, "accessDisplayNames")[Added] = "EXAMPLE\\Directory-Admins";
+        await _h.OnDispatcherAsync(() => Field<Dictionary<string, List<string>>>(page, "accessState")[alias].Add(Added));
+
+        // The directory refuses it, and the lookup is held until the page has moved to another module.
+        _h.GroupDirectory.Answer = _ => new DirectoryValidationResult(DirectoryLookupOutcome.NotFound, null);
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the access save never asked the directory");
+
+        // Past the bound, so the next module LOADS while the lookup is still held: that load replaces the page display
+        // names and its descriptor, which is the window this item is about. Inside the bound the route change waits and
+        // the message is built before anything is replaced.
+        Set(page, "saveWaitBound", Short);
+        var loading = await Open(page, Second);
+        await loading.WaitAsync(Long, Cancel);
+        Assert.Equal(Second, Shown(page));
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+
+        // The audit record, not the banner: the route change clears statusMessage as it loads, so the refusal the
+        // admin can still read is the recorded one - and it is the same text the banner would have carried.
+        var refusal = Assert.Single(_h.AuditEvents(), r => Text(r, "refusedAt") == "GroupGrantCheck");
+        var shown = Text(refusal, "error");
+        Assert.Contains("Directory-Admins", shown, StringComparison.Ordinal);
+        Assert.DoesNotContain(Added + ":", shown, StringComparison.Ordinal);
+        Assert.Empty(StoredSectionAccess(alias));
+    }
+
+    private string[] StoredSectionAccess(string alias)
+    {
+        var repository = new SectionAccessRepository(TestConfigStore.Create(_h.Root));
+        return repository.TryGetAll(out var access) && access.TryGetValue(alias, out var groups)
+            ? [.. groups.Order(StringComparer.Ordinal)]
+            : [];
+    }
+
+    /// <summary>
+    /// aud-a67 item 14: the route change waits up to saveWaitBound - ten seconds - for the saves on the module shown,
+    /// and showed nothing for any of it. The operator clicked another module and the page sat on the one they left,
+    /// with no sign it had heard them. It says what it is waiting for now, and that message is replaced either by the
+    /// next module's page or by the notice that the bound ran out.
+    /// </summary>
+    [Fact]
+    public async Task AnotherModuleOpenedWhileASaveRuns_SaysWhatItIsWaitingFor_UntilItOpens()
+    {
+        var page = await AdminsWithAGroupAdded();
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(page);
+        Reached(_h.GroupDirectory.Entered, "the save never asked the directory");
+
+        var loading = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+
+        Assert.False(loading.IsCompleted, "the route change did not wait - this fixture is stale");
+        var waiting = Status(page) ?? "";
+        Assert.Contains("Waiting for", waiting, StringComparison.Ordinal);
+        Assert.Contains(DisplayName(First), waiting, StringComparison.Ordinal);
+        Assert.Contains(DisplayName(Second), waiting, StringComparison.Ordinal);
+        Assert.False(Field<bool>(page, "statusIsError"));
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+        await loading.WaitAsync(Long, Cancel);
+
+        // The module opened, so the waiting message is gone rather than left over its page.
+        Assert.Equal(Second, Shown(page));
+        Assert.DoesNotContain("Waiting for", Status(page) ?? "", StringComparison.Ordinal);
+    }
 
     [Fact]
     public void TheWait_IsTheStoresBusyTimeoutPlusFiveSeconds()

@@ -132,7 +132,9 @@ public sealed class ModuleCatalog
             IsConfigOnly = true,
             // 1.0.3: the connection save reports to the status frame, including the pooled
             // runspace drain (docs/ProgressCoverage-Plan.md S2).
-            Version = "1.0.4",
+            // 1.0.5: that drain runs off the circuit, so the page stays live while the pooled
+            // connections are disconnected (aud-a67).
+            Version = "1.0.5",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",
@@ -1176,7 +1178,9 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: mandatory ticket before any search, written on the search and
             // reveal audit events; ValidateTickets per-module validation switch.
-            Version = "1.2.2",
+            // 1.2.3: a search that meets a held archive says so after the one busy wait, not the
+            // provider's 30-second retry around it (aud-a67).
+            Version = "1.2.3",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
@@ -1422,7 +1426,9 @@ public sealed class ModuleCatalog
             // UI appears at all.
             // 1.7.1: an exception during undo now writes the undo audit record and
             // notifies administrators; it did neither (review of aud-a26).
-            Version = "1.7.2",
+            // 1.7.3: an allowlist save that meets a busy settings store says so and is recorded as
+            // a refusal, where it showed the provider's error code (aud-a67).
+            Version = "1.7.3",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

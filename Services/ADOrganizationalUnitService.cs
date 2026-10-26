@@ -8,7 +8,9 @@ namespace ExchangeAdminWeb.Services;
 /// No Delinea credential is needed - standard domain membership is sufficient for
 /// <c>Get-ADOrganizationalUnit -Filter *</c>.
 /// </summary>
-public sealed class ADOrganizationalUnitService
+// aud-a67 item 10: through IOrganizationalUnitDirectory, as the group lookup goes through IGroupGrantDirectory
+// (aud-a66), so the page can be driven with a stand-in that holds an enumeration and reaches no directory.
+public sealed class ADOrganizationalUnitService : IOrganizationalUnitDirectory
 {
     private readonly ILogger<ADOrganizationalUnitService> _logger;
     private readonly object _cacheLock = new();

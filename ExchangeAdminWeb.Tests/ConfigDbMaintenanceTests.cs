@@ -280,4 +280,66 @@ public class ConfigDbMaintenanceTests
         Assert.Throws<ConfigDbMaintenanceException>(() => ConfigDbMaintenance.Init(temp.DbPath));
         Assert.Equal("not a database", File.ReadAllText(temp.DbPath));
     }
+
+    // ---- aud-a67 item 2: the db mode waits the one busy wait, not the provider's retry around it ----------------
+
+    [Fact]
+    public void OpenReadOnly_TakesTheOneBusyWait_AsBothItsBusyTimeoutAndItsCommandTimeout()
+    {
+        // The defect: busy_timeout was set and the connection's command timeout was not, so the provider ran a busy
+        // statement again, each run another full busy_timeout, until its own 30 seconds had passed (the aud-a41 shape).
+        using var temp = new TempDir();
+        ConfigDbMaintenance.Init(temp.DbPath);
+
+        using var connection = ConfigDbMaintenance.OpenReadOnly(Path.GetFullPath(temp.DbPath));
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA busy_timeout;";
+
+        Assert.Equal((long)SqliteConnectionFactory.BusyTimeout.TotalMilliseconds, Convert.ToInt64(command.ExecuteScalar()));
+        Assert.Equal((int)SqliteConnectionFactory.BusyTimeout.TotalSeconds, connection.DefaultTimeout);
+        Assert.Equal(connection.DefaultTimeout, command.CommandTimeout);
+    }
+
+    [Fact]
+    public void Check_OfADatabaseHeldByAnotherConnection_GivesUp_WithoutTheProvidersThirtySecondRetry()
+    {
+        // Measured against the built app before this fix: db check sat for 30.5 s on a database another process held, where
+        // docs/ConfigDbToolInApp-Plan.md documents 5; after it, 7.8 to 9.4 s - the open and the statement each wait once.
+        // The ceiling here is loose on purpose (aud-a67 item 7): it fails the 30-second retry loop and nothing else.
+        using var temp = new TempDir();
+        using (var holder = HoldExclusively(temp.DbPath))
+        {
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            // The provider's own busy failure, which the CLI's Execute turns into "error: ..." and exit 2.
+            var refused = Assert.Throws<SqliteException>(() => ConfigDbMaintenance.Check(temp.DbPath));
+            waited.Stop();
+
+            Assert.True(ConfigStoreBusy.IsBusy(refused), $"not SQLITE_BUSY: {refused.SqliteErrorCode} {refused.Message}");
+            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(25),
+                $"the check waited {waited.Elapsed.TotalSeconds:F1} s: the provider's retry loop, not the one busy wait");
+            GC.KeepAlive(holder);
+        }
+
+        // Released, the same check answers.
+        ConfigDbMaintenance.Check(temp.DbPath);
+    }
+
+    /// <summary>
+    /// Holds <paramref name="path"/> so no other connection may even read it: a write transaction whose page cache is one
+    /// page, so SQLite spills to the file and takes an EXCLUSIVE lock for the rest of the transaction. A plain
+    /// BEGIN IMMEDIATE takes RESERVED, which a reader passes.
+    /// </summary>
+    private static SqliteConnection HoldExclusively(string path)
+    {
+        var connection = ConfigDbTestFiles.Open(path);
+        ConfigDbTestFiles.Exec(connection, "PRAGMA cache_size=1;");
+        ConfigDbTestFiles.Exec(connection, "CREATE TABLE IF NOT EXISTS held (k TEXT PRIMARY KEY, v TEXT);");
+        ConfigDbTestFiles.Exec(connection, """
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 20000)
+            INSERT INTO held SELECT 'k' || i, 'v' || i FROM n;
+            """);
+        ConfigDbTestFiles.Exec(connection, "BEGIN IMMEDIATE;");
+        ConfigDbTestFiles.Exec(connection, "UPDATE held SET v = v || '-held';");
+        return connection;
+    }
 }

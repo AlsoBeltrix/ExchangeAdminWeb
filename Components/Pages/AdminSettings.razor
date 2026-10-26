@@ -384,6 +384,14 @@
     /// </summary>
     private async Task SaveCurrentTabAsync()
     {
+        // aud-a67. One save at a time from this button. The button is disabled while `saving`, but a click the browser
+        // sent before that render arrived - a double click - ran a second save beside the first, and the first to finish
+        // cleared `saving` in its finally, so the button came back while the other was still running. Each save sets
+        // `saving` before its first await, so the second click reads it here (the aud-a28o shape, at the event rather
+        // than inside each handler).
+        if (saving)
+            return;
+
         switch (tab)
         {
             case SecModules: await SaveEnablement(); break;

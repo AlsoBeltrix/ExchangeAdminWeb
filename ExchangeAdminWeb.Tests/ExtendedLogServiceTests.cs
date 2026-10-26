@@ -452,6 +452,40 @@ public class ExtendedLogServiceTests
     }
 
     [Fact]
+    public void ALogFolderThatCannotBeCreatedAtStartUp_StillBuildsTheService_AndTheEntryItRefusesIsDroppedAndCounted()
+    {
+        // aud-a64. The constructor still created the folder, with no guard, after aud-a56 moved that into every entry's write:
+        // a log root the folder could not be made in at start-up stopped this singleton being built, its consumer already
+        // running, instead of each entry being dropped, counted and reported.
+        using var temp = new TempDirectory();
+        var folder = Path.Combine(temp.Path, "ExchangeAdminWeb");
+        File.WriteAllBytes(folder, []);
+        var logger = new CapturingLogger();
+
+        ExtendedLogService? built = null;
+        Assert.Null(Record.Exception(() => built = CreateService(temp.Path, logger: logger)));
+        var service = built!;
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Text.Contains(folder, StringComparison.Ordinal));
+        service.SetLevel("Error");
+        service.Write(LogEventLevel.Error, "while the folder cannot be made", "Test");
+
+        // Two minutes for the consumer - another thread - to count the entry it could not write: a signal, not a timing, so
+        // only a consumer that never does its part fails it (master's kd-16 ConsumerWait, which this branch forked before).
+        Assert.True(SpinWait.SpinUntil(() => service.DroppedEntryCount == 1, TimeSpan.FromMinutes(2)),
+            "the entry the folder refused was not dropped and counted");
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+
+        File.Delete(folder);
+        service.Write(LogEventLevel.Error, "once it can be", "Test");
+        service.Dispose();
+
+        var (messages, unparsed) = ReadAsTheEventLogDoes(service);
+        Assert.Equal(0, unparsed);
+        Assert.Equal(["once it can be"], messages);
+        Assert.Equal(1, service.DroppedEntryCount);
+    }
+
+    [Fact]
     public void TheConsumer_InAFolderThatLetsItWriteButNotDelete_WritesEveryEntry()
     {
         // aud-a51. The shared appender opened its lock DeleteOnClose: where the folder grants create, read and write but
