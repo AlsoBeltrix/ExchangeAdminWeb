@@ -975,7 +975,10 @@ public sealed class ModuleCatalog
             // 2.17.0: an ambiguous identity is told as what it is - more than one directory
             // object, or the two directories not naming the same one - rather than always as
             // "multiple AD users" (aud-a2aa).
-            Version = "2.17.0",
+            // 2.18.0: the Room Finder preview says a building's room list does not exist and that
+            // the row will be refused until it is created, where it marked the row "new" and the
+            // apply then refused it (kd-66).
+            Version = "2.18.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
