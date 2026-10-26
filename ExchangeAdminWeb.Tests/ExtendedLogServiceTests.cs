@@ -594,18 +594,8 @@ public class ExtendedLogServiceTests
         Assert.Equal(0, service.DroppedEntryCount);
         Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
 
-        static bool TryDelete(string path)
-        {
-            try
-            {
-                Directory.Delete(path, recursive: true);
-                return true;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-        }
+        // kd-47: a held file refuses two ways, and both mean "not yet" (TestFolders).
+        static bool TryDelete(string path) => TestFolders.TryDelete(path);
     }
 
     [Fact]
