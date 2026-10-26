@@ -63,6 +63,7 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (5): `ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs`.
 - (4), with (13): `Components/Pages/ModuleConfig.razor`, `Components/Pages/AdminSettings.razor`,
   `Components/Pages/ExchangeOnlineConfig.razor`; `ExchangeAdminWeb.Tests/SettingsSaveOffCircuitTests.cs`,
   `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs` (two aud-a66 cases start their second save through the new seam).
@@ -155,7 +156,7 @@ Proof that nothing was weakened: aud-a66's E1 and E2 mutants were re-run on this
 cases (the last two rows below).
 
 The commit that landed this (`b1661786`) was made with `dotnet format` failing: its new case's `switch` blocks were
-indented one level short, and the gate's result was read after the commit rather than before it. `b6b7a3d2` is the
+indented one level short, and the gate's result was read after the commit rather than before it. `51b2f7fa` is the
 whitespace fix, the formatter's own, no code line changed; the gate, the build and the case pass on it. The two
 commits are one sub-item. This agent does not amend without the owner's authority, so the mistake stands in the
 history with its correction behind it.
@@ -171,6 +172,18 @@ its rows; 497/497 green after every restore. D1 to D3 are each page as it was at
 | D3 `ExchangeOnlineConfig.SaveExoConfig`'s guard removed | `95d77fa2f2c7242d654271fb632a1ed1` | 1 of 497: the same case for "Exchange Online Config" - two writes |
 | aud-a66 E1 re-run (`savesInFlight.Clear()` before the add) | `d4d0a3efc8218684d687086fb63277c1` | 1 of 497: `SettingsModuleMoveTests.ASecondSaveThatFinishesFirst_DoesNotLetAnotherModuleLoadUnderTheFirst` - "the page loaded another module while the first of two saves still waited for the directory" |
 | aud-a66 E2 re-run (the route change's wait looks once, `if` not `while`) | `18bc49f26d57dbeac9d869f8d3271220` | 3 of 497: `ASaveStartedWhileAnotherModuleWaitsToLoad_IsWaitedForAsWell`, `AnAdminsSaveWhoseLookupOutlastsTheWait_...` and `ASaveThatNeverFinishes_...` (no notice) |
+
+(5). The comment said `SetLevel` "logs and swallows" a store failure, so only the authorization call could reach the log
+level save's catch. It has rethrown the store's exception since aud-a28k, which is what lets a level that did not
+persist be reported as a failure rather than a success. The comment is corrected and the case is now a theory that
+drives both ways in - the authorization store, and the store the level is written to. Filter
+`FullyQualifiedName~SettingsSaveAuditTests|FullyQualifiedName~ExtendedLogServiceTests|FullyQualifiedName~SettingsStoreBusyTests`
+(95 tests); `ExtendedLogService.cs` MD5 `71edf225678dd7c9b8818b7e3803f335`, matched after the row; 95/95 green after the
+restore.
+
+| Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|
+| E5 `SetLevel` swallows the store's failure again (its `throw;` removed) - the world the stale comment described | `45b89105881f8e27ca84f067c8f70a23` | 3 of 95: the new row `AdminSettings_ALogLevelSaveThatThrows_IsRecordedAsAFailure(fails: "the settings store the level is written to")` (recorded Success where Failed was expected), `ExtendedLogServiceTests.SetLevel_WhenTheStoreRefusesIt_AndTheLoggerThrows_ThrowsTheStoresFailure`, and `SettingsStoreBusyTests.AdminSettings_ALogLevelSaveThatFindsTheStoreBusy_...` |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 

@@ -438,17 +438,26 @@ public sealed class SettingsSaveAuditTests : IDisposable
         AssertOnlyARefusal("ExtendedLogLevel", "Authorization", Status(page));
     }
 
-    [Fact]
-    public async Task AdminSettings_ALogLevelSaveThatThrows_IsRecordedAsAFailure()
+    /// <summary>
+    /// aud-a67 item 5: this said SetLevel "logs and swallows" a store failure, so only what came before it could reach
+    /// the catch. It has rethrown the store's exception since aud-a28k (ExtendedLogService.SetLevel), which is what lets
+    /// a level that did not persist be reported as a failure instead of a success. Both ways in are driven now.
+    /// </summary>
+    [Theory]
+    [InlineData("the authorization store")]
+    [InlineData("the settings store the level is written to")]
+    public async Task AdminSettings_ALogLevelSaveThatThrows_IsRecordedAsAFailure(string fails)
     {
-        // SetLevel logs and swallows a store failure, so the catch is reached only by what comes
-        // before it: here, the authorization call.
         var page = LevelChosen();
         var before = _h.StoredLogLevel();
-        _h.AuthorizationFailure = new InvalidOperationException("the authorization store could not be read");
+        if (fails == "the authorization store")
+            _h.AuthorizationFailure = new InvalidOperationException("the authorization store could not be read");
+        else
+            _h.LogLevelStore.WritesFail = true;
 
         await _h.RunAsync(page, "SaveLogLevel");
 
+        _h.LogLevelStore.WritesFail = false;
         Assert.Equal(before, _h.StoredLogLevel());
         AssertOnlyAFailure("ExtendedLogLevel", Status(page));
     }
