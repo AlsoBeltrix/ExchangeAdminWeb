@@ -253,15 +253,24 @@ public class ADDirectorySearchServiceTests
 
     internal const string StandInGlobalCatalog = "gc01.example.test";
 
+    /// <summary>kd-55. The objectGUID the stand-in group answers with - what a validated group's result must carry.</summary>
+    internal const string StandInGroupGuid = "6f1c2c7e-3b9a-4d55-9a51-1c2f0e4b7a10";
+
     /// <summary>
     /// The service with both its sessions standing in (psl-11): the probe's import loads, so the directory reads as
     /// available - checked here, with the probe's one import - and the search's session answers <c>Get-ADUser</c>,
-    /// <c>Get-ADGroup</c>, <c>Get-ADOrganizationalUnit</c> and <c>Get-ADForest</c> with one object each, noting every call in
+    /// <c>Get-ADGroup</c>, <c>Get-ADOrganizationalUnit</c> and <c>Get-ADForest</c>, noting every call in
     /// <paramref name="calls"/> as "command" or, for a group, "command|server". Every command is an advanced function and
     /// autoloading is off in both sessions, so neither can load a module or reach a directory.
     /// </summary>
-    internal static ADDirectorySearchService AvailableStandInService(List<string> calls)
+    /// <param name="answers">
+    /// kd-55. How many objects each directory command returns: "one" (the default, what the search tests expect), "none" -
+    /// the absence an existence check must report as NotFound rather than Unavailable - or "two", which makes a validation
+    /// ambiguous. <c>Get-ADForest</c> always answers its catalog.
+    /// </param>
+    internal static ADDirectorySearchService AvailableStandInService(List<string> calls, string answers = "one")
     {
+        var times = answers switch { "none" => 0, "two" => 2, _ => 1 };
         var probeCalls = new List<string>();
         var svc = new ADDirectorySearchService(NullLogger<ADDirectorySearchService>.Instance)
         {
@@ -270,20 +279,20 @@ public class ADDirectorySearchServiceTests
                 $global:DirectoryCalls.Add("Import-Module|$Name")
                 """)),
             CreateSearchRunspace = () => StandInSession(calls,
-                ("Get-ADUser", """
+                ("Get-ADUser", $$"""
                     [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
                     $global:DirectoryCalls.Add('Get-ADUser')
-                    [pscustomobject]@{ DisplayName = 'Alex Doe'; DistinguishedName = 'CN=Alex Doe,OU=Staff,DC=example,DC=test'; SamAccountName = 'adoe'; UserPrincipalName = 'alex.doe@example.test'; mail = 'alex.doe@example.test' }
+                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ DisplayName = 'Alex Doe'; DistinguishedName = 'CN=Alex Doe,OU=Staff,DC=example,DC=test'; SamAccountName = 'adoe'; UserPrincipalName = 'alex.doe@example.test'; mail = 'alex.doe@example.test' } }
                     """),
-                ("Get-ADGroup", """
+                ("Get-ADGroup", $$"""
                     [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
                     $global:DirectoryCalls.Add("Get-ADGroup|$Server")
-                    [pscustomobject]@{ DisplayName = 'Finance Approvers'; Name = 'Finance Approvers'; DistinguishedName = 'CN=Finance Approvers,OU=Groups,DC=example,DC=test'; SamAccountName = 'FinanceApprovers'; mail = $null; objectSid = 'S-1-5-21-1000000000-1000000000-1000000000-2001' }
+                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ DisplayName = 'Finance Approvers'; Name = 'Finance Approvers'; DistinguishedName = 'CN=Finance Approvers,OU=Groups,DC=example,DC=test'; SamAccountName = 'FinanceApprovers'; mail = $null; objectSid = 'S-1-5-21-1000000000-1000000000-1000000000-2001'; ObjectGUID = [guid]'{{StandInGroupGuid}}' } }
                     """),
-                ("Get-ADOrganizationalUnit", """
+                ("Get-ADOrganizationalUnit", $$"""
                     [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
                     $global:DirectoryCalls.Add('Get-ADOrganizationalUnit')
-                    [pscustomobject]@{ Name = 'Test Rooms'; DistinguishedName = 'OU=Test Rooms,DC=example,DC=test' }
+                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ Name = 'Test Rooms'; DistinguishedName = 'OU=Test Rooms,DC=example,DC=test' } }
                     """),
                 ("Get-ADForest", $$"""
                     [CmdletBinding()] param()

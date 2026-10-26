@@ -296,6 +296,80 @@ public class ADDirectoryValidateExistsTests
             Assert.Equal("example.test", Assert.Single(results, r => r.ObjectType == "Group").DnsDomain);
     }
 
+    // ---- kd-55: the existence check itself, on the available stand-in --------------------------------
+    // ValidateExists is what the Protected Principals admin page gates new entries on, and until psl-11 opened the search
+    // session nothing here could run it: the tests above cover its decision helpers and the unavailable path. These run the
+    // real method on the stand-in (ADDirectorySearchServiceTests.AvailableStandInService, no directory): the command each
+    // kind asks, what it maps back, and - the distinction the class exists for - an absence reported as NotFound.
+
+    [Theory]
+    [InlineData("User", "Get-ADUser", "Alex Doe", "CN=Alex Doe,OU=Staff,DC=example,DC=test")]
+    [InlineData("Group", "Get-ADGroup|", "Finance Approvers", "CN=Finance Approvers,OU=Groups,DC=example,DC=test")]
+    [InlineData("OU", "Get-ADOrganizationalUnit", "Test Rooms", "OU=Test Rooms,DC=example,DC=test")]
+    public void ValidateExists_EachObjectKind_AsksItsCommand_AndMapsTheMatch(string objectKind, string call, string label, string dn)
+    {
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls);
+
+        var result = svc.ValidateExists("Finance Approvers", objectKind);
+
+        Assert.Equal([call], calls);
+        Assert.Equal(DirectoryLookupOutcome.Found, result.Outcome);
+        Assert.False(result.Ambiguous);
+        var match = Assert.IsType<ADSearchResult>(result.Match);
+        Assert.Equal(objectKind, match.ObjectType);
+        Assert.Equal(label, match.DisplayName);
+        Assert.Equal(dn, match.DistinguishedName);
+        // The protected-target admin input stores a group's immutable id beside its DN, so validation must return it.
+        Assert.Equal(objectKind == "Group" ? ADDirectorySearchServiceTests.StandInGroupGuid : null, match.ObjectGuid);
+    }
+
+    [Theory]
+    [InlineData("User")]
+    [InlineData("Group")]
+    [InlineData("OU")]
+    public void ValidateExists_NothingMatches_IsNotFound_NeverUnavailable(string objectKind)
+    {
+        // The query ran and answered nothing: an affirmative absence. Reported as Unavailable it would tell an admin to
+        // retry later instead of checking the name - the inversion this method exists to prevent.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls, answers: "none");
+
+        var result = svc.ValidateExists("Finance Approvers", objectKind);
+
+        Assert.Equal(DirectoryLookupOutcome.NotFound, result.Outcome);
+        Assert.Null(result.Match);
+        Assert.Single(calls);
+    }
+
+    [Theory]
+    [InlineData("CN=Finance Approvers,OU=Groups,DC=winroot,DC=example,DC=test", "winroot.example.test")]
+    [InlineData("Finance Approvers", "")]
+    public void ValidateExists_ADnShapedGroup_IsAskedOfItsOwnDomain(string identity, string server)
+    {
+        // pgwt-5: a DN names its owning domain and the default binding is the local one, so a forest-wide picker selection
+        // revalidated here read as nonexistent. Only the Group kind routes, and only for a DN.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls);
+
+        var result = svc.ValidateExists(identity, "Group");
+
+        Assert.Equal(DirectoryLookupOutcome.Found, result.Outcome);
+        Assert.Equal([$"Get-ADGroup|{server}"], calls);
+    }
+
+    [Fact]
+    public void ValidateExists_MoreThanOneMatch_IsFoundAndAmbiguous()
+    {
+        // pgwt-4: several matches still answer "it exists", and the caller that must store exactly one object is told.
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService([], answers: "two");
+
+        var result = svc.ValidateExists("Finance Approvers", "Group");
+
+        Assert.Equal(DirectoryLookupOutcome.Found, result.Outcome);
+        Assert.True(result.Ambiguous);
+    }
+
     [Fact]
     public void Search_OuTermTooShort_ReturnsEmpty()
     {
