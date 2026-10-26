@@ -2002,10 +2002,10 @@
                 EmailAddress = singleEmail,
                 Status = MigrationStatus.Undetermined // aud-a23h: a throw before the service returned is no verdict either
             };
-            singleResult.IneligibilityReasons.Add($"Could not be determined: {ex.Message}");
-            checkFailure = $"Could not be determined: {ex.Message}";
+            singleResult.IneligibilityReasons.Add($"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // kd-34: the error's own words (aud-a23i's helper) - a sign-in that fails under Stop arrives as PowerShell's Stop exception, "The running command stopped because ..." in front
+            checkFailure = $"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             try { Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
-                "Error", singleTicketNumber, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
+                "Error", singleTicketNumber, ExchangeServiceBase.ResolveFailure(ex).primary); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
         }
         finally
         {
@@ -2081,7 +2081,7 @@
         }
         catch (Exception ex)
         {
-            singleCreateResult = PermissionResult.Fail(createFailure = ex.Message);
+            singleCreateResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -2144,12 +2144,12 @@
             {
                 BatchName = "Error",
                 Success = false,
-                Message = ex.Message,
+                Message = ExchangeServiceBase.ResolveFailure(ex).primary, // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
                 Direction = migrationDirection
             };
-            bulkFailure = $"The bulk eligibility check failed: {ex.Message}";
+            bulkFailure = $"The bulk eligibility check failed: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             Audit.LogMigrationAction(currentUser, clientIpAddress,
-                $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ex.Message);
+                $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ExchangeServiceBase.ResolveFailure(ex).primary);
         }
         finally
         {
@@ -2227,7 +2227,7 @@
         }
         catch (Exception ex)
         {
-            createResult = PermissionResult.Fail(createFailure = ex.Message);
+            createResult = PermissionResult.Fail(createFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -2294,7 +2294,7 @@
         }
         catch (Exception ex)
         {
-            (migrationBatches, unreadableBatches, batchListFailure) = MigrationBatchList.Failed(ex.Message); // aud-a23g: a throw before the service returns (the borrow, the connect) is the same failed load
+            (migrationBatches, unreadableBatches, batchListFailure) = MigrationBatchList.Failed(ExchangeServiceBase.ResolveFailure(ex).primary); // aud-a23g: a throw before the service returns (the borrow, the connect) is the same failed load; kd-34: in its own words
             batchActionResult = null; // as on success: a bulk action's reload puts its own result back beside the failure, not under "Failed to load"
         }
         finally
@@ -3316,7 +3316,7 @@
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            var result = await action();
+            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // kd-33: a throw is audited too
             batchActionResult = result;
             actionFailure = result.Success ? null : result.Message;
             try
@@ -3348,7 +3348,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
@@ -3380,7 +3380,7 @@
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            var result = await action();
+            var result = await AuditedIfItThrows(() => action(), auditAction, target, ticket); // kd-33: a throw is audited too
             batchActionResult = result;
             actionFailure = result.Success ? null : result.Message;
             try
@@ -3411,12 +3411,43 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(actionFailure = ex.Message);
+            batchActionResult = PermissionResult.Fail(actionFailure = ExchangeServiceBase.ResolveFailure(ex).primary); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {
             actionInProgress = null;
             activity.Complete(actionFailure is null, actionFailure);
+        }
+    }
+
+    // kd-33. A write whose action throws is audited too. Each executor wrote its row once the action returned, so a sign-in
+    // that failed during a write - the Stop exception the pool's borrow rethrows - or any other throw out of the action left
+    // no trace of an attempted mutation (the Constitution: every failed mutation writes an audit event). Filed as aud-a73
+    // files a permission write that threw: Failed when the service says the command was never sent (aud-a76's
+    // PermissionWriteNotSubmittedException), Undetermined otherwise, since it may have been. The cause in its own words
+    // (aud-a23i's helper), looked for inside the not-sent wrapper. The throw then goes on to the executor's catch, as before.
+    private async Task<PermissionResult> AuditedIfItThrows(Func<Task<PermissionResult>> write, string auditAction, string target, string ticket)
+    {
+        try
+        {
+            return await write();
+        }
+        catch (Exception ex)
+        {
+            var neverSent = ex is PermissionWriteNotSubmittedException;
+            var cause = ExchangeServiceBase.ResolveFailure(ex is PermissionWriteNotSubmittedException { InnerException: { } wrapped } ? wrapped : ex).primary.Trim().TrimEnd('.');
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, false, ticket,
+                    neverSent ? $"Nothing was written: the connection to Exchange failed: {cause}." : $"Whether the change was made could not be confirmed: {cause}.",
+                    filedAs: neverSent ? AuditResult.Failed : AuditResult.Undetermined);
+            }
+            catch (Exception auditEx)
+            {
+                Logger.LogError(auditEx, "Audit failed for {Action} on {Target}, whose write threw", auditAction, target);
+            }
+
+            throw;
         }
     }
 
@@ -3575,7 +3606,7 @@
             var auditWarnings = new List<string>();
             foreach (var batchName in batchNames)
             {
-                var result = await action(batchName);
+                var result = await AuditedIfItThrows(() => action(batchName), auditAction, batchName, ticket); // kd-33: the same, for the batch in flight
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, batchName,
@@ -3724,7 +3755,7 @@
 
             foreach (var email in plan.Eligible)
             {
-                var result = await action(email);
+                var result = await AuditedIfItThrows(() => action(email), auditAction, email, ticket); // kd-33: the same, for the mailbox in flight
                 try
                 {
                     Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, email,
@@ -3843,7 +3874,7 @@
                 // R9 and R26. Finding takes the operator TO the batch, and arriving at a batch is
                 // selecting it - there is no third state where the pane shows one thing and the
                 // tick boxes another. Adopt navigates and loads, so nothing is fetched here.
-                selectedBatches.Clear();
+                selectedBatches.Clear(); WithdrawStagedMailboxAction(); // kd-35: before the list is cleared below - kd-13's withdrawal finds a row's action among the loaded mailboxes, so read after the clear it found none, and Confirm ran the last batch's row action over this one
                 selectedBatches.Add(matchedBatch.BatchName);
                 batchUsers = null;
                 InvalidateStoredReports(matchedBatch.BatchName);
@@ -3874,7 +3905,7 @@
             }
 
             highlightedUser = searchResult.Email;
-            selectedBatches.Clear();
+            selectedBatches.Clear(); WithdrawStagedMailboxAction(); // kd-35: the same, for a mailbox found in its batch
             selectedBatches.Add(searchResult.BatchId!);
             batchUsers = null;
             InvalidateStoredReports(searchResult.BatchId);
@@ -3884,7 +3915,7 @@
         }
         catch (Exception ex)
         {
-            batchActionResult = PermissionResult.Fail(searchFailure = $"Search failed: {ex.Message}");
+            batchActionResult = PermissionResult.Fail(searchFailure = $"Search failed: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
         }
         finally
         {

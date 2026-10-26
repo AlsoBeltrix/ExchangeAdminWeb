@@ -68,6 +68,7 @@ public sealed class MigrationDenialTests : IDisposable
         var row = OneDeniedRow(auditAction);
         Assert.Equal(target, row.GetProperty("target").GetString());
         Assert.False(row.TryGetProperty("targets", out _)); // kd-17: a single action's target is the one it names; no list
+        Assert.False(row.TryGetProperty("targetCount", out _)); // kd-36: nor a count
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Equal("MigrationManage authorization denied", row.GetProperty("error").GetString());
         Assert.Equal((false, expected), Outcome());
@@ -274,12 +275,39 @@ public sealed class MigrationDenialTests : IDisposable
         Assert.DoesNotMatch(@"^Migration_", deniedTarget ?? "");
         Assert.Equal(target, deniedTarget);
         Assert.Equal([attempted], row.GetProperty("targets").EnumerateArray().Select(name => name.GetString()));
+        Assert.Equal(1, row.GetProperty("targetCount").GetInt32()); // kd-36: the run's own count, and nothing left out
+        Assert.False(row.GetProperty("targetsTruncated").GetBoolean());
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Equal("MigrationManage authorization denied", row.GetProperty("error").GetString());
         Assert.Equal((false, expected), Outcome());
 
         Field("tabIndex").SetValue(page, 2);
         Assert.Contains(expected, page.RenderText(), StringComparison.Ordinal);
+    }
+
+    // kd-36. A denied run over a large selection - a section-access change can deny the page's largest, thousands of
+    // mailboxes - records its count and only the first names, in the run's order, and says the rest were left out. Before:
+    // every name in the one row.
+    [Theory]
+    [InlineData("ExecuteBulkBatchAction")]
+    [InlineData("ExecuteBulkMailboxAction")]
+    public async Task ADeniedRunOverALargeSelection_RecordsItsCount_AndOnlyTheFirstNames(string handler)
+    {
+        var page = Page(deny: "MigrationManage");
+        Func<string, Task<PermissionResult>> action = _ => Task.FromResult(PermissionResult.Ok());
+        var onBatches = handler == "ExecuteBulkBatchAction";
+        var names = Enumerable.Range(1, 120).Select(i => onBatches ? $"Wave {i:000}" : $"user{i:000}@contoso.test").ToList();
+
+        if (onBatches)
+            await Call(page, handler, (IReadOnlyList<string>)names, (IReadOnlyList<MigrationBatchSkip>)[], action, "StopMigrationBatch", "Migration_StopSelected", "Queued stop of", Ticket);
+        else
+            await Call(page, handler, new MigrationUserActionPlan(names, []), action, "StopMigrationUser", "Migration_PauseMailboxes", "Queued pause of", Ticket);
+
+        var row = OneDeniedRow(onBatches ? "StopMigrationBatch" : "StopMigrationUser");
+        Assert.Equal(onBatches ? "120 batch(es)" : "120 mailbox(es)", row.GetProperty("target").GetString());
+        Assert.Equal(120, row.GetProperty("targetCount").GetInt32());
+        Assert.Equal(names.Take(50), row.GetProperty("targets").EnumerateArray().Select(name => name.GetString())); // MigrationService.DeniedTargetsRecorded
+        Assert.True(row.GetProperty("targetsTruncated").GetBoolean());
     }
 
     private static MigrationBatchResult OneEligibleRow() => new()

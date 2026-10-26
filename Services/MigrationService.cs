@@ -970,13 +970,19 @@ https://admin.exchange.microsoft.com/#/migration";
             ServicedNote = result.ServicedNote,
         };
 
+    // kd-36. How many of a denied run's names its row carries. A denial can cover the page's largest selection - thousands of
+    // mailboxes after a section-access change - and the row carried every name, one JSONL line that the Admin Event Log joins
+    // into one detail string. The row keeps the first of them, the run's own count and whether more were left out.
+    internal const int DeniedTargetsRecorded = 50;
+
     // aud-a23q. A failed authorization on a single action or a create: the bulk executors' "_Denied" row - action, target,
     // Failed, ticket, "<policy> authorization denied" - with mutationAttempted false (the aud-a28 refusal convention), and the
     // text the page shows and ends the activity with. It returned in silence: no banner, no row, an activity that read
     // "Nothing was done.". A failed audit write is logged and swallowed, as the bulk executors' is, so it cannot take the
     // denial's place. Static, with the page's services passed in, so each page line stays one statement (the page is
     // line-keyed by ClickGateRegistry). kd-17: a bulk run's denial passes the names it would have acted on as targets, and
-    // the row carries them - its target being the run's scope ("2 batch(es)"), which names none of them.
+    // the row carries them - its target being the run's scope ("2 batch(es)"), which names none of them. kd-36: the first
+    // DeniedTargetsRecorded of them, with targetCount and targetsTruncated.
     internal static string RecordDenial(AuditService audit, ILogger logger, string actor, string ipAddress,
         string auditAction, string description, string target, string ticket, string policy, IReadOnlyList<string>? targets = null)
     {
@@ -984,7 +990,11 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             var extra = new Dictionary<string, object?> { ["mutationAttempted"] = false };
             if (targets is not null)
-                extra["targets"] = targets.ToArray();
+            {
+                extra["targetCount"] = targets.Count;
+                extra["targets"] = targets.Take(DeniedTargetsRecorded).ToArray();
+                extra["targetsTruncated"] = targets.Count > DeniedTargetsRecorded;
+            }
             audit.LogMigrationAction(actor, ipAddress, $"{auditAction}_Denied", target, false, ticket,
                 errorDetail: $"{policy} authorization denied",
                 extra: extra);
@@ -1239,14 +1249,16 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public Task<PermissionResult> CompleteMigrationBatchAsync(string batchName)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Complete-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null), allowRetry: true));
     }
 
     /// <summary>
@@ -1281,7 +1293,8 @@ https://admin.exchange.microsoft.com/#/migration";
                 + "immediately."));
         }
 
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             var command = ps.AddCommand("Set-MigrationBatch")
                             .AddParameter("Identity", batchName)
@@ -1299,16 +1312,18 @@ https://admin.exchange.microsoft.com/#/migration";
                 command.AddParameter("CompleteAfter", null);
             }
 
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
         }, () => completeAfterUtc is { } at
             ? ($"Migration batch '{batchName}' will complete after {at.ToUniversalTime():yyyy-MM-dd HH:mm} UTC.", (string?)null)
             : ($"Scheduled completion cleared for migration batch '{batchName}'.", (string?)null),
-        allowRetry: true);
+        allowRetry: true));
     }
 
     public Task<PermissionResult> CompleteMigrationUserAsync(string emailAddress)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
@@ -1316,8 +1331,9 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("CompleteAfter", DateTime.UtcNow)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration completion initiated for {emailAddress}.", (string?)null), allowRetry: true);
+        }, () => ($"Migration completion initiated for {emailAddress}.", (string?)null), allowRetry: true));
     }
 
     public Task<PermissionResult> ApproveMigrationUserAsync(string emailAddress)
@@ -1326,7 +1342,8 @@ https://admin.exchange.microsoft.com/#/migration";
         // NOT retry-eligible: multiple writes incl. non-idempotent Resume-MoveRequest (retry-safety
         // audit). A dead session discards and fails as before; the operator re-runs manually.
         string? batchOutcome = null;
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             var pastDate = DateTime.Now.AddDays(-1);
 
@@ -1376,6 +1393,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the first write command is invoked next, after the reads
             ApproveStep(ps, tracker, "Set-MigrationUser -ApproveSkippedItems", emailAddress, applied);
 
             ps.AddCommand("Set-MigrationUser")
@@ -1424,7 +1442,7 @@ https://admin.exchange.microsoft.com/#/migration";
             batchOutcome = hasOwnBatch
                 ? DescribeCompletionReadBack(ps, tracker, emailAddress)
                 : $"{emailAddress} is not in a migration batch of its own, so no batch was completed; only this mailbox was told to complete.";
-        }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", batchOutcome));
+        }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", batchOutcome)));
     }
 
     // aud-a23h. One write of the approval. Invoke, as every other Migration write: it fails on HadErrors too, and a write
@@ -1567,38 +1585,44 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public Task<PermissionResult> StopMigrationUserAsync(string emailAddress)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Stop-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration stopped for {emailAddress}.", (string?)null), allowRetry: true);
+        }, () => ($"Migration stopped for {emailAddress}.", (string?)null), allowRetry: true));
     }
 
     public Task<PermissionResult> ResumeMigrationUserAsync(string emailAddress)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Start-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration resumed for {emailAddress}.", (string?)null), allowRetry: true);
+        }, () => ($"Migration resumed for {emailAddress}.", (string?)null), allowRetry: true));
     }
 
     public Task<PermissionResult> RemoveMigrationUserAsync(string emailAddress)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration user {emailAddress} removed.", (string?)null), allowRetry: true);
+        }, () => ($"Migration user {emailAddress} removed.", (string?)null), allowRetry: true));
     }
 
     // These three cmdlets return when Exchange ACCEPTS the request, not when the work is done: the
@@ -1607,38 +1631,44 @@ https://admin.exchange.microsoft.com/#/migration";
     // see on screen reads as a broken app, and it was.
     public Task<PermissionResult> RemoveMigrationBatchAsync(string batchName)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' queued for removal.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' queued for removal.", (string?)null), allowRetry: true));
     }
 
     public Task<PermissionResult> StopMigrationBatchAsync(string batchName)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Stop-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' queued to stop.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' queued to stop.", (string?)null), allowRetry: true));
     }
 
     public Task<PermissionResult> StartMigrationBatchAsync(string batchName)
     {
-        return RunAsync((ps, tracker) =>
+        var submission = new PermissionWriteSubmission(); // kd-33: a throw before the write command is sent says so (aud-a76)
+        return submission.TrackAsync(() => RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Start-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            submission.Submitting(); // kd-33: the write command is invoked next
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' queued to start.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' queued to start.", (string?)null), allowRetry: true));
     }
 
     // aud-a23k. A size that could not be read used to be 0 - the read failing, no row, a size that did not parse, and any

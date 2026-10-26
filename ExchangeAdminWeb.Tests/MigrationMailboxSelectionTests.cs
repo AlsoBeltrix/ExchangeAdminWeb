@@ -236,6 +236,36 @@ public sealed class MigrationMailboxSelectionTests : IDisposable
         Assert.Equal("Stop", Staged(page));
     }
 
+    // ---- kd-35: a search that opens another batch --------------------------------------------------------------------
+
+    // Both of the search's branches - a batch it matches by name, a mailbox it finds in its batch - cleared the mailbox list
+    // before opening the batch, and kd-13's withdrawal finds a row's action only among the loaded mailboxes. Before: batch B
+    // open, A's "Pause User" for Alice still staged, and Confirm paused Alice.
+    [Theory]
+    [InlineData("a batch by its name")]
+    [InlineData("a mailbox in its batch")]
+    public async Task ASearchThatOpensAnotherBatch_WithdrawsARowActionStagedOnTheLast(string found)
+    {
+        _exchange.MigrationUsers[Bob] = Row(("Identity", Bob), ("BatchId", BatchB));
+        var page = await PageWithTheBatchListLoaded();
+        using var renderer = new InteractiveRenderer(new ServiceCollection()
+            .AddSingleton<NavigationManager>(new RecordingNavigation()).AddSingleton(new ExchangeAdminWeb.Modules.ModuleCatalog()).BuildServiceProvider());
+        renderer.Attach(page);
+        await renderer.Dispatcher.InvokeAsync(() => Call(page, "SelectOnlyBatch", BatchA));
+        await renderer.Dispatcher.InvokeAsync(() => Run(page, "PauseUser", Alice));
+        Assert.Equal("Pause User", Staged(page));
+        Field("searchQuery").SetValue(page, found == "a batch by its name" ? BatchB : Bob);
+
+        await renderer.Dispatcher.InvokeAsync(() => Call(page, "SearchUser"));
+
+        Assert.Equal(BatchB, OpenBatch(page));
+        Assert.Null(Staged(page));
+        Assert.Null(Field("pendingActionCallback").GetValue(page));
+        Field("pendingActionTicket").SetValue(page, "INC0042");
+        await renderer.Dispatcher.InvokeAsync(() => Call(page, "ConfirmPendingAction"));
+        Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("Stop-MigrationUser", StringComparison.Ordinal));
+    }
+
     private sealed class RecordingNavigation : NavigationManager
     {
         public RecordingNavigation() => Initialize("https://example.test/", "https://example.test/migration");
@@ -244,7 +274,8 @@ public sealed class MigrationMailboxSelectionTests : IDisposable
     }
 
 #pragma warning disable BL0006 // a bare renderer, only so the page reports itself interactive
-    private sealed class InteractiveRenderer() : Renderer(new ServiceCollection().BuildServiceProvider(), NullLoggerFactory.Instance)
+    // kd-35: services for the components a render reaches - the search renders the page (StateHasChanged) before it opens the batch
+    private sealed class InteractiveRenderer(IServiceProvider? services = null) : Renderer(services ?? new ServiceCollection().BuildServiceProvider(), NullLoggerFactory.Instance)
     {
         public override Dispatcher Dispatcher { get; } = Dispatcher.CreateDefault();
         protected override RendererInfo RendererInfo { get; } = new("Server", isInteractive: true);
