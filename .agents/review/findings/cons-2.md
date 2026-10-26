@@ -3,7 +3,7 @@
 **Severity**: LOW - flaky test, the aud-a67 (7) class but outside the sub-item's named scope.
 `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs` `ALockReleasedWithinTheWait_LetsTheWriteThrough` asserts
 `elapsed < BusyTimeout` (5 s) after holding the lock 1 s; on a loaded host the write can legitimately take longer.
-**Status**: Merged to master `4afa745d`; codex defect review settings-batch-9 in flight
+**Status**: Closed - merged to master `4afa745d`; codex settings-batch-9 clean. Complete once fix/a64-a67 is deleted
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: see below
 **Reviewer**: implementer (aud-a64/a67 agent, candidate; not yet confirmed by the supervisor)
@@ -71,3 +71,7 @@ why it is loose rather than tight.
   `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` after `git add -A`: exit 0.
 - Not run: `Invoke-ScriptAnalyzer` and `Invoke-Pester tests/ps` - no PowerShell file changed. No directory, Exchange
   Online, Graph, DHCP, IIS, Delinea or SMTP call; nothing deployed.
+
+## Reviewer comments (supervisor, settings-batch-9)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base f08a664a head 554ad4da (merged 4afa745d); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat 554ad4da). One candidate, admitted as cons-6 (against cons-4). Codex judged the agent's three recorded calls and upheld all three: no await, StateHasChanged or yielding call sits between the last StillRequested and the assignment, and `ModuleAdmin.IsModuleAdmin` is synchronous, so the third check really was redundant and the source guard stands in for it; aud-a67 (9) is adequately superseded and its source guard is not tautological for the two named mutants; cons-2's ceiling is a broad sanity bound that does not bite under its own defect, and the sibling coverage it leans on is real (the held-lock failure case and the structural timeout assertion both catch removal of `DefaultTimeout`). cons-5's refusals return before any write, audit or dirty clearing, and Exchange Online Config's fields really are that page's working state. Artefacts: `.agents/review/settings-batch-9.result.txt`, `.stream.log`, `prompt-settings-batch-9.md`.
