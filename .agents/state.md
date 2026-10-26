@@ -14,10 +14,8 @@ the latest sweep is Archived 2026-10-23).
 more you find while doing so", then "ALL the bugs includes ALL the bugs. those too. all of them.
 ... EVERYTHING." That approved every open follow-up in `.agents/review/index.md` recorded "not
 approved" or "owner decision required" (`.agents/decisions.md` 2026-10-21). The stopping rule of
-2026-10-23 bounds it (`.agents/decisions.md` 2026-10-23): the agents in flight land and are
-codex-reviewed; of what codex raises, only HIGH and MEDIUM candidates are fixed; LOW candidates
-are admitted and held for after the first dev deploy; then version bumps, state refresh, token
-log and the hand-over of a deployable master.
+2026-10-23 narrowed it for one afternoon and the owner's 2026-10-23 EVENING ruling lifted that hold
+again: every remaining LOW, MEDIUM and HIGH is fixed before any deploy. That is the live scope.
 
 **Arrangement.** Opus 5.5 implementation agents dispatched from a supervising Fable session,
 each in its own worktree; one finding per commit; mutation proof per guard; a codex (gpt-5.5,
@@ -25,9 +23,8 @@ xhigh) defect review of each merged group. The findings and their status live in
 `.agents/review/index.md` and `.agents/review/findings/`; this file does not copy their counts.
 Each slice's arrangement and cost go in `.agents/token-log.md`.
 
-**Master, as of `d881ea58`:** base app 2.35.0 (was 2.34.0); sixteen module versions bumped in
-`Modules/ModuleCatalog.cs`, which owns which ones. The last gate results are in
-`## Verification`.
+**Master's position and gates are in the halt block below, not here.** `Modules/ModuleCatalog.cs`
+owns which module versions moved; `ExchangeAdminWeb.csproj` owns the base version.
 
 **HALTED 2026-10-26: every implementation agent was killed mid-slice by the account's individual spend limit**
 (HTTP 429 on `claude-opus-5-5`, eight agents within minutes of each other). Nothing was lost: each agent's
