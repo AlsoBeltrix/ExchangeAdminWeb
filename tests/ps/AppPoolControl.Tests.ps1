@@ -1228,23 +1228,34 @@ Describe 'cdt-46: one folder however the filesystem spells it - an 8.3 short nam
         # An 8.3 spelling of a folder that exists (cdt-50: found without a skip path), in order: the
         # fixture folder's own, when its volume generates short names; one set on it with fsutil, where
         # the volume allows short names but did not make one (that needs elevation; a refusal just falls
-        # through); Program Files', which most Windows hosts have. The source is kept for the messages.
+        # through); Program Files', which most Windows hosts have. The source is kept for the messages,
+        # and so is why each one gave nothing, so that a host with none fails the test that needs one
+        # and names the cause (cdt-56).
         $shortOf = { param([string]$Path) (cmd /c "for %I in (`"$Path`") do @echo %~sI").Trim() }
+        $script:Cdt46ShortTried = New-Object System.Collections.Generic.List[string]
         $script:Cdt46Long = $script:Cdt46Folder
         $script:Cdt46Short = & $shortOf $script:Cdt46Folder
         $script:Cdt46ShortSource = 'the fixture folder''s own short name'
         if ($script:Cdt46Short -eq $script:Cdt46Long) {
-            $null = cmd /c "fsutil file setshortname `"$($script:Cdt46Folder)`" CDT46L~1 2>&1"
+            $script:Cdt46ShortTried.Add("the fixture folder '$($script:Cdt46Folder)' has no short name: its volume made none")
+            $fsutil = @(cmd /c "fsutil file setshortname `"$($script:Cdt46Folder)`" CDT46L~1 2>&1")
+            $fsutilExit = $LASTEXITCODE
             $script:Cdt46Short = & $shortOf $script:Cdt46Folder
             $script:Cdt46ShortSource = 'a short name set on the fixture folder with fsutil'
+            if ($script:Cdt46Short -eq $script:Cdt46Long) {
+                $script:Cdt46ShortTried.Add("fsutil file setshortname on it exited $fsutilExit and set none: $((($fsutil | ForEach-Object { "$_".Trim() }) -join ' ').Trim())")
+            }
         }
         if ($script:Cdt46Short -eq $script:Cdt46Long) {
             $script:Cdt46Long = $env:ProgramFiles
             $script:Cdt46Short = & $shortOf $env:ProgramFiles
             $script:Cdt46ShortSource = 'Program Files'' short name'
+            if ($script:Cdt46Short -eq $script:Cdt46Long) {
+                $script:Cdt46ShortTried.Add("Program Files ('$($env:ProgramFiles)') has no short name")
+            }
         }
         $script:Cdt46HasShortName = ($script:Cdt46Short -ne $script:Cdt46Long)
-        if (-not $script:Cdt46HasShortName) { $script:Cdt46ShortSource = 'none: this host gives no 8.3 spelling' }
+        if (-not $script:Cdt46HasShortName) { $script:Cdt46ShortSource = 'none: ' + ($script:Cdt46ShortTried -join '; ') }
 
         function Get-IisEntry {
             param([string]$Location, [string]$ApplicationPool, [string]$PhysicalPath)
@@ -1269,18 +1280,18 @@ Describe 'cdt-46: one folder however the filesystem spells it - an 8.3 short nam
         (ConvertTo-ComparablePhysicalPath $syntheticShort) | Should -BeExactly $syntheticShort -Because 'a short component that names nothing on disk is not expanded'
         Test-SamePhysicalFolder -Path $syntheticShort -Other $syntheticLong | Should -BeFalse -Because 'a spelling that cannot be resolved on disk is not taken as the same folder'
 
-        # Where a real short spelling exists - see BeforeAll for where it came from - it is taken for its
-        # folder. GetFullPath already expands the short name of a folder that exists, under .NET
-        # Framework and .NET alike (probed for cdt-46), so this pins that the comparison keeps taking
-        # it, whichever half of it does the work.
-        if ($script:Cdt46HasShortName) {
-            Test-SamePhysicalFolder -Path $script:Cdt46Short -Other $script:Cdt46Long | Should -BeTrue -Because "'$($script:Cdt46Short)' ($($script:Cdt46ShortSource)) is '$($script:Cdt46Long)'"
-            Test-SamePhysicalFolder -Path $script:Cdt46Long -Other $script:Cdt46Short | Should -BeTrue
-            $served = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Long -NestedNodes Refuse -ApplicationsProbe {
-                    Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Short
-                })
-            $served.Count | Should -Be 1 -Because "a node IIS spells with the short name ($($script:Cdt46ShortSource)) serves the folder"
-        }
+        # A real short spelling - see BeforeAll for where it came from - is taken for its folder.
+        # GetFullPath already expands the short name of a folder that exists, under .NET Framework and
+        # .NET alike (probed for cdt-46), so this pins that the comparison keeps taking it, whichever half
+        # of it does the work. A host that gives none fails here and names why: these lines used to sit
+        # under an if on that, so such a host passed the suite on the synthetic case alone (cdt-56).
+        $script:Cdt46HasShortName | Should -BeTrue -Because "a real 8.3 spelling is needed to show that one is taken for its folder, and this host gave none ($($script:Cdt46ShortSource))"
+        Test-SamePhysicalFolder -Path $script:Cdt46Short -Other $script:Cdt46Long | Should -BeTrue -Because "'$($script:Cdt46Short)' ($($script:Cdt46ShortSource)) is '$($script:Cdt46Long)'"
+        Test-SamePhysicalFolder -Path $script:Cdt46Long -Other $script:Cdt46Short | Should -BeTrue
+        $served = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath $script:Cdt46Long -NestedNodes Refuse -ApplicationsProbe {
+                Get-IisEntry -Location 'Web/App' -ApplicationPool 'ProdPool' -PhysicalPath $script:Cdt46Short
+            })
+        $served.Count | Should -Be 1 -Because "a node IIS spells with the short name ($($script:Cdt46ShortSource)) serves the folder"
     }
 
     It 'takes a junction for the folder it points at, but not a sibling, and not a spelling that does not exist' {

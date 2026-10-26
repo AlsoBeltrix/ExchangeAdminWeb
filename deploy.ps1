@@ -370,7 +370,9 @@ $servingConfigPath = Join-Path $servingFolder "appsettings.json"
 # cdt-51: asked on every folder move, appsettings.json or not. Without the file nothing names a
 # ConfigStore:Path either, and Resolve-ConfigDbPath answers with the default config\exchangeadmin.db -
 # the database the application has been running on - so a missing file is treated as one that names
-# no ConfigStore:Path. With neither a file nor that database the move proceeds: nothing is stranded.
+# no ConfigStore:Path. With neither a file nor that database nothing is stranded here, but the check
+# after this block refuses the move all the same (cdt-55): without the file nothing on disk says which
+# database the application runs on.
 if ($movesFolder) {
     $servingHasSettings = Test-Path -LiteralPath $servingConfigPath
     $servingDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
@@ -382,6 +384,18 @@ if ($movesFolder) {
     if ($servingHasSettings) {
         Write-Warn "-AllowRepoint: the configuration is backed up from '$servingFolder', the folder IIS serves the application from now, and its ConfigStore:Path is carried into the appsettings.json generated in '$PublishPath'."
     }
+}
+
+# cdt-55: an existing application is never deployed over while the folder it runs from has no
+# appsettings.json - moved or not, whatever its config folder holds. Nothing on disk then says which
+# config database its running process opened: it may have started with a ConfigStore:Path naming a
+# shared database and lost the file since. This run would generate an appsettings.json naming none, and
+# the restarted application would open a database of its own and leave the one it was using, with no
+# verified backup of that one taken. An upgrade has the file by definition, and a fresh install that IIS
+# has no application for has no running configuration to lose, so neither is asked. Read-only, before
+# anything below writes.
+if (-not $isUpgrade -and $null -ne $existingApplication -and -not (Test-Path -LiteralPath $servingConfigPath)) {
+    Write-Fail "IIS application $ParentSite/$AppAlias exists, but the folder it runs from has no appsettings.json ('$servingConfigPath'). Its running process may have been started with a ConfigStore:Path naming a shared config database: nothing on disk now says which database it opened, the appsettings.json this run would generate names none, and the restarted application would open a database of its own and leave the one it was using, with no verified backup of that one taken. Restore that appsettings.json - earlier deploys keep copies of it under '$(Join-Path $LogRoot 'ExchangeAdminWeb\ConfigBackups')' - or write one naming the ConfigStore:Path the application uses, so this run carries it over; or, if the application has no configuration to keep, remove it from IIS, or move it by hand, before re-running. Nothing was deployed."
 }
 
 # --- Backups taken before anything is configured ---
