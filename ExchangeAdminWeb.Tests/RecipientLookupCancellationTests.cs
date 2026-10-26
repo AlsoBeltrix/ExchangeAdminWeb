@@ -35,6 +35,7 @@ public sealed class RecipientLookupCancellationTests : IDisposable
     private readonly TempDir _temp = new();
     private readonly ExtendedLogService _extendedLog;
     private readonly Vault _vault = new();
+    private readonly DelineaService _delinea;
     private readonly RecipientLookupService _service;
 
     public RecipientLookupCancellationTests()
@@ -51,9 +52,9 @@ public sealed class RecipientLookupCancellationTests : IDisposable
             NullLogger<ExtendedLogService>.Instance);
         var http = Substitute.For<IHttpClientFactory>();
         http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(_vault, disposeHandler: false));
-        var delinea = new DelineaService(http, config, NullLogger<DelineaService>.Instance, _extendedLog, _exchange.Trace,
+        _delinea = new DelineaService(http, config, NullLogger<DelineaService>.Instance, _extendedLog, _exchange.Trace,
             _ => ("fixture-client", "fixture-key"));
-        _service = _exchange.RecipientLookup(credentials: _exchange.Credentials("RecipientLookup", delinea, secretId: 7));
+        _service = _exchange.RecipientLookup(credentials: _exchange.Credentials("RecipientLookup", _delinea, secretId: 7));
     }
 
     public void Dispose()
@@ -108,6 +109,36 @@ public sealed class RecipientLookupCancellationTests : IDisposable
         Assert.Empty(shown.Warnings);
         Assert.Equal((false, shown.Error), Assert.Single(progress.Handles).Outcome);
         Assert.Equal(shown.Error, Assert.Single(_exchange.AuditEvents()).GetProperty("error").GetString());
+    }
+
+    // Finding kd-61. The credential paths that answer before the vault is reached - no secret ID set here - looked at no
+    // token, so a lookup the operator had already cancelled ran to the end: a warning shown, the activity completed as
+    // succeeded, and a success row in the audit log.
+    [Fact]
+    public async Task ACancelBeforeACredentialReadThatNeverReachesTheVault_IsStillACancel()
+    {
+        var service = _exchange.RecipientLookup(credentials: _exchange.Credentials("RecipientLookup", _delinea, secretId: null));
+        using var cancel = new CancellationTokenSource();
+        await cancel.CancelAsync();
+        var progress = new RecordingProgress(cancel.Token);
+        var page = new Page();
+        Inject(page, "LookupService", service);
+        Inject(page, "Audit", _exchange.Audit);
+        Inject(page, "Logger", NullLogger<Page>.Instance);
+        Inject(page, "Progress", progress);
+        PageField("emailAddress").SetValue(page, Address);
+        PageField("currentUser").SetValue(page, "CONTOSO\\operator");
+
+        await (Task)typeof(Page).GetMethod("RunLookup", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+
+        var shown = Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
+        Assert.Contains("cancel", shown.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(shown.Warnings);
+        Assert.Equal((false, shown.Error), Assert.Single(progress.Handles).Outcome);
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal(shown.Error, row.GetProperty("error").GetString());
+        Assert.False(_vault.Waiting.Task.IsCompleted); // nothing was asked of the vault
     }
 
     // The control, kd-14's rule: a vault request that gives up on its own, with nobody cancelling, is a read that failed - a

@@ -50,6 +50,11 @@ public class ModuleCredentialService
     // DelineaService's log lines, one for each null it returns: carrying them out would change a service every module uses.
     public async Task<ModuleCredentialLookup> LookupCredentialsAsync(string moduleId, string purpose, CancellationToken cancellationToken = default)
     {
+        // kd-61. Before any answer of its own. The two configuration paths below return a failure the caller reports as a read
+        // that could not be made, so a lookup whose operator had already cancelled finished, completed its activity as
+        // succeeded and wrote a success audit row. The vault call throws on a cancelled token (kd-37); these return before it.
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (_moduleConfig.IsModuleCorrupt(moduleId))
         {
             _logger.LogError("Cannot retrieve credentials for {Module}: module config is corrupt", moduleId);
