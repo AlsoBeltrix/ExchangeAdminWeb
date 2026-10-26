@@ -1,7 +1,7 @@
 # cdt-55: with the serving appsettings.json missing and no old default database, a move still drops a live shared ConfigStore
 
 **Severity**: MEDIUM - the cdt-51 class, Architectural Invariant 3. `deploy.ps1` about 337 and 994, `Program.cs` about 59: an existing application whose process started with `ConfigStore:Path` on a shared database, whose `appsettings.json` was then deleted while it ran, and whose old folder has no default `config\exchangeadmin.db`, passes the cdt-51 guard ("nothing stranded"); the run skips backup and carry-forward, generates appsettings without `ConfigStore:Path`, and the restarted app opens a new default database. The shared one still exists but the app silently leaves it, with no verified pre-deploy backup of the store it was using.
-**Status**: Merged to master `84a31608`; codex defect review ops-batch-15 in flight
+**Status**: Closed - merged to master `84a31608`; codex ops-batch-15 clean. Complete once fix/cdt36 is deleted
 **Branch**: `fix/cdt36` (worktree `D:\source\ExchangeAdminWeb-wt\cdt36`), after the cdt-54 commit `15066df8`
 **Commit**: the `fix(cdt-55)` commit on `fix/cdt36` that carries this record (not merged)
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 42c2690b head 7f1890f3 (merged fb2b288f); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat 7f1890f3)
@@ -200,3 +200,7 @@ None yet.
 ## Closeout
 
 Pending: commit on `fix/cdt36`, codex review, merge into `master`, branch deletion.
+
+## Reviewer comments (supervisor, ops-batch-15)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 15066df8 head 584eb2fc (merged 84a31608); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat 584eb2fc). Clean. Codex confirmed the cdt-55 refusal reads the IIS-served folder on a repoint, runs after cdt-51 so that refusal keeps its wording, and still precedes the backup folder, the appsettings copies, the pool and ACL work, the publish, the stop and the mirror; upgrades and true no-IIS fresh installs are allowed while -Force, -AllowRepoint and -ConfirmFreshInstall over an existing application with no serving appsettings fail closed. For cdt-56 the hidden branch is gone, the fixture cleanup stays in AfterAll, and fsutil failures are reported with their exit code and output rather than collapsed into `8.3 disabled`. Artefacts: `.agents/review/ops-batch-15.result.txt`, `.stream.log`, `prompt-ops-batch-15.md`.
