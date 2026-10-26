@@ -57,6 +57,11 @@ public class ModuleCredentialService
 
         if (_moduleConfig.IsModuleCorrupt(moduleId))
         {
+            // kd-69. The read above is synchronous and takes as long as the store does, so a cancel that arrives while it runs
+            // is first seen here: without this the failure it found was returned, the caller read it as a read it could not
+            // make, and the run finished, succeeded and was audited after the cancel - kd-61's defect through a narrower
+            // window. Above the log line, so the lookup either tells its caller why it refused or ends as a cancel, never both.
+            cancellationToken.ThrowIfCancellationRequested();
             _logger.LogError("Cannot retrieve credentials for {Module}: module config is corrupt", moduleId);
             return new ModuleCredentialLookup(null, ModuleCredentialFailure.ConfigUnreadable);
         }
@@ -64,6 +69,7 @@ public class ModuleCredentialService
         var secretIdValue = _moduleConfig.GetValue(moduleId, "DelineaSecretId");
         if (!int.TryParse(secretIdValue, out var secretId) || secretId <= 0)
         {
+            cancellationToken.ThrowIfCancellationRequested(); // kd-69: the same, for the read above
             _logger.LogError("Cannot retrieve credentials for {Module}: DelineaSecretId is not configured. Purpose: {Purpose}", moduleId, purpose);
             return new ModuleCredentialLookup(null, ModuleCredentialFailure.SecretIdNotSet);
         }
