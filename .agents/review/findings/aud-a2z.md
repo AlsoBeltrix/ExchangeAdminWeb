@@ -104,3 +104,7 @@ on `fix/a2e`. Independent review pending.
 
 Fixed on branch, not merged, not pushed. Module-scoped: Conference Rooms `2.16.0`. No shared infrastructure changed, so
 this does not move the base app version.
+
+## Reviewer comments (supervisor, cr-batch-10)
+
+Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base ebd66b91 head 26e8cd9b (merged 3bfdc1af); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat 26e8cd9b). One candidate, admitted as kd-68 (against aud-a2ab). Codex confirmed clean: the missing-list flow returns before Set-Place or any creation; the bulk path maps the refusal to a failed ROW, not a failed batch; `ReadRoomList` treats only a structural not-found as absence; the mail comparison is trimmed and case-insensitive and refuses an unset mail; the ambiguity text is centralised on every service Ambiguous path. Artefacts: `.agents/review/cr-batch-10.result.txt`, `.stream.log`, `prompt-cr-batch-10.md`.
