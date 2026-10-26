@@ -906,7 +906,11 @@ public sealed class ModuleCatalog
             // target (Protected Group Targets) before anything is written and again before each
             // write into it; a protected list refuses the row unless an authorised servicer acts
             // on the page (aud-a2e).
-            Version = "2.7.0",
+            // 2.14.0: a Building whose room list does not exist refuses the row before any write - a
+            // list that does not exist cannot be checked against Protected Group Targets, so the
+            // module no longer creates one (aud-a2ab). One step past master's 2.13.0, which already
+            // carries this branch's 2.7.0 and the kd-* bumps made while the branch was stopped.
+            Version = "2.14.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

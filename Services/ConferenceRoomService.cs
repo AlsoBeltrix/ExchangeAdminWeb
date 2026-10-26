@@ -535,6 +535,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             : $"Room list '{roomListName}' is a protected group: its membership cannot be changed here, so the room was not added to it. Operation not permitted.";
 
     /// <summary>
+    /// aud-a2ab. Why a row whose building has no room list is refused before it writes anything: the list would have to be
+    /// created, and a list that does not exist cannot be checked against Protected Group Targets - Exchange's email address
+    /// policy assigns the address a rule would name, at creation. It says which list to create, because that is what the
+    /// operator does next.
+    /// </summary>
+    internal static string RoomListDoesNotExistRefusal(string roomListName) =>
+        $"Room list '{roomListName}' does not exist, and a list that does not exist yet cannot be checked against Protected Group Targets before it is written to: Exchange assigns its address when it is created. Create the room list in Exchange Online and re-run this row.";
+
+    /// <summary>
     /// Why a synchronized list's cloud add was not made: no on-prem group of the list was checked before it, because the room
     /// was already on the list when the row was checked, and so the preflight looked none up (aud-a2f).
     /// </summary>
@@ -894,7 +903,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             {
                 // aud-a2e. The list is checked immediately before the add writes into it, as the object listGuid names,
                 // described by the read that gave listGuid: a list Exchange Online holds as that read reported it; one
-                // created here as the creation returned it; a synced one by the on-prem group the preflight resolved and
+                // created here as the creation returned it (aud-a2ab: no row reaches the add with a list that does not
+                // exist any more - the preflight refuses one - so that is the add's own guard now, proven by a direct
+                // call); a synced one by the on-prem group the preflight resolved and
                 // cleared - the group the list's address binds it to (aud-a2k), and which Exchange refuses this add for, the
                 // write landing on-prem below, where that group is checked again. None for a synced list means none was
                 // checked - the room was on the list when the row was checked - and the add is not made unchecked.
@@ -2103,10 +2114,22 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     private async Task<(string? error, RoomListTarget list, string? servicedNote)> PreflightRoomListAsync(
         ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, ClaimsPrincipal? actingUser)
     {
-        // aud-a2e. A list the row creates does not exist yet, so there is nothing to check before the writes: the add checks
-        // the list it created, as the creation returned it, before it adds the room.
+        // aud-a2ab. A list that does not exist yet cannot be checked against Protected Group Targets before the row writes,
+        // so the row does not write at all. aud-a2e left this branch a success - "the add checks the list it created" - so
+        // Set-Place, City/State/Country and the timezone all committed, New-DistributionGroup made the list, and only then
+        // was the list checked: a rule naming it was found after the app had changed the room and created a group (Known
+        // Failure Classes 1 and 3). The identity cannot be brought forward. The creation passes no -PrimarySmtpAddress, so
+        // Exchange's email address policy assigns the address, and the address and the Entra object id are the only things
+        // a rule can match a cloud list by - it has no DN, objectGUID or sAMAccountName, so the Target, OU and pattern
+        // rules cannot match it at all. A check built from the canonical name alone would be matched against no rule kind
+        // and would pass every time, reporting the gap closed rather than closing it. The operator creates the list in
+        // Exchange Online and re-runs the row.
         if (!list.Exists)
-            return (null, list, null);
+        {
+            var refusal = RoomListDoesNotExistRefusal(list.Name);
+            _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
+            return ($"{refusal} Nothing was written.", list, null);
+        }
 
         // aud-a2m. Every call on an existing list after this read names it by its Guid, cloud list or synced,
         // so a list Exchange reported without one cannot be added to. Refused here, while nothing has been
