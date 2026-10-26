@@ -63,6 +63,7 @@ NotYetConverted in `ClickGateRegistry` (no line keys), and `ProgressRegistry` pi
 ## Files changed
 
 - (1): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
+- (9): `Components/Pages/ModuleConfig.razor`; `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`.
 - (8): `ExchangeAdminWeb.Tests/SettingsSaveAuditTests.cs`.
 - (7): `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs`, `ExchangeAdminWeb.Tests/SettingsStoreBusyTests.cs`.
 - (6): `Services/ADAttributeEditorService.cs`, `Modules/ModuleCatalog.cs` (AD Attribute Editor 1.7.2 -> 1.7.3);
@@ -243,6 +244,28 @@ point of the item.
 |---|---|---|
 | H1 `SaveDirectoryReadSecretAsync` (a handler the old list did not name) writes its failure by hand | `92816b21219cb34b9e7b85750a3d75d9` | 1 of 52: `EveryRefusalAndCatchInASettingsSave_WritesItsRecord(AdminSettings.razor, SaveDirectoryReadSecretAsync)` - no `Audit.LogSettingsSaveException(` in its catch |
 | H2 `SaveExoConfig`'s drain catch (a SECOND catch in a handler the old list did name) stops using its own audit action | `5b0323e9c65007b16d8726ab763c02d5` | 1 of 52: the same case for `SaveExoConfig` - no `Audit.LogConnectionPoolDrainFailed(` in the drain's catch |
+
+(9). `OnParametersSetAsync` read the `ModuleId` parameter after its awaits, twice: the descriptor
+(`Catalog.GetById(ModuleId)`) after the authentication state, and the delegated-admin grant
+(`ModuleAdmin.IsModuleAdmin(ModuleId, user)`) after the authorization re-check. The router sets that parameter again on
+the next route change, so a second change inside either window made the load fetch the newer module's descriptor, or
+decide this page with another module's grant - and the route change that asked for the newer module then found nothing
+to do, so one route change's work was done twice and the other's not at all. The module is taken into `requested`
+before the first await and used for all of it, the early-return compare included.
+
+Filter as above, 505 tests. `ModuleConfig.razor` MD5 `c9fa8768373c056bed7ed97b1164a3f0`, matched after both rows;
+505/505 green after each restore. Each mutant restores one of the two reads as it was at `492725b5`.
+
+A first attempt at this case was vacuous and is worth recording: it held the authorization re-check only, which sits
+AFTER the descriptor read, and it left the operator a global admin, so the grant check never ran. Both mutants passed
+under it. The case is a theory over the two windows now - the authentication state for the descriptor, the
+authorization re-check for the grant, with the operator a module admin of the first module only - and each row fails
+its own mutant.
+
+| Mutation (call site) | Mutant MD5 | Named test failing |
+|---|---|---|
+| I1 the descriptor read from the parameter again (`Catalog.GetById(ModuleId)`) | `3c5b2a2d9171647d68edb5dc6e53a189` | 1 of 505: `ARouteChangeDuringALoad_LeavesTheLoadOnTheModuleItWasAskedFor(held: "the authentication state")` - the third module shown where the second was asked for |
+| I2 the delegated-admin check read from the parameter again (`IsModuleAdmin(ModuleId, user)`) | `f0c0d8e3d50e22707a2598d74a454e9b` | 1 of 505: the same case for "the authorization re-check" - the grant checked for the module the page had moved to, so the load it was asked for was refused |
 
 ## Also held (codex, settings-batch-6, 2026-10-23) - LOW
 

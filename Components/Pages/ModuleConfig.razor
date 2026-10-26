@@ -1062,12 +1062,20 @@
     {
         if (ModuleId == loadedModuleId) return;
 
+        // aud-a67. The module this load is for, taken before its first await and used for all of it. ModuleId is a
+        // parameter and the router sets it again on the next route change, so every read after an await could be a
+        // different module from the one before: the descriptor was fetched with one read and the delegated-admin check
+        // made with another, on either side of the authorization await, so a second route change in that window could
+        // pair one module's check with another module's page. It also made this call load the newer module and the call
+        // the router made for it find nothing to do - one route change's work done twice, the other's not at all.
+        var requested = ModuleId;
+
         // aud-a41, aud-a66. The saves on the module shown finish before another module is loaded over it - for at most
         // saveWaitBound (see savesInFlight and WaitForThisLoadsSavesAsync).
         var unfinished = await WaitForThisLoadsSavesAsync();
-        if (ModuleId == loadedModuleId) return;
+        if (requested == loadedModuleId) return;
 
-        loadedModuleId = ModuleId;
+        loadedModuleId = requested;
 
         authChecked = false;
         statusMessage = null;
@@ -1078,7 +1086,7 @@
 
         // aud-a66. Into a local, and shown with its state after the awaits below: until then the page keeps the module it shows
         // and that module's state, so a save started while this load waits takes one module's id with that module's state.
-        var next = Catalog.GetById(ModuleId);
+        var next = Catalog.GetById(requested);
         if (next == null || next.IsSystemModule)
         {
             authChecked = true;
@@ -1096,7 +1104,7 @@
         var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
         isGlobalAdmin = adminResult.Succeeded;
 
-        if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdmin(ModuleId, user))
+        if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdmin(requested, user))
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;

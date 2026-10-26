@@ -5,6 +5,7 @@ using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components;
 using NSubstitute;
 using ModuleConfigPage = ExchangeAdminWeb.Components.Pages.ModuleConfig;
@@ -438,6 +439,53 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.Equal(Second, Shown(page));
         Assert.False(dirty.IsDirty, $"the next module's page still counts unsaved edits: {dirty.Summary()}");
         Assert.Equal(0, dirty.DirtyCount);
+    }
+
+    /// <summary>
+    /// aud-a67 item 9: the load read the ModuleId parameter after its awaits - the descriptor with one read, the
+    /// delegated-admin grant with another, on either side of the authorization await - so a route change in one of
+    /// those windows made the load fetch the newer module's descriptor, or decide this page with another module's
+    /// grant. It takes the module it was asked for before its first await now, and uses that for all of it.
+    /// </summary>
+    /// <remarks>
+    /// One case per window, because each is held at a different await and only one of the two reads sits after each:
+    /// the authentication state comes before the descriptor, the authorization re-check before the grant check.
+    /// </remarks>
+    [Theory]
+    [InlineData("the authentication state")]
+    [InlineData("the authorization re-check")]
+    public async Task ARouteChangeDuringALoad_LeavesTheLoadOnTheModuleItWasAskedFor(string held)
+    {
+        var page = _h.OpenModuleConfig(First);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (held == "the authentication state")
+        {
+            var state = new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity(
+                [new Claim(ClaimTypes.Name, _h.AdminName), new Claim(ClaimTypes.GroupSid, SettingsPageHarness.AdminSid)], "test")));
+            var heldState = release.Task.ContinueWith(_ => state, Cancel, TaskContinuationOptions.None, TaskScheduler.Default);
+            _h.AuthState.GetAuthenticationStateAsync().Returns(heldState, Task.FromResult(state));
+        }
+        else
+        {
+            // Only a module admin, and only of the module this load is for: the grant check then decides the page, and
+            // it is the read that sits after the authorization await.
+            new ModuleAdminRepository(TestConfigStore.Create(_h.Root)).SetForModule(Second, [SettingsPageHarness.AdminSid]);
+            var heldAuth = release.Task.ContinueWith(_ => AuthorizationResult.Failed(), Cancel, TaskContinuationOptions.None, TaskScheduler.Default);
+            _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+                .Returns(heldAuth, Task.FromResult(AuthorizationResult.Failed()));
+        }
+
+        var loadingSecond = await Open(page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(loadingSecond.IsCompleted, $"the load did not wait at {held} - this fixture is stale");
+
+        // A second route change while the first load is still waiting, as a second click in the nav makes.
+        await _h.OnDispatcherAsync(() => page.ModuleId = Third);
+        release.SetResult();
+        await loadingSecond.WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(page));
+        Assert.DoesNotContain("access-denied", _h.Navigation.Navigations);
     }
 
     [Fact]
