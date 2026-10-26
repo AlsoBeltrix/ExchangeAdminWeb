@@ -862,7 +862,11 @@ public sealed class ModuleCatalog
             // moved off the renderer thread, as the preflight's did in 1.0.2: it is a ~30 second
             // synchronous forest search and a bar cannot paint on a frozen circuit, so reporting
             // alone would have changed nothing the operator can see.
-            Version = "1.0.4",
+            // 1.1.0: the ticket this module requires goes through the shared TicketValidationService,
+            // which since kd-24 and kd-48 refuses a ticket made only of control characters, or one
+            // with nothing visible in it - tickets this module used to accept. No code of its own
+            // changed (kd-50).
+            Version = "1.1.0",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
@@ -1161,7 +1165,10 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: mandatory ticket before any search, written on the search and
             // reveal audit events; ValidateTickets per-module validation switch.
-            Version = "1.2.2",
+            // 1.3.0: that ticket goes through the shared TicketValidationService, which since kd-24
+            // and kd-48 refuses a ticket made only of control characters, or one with nothing visible
+            // in it - tickets this module used to accept. No code of its own changed (kd-50).
+            Version = "1.3.0",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
