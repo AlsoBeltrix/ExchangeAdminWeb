@@ -867,7 +867,7 @@
             // 2. Ticket, mandatory. Presence is checked separately from validation because the
             //    ServiceNow client passes every ticket while the integration is dormant, so
             //    validation alone would admit a blank ticket on a deployment without it (AC14).
-            if (string.IsNullOrWhiteSpace(ticket))
+            if (!TicketPresence.IsPresent(ticket))
             {
                 Refuse("A ticket number is required.", "Ticket number missing");
                 return;

@@ -1089,7 +1089,9 @@ public sealed class ModuleCatalog
             // 1.5.3: a remediation's activity now completes below the administrator
             // notification, so the bar no longer reads Idle while that email is still in flight
             // (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.5.3",
+            // 1.6.0: a remediation's ticket presence is the shared TicketPresence rule, so a ticket
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1292,7 +1294,9 @@ public sealed class ModuleCatalog
             // 1.4.3: a device action's activity now completes below BOTH administrator
             // notifications, which is what the page's own comment always claimed it did
             // (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.4.3",
+            // 1.5.0: a device action's ticket presence is the shared TicketPresence rule, so a ticket
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.5.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",

@@ -475,10 +475,11 @@ public class RiskyUsersPageTests
     {
         // AC14. Presence and validation are separate checks on purpose: ServiceNowService passes
         // every ticket while the integration is dormant, so validation alone would admit a blank
-        // ticket on a deployment without ServiceNow.
+        // ticket on a deployment without ServiceNow. kd-45: presence is the shared TicketPresence
+        // rule, which also refuses a ticket with nothing visible in it.
         var body = MethodBody("ExecuteActionAsync");
 
-        var presenceIndex = body.IndexOf("string.IsNullOrWhiteSpace(ticket)", StringComparison.Ordinal);
+        var presenceIndex = body.IndexOf("TicketPresence.IsPresent(ticket)", StringComparison.Ordinal);
         var validateIndex = body.IndexOf("ServiceNow.ValidateTicketAsync(ticket)", StringComparison.Ordinal);
 
         Assert.True(presenceIndex >= 0, "ExecuteActionAsync does not require a ticket to be present.");
