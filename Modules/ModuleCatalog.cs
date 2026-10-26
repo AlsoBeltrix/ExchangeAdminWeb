@@ -624,7 +624,9 @@ public sealed class ModuleCatalog
             // ServiceNow, which passes one while it is dormant (kd-18).
             // 2.14.0: presence is the shared TicketPresence rule, which also refuses a ticket made
             // only of control characters (kd-24).
-            Version = "2.14.0",
+            // 2.15.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "2.15.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -651,7 +653,9 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.8.0: a ticket made only of control characters is no ticket - the shared
             // TicketPresence rule (kd-24).
-            Version = "1.8.0",
+            // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "1.9.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -824,7 +828,9 @@ public sealed class ModuleCatalog
             // while it is dormant (kd-18).
             // 1.4.0: presence is the shared TicketPresence rule, which also refuses a ticket made
             // only of control characters (kd-24).
-            Version = "1.4.0",
+            // 1.5.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "1.5.0",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -926,7 +932,9 @@ public sealed class ModuleCatalog
             // authorization re-check and any write, audited (kd-23).
             // 2.10.0: the page and the bulk processor judge presence by the shared TicketPresence
             // rule, which also refuses a ticket made only of control characters (kd-24).
-            Version = "2.10.0",
+            // 2.11.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "2.11.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -966,7 +974,9 @@ public sealed class ModuleCatalog
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
             // 1.5.0: a ticket made only of control characters is no ticket - the shared
             // TicketPresence rule (kd-24).
-            Version = "1.5.0",
+            // 1.6.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1112,7 +1122,9 @@ public sealed class ModuleCatalog
             // passes one while it is dormant; deauthorizing already did (kd-18).
             // 1.6.0: both paths judge presence by the shared TicketPresence rule, which also refuses
             // a ticket made only of control characters (kd-24).
-            Version = "1.6.0",
+            // 1.7.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "1.7.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",

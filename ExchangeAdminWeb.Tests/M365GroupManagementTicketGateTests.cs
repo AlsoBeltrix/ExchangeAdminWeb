@@ -113,6 +113,7 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
             data.Add(write, "");
             data.Add(write, "   ");
             data.Add(write, "\u0001"); // kd-24: a control-only ticket is no ticket either
+            data.Add(write, "\u200B"); // kd-48: nor a zero-width one
         }
 
         return data;
