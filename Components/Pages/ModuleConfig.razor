@@ -1085,7 +1085,23 @@
     /// stopped a load reading the parameter again mid-flight and (10) stopped the OU answer landing on the next page;
     /// this is the third ordering, and it is the one where the OLDER load wins.
     /// </remarks>
-    private bool StillRequested(string requested) => string.Equals(ModuleId, requested, StringComparison.Ordinal);
+    /// <remarks>
+    /// cons-6. The identity is not enough on its own. Route to A and suspend its load, route to B, route back to A and
+    /// let the newer A load finish: the older one's module id matches the route again, so it passed this check, reached
+    /// <c>LoadState()</c>, read the store afresh and dropped whatever had been edited on the newer A page - no save, no
+    /// refusal, no unsaved-changes prompt. So a load must also BE the latest: <see cref="routeGeneration"/> counts the
+    /// route changes this page has taken up, each load keeps the number it was given, and only the newest may apply
+    /// anything.
+    /// </remarks>
+    private bool StillRequested(string requested, int generation) =>
+        generation == routeGeneration && string.Equals(ModuleId, requested, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The route changes this page has taken up, counted (cons-6). Incremented by the load that takes one up, after the
+    /// no-op return above it, so a parameter set for the module already shown never invalidates the load in flight for
+    /// it. Read only through <see cref="StillRequested"/>.
+    /// </summary>
+    private int routeGeneration;
 
     private string? loadedModuleId;
     private bool moduleEnabled;
@@ -1109,6 +1125,10 @@
         // pair one module's check with another module's page. It also made this call load the newer module and the call
         // the router made for it find nothing to do - one route change's work done twice, the other's not at all.
         var requested = ModuleId;
+
+        // cons-6. And the number of this route change, which only the newest load holds: an older load for the SAME
+        // module - A, then B, then back to A - matches on identity alone and used to apply itself over the newer one.
+        var generation = ++routeGeneration;
 
         // aud-a67 item 14. Say what the page is waiting for, before it waits. The wait below is up to saveWaitBound -
         // ten seconds - and nothing was shown for any of it: the operator clicked another module and the page sat on the
@@ -1136,7 +1156,7 @@
         // cons-4. The route may have moved on while that read waited, and a load whose module is no longer the one the
         // router asks for must apply nothing: not the descriptor, not the state, not a navigation, not a message. It
         // ends here, silently - the load that won has already done, or is doing, its own work.
-        if (!StillRequested(requested)) return;
+        if (!StillRequested(requested, generation)) return;
 
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
@@ -1163,7 +1183,7 @@
         // cons-4, and the last check this load makes: nothing below awaits, so from here to the state it applies the
         // route cannot move under it. TheLoad_ChecksTheRouteHasNotMovedOn_ImmediatelyBeforeItAppliesTheModule holds
         // that in the source, which is what keeps an await added below from reopening the window.
-        if (!StillRequested(requested)) return;
+        if (!StillRequested(requested, generation)) return;
 
         isGlobalAdmin = adminResult.Succeeded;
 

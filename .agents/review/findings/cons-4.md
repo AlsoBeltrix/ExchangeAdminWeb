@@ -38,6 +38,10 @@ state and the authorization re-check - which between them cover the descriptor b
 (config-only, access-denied), the state application and the final messages.
 
 Three decisions, each forced by a mutant rather than assumed:
+**cons-6 extended this on 2026-10-26**, on this branch: identity alone passes an older load of the SAME module (A, B,
+A), so `StillRequested` now takes a route generation as well and the source guard below is anchored on the call rather
+than its arguments. See `.agents/review/findings/cons-6.md`.
+
 - A third check immediately before `module = next;`, which the record asks for in those words, was written and then
   removed: no await separates it from the check after the authorization read, so removing it changed nothing and no
   test could fail for it. What the record is really asking for - that the route cannot move between the last check and
