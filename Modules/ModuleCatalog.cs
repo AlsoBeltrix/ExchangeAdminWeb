@@ -834,7 +834,9 @@ public sealed class ModuleCatalog
             // only of control characters (kd-24).
             // 1.5.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "1.5.0",
+            // 1.6.0: the reset reads its ticket, its listed user and its method list at the click rather
+            // than after the yield, so a keystroke in that window cannot change what is recorded (kd-46).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "MfaReset",

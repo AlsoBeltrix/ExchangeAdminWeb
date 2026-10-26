@@ -102,6 +102,71 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
         Assert.Equal("Authorization denied.", shown.Message);
     }
 
+    [Fact]
+    public void TheTicketAuditedIsTheOneOnScreenAtTheClick_NotOneTypedDuringTheYield()
+    {
+        // kd-46. ExecuteReset raises isLoading and yields to the message loop before it reads anything.
+        // The ticket box binds on oninput and the browser's copy of its disabled attribute is one round
+        // trip stale, so a keystroke can land in that window - this test IS that keystroke, and the
+        // listed user is changed with it. What the handler records must be what the operator was
+        // looking at when they clicked Reset.
+        //
+        // Synchronous, over a pumping SynchronizationContext, because the race has to be won on purpose
+        // rather than hoped for: await Task.Yield() posts its continuation to the current context, so
+        // with this one the handler is REALLY suspended at the yield - asserted below - until the fields
+        // have been changed and the pump is run.
+        var previous = SynchronizationContext.Current;
+        var pump = new Pump();
+        SynchronizationContext.SetSynchronizationContext(pump);
+        try
+        {
+            var page = PageFor(Ticket, DormantServiceNow());
+
+            var running = Reset(page);
+            Assert.False(running.IsCompleted, "ExecuteReset no longer yields before it reads its inputs.");
+
+            SetField(page, "ticketNumber", "INC9999");
+            SetField(page, "listedUpn", "someone.else@contoso.com");
+
+            pump.RunUntil(running, TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        // The authorization re-check refuses (this fixture's), so this is that row - and it carries the
+        // two values a late keystroke could otherwise have replaced.
+        var row = Assert.Single(AuditRows());
+        Assert.Equal("MfaReset_Execute", row.GetProperty("action").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+        Assert.Equal(Target, row.GetProperty("target").GetString());
+    }
+
+    /// <summary>A context that holds posted continuations until the test runs them.</summary>
+    private sealed class Pump : SynchronizationContext
+    {
+        private readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _posted = new();
+
+        public override void Post(SendOrPostCallback d, object? state) => _posted.Add((d, state));
+
+        public override void Send(SendOrPostCallback d, object? state) => d(state);
+
+        public void RunUntil(Task task, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (!task.IsCompleted)
+            {
+                var left = deadline - DateTime.UtcNow;
+                Assert.True(left > TimeSpan.Zero, "the handler never finished");
+                Assert.True(_posted.TryTake(out var next, left), "the handler neither finished nor posted anything");
+                next.Callback(next.State);
+            }
+
+            task.GetAwaiter().GetResult();
+        }
+    }
+
     // ---- assertions ---------------------------------------------------------------------------
 
     private void AssertRefused(Page page, string ticket, string refusal)
