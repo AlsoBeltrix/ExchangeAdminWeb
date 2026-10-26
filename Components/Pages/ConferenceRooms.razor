@@ -1038,7 +1038,7 @@
                 return;
             }
 
-            if (!await ReauthorizeAsync()) return;
+            if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetMetadata", email, ticket, "Authorization denied.", "Authorization"); return; }
 
             // Protected-principal gate: the metadata write runs only inside onAllowed, so a protected
             // or fail-closed target never reaches old-value capture, the trace scope, or Set-Place.
@@ -1281,7 +1281,7 @@
                 AuditFinderAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
-            if (!await ReauthorizeAsync()) return;
+            if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetMetadata", "(bulk)", ticket, "Authorization denied.", "Authorization"); return; }
 
             // Submit only rows that resolved in the preview (same guard the old inline loop applied).
             var rows = csvRows
@@ -1393,12 +1393,12 @@
             // with the dismiss control queued ahead of our continuation - is the exact live-read
             // trap the local exists to avoid. The activity ends as a non-success with no message;
             // the banner carries the reason.
-            if (!await ReauthorizeAsync()) return;
+            if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetType", email, ticket, "Authorization denied.", "Authorization"); return; }
 
             if (!RoomTypeNames.TryParse(typeName, ignoreCase: false, out var roomType))
             {
                 result = completed = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {typeName}. Nothing was written." };
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: completed.Message, extra: new Dictionary<string, object?> { ["refusedAt"] = "Validation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); } return; // kd-29: the refusal row
+                AuditRefusal("ConferenceRooms_SetType", email, ticket, completed.Message, "Validation"); return; // kd-29: the refusal row
             }
 
             // Protected-principal gate: the write runs only inside onAllowed, so a protected or
@@ -1591,7 +1591,7 @@
                 AuditTypeAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
-            if (!await ReauthorizeAsync()) return;
+            if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetType", "(bulk)", ticket, "Authorization denied.", "Authorization"); return; }
 
             var rows = csvRows
                 .Where((_, i) => i < previewRows.Count && previewRows[i].RoomResolved)
@@ -1700,7 +1700,7 @@
         }
         return true;
     }
-
+    private void AuditRefusal(string action, string target, string ticket, string refusal, string refusedAt) { try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, action, target, false, ticket, errorDetail: refusal, extra: new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false }); } catch (Exception ex) { Logger.LogError(ex, "Audit failed"); } } // kd-52/kd-29: a refusal before any write, the aud-a28 fields
     /// <summary>
     /// Wraps a serviced-action note for the audit event's <c>extra</c>.
     /// </summary>
