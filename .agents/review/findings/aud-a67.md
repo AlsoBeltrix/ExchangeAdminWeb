@@ -252,6 +252,11 @@ point of the item.
 | H1 `SaveDirectoryReadSecretAsync` (a handler the old list did not name) writes its failure by hand | `92816b21219cb34b9e7b85750a3d75d9` | 1 of 52: `EveryRefusalAndCatchInASettingsSave_WritesItsRecord(AdminSettings.razor, SaveDirectoryReadSecretAsync)` - no `Audit.LogSettingsSaveException(` in its catch |
 | H2 `SaveExoConfig`'s drain catch (a SECOND catch in a handler the old list did name) stops using its own audit action | `5b0323e9c65007b16d8726ab763c02d5` | 1 of 52: the same case for `SaveExoConfig` - no `Audit.LogConnectionPoolDrainFailed(` in the drain's catch |
 
+**(9) was superseded on 2026-10-26 by cons-4**, which is on this branch: a load whose module the route has moved past
+now applies nothing, so this item's case asserts that outcome instead of the load completing, and its two mutants are
+re-run against the source guard cons-4 added. The mechanism below - one read of the parameter, before the first await -
+is unchanged and is what cons-4's comparison is made against. See `.agents/review/findings/cons-4.md`.
+
 (9). `OnParametersSetAsync` read the `ModuleId` parameter after its awaits, twice: the descriptor
 (`Catalog.GetById(ModuleId)`) after the authentication state, and the delegated-admin grant
 (`ModuleAdmin.IsModuleAdmin(ModuleId, user)`) after the authorization re-check. The router sets that parameter again on

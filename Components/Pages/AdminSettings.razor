@@ -362,6 +362,9 @@
 
     // Tab identity, kept separate from the dirty-state section names so the tab labels can be
     // short while the unsaved-changes prompt still reads as this page's headings.
+    /// <summary>cons-5. What a second Save press is told while the first is still running.</summary>
+    internal const string SaveAlreadyRunning = ExchangeAdminWeb.Components.Pages.ModuleConfig.SaveAlreadyRunning;
+
     private const string SecModules = SectionModules;
     private const string SecProtected = SectionProtected;
     private const string SecLogging = "Logging";
@@ -390,7 +393,13 @@
         // `saving` before its first await, so the second click reads it here (the aud-a28o shape, at the event rather
         // than inside each handler).
         if (saving)
+        {
+            // cons-5, as on Module Configuration: the second press can be for another tab of this page, and it stayed
+            // dirty with nothing on screen to say it had not been saved. Nothing cleared, nothing recorded.
+            statusMessage = SaveAlreadyRunning;
+            statusIsError = false;
             return;
+        }
 
         switch (tab)
         {

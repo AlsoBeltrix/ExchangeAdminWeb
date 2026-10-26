@@ -878,7 +878,14 @@
         // that outlasts its bound loads the next module and LoadState clears `saving`, so a new save can begin while the
         // old one is still running - and it is what makes a late save harmless whatever started it.
         if (saving)
+        {
+            // cons-5. Say so, rather than dropping the click: the second press can be for a different section of this
+            // page, and it stayed dirty with nothing on screen to say it had not been saved. Nothing is cleared and
+            // nothing is recorded - no save was attempted, and the running one writes its own record.
+            statusMessage = SaveAlreadyRunning;
+            statusIsError = false;
             return;
+        }
 
         await StartSaveAsync();
     }
@@ -997,6 +1004,9 @@
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
+    /// <summary>cons-5. What a second Save press is told while the first is still running.</summary>
+    internal const string SaveAlreadyRunning = "A save is already running; wait for it to finish.";
+
     // aud-a67 item 14. What the page shows WHILE it waits for those saves, where it used to show nothing for up to ten
     // seconds. It is replaced by the next module's own state when the load lands, or by UnfinishedSaveNotice when the
     // bound runs out first.
@@ -1064,6 +1074,19 @@
     // aud-a26n. The names picked from the directory on this page - the only ones an access save stores.
     private readonly Dictionary<string, string> pickedDisplayNames = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Whether the route still asks for the module this load took before its first await (cons-4).
+    /// </summary>
+    /// <remarks>
+    /// Not <c>loadedModuleId</c>: that is set early, by this load itself, so it says which load claimed the page and not
+    /// which module the router wants now. Two loads can be in flight at once - open B, route to C while B waits for its
+    /// authorization read, let C finish - and the one that resumes last used to apply its module over the newer one, so
+    /// a privileged module's configuration could be shown and edited after the route had moved to another. aud-a67 (9)
+    /// stopped a load reading the parameter again mid-flight and (10) stopped the OU answer landing on the next page;
+    /// this is the third ordering, and it is the one where the OLDER load wins.
+    /// </remarks>
+    private bool StillRequested(string requested) => string.Equals(ModuleId, requested, StringComparison.Ordinal);
+
     private string? loadedModuleId;
     private bool moduleEnabled;
     private bool enablementStoreCorrupt;
@@ -1109,6 +1132,12 @@
         statusMessage = null;
 
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+
+        // cons-4. The route may have moved on while that read waited, and a load whose module is no longer the one the
+        // router asks for must apply nothing: not the descriptor, not the state, not a navigation, not a message. It
+        // ends here, silently - the load that won has already done, or is doing, its own work.
+        if (!StillRequested(requested)) return;
+
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
@@ -1130,6 +1159,12 @@
         }
 
         var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
+
+        // cons-4, and the last check this load makes: nothing below awaits, so from here to the state it applies the
+        // route cannot move under it. TheLoad_ChecksTheRouteHasNotMovedOn_ImmediatelyBeforeItAppliesTheModule holds
+        // that in the source, which is what keeps an await added below from reopening the window.
+        if (!StillRequested(requested)) return;
+
         isGlobalAdmin = adminResult.Succeeded;
 
         if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdmin(requested, user))

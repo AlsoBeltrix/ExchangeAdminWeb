@@ -257,6 +257,11 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
         using var release = new ManualResetEventSlim();
 
         Func<Task> press;
+        Func<string> Status;
+        Func<bool> IsError;
+        // What "the press was not taken as handled" looks like on each page: the two with a dirty state keep their
+        // count, and Exchange Online Config, which has none, keeps the values typed into its fields.
+        Func<bool> KeptItsEdits;
         AttributeEditorHarness.SwitchableStore store;
         switch (page)
         {
@@ -268,6 +273,11 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
                     var module = TogglableModules().First(enablement.ContainsKey);
                     await _h.RunAsync(p, "ToggleModule", module, !enablement[module]);
                     press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
+                    Status = () => Field<string?>(p, typeof(AdminSettingsPage), "statusMessage") ?? "";
+                    IsError = () => Field<bool>(p, typeof(AdminSettingsPage), "statusIsError");
+                    var dirtyAdmin = Dirty(p, typeof(AdminSettingsPage)).DirtyCount;
+                    Assert.True(dirtyAdmin > 0, "the toggle left nothing unsaved - this fixture is stale");
+                    KeptItsEdits = () => Dirty(p, typeof(AdminSettingsPage)).DirtyCount == dirtyAdmin;
                     store = _h.EnablementStore;
                     break;
                 }
@@ -279,6 +289,9 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
                     Set(p, typeof(ExchangeOnlineConfigPage), "exoOrganization", "contoso.onmicrosoft.com");
                     Set(p, typeof(ExchangeOnlineConfigPage), "exoCertSubject", "CN=EXO-Automation");
                     press = () => _h.RunAsync(p, "SaveExoConfig");
+                    Status = () => Field<string?>(p, typeof(ExchangeOnlineConfigPage), "statusMessage") ?? "";
+                    IsError = () => Field<bool>(p, typeof(ExchangeOnlineConfigPage), "statusIsError");
+                    KeptItsEdits = () => Field<string>(p, typeof(ExchangeOnlineConfigPage), "exoOrganization") == "contoso.onmicrosoft.com";
                     store = _h.ModuleConfigStore;
                     break;
                 }
@@ -289,17 +302,29 @@ public sealed class SettingsSaveOffCircuitTests : IDisposable
                     Set(p, typeof(ModuleConfigPage), "tab", "Configuration");
                     await _h.RunAsync(p, "SetConfigValue", "DelineaSecretId", "4242");
                     press = () => _h.RunAsync(p, "SaveCurrentTabAsync");
+                    Status = () => Field<string?>(p, typeof(ModuleConfigPage), "statusMessage") ?? "";
+                    IsError = () => Field<bool>(p, typeof(ModuleConfigPage), "statusIsError");
+                    var dirtyModule = Dirty(p, typeof(ModuleConfigPage)).DirtyCount;
+                    Assert.True(dirtyModule > 0, "the config edit left nothing unsaved - this fixture is stale");
+                    KeptItsEdits = () => Dirty(p, typeof(ModuleConfigPage)).DirtyCount == dirtyModule;
                     store = _h.ModuleConfigStore;
                     break;
                 }
         }
 
         store.BeforeWrite = Hold;
+
         var first = Task.Run(press, cancel);
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10), cancel), "the first save never reached its store write");
 
         // The second press, while the first is still in its write: refused, and it must not even open a write.
         await press();
+
+        // cons-5. The refused press is said, not dropped: the second press can be for a different setting of the same
+        // page, and it used to disappear with its fields still dirty and nothing on screen.
+        Assert.Equal(ModuleConfigPage.SaveAlreadyRunning, Status());
+        Assert.False(IsError(), "the refusal was shown as an error; it is not one - nothing failed");
+        Assert.True(KeptItsEdits(), "the refused press cleared what was waiting to be saved");
 
         release.Set();
         await first.WaitAsync(TimeSpan.FromSeconds(30), cancel);
