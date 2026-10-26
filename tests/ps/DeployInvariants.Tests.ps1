@@ -1141,8 +1141,9 @@ Describe 'deploy.ps1' {
                 $pool, $folder = $script:cdt45Iis -split '\|', 2
                 [pscustomobject]@{ applicationPool = $pool; PhysicalPath = $folder }
             }
-            # The backup folder does not exist yet; the run's appsettings.json does.
-            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $script:cdt45Calls.Add("exists($Path)"); $Path -like '*appsettings.json' }
+            # The backup folder does not exist yet; the run's appsettings.json does. -LiteralPath since
+            # cdt-55, whose check asks whether the folder the application runs from has that file.
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path, $LiteralPath) $asked = "$Path$LiteralPath"; $script:cdt45Calls.Add("exists($asked)"); $asked -like '*appsettings.json' }
             ${function:New-Item} = { param($ItemType, $Path, [switch]$Force) $null = $ItemType, $Force; $script:cdt45Calls.Add("New-Item($Path)") }
             ${function:Copy-Item} = { param([Parameter(Position = 0)]$Path, [Parameter(Position = 1)]$Destination) $script:cdt45Calls.Add("Copy-Item($Path|$Destination)") }
 
@@ -1178,7 +1179,7 @@ Describe 'deploy.ps1' {
 
             $same = & $run 'ExamplePool|D:\example\publish'
             $same.Thrown | Should -BeNullOrEmpty
-            $same.Calls | Should -BeExactly ($read + ',exists(D:\example\logs\ExchangeAdminWeb\ConfigBackups),New-Item(D:\example\logs\ExchangeAdminWeb\ConfigBackups),exists(D:\example\publish\appsettings.json),Copy-Item(D:\example\publish\appsettings.json|D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak)') -Because 'a run the check passes creates the backup folder and takes the copy, after the read'
+            $same.Calls | Should -BeExactly ($read + ',exists(D:\example\publish\appsettings.json),exists(D:\example\logs\ExchangeAdminWeb\ConfigBackups),New-Item(D:\example\logs\ExchangeAdminWeb\ConfigBackups),exists(D:\example\publish\appsettings.json),Copy-Item(D:\example\publish\appsettings.json|D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak)') -Because 'a run the checks pass reads that its folder has an appsettings.json (cdt-55), then creates the backup folder and takes the copy, after the IIS read'
             $same.Printed | Should -BeLike '*Existing config backed up to D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak*'
         } finally {
             Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
@@ -1206,7 +1207,7 @@ Describe 'deploy.ps1' {
             ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt44Printed.Add("$Object") }
             $case = 0
             $run = {
-                param([string]$OldSettings, [bool]$OldDb, [string]$Served, [bool]$Upgrade, [bool]$Allow, [string]$Publish = '<new>')
+                param([string]$OldSettings, [bool]$OldDb, [string]$Served, [bool]$Upgrade, [bool]$Allow, [string]$Publish = '<new>', [string]$NewSettings = '')
                 $script:cdt44Printed = New-Object System.Collections.Generic.List[string]
                 $script:case++
                 $base = Join-Path $root "case$($script:case)"
@@ -1215,6 +1216,7 @@ Describe 'deploy.ps1' {
                 New-Item -ItemType Directory -Path (Join-Path $old 'config'), $new, (Join-Path $base 'shared') -Force | Out-Null
                 if ($OldSettings) { Set-Content -LiteralPath (Join-Path $old 'appsettings.json') -Value ($OldSettings.Replace('<shared>', (Join-Path $base 'shared\exchangeadmin.db').Replace('\', '\\'))) -Encoding UTF8 }
                 if ($OldDb) { Set-Content -LiteralPath (Join-Path $old 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8 }
+                if ($NewSettings) { Set-Content -LiteralPath (Join-Path $new 'appsettings.json') -Value $NewSettings -Encoding UTF8 }
                 Set-Content -LiteralPath (Join-Path $base 'shared\exchangeadmin.db') -Value 'db' -Encoding UTF8
                 # Read only by the lifted statements.
                 Set-Variable -Name isUpgrade -Value $Upgrade
@@ -1266,7 +1268,9 @@ Describe 'deploy.ps1' {
                     @{ Case = 'an upgrade'; Served = '<old>'; Upgrade = $true; Allow = $true }
                     @{ Case = 'no -AllowRepoint'; Served = '<old>'; Upgrade = $false; Allow = $false }
                     @{ Case = 'no folder reported'; Served = ''; Upgrade = $false; Allow = $true })) {
-                $r = & $run $shared $true $outside.Served $outside.Upgrade $outside.Allow
+                # The run's own folder has an appsettings.json, as it must when it deploys over an existing
+                # application without moving it: without one the run is refused (cdt-55, its own test).
+                $r = & $run $shared $true $outside.Served $outside.Upgrade $outside.Allow '<new>' $own
                 $r.Thrown | Should -BeNullOrEmpty -Because "nothing is moved ($($outside.Case)), so nothing is refused here"
                 $r.ServingFolder | Should -BeExactly $r.New -Because "outside a move the configuration is -PublishPath's, as before ($($outside.Case))"
                 Test-Path -LiteralPath $r.MoveCopy | Should -BeFalse -Because "there is no move to keep a copy for ($($outside.Case))"
@@ -1567,7 +1571,7 @@ Describe 'deploy.ps1' {
         $calls = @($s.Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true))
         $calls.Count | Should -Be 2 -Because 'one call per stop, and no other'
     }
-    It 'refuses a -AllowRepoint move off a folder whose appsettings.json is gone but whose own config database remains, and lets one with neither go (cdt-51, real files)' {
+    It 'refuses a -AllowRepoint move off a folder whose appsettings.json is gone but whose own config database remains (cdt-51, real files)' {
         # The stranded-database guard asked only when the old folder still had an appsettings.json, so a
         # folder that had lost it moved without a word, leaving its config\exchangeadmin.db behind
         # unbacked-up. The real statements from the serving-folder choice through the pre-move copy,
@@ -1629,18 +1633,100 @@ Describe 'deploy.ps1' {
 
             $unnamed = & $run '{ "AllowedHosts": "*" }' $true
             $unnamed.Thrown | Should -BeLike "*keeps its config database inside the folder it is being moved from*: its appsettings.json names no ConfigStore:Path, so after the move*" -Because 'the cdt-44 case keeps its own words'
-
-            $neither = & $run '' $false
-            $neither.Thrown | Should -BeNullOrEmpty -Because 'with neither an appsettings.json nor a database the old folder has nothing to strand'
-            $neither.ServingFolder | Should -BeExactly (ConvertTo-ComparablePhysicalPath $neither.Old)
-            $neither.MoveCopy | Should -BeFalse -Because 'there is no appsettings.json to copy'
-            $neither.Printed | Should -Not -BeLike '*the configuration is backed up from*' -Because 'there is no configuration to back up'
+            # A folder with neither an appsettings.json nor a database went ahead here until cdt-55, which
+            # refuses it in the check after this one: see that finding's test.
         } finally {
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
         }
     }
 
+    It 'refuses to deploy over an existing application whose folder has no appsettings.json, moved or not, whatever its config folder holds (cdt-55, real files)' {
+        # An existing application whose appsettings.json was gone was deployed over when its folder had no
+        # config\exchangeadmin.db either: the run generated an appsettings.json without ConfigStore:Path,
+        # and the restarted application opened a database of its own, leaving the shared one it had been
+        # running on. The real statements from the serving-folder choice through the pre-move copy,
+        # against temporary folders with the real modules.
+        foreach ($name in 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$servingFolder = $PublishPath') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-move.bak"'))) { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt55_' + [guid]::NewGuid().ToString('N'))
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt55Printed.Add("$Object") }
+            $script:cdt55Case = 0
+            $run = {
+                param([bool]$Exists, [bool]$Moves, [string]$Settings, [bool]$Db, [bool]$Upgrade = $false)
+                $script:cdt55Printed = New-Object System.Collections.Generic.List[string]
+                $script:cdt55Case++
+                $base = Join-Path $root "case$($script:cdt55Case)"
+                $old = Join-Path $base 'old'
+                $new = Join-Path $base 'new'
+                New-Item -ItemType Directory -Path (Join-Path $old 'config'), (Join-Path $new 'config') -Force | Out-Null
+                # The folder the application runs from: the old one in a move, else the run's own.
+                $serving = $new
+                if ($Moves) { $serving = $old }
+                if ($Settings) { Set-Content -LiteralPath (Join-Path $serving 'appsettings.json') -Value $Settings -Encoding UTF8 }
+                if ($Db) { Set-Content -LiteralPath (Join-Path $serving 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8 }
+                $app = $null
+                if ($Exists) { $app = [pscustomobject]@{ applicationPool = 'ExamplePool'; PhysicalPath = $serving } }
+                # Read only by the lifted statements: a -Force run (an upgrade has no -Force), with -AllowRepoint when it moves.
+                Set-Variable -Name isUpgrade -Value $Upgrade
+                Set-Variable -Name Force -Value ([switch](-not $Upgrade))
+                Set-Variable -Name AllowRepoint -Value ([switch]$Moves)
+                Set-Variable -Name existingApplication -Value $app
+                Set-Variable -Name PublishPath -Value $new
+                Set-Variable -Name configPath -Value (Join-Path $new 'appsettings.json')
+                Set-Variable -Name LogRoot -Value (Join-Path $base 'logs')
+                Set-Variable -Name timestamp -Value '20261023000000'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{
+                    Thrown       = $thrown
+                    Serving      = $serving
+                    Logs         = (Join-Path $base 'logs')
+                    BackupFolder = (Test-Path -LiteralPath (Join-Path $base 'logs\ExchangeAdminWeb\ConfigBackups'))
+                }
+            }
+
+            $refusal = "IIS application Example Site/ExampleApp exists, but the folder it runs from has no appsettings.json ('{0}\appsettings.json'). Its running process may have been started with a ConfigStore:Path naming a shared config database*Restore that appsettings.json - earlier deploys keep copies of it under '{1}\ExchangeAdminWeb\ConfigBackups'*remove it from IIS, or move it by hand, before re-running. Nothing was deployed."
+            foreach ($case in @(
+                    @{ Case = 'a move off a folder with neither an appsettings.json nor a database'; Moves = $true; Db = $false }
+                    @{ Case = 'in place, with no database either'; Moves = $false; Db = $false }
+                    @{ Case = 'in place, though its default database is there'; Moves = $false; Db = $true })) {
+                $r = & $run $true $case.Moves '' $case.Db
+                $r.Thrown | Should -BeLike ($refusal -f (ConvertTo-ComparablePhysicalPath $r.Serving), $r.Logs) -Because "nothing on disk says which database the application runs on ($($case.Case))"
+                $r.BackupFolder | Should -BeFalse -Because "the refusal comes before anything is written ($($case.Case))"
+            }
+
+            $stranding = & $run $true $true '' $true
+            $stranding.Thrown | Should -BeLike '*keeps its config database inside the folder it is being moved from*it has no appsettings.json to name one*' -Because 'a move that would strand the old folder''s database keeps the cdt-51 refusal and its words'
+
+            foreach ($case in @(
+                    @{ Case = 'an in-place run whose folder has its appsettings.json'; Exists = $true; Moves = $false; Settings = '{ "AllowedHosts": "*" }' }
+                    @{ Case = 'a move whose old folder has its appsettings.json'; Exists = $true; Moves = $true; Settings = '{ "AllowedHosts": "*" }' }
+                    @{ Case = 'a fresh install that IIS has no application for'; Exists = $false; Moves = $false; Settings = '' })) {
+                $r = & $run $case.Exists $case.Moves $case.Settings $false
+                $r.Thrown | Should -BeNullOrEmpty -Because "$($case.Case) is not refused here"
+            }
+            $upgrade = & $run $true $false '{ "AllowedHosts": "*" }' $false $true
+            $upgrade.Thrown | Should -BeNullOrEmpty -Because 'an upgrade has its appsettings.json by definition'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
     It 'takes the verified backup of a serving folder''s own database when its appsettings.json is gone (cdt-51, real files)' {
         # The fresh-install branch's verified backup was gated on the serving folder's appsettings.json
         # alone, so a folder that had lost it kept its config\exchangeadmin.db with no backup before the
