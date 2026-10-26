@@ -8,7 +8,7 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### Fix-everything work stream, 2026-10-21 to 2026-10-23 - REOPENED 2026-10-23 evening
+### Fix-everything work stream - HALTED 2026-10-26 by the account spend limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
 more you find while doing so", then "ALL the bugs includes ALL the bugs. those too. all of them.
@@ -29,7 +29,64 @@ Each slice's arrangement and cost go in `.agents/token-log.md`.
 `Modules/ModuleCatalog.cs`, which owns which ones. The last gate results are in
 `## Verification`.
 
-**REOPENED 2026-10-23 evening.** Owner ruling (`.agents/decisions.md` 2026-10-23 evening, verbatim there): every
+**HALTED 2026-10-26: every implementation agent was killed mid-slice by the account's individual spend limit**
+(HTTP 429 on `claude-opus-5-5`, eight agents within minutes of each other). Nothing was lost: each agent's
+committed slices were merged in a consolidation pass and master is green, but **no agent finished its queue and
+the merged consolidation has had no codex review of its own until `.agents/review/consolidation-1.result.txt`
+says otherwise.** This is the live blocker; the owner decides how the work resumes.
+
+**Master as of the consolidation (`8f55802a`, gates re-run by the supervisor on `f07f2db7`):** Release build 0
+errors / 0 warnings; full suite 7161 passed / 0 failed / 0 skipped; Pester 504 passed / 0 failed; PSScriptAnalyzer
+0 errors; `dotnet format`, `git diff --check` and the ASCII lint clean. The base app version is still 2.35.0 and
+**one base bump is owed at close** - several shared services changed (`TicketPresence`, `ModuleCredentialService`,
+`ADDirectorySearchService`, the revalidator, the log services).
+
+**What the consolidation merged** (`00798adb..8f55802a`): cdt-52, cdt-53, cdt-54; aud-a64 items (1)-(4); kd-33,
+kd-34, kd-35, kd-36; kd-18 and kd-40 for Mailbox Permissions only; kd-52; kd-47. One cross-branch defect was found
+by the gate and fixed at `8f55802a`: kd-52 made Conference Rooms' access refusal audited, which broke a kd-7
+control test pinning its absence. Expect more of that shape - the branches were written in parallel against
+different bases.
+
+**Eight worktrees are kept, each with uncommitted mid-slice work** (`git worktree list`; branches `fix/a2e`,
+`fix/cdt36`, `fix/a64-a67`, `fix/a68-kd2`, `fix/a70`, `fix/kd-misc`, `fix/psl10-a2y`, `fix/kd7-kd8`). Do not delete
+them: they hold the half-finished slices and each agent can be resumed from its transcript. `fix/kd-misc` is
+unmerged IN FULL - thirteen verified fixes - because its first commit is `kd-1`, which waits on an owner answer
+(below).
+
+**Still owed, by row:** every `[ ]` and `[~]` row in `.agents/review/index.md`. The large groups are aud-a67 (not
+started), aud-a64 (5)-(9), the Calendar Permissions half of kd-18 and kd-40, kd-37, kd-38, kd-39, kd-41, kd-43,
+kd-44, kd-45, kd-46, kd-48..kd-51, kd-53, kd-54, kd-55, kd-56, cdt-55, cdt-56, aud-a2z, aud-a2aa, aud-a2ab (HIGH),
+aud-a2ac.
+
+**Owner decisions the stream is blocked on** (none were answered; each is recorded in its finding):
+1. `kd-1` - Message Trace detail exports: the fix reverses D2 and D4 of `docs/MessageTraceDownloadLink-Plan.md`
+   (no ownership check; a mailed link anyone can use). Keep it and supersede those rulings, or drop the one commit
+   and close `kd-1` as by design. **`fix/kd-misc` cannot merge either way until this is answered.**
+2. `aud-a70` (6) - refuse every grant while the directory-read credential cannot be had. Agent recommends yes.
+3. `aud-a70` (13) - stop counting Undetermined as a success in telemetry and the trace operation. Agent
+   recommends yes.
+4. `aud-a70` (10) - the agent DISPUTES the lazy credential fetch (it would look up Exchange-named people as the
+   app pool even with the credential configured, against Architectural Invariant 7). Needs adjudication.
+5. `psl-10` (5) - tag `ADDirectoryLiveTests` and `AdDirectoryForestSearchLiveTests` so the default gate and CI
+   stop reading the live directory. Until then the mandated gate itself makes live calls.
+6. `aud-a2e` - `docs/ProjectConstitution.md` says a cloud-only principal is protected by a user row, but
+   `Services/ProtectedPrincipalEntryValidator.cs` refuses any entry Active Directory does not hold, so a cloud
+   room list cannot be protected today. Which wins.
+7. `aud-a29g` - accept the one-interval window on page renders, one audit line per refused page request with a
+   standalone 403 page, and cache-free circuit checks.
+
+**NEXT ACTION: the owner's.** Either raise the spend limit and say to resume (the agents resume from their
+transcripts; send each one its queue), or name a smaller scope. Nothing deploys: the owner's 2026-10-23 evening
+ruling stands that every open LOW, MEDIUM and HIGH is fixed first. The paragraph that follows is the 2026-10-23
+afternoon hand-over, kept for its checklist pointers.
+
+**The stream was reopened 2026-10-23 evening and ran until the halt above.** Owner ruling
+(`.agents/decisions.md` 2026-10-23 evening, verbatim there): every remaining LOW, MEDIUM and HIGH issue is
+resolved before any dev or prod deploy; the LOW hold and the three never-dispatched items were released.
+Arrangement (below) was unchanged: a thin supervising session, Opus 5.5 implementation agents in their own
+worktrees, a codex defect review per merged group. Roughly sixty findings were fixed, merged and reviewed before
+the halt; each merged group's codex verdict is in its finding record.
+ Owner ruling (`.agents/decisions.md` 2026-10-23 evening, verbatim there): every
 remaining LOW, MEDIUM and HIGH issue is resolved before any dev or prod deploy; the LOW hold and the three
 never-dispatched items are released now. Work in progress: the `.agents/review/index.md` rows whose Status begins
 "Open; released by the 2026-10-23 evening ruling" (the six held LOW records, `aud-a2e`, `cdt-36`, `aud-a29g`, and
