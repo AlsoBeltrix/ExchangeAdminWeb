@@ -5,6 +5,38 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-26 - codex is out of credit; one codex-commercial review, saved for the end
+
+Owner ruling 2026-10-26, verbatim: "codex is legitimately out of credit and will remain so. we will use
+codex-commercial, but need to limit to one review. save it until everything is done."
+
+This supersedes the per-merged-group review cadence the fix-everything stream has run on since 2026-10-21
+(`.agents/decisions.md` 2026-10-21 and the 2026-10-23 stopping rule, both of which assumed a codex defect
+review of each merged group). The gateway refuses codex: HTTP 412, Portkey API Key Usage Limit Exceeded,
+and the owner says that is permanent, not a window to wait out.
+
+The rule from here:
+
+- **No per-group reviews.** Merged slices land gate-green and UNREVIEWED. Every finding whose record said
+  "awaiting merge and codex review" now awaits the single review instead.
+- **One codex-commercial review, dispatched when the work is done**, not before. The supervisor accumulates
+  what it must cover - `prompt-consolidation-2.md` is its starting point and `.agents/review/index.md` records
+  which rows have never been reviewed.
+- **It is one shot, so it is aimed, not sprayed.** A single pass over the whole range would be weaker than the
+  fourteen focused passes it replaces: a reviewer reading everything reads nothing closely. The supervisor
+  writes it against the highest-risk unreviewed surface - the authorization, audit and notification changes,
+  and the cross-branch interactions the merges created - and says plainly in the prompt what it is NOT covering.
+- **The evidence standard for everything else is unchanged.** Each agent still proves its guard by mutation
+  with a byte-exact restore, and the full gate still runs on master. Those carry more weight now, because the
+  second judgment that used to catch what an implementer could not see is spent once at the end rather than
+  fourteen times along the way.
+- **Recorded cost of the change:** every per-group review in this stream that ran found something, and two of
+  them found a HIGH or a MEDIUM in freshly written, mutation-proven code. The findings this cadence will not
+  catch are a known, accepted cost of the ruling, not an oversight.
+
+Self-review remains forbidden (`AGENTS.md`), so the supervisor does not substitute its own reading for the
+review it no longer dispatches.
+
 ### 2026-10-23 - Everything open is fixed before any deploy; the LOW hold is lifted
 
 Owner ruling 2026-10-23 (evening), verbatim: "all remaining low/med/high issues need to be
