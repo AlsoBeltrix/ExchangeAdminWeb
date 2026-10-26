@@ -121,6 +121,23 @@ public sealed class ConferenceRoomProtectionGate
         $"No mailbox identity for '{identity}' - blocked");
 
     /// <summary>
+    /// aud-a2aa. What an <c>Ambiguous</c> resolution is told as. It used to say "matches multiple AD users", which names
+    /// the wrong thing for most of the ways the resolution now reaches that status: since aud-a2b an ambiguity is also
+    /// Exchange Online and Active Directory naming different objects for the one string, and since aud-a2c two Active
+    /// Directory objects holding the mailbox's GUID - objects of any class, which the lookup uses <c>Get-ADObject</c> to
+    /// see. Only the oldest source, a <c>Get-ADUser</c> filter matching twice, is users. So the text names neither a class
+    /// nor a directory, and says what to look at.
+    /// </summary>
+    /// <remarks>
+    /// The resolution reports the status and not which objects collided, so the kinds cannot be named without widening
+    /// <see cref="ProtectedPrincipalService.ResolveExchangeTargetAsync"/>, which every other gate shares. The neutral
+    /// wording is true of every source; the application log carries the specific reason, which each refusal already logs.
+    /// </remarks>
+    internal const string AmbiguousMessage =
+        "Identity is ambiguous - it matches more than one directory object, or Exchange Online and Active Directory do "
+        + "not name the same one. Check the address.";
+
+    /// <summary>
     /// The protection decision. Fail-closed: Unavailable / Ambiguous / CheckFailed / any exception
     /// all deny. NotFound is not protected - both directories were asked and neither knows the
     /// recipient (since resolution began asking Exchange, a secondary alias, a mail-enabled group
@@ -146,7 +163,7 @@ public sealed class ConferenceRoomProtectionGate
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
                 var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "Identity is ambiguous - matches multiple AD users."
+                    ? AmbiguousMessage
                     : "Protection check unavailable.";
                 return ProtectionOutcome.Deny(new ProtectionDenial(reason, $"{reason} - blocked"));
             }

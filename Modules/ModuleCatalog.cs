@@ -915,7 +915,10 @@ public sealed class ModuleCatalog
             // it used to arrive as an empty answer and read as absence (aud-a2ac).
             // 2.16.0: the synced room list's on-prem group is confirmed to still carry the list's
             // address in its own domain, not only its objectGUID and DN (aud-a2z).
-            Version = "2.16.0",
+            // 2.17.0: an ambiguous identity is told as what it is - more than one directory
+            // object, or the two directories not naming the same one - rather than always as
+            // "multiple AD users" (aud-a2aa).
+            Version = "2.17.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
