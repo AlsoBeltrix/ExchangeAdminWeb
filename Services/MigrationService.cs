@@ -1015,7 +1015,7 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         refusal = check is null ? "No eligibility check has been run for this mailbox; nothing was created."
             : check.Status != MigrationStatus.Eligible ? $"{check.EmailAddress}'s eligibility check reads {check.Status}, and only an eligible mailbox can be migrated; nothing was created."
-            : string.IsNullOrWhiteSpace(ticket) ? "A ticket number is required; nothing was created."
+            : !TicketPresence.IsPresent(ticket) ? "A ticket number is required; nothing was created."
             : null;
         return refusal is not null;
     }
@@ -1024,7 +1024,7 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         refusal = check is null ? "No eligibility check of a file has been run; nothing was created."
             : check.EligibleUsers == 0 ? "No mailbox in the checked file is eligible; nothing was created."
-            : string.IsNullOrWhiteSpace(ticket) ? "A ticket number is required; nothing was created."
+            : !TicketPresence.IsPresent(ticket) ? "A ticket number is required; nothing was created."
             : null;
         return refusal is not null;
     }

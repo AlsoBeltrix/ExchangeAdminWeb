@@ -281,6 +281,17 @@
 
     private async Task ExecuteReset()
     {
+        // kd-46. Captured at handler entry, ABOVE the raise and above the yield below, which is a real
+        // yield back to the message loop: the ticket box binds on oninput and its disabled attribute
+        // reaches the browser one round trip late, so a keystroke landing in that window used to change
+        // the ticket this handler validated, audited and emailed - a different ticket from the one on
+        // screen when the operator clicked Reset. The listed user and the method list travel with it, so
+        // the audit row, the bar's label and the reset all describe one reviewed account.
+        var upn = listedUpn ?? "";
+        var ticket = ticketNumber.Trim();
+        var methodsAtClick = methods;
+        var methodTypesBeforeReset = methodsAtClick.Select(m => m.MethodType).ToArray();
+
         isLoading = true;
         resetConfirmPending = false;
         await Task.Yield();
@@ -288,7 +299,6 @@
         // A13: the user whose methods are on screen, NOT the editable box. Re-reading the box
         // here is how a reset aimed at the account the operator reviewed landed on whatever
         // they had typed since.
-        var upn = listedUpn ?? "";
         if (string.IsNullOrWhiteSpace(upn))
         {
             // Nothing is listed, so there is no reviewed account to act on. Fail closed rather
@@ -298,8 +308,6 @@
             return;
         }
 
-        var ticket = ticketNumber.Trim();
-        var methodTypesBeforeReset = methods.Select(m => m.MethodType).ToArray();
         // Set when an authorised servicer overrode a protected-principal refusal, and carried into
         // the SUCCESS audit below. Null on an ordinary reset.
         string? servicedAuditDetail = null;
@@ -318,7 +326,7 @@
         // fifth of the nine partials). Every refusal inside the try is now inside the window too.
         using var activity = Progress.Begin(
             "MFA Reset", $"Resetting MFA methods for {upn}",
-            methods is null ? ActivitySize.Unknown : ActivitySize.Items(methods.Count));
+            methodsAtClick is null ? ActivitySize.Unknown : ActivitySize.Items(methodsAtClick.Count));
 
         try
         {

@@ -1,4 +1,7 @@
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Text;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -8,11 +11,18 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Present means: not null, not empty or white space, and no control character anywhere in it. The
-/// control-character half is the point. <see cref="string.IsNullOrWhiteSpace(string?)"/> answers false
-/// for U+0000 or U+0001, and <see cref="ServiceNowService.ValidateTicketAsync"/> passes every ticket
-/// while the integration is dormant, so a ticket made only of control characters went through every
-/// presence check and reached the write with nothing a reader of the audit row could use.
+/// Present means: at least one visible character, and nothing in it that is never part of a ticket -
+/// no control character (kd-24), no Unicode format character such as a zero-width space or a bidi mark
+/// (kd-48), and no unpaired surrogate. <see cref="string.IsNullOrWhiteSpace(string?)"/> answers false for
+/// all of those, and <see cref="ServiceNowService.ValidateTicketAsync"/> passes every ticket while the
+/// integration is dormant, so a ticket that looked blank went through every presence check and reached
+/// the write with nothing a reader of the audit row could use. A format character anywhere is refused,
+/// not just one standing alone: a bidi mark reorders the text around it, so "INC0042" and a ticket that
+/// only displays as "INC0042" would be different records of the same click.
+/// </para>
+/// <para>
+/// Visible means not white space, and not a character that draws nothing by itself: a combining mark,
+/// an unassigned or private-use code point. White space inside a ticket stays allowed ("CHG 0042").
 /// </para>
 /// <para>
 /// Deliberately not the ServiceNow shape (<see cref="ServiceNowService.TicketNumberPattern"/>): with
@@ -31,8 +41,34 @@ public static class TicketPresence
     public const string RequiredMessage = "Ticket number is required";
 
     /// <summary>True when <paramref name="ticket"/> is a ticket at all; see the class remarks.</summary>
-    public static bool IsPresent([NotNullWhen(true)] string? ticket) =>
-        !string.IsNullOrWhiteSpace(ticket) && !ticket.Any(char.IsControl);
+    public static bool IsPresent([NotNullWhen(true)] string? ticket)
+    {
+        if (string.IsNullOrEmpty(ticket))
+            return false;
+
+        var visible = false;
+        var rest = ticket.AsSpan();
+        while (!rest.IsEmpty)
+        {
+            // An unpaired surrogate is not text at all.
+            if (Rune.DecodeFromUtf16(rest, out var rune, out var consumed) != OperationStatus.Done)
+                return false;
+            rest = rest[consumed..];
+
+            var category = Rune.GetUnicodeCategory(rune);
+            if (category is UnicodeCategory.Control or UnicodeCategory.Format)
+                return false;
+
+            if (!Rune.IsWhiteSpace(rune) && !DrawsNothingAlone(category))
+                visible = true;
+        }
+
+        return visible;
+    }
+
+    private static bool DrawsNothingAlone(UnicodeCategory category) => category is
+        UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark or
+        UnicodeCategory.OtherNotAssigned or UnicodeCategory.PrivateUse;
 
     /// <summary>
     /// The refusal for a missing ticket, as a ServiceNow result, or null when one was given - for the

@@ -479,7 +479,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DhcpAuthorization => new()
     {
         Page = "DhcpAuthorization.razor",
-        ExpectedLineCount = 454,
+        ExpectedLineCount = 456,
 
         Predicates =
         [

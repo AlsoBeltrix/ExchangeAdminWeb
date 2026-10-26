@@ -114,6 +114,7 @@ public sealed class TicketValidationServiceTests : IDisposable
     [InlineData("   ")]
     [InlineData("\u0000")] // kd-24: a control-only ticket is no ticket either, by the shared rule
     [InlineData("\u0001")]
+    [InlineData("\u200B")] // kd-48: and a format-only one
     public async Task Off_BlankTicketRejected(string? ticket)
     {
         var validator = CreateValidator(CreateModuleConfig());

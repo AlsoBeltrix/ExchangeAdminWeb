@@ -172,7 +172,7 @@ public class MessageTraceExportListing
     /// </summary>
     public async Task<MessageTraceExportDownloadResult> TryDownloadAsync(string jobId, string? ticket)
     {
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (!TicketPresence.IsPresent(ticket))
             return new MessageTraceExportDownloadResult { Error = TicketRequiredMessage };
 
         var item = Resolve(jobId);

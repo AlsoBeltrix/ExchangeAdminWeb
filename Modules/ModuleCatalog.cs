@@ -423,7 +423,9 @@ public sealed class ModuleCatalog
             // when it may have been (kd-33); nine more catches give a failed sign-in in the error's own words
             // (kd-34); a search that opens another batch withdraws a row action staged on the last one (kd-35);
             // a denied bulk run's audit row carries its count and only its first fifty names (kd-36).
-            Version = "1.25.0",
+            // 1.26.0: both create refusals judge the ticket by the shared TicketPresence rule, so one
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.26.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -501,7 +503,9 @@ public sealed class ModuleCatalog
             // 1.7.0: the Received list has a ceiling (it bypassed every cap in the model),
             // and a truncated routing path or header list now SAYS so - the earliest hop shown
             // is not necessarily the origin (lower-priority Wave 4 header bounds).
-            Version = "1.7.0",
+            // 1.8.0: a detail export's download requires a ticket by the shared TicketPresence rule,
+            // so one with nothing visible in it no longer passes (kd-45).
+            Version = "1.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -640,7 +644,9 @@ public sealed class ModuleCatalog
             // ServiceNow, which passes one while it is dormant (kd-18).
             // 2.15.0: presence is the shared TicketPresence rule, which also refuses a ticket made
             // only of control characters (kd-24).
-            Version = "2.15.0",
+            // 2.16.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "2.16.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -667,7 +673,9 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.8.0: a ticket made only of control characters is no ticket - the shared
             // TicketPresence rule (kd-24).
-            Version = "1.8.0",
+            // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "1.9.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -846,7 +854,11 @@ public sealed class ModuleCatalog
             // while it is dormant (kd-18).
             // 1.4.0: presence is the shared TicketPresence rule, which also refuses a ticket made
             // only of control characters (kd-24).
-            Version = "1.4.0",
+            // 1.5.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            // 1.6.0: the reset reads its ticket, its listed user and its method list at the click rather
+            // than after the yield, so a keystroke in that window cannot change what is recorded (kd-46).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -978,7 +990,9 @@ public sealed class ModuleCatalog
             // 2.18.0: the Room Finder preview says a building's room list does not exist and that
             // the row will be refused until it is created, where it marked the row "new" and the
             // apply then refused it (kd-66).
-            Version = "2.18.0",
+            // 2.19.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "2.19.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1018,7 +1032,9 @@ public sealed class ModuleCatalog
             // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
             // 1.5.0: a ticket made only of control characters is no ticket - the shared
             // TicketPresence rule (kd-24).
-            Version = "1.5.0",
+            // 1.6.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1052,7 +1068,9 @@ public sealed class ModuleCatalog
             // of running with the frame idle (docs/ProgressCoverage-Plan.md S5).
             // 1.6.0: an error record the bound-object re-read leaves without throwing is no longer
             // taken for the disable's, the lockdown move's or the password reset's own error (psl-10).
-            Version = "1.6.0",
+            // 1.7.0: the disable's mandatory ticket is judged by the shared TicketPresence rule, so one
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.7.0",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1133,7 +1151,9 @@ public sealed class ModuleCatalog
             // 1.5.3: a remediation's activity now completes below the administrator
             // notification, so the bar no longer reads Idle while that email is still in flight
             // (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.5.3",
+            // 1.6.0: a remediation's ticket presence is the shared TicketPresence rule, so a ticket
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.6.0",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1168,7 +1188,11 @@ public sealed class ModuleCatalog
             // passes one while it is dormant; deauthorizing already did (kd-18).
             // 1.7.0: both paths judge presence by the shared TicketPresence rule, which also refuses
             // a ticket made only of control characters (kd-24).
-            Version = "1.7.0",
+            // 1.8.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
+            // - the shared TicketPresence rule (kd-48).
+            // 1.9.0: a deauthorize refused for its ticket records the ticket as submitted and says where
+            // it refused and that nothing was attempted, as authorize already did (kd-49).
+            Version = "1.9.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
@@ -1338,7 +1362,9 @@ public sealed class ModuleCatalog
             // 1.4.3: a device action's activity now completes below BOTH administrator
             // notifications, which is what the page's own comment always claimed it did
             // (docs/ProgressCoverage-Plan.md S3).
-            Version = "1.4.3",
+            // 1.5.0: a device action's ticket presence is the shared TicketPresence rule, so a ticket
+            // with nothing visible in it is refused as a blank one is (kd-45).
+            Version = "1.5.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",

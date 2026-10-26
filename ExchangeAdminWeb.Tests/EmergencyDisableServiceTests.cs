@@ -117,7 +117,9 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.5.0: the notice goes to the configured NotifySecurityTeam address rather than the
         // global admin list, and the page states the outcome instead of claiming one (aud-a27).
         // 1.6.0: a record the bound-object re-read leaves no longer fails the step after it (psl-10).
-        Assert.Equal("1.6.0", module.Version);
+        // 1.7.0: the mandatory ticket is judged by the shared TicketPresence rule, so one with nothing
+        // visible in it is refused as a blank one is (kd-45).
+        Assert.Equal("1.7.0", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
