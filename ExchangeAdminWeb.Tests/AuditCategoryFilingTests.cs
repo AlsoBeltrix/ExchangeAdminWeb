@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace ExchangeAdminWeb.Tests;
@@ -130,6 +131,28 @@ public class AuditCategoryFilingTests
         Assert.Contains("<option value=\"EmergencyDisable\">", text);
         Assert.Contains("<option value=\"LicensingUpdates\">", text);
         Assert.Contains("<option value=\"Comms10k\">", text);
+    }
+
+    [Fact]
+    public void AdminEventLog_CategoryFilter_OffersEveryModuleThatCanOwnABulkJob()
+    {
+        // kd-53. Admin Bulk Jobs files a cancel or a removal under the job's own module, so each of those modules is a
+        // category an operator must be able to filter to - the rule above, for the surface that reaches every module. The
+        // processors are read by reflection rather than listed, so a fifth one is caught here instead of filing into a
+        // category the filter does not offer.
+        var text = File.ReadAllText(FindRepoFile("Components", "Pages", "AdminEventLog.razor"));
+
+        var processors = typeof(ExchangeAdminWeb.Services.Jobs.IBulkJobProcessor).Assembly.GetTypes()
+            .Where(t => t is { IsClass: true, IsAbstract: false }
+                        && typeof(ExchangeAdminWeb.Services.Jobs.IBulkJobProcessor).IsAssignableFrom(t))
+            .Select(t => t.GetField("ModuleName", BindingFlags.Public | BindingFlags.Static)?.GetRawConstantValue() as string)
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct()
+            .ToList();
+
+        Assert.NotEmpty(processors);
+        foreach (var module in processors)
+            Assert.Contains($"<option value=\"{module}\">", text);
     }
 }
 

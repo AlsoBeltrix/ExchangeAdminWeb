@@ -108,6 +108,23 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobCarryingNoModule_IsFiledUnderThisPagesOwnCategory_NotABlankOne()
+    {
+        // kd-53. The category comes from the job; a job with none would leave the row uncategorised, which no filter and no
+        // compliance query can reach.
+        var (jobs, store) = JobService();
+        var job = Job(BulkJobStatus.Queued, moduleId: "");
+        store.Insert(job);
+        var page = BuildPage(jobs);
+
+        await Cancel(page, job);
+
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == Action);
+        Assert.Equal("AdminBulkJobs", row.GetProperty("category").GetString());
+        Assert.Equal("Success", row.GetProperty("result").GetString());
+    }
+
+    [Fact]
     public async Task ACancelTheStoreFails_IsAuditedAsFailed_AndStillThrows()
     {
         var (jobs, _) = JobService(migrated: false);
@@ -128,6 +145,9 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
     private JsonElement TheRow(BulkJob job, bool success, string? error)
     {
         var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == Action);
+        // kd-53. Filed under the job's own module: this fixture's job is a Comms-10k one, and every row went under
+        // ConferenceRooms whatever module the job belonged to.
+        Assert.Equal(Module, row.GetProperty("category").GetString());
         Assert.Equal("admin", row.GetProperty("user").GetString());
         Assert.Equal(OperatorIp, row.GetProperty("ip").GetString());
         Assert.Equal($"{Module}/{job.Id}", row.GetProperty("target").GetString());
@@ -142,10 +162,10 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
 
     // ---- the page and its job store --------------------------------------------------------------
 
-    private static BulkJob Job(BulkJobStatus status) => new()
+    private static BulkJob Job(BulkJobStatus status, string moduleId = Module) => new()
     {
         Id = "job-1",
-        ModuleId = Module,
+        ModuleId = moduleId,
         JobType = "T",
         Status = status,
         SubmittedBy = "jdoe",
