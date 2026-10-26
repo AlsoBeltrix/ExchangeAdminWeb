@@ -660,6 +660,14 @@ cannot be read is not set, so its `MaxFileMB` applies. Before, such a value stop
 trace writer, the trace, the extended log, the mail service or the bulk job runner from being
 built: every page that needs one failed, and for the job runner the app did not start.
 
+The three bulk-job settings also have a range, and a number outside it is read as the default and
+named the same way: `BulkJobs:StaleHeartbeatMinutes` 1 to 1440 (a minute to a day before a running
+job with no heartbeat shows as Stalled), `BulkJobs:RecentJobLimit` 1 to 1000 (finished jobs listed)
+and `BulkJobs:RetentionDays` 1 to 3650 (a day to ten years of finished job records kept). Before,
+any finite number was taken: a very large one threw out of the runner's constructor so the app did
+not start, a negative or zero retention made the start-up prune delete every finished job record,
+and a negative limit became no limit at all.
+
 ### 4. Deploy to IIS
 
 **Generic / new environments — use the standalone product installer** in **elevated

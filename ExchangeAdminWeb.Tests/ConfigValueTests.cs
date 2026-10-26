@@ -181,6 +181,73 @@ public sealed class ConfigValueTests : IDisposable
         Assert.Equal(1, logger.Attempts);
     }
 
+    /// <summary>
+    /// aud-a64: a number that parses was taken however large or small, so a finite "1e300" still threw out of
+    /// TimeSpan.FromDays in the bulk job runner's constructor, a negative retention put its start-up prune's cutoff in the
+    /// future, and a negative limit reached SQLite as LIMIT -n, which is no limit. A setting may now name its range, and a
+    /// value outside it is the default, named once like any other value that cannot be read.
+    /// </summary>
+    [Theory]
+    [InlineData("5", 5)]
+    [InlineData("1", 1)]
+    [InlineData("10", 10)]
+    [InlineData("0", 7)]
+    [InlineData("-1", 7)]
+    [InlineData("11", 7)]
+    public void ReadInt_TakesAValueInsideItsRange_AndAnythingOutsideItAsItsDefault(string value, int expected)
+    {
+        var key = UniqueKey();
+        var logger = new CapturingLogger<ConfigValueTests>();
+
+        Assert.Equal(expected, ConfigValue.ReadInt(Config((key, value)), key, whenBlank: 7, logger, min: 1, max: 10));
+
+        if (expected == 7 && value != "7")
+        {
+            var warning = Assert.Single(logger.Warnings);
+            Assert.Contains("cannot be read as a whole number from 1 to 10; it is read as 7", warning, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Empty(logger.Warnings);
+        }
+    }
+
+    [Theory]
+    [InlineData("2.5", 2.5)]
+    [InlineData("1", 1.0)]
+    [InlineData("0.5", 7.0)]
+    [InlineData("-3", 7.0)]
+    [InlineData("1e300", 7.0)]
+    public void ReadDouble_TakesAValueInsideItsRange_AndAnythingOutsideItAsItsDefault(string value, double expected)
+    {
+        var key = UniqueKey();
+        var logger = new CapturingLogger<ConfigValueTests>();
+
+        Assert.Equal(expected, ConfigValue.ReadDouble(Config((key, value)), key, whenBlank: 7, logger, min: 1, max: 10));
+
+        if (expected == 7.0)
+        {
+            var warning = Assert.Single(logger.Warnings);
+            Assert.Contains("cannot be read as a finite number from 1 to 10; it is read as 7", warning, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Empty(logger.Warnings);
+        }
+    }
+
+    [Fact]
+    public void AReadWithNoRange_NamesTheKindAlone_AsItAlwaysDid()
+    {
+        var key = UniqueKey();
+        var logger = new CapturingLogger<ConfigValueTests>();
+
+        Assert.Equal(5, ConfigValue.ReadInt(Config((key, "five")), key, whenBlank: 5, logger));
+
+        var warning = Assert.Single(logger.Warnings);
+        Assert.Contains("cannot be read as a whole number; it is read as 5", warning, StringComparison.Ordinal);
+    }
+
     // ---- the constructors ------------------------------------------------------------------------------
 
     [Fact]
@@ -338,6 +405,57 @@ public sealed class ConfigValueTests : IDisposable
         AssertNamed(logger, "BulkJobs:RecentJobLimit", limit, "25");
         AssertNamed(logger, "BulkJobs:RetentionDays", retention, "30");
         Assert.Equal(3, logger.Warnings.Count);
+    }
+
+    /// <summary>
+    /// aud-a64: the three bulk-job settings are range-checked, so a finite value out of range no longer throws out of
+    /// TimeSpan in this start-up singleton's constructor, nor reaches the prune and the LIMIT as a negative number.
+    /// </summary>
+    /// <remarks>
+    /// Each value is this test's own, as every case in this class must be: the warning is given once per process for each
+    /// setting and value, so a value another test also passes would be named there instead and counted missing here. The
+    /// range's own edges and its zero and negative cases are covered against unique keys by the two theories above; these
+    /// rows prove only that the runner passes a range per setting.
+    /// </remarks>
+    [Theory]
+    [InlineData("0.125", "-7", "0.25")]
+    [InlineData("-11", "-13", "-17")]
+    [InlineData("1e301", "999999997", "1e302")]
+    public void TheBulkJobRunner_GivenSettingsOutsideTheirRange_IsBuilt_WithItsDefaults(string heartbeat, string limit, string retention)
+    {
+        var logger = new CapturingLogger<BulkJobService>();
+        var config = Config(
+            ("BulkJobs:StaleHeartbeatMinutes", heartbeat),
+            ("BulkJobs:RecentJobLimit", limit),
+            ("BulkJobs:RetentionDays", retention));
+
+        BulkJobService? runner = null;
+        Assert.Null(Record.Exception(() => runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), config, logger)));
+
+        Assert.Equal(TimeSpan.FromMinutes(5), Field<TimeSpan>(runner!, "_staleHeartbeat"));
+        Assert.Equal(25, Field<int>(runner!, "_recentJobLimit"));
+        Assert.Equal(30, runner!.RetentionDays);
+        AssertNamed(logger, "BulkJobs:StaleHeartbeatMinutes", heartbeat, "5");
+        AssertNamed(logger, "BulkJobs:RecentJobLimit", limit, "25");
+        AssertNamed(logger, "BulkJobs:RetentionDays", retention, "30");
+        Assert.Equal(3, logger.Warnings.Count);
+    }
+
+    [Fact]
+    public void TheBulkJobRunner_GivenSettingsAtTheEdgesOfTheirRange_TakesThem()
+    {
+        var logger = new CapturingLogger<BulkJobService>();
+        var config = Config(
+            ("BulkJobs:StaleHeartbeatMinutes", "1440"),
+            ("BulkJobs:RecentJobLimit", "1000"),
+            ("BulkJobs:RetentionDays", "1"));
+
+        var runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), config, logger);
+
+        Assert.Equal(TimeSpan.FromMinutes(1440), Field<TimeSpan>(runner, "_staleHeartbeat"));
+        Assert.Equal(1000, Field<int>(runner, "_recentJobLimit"));
+        Assert.Equal(1, runner.RetentionDays);
+        Assert.Empty(logger.Warnings);
     }
 
     // ---- the source check ------------------------------------------------------------------------------

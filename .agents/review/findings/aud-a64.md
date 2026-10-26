@@ -116,6 +116,8 @@ At `3da510cb`: `Components/Pages/AdminEventLog.razor` 1263, 1050, 1644; `Service
 - (4): `Services/ModuleConfigService.cs`, `Services/Storage/LegacyConfigImport.cs`;
   `ExchangeAdminWeb.Tests/ModuleConfigServiceTests.cs`.
 - (6): `Services/UsageTelemetryService.cs`; `ExchangeAdminWeb.Tests/UsageTelemetryServiceTests.cs`.
+- (7)-(9): `Services/ConfigValue.cs`, `Services/Jobs/BulkJobService.cs`, `README.md`;
+  `ExchangeAdminWeb.Tests/ConfigValueTests.cs`, `ExchangeAdminWeb.Tests/BulkJobServiceTests.cs`.
 - (5): `Services/JsonlLogService.cs`, `Services/ExtendedLogService.cs`; `ExchangeAdminWeb.Tests/JsonlWriterRotationTests.cs`,
   `ExchangeAdminWeb.Tests/ExtendedLogServiceTests.cs`, `ExchangeAdminWeb.Tests/AuditServiceTests.cs` (the test that pinned
   the defect, rewritten to the new contract).
@@ -182,6 +184,26 @@ the restore. The mutant is the method as it was at `d42e146c` (no reset at all),
 | Mutation (call site) | Mutant MD5 | Named test failing |
 |---|---|---|
 | M6 `Readable`'s `Interlocked.Exchange(ref _switchReadFailureLogged, 0)` removed | `a5a843f11e24308301ec9c9b5c2c7f0a` | 1 of 97: `UsageTelemetryServiceTests.ASwitchThatFailsAgainAfterARecovery_IsReportedOncePerFailureStreak` - one warning where two were expected: the second failure streak was never reported |
+
+(7)-(9). Filter `FullyQualifiedName~ConfigValueTests|FullyQualifiedName~BulkJobServiceTests|FullyQualifiedName~BulkJobRepositoryTests|FullyQualifiedName~ConfigBooleanTests|FullyQualifiedName~Comms10kOwnedJobTests|FullyQualifiedName~MessageTraceExportListingTests`
+(192 tests). `BulkJobService.cs` MD5 `54c7d93f70b43a82bbb1a4da26a32d6d`, `ConfigValue.cs` `d9d15f9e3e4897a1a67ef17323b9dddd`,
+each matched after its rows; 192/192 green after every restore. Test bytes: `ConfigValueTests.cs`
+`f63b1292686e034445bcac7c6ccdf535`, `BulkJobServiceTests.cs` `0d42e35c3c9d8e472e51bcedec8ac01a`. M7 is the constructor
+as it was at `93d4c6e0`, so its six failures are the three defects' reproduction.
+
+| Mutation (call site) | Mutant MD5 | Named tests failing |
+|---|---|---|
+| M7 `BulkJobService`'s constructor reads the three settings with no range again | `4eb87a30bb34a889487de54dc3a1fefc` | 6 of 192: all three `TheBulkJobRunner_GivenSettingsOutsideTheirRange_IsBuilt_WithItsDefaults` rows - `System.OverflowException: TimeSpan overflowed because the duration is too long.` out of the constructor (7), and a heartbeat of `00:00:00` / `-00:01:00` where 5 minutes was expected; `Initialize_GivenARetentionOutsideItsRange_KeepsAFinishedJob`, both rows - the day-old finished job deleted at start-up (8); `GetRecentJobs_GivenALimitOutsideItsRange_ListsTheDefaultTwentyFive` - 30 of 30 listed where 25 were expected (9) |
+| extra E3 `ConfigValue.ReadDouble`'s range check removed | `3e4312ce782b2be4a332b33f1a57164e` | 8 of 192: the three out-of-range `ReadDouble` rows (0.5, -3, 1e300 each taken), and the runner's and the prune's cases above |
+| extra E4 `ConfigValue.ReadInt`'s range check removed | `bdb02a9e52ddfb687279f49fc420b389` | 7 of 192: the three out-of-range `ReadInt` rows (0, -1, 11 each taken), the runner's three rows (the limit read as -7, -13 and 999999997), and `GetRecentJobs_GivenALimitOutsideItsRange_...` |
+
+A first pass of this round left one failure on the restored tree:
+`TheBulkJobRunner_GivenSettingsOutsideTheirRange_IsBuilt_WithItsDefaults(heartbeat: "0", ...)` counted two warnings, not
+three. `ConfigValue` names a setting and value once per process (the `Named` dictionary), and the new
+`BulkJobServiceTests` cases pass `BulkJobs:RetentionDays` "0" and "-1" too, so whichever class ran first consumed the
+name - an order-dependent failure, not the mutant's. The rows were given values no other test uses (`0.125`/`-7`/`0.25`,
+`-11`/`-13`/`-17`, `1e301`/`999999997`/`1e302`), which is the rule this class's own remarks already state, and the whole
+round was run again on those bytes: the table above. The filter then ran three times in a row, 192/192 each time.
 
 **Merge note (this branch forked at `eb017102`; master is ahead).** `Services/JsonlLogService.cs`,
 `Services/ExtendedLogService.cs` and `JsonlWriterRotationTests.cs` are untouched on master, so those merge clean.
