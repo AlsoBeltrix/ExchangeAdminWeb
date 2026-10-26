@@ -6,7 +6,7 @@ module C while B is still awaiting its authorization, let C finish, then let B r
 `LoadState()` apply B's state although the route is C. `loadedModuleId` is set earlier in the bookkeeping, and
 nothing compares the request with the latest one immediately before the state is applied. aud-a67 (9) and (10) closed
 the double-load and the OU-answer cases; this ordering is a third.
-**Status**: Verified on branch; awaiting merge and codex review
+**Status**: Merged to master `4afa745d`; codex defect review settings-batch-9 in flight
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: see below
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 620e9d5a head f08a664a (merged fe67668d, with d0fc4c70); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat f08a664a)

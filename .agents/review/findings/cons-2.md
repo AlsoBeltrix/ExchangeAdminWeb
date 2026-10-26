@@ -3,7 +3,7 @@
 **Severity**: LOW - flaky test, the aud-a67 (7) class but outside the sub-item's named scope.
 `ExchangeAdminWeb.Tests/SqliteBusyWaitTests.cs` `ALockReleasedWithinTheWait_LetsTheWriteThrough` asserts
 `elapsed < BusyTimeout` (5 s) after holding the lock 1 s; on a loaded host the write can legitimately take longer.
-**Status**: Verified on branch; awaiting merge and codex review
+**Status**: Merged to master `4afa745d`; codex defect review settings-batch-9 in flight
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: see below
 **Reviewer**: implementer (aud-a64/a67 agent, candidate; not yet confirmed by the supervisor)

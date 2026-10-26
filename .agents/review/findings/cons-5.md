@@ -4,7 +4,7 @@
 `Components/Pages/AdminSettings.razor` about 392 and `Components/Pages/ExchangeOnlineConfig.razor` about 370: the
 aud-a67 (4)/(13) guard returns without a banner, a status line or a refusal record, so a second save - including one for
 a different dirty setting on the same page instance - is silently ignored while its setting stays dirty.
-**Status**: Verified on branch; awaiting merge and codex review
+**Status**: Merged to master `4afa745d`; codex defect review settings-batch-9 in flight
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: see below
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 620e9d5a head f08a664a (merged fe67668d, with d0fc4c70); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat f08a664a)

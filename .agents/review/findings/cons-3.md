@@ -4,7 +4,7 @@
 mode waits 5 s on a held database. aud-a67 (2) brought it down from a measured 30.5 s to a measured 7.8-9.4 s, and the
 residue is structural: `busy_timeout` is a PRAGMA settable only after opening, so the open and the statement each get
 one wait. The plan reads Implemented, so this is a correction, not a relabel.
-**Status**: Verified on branch; awaiting merge and codex review
+**Status**: Merged to master `4afa745d`; codex defect review settings-batch-9 in flight
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: see below
 **Reviewer**: implementer (aud-a64/a67 agent, candidate; not yet confirmed by the supervisor)
