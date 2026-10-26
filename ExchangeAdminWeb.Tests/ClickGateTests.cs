@@ -1552,6 +1552,34 @@ public class ClickGateTests
     }
 
     [Fact]
+    public void BlankCommentsBlanksAnHtmlCommentThatStartsWhereAnotherEnds()
+    {
+        // kd-56. The search for the next comment resumed one character past the end of the comment it
+        // had just blanked, so a comment written straight after another was never seen - here one
+        // holding a whole button, in the markup and in an @code template.
+        var page = string.Join("\n",
+            "<div>",
+            "    <!-- a --><!-- b: <button @onclick=\"StageDeleteSelected\">old</button> -->",
+            "    <button @onclick=\"Go\">Go</button>",
+            "</div>",
+            "@Row",
+            "@code {",
+            "    private RenderFragment Row => @<p><!-- c --><!-- d: <button @onclick=\"StagePurge\">old</button> --></p>;",
+            "    private void Go() { }",
+            "}");
+
+        var text = ClickGateSource.BlankComments(page);
+
+        Assert.Equal(page.Length, text.Length);
+        Assert.DoesNotContain("<!--", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("StageDeleteSelected", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("StagePurge", text, StringComparison.Ordinal);
+        Assert.Contains("<button @onclick=\"Go\">Go</button>", text, StringComparison.Ordinal);
+        Assert.Contains("@<p>", text, StringComparison.Ordinal);
+        Assert.Contains("</p>;", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AttributeValueReadsOnlyTheAttributeItNames()
     {
         // The other half of the walker, against a fixture rather than a page, because

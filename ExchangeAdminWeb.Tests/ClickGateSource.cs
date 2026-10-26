@@ -394,8 +394,11 @@ public sealed class ClickGateSource
         var regions = parsed.IsRazor ? parsed.Regions.Select(r => r.Raw).ToList() : [];
         var templates = regions.SelectMany(r => TemplatesIn(source, blanked, r.Start, r.End)).ToList();
 
+        // kd-56: the search resumes at at + 1. After a blanked comment "at" is its "-->", which holds
+        // no "<", so the next "<!--" is found from the comment's very end; at + 4 started one past it
+        // and missed a comment written straight after another ("<!-- a --><!-- b -->").
         for (var at = blanked.IndexOf("<!--", StringComparison.Ordinal); at >= 0;
-             at = blanked.IndexOf("<!--", at + 4, StringComparison.Ordinal))
+             at = blanked.IndexOf("<!--", at + 1, StringComparison.Ordinal))
         {
             if (regions.Any(r => r.Contains(at)))
             {
