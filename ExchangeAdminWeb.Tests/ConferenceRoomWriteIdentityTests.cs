@@ -1156,22 +1156,19 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Empty(ListCalls());
     }
 
-    // A Building with no room list under either name: the row creates one cloud-side.
-    private void NoListYet()
-    {
-        _h.MissingLists.Add(List);
-        _h.MissingLists.Add(ConferenceRoomService.BuildLegacyRoomListName("Building 1"));
-    }
+    // aud-a2ab. A Building with no room list: the row refuses before any write, so the creation is reached only by a direct
+    // call of the add - as the row used to call it - which is how the two tests below drive it.
+    private static ConferenceRoomService.RoomListTarget NoListYet() =>
+        new(List, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null, Guid: null);
 
     [Fact]
-    public async Task AListTheRowCreates_IsNamedByTheGuidTheCreationReturned()
+    public async Task AListTheAddCreates_IsNamedByTheGuidTheCreationReturned()
     {
         // No list was read, so the Guid is the one New-DistributionGroup returned for the object it made - with
         // a namesake present, the name would make the add ambiguous.
-        NoListYet();
         _h.ListNamesakes[List] = NamesakeGuid;
 
-        var result = await Finder(new Service(_h), Room());
+        var result = await new Service(_h).AddToRoomListAsync(Room(), "room1@contoso.test", Typed, NoListYet(), actingUser: null);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("New-DistributionGroup")), "Name"));
@@ -1183,14 +1180,12 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Fact]
     public async Task AListCreatedWithoutAGuid_IsNotAddedToByItsName()
     {
-        // The creation returned no Guid: the row fails, partial, and nothing is read or added by the name.
-        NoListYet();
+        // The creation returned no Guid: the add fails and nothing is read or added by the name.
         _h.CreatedListGuid = null;
 
-        var result = await Finder(new Service(_h), Room());
+        var result = await new Service(_h).AddToRoomListAsync(Room(), "room1@contoso.test", Typed, NoListYet(), actingUser: null);
 
         Assert.False(result.Success);
-        Assert.True(result.Partial);
         Assert.Single(_h.CallsTo("New-DistributionGroup"));
         Assert.Empty(ListCalls());
     }

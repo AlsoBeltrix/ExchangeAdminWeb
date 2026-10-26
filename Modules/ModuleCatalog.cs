@@ -963,7 +963,19 @@ public sealed class ModuleCatalog
             // 2.13.0: a
             // write refused at its access re-check - Room Finder or Room Type, single or CSV - is audited
             // once, as a refusal, as the job controls' is (kd-52).
-            Version = "2.13.0",
+            // 2.14.0: a Building whose room list does not exist refuses the row before any write - a
+            // list that does not exist cannot be checked against Protected Group Targets, so the
+            // module no longer creates one (aud-a2ab). One step past master's 2.13.0, which already
+            // carries this branch's 2.7.0 and the kd-* bumps made while the branch was stopped.
+            // 2.15.0: only Exchange's affirmative "no such object" means a building has no room
+            // list; an ambiguous name or a failed lookup refuses the row before any write, where
+            // it used to arrive as an empty answer and read as absence (aud-a2ac).
+            // 2.16.0: the synced room list's on-prem group is confirmed to still carry the list's
+            // address in its own domain, not only its objectGUID and DN (aud-a2z).
+            // 2.17.0: an ambiguous identity is told as what it is - more than one directory
+            // object, or the two directories not naming the same one - rather than always as
+            // "multiple AD users" (aud-a2aa).
+            Version = "2.17.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

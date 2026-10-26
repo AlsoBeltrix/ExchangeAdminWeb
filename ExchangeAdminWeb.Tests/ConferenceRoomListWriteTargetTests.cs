@@ -82,7 +82,7 @@ public sealed class ConferenceRoomListWriteTargetTests : IDisposable
                 withoutProtection ? null : protectedPrincipals ?? h.ProtectedPrincipals,
                 withoutProtection ? null : h.Servicers) => _h = h;
 
-        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose) =>
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken = default) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
         protected override Runspace OpenDirectoryRunspace() => _h.OpenDirectoryRunspace();
@@ -403,18 +403,61 @@ public sealed class ConferenceRoomListWriteTargetTests : IDisposable
     }
 
     [Fact]
-    public async Task AListTheRowCreates_IsCheckedBeforeTheRoomIsAddedToIt()
+    public async Task ABuildingWithNoRoomList_IsRefusedBeforeAnyWrite()
     {
-        // A list that does not exist yet cannot be checked before the writes; the add checks the list it created, as the
-        // creation returned it, before adding the room. A rule naming its new address refuses the add.
+        // aud-a2ab, the finding: this case used to be a partial - Set-Place, the timezone and New-DistributionGroup all ran,
+        // and the rule naming the list was found after the app had changed the room and created a group. A list that does
+        // not exist cannot be checked before it is written to (Exchange assigns its address at creation), so the row refuses
+        // and writes nothing: no Set-Place, no creation. Logged once where it is decided.
         NoListYet();
         _h.CreatedListAddress = "building1-rooms@contoso.test";
         Protect(new ProtectedPrincipalConfig { Users = ["building1-rooms@contoso.test"] });
+        var logger = new CapturingLogger();
+
+        var result = await Apply(new Service(_h, logger));
+
+        Assert.False(result.Success);
+        Assert.False(result.Partial);
+        Assert.Equal($"{ConferenceRoomService.RoomListDoesNotExistRefusal(List)} Nothing was written.", result.Message);
+        Assert.Contains(result.Steps, s => s.Stage == "Room list preflight" && !s.Success);
+        Assert.Empty(_h.Writes);
+        Assert.Empty(_h.CallsTo("New-DistributionGroup"));
+        Assert.Empty(_h.CallsTo("Add-DistributionGroupMember"));
+        var refusal = ConferenceRoomService.RoomListDoesNotExistRefusal(List);
+        var logged = Assert.Single(logger.Entries, e => e.Message.Contains(refusal, StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, logged.Level);
+        Assert.Equal($"Room-list preflight for {Typed} on {List} refused the row; nothing was written: {refusal}", logged.Message);
+    }
+
+    [Fact]
+    public async Task ABuildingWithNoRoomList_IsRefusedWithNothingProtectedAtAll()
+    {
+        // The refusal does not rest on a rule: the identity of a list that does not exist cannot be established at all, so
+        // the row refuses over an empty protection store too. This is the cost of the fail-closed call - Room Finder apply
+        // no longer creates a building's room list (the record's Known gaps).
+        NoListYet();
 
         var result = await Apply(new Service(_h));
 
         Assert.False(result.Success);
-        Assert.True(result.Partial);
+        Assert.False(result.Partial);
+        Assert.Empty(_h.Writes);
+        Assert.Empty(_h.CallsTo("New-DistributionGroup"));
+    }
+
+    [Fact]
+    public async Task TheAdd_StillChecksAListItCreates_BeforeAddingTheRoomToIt()
+    {
+        // aud-a2ab keeps the post-creation re-check. No row reaches the add with a list that does not exist any more, so it
+        // is the add's own guard, called directly as the row used to call it: a rule naming the created list's address
+        // refuses the add after the creation, and the room is not put on the list.
+        _h.CreatedListAddress = "building1-rooms@contoso.test";
+        Protect(new ProtectedPrincipalConfig { Users = ["building1-rooms@contoso.test"] });
+        var missing = new ConferenceRoomService.RoomListTarget(List, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null, Guid: null);
+
+        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, missing, actingUser: null);
+
+        Assert.False(result.Success);
         Assert.Contains(ProtectedGroup, result.Message, StringComparison.Ordinal);
         Assert.Single(_h.CallsTo("New-DistributionGroup"));
         Assert.Empty(_h.CallsTo("Add-DistributionGroupMember"));

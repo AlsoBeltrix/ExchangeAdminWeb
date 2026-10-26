@@ -127,8 +127,24 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable ListGuids { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
-    /// <summary>aud-a2m. The list names the stand-in <c>Get-DistributionGroup</c> does not find: a Building with no room list yet.</summary>
+    /// <summary>
+    /// aud-a2m. The list names the stand-in <c>Get-DistributionGroup</c> does not find: a Building with no room list yet.
+    /// aud-a2ac: reported as Exchange reports it, an error of category <c>ObjectNotFound</c> - the one failure the service
+    /// takes for an answer (<c>ExchangeServiceBase.IsNotFound</c>).
+    /// </summary>
     public IList MissingLists { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>
+    /// aud-a2ac. The list names the stand-in <c>Get-DistributionGroup</c> refuses as matching several recipients, the way
+    /// Exchange refuses an ambiguous <c>-Identity</c>: an error that is not a not-found, so it is never read as absence.
+    /// </summary>
+    public IList AmbiguousLists { get; } = ArrayList.Synchronized(new ArrayList());
+
+    /// <summary>
+    /// aud-a2ac. The list names the stand-in <c>Get-DistributionGroup</c> answers TWICE - the defensive half of the same
+    /// rule: two answers are not one list, whatever Exchange would really do with such an identity.
+    /// </summary>
+    public IList ListsAnsweringTwice { get; } = ArrayList.Synchronized(new ArrayList());
 
     /// <summary>aud-a2m. The <c>Guid</c> of the group the stand-in <c>New-DistributionGroup</c> returns unless a test changes <see cref="CreatedListGuid"/>.</summary>
     public const string DefaultCreatedListGuid = "31313131-3131-4131-8131-313131313131";
@@ -192,6 +208,13 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// as a real group always has one; a null or blank value answers none.
     /// </summary>
     public Hashtable DirectoryGroupSamAccountNames { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// aud-a2z. The <c>mail</c> a stand-in <c>Get-ADGroup -Identity</c> answers, when asked for it, for a group by
+    /// objectGUID: its own domain moved on from the address the catalog search still matches it by. A group not named here
+    /// answers the mail the search matches (<see cref="DirectoryGroupAttributes"/>); a null value answers none.
+    /// </summary>
+    public Hashtable DirectoryGroupMailInItsDomain { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
     public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
@@ -752,11 +775,14 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("DefaultListGuid", DefaultListGuid);
         rs.SessionStateProxy.SetVariable("ListGuids", ListGuids);
         rs.SessionStateProxy.SetVariable("MissingLists", MissingLists);
+        rs.SessionStateProxy.SetVariable("AmbiguousLists", AmbiguousLists);
+        rs.SessionStateProxy.SetVariable("ListsAnsweringTwice", ListsAnsweringTwice);
         rs.SessionStateProxy.SetVariable("CreatedListGuid", CreatedListGuid);
         rs.SessionStateProxy.SetVariable("CreatedListAddress", CreatedListAddress);
         rs.SessionStateProxy.SetVariable("ListExternalIds", ListExternalIds);
         rs.SessionStateProxy.SetVariable("ListMembersClearedAfterSetPlace", ListMembersClearedAfterSetPlace);
         rs.SessionStateProxy.SetVariable("DirectoryGroupSamAccountNames", DirectoryGroupSamAccountNames);
+        rs.SessionStateProxy.SetVariable("DirectoryGroupMailInItsDomain", DirectoryGroupMailInItsDomain);
         rs.SessionStateProxy.SetVariable("ListNamesakes", ListNamesakes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupAttributes", DirectoryGroupAttributes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupGuids", DirectoryGroupGuids);
@@ -925,8 +951,16 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Get-DistributionGroup {
             [CmdletBinding()] param($Identity)
             Write-StandInCall 'Get-DistributionGroup' $PSBoundParameters
+            # aud-a2ac. Not found is reported as Exchange reports it, with the ObjectNotFound category, because that is what
+            # the service now takes for an answer; every other failure here is an error it refuses on.
             if (@($global:MissingLists | Where-Object { "$_" -ieq "$Identity" }).Count -gt 0) {
-                Write-Error "The operation couldn't be performed because object '$Identity' couldn't be found on 'stand-in'."
+                Write-Error "The operation couldn't be performed because object '$Identity' couldn't be found on 'stand-in'." -Category ObjectNotFound
+                return
+            }
+            # aud-a2ac. An identity several recipients answer to, as Exchange refuses one; and the defensive case, a name
+            # answered twice.
+            if (@($global:AmbiguousLists | Where-Object { "$_" -ieq "$Identity" }).Count -gt 0) {
+                Write-Error "The operation couldn't be performed because '$Identity' matches multiple entries."
                 return
             }
             $list = @{ Name = "$Identity"; PrimarySmtpAddress = $global:DefaultListAddress; IsDirSynced = $false; Guid = [guid]$global:DefaultListGuid }
@@ -945,6 +979,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             # aud-a2e. Its Entra object id (ListExternalIds), when a test gives it one.
             if ($global:ListExternalIds.ContainsKey("$Identity")) { $list['ExternalDirectoryObjectId'] = $global:ListExternalIds["$Identity"] }
             New-Object psobject -Property $list
+            # aud-a2ac. A second answer for a name in ListsAnsweringTwice.
+            if (@($global:ListsAnsweringTwice | Where-Object { "$_" -ieq "$Identity" }).Count -gt 0) { New-Object psobject -Property $list }
         }
         # aud-a2m. Returns the group it made, as the real cmdlet does: CreatedListGuid its Guid, a null none.
         # aud-a2e. And CreatedListAddress its PrimarySmtpAddress, a null none.
@@ -1245,6 +1281,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if ($sam) { $row['SamAccountName'] = $sam }
             $name = Get-StandInGroupAttribute "$($group[0])" 'name'
             if ($name) { $row['Name'] = $name }
+            # aud-a2z. Its mail only when asked for (outside the real cmdlet's default set): DirectoryGroupMailInItsDomain,
+            # else the mail the catalog search matches it by.
+            if (@($Properties) -contains 'mail') {
+                $mail = if ($global:DirectoryGroupMailInItsDomain.ContainsKey("$($group[0])")) { $global:DirectoryGroupMailInItsDomain["$($group[0])"] } else { Get-StandInGroupAttribute "$($group[0])" 'mail' }
+                if ($mail) { $row['mail'] = "$mail" }
+            }
             if ($memberRead) { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
             New-Object psobject -Property $row
         }
