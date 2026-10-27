@@ -504,9 +504,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// <param name="cancellationToken">
     /// kd-59. The page's activity token, for the two preflights' credential fetches - the
     /// City/State/Country one and the on-prem room-list one - which both run before Set-Place, so a
-    /// cancel during either ends the row as a cancellation with nothing written. The fetches after
-    /// Set-Place take none on purpose: a cancel there would leave the room half-configured, the
-    /// partial these preflights exist to prevent, so once the first write is made the row runs on.
+    /// cancel during either ends the row as a cancellation with nothing written. kd-73: and looked
+    /// at once more immediately before Set-Place, so a cancel landing after those fetches ends the
+    /// row the same way. The fetches after Set-Place take none on purpose: a cancel there would leave
+    /// the room half-configured, the partial these preflights exist to prevent, so once the first
+    /// write is made the row runs on.
     /// </param>
     public async Task<RoomOperationResult> SetRoomMetadataAndListAsync(
         string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
@@ -620,6 +622,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 return result;
             }
         }
+
+        // kd-73. The operator's cancel, looked at once more before the first write. It can land after the last
+        // preflight's credential fetch - during the preflights' directory reads or the room list's resolution, which
+        // take no token - and nothing has been written yet, so the row still ends as a cancellation with nothing
+        // written. Nothing after this line takes the token (kd-59): once Set-Place is sent, the row runs on.
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Step 1: Set-Place (EXO) - Building/Capacity/Floor/devices are NOT dir-synced, so
         // EXO accepts them. City is intentionally NOT sent here; it is a synced attribute

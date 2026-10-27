@@ -95,7 +95,8 @@ internal sealed class MigrationStubExchange : IDisposable
     /// NestedSuppressedError - Remove-BlockedSenderAddress suppresses an error of its own. kd-6: UnblockStalls (a
     /// ManualResetEventSlim) - Remove-BlockedSenderAddress, once it has logged the call, waits on it. aud-a23n: CompleteClearsSchedule -
     /// Complete-MigrationBatch removes the batch's CompleteAfter, so a read-back has none; CompletionStatus (text) - it sets
-    /// the batch's Status.
+    /// the batch's Status. kd-73: TraceWindowStalls (a ManualResetEventSlim) - Get-MessageTraceV2, once it has logged the
+    /// call, waits on it.
     /// </summary>
     public Hashtable Behaviour { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
@@ -656,6 +657,11 @@ internal sealed class MigrationStubExchange : IDisposable
         ("Remove-BlockedSenderAddress", "[string] $SenderAddress, [string] $Reason", """
             if ($Behaviour['NestedSuppressedError']) { Get-Item 'C:\definitely-not-here-a23i' -ErrorAction SilentlyContinue }
             if ($null -ne $Behaviour['UnblockStalls']) { $null = $Behaviour['UnblockStalls'].Wait(120000) }
+            """),
+        // kd-73. Message Trace's cloud read, asked once per window of a wide search: logged as "Get-MessageTraceV2 -StartDate
+        // -EndDate" (and any filter it was given), answering no messages.
+        ("Get-MessageTraceV2", "[object] $StartDate, [object] $EndDate, [object] $ResultSize, [string] $SenderAddress, [string] $RecipientAddress, [string] $MessageId, [string] $Subject, [string] $SubjectFilterType", """
+            if ($null -ne $Behaviour['TraceWindowStalls']) { $null = $Behaviour['TraceWindowStalls'].Wait(120000) }
             """),
     ];
 

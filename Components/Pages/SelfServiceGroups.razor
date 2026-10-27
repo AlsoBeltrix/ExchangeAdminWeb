@@ -715,8 +715,9 @@
             pendingOp = null;
         }
 
-        // Reflect the change in the displayed membership (AC-M2), as on the typed path.
-        if (changeResult?.Success == true && ReferenceEquals(selected, group))
+        // Reflect the change in the displayed membership (AC-M2), as on the typed path. kd-74: decided from the
+        // local, as the activity is - changeResult is the banner's, and its dismiss can null it.
+        if (completed?.Success == true && ReferenceEquals(selected, group))
             await LoadMembers();
     }
 
@@ -959,8 +960,9 @@
 
         // Reflect the change in the displayed membership (AC-M2): a successful add/remove refreshes the
         // list so the added member appears / the removed row disappears. A failed change leaves the list
-        // as-is. Runs after isChanging is cleared so the list's Remove buttons re-enable.
-        if (changeResult?.Success == true && ReferenceEquals(selected, group))
+        // as-is. Runs after isChanging is cleared so the list's Remove buttons re-enable. kd-74: decided from
+        // the local, as the activity is - changeResult is the banner's, and its dismiss can null it.
+        if (completed?.Success == true && ReferenceEquals(selected, group))
             await LoadMembers();
     }
 

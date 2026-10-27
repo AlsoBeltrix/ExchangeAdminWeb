@@ -539,7 +539,11 @@ public sealed class ModuleCatalog
             // 1.8.4: a trace audits the addresses and ticket it searched with, and header analysis, a delivery detail and
             // a live download the ticket at their click - each read before its await - and a second trace, analysis or
             // download during one is ignored (kd-72).
-            Version = "1.8.4",
+            // 1.8.5: a search wider than one cloud window looks at the operator's cancel between windows, so a cancel ends it
+            // before the next window instead of after the last, filed Cancelled (kd-73).
+            // 1.8.6: on the Downloadable Reports sub-page a second Download click during a download is ignored, so a
+            // double click no longer reads, pushes and audits the export twice (kd-74).
+            Version = "1.8.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -870,7 +874,11 @@ public sealed class ModuleCatalog
             // 1.14.1: Back to groups retires a member load still running, so a load whose backend
             // never answers no longer leaves Manage members refused until the browser is
             // refreshed; a retired load returning late cannot free the view of a newer one (kd-51).
-            Version = "1.14.1",
+            // 1.14.2: after a single add or remove, the member-list refresh is decided from the change's own
+            // outcome rather than the result banner's field, which its dismiss can clear. Nothing the operator
+            // sees changes today - no await sits between the two - but one added there would have skipped the
+            // refresh silently (kd-74).
+            Version = "1.14.2",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -1046,7 +1054,12 @@ public sealed class ModuleCatalog
             // 2.19.2: a single-room Room Finder apply passes the operator's cancel to its preflights'
             // on-prem credential fetches, both before Set-Place, so a cancel there ends the row with
             // nothing written, filed Cancelled; after Set-Place the row runs on, as before (kd-59).
-            Version = "2.19.2",
+            // 2.19.3: the apply looks at that cancel once more immediately before Set-Place, so one landing after the
+            // preflights' credential fetches also ends the row with nothing written, filed Cancelled (kd-73).
+            // 2.19.4: the two CSV applies complete their progress activity from their own outcome, so dismissing the
+            // result banner while the job list refreshes no longer ends the bar as not succeeded for a job that was
+            // submitted (kd-74).
+            Version = "2.19.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1503,7 +1516,9 @@ public sealed class ModuleCatalog
             // (docs/ProgressCoverage-Plan.md S5).
             // 1.1.6: a preview runs against the licence type submitted - read above its paint yield - and a
             // second click during one is ignored (kd-72).
-            Version = "1.1.6",
+            // 1.1.7: a second click on Apply during an apply is ignored, so a double click no longer runs a second bulk
+            // licence change over the same rows (kd-74).
+            Version = "1.1.7",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",

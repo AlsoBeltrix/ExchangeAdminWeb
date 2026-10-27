@@ -1072,7 +1072,7 @@
                     var r = await RoomService.SetRoomMetadataAndListAsync(
                         email, room, cityName, buildingName, seats,
                         floorName, floorText, display, video,
-                        country, stateName, tz, activity.CancellationToken); // kd-59: the token the navigation guard cancels, to the preflights' credential fetches
+                        country, stateName, tz, activity.CancellationToken); // kd-59, kd-73: the token the navigation guard cancels, to the preflights' credential fetches and the check before Set-Place
 
                     op.Complete(r.Success, r.Message);
 
@@ -1083,9 +1083,9 @@
         }
         catch (OperationCanceledException) when (activity.CancellationToken.IsCancellationRequested)
         {
-            // kd-59. The operator's cancel, at a preflight's credential fetch - the only places the token reaches, both before
-            // Set-Place - so nothing was written. Filed Cancelled in the app's phrase for a cancel (kd-57), not as a row that
-            // failed, and the administrators told as for one. Any other cancellation is a failure, below.
+            // kd-59, kd-73. The operator's cancel, at a preflight's credential fetch or the check just before Set-Place - the only
+            // places the token reaches, all before Set-Place - so nothing was written. Filed Cancelled in the app's phrase for a
+            // cancel (kd-57), not as a row that failed, and the administrators told as for one. Any other cancellation fails, below.
             var cancelled = $"{AuditService.CancelledByTheOperator}. Nothing was written.";
             result = completed = new RoomOperationResult { Email = email, Success = false, Message = cancelled };
             AuditFinderAction(email, false, ticket, cancelled, cancelled: true);
@@ -1282,16 +1282,28 @@
             "Conference Rooms", "Applying the room CSV",
             previewRows is { Count: > 0 } ? ActivitySize.Items(previewRows.Count) : ActivitySize.Unknown);
 
+        // kd-74. Completed from a LOCAL, never from `result`, as SetupSingleRoom is: the banner's dismiss is wired
+        // straight at () => result = null and stays clickable while this handler is suspended, and the success path
+        // awaits RefreshJobs after publishing its result - so a dismiss there ended the bar as not succeeded for a
+        // job that had been submitted. Every assignment to `result` below writes the local in the same statement.
+        RoomOperationResult? completed = null;
+
         try
         {
             var ticketValidation = ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                result = completed = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 AuditFinderAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
-            if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetMetadata", "(bulk)", ticket, "Authorization denied.", "Authorization"); return; }
+            if (!await ReauthorizeAsync())
+            {
+                // ReauthorizeAsync has put this refusal in the banner; the bar takes the same words here, not from it.
+                completed = new RoomOperationResult { Success = false, Message = "Authorization denied." };
+                AuditRefusal("ConferenceRooms_SetMetadata", "(bulk)", ticket, "Authorization denied.", "Authorization");
+                return;
+            }
 
             // Submit only rows that resolved in the preview (same guard the old inline loop applied).
             var rows = csvRows
@@ -1301,7 +1313,7 @@
 
             if (rows.Count == 0)
             {
-                result = new RoomOperationResult { Success = false, Message = "No resolvable rooms to submit." };
+                result = completed = new RoomOperationResult { Success = false, Message = "No resolvable rooms to submit." };
                 return;
             }
 
@@ -1316,7 +1328,7 @@
 
             finderApplied = true;
             var skipNote = skipped > 0 ? $" ({skipped} unresolved row(s) were not submitted.)" : "";
-            result = new RoomOperationResult
+            result = completed = new RoomOperationResult
             {
                 Success = true,
                 Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
@@ -1325,14 +1337,14 @@
         }
         catch (Exception ex)
         {
-            result = new RoomOperationResult { Success = false, Message = ex.Message };
+            result = completed = new RoomOperationResult { Success = false, Message = ex.Message };
             AuditFinderAction("(bulk)", false, ticket, ex.Message);
         }
         finally
         {
             isLoading = false;
             isCsvProcessing = false;
-            csvActivity.Complete(result?.Success ?? false, result?.Message);
+            csvActivity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 
@@ -1592,16 +1604,27 @@
             "Conference Rooms", "Applying the room CSV",
             previewRows is { Count: > 0 } ? ActivitySize.Items(previewRows.Count) : ActivitySize.Unknown);
 
+        // kd-74. Completed from a LOCAL, never from `result`, as ApplyFinderCsv is and for the same reason: a dismiss
+        // while RefreshJobs is awaited, after the success is published, ended the bar as not succeeded for a job
+        // that had been submitted. Every assignment to `result` below writes the local in the same statement.
+        RoomOperationResult? completed = null;
+
         try
         {
             var ticketValidation = ConferenceRoomService.RequireTicket(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                result = completed = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 AuditTypeAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}", refusedAt: ConferenceRoomService.TicketRefusalStep);
                 return;
             }
-            if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetType", "(bulk)", ticket, "Authorization denied.", "Authorization"); return; }
+            if (!await ReauthorizeAsync())
+            {
+                // ReauthorizeAsync has put this refusal in the banner; the bar takes the same words here, not from it.
+                completed = new RoomOperationResult { Success = false, Message = "Authorization denied." };
+                AuditRefusal("ConferenceRooms_SetType", "(bulk)", ticket, "Authorization denied.", "Authorization");
+                return;
+            }
 
             var rows = csvRows
                 .Where((_, i) => i < previewRows.Count && previewRows[i].RoomResolved)
@@ -1610,7 +1633,7 @@
 
             if (rows.Count == 0)
             {
-                result = new RoomOperationResult { Success = false, Message = "No resolvable rooms to submit." };
+                result = completed = new RoomOperationResult { Success = false, Message = "No resolvable rooms to submit." };
                 return;
             }
 
@@ -1625,7 +1648,7 @@
 
             typeApplied = true;
             var skipNote = skipped > 0 ? $" ({skipped} unresolved row(s) were not submitted.)" : "";
-            result = new RoomOperationResult
+            result = completed = new RoomOperationResult
             {
                 Success = true,
                 Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
@@ -1634,14 +1657,14 @@
         }
         catch (Exception ex)
         {
-            result = new RoomOperationResult { Success = false, Message = ex.Message };
+            result = completed = new RoomOperationResult { Success = false, Message = ex.Message };
             AuditTypeAction("(bulk)", false, ticket, ex.Message);
         }
         finally
         {
             isLoading = false;
             isCsvProcessing = false;
-            csvActivity.Complete(result?.Success ?? false, result?.Message);
+            csvActivity.Complete(completed?.Success ?? false, completed?.Message);
         }
     }
 

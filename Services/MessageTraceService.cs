@@ -14,8 +14,10 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
 
     /// <param name="cancellationToken">
     /// kd-59. The page's activity token, for the on-premises half's credential fetch (kd-37's seam): a cancel during that read
-    /// stops it, and comes out of here as a cancellation - the operator's, not a backend that failed - once the cloud half,
-    /// which takes no token (kd-58), has ended. A cancellation the token did not cause is a backend that failed, as before.
+    /// stops it, and comes out of here as a cancellation - the operator's, not a backend that failed - once the cloud half has
+    /// ended. No cloud read takes the token (kd-58), but a search of more than one window looks at it between windows (kd-73),
+    /// so a cancel ends the cloud half with the window under way and comes out here as the operator's too. A cancellation the
+    /// token did not cause is a backend that failed, as before.
     /// </param>
     public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId = null, CancellationToken cancellationToken = default)
     {
@@ -24,7 +26,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         // Get-MessageTrackingLog has no such limit - so chunking both would issue N pointless
         // on-prem queries and risk duplicating on-prem rows.
         var responses = await Task.WhenAll(
-            RunMessageTraceBackendAsync(() => GetChunkedCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "Exchange Online", cancellationToken),
+            RunMessageTraceBackendAsync(() => GetChunkedCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId, cancellationToken), "Exchange Online", cancellationToken),
             RunMessageTraceBackendAsync(() => GetOnPremMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId, cancellationToken), "On-prem", cancellationToken));
 
         var merged = new MessageTraceResponse();
@@ -368,9 +370,15 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
     ///
     /// Windows are emitted newest-first, so a result cap consumed part-way through drops the
     /// OLDEST messages rather than the most recent.
+    ///
+    /// kd-73. The operator's cancel is looked at between windows: once it is in, no further window
+    /// is started and the search comes out as a cancellation of <paramref name="cancellationToken"/>,
+    /// which the page files Cancelled (kd-59, kd-57). The window under way runs to its end - no cloud
+    /// read takes the token (kd-58) - and a search of one window is not looked at, as before.
     /// </remarks>
     private async Task<MessageTraceResponse> GetChunkedCloudMessageTraceAsync(
-        string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)
+        string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId,
+        CancellationToken cancellationToken)
     {
         var windows = MessageTraceWindowPlanner.Split(startDate, endDate);
 
@@ -381,8 +389,12 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
 
         var merged = new MessageTraceResponse();
 
-        foreach (var window in windows)
+        for (var i = 0; i < windows.Count; i++)
         {
+            if (i > 0)
+                cancellationToken.ThrowIfCancellationRequested(); // kd-73: between windows, so none starts after a cancel
+
+            var window = windows[i];
             var partial = await GetCloudMessageTraceAsync(sender, recipient, window.Start, window.End, subjectFilter, messageId);
 
             if (!string.IsNullOrWhiteSpace(partial.Error))
