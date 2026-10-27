@@ -2548,7 +2548,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null, null);
 
         step = "reading the list's group in its own domain";
-        return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), credential);
+        return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), address, credential);
     }
 
     // aud-a2j. The group the catalog search found, read again by its DN on a domain controller of
@@ -2558,8 +2558,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // is refused rather than written to a group the catalog remembered. A DN that names no domain
     // cannot be routed, and refuses. GroupManagementService.ResolveMemberForWrite makes the same
     // re-read for the same reason. Assumes the ActiveDirectory module is already imported.
+    //
+    // aud-a2z. listAddress is the list's address the catalog search matched the group by (aud-a2k): the re-read confirms
+    // the group still carries it, below.
     private static (string? error, string? objectGuid, string? distinguishedName) ReadAdGroupInItsDomain(
-        PowerShell ps, string roomListName, string objectGuid, string? distinguishedName, PSCredential credential)
+        PowerShell ps, string roomListName, string objectGuid, string? distinguishedName, string listAddress, PSCredential credential)
     {
         var server = GroupManagementService.ServerFromDn(distinguishedName);
         if (server is null)
@@ -2567,6 +2570,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         ps.AddCommand("Get-ADGroup")
           .AddParameter("Identity", distinguishedName)
+          .AddParameter("Properties", new[] { "mail" })
           .AddParameter("Server", server)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
@@ -2579,6 +2583,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         var readDn = read.Count == 1 ? read[0]?.Properties["DistinguishedName"]?.Value?.ToString() : null;
         if (readGuid is null || !string.Equals(readGuid, objectGuid, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(readDn))
             return ($"The on-prem AD group the forest's global catalog found for room list '{roomListName}' ({objectGuid}) is not what its own domain ({server}) holds at that name: {read.Count} object(s) answered, ObjectGUID {readGuid ?? "none"}. Refusing to write.", null, null);
+
+        // aud-a2z. And the group still carries the list's address in its own domain. The catalog found it by that mail, and
+        // a catalog behind an address move answers the group the address has left: its objectGUID and DN still check out,
+        // and the room would be added to a group that is no longer the list's. Compared as an address is, trimmed and
+        // ignoring case; another address, or none, refuses.
+        var readMail = read[0]!.Properties["mail"]?.Value?.ToString()?.Trim();
+        if (!string.Equals(readMail, listAddress, StringComparison.OrdinalIgnoreCase))
+            return ($"The on-prem AD group the forest's global catalog found for room list '{roomListName}' ({readGuid}) does not carry the list's address '{listAddress}' in its own domain ({server}): its mail there is {(string.IsNullOrWhiteSpace(readMail) ? "not set" : $"'{readMail}'")}. The catalog may not have caught up with a change to the group. Refusing to write.", null, null);
 
         return (null, readGuid, readDn);
     }
