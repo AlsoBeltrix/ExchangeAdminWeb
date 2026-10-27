@@ -5,6 +5,24 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-27 - Cloud Password Reset fills a missing employee ID (plan approved); the mandate's condition is about the user's experience
+
+1. **`docs/CloudPasswordResetEmployeeId-Plan.md` - owner: "go".** When a cloud admin account carries no employee ID,
+   the module derives the owner from the account's name (the name minus its cloud-admin ending, as a logon name in the
+   host's forest), reads that person's employee ID, saves it on the cloud account, then resets the password and mails
+   it to the owner. Owner's clarification of the refusal, verbatim: "the failure mode is that 1. a user with permission
+   to load the module but not to view the password AND 2. the lookup fails, the existing cannot process error holds."
+   One failure mode, both conditions together: the operator can open the module but cannot see the password, and the
+   lookup fails - today's refusal, word for word. Every other current refusal stays. Supersedes the 2026-09-14
+   rejection only for filling the one account being reset (the stored owner map stays rejected) and the module plan's
+   line that the true-up process is outside the module. Queued behind the fix-everything close-out. Wording rule from
+   the same exchange: describe permissions by what a person can do, never as "holds X but not Y".
+2. **What "do not remove or significantly change any intended functionality" means - owner, verbatim: "the condition
+   is to not change functionality for users. since it works currently, and will continue to work in the same way with
+   no change on the users' part, this satisfies the condition."** Asked about aud-a70 (6) - refusing every permission
+   grant while the directory-read credential cannot be had, not only grants to groups. The owner's Sunday "yes" stands:
+   the operator's flow is unchanged, so the condition is met. The test for the condition is the user's experience of
+   the module, not the internals.
 ### 2026-10-26/27 - The mandate restated, repo-wide; the deploy pipeline; protected principals leave Conference Rooms; the unconfirmed-change email
 
 These supersede parts of the entry below (the eight decisions of 2026-10-26).

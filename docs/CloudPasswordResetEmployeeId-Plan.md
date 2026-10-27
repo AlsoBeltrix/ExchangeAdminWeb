@@ -1,6 +1,6 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **Draft, 2026-10-27. Not approved; nothing in it is authorised.**
+Status: **Approved, 2026-10-27 (owner: "go"). Not started; queued behind the fix-everything close-out in `.agents/state.md`.**
 Owner: Michael
 Module: `CloudPasswordReset` (`Modules/ModuleCatalog.cs:877`, version `1.1.0`)
 Extends: `docs/CloudPasswordReset-Plan.md` (Implemented 2026-09-23, unproven against the live
@@ -78,17 +78,17 @@ Owner, the same day, clarifying the last sentence, verbatim:
 > view the password AND 2. the lookup fails, the existing cannot process error holds. prove to me
 > that you understand
 
-**The reading.** One failure mode, both conditions together. "Permission to load the module" is
+**Wording rule (owner, 2026-10-27).** Describe permissions by what a person can do - "can open the module", "cannot see the password" - never by a permission name with "but not" in front of it; the owner read "holds X but not Y" backwards and so will others.`n`n**The reading.** One failure mode, both conditions together. "Permission to load the module" is
 the main permission `CloudPasswordReset`. "Permission to view the password" is the granular
 `CloudPasswordResetReveal`. "The existing cannot process error" is the refusal the page already
 gives an operator without the reveal permission when no destination resolves (quoted in 3.3).
 For an account with no employee ID:
 
-| Operator holds | Lookup succeeds | Lookup fails |
+| Operator | Lookup succeeds | Lookup fails |
 |---|---|---|
-| `CloudPasswordReset` and `CloudPasswordResetReveal` | Number saved, password reset, mailed to the owner | Today's reveal override: reset, shown once, nothing mailed, nothing saved |
-| `CloudPasswordReset` only | Number saved, password reset, mailed to the owner | **The existing refusal, verbatim. The only decline on the new path.** |
-| Neither | Never gets here: access-denied at load, and a direct event invocation is refused as `PermissionDenied`, as today | Same |
+| Can open the module AND can see the password (`CloudPasswordReset` with `CloudPasswordResetReveal`) | Number saved, password reset, mailed to the owner | Today's reveal override: reset, shown once, nothing mailed, nothing saved |
+| Can open the module, CANNOT see the password - the L2 tech (`CloudPasswordReset` alone) | Number saved, password reset, mailed to the owner | **The existing refusal, verbatim. The only decline on the new path.** |
+| Cannot open the module | Never gets here: access-denied at load, and a direct event invocation is refused as `PermissionDenied`, as today | Same |
 
 The drafting brief proposed reading the "AND" as two separate refusal reasons. The owner's
 clarification supersedes that, and this plan follows the owner.
@@ -696,7 +696,7 @@ The new step adds no refusal value of its own. The two refusals it can lead to a
     save, with *"You are not authorized to reset cloud passwords."*
   - It is audited as `CloudPasswordReset_Execute`, failure, with `refusalReason=PermissionDenied`
     and `employeeIdFill=NotAttempted`, and the admins are alerted (`RefuseAsync`).
-- **With `CloudPasswordReset` but not `CloudPasswordResetReveal`, after a failed lookup:**
+- **The L2 tech - can open the module, cannot see the password - after a failed lookup:**
   - The operator gets the existing refusal (3.3), and nothing is written.
   - It is audited as `CloudPasswordReset_Execute`, failure, with
     `refusalReason=DestinationNoEmployeeId` and `employeeIdFill` saying why, and the admins are
