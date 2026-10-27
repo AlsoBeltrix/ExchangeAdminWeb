@@ -1268,7 +1268,9 @@ public sealed class ModuleCatalog
             // 1.3.0: that ticket goes through the shared TicketValidationService, which since kd-24
             // and kd-48 refuses a ticket made only of control characters, or one with nothing visible
             // in it - tickets this module used to accept. No code of its own changed (kd-50).
-            Version = "1.3.0",
+            // 1.3.1: a search runs on, labels and audits the name, recovery value, ticket and live-AD choice it
+            // was submitted with - read above its paint yield - and a second submit during one is ignored (kd-72).
+            Version = "1.3.1",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",

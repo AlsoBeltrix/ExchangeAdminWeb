@@ -1,6 +1,10 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.RenderTree;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -21,7 +25,10 @@ namespace ExchangeAdminWeb.Tests;
 /// Two ways to hold a handler at its first await. Where that await is a service call, a stand-in that blocks until
 /// released. Where it is <c>await Task.Yield()</c>, <see cref="HeldContinuations"/>: the yield posts its continuation
 /// to the current context, so with this one the handler is really suspended - asserted - until the test has changed
-/// the field and pumps. Blazor's renderer dispatcher does the same, which is why a queued event can land there.
+/// the field and pumps. Blazor's renderer dispatcher does the same, which is why a queued event can land there. A
+/// handler that renders before its yield needs a renderer: <see cref="RunOnDispatcherWithChangeInTheYield"/> runs it on
+/// a <see cref="HandlerRenderer"/>'s dispatcher and applies the change in the same work item, after the handler has
+/// yielded and before its continuation - which that dispatcher queues behind the work item - can run.
 /// </para>
 /// </remarks>
 internal static class SubmittedValueHarness
@@ -30,8 +37,7 @@ internal static class SubmittedValueHarness
 
     /// <summary>Sets an injected property on the page.</summary>
     public static void Set(object page, string property, object? value) =>
-        (page.GetType().GetProperty(property, Members)
-            ?? throw new InvalidOperationException($"{page.GetType().Name} has no property {property}"))
+        Find(page, type => type.GetProperty(property, Members | BindingFlags.DeclaredOnly), "property", property)
             .SetValue(page, value);
 
     /// <summary>Sets a page field - what a bound control's change event does.</summary>
@@ -43,13 +49,56 @@ internal static class SubmittedValueHarness
 
     /// <summary>Invokes a handler and returns its task.</summary>
     public static Task Call(object page, string method, params object?[] arguments) =>
-        (Task)(page.GetType().GetMethod(method, Members)
-            ?? throw new InvalidOperationException($"{page.GetType().Name} has no method {method}"))
+        (Task)Find(page, type => type.GetMethod(method, Members | BindingFlags.DeclaredOnly), "method", method)
             .Invoke(page, arguments.Length == 0 ? null : arguments)!;
 
     private static FieldInfo FieldOf(object page, string field) =>
-        page.GetType().GetField(field, Members)
-            ?? throw new InvalidOperationException($"{page.GetType().Name} has no field {field}");
+        Find(page, type => type.GetField(field, Members | BindingFlags.DeclaredOnly), "field", field);
+
+    // Up the hierarchy, because a page is often a render-nothing subclass and its members are the base's privates.
+    private static T Find<T>(object page, Func<Type, T?> member, string kind, string name) where T : MemberInfo
+    {
+        for (var type = page.GetType(); type is not null; type = type.BaseType)
+        {
+            if (member(type) is { } found)
+                return found;
+        }
+
+        throw new InvalidOperationException($"{page.GetType().Name} has no {kind} {name}");
+    }
+
+    /// <summary>
+    /// Runs <paramref name="handler"/> on <paramref name="renderer"/>'s dispatcher and, in the same work item once it
+    /// has yielded, <paramref name="inTheYield"/> - the change event. The handler's continuation is queued behind the
+    /// work item, so the change lands in the yield. Returns the handler's task, still running.
+    /// </summary>
+    public static Task RunOnDispatcherWithChangeInTheYield(HandlerRenderer renderer, Func<Task> handler, Action inTheYield)
+    {
+        Task running = Task.CompletedTask;
+        renderer.Dispatcher.InvokeAsync(() =>
+        {
+            running = handler();
+            Assert.False(running.IsCompleted, "The handler finished without yielding, so nothing could change under it.");
+            inTheYield();
+        }).GetAwaiter().GetResult();
+        return running;
+    }
+
+#pragma warning disable BL0006 // the minimal handler renderer, the EventLogUndoRefusalTests pattern
+    /// <summary>A renderer that renders into nothing: what a page needs to call StateHasChanged in a test.</summary>
+    internal sealed class HandlerRenderer() : Renderer(new ServiceCollection().BuildServiceProvider(), NullLoggerFactory.Instance)
+    {
+        public override Dispatcher Dispatcher { get; } = Dispatcher.CreateDefault();
+
+        /// <summary>Attaches <paramref name="component"/> as a root, on the dispatcher.</summary>
+        public void Attach(IComponent component) =>
+            Dispatcher.InvokeAsync(() => AssignRootComponentId(component)).GetAwaiter().GetResult();
+
+        protected override Task UpdateDisplayAsync(in RenderBatch batch) => Task.CompletedTask;
+
+        protected override void HandleException(Exception exception) => throw exception;
+    }
+#pragma warning restore BL0006
 
     /// <summary>
     /// Starts <paramref name="handler"/> under a <see cref="HeldContinuations"/> context, asserts it is suspended at
