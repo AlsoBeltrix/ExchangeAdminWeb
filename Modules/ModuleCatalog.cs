@@ -897,7 +897,9 @@ public sealed class ModuleCatalog
             // - the shared TicketPresence rule (kd-48).
             // 1.6.0: the reset reads its ticket, its listed user and its method list at the click rather
             // than after the yield, so a keystroke in that window cannot change what is recorded (kd-46).
-            Version = "1.6.0",
+            // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
+            // before, and a second submit during a listing is ignored (kd-72).
+            Version = "1.6.1",
             MainPermission = new(
                 "Access",
                 "MfaReset",

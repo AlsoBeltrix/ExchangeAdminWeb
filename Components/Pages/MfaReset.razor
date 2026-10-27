@@ -47,8 +47,10 @@
                     <div class="mb-3">
                         <label class="form-label fw-semibold">User Principal Name</label>
                         <div class="input-group">
-                            <input type="email" class="form-control" @bind="userPrincipalName" placeholder="user@analog.com"
-                                   disabled="@isLoading" @onkeydown="HandleKeyDown" />
+                            @* kd-72: bound on input, not on change. Enter's keydown reaches the server before the
+                               change event, so a change-bound box listed the user it held before. *@
+                            <input type="email" class="form-control" @bind="userPrincipalName" @bind:event="oninput"
+                                   placeholder="user@analog.com" disabled="@isLoading" @onkeydown="HandleKeyDown" />
                             <button class="btn btn-primary" @onclick="ListMethods" disabled="@(isLoading || string.IsNullOrWhiteSpace(userPrincipalName))">
                                 List Methods
                             </button>
@@ -204,10 +206,11 @@
     /// the call the window has to dominate has returned, so there is nothing to put in Items and
     /// nothing to put in the label either. The count goes in the Complete message instead.
     ///
-    /// upn is hoisted above the Begin so the label names the target, NOT as a race fix: the UPN
-    /// box at :50 is disabled="@isLoading" and the raise is above the yield, so the field is shut
-    /// for the whole window. The catch reads the hoisted local for the same reason it reads it in
-    /// the try - one value, read once, rather than two reads of a field that could disagree.
+    /// upn is hoisted above the Begin and the yield, and that IS a race fix (kd-72): the UPN box is
+    /// disabled="@isLoading", but the browser's copy of that attribute is one round trip stale, so a
+    /// change can still land in the yield. The capture keeps the read, the panel and the audit row on
+    /// the user submitted. The catch reads the hoisted local for the same reason it reads it in the
+    /// try - one value, read once, rather than two reads of a field that could disagree.
     ///
     /// An empty result completes TRUE: a lookup that ran and found nothing finished, which is
     /// the reviewer's 2026-10-08 ruling. A Graph fault falls out of scope to the dispose
@@ -215,6 +218,10 @@
     /// </remarks>
     private async Task ListMethods()
     {
+        // kd-72. A second submit while a listing runs is ignored, not run beside it: the box and the
+        // button are disabled while isLoading, but the browser's copy of that is one round trip stale.
+        if (isLoading) return;
+
         isLoading = true;
         result = null;
         methods = new();
