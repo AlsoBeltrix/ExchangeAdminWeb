@@ -16,15 +16,11 @@ are Opus 5.5; codex is gone and one codex-commercial review runs at the very end
 
 **Step 1 - CLOSED, the other way.** The supervisor reverted the weekend's deploy work wholesale (`23e8e5ca`, `e0808859`); the owner corrected it ("I did not say make them byte-identical. I said FIX PROBLEMS. DO NOT CHANGE FUNCTIONALITY") and restated the mandate repo-wide: find and fix bugs; remove or significantly change no intended functionality (`.agents/decisions.md`, item 0 of the top entry). The deploy fixes are reinstated at `1b2e015e`; cdt-58 reopens into step 4. Pester 508, PSScriptAnalyzer 0 errors, ASCII and whitespace clean.
 
-**Step 2 - IN PROGRESS.** One agent on `fix/a2ad` (worktree `D:\source\ExchangeAdminWeb-wt\a2ad`) removes every
-protected-principal check the weekend added to Conference Rooms (aud-a2e, a2z, a2ab, kd-66) and restores room-list
-creation; the genuine fixes stay by name; the July room-mailbox gate is untouched. Brief: `aud-a2ad.md`.
+**Step 2 - DONE (`56cc4153`).** Every protected-principal check the weekend added to Conference Rooms is out (aud-a2e, aud-a2ab, kd-66 reversed); a building whose room list Exchange affirmatively reports missing has it created and the room added, the preview marks it "new"; aud-a2z kept as a correctness check; the July room-mailbox gate untouched. Exemption written into the Constitution and Known Failure Class 3 (`7ece7227`). Conference Rooms 2.19.1.
 
-**Step 3 - merge the module-configuration page fix** (cons-7, `fix/a64-a67` at `0769536e`: rapid navigation between
-modules can no longer leave the page blank or overwrite unsaved edits). Supervisor; then the full build and test, which
-also gates the un-gated kd-misc merge (`5ea424d5`) and kd-1 revert (`708770ef`).
+**Step 3 - DONE.** cons-7 was already on master (`0769536e`). Master gated at `56cc4153`: Release build 0 errors; 7355 passed, 0 failed, 0 skipped; Pester 508; PSScriptAnalyzer 0 errors; format, whitespace and ASCII clean. The nine weekend branches are verified in master by patch identity; three deleted; six worktrees (a2e, a68-kd2, a70, cdt36, kd7-kd8, psl10-a2y) kept only for the uncommitted step 4 work the killed agents left, which the step 4 agents resume from.
 
-**Step 4 - the remaining genuine bug fixes, one agent at a time:** the two permission-page guards (kd-39: a
+**Step 4 - IN PROGRESS, one agent at a time (first: kd-39/kd-41 on `fix/kd39-kd41`):** the two permission-page guards (kd-39: a
 notification or progress call that fails no longer shows a finished bulk run as failed or escapes the handler) and the
 copied field (kd-41); kd-44's notice to the affected user and the mailbox owner REMOVED by owner ruling 2026-10-27
 ("remove to affected target, keep to admin" - back to administrators only); Self-Service Groups no longer locks up
