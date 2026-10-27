@@ -80,6 +80,13 @@ public class MessageTraceDetail
     public MessageTraceResult Summary { get; set; } = default!;
     public List<MessageTraceDetailEvent> Events { get; set; } = new();
     public string? Error { get; set; }
+
+    /// <summary>
+    /// kd-59. True when the read was stopped by a cancellation of the token its caller passed - the caller's own cancel,
+    /// which the page files Cancelled (kd-57). <see cref="Error"/> is set as for any read that failed, so a caller that reads
+    /// only the error - the detail job - reads what it read before; the read stays fail-soft.
+    /// </summary>
+    public bool Cancelled { get; set; }
 }
 
 public class MessageTraceResponse

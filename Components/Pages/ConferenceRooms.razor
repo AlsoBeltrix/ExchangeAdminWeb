@@ -1072,7 +1072,7 @@
                     var r = await RoomService.SetRoomMetadataAndListAsync(
                         email, room, cityName, buildingName, seats,
                         floorName, floorText, display, video,
-                        country, stateName, tz);
+                        country, stateName, tz, activity.CancellationToken); // kd-59: the token the navigation guard cancels, to the preflights' credential fetches
 
                     op.Complete(r.Success, r.Message);
 
@@ -1080,6 +1080,16 @@
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed);
                     return r;
                 });
+        }
+        catch (OperationCanceledException) when (activity.CancellationToken.IsCancellationRequested)
+        {
+            // kd-59. The operator's cancel, at a preflight's credential fetch - the only places the token reaches, both before
+            // Set-Place - so nothing was written. Filed Cancelled in the app's phrase for a cancel (kd-57), not as a row that
+            // failed, and the administrators told as for one. Any other cancellation is a failure, below.
+            var cancelled = $"{AuditService.CancelledByTheOperator}. Nothing was written.";
+            result = completed = new RoomOperationResult { Email = email, Success = false, Message = cancelled };
+            AuditFinderAction(email, false, ticket, cancelled, cancelled: true);
+            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, false, ticket, cancelled);
         }
         catch (Exception ex)
         {
@@ -1717,9 +1727,9 @@
 
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null, string? refusedAt = null)
+        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null, string? refusedAt = null, bool cancelled = false)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ConferenceRoomService.WithRefusal(ConferenceRoomService.WithAttributesConfirmed(ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, writtenDirectoryObject), membershipConfirmed), attributesConfirmed), refusedAt)); }
+        try { var extra = ConferenceRoomService.WithRefusal(ConferenceRoomService.WithAttributesConfirmed(ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, writtenDirectoryObject), membershipConfirmed), attributesConfirmed), refusedAt); Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: cancelled ? AuditService.FiledCancelled(extra) : extra); } // kd-59: an operator's cancel is filed Cancelled (kd-57)
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 

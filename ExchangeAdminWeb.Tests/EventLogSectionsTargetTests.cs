@@ -208,16 +208,65 @@ public sealed class EventLogSectionsTargetTests : IDisposable
     public void TheResultFilter_OffersUndetermined()
     {
         // Tripwire, as the undo panel's close buttons are pinned: no host renders the page, so its markup is read, its
-        // comments blanked.
+        // comments blanked. kd-71: and Cancelled, last.
+        Assert.Equal(["", "Success", "Failed", "Ineligible", "Undetermined", "Cancelled"], ResultFilterOptions());
+    }
+
+    // ---- kd-71: every result the app files has an option in the Result filter ----------------------------------------
+
+    /// <summary>
+    /// Every result an audit row is filed under: aud-a70 (13)'s inventory (Success, Failed, Undetermined, Ineligible) and
+    /// kd-57's Cancelled - with the names the code itself files, so a result added there without an option fails here too:
+    /// every <see cref="AuditResult"/> name (what <c>filedAs</c> files) and <see cref="AuditService.CancelledResult"/> (what
+    /// <see cref="AuditService.FiledCancelled"/> files).
+    /// </summary>
+    private static IReadOnlyList<string> ResultsTheAppFiles() =>
+        new[] { "Success", "Failed", "Undetermined", "Ineligible", "Cancelled" }
+            .Concat(Enum.GetNames<AuditResult>())
+            .Append(AuditService.CancelledResult)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    [Fact]
+    public void TheResultFilter_OffersEveryResultTheAppFiles()
+    {
+        // The kd-65 class, for this filter: aud-a28z part 5 added Undetermined with its option; kd-57 added Cancelled without
+        // one, so a cancelled row could be found only under All. A result with no option is a row the filter cannot find.
+        var options = ResultFilterOptions();
+
+        Assert.All(ResultsTheAppFiles(), result => Assert.Contains(result, options));
+    }
+
+    [Fact]
+    public void ACancelledRow_IsFoundUnderCancelled_AndUnderNoOtherResult()
+    {
+        _audit.LogLookupAction(Admin, Ip, "MessageTrace_DetailDownload", "<m1@example.test>", false, AuditService.CancelledByTheOperator,
+            "CHG0502", AuditService.FiledCancelled());
+        var page = new Page();
+        var parse = typeof(Page).GetMethod("ParseAuditLine", PrivateInstance)!;
+        var entry = parse.Invoke(page, [Assert.Single(AuditLines()), DateTime.MinValue, DateTime.MaxValue])
+            ?? throw new InvalidOperationException("the page did not parse the cancel's audit line");
+
+        Assert.Equal("Cancelled", Read(entry, "Result"));
+
+        ((IList)typeof(Page).GetField("allEvents", PrivateInstance)!.GetValue(page)!).Add(entry);
+        Assert.Same(entry, Assert.Single(ShownUnderResult(page, "Cancelled")));
+        Assert.All(ResultFilterOptions().Where(option => option is not ("" or "Cancelled")),
+            option => Assert.Empty(ShownUnderResult(page, option)));
+        Assert.Same(entry, Assert.Single(ShownUnderResult(page, "")));
+    }
+
+    /// <summary>The Result filter's option values, read from the page's markup with its comments blanked (no host renders it).</summary>
+    private static List<string> ResultFilterOptions()
+    {
         var markup = RazorSyntax.CommentsBlanked(File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor")));
 
         var select = Regex.Match(markup, @"<select[^>]*@bind=""selectedResult""[^>]*>(?<options>.*?)</select>", RegexOptions.Singleline);
         Assert.True(select.Success, "the Result filter's select was not found");
-        var values = Regex.Matches(select.Groups["options"].Value, @"<option value=""(?<value>[^""]*)"">")
+        return Regex.Matches(select.Groups["options"].Value, @"<option value=""(?<value>[^""]*)"">")
             .Select(m => m.Groups["value"].Value)
             .ToList();
-        Assert.Equal(["", "Success", "Failed", "Ineligible", "Undetermined"], values);
     }
 
     // ---- aud-a73: a permission change whose outcome could not be confirmed is no failure either ----------------------------

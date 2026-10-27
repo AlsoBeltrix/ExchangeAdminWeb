@@ -58,6 +58,24 @@ internal static class PermissionChangeFailure
         step == TheWrite && ex is PermissionWriteNotSubmittedException ? TheConnection : step;
 
     /// <summary>
+    /// kd-59. What an on-premises change says, banner and record, when the operator's cancel stopped it before its command was
+    /// sent: the app's phrase for a cancel (kd-57), and that nothing was written.
+    /// </summary>
+    internal const string CancelledBeforeTheWrite = AuditService.CancelledByTheOperator + " before the change was sent. Nothing was written.";
+
+    /// <summary>kd-59. The record <see cref="CancelledBeforeTheWrite"/> is written as, for the log line if that write throws.</summary>
+    internal const string CancelledChangeRecord = "the cancelled on-premises change";
+
+    /// <summary>
+    /// kd-59. Whether <paramref name="ex"/> is the operator's cancel of an on-premises change: a write the service says was
+    /// never sent (aud-a76), stopped by a cancellation - the credential fetch is the step that takes the activity's token -
+    /// with that token, <paramref name="activity"/>, cancelled. Any other throw, a cancellation the operator did not ask for
+    /// included, is a failure in its own words.
+    /// </summary>
+    internal static bool CancelledBeforeItWasSent(Exception ex, CancellationToken activity) =>
+        ex is PermissionWriteNotSubmittedException { InnerException: OperationCanceledException } && activity.IsCancellationRequested;
+
+    /// <summary>
     /// aud-a73. The result the record of a throw at <paramref name="step"/> is filed under: Undetermined at
     /// <see cref="TheWrite"/>, which may or may not have taken, as its banner says; Failed before the write and at
     /// <see cref="TheConnection"/> (aud-a76), when nothing was written, and after it, when the written change has its own row

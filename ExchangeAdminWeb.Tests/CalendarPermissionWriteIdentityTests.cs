@@ -124,7 +124,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     [Fact]
     public async Task AnOnPremSet_SendsTheValidatedMailbox_AndWritesItsCalendar()
     {
-        var result = await new OnPremService(_h).SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, "Reviewer");
+        var result = await new OnPremService(_h).SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, "Reviewer", TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Argument(Assert.Single(_h.CallsTo("Invoke-Command")), 0));
@@ -134,7 +134,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     [Fact]
     public async Task AnOnPremRemove_SendsTheValidatedMailbox_AndWritesItsCalendar()
     {
-        var result = await new OnPremService(_h).RemoveCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee);
+        var result = await new OnPremService(_h).RemoveCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Argument(Assert.Single(_h.CallsTo("Invoke-Command")), 0));
@@ -149,8 +149,8 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         var service = new OnPremService(_h);
 
         var result = set
-            ? await service.SetCalendarPermissionOnPremAsync(Typed, null, Trustee, "Reviewer")
-            : await service.RemoveCalendarPermissionOnPremAsync(Typed, null, Trustee);
+            ? await service.SetCalendarPermissionOnPremAsync(Typed, null, Trustee, "Reviewer", TestContext.Current.CancellationToken)
+            : await service.RemoveCalendarPermissionOnPremAsync(Typed, null, Trustee, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal(ValidatedMailbox.Refusal(Typed), result.Message);

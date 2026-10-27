@@ -177,7 +177,9 @@ public sealed class ModuleCatalog
             // 1.6.2: kd-44 reversed by owner ruling 2026-10-27 ("remove to affected target, keep to admin") - a change whose
             // outcome could not be confirmed tells the administrators alone again; kd-44's notice to the user and the mailbox
             // owner, single change and bulk row alike, is gone.
-            Version = "1.6.2",
+            // 1.6.3: an on-premises change passes the operator's cancel to its credential fetch, so a cancel during it stops
+            // the change before it is sent - nothing written, filed Cancelled (kd-59).
+            Version = "1.6.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -223,7 +225,9 @@ public sealed class ModuleCatalog
             // 1.4.1: as Mailbox Permissions 1.6.1 - a CSV run whose progress panel cannot be completed stands (kd-39).
             // 1.4.2: as Mailbox Permissions 1.6.2 - kd-44 reversed by owner ruling 2026-10-27: a change whose outcome could not
             // be confirmed tells the administrators alone; the user and the calendar owner are no longer sent kd-44's notice.
-            Version = "1.4.2",
+            // 1.4.3: as Mailbox Permissions 1.6.3 - an on-premises change passes the operator's cancel to its credential fetch,
+            // so a cancel during it stops the change before it is sent: nothing written, filed Cancelled (kd-59).
+            Version = "1.4.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -521,7 +525,11 @@ public sealed class ModuleCatalog
             // so one with nothing visible in it no longer passes (kd-45).
             // 1.8.1: a live detail download the operator cancels is filed Cancelled, not Failed, in the
             // app's one phrase for a cancel, "Cancelled by the operator" (kd-57).
-            Version = "1.8.1",
+            // 1.8.2: the search and the delivery detail pass the operator's cancel to the on-premises credential
+            // fetch, so a cancel during it stops the on-premises read; filed Cancelled (kd-59).
+            // 1.8.3: a live detail download stops at the operator's cancel before the next message and pushes no CSV,
+            // filed Cancelled; a cancellation that is not theirs - a browser call that timed out - is a failed download (kd-70).
+            Version = "1.8.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1019,7 +1027,10 @@ public sealed class ModuleCatalog
             // aud-a2ab, kd-66) is removed, and a building whose room list Exchange affirmatively
             // reports missing gets the list created and the room added, the preview marking it
             // "new", as before (aud-a2ad). aud-a2z's address re-check stays: it is a correctness check.
-            Version = "2.19.1",
+            // 2.19.2: a single-room Room Finder apply passes the operator's cancel to its preflights'
+            // on-prem credential fetches, both before Set-Place, so a cancel there ends the row with
+            // nothing written, filed Cancelled; after Set-Place the row runs on, as before (kd-59).
+            Version = "2.19.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1561,7 +1572,9 @@ public sealed class ModuleCatalog
             // MessageTrace and Migration, whose jobs Admin Bulk Jobs now files under their own module
             // (kd-53), and AdminBulkJobs, which a job carrying no module falls back to (kd-63) - a row
             // filed under a category the filter does not list can be found only under All (kd-65).
-            Version = "1.5.0",
+            // 1.5.1: the Result filter offers Cancelled, the result a cancel is filed under since kd-57 -
+            // such a row could be found only under All (kd-71).
+            Version = "1.5.1",
             MainPermission = new(
                 "Access",
                 "EventLog",

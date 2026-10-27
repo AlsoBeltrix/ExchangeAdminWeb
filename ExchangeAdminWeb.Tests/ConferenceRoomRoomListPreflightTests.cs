@@ -147,7 +147,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var service = new Service(_h) { NoCredential = true };
 
         var result = await service.SetRoomMetadataAndListAsync(
-            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time", TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(["Set-Place", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration"], _h.Writes);
@@ -261,7 +261,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var service = new Service(_h) { NoCredential = true };
 
         var result = await service.SetRoomMetadataAndListAsync(
-            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time", TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(["Set-Place", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration"], _h.Writes);

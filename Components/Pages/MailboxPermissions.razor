@@ -704,9 +704,9 @@
             if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttemptAtWrite", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
             step = PermissionChangeFailure.TheWrite;
-            var opResult = isAdd
-                ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs)
-                : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs);
+            var opResult = isAdd // kd-59: the activity's token, the one the navigation guard cancels, to the write's credential fetch
+                ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs, onPremActivity.CancellationToken)
+                : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs, onPremActivity.CancellationToken);
             step = PermissionChangeFailure.AfterTheWrite;
             var actionVerb = isAdd ? "Add" : "Remove"; var rowsWritten = true; // aud-a70 (1): whether every row of the change was written
             // aud-a23b: rights come from AppliedRights, never from Detail (on a cloud grant, Detail is the OWA link).
@@ -738,6 +738,15 @@
             }
 
             result = outcome = SelfGrantRefusalRecord.Said(opResult, rowsWritten);
+        }
+        catch (Exception ex) when (PermissionChangeFailure.CancelledBeforeItWasSent(ex, onPremActivity.CancellationToken))
+        {
+            // kd-59. The operator's cancel stopped the write's credential fetch, before its command was sent: not a change that
+            // failed - filed Cancelled, in the app's phrase for a cancel (kd-57), with nothing written; and, as for any write
+            // never sent, no notification. Every other throw, a cancellation the operator did not ask for included, is below.
+            result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(PermissionChangeFailure.CancelledBeforeTheWrite, () => Audit.LogMailboxPermission(
+                currentUser, clientIpAddress, action, target, user, permType, false, ticket, errorDetail: PermissionChangeFailure.CancelledBeforeTheWrite,
+                extra: AuditService.FiledCancelled(onPremExtra)), Logger, target, PermissionChangeFailure.CancelledChangeRecord));
         }
         catch (Exception ex)
         {

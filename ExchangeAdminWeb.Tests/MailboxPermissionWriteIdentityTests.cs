@@ -120,7 +120,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
     public async Task AnOnPremGrant_SendsTheValidatedMailbox_AndBindsSendAsToTheMailboxItNames()
     {
         var result = await new OnPremService(_h).AddMailboxPermissionsOnPremAsync(
-            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true);
+            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         var remote = _h.CallsTo("Invoke-Command");
@@ -136,7 +136,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
     public async Task AnOnPremRevoke_SendsTheValidatedMailbox_AndBindsSendAsToTheMailboxItNames()
     {
         var result = await new OnPremService(_h).RemoveMailboxPermissionsOnPremAsync(
-            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true);
+            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         var remote = _h.CallsTo("Invoke-Command");
@@ -154,8 +154,8 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
         var service = new OnPremService(_h);
 
         var result = grant
-            ? await service.AddMailboxPermissionsOnPremAsync(Typed, null, Trustee, fullAccess: true, sendAs: true)
-            : await service.RemoveMailboxPermissionsOnPremAsync(Typed, null, Trustee, fullAccess: true, sendAs: true);
+            ? await service.AddMailboxPermissionsOnPremAsync(Typed, null, Trustee, fullAccess: true, sendAs: true, TestContext.Current.CancellationToken)
+            : await service.RemoveMailboxPermissionsOnPremAsync(Typed, null, Trustee, fullAccess: true, sendAs: true, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal(ValidatedMailbox.Refusal(Typed), result.Message);
