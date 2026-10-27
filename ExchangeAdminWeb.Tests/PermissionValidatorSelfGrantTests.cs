@@ -1340,7 +1340,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     // aud-a70 (6): without the directory-read credential every grant row of a file is refused; a removal row is written.
 
     /// <summary>aud-a70 (6): the bulk loops this is pinned on - Mailbox Permissions' (false) and Calendar Permissions' (true).</summary>
-    private static readonly bool[] CredentialLoops = [false];
+    private static readonly bool[] CredentialLoops = [false, true];
 
     /// <summary>Each loop, and each way the credential cannot be had (<see cref="ExchangeWriteHarness.DirectoryReadCredentialsWithheld"/>).</summary>
     public static TheoryData<bool, string> LoopsWithoutTheCredential

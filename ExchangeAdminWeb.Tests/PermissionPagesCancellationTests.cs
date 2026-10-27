@@ -294,7 +294,7 @@ public sealed class PermissionPagesCancellationTests : IDisposable
     // ---- aud-a70 (6): the operator's cancel and the self-grant check's credential -----------------------------------------
 
     /// <summary>aud-a70 (6): the pages this is pinned on.</summary>
-    public static TheoryData<string> CredentialPages => [MailboxPage];
+    public static TheoryData<string> CredentialPages => [MailboxPage, CalendarPage];
 
     /// <summary>
     /// <paramref name="component"/>'s validator over an Exchange that names <see cref="Other"/> as a person - so the grant needs

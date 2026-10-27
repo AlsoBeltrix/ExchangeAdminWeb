@@ -1917,7 +1917,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     private const string Delegates = "delegates@contoso.test";
 
     /// <summary>aud-a70 (6): the pages this is pinned on.</summary>
-    private static readonly string[] CredentialPages = [MailboxPage];
+    private static readonly string[] CredentialPages = [MailboxPage, CalendarPage];
 
     /// <summary>
     /// Each page, each way the credential cannot be had (<see cref="ExchangeWriteHarness.DirectoryReadCredentialsWithheld"/>)

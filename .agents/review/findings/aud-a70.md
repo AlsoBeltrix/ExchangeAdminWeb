@@ -717,4 +717,34 @@ and ProgressRegistry ran under them, green.
 
 Full suite on this commit's tree (Debug, `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`): 7,504 passed / 0
 failed / 0 skipped. `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
-`tools/Test-AsciiOnly.ps1`: clean.
+`tools/Test-AsciiOnly.ps1`: clean. Commit `d7c9ec5c`.
+
+### As implemented - Calendar Permissions
+
+- No production code of its own: its three paths ask the same check, changed in the commit above. `Modules/ModuleCatalog.cs`:
+  Calendar Permissions 1.4.3 -> 1.4.4 (236-240), "as Mailbox Permissions 1.6.4", naming aud-a70 (6) and the ruling.
+- Tests: Calendar Permissions joins each list the theories run over - `CredentialPages` in `PermissionPagesSelfGrantTests` and
+  `PermissionPagesCancellationTests`, `CredentialLoops` in `PermissionValidatorSelfGrantTests` - 26 cases: `SubmitSingle` and
+  `ExecuteOnPrem` refusing a person and a group per shape (`SetCalendar_SelfGrantAttempt`, `SetCalendar_SelfGrantAttemptAtWrite`),
+  the bulk file (`BulkSetCalendar_SelfGrantAttempt`, one fetch), the cloud, on-premises and bulk removals written, and the two
+  cancel cases.
+
+### Guard proof - Calendar Permissions
+
+The same driver, protocol and filter: 913 tests (887 and Calendar Permissions' 26). Fixed-file MD5s: the validator and the
+directory session as above (`DE2C5E015157CFB92F59414AA1825467`, `8EA1F48B4486FE08F361DADAAA68233E`),
+`Components/Pages/CalendarPermissions.razor` `25E8CB9039DA6B2DE0FF015AC6AD828C` (771, unchanged), `Services/CalendarPermissionService.cs`
+`3B958EE6B26E5F2198BF30DFDDB19466` (543, unchanged). Every restore matched; the restored tree rebuilt and the filter: 913/913.
+
+| # | Mutation | Mutant MD5 | Failed (of 913) - Calendar Permissions' rows among them |
+|---|---|---|---|
+| M6 again | the guard as it stood (both files as at `7ef50c41`) | as above | 32 - the 22 above and 10 of Calendar's: `ASingleGrant_...` x3, `TheOnPremReCheck_...` x3, `ABulkFile_...(calendar: True)` x3 (every person row), `TheSelfGrantChecksCredentialFailing_...(page: "Calendar Permissions")` |
+| E6a again | the group branch dropped | as above | 31 - the 22 above and Calendar's 9 group rows: `ASingleGrant_...` x3, `TheOnPremReCheck_...` x3, `ABulkFile_...(calendar: True)` x3 |
+| E6b again | the refusal block removed | as above | 57 - the 41 above and Calendar's 16: every single, on-premises and bulk row, and the failing-fetch cancel case |
+| E6d again | a cancellation from the fetch let out | as above | 15 - the 10 above and Calendar's 5 "cancelled" rows |
+| E6r4 | `SubmitSingle` asks the check of a removal (`if (isSet)` -> `if (true)`, 404) | `C18A13C71982A1C4BFACBE14CC316608` (771 lines) | 3: `ASingleRemoval_...(page: "Calendar Permissions")` x3 |
+| E6r5 | the bulk loop asks it of a removal row (`CalendarPermissionService.cs` 285) | `D6D8562DE7999DD652E24DBEC997EE61` | 3: `ABulkRemoval_...(calendar: True)` x3 |
+| E6r6 | `ExecuteOnPrem` asks it of a removal (`isSet &&` dropped, 658) | `9F529F1F198C66842B5BAFF7AC762816` (771 lines) | 3: `AnOnPremRemoval_...(page: "Calendar Permissions")` x3 |
+| E6k2 | kd-59's cancel catch never taken (685) | `E4B9DCE560C54ED98A1088CFA17B329C` (771 lines) | 3: `ACancelWhileTheSelfGrantCheckHasItsCredentialFetched_...(page: "Calendar Permissions")` and kd-59's two Calendar rows |
+
+Full suite on this commit's tree: 7,530 passed / 0 failed / 0 skipped. Format, whitespace and ASCII clean.

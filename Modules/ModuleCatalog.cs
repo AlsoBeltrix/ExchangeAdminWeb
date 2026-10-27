@@ -233,7 +233,11 @@ public sealed class ModuleCatalog
             // be confirmed tells the administrators alone; the user and the calendar owner are no longer sent kd-44's notice.
             // 1.4.3: as Mailbox Permissions 1.6.3 - an on-premises change passes the operator's cancel to its credential fetch,
             // so a cancel during it stops the change before it is sent: nothing written, filed Cancelled (kd-59).
-            Version = "1.4.3",
+            // 1.4.4: as Mailbox Permissions 1.6.4 - aud-a70 (6), owner ruling 2026-10-26 ("yes"): every calendar grant is
+            // refused while the protected-principal directory-read credential cannot be had, to a person Exchange Online names
+            // as well as to a group, single change, on-premises re-check and bulk row alike - refused as incomplete naming the
+            // setting, nothing written. A removal is not checked and goes ahead as before.
+            Version = "1.4.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
