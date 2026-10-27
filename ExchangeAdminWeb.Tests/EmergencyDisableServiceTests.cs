@@ -119,7 +119,8 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.6.0: a record the bound-object re-read leaves no longer fails the step after it (psl-10).
         // 1.7.0: the mandatory ticket is judged by the shared TicketPresence rule, so one with nothing
         // visible in it is refused as a blank one is (kd-45).
-        Assert.Equal("1.7.0", module.Version);
+        // 1.7.1: the account, ticket and lockdown choice are read above the disable's yield (kd-72).
+        Assert.Equal("1.7.1", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
@@ -486,7 +487,9 @@ public class EmergencyDisableServiceTests : IDisposable
         // would render, tick, and do nothing at all - the defect this test exists to prevent.
         var page = ReadPageSource("EmergencyDisable.razor");
 
-        Assert.Contains("authState.User, moveToLockdownOu)", page, StringComparison.Ordinal);
+        // kd-72: the choice as confirmed, captured above the handler's yield into moveToLockdown.
+        Assert.Contains("var moveToLockdown = moveToLockdownOu;", page, StringComparison.Ordinal);
+        Assert.Contains("authState.User, moveToLockdown)", page, StringComparison.Ordinal);
         Assert.DoesNotContain("moveToLockdownOu: false", page, StringComparison.Ordinal);
     }
 

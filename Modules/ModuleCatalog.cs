@@ -1114,7 +1114,9 @@ public sealed class ModuleCatalog
             // taken for the disable's, the lockdown move's or the password reset's own error (psl-10).
             // 1.7.0: the disable's mandatory ticket is judged by the shared TicketPresence rule, so one
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.7.0",
+            // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
+            // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
+            Version = "1.7.1",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
