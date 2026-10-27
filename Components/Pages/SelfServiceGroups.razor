@@ -501,7 +501,8 @@
     // kd-19. Which member load may publish. Every load takes the next value and BackToGroups - the
     // only other writer of `selected` - advances it, so a load publishes only while its group is
     // still the one shown. A token rather than ReferenceEquals(selected, group): LoadMembers is
-    // registered as never reading `selected` after its first await (ClickGateRegistry).
+    // registered as never reading `selected` after its first await (ClickGateRegistry). kd-51: it
+    // also decides which load may lower isLoadingMembers, which BackToGroups lowers itself.
     private int memberLoadToken;
 
     // Bulk remove state (docs/GroupBulkActions-Plan.md S4). Selection is keyed on the immutable
@@ -567,8 +568,15 @@
     private void BackToGroups()
     {
         selected = null;
-        // kd-19: a member load still running for the group being left must not publish.
+        // kd-19: a member load still running for the group being left must not publish. kd-51: nor
+        // keep the view busy. Leaving retires the load whole - the token it publishes under and the
+        // flag it holds - because a load whose backend never returns never reaches its finally, and
+        // isLoadingMembers is a member of IsManageBusy: both Manage members buttons stayed disabled
+        // and SelectGroup refused at once until the browser was refreshed. Lowering it here is safe
+        // only because a load lowers it under its own token, so the retired load, should it ever
+        // return, cannot lower the flag of a load started after it.
         memberLoadToken++;
+        isLoadingMembers = false;
         memberIdentity = "";
         changeResult = null;
         groupMembers = [];
@@ -627,10 +635,16 @@
         }
         finally
         {
-            // Unconditional, deliberately: BackToGroups advances the token mid-load, and a lowering
-            // that waited for a current token would then never run, leaving isLoadingMembers - a
-            // member of IsManageBusy - stuck true and both Manage members buttons dead.
-            isLoadingMembers = false;
+            // kd-51: only the current load lowers the flag. It was unconditional while BackToGroups
+            // advanced the token without lowering the flag, when a token-guarded lowering would have
+            // left it stuck true. BackToGroups lowers it now, so the guard is what stops a retired
+            // load that returns late from lowering the flag of a newer load still reading - which
+            // would leave that view clickable mid-load. Whoever holds the current token lowers it:
+            // the load, here, or BackToGroups, which retires it. GroupManagement.SelectGroup's
+            // isSelecting is the same shape.
+            if (token == memberLoadToken)
+                isLoadingMembers = false;
+
             loadActivity.Complete(loadError is null, loadError);
         }
     }

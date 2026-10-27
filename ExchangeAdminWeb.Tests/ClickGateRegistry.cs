@@ -4147,6 +4147,14 @@ public static class ClickGateRegistry
     /// snapshots its group at entry, and the obligation is registered below.
     /// </para>
     /// <para>
+    /// <b>kd-51 made the reset safe for one of the three, and only that one.</b> kd-19 gave the
+    /// member load a monotonic token, and a load now lowers isLoadingMembers only while its token is
+    /// current, so BackToGroups retires the load whole - it advances the token and lowers the flag -
+    /// and a retired load returning late lowers nothing. Without that, a member read whose backend
+    /// never answered kept the door at 128 and 179 shut until the browser was refreshed. isChanging
+    /// and isResolving have no token and are still not reset here, for the reason above.
+    /// </para>
+    /// <para>
     /// <b>The tie between the exemption and the snapshot is prose, and that is a limitation, not a
     /// choice.</b> <see cref="ExemptControl.PrerequisiteBeforeExemptionHolds"/> is exactly the
     /// field this wants - the BackToGroups exemption is safe only because
@@ -4225,7 +4233,7 @@ public static class ClickGateRegistry
     private static PageGateEntry SelfServiceGroups => new()
     {
         Page = "SelfServiceGroups.razor",
-        ExpectedLineCount = 1272,
+        ExpectedLineCount = 1286,
 
         // Two, and the list field exists for exactly this. Both scopes have real flags and real
         // controls; see the remarks for why a single page-wide predicate cannot work here and why
@@ -4344,13 +4352,17 @@ public static class ClickGateRegistry
                 + "batch. Exempting it is safe because the flags it leaves raised are consulted by "
                 + "NOTHING in the browse view - the two predicates are disjoint - and the only way "
                 + "back into the scope that owns them, Manage members at 128 and 179, is gated on "
-                + "IsManageBusy. A flag reset here was considered and rejected: isChanging, "
-                + "isLoadingMembers and isResolving are lowered in the finallys of operations still "
-                + "in flight, so clearing them from outside means an old operation's finally later "
-                + "lowers a flag a new view has raised",
+                + "IsManageBusy. A reset of isChanging and isResolving here was considered and "
+                + "rejected: they are lowered in the finallys of operations still in flight, so "
+                + "clearing them from outside means an old operation's finally later lowers a flag "
+                + "a new view has raised. isLoadingMembers is the exception since kd-51: a member "
+                + "load lowers it only under its own memberLoadToken, so Back retires the load - "
+                + "token and flag - and a backend that never answers no longer keeps the door shut",
                 ConditionThatKeepsItTrue:
                 "BackToGroups stays a synchronous state reset with no await and no service call, "
-                + "and every handler that can outlive the switch keeps reading its own entry "
+                + "it lowers isLoadingMembers only beside the memberLoadToken advance that retires "
+                + "the load (kd-51), and LoadMembers lowers the flag only while its own token is "
+                + "current. And every handler that can outlive the switch keeps reading its own entry "
                 + "snapshot rather than `selected`. LoadMembers is the one that did not, and its "
                 + "catch dereferenced the nulled field: the registered PostAwaitLiveRead for "
                 + "LoadMembers/selected is this exemption's real precondition. It cannot be "
@@ -4475,7 +4487,8 @@ public static class ClickGateRegistry
                 "only in the browse view, and gated on IsManageBusy rather than IsBrowseBusy on "
                 + "purpose. It is the door back into the manage view, so it is the one control that "
                 + "must refuse while a manage-scope operation started before the operator pressed "
-                + "Back is still in flight. This is the other half of the exemption at 205; neither "
+                + "Back is still in flight - a change or a paste resolve; a member load is retired "
+                + "by Back itself (kd-51). This is the other half of the exemption at 205; neither "
                 + "can be changed without the other. The PreserveClause is the page predicate "
                 + "itself, which is off-label for a field documented as holding NON-busy clauses, "
                 + "and it is kept deliberately now that the hole which produced it has been closed "
