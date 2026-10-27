@@ -5,6 +5,47 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-26/27 - Later rulings: the deploy pipeline is restored, protected principals leave Conference Rooms entirely, and the unconfirmed-change email
+
+These supersede parts of the entry below (the eight decisions of 2026-10-26).
+
+1. **Deploy pipeline - "no one asked for ANY functionality changes to the deploy pipeline. FIX != functionality
+   change!" and "do not change the fucking deploy script's functionality. FIX BUGS. do not change existing, decided
+   behaviour."** Every weekend change to `deploy.ps1`, `tools/Install-ExchangeAdminWeb.ps1`,
+   `tools/AppPoolControl.psm1` and their Pester files is reverted to the `eb017102` state and the README paragraph
+   describing the new behaviour is removed (the `-AllowRepoint` switch, the upgrade-order refusal, the move-source
+   backup, the junction-aware folder comparison, the other-applications warning, the missing-appsettings refusals,
+   the 8.3 test and the suite-integrity test). Rows cdt-36, 42, 44, 45, 46, 48, 49, 50, 51, 52, 54, 55, 56, 57 are
+   closed as reverted and cdt-58 as declined. The three documentation pointer corrections (cdt-43, 47, 53) stay: they
+   change no behaviour. A future pipeline change goes through a plan with an exec summary, as the Constitution requires.
+2. **Protected principals and Conference Rooms - "protected principals or groups are, ONCE AGAIN, OUT OF SCOPE FOR THIS
+   MODULE. DO NOT BRING ME ANYTHING ABOUT PROTECTED PRINCIPALS RELATED ISSUES. REMOVE ALL OF THAT ILLEGALLY ADDED
+   BULLSHIT AND LIMIT TO FIXING FUCKING ISSUES."** Supersedes item 2 of the entry below: there is no scoped exception
+   and no check before the add. Every protected-principal or protected-group check the weekend added to the Conference
+   Rooms module is removed, room-list creation and its preview wording are restored, and the module does not consult
+   Protected Group Targets or the protected-principal list at all. The Constitution's protected-principal rule carries
+   Conference Rooms as its third module-scoped exemption, beside Self-Service Groups and Comms-10k, by this ruling.
+   Item 7 of the entry below (the aud-a2e Constitution conflict) is closed the same way: nothing about protected
+   principals is brought to the owner for this module again. The weekend's genuine fixes in the module stay (an
+   ambiguous room-list lookup refuses instead of reading as "no list"; cancelling or removing a bulk job is audited
+   and re-checks the operator's access; refusal messages say nothing was written).
+3. **Tests - "I don't care about tests. tests do not override directives. tests are for YOU to validate what YOU did
+   and what YOU are responsible for fixing."** Closes item 6 of the entry below: test hygiene (the live-directory test
+   classes leaving the default run, the stand-in countdown bug) is the agents' own business and needs no owner call.
+4. **aud-a29g (item 8 below) - (a) "don't care. this will never happen in the real world. fix it or document it";
+   (b) "if the user loses access to the whole application, redirect to the home page will just loop. 403."; (c) the
+   owner asked what a per-circuit read and a cache are** - (a) is fixed or documented at the implementer's choice;
+   (b) a user who loses all access is answered with 403, never a redirect; (c) stays open until explained in plain
+   terms and answered.
+5. **kd-44, the "outcome could not be confirmed" email - 2026-10-27: "remove to affected target, keep to admin."** The
+   notice to the affected user that kd-44 added is removed. The administrators' notice (there before kd-44) stays.
+   Read as: back to administrators only, so the new notice to the mailbox owner goes as well - the owner named two
+   recipients and the pre-kd-44 behaviour was administrators alone. The Constitution sentence kd-44 rested on ("any
+   change to a user's permissions or access must additionally notify the affected user") does not apply to a change
+   whose outcome is unknown, by this ruling.
+6. **kd-28 (a number where a room type name belongs in the bulk CSV) - "when has this ever happened? I cannot rule on
+   a fabricated non-issue."** It never happened; the fix is merged and reviewed and changes nothing for a CSV with
+   names in it. It stays as landed and is not raised again.
 ### 2026-10-26 - Owner rulings on the stream's open decisions (four settled, four pending clarification)
 
 Owner answers of 2026-10-26, verbatim where quoted, to the eight decisions the supervisor listed:

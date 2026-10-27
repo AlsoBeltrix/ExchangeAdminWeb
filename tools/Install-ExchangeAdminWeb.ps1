@@ -641,6 +641,23 @@ function Assert-ConfigStorePlanDatabase {
     Write-Fail "ConfigStore:Path from $from names '$($Plan.Path)' but no database exists there. The app opens a configured database without creating it, so this instance cannot start on it. Fix the key, restore the file, run tools\Move-ConfigDbToShared.ps1, or re-run with -RegenerateAppSettings -ConfigStorePath naming a database that exists. Nothing was changed."
 }
 
+function ConvertTo-InstallerComparablePath {
+    # One spelling per folder (cdt-15): environment variables expanded (IIS often stores
+    # %SystemDrive%\...), made absolute and normalised, trailing separators dropped. Callers
+    # compare the results by equality, case-insensitively - never by prefix, because one
+    # instance's folder is easily a prefix of a sibling's.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    try {
+        $full = [System.IO.Path]::GetFullPath($expanded)
+    } catch {
+        $full = $expanded
+    }
+    return $full.TrimEnd('\', '/')
+}
+
 function Assert-ApplicationTargetUnchanged {
     # cdt-15. "Create or update IIS web application" below sets an EXISTING application's pool and
     # folder to this run's -AppPoolName and -PublishPath, and both default to fixed values when
@@ -665,57 +682,14 @@ function Assert-ApplicationTargetUnchanged {
     if (-not [string]::Equals($ExistingPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase)) {
         $differences += "app pool '$ExistingPool' (this run: -AppPoolName '$AppPoolName')"
     }
-    # One folder rule, the module's (cdt-48): environment variables expanded (IIS often stores
-    # %SystemDrive%\...), made absolute, trailing separators dropped, compared case-insensitively and
-    # never by prefix - one instance's folder is easily a prefix of a sibling's - and an empty folder is
-    # never the same; or both spellings exist and resolve to one final path, so a junction is taken for
-    # its target (cdt-46). The installer imports tools\AppPoolControl.psm1 below, before this runs, and
-    # its Assert-AppPoolServesPath uses the same rule, so its two checks cannot disagree.
-    # cdt-52: a spelling that does not exist on disk has no final path, so it is never matched that
-    # way; the refusal names it, in cdt-46's words. The note only explains a refusal; it decides nothing.
-    $spellingNote = ''
-    if (-not (Test-SamePhysicalFolder -Path $ExistingPhysicalPath -Other $PublishPath)) {
+    $existingFolder = ConvertTo-InstallerComparablePath $ExistingPhysicalPath
+    $runFolder = ConvertTo-InstallerComparablePath $PublishPath
+    if ([string]::IsNullOrWhiteSpace($existingFolder) -or -not [string]::Equals($existingFolder, $runFolder, [System.StringComparison]::OrdinalIgnoreCase)) {
         $differences += "files at '$ExistingPhysicalPath' (this run: -PublishPath '$PublishPath')"
-        $missing = @(foreach ($spelling in @($ExistingPhysicalPath, $PublishPath)) {
-                $comparable = ConvertTo-ComparablePhysicalPath $spelling
-                if ($comparable -and -not [System.IO.Directory]::Exists($comparable)) { "'$spelling'" }
-            })
-        if ($missing.Count -gt 0) { $spellingNote = " A spelling that cannot be resolved on disk is not taken as the same folder: $($missing -join ', ')." }
     }
     if ($differences.Count -gt 0) {
-        Write-Fail "IIS application $Location already exists, with $($differences -join ' and ').$spellingNote An update must name the pool and folder it was installed with - -AppPoolName and -PublishPath default to fixed values when omitted - or this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$ExistingPhysicalPath', or move the application in IIS first if that is intended. Nothing was changed."
+        Write-Fail "IIS application $Location already exists, with $($differences -join ' and '). An update must name the pool and folder it was installed with - -AppPoolName and -PublishPath default to fixed values when omitted - or this run would move the live application. Re-run with -AppPoolName '$ExistingPool' -PublishPath '$ExistingPhysicalPath', or move the application in IIS first if that is intended. Nothing was changed."
     }
-}
-
-function Assert-ExistingApplicationConfigKnown {
-    # cdt-57, the cdt-55 rule in this installer's terms. An existing application whose folder has lost
-    # its appsettings.json is not deployed over. Nothing on disk then says which config database its
-    # running process opened: it may have started on a ConfigStore:Path naming a shared one. The run
-    # would generate an appsettings.json naming no key, and the restarted instance would open a new
-    # database of its own under config\ and leave the one it was using behind, with no verified backup
-    # of that one taken.
-    #
-    # The folder is -PublishPath, not a separate serving folder: the check above has just refused any
-    # run whose -PublishPath is not the folder IIS serves this application from, so for an existing
-    # application the two are the same folder.
-    #
-    # -ConfigStorePath answers the refusal, and is the reason it is actionable here. Supplying it
-    # states which database the instance opens: Resolve-ConfigStorePlan writes that key into the
-    # generated file, and cdt-21 then refuses if no database exists there. So the decision is explicit
-    # and verified rather than silently defaulted. Whitespace is not a path.
-    param(
-        [string]$Location,
-        [bool]$Exists,
-        [string]$PublishPath,
-        [string]$SuppliedConfigStorePath
-    )
-
-    if (-not $Exists) { return }
-    $appSettings = Join-Path $PublishPath "appsettings.json"
-    if (Test-Path -LiteralPath $appSettings -PathType Leaf) { return }
-    if (-not [string]::IsNullOrWhiteSpace($SuppliedConfigStorePath)) { return }
-
-    Write-Fail "IIS application $Location already exists, but there is no appsettings.json at '$appSettings'. Its running process may have been started with a ConfigStore:Path naming a shared config database: nothing on disk now says which database it opened, and this run would generate an appsettings.json naming none, so the instance would open a new database of its own under '$PublishPath\config' and leave the one it was using behind, with no verified backup of that one taken. Re-run with -ConfigStorePath naming the database this instance opens, restore its appsettings.json, or remove the application from IIS first if it has no configuration to keep. Nothing was changed."
 }
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
@@ -854,10 +828,6 @@ if ($applicationLookupFailed) {
     }
 }
 Assert-ApplicationTargetUnchanged -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -ExistingPool "$($existingApplication.applicationPool)" -ExistingPhysicalPath "$($existingApplication.PhysicalPath)" -AppPoolName $AppPoolName -PublishPath $PublishPath
-# cdt-57. The check above has just proved that IIS serves this application from -PublishPath, so that
-# folder's appsettings.json is the configuration it runs on. Read-only, in plan and apply mode alike,
-# and before anything is written.
-Assert-ExistingApplicationConfigKnown -Location "$ParentSite/$AppAlias" -Exists ($null -ne $existingApplication) -PublishPath $PublishPath -SuppliedConfigStorePath $ConfigStorePath
 
 # Read it in both modes - see the plan-mode note above. Guarded because the IIS provider
 # may not exist on a machine that is only producing a plan.
