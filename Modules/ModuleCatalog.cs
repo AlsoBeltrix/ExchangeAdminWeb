@@ -1021,7 +1021,10 @@ public sealed class ModuleCatalog
             // aud-a2ab, kd-66) is removed, and a building whose room list Exchange affirmatively
             // reports missing gets the list created and the room added, the preview marking it
             // "new", as before (aud-a2ad). aud-a2z's address re-check stays: it is a correctness check.
-            Version = "2.19.1",
+            // 2.19.2: a single-room Room Finder apply passes the operator's cancel to its preflights'
+            // on-prem credential fetches, both before Set-Place, so a cancel there ends the row with
+            // nothing written, filed Cancelled; after Set-Place the row runs on, as before (kd-59).
+            Version = "2.19.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

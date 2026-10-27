@@ -76,7 +76,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null, ModuleCredentialService? credentials = null)
             : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
-        protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
+        protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose, CancellationToken cancellationToken)
         {
             if (CredentialFailureFor is { } failing && purpose.Contains(failing, StringComparison.Ordinal))
             {
@@ -84,7 +84,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
                 CredentialPurposes.Add(purpose);
                 return Task.FromResult(new ModuleCredentialLookup(null, CredentialFailure));
             }
-            return base.LookupDirectoryCredentialAsync(purpose);
+            return base.LookupDirectoryCredentialAsync(purpose, cancellationToken);
         }
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken)
@@ -1233,7 +1233,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         using var scope = provider.CreateScope();
 
         var result = await scope.ServiceProvider.GetRequiredService<ConferenceRoomService>().SetRoomMetadataAndListAsync(
-            Typed, Room(), "", "Building 1", 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+            Typed, Room(), "", "Building 1", 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time", TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("New-DistributionGroup")), "Name"));
@@ -1574,7 +1574,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         var service = new Service(_h, logger);
 
         var result = await service.SetRoomMetadataAndListAsync(
-            Typed, room, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone);
+            Typed, room, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.False(result.Partial);

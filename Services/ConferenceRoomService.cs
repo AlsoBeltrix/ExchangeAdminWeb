@@ -501,10 +501,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// The room the protection gate validated (aud-a2d): every Exchange write takes its GUID and the
     /// Active Directory steps its proven objectGUID. Null refuses before anything is read or written.
     /// </param>
+    /// <param name="cancellationToken">
+    /// kd-59. The page's activity token, for the two preflights' credential fetches - the
+    /// City/State/Country one and the on-prem room-list one - which both run before Set-Place, so a
+    /// cancel during either ends the row as a cancellation with nothing written. The fetches after
+    /// Set-Place take none on purpose: a cancel there would leave the room half-configured, the
+    /// partial these preflights exist to prevent, so once the first write is made the row runs on.
+    /// </param>
     public async Task<RoomOperationResult> SetRoomMetadataAndListAsync(
         string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
         string floor, string floorLabel, string displayDevice, string videoDevice,
-        string countryOrRegion, string state, string timezone)
+        string countryOrRegion, string state, string timezone, CancellationToken cancellationToken = default)
     {
         var result = new RoomOperationResult { Email = roomEmail };
 
@@ -570,7 +577,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // already committed Set-Place - the partial-apply defect from the 2026-06-17 review.
         // aud-a2q. It also proves the server the write is to use - the object read through it - and
         // hands it over, so the write goes nowhere the preflight did not reach the object.
-        var (adPreflightError, adServer) = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion);
+        var (adPreflightError, adServer) = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion, cancellationToken);
         if (adPreflightError != null)
         {
             result.Success = false;
@@ -604,7 +611,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 return result;
             }
 
-            var listPreflightError = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
+            var listPreflightError = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList, cancellationToken);
             if (listPreflightError != null)
             {
                 result.Success = false;
@@ -738,6 +745,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 : "Room metadata and room list configured. City/State/Country read back as set on-prem after Set-ADUser reported an error, and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min).";
         return result;
     }
+
+    // kd-59. The bulk job's row, as it was: it passes no token (the job is not the page's activity), so its rows are
+    // unchanged by the page's cancel reaching the preflights.
+    Task<RoomOperationResult> Jobs.IConferenceRoomBulkOperations.SetRoomMetadataAndListAsync(
+        string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
+        string floor, string floorLabel, string displayDevice, string videoDevice,
+        string countryOrRegion, string state, string timezone) =>
+        SetRoomMetadataAndListAsync(roomEmail, room, city, building, capacity, floor, floorLabel, displayDevice, videoDevice,
+            countryOrRegion, state, timezone, CancellationToken.None);
 
     /// <param name="room">The validated room (aud-a2d): the member added, by GUID or proven objectGUID.</param>
     /// <param name="roomPrimary">
@@ -1613,13 +1629,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // read, or Delinea returned nothing for it. The credential service now says which, and the refusal says it. With no
     // credential service (a host that registered none, which the base allows) there is nothing to say why: the base's
     // lookup logs that and returns none, refused as not configured, as this file always did. Virtual, as the base's lookup
-    // is, for the tests.
-    protected virtual async Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
+    // is, for the tests. kd-59: the token goes on to the vault (kd-37's seam), which throws when it is cancelled; a request
+    // that times out with nobody cancelling is still no credential. Each path names its token - the two preflights the
+    // page's, the two writes none (SetRoomMetadataAndListAsync says why).
+    protected virtual async Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose, CancellationToken cancellationToken)
     {
         if (_moduleCredentials is not null)
-            return await _moduleCredentials.LookupCredentialsAsync(ModuleId, purpose);
+            return await _moduleCredentials.LookupCredentialsAsync(ModuleId, purpose, cancellationToken);
 
-        var credentials = await GetModuleCredentialsAsync(purpose);
+        var credentials = await GetModuleCredentialsAsync(purpose, cancellationToken);
         return new ModuleCredentialLookup(
             credentials, credentials is null ? ModuleCredentialFailure.SecretIdNotSet : ModuleCredentialFailure.None);
     }
@@ -1682,7 +1700,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // cannot use there - passed, Set-Place committed, and the routed write failed: the partial this
     // guard exists to prevent (aud-a2f). So the object is read again, by its objectGUID, through that
     // server, and the write is handed the server this read proved instead of deriving its own.
-    private async Task<(string? error, string? server)> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion)
+    private async Task<(string? error, string? server)> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, CancellationToken cancellationToken)
     {
         Dictionary<string, object> attrs;
         try
@@ -1722,7 +1740,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // aud-a2x. And the refusal opens with why there is none (DirectoryCredentialRefusal), so an ID that is set is not
         // asked for again; for no ID its words are as before. The three paths below take the same clause.
         var purpose = $"Set-ADUser preflight for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose, cancellationToken); // kd-59: before Set-Place, so the page's cancel ends the row here
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -1826,7 +1844,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // aud-a2v. As the preflight's, in this write's words - after Set-Place, inside the row's partial. Reached when this
         // lookup returns none though the preflight's returned one: each asks the PAM provider again.
         var purpose = $"Set-ADUser synced attributes for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose, CancellationToken.None); // kd-59: after Set-Place - no cancel here, or the room is left half-configured
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -1979,7 +1997,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Returns the refusal, or null. (A genuine failure of the membership write after a passing
     // preflight - missing write-members delegation, say - remains the inherent two-system residual.)
     // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
-    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
+    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, CancellationToken cancellationToken)
     {
         if (!list.Exists)
             return null;
@@ -2026,7 +2044,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // refusal is built without its " Nothing was written.", as the three above, and the message is unchanged - but for
         // its opening clause, which since aud-a2x says why the lookup returned none, as the City/State/Country preflight's.
         var purpose = $"on-prem room-list membership preflight for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose, cancellationToken); // kd-59: before Set-Place, as the City/State/Country preflight's
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -2138,7 +2156,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // returns none though the preflight's returned one, or when the preflight asked for none - the room on the list in
         // Exchange then - and the cloud add no longer finds it there.
         var purpose = $"on-prem room-list membership add for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose);
+        var lookup = await LookupDirectoryCredentialAsync(purpose, CancellationToken.None); // kd-59: after Set-Place, as the City/State/Country write's
         var creds = lookup.Credentials;
         if (creds is null)
         {

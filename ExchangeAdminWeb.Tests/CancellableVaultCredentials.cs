@@ -17,9 +17,10 @@ namespace ExchangeAdminWeb.Tests;
 /// activity's token, and expects the work to end as the operator's cancel.
 /// </summary>
 /// <remarks>
-/// The stand-in vault answers the token request, then waits at the secret request; with <see cref="TimesOut"/> the secret
-/// request gives up by itself, as HttpClient's own timeout does, with nobody cancelling - kd-14's and kd-37's "an unasked
-/// vault timeout is still a read that failed". The module configuration holds the module's secret ID. Every wait is bounded
+/// The stand-in vault answers the token request, then waits at the secret request <see cref="WaitsAtSecretRequest"/> names
+/// (the first, unless a test says otherwise) and answers every other with a credential; with <see cref="TimesOut"/> the
+/// secret request gives up by itself, as HttpClient's own timeout does, with nobody cancelling - kd-14's and kd-37's "an
+/// unasked vault timeout is still a read that failed". The module configuration holds the module's secret ID. Every wait is bounded
 /// at <see cref="Bound"/>, so a caller that passes no token fails its test on the bound instead of hanging it. The audit log
 /// is the fixture's own folder. No vault, no directory, no Exchange.
 /// </remarks>
@@ -86,6 +87,19 @@ internal sealed class CancellableVaultCredentials : IDisposable
         set => _vault.TimesOut = value;
     }
 
+    /// <summary>
+    /// Which secret request waits for its caller's cancel, counting from 1; every other one is answered with a credential.
+    /// <see cref="int.MaxValue"/> answers them all.
+    /// </summary>
+    public int WaitsAtSecretRequest
+    {
+        get => _vault.WaitsAtSecretRequest;
+        set => _vault.WaitsAtSecretRequest = value;
+    }
+
+    /// <summary>How many secret requests the vault has been sent.</summary>
+    public int SecretRequests => _vault.SecretRequests;
+
     /// <summary>Every audit row written so far, oldest first.</summary>
     public IReadOnlyList<JsonElement> AuditRows()
     {
@@ -111,17 +125,28 @@ internal sealed class CancellableVaultCredentials : IDisposable
     private sealed class Vault : HttpMessageHandler
     {
         private int _cancelled;
+        private int _secretRequests;
 
         public bool WasCancelled => Volatile.Read(ref _cancelled) == 1;
+
+        public int SecretRequests => Volatile.Read(ref _secretRequests);
 
         public TaskCompletionSource Requested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool TimesOut { get; set; }
 
+        public int WaitsAtSecretRequest { get; set; } = 1;
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("/oauth2/token", StringComparison.Ordinal))
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"access_token":"test-token","expires_in":3600}""") };
+
+            if (Interlocked.Increment(ref _secretRequests) != WaitsAtSecretRequest && !TimesOut)
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"items":[{"fieldName":"Username","itemValue":"svc-module"},{"fieldName":"Password","itemValue":"not-a-secret"},{"fieldName":"Domain","itemValue":"CONTOSO"}]}"""),
+                };
 
             Requested.TrySetResult();
             if (TimesOut)
