@@ -420,3 +420,4 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-27, slice 4.** kd-51 (Self-Service Groups: Back ends the running load and clears the busy flag; a retired load cannot lower a newer load's flag) with kd-67 contested and declined: ~267K agent tokens, 133 tool uses, 35 min; 7373 tests on the branch.
 
 **2026-10-27, slice 5.** kd-59 (four modules), kd-70, kd-71, kd-58 sized for a plan: ~668K agent tokens, 370 tool uses, 2 h 4 min; 7402 tests on the branch, 34 mutants; merged `a9cdf00d`.
+**2026-10-27, slice 6.** kd-72 (the owner's production report: a run must use the value submitted; Delegation Report and twelve more pages, 13 commits, 52 mutants, 46 new tests): ~837K agent tokens, 461 tool uses, 2 h 4 min; 7448 tests on the branch; merged `e24887ed`.
