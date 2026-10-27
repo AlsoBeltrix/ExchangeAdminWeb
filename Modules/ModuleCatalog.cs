@@ -933,7 +933,9 @@ public sealed class ModuleCatalog
             // which since kd-24 and kd-48 refuses a ticket made only of control characters, or one
             // with nothing visible in it - tickets this module used to accept. No code of its own
             // changed (kd-50).
-            Version = "1.1.0",
+            // 1.1.1: a reset writes, mails and records the ticket and force-change choice confirmed - read above
+            // its yield (kd-72).
+            Version = "1.1.1",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
