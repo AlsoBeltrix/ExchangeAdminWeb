@@ -1195,7 +1195,9 @@ public sealed class ModuleCatalog
             // (docs/ProgressCoverage-Plan.md S3).
             // 1.6.0: a remediation's ticket presence is the shared TicketPresence rule, so a ticket
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.6.0",
+            // 1.6.1: a lookup and a list query read the user and the filter they were submitted with, above
+            // their yield, and a second submit during one is ignored (kd-72).
+            Version = "1.6.1",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
