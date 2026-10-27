@@ -545,3 +545,176 @@ supervisor's). No module version: no module's own behaviour changed, only the sh
 **Gates on this commit's tree** (2026-10-27): `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` exit 0,
 7,367 passed / 0 failed / 0 skipped; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0;
 `git diff --check HEAD` exit 0; `tools/Test-AsciiOnly.ps1` passed. The Release build is run on the branch's final tree.
+
+## (6) - every grant refused without the directory-read credential (implementer, 2026-10-27, branch `fix/a70-6` from master `7ef50c41`)
+
+**Ruling.** Owner, 2026-10-26: "yes" - every permission grant is refused while the directory-read credential cannot be
+had, not only grants to groups (`.agents/decisions.md` 2026-10-26, item 3). Read against the 2026-10-27 mandate by the
+owner: "the condition is to not change functionality for users. since it works currently, and will continue to work in the
+same way with no change on the users' part, this satisfies the condition" (`.agents/decisions.md` 2026-10-27, item 2).
+
+### The code as it stood (lines at `7ef50c41`)
+
+- **Where the credential is had, and the gap.** `Services/PermissionValidator.cs` `CompareInDirectoryAsync`, 808-823:
+  `var (credential, credentialProblem) = await run.DirectoryReadCredentialAsync(DirectoryReadCredentialAsync);` then
+  `if (credential is null && grantee is null)` refuses (812, `SelfGrantCheckIncompleteBecause($"the on-premises directory
+  could not resolve '{affectedUser}': {credentialProblem}")`) - only a grantee Exchange Online names nothing for. Otherwise
+  `if (credential is null)` (815) logs "looks {Affected} up in the on-premises directory under the session's own identity"
+  and the lookup is `credential is null ? directory.FindNamedByUnderSessionIdentity(affectedUser,
+  grantee?.PrimarySmtpAddress) : directory.FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress, credential)` (821-823;
+  `Services/SelfGrantDirectory.cs` 140-141, `Search(..., credential: null)`). That is aud-a69's residual: a person Exchange
+  names is compared by Exchange, and the directory objects the name also reaches are read as the app pool's identity, so one
+  hidden from it goes uncompared. The other no-credential refusals sit downstream and fire only when a group turns up:
+  875-879 (a group the lookup found: "whether you are a member of the group '<x>' could not be read: <problem>") and
+  1003-1007 (`CompareInExchangeGroupAsync`, a synced group nested in a cloud-only one, the same words). A cloud-only group
+  with no synced member reads no directory membership and is granted without the credential (869, `if (account is null ||
+  groups.Count == 0) return null;`), its name looked up as the session.
+- **Who asks.** Only the two permission modules, on three paths each, and only for a grant. Mailbox Permissions:
+  `SubmitSingle` 428-431 (`// Validate self-grant (only for Add operations)`, `if (isAdd)`, then
+  `Validator.ValidateSelfGrantAsync(validationAuthState.User, user)`), recorded at 443-446 as
+  `Add{permType}_SelfGrantAttempt`, Failed, `errorDetail: selfGrantError`; `ExecuteOnPrem`'s re-check at 704 (`if (isAdd &&
+  await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError)`, recorded
+  `Add{permType}_SelfGrantAttemptAtWrite`, its banner `SelfGrantRefusalRecord.AtWrite`); the bulk row,
+  `Services/MailboxPermissionService.cs` 346-355 (`if (isAdd)`, `BulkAdd{permType}_SelfGrantAttempt`). Calendar Permissions:
+  `SubmitSingle` 404-416 (`if (isSet)`, `SetCalendar_SelfGrantAttempt`), `ExecuteOnPrem` 658 (`isSet && ...`,
+  `SetCalendar_SelfGrantAttemptAtWrite`), `Services/CalendarPermissionService.cs` 285-294 (`if (isSet)`,
+  `BulkSetCalendar_SelfGrantAttempt`). Every one records the validator's refusal as its error, so the group case's audit shape
+  is the shape every refusal of the check takes.
+- **Cancellation.** The self-grant check's credential fetch takes no token: `DirectoryReadSecretFetch` (44) is
+  `Func<int, Task<...>>`, and production's `FetchDirectoryReadSecretAsync` ends `return await
+  store.GetCredentialsBySecretIdAsync(secretId);` (1149) - the default token, under which `DelineaService` answers a request
+  that gave up with null (its `catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)`, 219, is
+  never taken). kd-37/kd-59 threaded the operator's token to the on-premises WRITE's credential fetch only - Mailbox 707-709,
+  Calendar 660-663 (`onPremActivity.CancellationToken`) - filed Cancelled by the catch at Mailbox 742 / Calendar 685
+  (`PermissionChangeFailure.CancelledBeforeItWasSent`), and that fetch runs after the self-grant re-check. No operator cancel
+  reaches the fetch this refusal rests on, on any of the three paths.
+
+### Approach
+
+1. **One refusal, in the shared check, where the credential is had.** `CompareInDirectoryAsync`: when the credential cannot
+   be had - its setting unreadable, not configured, not retrieved, a blank account, a fetch that throws or answers with a
+   cancellation - the grant is refused there, before any lookup, whatever the grantee: a group Exchange names in the group
+   refusal's words, "whether you are a member of the group '<x>' could not be read: <problem>" (aud-a60's, 878 as it
+   stood), and every other grantee in the lookup's, "the on-premises directory could not resolve '<x>': <problem>"
+   (aud-a69's, 812). No new words: both go through `SelfGrantCheckIncompleteBecause` ("Access denied: The self-grant check
+   could not be completed: ...; nothing was written. Contact your administrator."), and the problem texts name the setting
+   (`DirectoryReadCredentialNotConfigured` ends "(Admin Settings, Protected principals)"). Everything before it is unchanged
+   and runs first - the string match, the directory session, the operator's own lookup, Exchange's two lookups and its
+   comparison - so a grant Exchange already names as the operator's is still refused as a self-grant, and a check that
+   fails earlier still refuses with its own reason: with the check on, no grant passes without the credential.
+2. **The session-identity lookup goes.** `FindNamedByUnderSessionIdentity` (its only caller was 822) is removed; the grantee
+   is looked up under the credential alone. The downstream no-credential refusals (875-879, 1003-1007) can no longer be
+   reached - the credential is had above them - and go, with the parameter that carried the problem to the nested one;
+   `CompareInExchangeGroupAsync` takes the credential as non-null. The setting-unreadable log line (1117) says every grant
+   is refused, not grants to groups.
+3. **The pages and the bulk loops are not touched.** They hand the validator's refusal to the record they already write for
+   the group case: single change `Add{rights}_SelfGrantAttempt` / `SetCalendar_SelfGrantAttempt`, the on-premises re-check
+   `..._SelfGrantAttemptAtWrite` with its "made again right before the write" banner, the bulk row
+   `BulkAdd{rights}_SelfGrantAttempt` / `BulkSetCalendar_SelfGrantAttempt` and a FAILED entry - Failed, the refusal as its
+   error, nothing written, no notification (a refused grant sends none today). No line moves on either page, so
+   ClickGateRegistry and ProgressRegistry are untouched.
+4. **A removal is not affected.** The check is asked for a grant alone - each of the six call sites above sits behind
+   `isAdd` / `isSet` - and a removal grants no one anything, so it needs no credential and goes ahead as before. Pinned by
+   tests on each path. (A Calendar "set" is a grant here whatever its level, "None" included, as it always was.)
+5. **Cancellation.** No operator cancel reaches this fetch (above), so a fetch that answers with a cancellation is a
+   credential read that errored: refused, `DirectoryReadCredentialNotRetrieved`, fail closed. The operator's own cancel stays
+   kd-59's: arriving while the check's credential is fetched, it is seen at the write's credential fetch, which runs next,
+   and the change is filed Cancelled - not this refusal; if the check's fetch then fails for its own reason, that failure is
+   the refusal (kd-59's rule, `AWriteThatFailedForItsOwnReason_AsTheOperatorCancelled_IsThatFailure`). Threading the token
+   into the check is not done: it is the kd-58 class (cancellation reaching the shared reads), outside this ruling.
+6. **Scope.** The ruling is the self-grant check's: with Prevent Self-Grant off no check runs, nothing needs the credential
+   and nothing changes (`PermissionValidatorTests.ValidateSelfGrant_Disabled_AllowsSelfGrant`, whose validator has no
+   credential, already pins it).
+7. **Docs.** README Self-grant Prevention and the Admin Settings placeholder and hint (written by aud-a70 (2) and (3) - not
+   (17), as the brief has it) say every grant needs the credential and a removal does not; environment-neutral.
+8. **Versions.** Mailbox Permissions 1.6.3 -> 1.6.4, Calendar Permissions 1.4.3 -> 1.4.4, each noting aud-a70 (6) and the
+   ruling. `PermissionValidator` and `SelfGrantDirectory` are shared: the base app version bump is owed, not made here.
+
+Commits, one module per commit as the brief asks: the refusal lives in the shared check both modules ask, so the first
+commit (Mailbox Permissions) carries the validator change with Mailbox Permissions' path tests and version - Calendar
+Permissions' grants are refused from that commit on, through the same lines - and the second (Calendar Permissions) its path
+tests and version. Each commit carries its own section of this record; the docs follow in a commit of their own, and the
+branch-tip gates with the index row in the last.
+
+Tests (none reaches a directory, Exchange or a secret store): `ExchangeWriteHarness.WithholdDirectoryReadCredential` -
+absent (no Secret ID), errored (the fetch throws), cancelled (the fetch answers with a cancellation) - for the path tests.
+`PermissionValidatorSelfGrantTests`: a grant to a person Exchange names, without the credential, refused and not looked up
+(in place of `AGrantToAPerson_NeedsNoDirectoryReadCredential`, which pinned the gap); a cloud-only group without it, refused
+and its members not read; "the fetch is cancelled" joins `CredentialsNotToBeHad`; each bulk loop refusing a person row and a
+group row, the credential fetched once for the file; each bulk loop's removal written. `PermissionPagesSelfGrantTests`: each
+page's `SubmitSingle` and `ExecuteOnPrem` refusing a person and a group per shape, recorded as the group case is; each page's
+cloud and on-premises removal written. `PermissionPagesCancellationTests`: the operator's cancel during the check's
+credential read filed Cancelled (kd-59); the check's fetch failing as the operator cancels, the refusal. Mutations: the
+guard as it stood (the validator and the directory session at `7ef50c41`); the group branch's words dropped; the refusal
+block removed; a removal put through the check.
+
+### As implemented - the shared check, with Mailbox Permissions (lines at this commit)
+
+- `Services/PermissionValidator.cs` `CompareInDirectoryAsync`: the credential had at 811 as before; `if (credential is
+  null)` (812-822) refuses every grant there - `if (grantee is not null && IsGroupRecipient(grantee))` (814) in the group
+  refusal's words (817), else in the lookup's (821) - one warning each, naming the problem. The lookup is
+  `directory.FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress, credential)` alone (827). The membership-time refusal
+  that followed `if (account is null || groups.Count == 0)` is gone, its comment saying the credential was had above
+  (876-878); `CompareInExchangeGroupAsync` takes `PSCredential credential` (930) and its synced-nested refusal is gone. The
+  setting-unreadable log line says "every grant is refused until it can be" (1113). Remarks on `ValidateSelfGrantAsync`,
+  `CompareInDirectoryAsync`, `CompareInExchangeGroupAsync` and `DirectoryReadCredentialAsync` say so.
+- `Services/SelfGrantDirectory.cs`: `FindNamedByUnderSessionIdentity` removed; `FindNamedBy`'s summary says it is the only
+  grantee lookup (129-130). No other reference to it in the code or the tests.
+- `Modules/ModuleCatalog.cs`: Mailbox Permissions 1.6.3 -> 1.6.4 (184-188), naming aud-a70 (6) and the ruling.
+- Pages and services untouched: `MailboxPermissions.razor` 817 lines, `CalendarPermissions.razor` 771, the same bytes as at
+  `7ef50c41`, so no ClickGateRegistry or ProgressRegistry entry moved.
+- Tests. `ExchangeWriteHarness`: `DirectoryReadCredentialsWithheld` and `WithholdDirectoryReadCredential(shape)` - "absent"
+  clears the stored Secret ID now and for every validator made later; "errored" and "cancelled" make the stand-in fetch's
+  answer a throw or a cancellation; each returns the problem the refusal names. `PermissionValidatorSelfGrantTests`:
+  `AGrantToAPerson_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNotLookedUp` (6 shapes; replaces
+  `AGrantToAPerson_NeedsNoDirectoryReadCredential`, which asserted the grant allowed and the session's lookup),
+  `ACloudOnlyGroup_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndItsMembersAreNotRead` (6),
+  `CredentialsNotToBeHad` + "the fetch is cancelled" (a row more for the group, UPN-only and Exchange-does-not-name theories),
+  `ABulkFile_WithoutTheDirectoryReadCredential_RefusesEveryGrantRow_RecordedAsTheChecksRefusal` (a person row and a group row:
+  both FAILED, `BulkAddFullAccess_SelfGrantAttempt`, Failed, each refusal its error, nothing written, one fetch for the file)
+  and `ABulkRemoval_WithoutTheDirectoryReadCredential_IsWritten_TheSelfGrantCheckNotAsked`, both over `LoopsWithoutTheCredential`
+  (Mailbox Permissions' loop here). `PermissionPagesSelfGrantTests` (`Submit`, `SubmitMailboxGrant`, `SubmitCalendarGrant` and
+  `ConfirmOnPrem` take `removal`): `ASingleGrant_WithoutTheDirectoryReadCredential_IsRefusedNamingIt_RecordedAsTheChecksRefusal`
+  and `TheOnPremReCheck_WithoutTheDirectoryReadCredential_RefusesTheGrant_BeforeAnythingIsSent` (shape x person or group: the
+  banner, `AddFullAccess_SelfGrantAttempt` / `..._SelfGrantAttemptAtWrite`, Failed, the refusal as its error, nothing written
+  or sent), `ASingleRemoval_...` and `AnOnPremRemoval_WithoutTheDirectoryReadCredential_IsWritten_TheSelfGrantCheckNotAsked` (the
+  removal written, no fetch, no directory call). `PermissionPagesCancellationTests`:
+  `ACancelWhileTheSelfGrantCheckHasItsCredentialFetched_IsFiledCancelled_NotTheCredentialRefusal` and
+  `TheSelfGrantChecksCredentialFailing_AsTheOperatorCancels_IsTheCredentialRefusal` (the check's fetch held until the operator
+  cancels, then answering, or failing). Each page and loop theory runs over its own list, Mailbox Permissions alone in this
+  commit. Fixture: `PermissionValidatorTests.ValidateSelfGrant_DifferentUser_ReturnsNull` granted to a person Exchange names
+  with no credential configured, which this refuses: `CreateValidator(directoryReadCredential: true)` gives it one (the
+  appsettings fallback Secret ID and a stand-in fetch). The full suite found no other.
+
+### Guard proof - the shared check, with Mailbox Permissions
+
+Driver `bin/a70-6-scratch/mutate.ps1` (git-ignored, in the worktree; log `a70-6-mutations.log`, one TRX per run). Per mutant:
+each touched file's MD5 and line count; the edit - an exact-text replacement that must match once, or the whole file as at a
+revision; the mutant MD5 and line count; a Debug build of the test project, 0 errors required; the filter run `--no-build`,
+the failing names read from the TRX; the original bytes written back, the write time advanced, the MD5 checked equal. After
+the round the restored tree was rebuilt and the filter run: 887/887. Filter
+`FullyQualifiedName~PermissionValidator|FullyQualifiedName~PermissionPages|FullyQualifiedName~SelfGrant|FullyQualifiedName~MailboxPermission|FullyQualifiedName~CalendarPermission|FullyQualifiedName~ClickGate|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ValidatedWriteCallSite|FullyQualifiedName~PermissionWriteSubmission`
+(887 tests). Fixed-file MD5s: `Services/PermissionValidator.cs` `DE2C5E015157CFB92F59414AA1825467` (1,426 lines),
+`Services/SelfGrantDirectory.cs` `8EA1F48B4486FE08F361DADAAA68233E` (335), `Components/Pages/MailboxPermissions.razor`
+`BE2CF82B7E739D284F5AFB547F75DB4E` (817, unchanged), `Services/MailboxPermissionService.cs` `6F19DED2F5BFF6DEFA49F99938EEAB22`
+(608, unchanged). Every restore matched.
+
+| # | Mutation | Mutant MD5 | Failed (of 887) |
+|---|---|---|---|
+| M6 (the record's) | the guard as it stood: `PermissionValidator.cs` and `SelfGrantDirectory.cs` as at `7ef50c41` | `6FD31108171C506095E4CBBF7FB545FE`, `DC8279156F7F6906F828B383588B2AD8` | 22: every person row on every path - `ASingleGrant_...` x3, `TheOnPremReCheck_...` x3, `ABulkFile_...` x3 (the person row written), `AGrantToAPerson_...` x6 (allowed) - `ACloudOnlyGroup_...` x6 (allowed once its members were read) and `TheSelfGrantChecksCredentialFailing_AsTheOperatorCancels_...` (allowed, so the write's fetch filed the cancel) |
+| E6a | the group branch dropped: a group Exchange names refused in the lookup's words | `6B11D8D45F1A465786D88426603FC946` | 22: every group row - `ASingleGrant_...` x3, `TheOnPremReCheck_...` x3, `ABulkFile_...` x3, `ACloudOnlyGroup_...` x6, `AGroupGrant_WithoutTheDirectoryReadCredential_...` x6, `ASyncedGroupInACloudOnlyGroup_WithoutTheDirectoryReadCredential_...` |
+| E6b | the refusal block removed (the missing credential handed to the lookup, `credential!`) | `3B9296F179873F76077931FA785C0366` | 41: every row above whose refusal names the problem, on every path, and the six `AGranteeExchangeDoesNotName_...` rows - each refused by the lookup's throw, the setting not named |
+| E6d | a cancellation from the check's fetch let out (`catch (Exception ex) when (ex is not OperationCanceledException)`) | `3705F15DC75C685A83737A7684E6F9AA` | 10: every "cancelled" row - `ASingleGrant_...` x2 and `TheOnPremReCheck_...` x2 (person, group), `ABulkFile_...`, and the "the fetch is cancelled" rows of `AGrantToAPerson_...`, `ACloudOnlyGroup_...`, `AGroupGrant_...`, `AGranteeExchangeDoesNotName_...`, `AnOperatorKnownOnlyByTheirUpnClaim_...` |
+| E6r1 | `SubmitSingle` asks the check of a removal (`if (isAdd)` -> `if (true)`, 429) | `08F1254961BE99CC57883094ED05A96D` (817 lines) | 3: `ASingleRemoval_...` x3 |
+| E6r2 | the bulk loop asks it of a removal row (`MailboxPermissionService.cs` 346) | `642E0940C23131A01AC26FF17A7235CC` | 3: `ABulkRemoval_...` x3 |
+| E6r3 | `ExecuteOnPrem` asks it of a removal (`isAdd &&` dropped, 704) | `67C65A5E930C7E2EE8E883280EEBE401` (817 lines) | 3: `AnOnPremRemoval_...` x3 |
+| E6k | kd-59's cancel catch never taken (742, `when (false && ...)`) | `FA6B58532C43566A6035B450DED0D457` (817 lines) | 3: `ACancelWhileTheSelfGrantCheckHasItsCredentialFetched_...` and kd-59's own two `ACancelOfTheOnPremActivity_...` rows |
+
+M6 is the finding's reproduction on this module's three paths: each person row it fails is a grant the code as it stood let
+through without the credential. Its group rows pass under M6 - the group case was refused before, in the same words - which is
+the "no new words" half of the Approach; E6a is what pins those words. The page mutants keep 817 lines, so ClickGateRegistry
+and ProgressRegistry ran under them, green.
+
+Full suite on this commit's tree (Debug, `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`): 7,504 passed / 0
+failed / 0 skipped. `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and
+`tools/Test-AsciiOnly.ps1`: clean.

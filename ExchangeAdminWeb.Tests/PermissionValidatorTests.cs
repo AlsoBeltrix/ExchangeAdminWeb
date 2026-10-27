@@ -81,7 +81,8 @@ public sealed class PermissionValidatorTests : IDisposable
         bool preventSelfGrant = true,
         string[]? appsettingsExcludedUsers = null,
         ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null,
-        IIdentityResolver? resolver = null)
+        IIdentityResolver? resolver = null,
+        bool directoryReadCredential = false)
     {
         // One database per validator, every store on it, so nothing one test seeds reaches another (aud-a26q); the logs
         // under the same directory rather than one every validator and every run shared, all of it deleted (aud-a26t).
@@ -93,6 +94,11 @@ public sealed class PermissionValidatorTests : IDisposable
             ["Delinea:SecretServerUrl"] = "https://fake.local",
             ["Audit:LogRoot"] = Path.Combine(testDir, "logs")
         };
+
+        // aud-a70 (6): a grant the self-grant check clears needs the protected-principal directory-read credential - its
+        // Secret ID here, by the fallback the lookups read, and a stand-in fetch for it on the validator below.
+        if (directoryReadCredential)
+            configData["Security:ProtectedPrincipalDirectoryReadSecretId"] = "4242";
 
         // Retired appsettings source: seeded only by the guard test that proves a value
         // present ONLY under Security:ExcludedUsers is no longer read (retired 2026-07-28).
@@ -164,6 +170,9 @@ public sealed class PermissionValidatorTests : IDisposable
         return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, servicers, logger, scopeFactory)
         {
             SelfGrantDirectoryRunspace = new SelfGrantDirectoryStandIn().Open,
+            DirectoryReadSecretFetch = directoryReadCredential
+                ? _ => Task.FromResult<(string username, string password, string domain)?>(("svc-dirread", "stand-in-secret", "DOMAIN"))
+                : null,
         };
     }
 
@@ -262,12 +271,13 @@ public sealed class PermissionValidatorTests : IDisposable
         // Past the string match the check finds the operator in the directory and asks Exchange: here the directory holds
         // the operator and nobody named jdoe, and Exchange names jdoe as a recipient of their own, so the grant is to someone
         // else. aud-a69: a grantee neither Exchange nor the directory holds is refused as a check that could not be completed.
+        // aud-a70 (6): and every grant is refused without the directory-read credential, so this one has it.
         var forest = new SelfGrantDirectoryStandIn();
         var admin = forest.AddUser("admin", upn: "admin@company.com");
         var resolver = ExchangeKnowsNobody();
         resolver.ResolveRecipientAsync("jdoe@company.com").Returns(
             new ResolvedRecipient("jdoe@company.com", "ext-jdoe", "UserMailbox", ExistsOnPrem: false));
-        var validator = CreateValidator(resolver: resolver);
+        var validator = CreateValidator(resolver: resolver, directoryReadCredential: true);
         validator.SelfGrantDirectoryRunspace = forest.Open;
 
         var result = await validator.ValidateSelfGrantAsync(

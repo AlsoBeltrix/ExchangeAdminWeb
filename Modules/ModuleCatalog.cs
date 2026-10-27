@@ -181,7 +181,11 @@ public sealed class ModuleCatalog
             // owner, single change and bulk row alike, is gone.
             // 1.6.3: an on-premises change passes the operator's cancel to its credential fetch, so a cancel during it stops
             // the change before it is sent - nothing written, filed Cancelled (kd-59).
-            Version = "1.6.3",
+            // 1.6.4: aud-a70 (6), owner ruling 2026-10-26 ("yes"): every grant is refused while the protected-principal
+            // directory-read credential cannot be had - a grant to a person Exchange Online names as well as one to a group,
+            // single change, on-premises re-check and bulk row alike - refused as incomplete naming the setting, nothing
+            // written. A removal is not checked and goes ahead as before.
+            Version = "1.6.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

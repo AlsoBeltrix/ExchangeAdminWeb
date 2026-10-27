@@ -523,14 +523,52 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public int DirectoryReadFetches => Volatile.Read(ref _directoryReadFetches);
 
     /// <summary>
+    /// aud-a70 (6). The ways a grant's directory-read credential cannot be had that the path tests run: no Secret ID stored
+    /// ("absent"), a secret fetch that throws ("errored"), and one that answers with a cancellation ("cancelled") - never the
+    /// operator's: the self-grant check hands its fetch no token.
+    /// </summary>
+    public static readonly string[] DirectoryReadCredentialsWithheld = ["absent", "errored", "cancelled"];
+
+    private bool _directoryReadSecretIdWithheld;
+    private Func<Task<(string username, string password, string domain)?>>? _directoryReadSecretAnswer;
+
+    /// <summary>
+    /// aud-a70 (6). From now on no <see cref="NothingProtectedValidator"/> - made before this call or after it - can have the
+    /// directory-read credential, as <paramref name="shape"/> (one of <see cref="DirectoryReadCredentialsWithheld"/>) says; the
+    /// problem a refusal names for it.
+    /// </summary>
+    public string WithholdDirectoryReadCredential(string shape)
+    {
+        switch (shape)
+        {
+            case "absent":
+                _directoryReadSecretIdWithheld = true;
+                ModuleConfig.UpdateModuleValues(ProtectedPrincipalService.ProtectedPrincipalsModuleKey,
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [ProtectedPrincipalService.DirectoryReadSecretConfigKey] = "" });
+                return PermissionValidator.DirectoryReadCredentialNotConfigured;
+            case "errored":
+                _directoryReadSecretAnswer = () => Task.FromException<(string username, string password, string domain)?>(
+                    new InvalidOperationException("the secret store is unreachable"));
+                return PermissionValidator.DirectoryReadCredentialNotRetrieved;
+            case "cancelled":
+                _directoryReadSecretAnswer = () => Task.FromCanceled<(string username, string password, string domain)?>(
+                    new CancellationToken(canceled: true));
+                return PermissionValidator.DirectoryReadCredentialNotRetrieved;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape), shape, "not a way the directory-read credential is withheld");
+        }
+    }
+
+    /// <summary>
     /// A real <see cref="PermissionValidator"/> with no protection configured, asking Exchange
     /// through <paramref name="resolver"/> - so the bulk loops bind each row through a real check.
     /// </summary>
     /// <remarks>
     /// aud-a60. The self-grant check reads group membership under the protected-principal directory-read credential: its
     /// Secret ID is stored here, and the validator's secret fetch is a stand-in that gives <see cref="DirectoryReadAccount"/>
-    /// for it and counts each fetch - no secret store is reached. <paramref name="protectedPrincipalsConfig"/>, when given, is
-    /// the module config the protected-principal service reads that setting from (a store that cannot be read, for one).
+    /// for it and counts each fetch - no secret store is reached - unless <see cref="WithholdDirectoryReadCredential"/> says
+    /// otherwise. <paramref name="protectedPrincipalsConfig"/>, when given, is the module config the protected-principal
+    /// service reads that setting from (a store that cannot be read, for one).
     /// </remarks>
     public PermissionValidator NothingProtectedValidator(IIdentityResolver resolver, ModuleConfigService? protectedPrincipalsConfig = null)
     {
@@ -544,7 +582,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         ModuleConfig.UpdateModuleValues(ProtectedPrincipalService.ProtectedPrincipalsModuleKey,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                [ProtectedPrincipalService.DirectoryReadSecretConfigKey] = DirectoryReadSecretId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                [ProtectedPrincipalService.DirectoryReadSecretConfigKey] = _directoryReadSecretIdWithheld
+                    ? ""
+                    : DirectoryReadSecretId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             });
         var protectedPrincipals = new ProtectedPrincipalService(env, Config, protectedPrincipalsConfig ?? ModuleConfig,
             TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance);
@@ -565,7 +605,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
             DirectoryReadSecretFetch = secretId =>
             {
                 Interlocked.Increment(ref _directoryReadFetches);
-                return Task.FromResult<(string username, string password, string domain)?>(
+                return _directoryReadSecretAnswer?.Invoke() ?? Task.FromResult<(string username, string password, string domain)?>(
                     secretId == DirectoryReadSecretId ? ("svc-dirread", "stand-in-secret", "CONTOSO") : null);
             },
         };

@@ -659,8 +659,10 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Empty(_h.Forest.Errors);
     }
 
+    // aud-a70 (6): "the fetch is cancelled" too - no operator's cancel reaches the check's fetch, so a cancellation from it is
+    // a fetch that failed.
     public static TheoryData<string> CredentialsNotToBeHad =>
-        ["not configured", "its setting cannot be read", "not retrieved", "the fetch throws", "a blank account"];
+        ["not configured", "its setting cannot be read", "not retrieved", "the fetch throws", "the fetch is cancelled", "a blank account"];
 
     /// <summary>
     /// A validator over <paramref name="resolver"/> whose directory-read credential cannot be had as <paramref name="shape"/>
@@ -688,6 +690,10 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
                 validator.DirectoryReadSecretFetch = _ =>
                     Task.FromException<(string username, string password, string domain)?>(new InvalidOperationException("the secret store is unreachable"));
                 break;
+            case "the fetch is cancelled":
+                validator.DirectoryReadSecretFetch = _ =>
+                    Task.FromCanceled<(string username, string password, string domain)?>(new CancellationToken(canceled: true));
+                break;
             default:
                 validator.DirectoryReadSecretFetch = _ => Task.FromResult<(string username, string password, string domain)?>((" ", "secret", "CONTOSO"));
                 break;
@@ -714,21 +720,45 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Empty(_h.Forest.Errors);
     }
 
-    [Fact]
-    public async Task AGrantToAPerson_NeedsNoDirectoryReadCredential()
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task AGrantToAPerson_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndNotLookedUp(string shape)
     {
-        // A deployment without the credential still grants to a person Exchange names: Exchange's comparison stands, and the
-        // directory's lookup of the grantee runs as the session, an answer that can only add a refusal (aud-a69). A grantee
-        // Exchange does not name is refused without it (AGranteeExchangeDoesNotName_WithoutTheDirectoryReadCredential_...).
+        // aud-a70 (6), owner ruling 2026-10-26. A deployment without the credential granted to a person Exchange names: the
+        // directory's lookup of the grantee ran as the session, so an object the name also reaches there and that identity
+        // cannot see was never compared (aud-a69's residual). Every grant is refused now, in the lookup's words, and nothing
+        // is looked up as the session in the credential's place. Exchange's own comparison still runs first.
         var resolver = ExchangeKnowsTheTarget();
         resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
         resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
-        var validator = _h.NothingProtectedValidator(resolver);
-        ClearTheDirectoryReadSecretId();
+        var (validator, problem) = WithoutTheCredential(resolver, shape);
 
-        Assert.Null(await validator.ValidateSelfGrantAsync(Jdoe, Other));
-        Assert.Equal(0, _h.DirectoryReadFetches);
-        Assert.Null(Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(Other, Other)).As);
+        var result = await validator.ValidateSelfGrantAsync(Jdoe, Other);
+
+        Assert.Equal(IncompleteBecause($"the on-premises directory could not resolve '{Other}': {problem}"), result);
+        await resolver.Received(1).ResolveRecipientAsync(Other);
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => call == GranteeLookup(Other, Other));
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Theory]
+    [MemberData(nameof(CredentialsNotToBeHad))]
+    public async Task ACloudOnlyGroup_WithoutTheDirectoryReadCredential_IsRefused_AsIncomplete_AndItsMembersAreNotRead(string shape)
+    {
+        // aud-a70 (6). A group only Exchange Online holds, with no synced group among its members, needed no directory read
+        // and was granted without the credential once Exchange had read its members - its name looked up as the session.
+        // Refused now, before its members are read, in the group refusal's words.
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"));
+        var (validator, problem) = WithoutTheCredential(resolver, shape);
+
+        var result = await validator.ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(IncompleteBecause($"whether you are a member of the group '{CloudGroup}' could not be read: {problem}"), result);
+        await resolver.DidNotReceive().ReadGroupMembersAsync(Arg.Any<string>());
+        Assert.DoesNotContain(_h.Forest.Calls.Cast<string>(), call => call == GranteeLookup(CloudGroup, CloudGroup));
+        Assert.Empty(_h.Forest.MembershipReads);
+        Assert.Empty(_h.Forest.Errors);
     }
 
     // ---- aud-a70 (7): an operator known only by a UPN claim is looked up under the directory-read credential ---------------
@@ -1305,6 +1335,84 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.Equal(["FAILED", "SUCCESS"], bulk.Entries.Select(entry => entry.Status));
         Assert.Single(_h.AuditRows(), row => Text(row, "action") == NoUserAction(calendar, grant));
         Assert.NotEmpty(_h.Writes);
+    }
+
+    // aud-a70 (6): without the directory-read credential every grant row of a file is refused; a removal row is written.
+
+    /// <summary>aud-a70 (6): the bulk loops this is pinned on - Mailbox Permissions' (false) and Calendar Permissions' (true).</summary>
+    private static readonly bool[] CredentialLoops = [false];
+
+    /// <summary>Each loop, and each way the credential cannot be had (<see cref="ExchangeWriteHarness.DirectoryReadCredentialsWithheld"/>).</summary>
+    public static TheoryData<bool, string> LoopsWithoutTheCredential
+    {
+        get
+        {
+            var data = new TheoryData<bool, string>();
+            foreach (var calendar in CredentialLoops)
+                foreach (var shape in ExchangeWriteHarness.DirectoryReadCredentialsWithheld)
+                    data.Add(calendar, shape);
+            return data;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(LoopsWithoutTheCredential))]
+    public async Task ABulkFile_WithoutTheDirectoryReadCredential_RefusesEveryGrantRow_RecordedAsTheChecksRefusal(bool calendar, string shape)
+    {
+        // aud-a70 (6), owner ruling 2026-10-26. A row granting to a person Exchange names was written without the credential,
+        // one granting to a group was refused. Both are refused now, each recorded as the self-grant check's refusal with its
+        // reason - the shape the group's always had - nothing written, and the credential asked for once for the whole file.
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Upn).Returns(Recipient(Upn, "ext-jdoe"));
+        resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+        var problem = _h.WithholdDirectoryReadCredential(shape);
+
+        var bulk = await RunBulk(calendar, grant: true, Row(calendar, Other) + Row(calendar, Delegates), resolver);
+
+        string[] refusals =
+        [
+            IncompleteBecause($"the on-premises directory could not resolve '{Other}': {problem}"),
+            IncompleteBecause($"whether you are a member of the group '{Delegates}' could not be read: {problem}"),
+        ];
+        Assert.Equal(0, bulk.SuccessCount);
+        Assert.Equal(2, bulk.FailedCount);
+        Assert.Equal(["FAILED", "FAILED"], bulk.Entries.Select(entry => entry.Status));
+        Assert.Equal(refusals, bulk.Entries.Select(entry => entry.Message));
+        var records = _h.AuditRows();
+        Assert.Equal(2, records.Count);
+        Assert.All(records, record =>
+        {
+            Assert.Equal(calendar ? "BulkSetCalendar_SelfGrantAttempt" : "BulkAddFullAccess_SelfGrantAttempt", Text(record, "action"));
+            Assert.Equal("Failed", Text(record, "result"));
+        });
+        Assert.Equal(refusals, records.Select(record => Text(record, "error")));
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, _h.Connects);
+        Assert.Equal(shape == "absent" ? 0 : 1, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.MembershipReads);
+    }
+
+    [Theory]
+    [MemberData(nameof(LoopsWithoutTheCredential))]
+    public async Task ABulkRemoval_WithoutTheDirectoryReadCredential_IsWritten_TheSelfGrantCheckNotAsked(bool calendar, string shape)
+    {
+        // aud-a70 (6). A removal grants no one anything: the loops ask the self-grant check for a grant row alone, so a removal
+        // row needs no credential and is written as before.
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Other).Returns(Recipient(Other, "ext-other"));
+        _h.WithholdDirectoryReadCredential(shape);
+
+        var bulk = await RunBulk(calendar, grant: false, Row(calendar, Other), resolver);
+
+        Assert.Equal(1, bulk.SuccessCount);
+        Assert.Equal(0, bulk.FailedCount);
+        Assert.Equal(calendar ? "Remove-MailboxFolderPermission" : "Remove-MailboxPermission", Assert.Single(_h.Writes));
+        Assert.Equal(calendar ? "BulkRemoveCalendar" : "BulkRemove_FullAccess", Text(Assert.Single(_h.AuditRows()), "action"));
+        Assert.Equal(0, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Calls);
+        await resolver.DidNotReceive().ResolveRecipientAsync(Other);
     }
 
     // aud-a59: a row that names no target is an invalid row too, refused before any check - it was recorded under the

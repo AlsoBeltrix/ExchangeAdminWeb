@@ -631,7 +631,8 @@ public class PermissionValidator
     /// nesting the protected-group evaluator reads, or through their primary group; a group only Exchange Online holds is
     /// asked of Exchange. aud-a50: the on-premises write runs this again right before it writes. aud-a61: each call is its
     /// own run of the check (<see cref="SelfGrantRun"/>), so it reads afresh. aud-a69: the grantee is looked up under the
-    /// protected-principal directory-read credential, and one neither Exchange nor the directory holds is refused.
+    /// protected-principal directory-read credential, and one neither Exchange nor the directory holds is refused. aud-a70
+    /// (6), owner ruling 2026-10-26: while that credential cannot be had, every grant is refused, not only one to a group.
     /// </remarks>
     public Task<string?> ValidateSelfGrantAsync(ClaimsPrincipal? actingUser, string affectedUser) =>
         ValidateSelfGrantAsync(actingUser, affectedUser, new SelfGrantRun());
@@ -784,7 +785,8 @@ public class PermissionValidator
     /// so what the typed string and Exchange's answer each name is compared. An object is the operator by objectGUID, or by
     /// primary address: the object that address belongs to is the mailbox the grant would land on. aud-a69: searched under
     /// the protected-principal directory-read credential, the one the membership is read under; a grantee Exchange does not
-    /// name refuses when that credential cannot be had, and when the directory holds nothing it names.
+    /// name refuses when the directory holds nothing it names. aud-a70 (6): without that credential every grant refuses
+    /// before any lookup - a person Exchange names as well as a group (owner ruling 2026-10-26).
     ///
     /// aud-a52. Whether a group holds the operator is the protected-group evaluator's question
     /// (<see cref="ProtectedGroupMembership.Evaluate"/>), asked once over every group concerned and read in this session
@@ -802,25 +804,27 @@ public class PermissionValidator
     {
         // aud-a69. The grantee is looked up under the protected-principal directory-read credential, once per run, as the
         // membership below is read (aud-a60): an object the session's identity cannot see reads as no row, and no row lets
-        // the grantee through. A grantee Exchange does not name is the directory's alone to answer for, so without the
-        // credential nothing may answer; one Exchange names is compared by Exchange, and the session's lookup of it can only
-        // add a refusal.
+        // the grantee through. aud-a70 (6), owner ruling 2026-10-26: without the credential every grant is refused here,
+        // before any lookup - a person Exchange names as well, whose lookup ran as the session's identity, so an object the
+        // name also reaches in the directory and that identity cannot see went uncompared. A group Exchange names is refused
+        // in the group refusal's words (aud-a60), every other grantee in the lookup's (aud-a69); each names the problem.
         var (credential, credentialProblem) = await run.DirectoryReadCredentialAsync(DirectoryReadCredentialAsync);
-        if (credential is null && grantee is null)
+        if (credential is null)
         {
-            _logger.LogWarning("The self-grant check cannot look {Affected}, which Exchange Online holds no recipient for, up in the on-premises directory: {Problem} - failing closed", affectedUser, credentialProblem);
+            if (grantee is not null && IsGroupRecipient(grantee))
+            {
+                _logger.LogWarning("The self-grant check cannot read whether {User} is a member of {Affected}, a group Exchange Online names: {Problem} - failing closed", exchangeIdentity, affectedUser, credentialProblem);
+                return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read: {credentialProblem}");
+            }
+
+            _logger.LogWarning("The self-grant check cannot look {Affected} up in the on-premises directory: {Problem} - failing closed", affectedUser, credentialProblem);
             return SelfGrantCheckIncompleteBecause($"the on-premises directory could not resolve '{affectedUser}': {credentialProblem}");
         }
-
-        if (credential is null)
-            _logger.LogWarning("The self-grant check looks {Affected} up in the on-premises directory under the session's own identity, beside Exchange Online's answer: {Problem}", affectedUser, credentialProblem);
 
         IReadOnlyList<SelfGrantDirectoryObject> named;
         try
         {
-            named = await Task.Run(() => credential is null
-                ? directory.FindNamedByUnderSessionIdentity(affectedUser, grantee?.PrimarySmtpAddress)
-                : directory.FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress, credential));
+            named = await Task.Run(() => directory.FindNamedBy(affectedUser, grantee?.PrimarySmtpAddress, credential));
         }
         catch (Exception ex)
         {
@@ -860,7 +864,7 @@ public class PermissionValidator
 
             // Cloud-only (aud-a52): Exchange holds its membership; the synced groups nested in it are the directory's to read.
             var (refusal, synced) = await CompareInExchangeGroupAsync(directory, account, actor, exchangeIdentity, affectedUser, grantee, run,
-                credential, credentialProblem);
+                credential);
             if (refusal is not null)
                 return refusal;
             groups.AddRange(synced);
@@ -870,13 +874,8 @@ public class PermissionValidator
             return null;
 
         // aud-a60. Read under the protected-principal directory-read credential, never the session's identity: a link that
-        // identity cannot see reads as no row, and no row is the evaluator's evidence. Without the credential there is no
-        // answer to give. aud-a69: had above, before the grantee's lookup.
-        if (credential is null)
-        {
-            _logger.LogWarning("The self-grant check cannot read whether {User} is a member of a group {Affected} names: {Problem} - failing closed", exchangeIdentity, affectedUser, credentialProblem);
-            return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read: {credentialProblem}");
-        }
+        // identity cannot see reads as no row, and no row is the evaluator's evidence. aud-a70 (6): had above - no grant gets
+        // this far without it.
 
         // One evaluation for every group concerned: the operator and their primary group are read once, and an answer the
         // evaluator could not complete refuses unless a group already matched (aud-a52). Once per run for this operator and
@@ -922,13 +921,13 @@ public class PermissionValidator
     /// from the operator. A synced group among the members is not Exchange's to expand - the directory holds its whole
     /// membership, groups Exchange does not list included - so it is found there by its address and joins the evaluation;
     /// one the directory does not hold refuses. aud-a69: it is found under the directory-read credential the evaluation
-    /// reads under (<paramref name="credential"/>), and without that credential the check refuses, naming
-    /// <paramref name="credentialProblem"/>, before any lookup. aud-a72: a dynamic distribution group's members are the ones
-    /// Exchange calculated. A check that could not be completed is never a cleared grant (aud-a28y).
+    /// reads under (<paramref name="credential"/>) - which the caller has before it asks: without it every grant is refused
+    /// there, before any lookup (aud-a70 (6)). aud-a72: a dynamic distribution group's members are the ones Exchange
+    /// calculated. A check that could not be completed is never a cleared grant (aud-a28y).
     /// </remarks>
     private async Task<(string? Refusal, IReadOnlyList<string> SyncedGroups)> CompareInExchangeGroupAsync(SelfGrantDirectory directory,
         SelfGrantDirectoryObject? account, ResolvedRecipient? actor, string exchangeIdentity, string affectedUser, ResolvedRecipient group,
-        SelfGrantRun run, PSCredential? credential, string? credentialProblem)
+        SelfGrantRun run, PSCredential credential)
     {
         var unread = SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
         if (actor is null)
@@ -998,13 +997,8 @@ public class PermissionValidator
         var synced = new List<string>();
         foreach (var nested in members.Where(member => member.IsGroup && member.IsDirSynced == true))
         {
-            // aud-a69. Found under the credential the evaluation reads under, so what it reads is what was found. Without it
-            // the evaluation this group would join cannot be made, so nothing is looked up as the session: refused, naming why.
-            if (credential is null)
-            {
-                _logger.LogWarning("The self-grant check cannot read whether {User} is a member of {Affected}, which holds a synced group: {Problem} - failing closed", exchangeIdentity, affectedUser, credentialProblem);
-                return (SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read: {credentialProblem}"), []);
-            }
+            // aud-a69. Found under the credential the evaluation reads under, so what it reads is what was found - never looked
+            // up as the session.
 
             var address = nested.PrimarySmtpAddress;
             IReadOnlyList<SelfGrantDirectoryObject> held;
@@ -1102,19 +1096,21 @@ public class PermissionValidator
 
     /// <summary>
     /// The credential the self-grant check reads group membership under, or why it cannot be had (aud-a60): the
-    /// protected-principal directory-read credential, by the Secret ID the protected-principal check reads it by.
+    /// protected-principal directory-read credential, by the Secret ID the protected-principal check reads it by. aud-a69:
+    /// the grantee is looked up under it too, and aud-a70 (6): without it every grant is refused.
     /// </summary>
     /// <remarks>
     /// The setting is probed first: a store that cannot be read refuses rather than letting the Secret ID's read fall back to
     /// appsettings in its place. No Secret ID, a secret the store does not give, a blank account or a fetch that throws each
-    /// refuse. ModuleCredentialService is not asked: it reads a module's DelineaSecretId, which for the permission modules is
-    /// the on-premises Exchange write credential.
+    /// refuse - a fetch that answers with a cancellation too: no operator's cancel reaches this fetch, which is handed no
+    /// token, so it is a fetch that failed. ModuleCredentialService is not asked: it reads a module's DelineaSecretId, which
+    /// for the permission modules is the on-premises Exchange write credential.
     /// </remarks>
     private async Task<(PSCredential? Credential, string? Problem)> DirectoryReadCredentialAsync()
     {
         if (!_protectedPrincipalService.TryGetDirectoryReadSecret(out _))
         {
-            _logger.LogError("The self-grant check cannot read the protected-principal directory-read credential's setting - grants to groups are refused until it can be. {Store}",
+            _logger.LogError("The self-grant check cannot read the protected-principal directory-read credential's setting - every grant is refused until it can be. {Store}",
                 SettingsStoreText.ServiceModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey));
             return (null, DirectoryReadCredentialUnreadable);
         }
