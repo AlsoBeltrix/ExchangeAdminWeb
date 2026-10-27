@@ -797,6 +797,10 @@
 
     private async Task RunTrace()
     {
+        // kd-72. A second submit while a trace runs is ignored, not run beside it: Trace and Run Trace Now are
+        // disabled while isLoading, but the browser's copy of that is one round trip stale.
+        if (isLoading) return;
+
         validationError = ValidateDateRange(startDate, endDate);
         if (validationError != null) return;
 
@@ -844,6 +848,12 @@
     // kd-59: true when the operator's cancel ended the search - the cancellation of this token, which is the activity's.
     private async Task<bool> RunRealtimeTrace(CancellationToken cancellationToken)
     {
+        // kd-72. What the audit row names - the addresses and message id searched, and the ticket - read here, with
+        // the search's own arguments, before its await. They were read after it, and Fill Trace Form stays
+        // clickable during a trace and rewrites them, so a row could name a search that was never run.
+        var target = TraceTarget();
+        var ticket = ticketNumber.Trim();
+
         try
         {
             response = await MsgTrace.GetMessageTraceAsync(
@@ -854,24 +864,23 @@
                 string.IsNullOrWhiteSpace(messageId) ? null : messageId.Trim(),
                 cancellationToken);
 
-            var target = TraceTarget();
             var auditDetail = response.Error ?? (response.Warnings.Any() ? string.Join(" | ", response.Warnings.Distinct(StringComparer.OrdinalIgnoreCase)) : null);
             var auditSuccess = response.Error == null && !response.Warnings.Any();
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, auditSuccess, auditDetail, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, auditSuccess, auditDetail, ticket);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             // kd-59. The operator's cancel stopped the on-premises half at its credential fetch. Not a search that failed: filed
             // Cancelled, in the app's phrase for a cancel (kd-57). Any other cancellation is a search that failed, below.
             response = new MessageTraceResponse { Error = AuditService.CancelledByTheOperator };
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", TraceTarget(), false, AuditService.CancelledByTheOperator,
-                ticketNumber.Trim(), AuditService.FiledCancelled());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, false, AuditService.CancelledByTheOperator,
+                ticket, AuditService.FiledCancelled());
             return true;
         }
         catch (Exception ex)
         {
             response = new MessageTraceResponse { Error = ex.Message };
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", TraceTarget(), false, ex.Message, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, false, ex.Message, ticket);
         }
 
         return false;
@@ -879,11 +888,17 @@
 
     private async Task AnalyzePastedHeaders()
     {
+        // kd-72. One analysis at a time, as the disabled Analyze and file picker already intend.
+        if (isAnalyzing) return;
+
         await AnalyzeHeadersAsync(() => Task.FromResult(HeaderAnalysis.AnalyzeHeaderText(headerText)), "Pasted Headers");
     }
 
     private async Task AnalyzeUploadedFile(InputFileChangeEventArgs e)
     {
+        // kd-72. As AnalyzePastedHeaders; above the file name, so an ignored pick does not relabel the analysis.
+        if (isAnalyzing) return;
+
         var file = e.File;
         uploadedFileName = file.Name;
         await AnalyzeHeadersAsync(async () =>
@@ -895,6 +910,9 @@
 
     private async Task AnalyzeHeadersAsync(Func<Task<HeaderAnalysisResult>> analyze, string target)
     {
+        // kd-72. The ticket the analysis is recorded under, read before the analysis's await: it was read after it,
+        // and the trace form's ticket box is not disabled while an analysis runs.
+        var ticket = ticketNumber.Trim();
         isAnalyzing = true;
         headerAnalysisError = null;
         headerAnalysis = null;
@@ -906,12 +924,12 @@
         {
             headerAnalysis = await analyze();
             analyzeActivity.Complete(true);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, true, null, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, true, null, ticket);
         }
         catch (Exception ex)
         {
             headerAnalysisError = ex.Message;
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, false, ex.Message, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, false, ex.Message, ticket);
         }
         finally
         {
@@ -1076,6 +1094,9 @@
         detail = null;
         detailLoading = true;
         var target = string.IsNullOrWhiteSpace(msg.MessageId) ? msg.MessageTraceId : msg.MessageId;
+        // kd-72. The ticket the read is recorded under, read before its await: the box is not disabled while a
+        // detail loads, and it was read after.
+        var ticket = ticketNumber.Trim();
 
         using var detailActivity = Progress.Begin(
             "Message Trace", $"Loading delivery detail for {target}", ActivitySize.Unknown);
@@ -1092,7 +1113,7 @@
                 fetched = new MessageTraceDetail { Summary = msg, Error = AuditService.CancelledByTheOperator };
             var success = string.IsNullOrEmpty(fetched.Error);
             detailActivity.Complete(success, fetched.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, fetched.Error, ticketNumber.Trim(),
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, fetched.Error, ticket,
                 cancelled ? AuditService.FiledCancelled() : null);
             if (token == detailRequestToken)
             {
@@ -1101,7 +1122,7 @@
         }
         catch (Exception ex)
         {
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, false, ex.Message, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, false, ex.Message, ticket);
             if (token == detailRequestToken)
             {
                 detail = new MessageTraceDetail { Summary = msg, Error = ex.Message };
@@ -1175,6 +1196,9 @@
 
     private async Task DownloadSelectedDetails()
     {
+        // kd-72. A second click while a download runs is ignored, as the disabled button already intends.
+        if (detailActionBusy) return;
+
         var messages = SelectedMessages();
         // Guard the threshold at the action too (UI hiding is not the gate): only <=LiveMax downloads live.
         if (MessageTraceDetailReport.ResolveAction(messages.Count) != MessageTraceDetailAction.LiveOrEmail)
@@ -1188,6 +1212,9 @@
         detailActionBusy = true;
         detailActionKind = "download";
         var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
+        // kd-72. The ticket the download is recorded under, read before its first await: the box is not disabled
+        // while a download runs, and it was read after every read.
+        var ticket = ticketNumber.Trim();
 
         // Items, and a REAL one: the selection count is known, so the frame shows a true
         // "x of y" rather than a spinner over an unknown number of cloud round trips.
@@ -1221,7 +1248,7 @@
 
             activity.Complete(true, $"{details.Count:N0} message(s) exported");
 
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, true, null, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, true, null, ticket);
         }
         catch (OperationCanceledException) when (activity.CancellationToken.IsCancellationRequested)
         {
@@ -1234,12 +1261,12 @@
             detailActionError = null;
             activity.Complete(false, AuditService.CancelledByTheOperator);
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target,
-                false, AuditService.CancelledByTheOperator, ticketNumber.Trim(), AuditService.FiledCancelled());
+                false, AuditService.CancelledByTheOperator, ticket, AuditService.FiledCancelled());
         }
         catch (Exception ex)
         {
             detailActionError = ex.Message;
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, false, ex.Message, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, false, ex.Message, ticket);
         }
         finally
         {

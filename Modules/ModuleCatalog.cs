@@ -533,7 +533,10 @@ public sealed class ModuleCatalog
             // fetch, so a cancel during it stops the on-premises read; filed Cancelled (kd-59).
             // 1.8.3: a live detail download stops at the operator's cancel before the next message and pushes no CSV,
             // filed Cancelled; a cancellation that is not theirs - a browser call that timed out - is a failed download (kd-70).
-            Version = "1.8.3",
+            // 1.8.4: a trace audits the addresses and ticket it searched with, and header analysis, a delivery detail and
+            // a live download the ticket at their click - each read before its await - and a second trace, analysis or
+            // download during one is ignored (kd-72).
+            Version = "1.8.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
