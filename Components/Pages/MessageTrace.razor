@@ -829,7 +829,7 @@
             // made it unnecessary (docs/MessageTraceHistoricalRetirement-Plan.md), so the chunked
             // search sat in the build while the page walked past it. Do not reintroduce a
             // date-width branch here - the service splits wide ranges into windows itself.
-            var cancelled = await RunRealtimeTrace(activity.CancellationToken); // kd-59: the token the navigation guard cancels, to the on-premises half's credential fetch
+            var cancelled = await RunRealtimeTrace(activity.CancellationToken); // kd-59, kd-73: the token the navigation guard cancels, to the on-premises half's credential fetch and the cloud half's windows
             activity.Complete(!cancelled, cancelled ? AuditService.CancelledByTheOperator : response?.Results?.Count is int n ? $"{n:N0} message(s)" : null);
         }
         catch (Exception ex)
@@ -870,8 +870,9 @@
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // kd-59. The operator's cancel stopped the on-premises half at its credential fetch. Not a search that failed: filed
-            // Cancelled, in the app's phrase for a cancel (kd-57). Any other cancellation is a search that failed, below.
+            // kd-59, kd-73. The operator's cancel stopped the on-premises half at its credential fetch, or the cloud half between
+            // two of its windows. Not a search that failed: filed Cancelled, in the app's phrase for a cancel (kd-57). Any other
+            // cancellation is a search that failed, below.
             response = new MessageTraceResponse { Error = AuditService.CancelledByTheOperator };
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, false, AuditService.CancelledByTheOperator,
                 ticket, AuditService.FiledCancelled());

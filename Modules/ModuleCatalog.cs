@@ -539,7 +539,9 @@ public sealed class ModuleCatalog
             // 1.8.4: a trace audits the addresses and ticket it searched with, and header analysis, a delivery detail and
             // a live download the ticket at their click - each read before its await - and a second trace, analysis or
             // download during one is ignored (kd-72).
-            Version = "1.8.4",
+            // 1.8.5: a search wider than one cloud window looks at the operator's cancel between windows, so a cancel ends it
+            // before the next window instead of after the last, filed Cancelled (kd-73).
+            Version = "1.8.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
