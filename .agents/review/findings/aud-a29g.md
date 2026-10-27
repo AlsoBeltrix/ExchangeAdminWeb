@@ -376,3 +376,10 @@ _blazor transport bypass it by design; fail-closed is intact (directory errors, 
 grant stores become LookupFailed and a neutral 403 page; the catch-all does the same); the 403 body carries no group
 names, SIDs or exception text; the loopback tests use a hand-built probe host, with Program.cs order covered by a
 source-text tripwire. Artefacts: `.agents/review/auth-batch-1.result.txt`, `.stream.log`, `prompt-auth-batch-1.md`.
+## Owner answers, 2026-10-26/27 - the held choices close
+
+- (a) the one-interval window: owner "don't care. this will never happen in the real world. fix it or document it" - documented: this section and "Choices the owner can veto" item 1 describe the window; the fresh-read-per-request variant stays rejected.
+- (b) the refusal: owner "403." - item 5 is what landed: a standalone 403 page, one audit line per refused request. Nothing to change.
+- (c) cache-free circuit checks: item 3 stays as landed (the open tab's timer check reads the directory fresh); the owner asked what it was, it was explained, and nothing changes.
+
+The row's "owner calls held" note is closed; fix/a29g was deleted 2026-10-27 after its content was verified in master by patch identity.
