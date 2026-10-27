@@ -1960,6 +1960,27 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Contains("could not be sent", message, StringComparison.Ordinal);
     }
 
+    // ---- kd-39: a CSV run whose progress cannot complete stands, and nothing escapes the handler ---------------------------
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ABulkRun_WhoseProgressCannotComplete_StandsAndNothingEscapesTheHandler(string page)
+    {
+        // The aud-a70 (9) shape on the bulk path: the completion is the finally's last statement, after every row was written
+        // and the run's summary recorded, and it sat in no guard - a throw there left the handler with the run already done.
+        var (progress, activity, failure) = ProgressThatCannotComplete();
+
+        var (result, bulk, warnings, _) = await ProcessBulkGrant(page, progress: progress);
+
+        Assert.Null(result);
+        Assert.Equal(1, Assert.IsType<BulkOperationResult>(bulk).SuccessCount);
+        Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+        activity.Received(1).Complete(true, null);
+        var (message, exception) = Assert.Single(warnings);
+        Assert.Same(failure, exception);
+        Assert.Contains("could not be completed", message, StringComparison.Ordinal);
+    }
+
     /// <summary>Keeps every warning a page logs, with its exception.</summary>
     private sealed class CapturingLogger<T> : ILogger<T>
     {
