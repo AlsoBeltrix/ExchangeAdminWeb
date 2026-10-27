@@ -874,7 +874,11 @@ public sealed class ModuleCatalog
             // 1.14.1: Back to groups retires a member load still running, so a load whose backend
             // never answers no longer leaves Manage members refused until the browser is
             // refreshed; a retired load returning late cannot free the view of a newer one (kd-51).
-            Version = "1.14.1",
+            // 1.14.2: after a single add or remove, the member-list refresh is decided from the change's own
+            // outcome rather than the result banner's field, which its dismiss can clear. Nothing the operator
+            // sees changes today - no await sits between the two - but one added there would have skipped the
+            // refresh silently (kd-74).
+            Version = "1.14.2",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

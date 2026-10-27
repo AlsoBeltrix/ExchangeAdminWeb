@@ -4207,11 +4207,12 @@ public static class ClickGateRegistry
     /// <c>selectedGuids</c> and AddResolvedAsync's <c>resolution</c> are already snapshotted
     /// through <c>SelectedMembers()</c> and a Where, and the CapturedAtEntry matcher requires the
     /// capture line to name the live field textually, which <c>var rows = SelectedMembers();</c>
-    /// does not (the resolution half does, and IS registered). And <c>changeResult</c> is read
-    /// after an await in ChangeMember and RemoveListedMember, at the still-looking-at-it test - but
-    /// unreachably so: no await separates the assignment from the read, so the browser never sees
-    /// the banner, and its dismiss button cannot be clicked, in that window. That is why the
-    /// dismiss at 300 needs no prerequisite; the day an await appears between them it does.
+    /// does not (the resolution half does, and IS registered). And <c>changeResult</c> is not read
+    /// back. ChangeMember and RemoveListedMember used to read it after an await, at their
+    /// still-looking-at-it refresh test - unreachably so, as no await separated the assignment from
+    /// the read - until kd-74 (3) moved that decision to their local <c>completed</c>, which their
+    /// activities already completed from (SelfServiceGroupsRefreshDecisionTests pins it). That is
+    /// why the dismiss at 300 needs no prerequisite.
     /// </para>
     /// <para>
     /// <b>Fixed by kd-8, and not a gating problem.</b> Re-entering the manage view for a DIFFERENT
@@ -4233,7 +4234,7 @@ public static class ClickGateRegistry
     private static PageGateEntry SelfServiceGroups => new()
     {
         Page = "SelfServiceGroups.razor",
-        ExpectedLineCount = 1286,
+        ExpectedLineCount = 1288,
 
         // Two, and the list field exists for exactly this. Both scopes have real flags and real
         // controls; see the remarks for why a single page-wide predicate cannot work here and why
@@ -4375,13 +4376,13 @@ public static class ClickGateRegistry
                 + "message on screen for the whole of the next one, the same reason Migration's "
                 + "dismiss at 442, DhcpAuthorization's at 40 and ConferenceRooms' at 452 are exempt",
                 ConditionThatKeepsItTrue:
-                "no await appears between a handler ASSIGNING changeResult and reading it back at "
-                + "its ReferenceEquals(selected, group) refresh test. ChangeMember and "
-                + "RemoveListedMember both read it there, so the read exists - it is unreachable "
-                + "only because the browser never renders the banner, and so cannot dispatch this "
-                + "dismiss, inside that synchronous stretch. Put an await between them and this "
-                + "control can null the result under them: the refresh is then silently skipped and "
-                + "the member list stays stale after a successful write"),
+                "no handler starts reading changeResult back. Since kd-74 (3) none does: ChangeMember "
+                + "and RemoveListedMember decide their member-list refresh from their local "
+                + "completed, not from this field (SelfServiceGroupsRefreshDecisionTests). The moment "
+                + "a handler reads it after an await, this control can null it under that read - a "
+                + "refresh silently skipped, the member list stale after a successful write - and the "
+                + "exemption needs a PostAwaitLiveRead and a PrerequisiteBeforeExemptionHolds before "
+                + "it holds again"),
 
             new ExemptControl(361, "@onclick=\"() => bulkOutcome = null\"",
                 "dismisses the per-row outcome table of the last batch, on the same reasoning as "
