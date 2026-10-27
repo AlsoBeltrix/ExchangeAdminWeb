@@ -282,6 +282,11 @@
             return;
         }
 
+        // kd-72. The toggle this save writes, read here, above the yield: aud-a41's "the one this save began
+        // with" below was read after the yield and the authorization re-check, so a click on the toggle
+        // landing there - its disabled attribute reaches the browser a round trip late - was saved instead.
+        var wanted = moduleEnabled;
+
         saving = true;
         statusMessage = null;
         statusIsWarning = false;
@@ -324,16 +329,16 @@
 
             // aud-a28k. Nothing toggled, nothing written: writing the loaded toggle back reverted a change made
             // elsewhere since the page loaded. A toggle is written alone, decided against its row under the lock.
-            if (moduleEnabled == moduleEnabledBaseline)
+            if (wanted == moduleEnabledBaseline)
             {
                 statusMessage = "The Exchange Online module status is unchanged; nothing was saved.";
                 statusIsError = false;
             }
             else
             {
-                // aud-a41. The toggle written, and the baseline after it, are the one this save began with: the write runs off
-                // the circuit, since it can wait up to the store's busy timeout for a lock held elsewhere.
-                var wanted = moduleEnabled;
+                // aud-a41. The toggle written, and the baseline after it, are the one this save began with (read above its
+                // yield, kd-72): the write runs off the circuit, since it can wait up to the store's busy timeout for a lock
+                // held elsewhere.
                 var outcome = await Task.Run(() => Enablement.SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = wanted }));
                 if (outcome.StoreCorrupt)
                 {
@@ -380,6 +385,13 @@
             statusIsError = false;
             return;
         }
+
+        // kd-72. The three fields this save validates and writes, read here, above the yield. They were read
+        // after the yield and the authorization re-check, and none of them is disabled while a save runs, so
+        // a keystroke landing there was validated and saved instead of what was on screen at the click.
+        var trimmedAppId = exoAppId.Trim();
+        var trimmedOrg = exoOrganization.Trim();
+        var trimmedCert = exoCertSubject.Trim();
 
         saving = true;
         statusMessage = null;
@@ -445,10 +457,6 @@
                 Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "StoreUnreadable", statusMessage);
                 return;
             }
-
-            var trimmedAppId = exoAppId.Trim();
-            var trimmedOrg = exoOrganization.Trim();
-            var trimmedCert = exoCertSubject.Trim();
 
             bool allEmpty = string.IsNullOrWhiteSpace(trimmedAppId)
                          && string.IsNullOrWhiteSpace(trimmedOrg)

@@ -134,7 +134,9 @@ public sealed class ModuleCatalog
             // runspace drain (docs/ProgressCoverage-Plan.md S2).
             // 1.0.5: that drain runs off the circuit, so the page stays live while the pooled
             // connections are disconnected (aud-a67).
-            Version = "1.0.5",
+            // 1.0.6: both saves write the toggle and the connection fields as they stood at the click, read above
+            // their yield (kd-72).
+            Version = "1.0.6",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",
