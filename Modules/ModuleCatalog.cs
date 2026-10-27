@@ -1048,7 +1048,9 @@ public sealed class ModuleCatalog
             // 2.19.2: a single-room Room Finder apply passes the operator's cancel to its preflights'
             // on-prem credential fetches, both before Set-Place, so a cancel there ends the row with
             // nothing written, filed Cancelled; after Set-Place the row runs on, as before (kd-59).
-            Version = "2.19.2",
+            // 2.19.3: the apply looks at that cancel once more immediately before Set-Place, so one landing after the
+            // preflights' credential fetches also ends the row with nothing written, filed Cancelled (kd-73).
+            Version = "2.19.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
