@@ -399,7 +399,13 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// builds <c>&lt;GUID&gt;:\Calendar</c> from the argument it is sent. Null refuses before a
     /// credential is requested.
     /// </summary>
-    public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, string accessRight)
+    /// <param name="cancellationToken">
+    /// kd-59. The page's activity token, for the credential fetch (kd-37's seam): a cancel during it leaves, as every throw
+    /// before the mark does, as a <see cref="PermissionWriteNotSubmittedException"/> - nothing was sent - with the
+    /// cancellation as its cause. Nothing after the fetch takes it: once the credential is in hand the write runs as before.
+    /// </param>
+    public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, string accessRight,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
@@ -408,7 +414,7 @@ public class CalendarPermissionService : ExchangeServiceBase
         // throw from any of them leaves as a PermissionWriteNotSubmittedException: nothing was sent. A throw from the
         // Invoke-Command itself, once sent, goes out as it is - a write whose outcome is unknown.
         var submission = new PermissionWriteSubmission();
-        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation"));
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation", cancellationToken)); // kd-59
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -470,15 +476,16 @@ public class CalendarPermissionService : ExchangeServiceBase
         }), _onPremThrottle));
     }
 
-    /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>.</summary>
-    public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user)
+    /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>, its token too (kd-59).</summary>
+    public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
         // aud-a76: marked as SetCalendarPermissionOnPremAsync is.
         var submission = new PermissionWriteSubmission();
-        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation"));
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation", cancellationToken)); // kd-59
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 

@@ -657,10 +657,10 @@
             }
             if (isSet && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogCalendarPermission(currentUser, clientIpAddress, "SetCalendar_SelfGrantAttemptAtWrite", target, user, level, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox); step = PermissionChangeFailure.TheWrite; PermissionResult opResult;
-            if (isSet)
-                opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, access.ToString());
+            if (isSet) // kd-59: the activity's token, the one the navigation guard cancels, to the write's credential fetch
+                opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, access.ToString(), onPremActivity.CancellationToken);
             else
-                opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user);
+                opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, onPremActivity.CancellationToken);
             step = PermissionChangeFailure.AfterTheWrite;
             var rowWritten = SelfGrantRefusalRecord.Recorded(() => Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
@@ -681,6 +681,15 @@
             }
 
             result = outcome = SelfGrantRefusalRecord.Said(opResult, rowWritten);
+        }
+        catch (Exception ex) when (PermissionChangeFailure.CancelledBeforeItWasSent(ex, onPremActivity.CancellationToken))
+        {
+            // kd-59. As Mailbox Permissions' handler: the operator's cancel stopped the write's credential fetch, before its
+            // command was sent - filed Cancelled, in the app's phrase for a cancel (kd-57), with nothing written; and, as for any
+            // write never sent, no notification. Every other throw, a cancellation the operator did not ask for included, is below.
+            result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(PermissionChangeFailure.CancelledBeforeTheWrite, () => Audit.LogCalendarPermission(
+                currentUser, clientIpAddress, action, target, user, level, false, ticket, errorDetail: PermissionChangeFailure.CancelledBeforeTheWrite,
+                extra: AuditService.FiledCancelled(onPremExtra)), Logger, target, PermissionChangeFailure.CancelledChangeRecord));
         }
         catch (Exception ex)
         {

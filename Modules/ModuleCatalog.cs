@@ -225,7 +225,9 @@ public sealed class ModuleCatalog
             // 1.4.1: as Mailbox Permissions 1.6.1 - a CSV run whose progress panel cannot be completed stands (kd-39).
             // 1.4.2: as Mailbox Permissions 1.6.2 - kd-44 reversed by owner ruling 2026-10-27: a change whose outcome could not
             // be confirmed tells the administrators alone; the user and the calendar owner are no longer sent kd-44's notice.
-            Version = "1.4.2",
+            // 1.4.3: as Mailbox Permissions 1.6.3 - an on-premises change passes the operator's cancel to its credential fetch,
+            // so a cancel during it stops the change before it is sent: nothing written, filed Cancelled (kd-59).
+            Version = "1.4.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

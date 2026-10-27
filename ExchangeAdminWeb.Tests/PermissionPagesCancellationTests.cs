@@ -34,6 +34,7 @@ public sealed class PermissionPagesCancellationTests : IDisposable
 {
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
     private const string MailboxPage = "Mailbox Permissions";
+    private const string CalendarPage = "Calendar Permissions";
     private const string Logon = @"CONTOSO\jdoe";
     private const string Upn = "jdoe@contoso.test";
     private const string Target = "shared@contoso.test";
@@ -60,10 +61,13 @@ public sealed class PermissionPagesCancellationTests : IDisposable
         _h.Dispose();
     }
 
-    public static TheoryData<string> Pages => [MailboxPage];
+    public static TheoryData<string> Pages => [MailboxPage, CalendarPage];
 
     /// <summary>Each page's two on-premises changes: the grant (tab 0) and the removal (tab 1).</summary>
-    public static TheoryData<string, bool> Changes => new() { { MailboxPage, true }, { MailboxPage, false } };
+    public static TheoryData<string, bool> Changes => new()
+    {
+        { MailboxPage, true }, { MailboxPage, false }, { CalendarPage, true }, { CalendarPage, false },
+    };
 
     private static string ModuleOf(string page) => page == MailboxPage ? "MailboxPermissions" : "CalendarPermissions";
 
@@ -100,6 +104,30 @@ public sealed class PermissionPagesCancellationTests : IDisposable
         }
     }
 
+    /// <summary>The on-premises Calendar Permissions write, as <see cref="OnPremMailboxService"/>.</summary>
+    private sealed class OnPremCalendarService : CalendarPermissionService
+    {
+        private readonly ExchangeWriteHarness _h;
+
+        public OnPremCalendarService(ExchangeWriteHarness h, ModuleCredentialService credentials)
+            : base(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, credentials, h.Trace) => _h = h;
+
+        public Exception? CredentialFailure { get; init; }
+
+        public Action? Connect { get; init; }
+
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
+            CredentialFailure is { } failure
+                ? Task.FromException<(string username, string password, string domain)?>(failure)
+                : base.GetModuleCredentialsAsync(purpose, cancellationToken);
+
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        {
+            Connect?.Invoke();
+            _h.DefineOnPremSession(ps);
+        }
+    }
+
     private ComponentBase PageFor(string page, RecordingProgress progress, Exception? credentialFailure = null, bool grant = true,
         Action? connect = null)
     {
@@ -115,7 +143,10 @@ public sealed class PermissionPagesCancellationTests : IDisposable
         }
         else
         {
-            throw new ArgumentOutOfRangeException(nameof(page), page, "no such page");
+            component = new CalendarPermissions();
+            Set(component, "CalendarService", new OnPremCalendarService(_h, credentials) { CredentialFailure = credentialFailure, Connect = connect });
+            Set(component, "Logger", NullLogger<CalendarPermissions>.Instance);
+            SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
         }
 
         var auth = Substitute.For<AuthenticationStateProvider>();
