@@ -392,9 +392,6 @@ public class MailboxPermissionService : ExchangeServiceBase
                 await PermissionChangeNotifier.NotifyAffectedAsync(
                     email, result.AppliedRights ?? [], row.Target, row.Target, row.User,
                     currentUser, isAdd, _logger);
-                // kd-44: and a right whose outcome is unknown tells them it may have changed.
-                await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(
-                    email, result.UnconfirmedRights ?? [], row.Target, row.Target, row.User, currentUser, isAdd, _logger);
 
                 if (result.Success)
                 {

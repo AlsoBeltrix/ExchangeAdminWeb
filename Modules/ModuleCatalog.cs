@@ -172,7 +172,10 @@ public sealed class ModuleCatalog
             // the target is bound (kd-18, kd-40). Calendar Permissions does not do this yet.
             // 1.6.1: a CSV run whose progress panel cannot be completed stands, the failure logged; the completion
             // threw out of the handler after every row was written (kd-39, the aud-a70 (9) guard on the bulk path).
-            Version = "1.6.1",
+            // 1.6.2: kd-44 reversed by owner ruling 2026-10-27 ("remove to affected target, keep to admin") - a change whose
+            // outcome could not be confirmed tells the administrators alone again; kd-44's notice to the user and the mailbox
+            // owner, single change and bulk row alike, is gone.
+            Version = "1.6.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -212,7 +215,9 @@ public sealed class ModuleCatalog
             // 1.4.0: aud-a70 - as Mailbox Permissions 1.5.0, and an on-premises write Exchange refused is a failed result,
             // no longer "could not be confirmed".
             // 1.4.1: as Mailbox Permissions 1.6.1 - a CSV run whose progress panel cannot be completed stands (kd-39).
-            Version = "1.4.1",
+            // 1.4.2: as Mailbox Permissions 1.6.2 - kd-44 reversed by owner ruling 2026-10-27: a change whose outcome could not
+            // be confirmed tells the administrators alone; the user and the calendar owner are no longer sent kd-44's notice.
+            Version = "1.4.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

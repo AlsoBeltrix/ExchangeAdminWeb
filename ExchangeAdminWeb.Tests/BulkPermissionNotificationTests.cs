@@ -129,19 +129,19 @@ public class BulkPermissionNotificationTests
     }
 
     [Theory]
-    [InlineData("MailboxPermissionService.cs", "ProcessMailboxPermissionsCsvAsync", "result.UnconfirmedRights ?? []")]
-    [InlineData("CalendarPermissionService.cs", "ProcessCalendarPermissionsCsvAsync", "result.Unconfirmed ? [notifyPermType] : []")]
-    public void TheBulkLoopsTellTheAffectedOfARowThatCouldNotBeConfirmed(string file, string method, string rights)
+    [InlineData("MailboxPermissionService.cs", "ProcessMailboxPermissionsCsvAsync")]
+    [InlineData("CalendarPermissionService.cs", "ProcessCalendarPermissionsCsvAsync")]
+    public void TheBulkLoopsTellTheAffectedOnlyOfWhatApplied(string file, string method)
     {
-        // kd-44. A row whose outcome is unknown tells the trustee and the owner it may have changed: once, on what is
-        // unconfirmed, and before the success branch - such a row is not a success.
+        // kd-44 told the trustee and the owner of a row whose outcome could not be confirmed; the owner's ruling of 2026-10-27
+        // ("remove to affected target, keep to admin") took that notice out. The loop's one notice to them is the one on what
+        // applied, so a row whose outcome is unknown tells them nothing.
         var body = Body(file, method);
 
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, "NotifyAffectedOfUnconfirmedAsync"));
-        var notifyAt = body.IndexOf("PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync", StringComparison.Ordinal);
-        Assert.True(notifyAt > 0, "the bulk loop must tell the affected of an unconfirmed row");
-        Assert.True(body.IndexOf(rights, notifyAt, StringComparison.Ordinal) > notifyAt, "on what is unconfirmed");
-        Assert.True(body.IndexOf("if (result.Success)", notifyAt, StringComparison.Ordinal) > notifyAt, "before the success branch");
+        var calls = System.Text.RegularExpressions.Regex.Matches(body, @"PermissionChangeNotifier\.(\w+)\(")
+            .Select(match => match.Groups[1].Value);
+        Assert.Equal(["NotifyAffectedAsync"], calls);
+        Assert.DoesNotContain("email.Send", body, StringComparison.Ordinal);
     }
 
     [Theory]

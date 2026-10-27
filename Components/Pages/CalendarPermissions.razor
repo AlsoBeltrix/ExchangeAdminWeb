@@ -495,7 +495,7 @@
                     try { await Email.SendUserNotificationAsync(user, $"{target} (Calendar)", currentUser, permType, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to {User} of the change on {Target} could not be sent; the change stands", user, target); }
                     // Notify the calendar owner
                     try { await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
-                } if (opResult.Unconfirmed) await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(Email, [isSet ? $"Calendar {level}" : "Calendar Access"], $"{target} (Calendar)", target, user, currentUser, isSet, Logger); // kd-44: a write whose outcome is unknown tells the user and the owner it may have changed
+                }
 
                 result = SelfGrantRefusalRecord.Said(opResult, rowWritten);
                 activity.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
@@ -503,7 +503,7 @@
             catch (Exception ex)
             {
                 step = PermissionChangeFailure.StageOf(step, ex); var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); // aud-a71: recorded as ExecuteOnPrem's catch records - a write that threw may have applied, so its row is filed Undetermined, a throw before or after it Failed (aud-a73), and a write the service says was never sent Failed, nothing written (aud-a76)
-                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : null, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox), filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : "Remove", ticket, failure, $"{target} (Calendar)", isSet ? $"Calendar {access}" : "Calendar Access", isSet, Logger); /* aud-a70 (15), kd-44 */ try { activity.Complete(false, failed); } catch (Exception completeEx) { Logger.LogWarning(completeEx, "The progress of the change on {Target} could not be completed; the result stands", target); } // aud-a70 (9): a completion that throws no longer leaves the handler
+                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : null, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox), filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : "Remove", ticket, failure, Logger); /* aud-a70 (15): administrators only - kd-44 reversed, owner 2026-10-27 */ try { activity.Complete(false, failed); } catch (Exception completeEx) { Logger.LogWarning(completeEx, "The progress of the change on {Target} could not be completed; the result stands", target); } // aud-a70 (9): a completion that throws no longer leaves the handler
             }
         }
         finally
@@ -678,7 +678,7 @@
                 var permType = isGrant ? $"Calendar {level}" : "Calendar Access";
                 try { await Email.SendUserNotificationAsync(user, $"{target} (Calendar)", currentUser, permType, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to {User} of the change on {Target} could not be sent; the change stands", user, target); }
                 try { await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
-            } if (opResult.Unconfirmed) await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(Email, [isSet ? $"Calendar {level}" : "Calendar Access"], $"{target} (Calendar)", target, user, currentUser, isSet, Logger); // kd-44: as SubmitSingle's
+            }
 
             result = outcome = SelfGrantRefusalRecord.Said(opResult, rowWritten);
         }
@@ -687,7 +687,7 @@
             step = PermissionChangeFailure.StageOf(step, ex); var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The on-premises permission change on {Target} failed at {Step}", target, step); // aud-a76: a write the service says was never sent is the connection's failure - Failed, nothing written
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(failure, () => Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
-                false, ticket, errorDetail: failure, extra: onPremExtra, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, action, target, user, level ?? "Remove", ticket, failure, $"{target} (Calendar)", isSet ? $"Calendar {level}" : "Calendar Access", isSet, Logger); // aud-a70 (15): an Undetermined change tells the administrators - and, kd-44, the user and the owner; aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73); aud-a70 (4): with the identity written and the servicer note
+                false, ticket, errorDetail: failure, extra: onPremExtra, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, action, target, user, level ?? "Remove", ticket, failure, Logger); // aud-a70 (15): an Undetermined change tells the administrators, and only them (kd-44 reversed, owner 2026-10-27); aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73); aud-a70 (4): with the identity written and the servicer note
         }
         finally
         {

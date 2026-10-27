@@ -340,9 +340,6 @@ public class CalendarPermissionService : ExchangeServiceBase
                 await PermissionChangeNotifier.NotifyAffectedAsync(
                     email, result.Success ? [notifyPermType] : [], $"{row.Target} (Calendar)",
                     row.Target, row.User, currentUser, isSet, _logger);
-                // kd-44: and a write whose outcome is unknown tells them it may have changed.
-                await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(
-                    email, result.Unconfirmed ? [notifyPermType] : [], $"{row.Target} (Calendar)", row.Target, row.User, currentUser, isSet, _logger);
 
                 if (result.Success)
                 {
