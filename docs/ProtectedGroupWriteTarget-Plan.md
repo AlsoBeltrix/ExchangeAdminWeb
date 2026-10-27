@@ -184,9 +184,6 @@ themselves. The servicer override is the intended route for both.
 - Conference Rooms, Mailbox/Calendar Permissions, and the other servicer-capable modules
   are out of scope: their write target is a mailbox and is already validated
   (`ValidateTargetMailboxAsync`).
-  **Correction (aud-a2e, 2026-10-23):** not true of Conference Rooms - a Room Finder row
-  also writes INTO a group, the building's room list, and that write now goes through
-  this plan's gate. See `.agents/review/findings/aud-a2e.md`.
 - No retro-fitting of a protection gate onto read paths.
 
 ## Acceptance criteria

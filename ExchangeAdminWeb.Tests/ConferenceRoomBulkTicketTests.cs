@@ -114,8 +114,7 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         public readonly List<string> FinderCalls = new();
         public readonly List<string> TypeCalls = new();
 
-        public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, System.Security.Claims.ClaimsPrincipal? actingUser,
-            string city, string building, int capacity,
+        public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
             string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone)
         {
             FinderCalls.Add(roomEmail);

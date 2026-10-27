@@ -201,7 +201,7 @@
                                         <small>
                                             @row.RoomListName
                                             @if (row.IsLegacyRoomList) { <span class="badge bg-warning text-dark">legacy</span> }
-                                            @if (!row.RoomListExists && row.RoomResolved) { <span class="badge bg-danger">does not exist</span> }
+                                            @if (!row.RoomListExists && row.RoomResolved) { <span class="badge bg-info">new</span> }
                                         </small>
                                     </td>
                                     <td>
@@ -1070,13 +1070,13 @@
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
 
                     var r = await RoomService.SetRoomMetadataAndListAsync(
-                        email, room, await CurrentUserAsync(), cityName, buildingName, seats,
+                        email, room, cityName, buildingName, seats,
                         floorName, floorText, display, video,
                         country, stateName, tz);
 
                     op.Complete(r.Success, r.Message);
 
-                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, GroupManagementService.CombineNotes(serviced, r.RoomListServicedNote), room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed);
                     return r;
                 });
@@ -1204,8 +1204,8 @@
                         preview.RoomListExists = listExists;
                         preview.IsLegacyRoomList = isLegacy;
                         preview.StrayCityRoomListName = strayCityList;
-                        if (isLegacy) preview.Warnings.Add($"Using legacy room list '{listName}'. New naming would be '{ConferenceRoomService.BuildRoomListName(row.Building)}'.");
-                        if (!listExists) preview.Warnings.Add($"Room list '{preview.RoomListName}' does not exist. This row will be refused: create the list in Exchange Online, then re-run it.");
+                        if (isLegacy)
+                            preview.Warnings.Add($"Using legacy room list '{listName}'. New naming would be '{ConferenceRoomService.BuildRoomListName(row.Building)}'.");
                         if (!string.IsNullOrWhiteSpace(strayCityList))
                             preview.Warnings.Add($"A city-named list '{strayCityList}' also exists. This room will be added to '{preview.RoomListName}' (the building list). Review the stray list manually.");
                     }

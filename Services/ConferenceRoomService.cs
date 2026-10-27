@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
-using System.Security.Claims;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExchangeAdminWeb.Models;
@@ -13,12 +12,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     private readonly ModuleConfigService _moduleConfig;
     private const string ModuleId = "ConferenceRooms";
 
-    // aud-a2e. The Protected Group Targets check on the room list a Room Finder row writes into (CheckRoomListTarget). Optional
-    // as the base's credential service is: the container supplies both, and a host without them refuses every room-list
-    // write - it does not skip the check.
-    private readonly ProtectedPrincipalService? _protectedPrincipals;
-    private readonly ProtectedPrincipalServicerService? _servicers;
-
     public ConferenceRoomService(
         ExoConnectionPool exoPool,
         DelineaService delineaService,
@@ -26,9 +19,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         ModuleCredentialService moduleCredentials,
         OperationTraceService operationTrace,
         IConfiguration config,
-        ILogger<ConferenceRoomService> logger,
-        ProtectedPrincipalService? protectedPrincipals = null,
-        ProtectedPrincipalServicerService? servicers = null)
+        ILogger<ConferenceRoomService> logger)
         : base(exoPool, delineaService, logger,
                config["OnPremExchange:ServerUri"] ?? "",
                moduleCredentials,
@@ -36,8 +27,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                operationTrace)
     {
         _moduleConfig = moduleConfig;
-        _protectedPrincipals = protectedPrincipals;
-        _servicers = servicers;
     }
 
     // -------------------------------------------------------------------------
@@ -376,16 +365,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// returned it - null when the list does not exist or Exchange reported none. And its
     /// <c>Guid</c>, "D" form (aud-a2m): every later Exchange call on the list names it by this, never
     /// by the name - null when the list does not exist or Exchange reported no usable one.
-    /// aud-a2e. And its Entra object id (<c>ExternalDirectoryObjectId</c>), from the same object, null
-    /// when Exchange reported none - with the address, what the Protected Group Targets check can match
-    /// a cloud list by (<see cref="CloudListTarget"/>). And, set by the preflight only, for a list
-    /// synchronized from on-premises whose on-prem group it resolved and the check cleared: that group,
-    /// as its own domain answered for it - what the cloud add to the list is checked against again
-    /// before it writes. Null otherwise; a synced list's cloud add without it is refused.
     /// </summary>
     /// <remarks>Internal, not private, for the tests (aud-a2p): <see cref="AddToRoomListAsync"/> takes one.</remarks>
-    internal sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress, string? Guid,
-        string? ExternalDirectoryObjectId = null, ResolvedDirectoryPrincipal? DirectoryGroup = null)
+    internal sealed record RoomListTarget(string Name, bool Exists, bool IsLegacy, bool? IsDirSynced, string? PrimarySmtpAddress, string? Guid)
     {
         /// <summary>
         /// An existing list synchronized from on-premises. Exchange Online refuses the cloud add to
@@ -408,14 +390,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         var canonicalName = BuildRoomListName(building);
         var canonical = ReadRoomList(ps, tracker, canonicalName);
         if (canonical.Count > 0)
-            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]), ReadPrimarySmtpAddress(canonical[0]), ReadListGuid(canonical[0]),
-                ReadExternalDirectoryObjectId(canonical[0]));
+            return new RoomListTarget(canonicalName, Exists: true, IsLegacy: false, ReadIsDirSynced(canonical[0]), ReadPrimarySmtpAddress(canonical[0]), ReadListGuid(canonical[0]));
 
         var legacyName = BuildLegacyRoomListName(building);
         var legacy = ReadRoomList(ps, tracker, legacyName);
         if (legacy.Count > 0)
-            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]), ReadPrimarySmtpAddress(legacy[0]), ReadListGuid(legacy[0]),
-                ReadExternalDirectoryObjectId(legacy[0]));
+            return new RoomListTarget(legacyName, Exists: true, IsLegacy: true, ReadIsDirSynced(legacy[0]), ReadPrimarySmtpAddress(legacy[0]), ReadListGuid(legacy[0]));
 
         return new RoomListTarget(canonicalName, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null, Guid: null);
     }
@@ -484,98 +464,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     private static string? ReadPrimarySmtpAddress(PSObject list) =>
         list.Properties["PrimarySmtpAddress"]?.Value?.ToString();
 
-    // aud-a2e. The list's Entra object id, from the object the reads above came from: with its address, what a protected user
-    // row can name a cloud object by (CloudListTarget). Null when Exchange reported none.
-    private static string? ReadExternalDirectoryObjectId(PSObject list)
-    {
-        var value = list.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    }
-
     // The apply's room list, read before any write (aud-a2f). Read-only: safe to retry.
     private Task<RoomListTarget> ResolveRoomListTargetAsync(string building) =>
         RunPooledQueryAsync((ps, tracker) => FindRoomList(ps, tracker, building), allowRetry: true);
-
-    // -------------------------------------------------------------------------
-    // aud-a2e. The room list as a write target (Protected Group Targets)
-    // -------------------------------------------------------------------------
-    // A Room Finder row writes into a GROUP - the building's room list - as well as into the room's mailbox, and that write
-    // was never checked: docs/ProtectedGroupWriteTarget-Plan.md left the module out because its write target was taken to be
-    // a mailbox. The list is checked with the shared write-target gate, ProtectedPrincipalServicing.ForWriteTarget - the one
-    // Group Management consults - on the object each write names: before anything is written (PreflightRoomListAsync), and
-    // again immediately before each write into the list (AddToRoomListAsync, AddToRoomListViaAdAsync).
-
-    /// <summary>
-    /// A room list Exchange Online holds, as the Protected Group Targets check sees it: the identifiers Exchange reported for
-    /// the object the cloud add names by its <c>Guid</c> - its primary address and its Entra object id.
-    /// </summary>
-    /// <remarks>
-    /// It has no on-premises object, so no distinguished name, objectGUID or sAMAccountName: the Group Targets, OU and pattern
-    /// rules are evaluated from those and cannot match it. That is the structural limit the Constitution states for cloud-only
-    /// principals (Protected Principals: protected by address, never by group or OU), not a rule skipped; the user rows apply.
-    /// A group has no user principal name. Pure, for unit testing.
-    /// </remarks>
-    internal static ResolvedDirectoryPrincipal CloudListTarget(string name, string? primarySmtpAddress, string? externalDirectoryObjectId) =>
-        new(Source: "ConferenceRoomService-EXO",
-            DisplayName: name,
-            UserPrincipalName: string.Empty,
-            SamAccountName: null,
-            PrimarySmtpAddress: string.IsNullOrWhiteSpace(primarySmtpAddress) ? null : primarySmtpAddress.Trim(),
-            DistinguishedName: null,
-            ObjectGuid: null,
-            EntraObjectId: externalDirectoryObjectId);
-
-    /// <summary>
-    /// The write-target decision for the room list <paramref name="list"/> names: the shared gate
-    /// (<see cref="ProtectedPrincipalServicing.ForWriteTarget"/>), under the Conference Rooms servicer grant the room gate uses.
-    /// </summary>
-    /// <remarks>
-    /// Fail closed, as the gate is: a failed or errored check refuses with its reason, and a protected list refuses unless
-    /// <paramref name="actingUser"/> may service protected principals in this module - a null user (a bulk row, off-circuit)
-    /// never may. Without the protected-principal services there is nothing to ask, and that refuses too. An authorised
-    /// servicer's override is logged here, once per check, and its note is the caller's to carry to the audit.
-    /// </remarks>
-    private ProtectedPrincipalServicing.WriteTargetDecision CheckRoomListTarget(ResolvedDirectoryPrincipal list, ClaimsPrincipal? actingUser)
-    {
-        if (_protectedPrincipals is null || _servicers is null)
-            return new(false, "Protection check unavailable: the protected-principal service is not available to Conference Rooms.", null);
-
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(
-            _protectedPrincipals, _servicers, list, actingUser, ConferenceRoomProtectionGate.ModuleId);
-        if (decision.Allowed && decision.ServicedNote is not null)
-            _logger.LogInformation("Authorised servicer adding a room to protected room list {List}: {Note}", list.DisplayName, decision.ServicedNote);
-        return decision;
-    }
-
-    /// <summary>
-    /// Why the room was not added to room list <paramref name="roomListName"/> when the write-target check did not allow it: a
-    /// protected list the operator may not service, or a check that failed - neither ending "Nothing was written.", which the
-    /// preflight adds and the add, after Set-Place, cannot claim.
-    /// </summary>
-    /// <remarks>
-    /// The rules a protected list matched are not named to the operator, as Group Management names none; an authorised
-    /// servicer's override is recorded with them, in the audit.
-    /// </remarks>
-    internal static string RoomListTargetRefusal(string roomListName, ProtectedPrincipalServicing.WriteTargetDecision decision) =>
-        decision.FailReason is { } reason
-            ? $"Room list '{roomListName}' could not be checked against Protected Group Targets, so the room was not added to it: {Sentence(reason)}"
-            : $"Room list '{roomListName}' is a protected group: its membership cannot be changed here, so the room was not added to it. Operation not permitted.";
-
-    /// <summary>
-    /// aud-a2ab. Why a row whose building has no room list is refused before it writes anything: the list would have to be
-    /// created, and a list that does not exist cannot be checked against Protected Group Targets - Exchange's email address
-    /// policy assigns the address a rule would name, at creation. It says which list to create, because that is what the
-    /// operator does next.
-    /// </summary>
-    internal static string RoomListDoesNotExistRefusal(string roomListName) =>
-        $"Room list '{roomListName}' does not exist, and a list that does not exist yet cannot be checked against Protected Group Targets before it is written to: Exchange assigns its address when it is created. Create the room list in Exchange Online and re-run this row.";
-
-    /// <summary>
-    /// Why a synchronized list's cloud add was not made: no on-prem group of the list was checked before it, because the room
-    /// was already on the list when the row was checked, and so the preflight looked none up (aud-a2f).
-    /// </summary>
-    internal static string RoomListNotCheckedRefusal(string roomListName) =>
-        $"Room list '{roomListName}' is synchronized from on-premises, and its on-premises group was not checked against Protected Group Targets before this write: the room was on the list when the row was checked, so the group was not looked up. The room was not added to it.";
 
     private static readonly HashSet<string> ValidRoomRecipientTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -610,13 +501,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// The room the protection gate validated (aud-a2d): every Exchange write takes its GUID and the
     /// Active Directory steps its proven objectGUID. Null refuses before anything is read or written.
     /// </param>
-    /// <param name="actingUser">
-    /// aud-a2e. The operator, for the servicer grant on a room list protected as a write target - the
-    /// room gate's rule: the page passes the signed-in operator, a bulk row null, which never services.
-    /// Required, with no default, as the gate's is.
-    /// </param>
     public async Task<RoomOperationResult> SetRoomMetadataAndListAsync(
-        string roomEmail, ValidatedMailbox? room, ClaimsPrincipal? actingUser, string city, string building, int capacity,
+        string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
         string floor, string floorLabel, string displayDevice, string videoDevice,
         string countryOrRegion, string state, string timezone)
     {
@@ -698,9 +584,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // only at the add, a proven AD object, the AD credential, that object and the list's on-prem
         // group were all first tested after Set-Place and the timezone had committed - so a
         // cloud-only room on a synced list came back partial on every re-run.
-        // aud-a2e. And the list checked as a write target (Protected Group Targets) before anything is
-        // written: a list the check refuses refuses the whole row here, so Set-Place does not proceed
-        // past a room list the room may not be added to.
         RoomListTarget? roomList = null;
         if (!string.IsNullOrWhiteSpace(building))
         {
@@ -721,7 +604,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 return result;
             }
 
-            var (listPreflightError, checkedList, listServicedNote) = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList, actingUser);
+            var listPreflightError = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
             if (listPreflightError != null)
             {
                 result.Success = false;
@@ -729,11 +612,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 result.Steps.Add(new RoomOperationStep { Stage = "Room list preflight", Success = false, Error = listPreflightError });
                 return result;
             }
-            // aud-a2e. The list as the preflight checked it - a synced one with the on-prem group it
-            // resolved and cleared, which the cloud add is checked against again - and, when a servicer's
-            // grant let the row past a protected list, the note the audit records.
-            roomList = checkedList;
-            result.RoomListServicedNote = listServicedNote;
         }
 
         // Step 1: Set-Place (EXO) - Building/Capacity/Floor/devices are NOT dir-synced, so
@@ -827,10 +705,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // resolved and proven before the writes (aud-a2f), not looked up again.
         if (roomList is not null)
         {
-            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, roomList, actingUser);
-            // aud-a2e. The note of the check made just before a write into the list, when a servicer's grant
-            // allowed one; else the preflight's.
-            result.RoomListServicedNote = listResult.RoomListServicedNote ?? result.RoomListServicedNote;
+            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
             result.WrittenDirectoryObject ??= listResult.WrittenDirectoryObject; // the on-prem add's (aud-a2g)
             // aud-a2n. Why, if the list add confirmed a membership it is not known to have written, no
             // object is named for it: the audit records this in its place.
@@ -870,17 +745,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// against the list's members only, never written.
     /// </param>
     /// <param name="roomEmail">The operator's input, for the result only.</param>
-    /// <param name="list">
-    /// The room list resolved, and its on-prem add proven, before any write (aud-a2f) - for a synced list the preflight
-    /// checked, with the on-prem group it cleared (aud-a2e).
-    /// </param>
-    /// <param name="actingUser">aud-a2e. The operator, for the servicer grant on a protected list; null never services.</param>
+    /// <param name="list">The room list resolved, and its on-prem add proven, before any write (aud-a2f).</param>
     /// <remarks>
     /// Internal, not private, for the tests (aud-a2p): its message reaches no result the row returns - the row
     /// replaces a success's - so only a direct call can pin it.
     /// </remarks>
     internal async Task<RoomOperationResult> AddToRoomListAsync(
-        ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, ClaimsPrincipal? actingUser)
+        ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
     {
         var result = new RoomOperationResult { Email = roomEmail };
         var (roomListName, exists, isLegacy) = (list.Name, list.Exists, list.IsLegacy);
@@ -888,18 +759,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // happened: the no-op said "Added to room list" as the add did - the claim aud-a2p took out of the on-prem
         // fallback's messages.
         var alreadyInList = false;
-        // aud-a2e. Why the cloud add was not made, when the Protected Group Targets check refused the list it would write
-        // into or no check covered it; and the note of a servicer's grant that allowed it, for the audit.
-        string? listRefusal = null;
-        string? servicedNote = null;
 
         var opResult = await RunAsync((ps, tracker) =>
         {
             // aud-a2m. The list by the Guid it was read with, or - for a list created here - the Guid of the
             // object the creation returned: never found again by its name.
             var listGuid = list.Guid;
-            // aud-a2e. A list created here, as the creation returned it: the object the add below writes into.
-            ResolvedDirectoryPrincipal? createdTarget = null;
             if (!exists)
             {
                 // Room lists are created cloud-side (New-DistributionGroup runs against the
@@ -916,8 +781,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 var created = Invoke(ps, tracker);
                 result.Steps.Add(new RoomOperationStep { Stage = $"Create room list '{roomListName}'", Success = true });
                 listGuid = created.Count == 1 ? ReadListGuid(created[0]) : null;
-                if (created.Count == 1)
-                    createdTarget = CloudListTarget(roomListName, ReadPrimarySmtpAddress(created[0]), ReadExternalDirectoryObjectId(created[0]));
             }
             else if (isLegacy)
             {
@@ -944,32 +807,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
             if (!alreadyMember)
             {
-                // aud-a2e. The list is checked immediately before the add writes into it, as the object listGuid names,
-                // described by the read that gave listGuid: a list Exchange Online holds as that read reported it; one
-                // created here as the creation returned it (aud-a2ab: no row reaches the add with a list that does not
-                // exist any more - the preflight refuses one - so that is the add's own guard now, proven by a direct
-                // call); a synced one by the on-prem group the preflight resolved and
-                // cleared - the group the list's address binds it to (aud-a2k), and which Exchange refuses this add for, the
-                // write landing on-prem below, where that group is checked again. None for a synced list means none was
-                // checked - the room was on the list when the row was checked - and the add is not made unchecked.
-                var target = !exists
-                    ? createdTarget
-                    : list.TakesOnPremFallback
-                        ? list.DirectoryGroup
-                        : CloudListTarget(roomListName, list.PrimarySmtpAddress, list.ExternalDirectoryObjectId);
-                if (target is null)
-                {
-                    listRefusal = RoomListNotCheckedRefusal(roomListName);
-                    return;
-                }
-                var decision = CheckRoomListTarget(target, actingUser);
-                if (!decision.Allowed)
-                {
-                    listRefusal = RoomListTargetRefusal(roomListName, decision);
-                    return;
-                }
-                servicedNote = decision.ServicedNote;
-
                 _operationTrace?.Step("AddToRoomList", backend: "EXO", command: "Add-DistributionGroupMember", target: room.Identity);
                 ps.AddCommand("Add-DistributionGroupMember")
                   .AddParameter("Identity", listGuid)
@@ -983,20 +820,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 result.Steps.Add(new RoomOperationStep { Stage = $"Already in '{roomListName}'", Success = true });
             }
         });
-
-        // aud-a2e. Recorded whatever follows: a later failure of a write a servicer's grant allowed still carries the
-        // grant's note (pgwt-7).
-        result.RoomListServicedNote = servicedNote;
-        if (listRefusal is not null)
-        {
-            // The cloud add was not made: refused before its write, after Set-Place, inside the row's partial - so the
-            // refusal does not say nothing was written. Logged once, here, where it is decided.
-            _logger.LogWarning("Room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, listRefusal);
-            result.Success = false;
-            result.Message = listRefusal;
-            result.Steps.Add(new RoomOperationStep { Stage = "Add to room list", Success = false, Error = listRefusal });
-            return result;
-        }
 
         if (!opResult.Success)
         {
@@ -1038,9 +861,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     }
 
                     _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Set-ADGroup", target: room.DirectoryObjectGuid ?? roomEmail);
-                    var (adError, adWritten, adConfirmed, adServicedNote) = await AddToRoomListViaAdAsync(room, roomEmail, list, actingUser);
-                    // aud-a2e. The on-prem write's own check, made just before it, when a servicer's grant allowed it.
-                    result.RoomListServicedNote = adServicedNote ?? result.RoomListServicedNote;
+                    var (adError, adWritten, adConfirmed) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName, list.PrimarySmtpAddress);
                     if (adError == null)
                     {
                         result.Success = true;
@@ -2155,38 +1976,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // and whether the room is already in it (aud-a2i) - is checked here, and its absence refuses the
     // row while nothing has been written. A list whose sync state Exchange did not report is refused
     // too: whether the row can complete is then unknown, and the old order found out by writing.
-    // Returns the refusal, or null for none - and, since aud-a2e, beside it what is described below.
-    // (A genuine failure of the membership write after a passing
+    // Returns the refusal, or null. (A genuine failure of the membership write after a passing
     // preflight - missing write-members delegation, say - remains the inherent two-system residual.)
     // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
-    //
-    // aud-a2e. And the list checked as a write target - Protected Group Targets, through the shared gate
-    // (CheckRoomListTarget) - before this reports the add as possible: a list Exchange Online holds as Exchange
-    // reported it, always, the check needing no directory; a synced list by the on-prem group resolved below, the
-    // object the on-prem add writes into, whenever the add may write - not when Exchange already shows the room on
-    // the list, which writes nothing to it and needs nothing on-prem (aud-a2f). A list the check refuses refuses the
-    // whole row here, nothing written: the fail-closed answer to whether Set-Place may proceed when the room cannot be
-    // added to its list. Returns, beside the refusal, the list as checked - a synced one with the group the check
-    // cleared, which the add checks its cloud write against again - and a servicer's note, when one's grant allowed it.
-    private async Task<(string? error, RoomListTarget list, string? servicedNote)> PreflightRoomListAsync(
-        ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, ClaimsPrincipal? actingUser)
+    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
     {
-        // aud-a2ab. A list that does not exist yet cannot be checked against Protected Group Targets before the row writes,
-        // so the row does not write at all. aud-a2e left this branch a success - "the add checks the list it created" - so
-        // Set-Place, City/State/Country and the timezone all committed, New-DistributionGroup made the list, and only then
-        // was the list checked: a rule naming it was found after the app had changed the room and created a group (Known
-        // Failure Classes 1 and 3). The identity cannot be brought forward. The creation passes no -PrimarySmtpAddress, so
-        // Exchange's email address policy assigns the address, and the address and the Entra object id are the only things
-        // a rule can match a cloud list by - it has no DN, objectGUID or sAMAccountName, so the Target, OU and pattern
-        // rules cannot match it at all. A check built from the canonical name alone would be matched against no rule kind
-        // and would pass every time, reporting the gap closed rather than closing it. The operator creates the list in
-        // Exchange Online and re-runs the row.
         if (!list.Exists)
-        {
-            var refusal = RoomListDoesNotExistRefusal(list.Name);
-            _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-            return ($"{refusal} Nothing was written.", list, null);
-        }
+            return null;
 
         // aud-a2m. Every call on an existing list after this read names it by its Guid, cloud list or synced,
         // so a list Exchange reported without one cannot be added to. Refused here, while nothing has been
@@ -2199,46 +1995,31 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // Each is built without its " Nothing was written.", so the line carries the refusal as the others do and the
             // message is unchanged.
             _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-            return ($"{refusal} Nothing was written.", list, null);
+            return $"{refusal} Nothing was written.";
         }
 
         if (list.IsDirSynced is null)
         {
             var refusal = $"Exchange did not report whether room list '{list.Name}' is synchronized from on-premises, so it cannot be established before writing that the room can be added to it.";
             _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-            return ($"{refusal} Nothing was written.", list, null);
+            return $"{refusal} Nothing was written.";
         }
 
         if (!list.TakesOnPremFallback)
-        {
-            // aud-a2e. A list Exchange Online holds takes the cloud add, which writes into the object this list's read
-            // returned: checked as that read described it (CloudListTarget) - before anything is written, and again by the
-            // add just before its write. Not after a membership read: the check needs no directory, and a protected list
-            // refuses the row whether or not the room is on it already - the stricter direction.
-            var decision = CheckRoomListTarget(CloudListTarget(list.Name, list.PrimarySmtpAddress, list.ExternalDirectoryObjectId), actingUser);
-            if (!decision.Allowed)
-            {
-                var refusal = RoomListTargetRefusal(list.Name, decision);
-                _logger.LogWarning("Room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-                return ($"{refusal} Nothing was written.", list, null);
-            }
-            return (null, list, decision.ServicedNote);
-        }
+            return null;
 
         // Already on the list, the add writes nothing - it finds the room among the members, by the
         // same test - so nothing on-prem is needed or asked for. Without this, a synced room re-run on
         // its synced list was refused whenever Active Directory could not be proven: a row that, before
         // this preflight existed, completed without touching the list at all.
-        // aud-a2e. Nor is the list's group checked: no group is looked up, and nothing is written to the list. Should the
-        // add find the room gone from it, its cloud add has no checked group and is not made (RoomListNotCheckedRefusal).
         if (await IsOnRoomListAsync(list.Guid, roomPrimary))
-            return (null, list, null);
+            return null;
 
         if (room.DirectoryObjectGuid is not { } roomGuid)
         {
             var refusal = NoDirectoryObject(roomEmail, $"it cannot be added to room list '{list.Name}', which is synchronized from on-premises and takes members only there");
             _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-            return ($"{refusal} Nothing was written.", list, null);
+            return $"{refusal} Nothing was written.";
         }
 
         // aud-a2v. As the City/State/Country preflight's: the line names the room, the list and the purpose asked with. The
@@ -2251,10 +2032,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             var refusal = $"{DirectoryCredentialRefusal(lookup.Failure)}, and room list '{list.Name}' is synchronized from on-premises, so the room cannot be added to it.";
             _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, list.Name, purpose, refusal);
-            return ($"{refusal} Nothing was written.", list, null);
+            return $"{refusal} Nothing was written.";
         }
 
-        return await Task.Run<(string? error, RoomListTarget list, string? servicedNote)>(() =>
+        return await Task.Run(() =>
         {
             // aud-a2s. The step under way, for the catch at the end, as the City/State/Country paths keep it (aud-a2q,
             // aud-a2r). A throw from any step here was told as "Failed to validate the on-prem room list ... before
@@ -2284,13 +2065,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 if (roomError != null)
                 {
                     _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, roomError);
-                    return ($"{Sentence(roomError)} Nothing was written.", list, null);
+                    return $"{Sentence(roomError)} Nothing was written.";
                 }
 
                 // The resolver's refusals are shared with the add, which meets them after the writes,
                 // so here, as for the membership read below, the preflight says nothing was written.
-                var (groupError, group) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, list.ExternalDirectoryObjectId, credential, ref step);
-                if (groupError != null || group is null)
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, credential, ref step);
+                if (groupError != null)
                 {
                     // aud-a2t. A refusal the resolver returns is logged here, where it refuses the row, once, at Warning. It
                     // used to reach only the row's result and audit - only a throw was logged, by the catch below - so the
@@ -2298,22 +2079,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     // reader shared with the add, it says why, and only this path knows that nothing was written yet, as
                     // its catch's line says. Not again by the row, which puts the refusal on its result. One line for every
                     // refusal the resolver returns, the error-record ones too, which no stand-in reaches.
-                    var refusal = groupError ?? $"The on-prem group for room list '{list.Name}' could not be resolved.";
-                    _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-                    return ($"{refusal} Nothing was written.", list, null);
-                }
-
-                // aud-a2e. The group the on-prem add writes into, as its own domain has just answered for it, checked as a
-                // write target before anything is written: by its objectGUID and DN (Protected Group Targets, OUs), its
-                // sAMAccountName (patterns) and the list's address and Entra object id (user rows). Right after it is
-                // resolved, whatever its own member attribute holds: Exchange shows the room off the list, so the cloud add
-                // will be made, and the add checks this same group again before it.
-                var decision = CheckRoomListTarget(group, actingUser);
-                if (!decision.Allowed)
-                {
-                    var refusal = RoomListTargetRefusal(list.Name, decision);
-                    _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, refusal);
-                    return ($"{refusal} Nothing was written.", list, null);
+                    _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, groupError);
+                    return $"{groupError} Nothing was written.";
                 }
 
                 // aud-a2i. And whether the add will write at all: the room's membership of that group,
@@ -2322,19 +2089,19 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // which fails on a group past the ADWS cap or with a member in another domain - after
                 // Set-Place and the timezone had committed, so such a list made every row partial.
                 step = "reading the membership of the list's group";
-                var (memberError, _) = ReadOnPremListMembership(ps, group.ObjectGuid, group.DistinguishedName, roomDn, list.Name, credential);
+                var (memberError, _) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, list.Name, credential);
                 if (memberError is null)
-                    return (null, list with { DirectoryGroup = group }, decision.ServicedNote);
+                    return null;
                 // aud-a2t. Logged as the resolver's refusal above. Not inside the membership read: it is also the add's
                 // read-back, whose outcome the add logs with what the write reported (aud-a2n), so a line there would log
                 // that outcome twice.
                 _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, memberError);
-                return ($"{memberError} Nothing was written.", list, null);
+                return $"{memberError} Nothing was written.";
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "On-prem room-list preflight for {Room} on {List}: {Step} failed; nothing was written", roomEmail, list.Name, step);
-                return ($"Failed to validate the on-prem room list '{list.Name}' before writing: {step} failed: {Sentence(ex.Message)} Nothing was written.", list, null);
+                return $"Failed to validate the on-prem room list '{list.Name}' before writing: {step} failed: {Sentence(ex.Message)} Nothing was written.";
             }
         });
     }
@@ -2353,26 +2120,18 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     //
     // aud-a2d. The member added is the AD object the protection gate proved owns the room's
     // mailbox, by objectGUID - not a userPrincipalName match of the typed string. aud-a2k. The group
-    // is found by the list's address, the primary SMTP address Exchange reported for the list before
-    // any write - the address the preflight found it by.
-    //
-    // aud-a2e. And the group, as it resolves here, is checked as a write target (Protected Group
-    // Targets) immediately before the write that names its objectGUID - after the membership read, so
-    // the already-a-member no-op, which writes nothing, is not refused. The fourth value is the note of
-    // a servicer's grant that allowed the write, carried on every outcome after it (pgwt-7).
-    private async Task<(string? error, string? written, string? confirmed, string? servicedNote)> AddToRoomListViaAdAsync(
-        ValidatedMailbox room, string roomEmail, RoomListTarget list, ClaimsPrincipal? actingUser)
+    // is found by listAddress, the primary SMTP address Exchange reported for the list before any
+    // write - the address the preflight found it by.
+    private async Task<(string? error, string? written, string? confirmed)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName, string? listAddress)
     {
-        var roomListName = list.Name;
         if (room.DirectoryObjectGuid is not { } roomGuid)
         {
             var refusal = NoDirectoryObject(roomEmail, "the room could not be added to the on-prem room list");
-            // aud-a2u. Logged as the add's other refusals. Through the row only a race reached it: the preflight passes a
+            // aud-a2u. Logged as the add's other refusals. Through the row only a race reaches it: the preflight passes a
             // room with no object on a synced list only when Exchange shows the room on the list already, and the add's own
-            // membership read then no longer does. Since aud-a2e not even that: no group was checked for such a list, so
-            // the add refuses its cloud write (RoomListNotCheckedRefusal) and never falls back to this one.
+            // membership read then no longer does.
             _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, refusal);
-            return (refusal, null, null, null);
+            return (refusal, null, null);
         }
 
         // aud-a2v. As the preflight's, in the add's words - after Set-Place, inside the row's partial. Reached when this lookup
@@ -2385,10 +2144,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             var refusal = $"{DirectoryCredentialRefusal(lookup.Failure)}. The room could not be added to the on-prem room list.";
             _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: no AD credential was returned for {Purpose}: {Refusal}", roomEmail, roomListName, purpose, refusal);
-            return (refusal, null, null, null);
+            return (refusal, null, null);
         }
 
-        return await Task.Run<(string? error, string? written, string? confirmed, string? servicedNote)>(() =>
+        return await Task.Run<(string? error, string? written, string? confirmed)>(() =>
         {
             // aud-a2s. The step under way, as in the preflight above. The catch at the end logged "On-prem room-list member
             // add (Set-ADGroup on the group's member attribute) failed" and told the row it had failed to add the room on
@@ -2397,9 +2156,6 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // settle their own errors below, each in its own words (aud-a2n), so only the steps before the write's Invoke
             // reach the catch: whatever reaches it, this row did not add the room.
             var step = "opening the directory runspace";
-            // aud-a2e. Set by the write-target check below when a servicer's grant allowed the write; every outcome after it
-            // carries it, the catch's included.
-            string? servicedNote = null;
             try
             {
                 using var runspace = OpenDirectoryRunspace();
@@ -2421,20 +2177,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 if (roomError != null)
                 {
                     _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, roomError);
-                    return (roomError, null, null, null);
+                    return (roomError, null, null);
                 }
 
-                var (groupError, group) = ResolveAdGroupGuid(ps, roomListName, list.PrimarySmtpAddress, list.ExternalDirectoryObjectId, credential, ref step);
-                if (groupError != null || group is null)
+                var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, roomListName, listAddress, credential, ref step);
+                if (groupError != null)
                 {
                     // aud-a2t. Logged where the add refuses, once, as in the preflight above. This is after Set-Place,
                     // inside the row's partial, so the line says the add's write was not made, not that nothing was.
-                    var refusal = groupError ?? $"The on-prem group for room list '{roomListName}' could not be resolved.";
-                    _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, refusal);
-                    return (refusal, null, null, null);
+                    _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, groupError);
+                    return (groupError, null, null);
                 }
-                var groupGuid = group.ObjectGuid;
-                var groupDn = group.DistinguishedName;
 
                 // Idempotency: skip the add if the room is already a member (matches the cloud
                 // path's already-member no-op so a re-run is safe). aud-a2i: read from the group's
@@ -2449,23 +2202,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     // aud-a2t. As the resolver's refusal above. The same read as the read-back below, whose outcome is
                     // logged there, with the write's.
                     _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, memberError);
-                    return (memberError, null, null, null);
+                    return (memberError, null, null);
                 }
                 if (alreadyMember)
-                    return (null, null, null, null);
-
-                // aud-a2e. The group checked immediately before the write into it, as the object the write names: the
-                // snapshot resolved just above, whose objectGUID is the write's -Identity and whose DN routes it - the
-                // group this add writes, whatever group the preflight cleared. Refused, the room is not added: after
-                // Set-Place, inside the row's partial, so the refusal does not say nothing was written.
-                var decision = CheckRoomListTarget(group, actingUser);
-                if (!decision.Allowed)
-                {
-                    var refusal = RoomListTargetRefusal(roomListName, decision);
-                    _logger.LogWarning("On-prem room-list add for {Room} on {List} refused before its write: {Refusal}", roomEmail, roomListName, refusal);
-                    return (refusal, null, null, null);
-                }
-                servicedNote = decision.ServicedNote;
+                    return (null, null, null);
 
                 // aud-a2j. The room goes on the group's own member attribute, written on the group's
                 // domain - the form both group modules write (GroupManagementService.
@@ -2546,7 +2286,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     return ($"Adding {roomEmail} to on-prem room list '{roomListName}' could not be confirmed: reading its group {groupDn} back from {groupServer} failed: {readError}"
                         + (writeError is null ? ""
                             : refusedAsPresent ? $" Before that, Active Directory refused the add as a value already there ({writeError.Message})."
-                            : $" Before that, Set-ADGroup reported an error ({writeError.Message})."), null, null, servicedNote);
+                            : $" Before that, Set-ADGroup reported an error ({writeError.Message})."), null, null);
                 }
                 if (!present)
                 {
@@ -2554,11 +2294,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     return ($"Adding {roomEmail} to on-prem room list '{roomListName}' was not confirmed: its group {groupDn}, read back from {groupServer}, does not hold the room as a member"
                         + (writeError is null ? "."
                             : refusedAsPresent ? $", though Active Directory refused the add as a value already there ({writeError.Message})."
-                            : $", and Set-ADGroup reported an error ({writeError.Message})."), null, null, servicedNote);
+                            : $", and Set-ADGroup reported an error ({writeError.Message})."), null, null);
                 }
                 // The room there and the write reported nothing: this row's write put it there (aud-a2g).
                 if (writeError is null)
-                    return (null, roomGuid, null, servicedNote);
+                    return (null, roomGuid, null);
 
                 // aud-a2n, folded-in item 1, by aud-a2g's rule - name only what a write produced. The room is there
                 // after a refused or failing write: the row succeeds, the membership it asked for being in place,
@@ -2570,14 +2310,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     ? $"{ConfirmedAfterRefusal} ({writeError.Message}): its group {groupDn}, read back from {groupServer}, holds the room. No directory object is recorded as written: this row's add did not put it there."
                     : $"{ConfirmedAfterWriteError} ({writeError.Message}): its group {groupDn}, read back from {groupServer}, holds the room. No directory object is recorded as written: whether this row's add put it there is not known.";
                 _logger.LogWarning("On-prem room-list add for {Room} on {List}: {Confirmed}", roomEmail, roomListName, confirmed);
-                return (null, null, confirmed, servicedNote);
+                return (null, null, confirmed);
             }
             catch (Exception ex)
             {
                 // Only the steps before the write's Invoke get here (see step), so the room was not added by this row. This
                 // comes after Set-Place and the timezone, inside the row's partial, so it does not say nothing was written.
                 _logger.LogError(ex, "On-prem room-list add for {Room} on {List}: {Step} failed", roomEmail, roomListName, step);
-                return ($"Failed to add the room to the on-prem room list '{roomListName}': {step} failed: {ex.Message}", null, null, servicedNote);
+                return ($"Failed to add the room to the on-prem room list '{roomListName}': {step} failed: {ex.Message}", null, null);
             }
         });
     }
@@ -2772,23 +2512,19 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // naming it.
     //
     // aud-a2t. It logs nothing: each caller logs a refusal it returns where that refuses the row, once.
-    //
-    // aud-a2e. It returns the group as a whole snapshot (ReadAdGroupInItsDomain), not its objectGUID and DN alone: the
-    // object the Protected Group Targets check is run on is the object whose objectGUID the write names and whose DN routes
-    // it and the membership read. listExternalId, the list's Entra object id, rides on the snapshot for the user rows.
-    private static (string? error, ResolvedDirectoryPrincipal? group) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, string? listExternalId, PSCredential credential, ref string step)
+    private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, PSCredential credential, ref string step)
     {
         // A list Exchange reports no address for has nothing to find its group by. Refused before the
         // forest is asked anything: a search for an empty mail is not a search for this list's group,
         // whatever the directory makes of it.
         var address = listAddress?.Trim() ?? "";
         if (address.Length == 0)
-            return ($"Exchange reported no primary SMTP address for room list '{roomListName}', so its on-prem group cannot be identified: the group is found by that address alone, never by its name. Check the list in Exchange Online. The room was not added to the list.", null);
+            return ($"Exchange reported no primary SMTP address for room list '{roomListName}', so its on-prem group cannot be identified: the group is found by that address alone, never by its name. Check the list in Exchange Online. The room was not added to the list.", null, null);
 
         step = "resolving the forest's global catalog";
         var (catalog, catalogError) = ResolveForestGlobalCatalog(ps, credential);
         if (catalog is null)
-            return ($"The forest's global catalog could not be resolved ({catalogError}), so the on-prem group for room list '{roomListName}' cannot be looked up across the forest. Refusing rather than searching one domain.", null);
+            return ($"The forest's global catalog could not be resolved ({catalogError}), so the on-prem group for room list '{roomListName}' cannot be looked up across the forest. Refusing rather than searching one domain.", null, null);
 
         step = "searching the forest's global catalog for the list's group";
         var escaped = address.Replace("'", "''");
@@ -2799,20 +2535,20 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "Stop");
         var found = ps.Invoke();
         if (ps.HadErrors)
-            return (FirstError(ps) ?? $"AD lookup failed for room list '{roomListName}'.", null);
+            return (FirstError(ps) ?? $"AD lookup failed for room list '{roomListName}'.", null, null);
         ps.Commands.Clear();
 
         if (found.Count == 0)
-            return ($"No on-prem AD group in the forest has mail '{address}', the primary SMTP address Exchange holds for room list '{roomListName}'. Check that the list's group in on-premises Active Directory carries exactly that address in its mail attribute. The room was not added to the list.", null);
+            return ($"No on-prem AD group in the forest has mail '{address}', the primary SMTP address Exchange holds for room list '{roomListName}'. Check that the list's group in on-premises Active Directory carries exactly that address in its mail attribute. The room was not added to the list.", null, null);
         if (found.Count > 1)
-            return ($"Multiple on-prem AD groups ({found.Count}) in the forest have mail '{address}', the primary SMTP address Exchange holds for room list '{roomListName}'. Check which of them is the list's group; only it may carry that address. Refusing to write to avoid the wrong group.", null);
+            return ($"Multiple on-prem AD groups ({found.Count}) in the forest have mail '{address}', the primary SMTP address Exchange holds for room list '{roomListName}'. Check which of them is the list's group; only it may carry that address. Refusing to write to avoid the wrong group.", null, null);
 
         var objectGuid = found[0].Properties["ObjectGUID"]?.Value?.ToString();
         if (string.IsNullOrWhiteSpace(objectGuid))
-            return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null);
+            return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null, null);
 
         step = "reading the list's group in its own domain";
-        return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), address, listExternalId, credential);
+        return ReadAdGroupInItsDomain(ps, roomListName, objectGuid, found[0].Properties["DistinguishedName"]?.Value?.ToString(), credential);
     }
 
     // aud-a2j. The group the catalog search found, read again by its DN on a domain controller of
@@ -2822,56 +2558,29 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // is refused rather than written to a group the catalog remembered. A DN that names no domain
     // cannot be routed, and refuses. GroupManagementService.ResolveMemberForWrite makes the same
     // re-read for the same reason. Assumes the ActiveDirectory module is already imported.
-    //
-    // aud-a2e. And the group as the Protected Group Targets check needs it - the full snapshot pgwt-2 requires of a write
-    // target, never a bare DN: the objectGUID and DN this read answered (the Group Targets and OU rules, and the write's
-    // identity and route), the sAMAccountName and name of its default property set (the pattern rules), its mail - the
-    // list's address, which the catalog search matched it by (aud-a2k) - and the list's Entra object id (the user rows). A
-    // read without a sAMAccountName refuses: a pattern rule would be skipped in silence, as a DN-only snapshot skipped it.
-    private static (string? error, ResolvedDirectoryPrincipal? group) ReadAdGroupInItsDomain(
-        PowerShell ps, string roomListName, string objectGuid, string? distinguishedName, string listAddress, string? listExternalId, PSCredential credential)
+    private static (string? error, string? objectGuid, string? distinguishedName) ReadAdGroupInItsDomain(
+        PowerShell ps, string roomListName, string objectGuid, string? distinguishedName, PSCredential credential)
     {
         var server = GroupManagementService.ServerFromDn(distinguishedName);
         if (server is null)
-            return ($"The on-prem AD group found for room list '{roomListName}' has no distinguished name that names its domain ({distinguishedName ?? "none"}); refusing to write.", null);
+            return ($"The on-prem AD group found for room list '{roomListName}' has no distinguished name that names its domain ({distinguishedName ?? "none"}); refusing to write.", null, null);
 
         ps.AddCommand("Get-ADGroup")
           .AddParameter("Identity", distinguishedName)
-          .AddParameter("Properties", new[] { "mail" })
           .AddParameter("Server", server)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var read = ps.Invoke();
         if (ps.HadErrors)
-            return (FirstError(ps) ?? $"The on-prem AD group for room list '{roomListName}' could not be read in its own domain ({server}).", null);
+            return (FirstError(ps) ?? $"The on-prem AD group for room list '{roomListName}' could not be read in its own domain ({server}).", null, null);
         ps.Commands.Clear();
 
         var readGuid = read.Count == 1 ? read[0]?.Properties["ObjectGUID"]?.Value?.ToString() : null;
         var readDn = read.Count == 1 ? read[0]?.Properties["DistinguishedName"]?.Value?.ToString() : null;
         if (readGuid is null || !string.Equals(readGuid, objectGuid, StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(readDn))
-            return ($"The on-prem AD group the forest's global catalog found for room list '{roomListName}' ({objectGuid}) is not what its own domain ({server}) holds at that name: {read.Count} object(s) answered, ObjectGUID {readGuid ?? "none"}. Refusing to write.", null);
+            return ($"The on-prem AD group the forest's global catalog found for room list '{roomListName}' ({objectGuid}) is not what its own domain ({server}) holds at that name: {read.Count} object(s) answered, ObjectGUID {readGuid ?? "none"}. Refusing to write.", null, null);
 
-        // aud-a2z. And the group still carries the list's address in its own domain. The catalog found it by that mail, and
-        // a catalog behind an address move answers the group the address has left: its objectGUID and DN still check out,
-        // and the room would be added to a group that is no longer the list's. Compared as an address is, trimmed and
-        // ignoring case; another address, or none, refuses.
-        var readMail = read[0]!.Properties["mail"]?.Value?.ToString()?.Trim();
-        if (!string.Equals(readMail, listAddress, StringComparison.OrdinalIgnoreCase))
-            return ($"The on-prem AD group the forest's global catalog found for room list '{roomListName}' ({readGuid}) does not carry the list's address '{listAddress}' in its own domain ({server}): its mail there is {(string.IsNullOrWhiteSpace(readMail) ? "not set" : $"'{readMail}'")}. The catalog may not have caught up with a change to the group. Refusing to write.", null);
-
-        var samAccountName = read[0]!.Properties["SamAccountName"]?.Value?.ToString();
-        if (string.IsNullOrWhiteSpace(samAccountName))
-            return ($"The on-prem AD group for room list '{roomListName}' ({readGuid}) was read in its own domain ({server}) without a sAMAccountName, so it cannot be checked against Protected Group Targets; refusing to write.", null);
-
-        return (null, new ResolvedDirectoryPrincipal(
-            Source: "ConferenceRoomService-AD",
-            DisplayName: read[0]!.Properties["Name"]?.Value?.ToString() ?? readDn,
-            UserPrincipalName: string.Empty,
-            SamAccountName: samAccountName,
-            PrimarySmtpAddress: listAddress,
-            DistinguishedName: readDn,
-            ObjectGuid: readGuid,
-            EntraObjectId: listExternalId));
+        return (null, readGuid, readDn);
     }
 
     // aud-a2j. The forest's global catalog as "host:3268", discovered from the forest the module

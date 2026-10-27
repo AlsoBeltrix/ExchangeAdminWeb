@@ -214,12 +214,9 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     // Per-row application - delegates to the unchanged ConferenceRoomService methods.
     // -------------------------------------------------------------------------
 
-    // aud-a2e. No operator, explicitly, for the room list's write-target check as for the room gate above:
-    // a protected room list in a bulk CSV refuses whoever submitted it, and no servicer note can arise for
-    // the row's audit to record.
     private async Task<RoomOperationResult> ApplyFinderRowAsync(FinderCsvRow row, ValidatedMailbox room) =>
         await _rooms.SetRoomMetadataAndListAsync(
-            row.Email, room, actingUser: null, row.City, row.Building, row.Capacity,
+            row.Email, room, row.City, row.Building, row.Capacity,
             row.Floor, row.FloorLabel, row.DisplayDeviceName, row.VideoDeviceName,
             row.CountryOrRegion, row.State, row.TimeZone);
 

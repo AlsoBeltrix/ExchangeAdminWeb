@@ -4,8 +4,12 @@ using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -69,10 +73,8 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         public List<string> CredentialPurposes { get; } = [];
 
         // aud-a2x. With a credential service, the base's lookup asks it, and neither seam below is reached.
-        // aud-a2e. With the harness's protection services - nothing protected - as the container supplies them.
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null, ModuleCredentialService? credentials = null)
-            : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance,
-                h.ProtectedPrincipals, h.Servicers) => _h = h;
+            : base(h.Pool, null!, h.ModuleConfig, credentials!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
         protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose)
         {
@@ -102,7 +104,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     private ValidatedMailbox Room(string? directoryObject = CheckedObject) => ExchangeWriteHarness.Validated(Checked, directoryObject);
 
     private Task<RoomOperationResult> Finder(Service service, ValidatedMailbox? room, string city = "", string state = "", string country = "")
-        => service.SetRoomMetadataAndListAsync(Typed, room, actingUser: null, city, "Building 1", 8, "2", "Second", "TV", "Polycom", country, state, "GMT Standard Time");
+        => service.SetRoomMetadataAndListAsync(Typed, room, city, "Building 1", 8, "2", "Second", "TV", "Polycom", country, state, "GMT Standard Time");
 
     [Fact]
     public async Task TheFinderWrites_AreBoundToTheValidatedRoom_NotTheStringTyped()
@@ -1156,19 +1158,22 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         Assert.Empty(ListCalls());
     }
 
-    // aud-a2ab. A Building with no room list: the row refuses before any write, so the creation is reached only by a direct
-    // call of the add - as the row used to call it - which is how the two tests below drive it.
-    private static ConferenceRoomService.RoomListTarget NoListYet() =>
-        new(List, Exists: false, IsLegacy: false, IsDirSynced: null, PrimarySmtpAddress: null, Guid: null);
+    // A Building with no room list under either name: the row creates one cloud-side.
+    private void NoListYet()
+    {
+        _h.MissingLists.Add(List);
+        _h.MissingLists.Add(ConferenceRoomService.BuildLegacyRoomListName("Building 1"));
+    }
 
     [Fact]
-    public async Task AListTheAddCreates_IsNamedByTheGuidTheCreationReturned()
+    public async Task AListTheRowCreates_IsNamedByTheGuidTheCreationReturned()
     {
         // No list was read, so the Guid is the one New-DistributionGroup returned for the object it made - with
         // a namesake present, the name would make the add ambiguous.
+        NoListYet();
         _h.ListNamesakes[List] = NamesakeGuid;
 
-        var result = await new Service(_h).AddToRoomListAsync(Room(), "room1@contoso.test", Typed, NoListYet(), actingUser: null);
+        var result = await Finder(new Service(_h), Room());
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("New-DistributionGroup")), "Name"));
@@ -1180,14 +1185,104 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Fact]
     public async Task AListCreatedWithoutAGuid_IsNotAddedToByItsName()
     {
-        // The creation returned no Guid: the add fails and nothing is read or added by the name.
+        // The creation returned no Guid: the row fails, partial, and nothing is read or added by the name.
+        NoListYet();
         _h.CreatedListGuid = null;
 
-        var result = await new Service(_h).AddToRoomListAsync(Room(), "room1@contoso.test", Typed, NoListYet(), actingUser: null);
+        var result = await Finder(new Service(_h), Room());
 
         Assert.False(result.Success);
+        Assert.True(result.Partial);
         Assert.Single(_h.CallsTo("New-DistributionGroup"));
         Assert.Empty(ListCalls());
+    }
+
+    [Fact]
+    public async Task TheRoomListPath_ConsultsNoProtectedPrincipalService_WhenTheContainerHoldsOne()
+    {
+        // aud-a2ad. Protected principals are out of scope for Conference Rooms (owner ruling 2026-10-26,
+        // .agents/decisions.md): nothing on the room-list path consults the protected-principal list or Protected Group
+        // Targets. The service is built as the container builds it - Program.cs registers it by AddScoped - from a provider
+        // that also holds a recording protected-principal stand-in and the servicer service, so a constructor that asked
+        // for either would be handed them. A building with no list has the list created and the room added, and the
+        // stand-in records no call.
+        NoListYet();
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_h.Dir);
+        var http = Substitute.For<IHttpClientFactory>();
+        http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient());
+        var extLog = new ExtendedLogService(_h.Config, env, TestConfigStore.CreateAppSettings(_h.Dir), NullLogger<ExtendedLogService>.Instance);
+        var delinea = new DelineaService(http, _h.Config, NullLogger<DelineaService>.Instance, extLog, _h.Trace);
+        var protection = new RecordingProtectedPrincipals(env, _h.Config, _h.ModuleConfig, TestConfigStore.CreateProtectedPrincipal(_h.Dir), delinea);
+        var servicers = new ProtectedPrincipalServicerService(
+            new SectionAccessService(_h.Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(),
+                new SectionAccessRepository(TestConfigStore.Create(_h.Dir))),
+            NullLogger<ProtectedPrincipalServicerService>.Instance);
+        using var provider = new ServiceCollection()
+            .AddSingleton(_h.Pool)
+            .AddSingleton(delinea)
+            .AddSingleton(_h.ModuleConfig)
+            .AddSingleton(new ModuleCredentialService(_h.ModuleConfig, delinea, NullLogger<ModuleCredentialService>.Instance))
+            .AddSingleton(_h.Trace)
+            .AddSingleton(_h.Config)
+            .AddSingleton<ILogger<ConferenceRoomService>>(NullLogger<ConferenceRoomService>.Instance)
+            .AddSingleton<ProtectedPrincipalService>(protection)
+            .AddSingleton(servicers)
+            .AddScoped<ConferenceRoomService>()
+            .BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var result = await scope.ServiceProvider.GetRequiredService<ConferenceRoomService>().SetRoomMetadataAndListAsync(
+            Typed, Room(), "", "Building 1", 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("New-DistributionGroup")), "Name"));
+        Assert.Equal(ExchangeWriteHarness.DefaultCreatedListGuid,
+            ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-DistributionGroupMember")), "Identity"));
+        Assert.Empty(protection.Calls);
+    }
+
+    /// <summary>
+    /// aud-a2ad. A protected-principal service that records every member a caller can reach and answers each one as
+    /// protected or failed, so a consult would show here and refuse the row as well.
+    /// </summary>
+    private sealed class RecordingProtectedPrincipals(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
+        ProtectedPrincipalRepository repository, DelineaService delinea)
+        : ProtectedPrincipalService(env, config, moduleConfig, repository, delinea, NullLogger<ProtectedPrincipalService>.Instance)
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Calls { get; } = new();
+
+        public override bool HasCentralConfig => Record(nameof(HasCentralConfig), true);
+
+        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
+            Task.FromResult(Record(nameof(CheckAsync), ProtectedPrincipalResult.Protected("stand-in")));
+
+        public override ProtectedPrincipalResult CheckWriteTarget(ResolvedDirectoryPrincipal target) =>
+            Record(nameof(CheckWriteTarget), ProtectedPrincipalResult.Protected("stand-in"));
+
+        public override (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig() =>
+            Record(nameof(LoadEffectiveConfig), ((ProtectedPrincipalConfig?)null, Array.Empty<string>(), (string?)"stand-in"));
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity) =>
+            Unresolved(nameof(ResolveWithStatusAsync));
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity) =>
+            Unresolved(nameof(ResolveWithExchangeFallbackAsync));
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity) =>
+            Unresolved(nameof(ResolveExchangeTargetAsync));
+
+        public override Task<(bool answered, IReadOnlyList<MailboxGuidHolder> holders)> FindMailboxGuidHoldersAsync(Guid mailboxGuid) =>
+            Task.FromResult(Record(nameof(FindMailboxGuidHoldersAsync), (false, (IReadOnlyList<MailboxGuidHolder>)Array.Empty<MailboxGuidHolder>())));
+
+        private T Record<T>(string member, T answer)
+        {
+            Calls.Enqueue(member);
+            return answer;
+        }
+
+        private Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> Unresolved(string member) =>
+            Task.FromResult(Record(member, ((ResolvedDirectoryPrincipal?)null, ResolutionStatus.Unavailable)));
     }
 
     [Fact]
@@ -1425,19 +1520,17 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Fact]
     public async Task TheOnPremAddsRefusalOfARoomWithNoDirectoryObject_IsLoggedOnce()
     {
-        // The on-prem add's own refusal of a room with no proven object. Through the row only a race reached it - the
-        // preflight's membership read finding the room on its synced list, the add's no longer - and since aud-a2e not even
-        // that: no group was checked for such a list, so the add refuses its cloud write first. It stays the add's own guard,
-        // so the add is called directly, as the row calls it after Set-Place (aud-a2p), handed a list carrying a cleared
-        // group as if a check had run: it fails with nothing written on-prem and no credential asked for, and one warning
-        // names the room, the list and the refusal.
+        // The on-prem add's own refusal of a room with no proven object. Through the row only a race reaches it - the
+        // preflight's membership read finding the room on its synced list, the add's no longer - so the add is called
+        // directly, as the row calls it after Set-Place (aud-a2p): it fails with nothing written on-prem and no credential
+        // asked for, and one warning names the room, the list and the refusal.
         SyncedListTakingTheRoomOnPrem();
         var logger = new CapturingLogger();
         var service = new Service(_h, logger);
         var list = new ConferenceRoomService.RoomListTarget(List, Exists: true, IsLegacy: false, IsDirSynced: true,
-            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid, DirectoryGroup: ExchangeWriteHarness.DirectoryGroupAsChecked());
+            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
 
-        var result = await service.AddToRoomListAsync(Room(directoryObject: null), "room1@contoso.test", Typed, list, actingUser: null);
+        var result = await service.AddToRoomListAsync(Room(directoryObject: null), "room1@contoso.test", Typed, list);
 
         Assert.False(result.Success);
         Assert.Null(result.WrittenDirectoryObject);
@@ -1481,7 +1574,7 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         var service = new Service(_h, logger);
 
         var result = await service.SetRoomMetadataAndListAsync(
-            Typed, room, actingUser: null, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone);
+            Typed, room, "Dublin", "Building 1", 8, "2", "Second", "TV", "Polycom", "IE", "Leinster", timezone);
 
         Assert.False(result.Success);
         Assert.False(result.Partial);
