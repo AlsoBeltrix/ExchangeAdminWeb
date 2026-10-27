@@ -23,8 +23,8 @@ public sealed class SettingsNoOpAndUnreadableSecretTests : IDisposable
     private const string GroupA = "S-1-5-21-1000-2000-3000-4001";
     private const string GroupB = "S-1-5-21-1000-2000-3000-4002";
     private const string Cfo = "cfo@contoso.com";
-    // aud-a70 (3): the credential's placeholder names what else needs it.
-    private const string SecretPlaceholder = "Required for group and OU rules, and for permission grants to groups";
+    // aud-a70 (3), (6): the credential's placeholder names what else needs it.
+    private const string SecretPlaceholder = "Required for group and OU rules, and for every permission grant";
 
     private readonly SettingsPageHarness _h = new();
 

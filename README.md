@@ -534,10 +534,10 @@ permission that could. Disabled by default and fail-closed.
     directory, including every group that holds the operator - nested, through their primary group, or, for a group
     only Exchange Online holds, through its members. A check that cannot be completed refuses; it never clears a grant
   - **Needs the Directory Read Credential** (Admin Settings, Protected principals) - the credential the
-    protected-principal check reads with. Without it, a grant to a group the on-premises directory holds, or to a
-    grantee only that directory holds, is refused as incomplete, naming the setting, and so is every grant by an
-    operator whose sign-in names them by a user principal name alone; a grant to a person Exchange Online names still
-    goes ahead. With it configured, each check fetches it once (a bulk file once for the whole file)
+    protected-principal check reads with. While the check is on (Prevent Self-Grant, the default), every grant needs
+    it: without it, every grant is refused as incomplete, naming the setting - to a person or to a group, whichever
+    directory holds the grantee - and nothing is written. A removal is not checked and does not need it. With it
+    configured, each check fetches it once (a bulk file once for the whole file)
   - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
     refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient
     its filter matches only since then is not compared. One Exchange reports no member of is refused as incomplete,

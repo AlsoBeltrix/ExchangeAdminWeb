@@ -279,14 +279,14 @@
                            value="@ppDirectoryReadSecretId"
                            disabled="@ppSecretUnreadable"
                            @oninput="(e) => SetPpDirectoryReadSecretId(e.Value?.ToString() ?? string.Empty)"
-                           placeholder="Required for group and OU rules, and for permission grants to groups" />
+                           placeholder="Required for group and OU rules, and for every permission grant" />
                     @if (ppSecretUnreadable)
                     {
                         <small class="text-danger d-block">@SecretUnreadableText</small>
                     }
                     else
                     {
-                        <small class="text-muted">Read-only AD credential for group membership and OU checks. Mailbox Permissions and Calendar Permissions also need it to grant to a group, or to a grantee only the on-premises directory holds: without it such a grant is refused.</small>
+                        <small class="text-muted">Read-only AD credential for group membership and OU checks. While Prevent Self-Grant is on, Mailbox Permissions and Calendar Permissions also need it for every grant: without it every grant is refused. A removal does not need it.</small>
                         @if (ppSecretFallbackId is { } fallbackId)
                         {
                             <small class="text-muted d-block">@SecretFallbackText(fallbackId)</small>

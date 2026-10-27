@@ -747,4 +747,35 @@ directory session as above (`DE2C5E015157CFB92F59414AA1825467`, `8EA1F48B4486FE0
 | E6r6 | `ExecuteOnPrem` asks it of a removal (`isSet &&` dropped, 658) | `9F529F1F198C66842B5BAFF7AC762816` (771 lines) | 3: `AnOnPremRemoval_...(page: "Calendar Permissions")` x3 |
 | E6k2 | kd-59's cancel catch never taken (685) | `E4B9DCE560C54ED98A1088CFA17B329C` (771 lines) | 3: `ACancelWhileTheSelfGrantCheckHasItsCredentialFetched_...(page: "Calendar Permissions")` and kd-59's two Calendar rows |
 
-Full suite on this commit's tree: 7,530 passed / 0 failed / 0 skipped. Format, whitespace and ASCII clean.
+Full suite on this commit's tree: 7,530 passed / 0 failed / 0 skipped. Format, whitespace and ASCII clean. Commit `18d2467d`.
+
+### As implemented - the docs
+
+- `README.md` 536-540, Self-grant Prevention: "While the check is on (Prevent Self-Grant, the default), every grant needs it:
+  without it, every grant is refused as incomplete, naming the setting - to a person or to a group, whichever directory holds
+  the grantee - and nothing is written. A removal is not checked and does not need it." It said a grant to a group the
+  directory holds, or to a grantee only it holds, was refused, "and so is every grant by an operator whose sign-in names them
+  by a user principal name alone; a grant to a person Exchange Online names still goes ahead" - the UPN-only clause goes, every
+  grant being refused now. The cost sentence stays. In place, 1,264 lines.
+- `Components/Pages/AdminSettings.razor` 282, the credential's placeholder: "Required for group and OU rules, and for every
+  permission grant"; 289, its hint: "Read-only AD credential for group membership and OU checks. While Prevent Self-Grant is on,
+  Mailbox Permissions and Calendar Permissions also need it for every grant: without it every grant is refused. A removal does
+  not need it." In place, 1,465 lines; Admin Settings is not line-keyed (ClickGateRegistry lists it as not started).
+- Neither text names an environment (Invariant 7): the setting by its label, the check by its module.
+- Tests: `SelfGrantDocumentationTests.TheReadme_SaysTheCheckNeedsTheDirectoryReadCredential_AndWhatItRefusesWithoutIt` reads the
+  new sentences and that "still goes ahead" is gone; `AdminSettings_SaysTheDirectoryReadCredentialIsWhatPermissionGrantsToGroupsNeed`
+  is renamed `AdminSettings_SaysEveryPermissionGrantNeedsTheDirectoryReadCredential` and reads the new placeholder and hint, the
+  old hint gone. `SettingsNoOpAndUnreadableSecretTests` finds the credential's input by its placeholder, so its locator
+  constant follows the new text.
+
+### Guard proof - the docs
+
+The same driver; filter `FullyQualifiedName~SelfGrantDocumentation|FullyQualifiedName~SettingsNoOpAndUnreadableSecret|FullyQualifiedName~SettingsStoreText|FullyQualifiedName~AdminPageDirtyState|FullyQualifiedName~ProgressRegistry|FullyQualifiedName~ClickGate`
+(419 tests). Fixed-file MD5s: `README.md` `FFB97C5ED345A08C969A75E9E7BC08A4`, `Components/Pages/AdminSettings.razor`
+`F5A6704E45BBB2651BA473D23061D961`. Every restore matched; the restored tree rebuilt and the filter: 419/419.
+
+| # | Mutation | Mutant MD5 | Failed (of 419) |
+|---|---|---|---|
+| M6d (the record's) | the README as it stood (`7ef50c41`) | `1CE94290C68E164AE285C962B24A01F1` | 1: `TheReadme_SaysTheCheckNeedsTheDirectoryReadCredential_AndWhatItRefusesWithoutIt` |
+| M6e | the Admin Settings hint as it stood | `6767882B39203A2A9AB976180606D9C9` | 1: `AdminSettings_SaysEveryPermissionGrantNeedsTheDirectoryReadCredential` |
+| E6f | the placeholder as it stood | `8CAE2C8561EDE426D004A2E45559D3B5` | 3: the same test, and `SettingsNoOpAndUnreadableSecretTests`' two that find the input by it |
