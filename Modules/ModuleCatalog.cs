@@ -169,7 +169,9 @@ public sealed class ModuleCatalog
             // write recorded; a right whose session failed once sent filed Undetermined and its administrators told so.
             // 1.6.0: a grant or revoke requires a ticket of its own, before ServiceNow, which passes
             // one while it is dormant; a refusal at the ticket or at the access re-check is audited before
-            // the target is bound (kd-18, kd-40). Calendar Permissions does not do this yet.
+            // the target is bound (kd-18, kd-40). Landed under the same version, unnoted at the time: a CSV run whose
+            // administrator notification cannot be sent stands and says so in its own words (kd-38); kd-44's
+            // could-not-be-confirmed notice to the user and owner (reversed in 1.6.2).
             // 1.6.1: a CSV run whose progress panel cannot be completed stands, the failure logged; the completion
             // threw out of the handler after every row was written (kd-39, the aud-a70 (9) guard on the bulk path).
             // 1.6.2: kd-44 reversed by owner ruling 2026-10-27 ("remove to affected target, keep to admin") - a change whose
@@ -214,6 +216,10 @@ public sealed class ModuleCatalog
             // row - a removal said "Permission: Remove" (review of aud-a24).
             // 1.4.0: aud-a70 - as Mailbox Permissions 1.5.0, and an on-premises write Exchange refused is a failed result,
             // no longer "could not be confirmed".
+            // Landed under 1.4.0, unnoted at the time: a grant or revoke requires a ticket of its own and a refusal at the
+            // ticket or the access re-check is audited before the target is bound (kd-18, kd-40, as Mailbox 1.6.0); the
+            // kd-38 notification guard; a cloud Set whose session drops mid-command is filed Undetermined, not Failed, the
+            // Add fallback's preflight error no longer masking the unknown outcome (kd-43); kd-44's notice (reversed in 1.4.2).
             // 1.4.1: as Mailbox Permissions 1.6.1 - a CSV run whose progress panel cannot be completed stands (kd-39).
             // 1.4.2: as Mailbox Permissions 1.6.2 - kd-44 reversed by owner ruling 2026-10-27: a change whose outcome could not
             // be confirmed tells the administrators alone; the user and the calendar owner are no longer sent kd-44's notice.
