@@ -841,7 +841,10 @@ public sealed class ModuleCatalog
             // (psl-10).
             // 1.14.0: Manage members refuses while the open group is still loading or changing,
             // and a member load publishes only while its group is still the one shown (kd-19).
-            Version = "1.14.0",
+            // 1.14.1: Back to groups retires a member load still running, so a load whose backend
+            // never answers no longer leaves Manage members refused until the browser is
+            // refreshed; a retired load returning late cannot free the view of a newer one (kd-51).
+            Version = "1.14.1",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

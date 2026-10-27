@@ -29,6 +29,12 @@ namespace ExchangeAdminWeb.Tests;
 /// test releases it and then answers every request with a server error - so each load ends with no
 /// credential, refused before any directory is touched, and the page shows the load as failed. The
 /// handlers are driven by reflection with their injected services set, the kd-4 page-handler pattern.
+/// <para>
+/// kd-51. Back to groups retires a load that is still running - the token it publishes under and the
+/// busy flag it holds - so a backend that never answers no longer leaves every way back into a group
+/// refused until the browser is refreshed; and a load lowers the flag only under its own token, so a
+/// retired one returning late cannot free the view while a newer load is still reading.
+/// </para>
 /// </remarks>
 public sealed class SelfServiceGroupMemberLoadTests : IDisposable
 {
@@ -89,6 +95,7 @@ public sealed class SelfServiceGroupMemberLoadTests : IDisposable
     public void Dispose()
     {
         _vault.Release.TrySetResult();
+        _vault.ReleaseHeld.TrySetResult();
         _progress.Dispose();
         _temp.Dispose();
     }
@@ -138,7 +145,81 @@ public sealed class SelfServiceGroupMemberLoadTests : IDisposable
         Assert.Null(Field<string>(page, "memberLoadError"));
         Assert.Empty(Field<IReadOnlyList<GroupMember>>(page, "groupMembers")!);
 
-        // Lowered all the same: a load that may not publish must still release the view.
+        // Not busy afterwards. Since kd-51 it is Back to groups that lowers the flag, when it retires
+        // the load, and the load's late return leaves it lowered.
+        Assert.False(Flag(page, "isLoadingMembers"));
+    }
+
+    [Fact]
+    public async Task AMemberLoadThatNeverReturns_DoesNotStrandTheManageView()
+    {
+        // kd-51. The load raises isLoadingMembers, a member of IsManageBusy, and only its own finally
+        // lowered it - so a backend that never answered left both Manage members buttons disabled and
+        // SelectGroup refusing (kd-19's guard) until the browser was refreshed. The vault holds this
+        // load's credential fetch and answers it only at the end, so every assertion about the view is
+        // taken while the load is still hanging.
+        var (first, second) = (Group("Finance Team"), Group("Payroll Team"));
+        var page = PageBrowsing();
+
+        var hung = Select(page, first);
+        await _vault.FirstArrived.Task.WaitAsync(Patience, TestContext.Current.CancellationToken);
+        Assert.True(Busy(page), "the load did not hold the view busy, so there is nothing for Back to free");
+
+        Invoke(page, "BackToGroups");
+
+        // Free the moment the operator leaves, though the load has not returned.
+        Assert.False(hung.IsCompleted, "the load returned; this test needs it hanging");
+        Assert.False(Flag(page, "isLoadingMembers"));
+        Assert.False(Busy(page));
+
+        // And usable: another group opens rather than being refused, and its own load holds the view.
+        var opening = Select(page, second);
+        Assert.Same(second, Field<ManageableGroup>(page, "selected"));
+        Assert.True(Busy(page), "the second group's load is not holding the view");
+        Assert.False(hung.IsCompleted, "the first load returned before the second group was opened");
+
+        // Answered only now, inside the test, so nothing runs on after the fixture is disposed. The
+        // first load's late return publishes nothing; the second group's view gets its own outcome.
+        _vault.Release.SetResult();
+        await hung.WaitAsync(Patience, TestContext.Current.CancellationToken);
+        await opening.WaitAsync(Patience, TestContext.Current.CancellationToken);
+
+        Assert.Same(second, Field<ManageableGroup>(page, "selected"));
+        Assert.Equal(LoadFailed, Field<string>(page, "memberLoadError"));
+        Assert.False(Busy(page));
+    }
+
+    [Fact]
+    public async Task ARetiredLoadReturningLate_DoesNotLowerTheFlagOfTheLoadThatReplacedIt()
+    {
+        // kd-51's other half. Back to groups may lower the flag only because a load lowers it under its
+        // own token. Lowered unconditionally, the retired load returning late would free the view while
+        // the load that replaced it is still reading.
+        var (first, second) = (Group("Finance Team"), Group("Payroll Team"));
+        var page = PageBrowsing();
+
+        var retired = Select(page, first);
+        await _vault.FirstArrived.Task.WaitAsync(Patience, TestContext.Current.CancellationToken);
+        Invoke(page, "BackToGroups");
+
+        // The second group's load, held at the vault on its own: answering the first does not answer it.
+        var current = _vault.HoldingItsOwnRequests(() => Select(page, second));
+        Assert.Same(second, Field<ManageableGroup>(page, "selected"));
+
+        _vault.Release.SetResult();
+        await retired.WaitAsync(Patience, TestContext.Current.CancellationToken);
+        await _vault.HeldArrived.Task.WaitAsync(Patience, TestContext.Current.CancellationToken);
+
+        // The retired load has returned; the current one is mid-read at the vault and still holds the view.
+        Assert.False(current.IsCompleted, "the second group's load finished; this test needs it still reading");
+        Assert.True(Flag(page, "isLoadingMembers"), "the retired load lowered the flag of the load still reading");
+        Assert.True(Busy(page));
+
+        _vault.ReleaseHeld.SetResult();
+        await current.WaitAsync(Patience, TestContext.Current.CancellationToken);
+
+        Assert.Same(second, Field<ManageableGroup>(page, "selected"));
+        Assert.Equal(LoadFailed, Field<string>(page, "memberLoadError"));
         Assert.False(Flag(page, "isLoadingMembers"));
     }
 
@@ -205,6 +286,10 @@ public sealed class SelfServiceGroupMemberLoadTests : IDisposable
     private static bool Flag(Page page, string name) =>
         (bool)typeof(Page).GetField(name, PrivateInstance)!.GetValue(page)!;
 
+    /// <summary>The manage view's own busy predicate, which both Manage members buttons and SelectGroup consult.</summary>
+    private static bool Busy(Page page) =>
+        (bool)typeof(Page).GetProperty("IsManageBusy", PrivateInstance)!.GetValue(page)!;
+
     private static void SetProperty(Page page, string name, object value) =>
         typeof(Page).GetProperty(name, PrivateInstance)!.SetValue(page, value);
 
@@ -215,17 +300,47 @@ public sealed class SelfServiceGroupMemberLoadTests : IDisposable
     /// The vault: holds the first request until released, then answers every request with a server
     /// error, so the credential fetch fails and the member read is refused before any directory call.
     /// </summary>
+    /// <remarks>
+    /// kd-51. A load started through <see cref="HoldingItsOwnRequests"/> is held apart, until
+    /// <see cref="ReleaseHeld"/>. Its requests are told apart by a mark in their execution context,
+    /// not by count: they queue behind the first load's token lock, and that load's own retry, made
+    /// once it is released, would otherwise be taken for them.
+    /// </remarks>
     private sealed class GatedVault : HttpMessageHandler
     {
+        private readonly AsyncLocal<bool> _held = new();
         private int _requests;
 
         public TaskCompletionSource FirstArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource HeldArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseHeld { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Starts <paramref name="start"/> with every vault request it goes on to make held until <see cref="ReleaseHeld"/>.</summary>
+        public Task HoldingItsOwnRequests(Func<Task> start)
+        {
+            _held.Value = true;
+            try
+            {
+                return start();
+            }
+            finally
+            {
+                _held.Value = false;
+            }
+        }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (Interlocked.Increment(ref _requests) == 1)
+            if (_held.Value)
+            {
+                HeldArrived.TrySetResult();
+                await ReleaseHeld.Task.WaitAsync(cancellationToken);
+            }
+            else if (Interlocked.Increment(ref _requests) == 1)
             {
                 FirstArrived.TrySetResult();
                 await Release.Task.WaitAsync(cancellationToken);
