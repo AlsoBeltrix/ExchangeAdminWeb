@@ -616,7 +616,9 @@ public sealed class ModuleCatalog
             // 1.5.1: an unblock the operator cancels before it was sent is filed Cancelled, not Failed,
             // and says so in the app's phrase for a cancel - nothing was changed (kd-57). One cancelled
             // after it was sent stays Undetermined.
-            Version = "1.5.1",
+            // 1.5.2: an unblock acts on and records the address, ticket and reason confirmed - read above its
+            // yield - and a second click during one is ignored (kd-72).
+            Version = "1.5.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

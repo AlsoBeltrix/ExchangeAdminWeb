@@ -306,16 +306,23 @@
 
     private async Task ConfirmUnblock()
     {
+        // kd-72. A second click while an unblock runs is ignored, not run beside it: Confirm is disabled
+        // while isLoading, but the browser's copy of that is one round trip stale.
+        if (isLoading)
+            return;
         if (confirmAddress is null)
             return;
+
+        // kd-72. What this unblock acts on and records, read once, above the yield. They were read on the
+        // line after it, so a keystroke in the ticket box, or Cancel, landing in the yield changed the
+        // address unblocked and the ticket and reason recorded.
+        var address = confirmAddress;
+        var ticket = ticketNumber.Trim();
+        var unblockReason = reason.Trim();
 
         isLoading = true;
         result = null;
         await Task.Yield();
-
-        var address = confirmAddress;
-        var ticket = ticketNumber.Trim();
-        var unblockReason = reason.Trim();
 
         // Opened HERE, above the try, so the authorization and protected-principal refusals
         // inside it are covered too, and completed AFTER the notification email - not at the
