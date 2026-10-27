@@ -1565,7 +1565,9 @@ public sealed class ModuleCatalog
             // (docs/ProtectedGroupWriteTarget-Plan.md T0) - pgwt-8.
             // 1.2.2: the page reports to the status frame at all - the staleness sweep and the
             // four protected-principal Add paths were silent (docs/ProgressCoverage-Plan.md S4).
-            Version = "1.2.2",
+            // 1.2.3: the enablement, protected-principal and log-level saves write the toggles, the directory-read
+            // secret ID and the level as they stood at the click, read above their yield (kd-72).
+            Version = "1.2.3",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

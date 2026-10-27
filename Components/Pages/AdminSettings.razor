@@ -667,6 +667,11 @@
 
     private async Task SaveEnablement()
     {
+        // aud-a41. What this save writes, and what its records name, taken before anything waits: its write runs off the
+        // circuit, and a toggle switched while it waits is not part of this save - it stays unsaved. kd-72: taken HERE,
+        // above the yield - it was taken below it, so a toggle switched in the yield was saved with the rest.
+        var changes = ChangedToggles();
+
         saving = true;
         statusMessage = null;
         await Task.Yield();
@@ -675,9 +680,6 @@
         // a refused or failed attempt to change who can use a module, or who is protected, left no
         // trace. Read above the try, so the catch has the ip too.
         var ip = ClientInfo.GetIpForUser(currentUser);
-        // aud-a41. What this save writes, and what its records name, taken before anything waits: its write runs off the
-        // circuit, and a toggle switched while it waits is not part of this save - it stays unsaved.
-        var changes = ChangedToggles();
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -786,6 +788,11 @@
 
     private async Task SaveLogLevel()
     {
+        // aud-a41. The level written and recorded is the one chosen when this save began. kd-72: read HERE, above the
+        // yield - it was read below the yield and the authorization re-check, and the select is not disabled while a
+        // save runs, so a pick landing there was the level written.
+        var level = selectedLogLevel;
+
         saving = true;
         statusMessage = null;
         await Task.Yield();
@@ -805,8 +812,7 @@
             }
 
             var previousLevel = ExtendedLog.CurrentLevel;
-            // aud-a41. The level written and recorded is the one chosen when this save began; its write runs off the circuit.
-            var level = selectedLogLevel;
+            // aud-a41. Its write runs off the circuit; the level is the one read above the yield.
             await Task.Run(() => ExtendedLog.SetLevel(level));
 
             try { Audit.LogSettingsChange(currentUser, ip, section, new[] { previousLevel }, new[] { level }); }
@@ -1138,6 +1144,12 @@
 
     private async Task SaveProtectedPrincipals()
     {
+        // kd-72. The directory-read secret ID this save validates and writes, read here, above the yield. Its box is
+        // bound by hand on input and not disabled while a save runs, so a keystroke landing in the yield or the
+        // authorization re-check was the ID validated and saved. The lists are built by the Add and Remove clicks,
+        // and their snapshot stays below the in-flight-Add refusal (ppv-3), where it was.
+        var submittedSecretId = ppDirectoryReadSecretId;
+
         saving = true;
         statusMessage = null;
         await Task.Yield();
@@ -1185,8 +1197,8 @@
             // blank. When it is changing, two checks before anything is written, as for the rules: the page's
             // own load (aud-a26k) - the store may read again by now, and the value shown is still not the one the
             // save would replace - and the store as it is now (aud-a28j).
-            var secretId = ppDirectoryReadSecretId.Trim();
-            var secretChanged = SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline) > 0;
+            var secretId = submittedSecretId.Trim();
+            var secretChanged = SecretIdDelta(submittedSecretId, ppDirectoryReadSecretIdBaseline) > 0;
 
             // aud-a26p. A changed Secret ID the lookups would not read is refused before anything is written: stored, it
             // sent every lookup to the appsettings fallback or to no credential, and the typo showed only as a lookup
