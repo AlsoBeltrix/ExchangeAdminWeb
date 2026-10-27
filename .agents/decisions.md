@@ -31,9 +31,10 @@ These supersede parts of the entry below (the eight decisions of 2026-10-26).
    MODULE. DO NOT BRING ME ANYTHING ABOUT PROTECTED PRINCIPALS RELATED ISSUES. REMOVE ALL OF THAT ILLEGALLY ADDED
    BULLSHIT AND LIMIT TO FIXING FUCKING ISSUES."** Supersedes item 2 of the entry below: there is no scoped exception
    and no check before the add. Every protected-principal or protected-group check the weekend added to the Conference
-   Rooms module is removed, room-list creation and its preview wording are restored, and the module does not consult
-   Protected Group Targets or the protected-principal list at all. The Constitution's protected-principal rule carries
-   Conference Rooms as its third module-scoped exemption, beside Self-Service Groups and Comms-10k, by this ruling.
+   Rooms module is removed, room-list creation and its preview wording are restored, and the module does not check the
+   room-list group it writes into against Protected Group Targets. The July 2026 gate on the room mailbox itself is
+   pre-weekend, decided behaviour and stays. The Constitution's protected-principal rule carries Conference Rooms as its
+   third module-scoped exemption, beside Self-Service Groups and Comms-10k, by this ruling (written in 2026-10-27).
    Item 7 of the entry below (the aud-a2e Constitution conflict) is closed the same way: nothing about protected
    principals is brought to the owner for this module again. The weekend's genuine fixes in the module stay (an
    ambiguous room-list lookup refuses instead of reading as "no list"; cancelling or removing a bulk job is audited

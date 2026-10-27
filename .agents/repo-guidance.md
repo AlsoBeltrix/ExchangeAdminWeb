@@ -165,8 +165,8 @@ only the new module's own version is set (Constitution "Deployment And Versionin
 3. **Fail-closed authorization** — authorization/enablement stores must deny when a
    read or write fails (never fall through to a permissive default), and every
    mutating module must route its write target through the protected-principal check
-   before writing. Two scoped exceptions, and they are near-opposites - do not
-   conflate them, and no other module may read itself into either:
+   before writing. Three scoped exceptions - do not conflate them, and no other
+   module may read itself into any:
    - Self-Service Groups does not consult Protected Group Targets (owner ruling
      2026-08-31, `.agents/decisions.md`, Constitution carries it); its
      member-protection check stays.
@@ -175,6 +175,10 @@ only the new module's own version is set (Constitution "Deployment And Versionin
      app's broadest exemption, scoped to that one module, which exists only to
      replace the membership of one broadcast list whose membership grants access to
      nothing.
+   - Conference Rooms does not check the room-list group it adds a room to against
+     Protected Group Targets, and creates a building's list when none exists (owner
+     ruling 2026-10-26, .agents/decisions.md, Constitution carries it). Its gate on
+     the room mailbox it writes stays.
 4. **Stale references** — never trust remembered file contents or doc claims. Re-read
    files before editing; verify doc statements against current code.
 
