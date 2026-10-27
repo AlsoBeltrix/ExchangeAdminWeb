@@ -170,7 +170,9 @@ public sealed class ModuleCatalog
             // 1.6.0: a grant or revoke requires a ticket of its own, before ServiceNow, which passes
             // one while it is dormant; a refusal at the ticket or at the access re-check is audited before
             // the target is bound (kd-18, kd-40). Calendar Permissions does not do this yet.
-            Version = "1.6.0",
+            // 1.6.1: a CSV run whose progress panel cannot be completed stands, the failure logged; the completion
+            // threw out of the handler after every row was written (kd-39, the aud-a70 (9) guard on the bulk path).
+            Version = "1.6.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -209,7 +211,8 @@ public sealed class ModuleCatalog
             // row - a removal said "Permission: Remove" (review of aud-a24).
             // 1.4.0: aud-a70 - as Mailbox Permissions 1.5.0, and an on-premises write Exchange refused is a failed result,
             // no longer "could not be confirmed".
-            Version = "1.4.0",
+            // 1.4.1: as Mailbox Permissions 1.6.1 - a CSV run whose progress panel cannot be completed stands (kd-39).
+            Version = "1.4.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

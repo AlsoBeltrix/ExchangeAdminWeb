@@ -586,7 +586,7 @@
         finally
         {
             isLoading = false;
-            bulkActivity.Complete(completedBulk != null, completedBulk == null ? "The CSV run did not complete." : null);
+            try { bulkActivity.Complete(completedBulk != null, completedBulk == null ? "The CSV run did not complete." : null); } catch (Exception completeEx) { Logger.LogWarning(completeEx, "The progress of the CSV run on {File} could not be completed; the run stands", file.Name); } // kd-39: the aud-a70 (9) guard on the bulk path - a completion that throws after every row was written no longer leaves the handler
         }
     }
 

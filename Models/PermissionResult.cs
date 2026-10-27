@@ -94,7 +94,8 @@ public class PermissionResult
     /// outcome - success or failure - must reach the audit with the note, or a failed write on
     /// a protected target loses the record of who was authorised to attempt it (and a write
     /// that timed out AFTER committing at the DC audits as a noteless failure). No-op when the
-    /// note is blank or unchanged.
+    /// note is blank or unchanged. Every other field is carried as it is (kd-41: it dropped
+    /// <see cref="UnverifiedTargets"/>; <c>PermissionResultCopyTests</c> holds each one).
     /// </summary>
     public PermissionResult WithServicedNote(string? servicedNote)
         => string.IsNullOrWhiteSpace(servicedNote) || ServicedNote == servicedNote
@@ -105,6 +106,7 @@ public class PermissionResult
                 Message = Message,
                 Detail = Detail,
                 ExcludedTargets = ExcludedTargets,
+                UnverifiedTargets = UnverifiedTargets,
                 AppliedRights = AppliedRights,
                 UnconfirmedRights = UnconfirmedRights,
                 Changed = Changed,
