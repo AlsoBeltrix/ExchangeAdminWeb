@@ -541,7 +541,9 @@ public sealed class ModuleCatalog
             // download during one is ignored (kd-72).
             // 1.8.5: a search wider than one cloud window looks at the operator's cancel between windows, so a cancel ends it
             // before the next window instead of after the last, filed Cancelled (kd-73).
-            Version = "1.8.5",
+            // 1.8.6: on the Downloadable Reports sub-page a second Download click during a download is ignored, so a
+            // double click no longer reads, pushes and audits the export twice (kd-74).
+            Version = "1.8.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

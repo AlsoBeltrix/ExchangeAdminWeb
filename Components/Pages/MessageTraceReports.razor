@@ -143,6 +143,10 @@
 
     private async Task Download(string jobId)
     {
+        // kd-74. A second click while a download runs is ignored, not run beside it: every Download button is
+        // disabled while busy, but the browser's copy of that is one round trip stale, and a second run read,
+        // pushed and audited the export again.
+        if (busy) return;
         error = null;
         busy = true;
         busyJobId = jobId;
