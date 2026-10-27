@@ -1529,7 +1529,9 @@ public sealed class ModuleCatalog
             // notifies administrators; it did neither (review of aud-a26).
             // 1.7.3: an allowlist save that meets a busy settings store says so and is recorded as
             // a refusal, where it showed the provider's error code (aud-a67).
-            Version = "1.7.3",
+            // 1.7.4: a lookup runs on the identity submitted and a save records the ticket submitted - both read
+            // above their yield - and a second submit during either is ignored (kd-72).
+            Version = "1.7.4",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
