@@ -1572,7 +1572,9 @@ public sealed class ModuleCatalog
             // MessageTrace and Migration, whose jobs Admin Bulk Jobs now files under their own module
             // (kd-53), and AdminBulkJobs, which a job carrying no module falls back to (kd-63) - a row
             // filed under a category the filter does not list can be found only under All (kd-65).
-            Version = "1.5.0",
+            // 1.5.1: the Result filter offers Cancelled, the result a cancel is filed under since kd-57 -
+            // such a row could be found only under All (kd-71).
+            Version = "1.5.1",
             MainPermission = new(
                 "Access",
                 "EventLog",
