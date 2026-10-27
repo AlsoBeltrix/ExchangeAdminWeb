@@ -20,6 +20,30 @@ public class AuditService
     }
 
     /// <summary>
+    /// kd-57. The result a cancelled operation's row is filed under: neither a success nor a failure (aud-a70 (13) counts only
+    /// "Success" as a success).
+    /// </summary>
+    public const string CancelledResult = "Cancelled";
+
+    /// <summary>
+    /// kd-57. The app's one phrase for a cancel - what the operator is shown and what the row's error says. Message Trace's
+    /// words; a cancelled Recipient Lookup said the framework's "The operation was canceled.".
+    /// </summary>
+    public const string CancelledByTheOperator = "Cancelled by the operator";
+
+    /// <summary>
+    /// kd-57. A copy of <paramref name="extra"/> with the row filed <see cref="CancelledResult"/>. Through <c>extra</c> because the
+    /// methods a cancel is filed by take no explicit result - kd-6's <c>FiledUndetermined</c> on the Blocked Senders page is the
+    /// same move - and <see cref="MergeExtra"/> is merged last, so the result set here is the row's.
+    /// </summary>
+    public static Dictionary<string, object?> FiledCancelled(Dictionary<string, object?>? extra = null)
+    {
+        var filed = extra is null ? new Dictionary<string, object?>() : new Dictionary<string, object?>(extra);
+        filed["result"] = CancelledResult;
+        return filed;
+    }
+
+    /// <summary>
     /// Merges caller-supplied fields into an audit event, whatever the outcome.
     /// </summary>
     /// <remarks>

@@ -1204,10 +1204,11 @@
         {
             // The operator chose to leave and cancel. That is not an error and must not be
             // rendered as one - but it IS audited, because a half-finished export of other
-            // people's mail detail is a thing to have a record of.
+            // people's mail detail is a thing to have a record of. kd-57: filed Cancelled, not
+            // Failed, in the app's one phrase for a cancel.
             detailActionError = null;
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target,
-                false, "Cancelled by the operator", ticketNumber.Trim());
+                false, AuditService.CancelledByTheOperator, ticketNumber.Trim(), AuditService.FiledCancelled());
         }
         catch (Exception ex)
         {

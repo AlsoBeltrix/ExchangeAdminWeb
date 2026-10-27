@@ -394,6 +394,25 @@ public class AuditServiceTests : IDisposable
     }
 
     [Fact]
+    public void FiledCancelled_FilesTheRowCancelled_AndLeavesTheCallersExtraAsItWas()
+    {
+        // kd-57. The one way a cancel is filed: the caller's extra, copied, with the result set to Cancelled - merged last, so
+        // it is the row's. The caller's own dictionary is not changed.
+        var extra = new Dictionary<string, object?> { ["protectedPrincipalServiced"] = "the servicer note" };
+
+        var filed = AuditService.FiledCancelled(extra);
+        _audit.LogModuleAction("admin", "10.0.0.1", "UnblockSender", "BlockedSenders", "spam@fabrikam.test", success: false,
+            "INC001", AuditService.CancelledByTheOperator, filed);
+
+        Assert.False(extra.ContainsKey("result"));
+        var row = ReadAuditEvents().Single().RootElement;
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
+        Assert.Equal("Cancelled by the operator", row.GetProperty("error").GetString());
+        Assert.Equal("the servicer note", row.GetProperty("protectedPrincipalServiced").GetString());
+        Assert.Equal("Cancelled", AuditService.FiledCancelled()["result"]);
+    }
+
+    [Fact]
     public void OperationTrace_DoesNotWriteRawExceptionMessages()
     {
         _trace.Step(

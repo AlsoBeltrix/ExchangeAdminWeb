@@ -513,7 +513,9 @@ public sealed class ModuleCatalog
             // is not necessarily the origin (lower-priority Wave 4 header bounds).
             // 1.8.0: a detail export's download requires a ticket by the shared TicketPresence rule,
             // so one with nothing visible in it no longer passes (kd-45).
-            Version = "1.8.0",
+            // 1.8.1: a live detail download the operator cancels is filed Cancelled, not Failed, in the
+            // app's one phrase for a cancel, "Cancelled by the operator" (kd-57).
+            Version = "1.8.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -541,7 +543,10 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.0", // kd-37: an operator cancel during the lookup stops it
+            // 1.2.0: kd-37 - an operator cancel during the lookup stops it.
+            // 1.2.1: kd-57 - that cancel is shown and filed as one: "Cancelled by the operator", result
+            // Cancelled; it was a failed lookup in the framework's words, "The operation was canceled.".
+            Version = "1.2.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -592,7 +597,10 @@ public sealed class ModuleCatalog
             // the page; one that was sent but not confirmed says so and is audited Undetermined, and
             // one abandoned before it was sent says nothing was changed and is never sent (kd-6). A
             // failed unblock by an authorised servicer keeps the servicer note on its audit row (kd-10).
-            Version = "1.5.0",
+            // 1.5.1: an unblock the operator cancels before it was sent is filed Cancelled, not Failed,
+            // and says so in the app's phrase for a cancel - nothing was changed (kd-57). One cancelled
+            // after it was sent stays Undetermined.
+            Version = "1.5.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

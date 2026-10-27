@@ -138,9 +138,12 @@ public sealed class BlockedSenderUnblockBoundTests : IDisposable
         Assert.True(connecting.Wait(Watchdog, TestContext.Current.CancellationToken), "the pool never began connecting");
         cancel.Cancel();
 
-        var result = await call.WaitAsync(Watchdog, TestContext.Current.CancellationToken);
-        Assert.False(result.Success);
-        Assert.Contains("nothing was changed", result.Message, StringComparison.Ordinal);
+        // kd-57: the cancel is thrown as a cancel, in the app's phrase for one - it was a failed result, which the page filed
+        // Failed. It still says nothing was changed.
+        var cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => call.WaitAsync(Watchdog, TestContext.Current.CancellationToken));
+        Assert.StartsWith($"Cancelled by the operator before the unblock of {Sender} was sent", cancelled.Message, StringComparison.Ordinal);
+        Assert.Contains("nothing was changed", cancelled.Message, StringComparison.Ordinal);
 
         // The connect completes and the abandoned call runs - and must not send.
         connectGate.Set();
@@ -194,6 +197,45 @@ public sealed class BlockedSenderUnblockBoundTests : IDisposable
         var shown = (PermissionResult)typeof(Page).GetField("result", PrivateInstance)!.GetValue(page)!;
         Assert.False(shown.Success);
         Assert.Contains("could not be confirmed", shown.Message, StringComparison.Ordinal);
+        Assert.Empty(progress.Active);
+    }
+
+    [Fact]
+    public async Task Page_AnUnblockTheOperatorCancelsBeforeItWasSent_IsFiledCancelled()
+    {
+        // kd-57. The navigation guard's OK before the unblock was sent: nothing was changed. It came back a failed result and
+        // was filed Failed; it is a cancel, filed Cancelled, in the app's phrase for one. A cancel after the send stays
+        // Undetermined (the test above).
+        using var connecting = new ManualResetEventSlim();
+        using var connectGate = new ManualResetEventSlim();
+        var service = Service(_exchange.Pool(beforeConnect: () =>
+        {
+            connecting.Set();
+            connectGate.Wait(Watchdog);
+        }), UnblockBoundLongerThanTheTest());
+        var page = UnblockPage(service, out var progress);
+        using var activities = progress;
+
+        var confirm = (Task)typeof(Page).GetMethod("ConfirmUnblock", PrivateInstance)!.Invoke(page, null)!;
+        Assert.True(connecting.Wait(Watchdog, TestContext.Current.CancellationToken), "the pool never began connecting");
+        progress.CancelAll();
+
+        Assert.Same(confirm, await Task.WhenAny(confirm, Task.Delay(Watchdog, TestContext.Current.CancellationToken)));
+        await confirm;
+        connectGate.Set();
+        await _logger.Abandoned.Task.WaitAsync(Watchdog, TestContext.Current.CancellationToken);
+        Assert.False(UnblockWasSent(), "an unblock filed as cancelled before it was sent was sent afterwards");
+
+        var row = Assert.Single(_exchange.AuditEvents(), r => r.GetProperty("action").GetString() == "UnblockSender");
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
+        var error = row.GetProperty("error").GetString();
+        Assert.StartsWith($"Cancelled by the operator before the unblock of {Sender} was sent", error, StringComparison.Ordinal);
+        Assert.Contains("nothing was changed", error, StringComparison.Ordinal);
+
+        Assert.False((bool)typeof(Page).GetField("isLoading", PrivateInstance)!.GetValue(page)!);
+        var shown = (PermissionResult)typeof(Page).GetField("result", PrivateInstance)!.GetValue(page)!;
+        Assert.False(shown.Success);
+        Assert.Equal(error, shown.Message);
         Assert.Empty(progress.Active);
     }
 

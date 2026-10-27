@@ -104,11 +104,15 @@ public sealed class RecipientLookupCancellationTests : IDisposable
         await cancel.CancelAsync();
         await run;
 
+        // kd-57: in the app's one phrase for a cancel, and filed Cancelled - it was filed Failed, in the framework's words
+        // "The operation was canceled.".
         var shown = Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
-        Assert.Contains("cancel", shown.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Cancelled by the operator", shown.Error);
         Assert.Empty(shown.Warnings);
         Assert.Equal((false, shown.Error), Assert.Single(progress.Handles).Outcome);
-        Assert.Equal(shown.Error, Assert.Single(_exchange.AuditEvents()).GetProperty("error").GetString());
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
+        Assert.Equal(shown.Error, row.GetProperty("error").GetString());
     }
 
     // Finding kd-61. The credential paths that answer before the vault is reached - no secret ID set here - looked at no
@@ -132,13 +136,37 @@ public sealed class RecipientLookupCancellationTests : IDisposable
         await (Task)typeof(Page).GetMethod("RunLookup", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
 
         var shown = Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
-        Assert.Contains("cancel", shown.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Cancelled by the operator", shown.Error); // kd-57, as above
         Assert.Empty(shown.Warnings);
         Assert.Equal((false, shown.Error), Assert.Single(progress.Handles).Outcome);
         var row = Assert.Single(_exchange.AuditEvents());
-        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
         Assert.Equal(shown.Error, row.GetProperty("error").GetString());
         Assert.False(_vault.Waiting.Task.IsCompleted); // nothing was asked of the vault
+    }
+
+    // kd-57's control: a cancellation the operator did not ask for - the activity's token is not cancelled - is not filed as
+    // theirs. It stays a lookup that failed, in its own words, filed Failed.
+    [Fact]
+    public async Task ACancellationTheOperatorDidNotAskFor_IsStillALookupThatFailed()
+    {
+        _exchange.Failures["OnPrem Credentials on-prem mailbox location check"] = new OperationCanceledException("the location read was cancelled");
+        var progress = new RecordingProgress();
+        var page = new Page();
+        Inject(page, "LookupService", _exchange.RecipientLookup());
+        Inject(page, "Audit", _exchange.Audit);
+        Inject(page, "Logger", NullLogger<Page>.Instance);
+        Inject(page, "Progress", progress);
+        PageField("emailAddress").SetValue(page, Address);
+        PageField("currentUser").SetValue(page, "CONTOSO\\operator");
+
+        await (Task)typeof(Page).GetMethod("RunLookup", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+
+        var shown = Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
+        Assert.Equal("the location read was cancelled", shown.Error);
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal(shown.Error, row.GetProperty("error").GetString());
     }
 
     // The control, kd-14's rule: a vault request that gives up on its own, with nobody cancelling, is a read that failed - a
