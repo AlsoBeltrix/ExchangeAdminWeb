@@ -29,17 +29,17 @@ public static class PermissionChangeNotifier
     public const string UnconfirmedSuffix = "_UNCONFIRMED";
 
     /// <summary>
-    /// aud-a70 (15). The notifications of a single change its handler's catch files Undetermined - a write that may have been
-    /// made, and so a mutating action administrators are told of (Constitution, Notifications): its action marked
-    /// <see cref="UnconfirmedSuffix"/>, not a success, the banner as its detail. kd-44, revising (15): and the affected user
-    /// and the owner, told it may have changed (<see cref="NotifyAffectedOfUnconfirmedAsync"/>) - the grant and removal
-    /// notices say access changed, which nobody can say here, but a change that may have applied is not left silent to them.
-    /// Sent only when <paramref name="filed"/> is Undetermined: a failure before the write, or at the connection, wrote
-    /// nothing. A throw is logged against the target, and the result stands.
+    /// aud-a70 (15). The administrator notification of a single change its handler's catch files Undetermined - a write that
+    /// may have been made, and so a mutating action administrators are told of (Constitution, Notifications): its action
+    /// marked <see cref="UnconfirmedSuffix"/>, not a success, the banner as its detail. Sent only when <paramref name="filed"/>
+    /// is Undetermined: a failure before the write, or at the connection, wrote nothing. No user or owner notification - they
+    /// say access changed, which nobody can say here. A throw is logged against the target, and the result stands.
+    /// kd-44 added a notice to the user and the owner that the change could not be confirmed; the owner's ruling of 2026-10-27
+    /// ("remove to affected target, keep to admin", <c>.agents/decisions.md</c>) took it out again: administrators alone.
     /// </summary>
-    public static async Task NotifyIfUnconfirmedAsync(AuditResult filed, EmailService email, string performedBy,
+    public static async Task NotifyAdminIfUnconfirmedAsync(AuditResult filed, EmailService email, string performedBy,
         string ipAddress, string action, string target, string user, string permissionType, string ticket, string detail,
-        string trusteeLabel, string affectedPermission, bool isGrant, ILogger logger)
+        ILogger logger)
     {
         if (filed != AuditResult.Undetermined)
             return;
@@ -52,42 +52,6 @@ public static class PermissionChangeNotifier
         catch (Exception ex)
         {
             logger.LogWarning(ex, "The administrator notification for {Target} could not be sent; the change stands", target);
-        }
-
-        await NotifyAffectedOfUnconfirmedAsync(email, [affectedPermission], trusteeLabel, target, user, performedBy, isGrant, logger);
-    }
-
-    /// <summary>
-    /// kd-44. Tells the trustee and the owner that a change whose outcome could not be confirmed may have altered access to
-    /// <paramref name="ownerTarget"/> (<see cref="EmailService.SendUnconfirmedUserNotificationAsync"/> and its owner twin:
-    /// neutral wording - what may have changed, and to contact the IT Service Desk). Nothing is sent when
-    /// <paramref name="unconfirmedRights"/> is empty. Each send is guarded on its own: a throw is logged and the other is still
-    /// sent, and the result stands.
-    /// </summary>
-    public static async Task NotifyAffectedOfUnconfirmedAsync(EmailService email, IReadOnlyList<string> unconfirmedRights,
-        string trusteeLabel, string ownerTarget, string user, string performedBy, bool isGrant, ILogger logger)
-    {
-        if (unconfirmedRights.Count == 0)
-            return;
-
-        var permType = string.Join("+", unconfirmedRights);
-
-        try
-        {
-            await email.SendUnconfirmedUserNotificationAsync(user, trusteeLabel, performedBy, permType, isGrant);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "The notification to {User} of the unconfirmed change on {Target} could not be sent; the result stands", user, ownerTarget);
-        }
-
-        try
-        {
-            await email.SendUnconfirmedOwnerNotificationAsync(ownerTarget, user, performedBy, permType, isGrant);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "The notification to the owner of {Target} of the unconfirmed change could not be sent; the result stands", ownerTarget);
         }
     }
 

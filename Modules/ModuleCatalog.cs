@@ -172,7 +172,10 @@ public sealed class ModuleCatalog
             // the target is bound (kd-18, kd-40). Calendar Permissions does not do this yet.
             // 1.6.1: a CSV run whose progress panel cannot be completed stands, the failure logged; the completion
             // threw out of the handler after every row was written (kd-39, the aud-a70 (9) guard on the bulk path).
-            Version = "1.6.1",
+            // 1.6.2: kd-44 reversed by owner ruling 2026-10-27 ("remove to affected target, keep to admin") - a change whose
+            // outcome could not be confirmed tells the administrators alone again; kd-44's notice to the user and the mailbox
+            // owner, single change and bulk row alike, is gone.
+            Version = "1.6.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -212,7 +215,9 @@ public sealed class ModuleCatalog
             // 1.4.0: aud-a70 - as Mailbox Permissions 1.5.0, and an on-premises write Exchange refused is a failed result,
             // no longer "could not be confirmed".
             // 1.4.1: as Mailbox Permissions 1.6.1 - a CSV run whose progress panel cannot be completed stands (kd-39).
-            Version = "1.4.1",
+            // 1.4.2: as Mailbox Permissions 1.6.2 - kd-44 reversed by owner ruling 2026-10-27: a change whose outcome could not
+            // be confirmed tells the administrators alone; the user and the calendar owner are no longer sent kd-44's notice.
+            Version = "1.4.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -508,7 +513,9 @@ public sealed class ModuleCatalog
             // is not necessarily the origin (lower-priority Wave 4 header bounds).
             // 1.8.0: a detail export's download requires a ticket by the shared TicketPresence rule,
             // so one with nothing visible in it no longer passes (kd-45).
-            Version = "1.8.0",
+            // 1.8.1: a live detail download the operator cancels is filed Cancelled, not Failed, in the
+            // app's one phrase for a cancel, "Cancelled by the operator" (kd-57).
+            Version = "1.8.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -536,7 +543,10 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.0", // kd-37: an operator cancel during the lookup stops it
+            // 1.2.0: kd-37 - an operator cancel during the lookup stops it.
+            // 1.2.1: kd-57 - that cancel is shown and filed as one: "Cancelled by the operator", result
+            // Cancelled; it was a failed lookup in the framework's words, "The operation was canceled.".
+            Version = "1.2.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -587,7 +597,10 @@ public sealed class ModuleCatalog
             // the page; one that was sent but not confirmed says so and is audited Undetermined, and
             // one abandoned before it was sent says nothing was changed and is never sent (kd-6). A
             // failed unblock by an authorised servicer keeps the servicer note on its audit row (kd-10).
-            Version = "1.5.0",
+            // 1.5.1: an unblock the operator cancels before it was sent is filed Cancelled, not Failed,
+            // and says so in the app's phrase for a cancel - nothing was changed (kd-57). One cancelled
+            // after it was sent stays Undetermined.
+            Version = "1.5.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

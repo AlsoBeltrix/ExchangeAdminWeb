@@ -451,6 +451,8 @@
         // kd-6: true when the service stopped waiting after the unblock was sent, so whether it applied is
         // not known; the row below is then filed Undetermined.
         var outcomeUnknown = false;
+        // kd-57: true when the operator cancelled before the unblock was sent; the row below is then filed Cancelled.
+        var cancelled = false;
         try
         {
             activity.Step("unblocking the sender in Exchange Online");
@@ -468,6 +470,15 @@
             // The service's own sentence: "Unblock failed" would tell the operator it did not happen.
             opResult = PermissionResult.Fail(ex.Message);
             outcomeUnknown = true;
+        }
+        catch (OperationCanceledException ex) when (activity.CancellationToken.IsCancellationRequested)
+        {
+            // kd-57. The operator's cancel, before the unblock was sent: nothing was changed, and it is not a failure. Filed
+            // Cancelled, in the service's sentence, which opens with the app's phrase for a cancel. It was a failed result,
+            // filed Failed.
+            scope.Complete(false, ex.Message);
+            opResult = PermissionResult.Fail(ex.Message);
+            cancelled = true;
         }
         catch (Exception ex)
         {
@@ -500,6 +511,8 @@
                 : null;
             if (outcomeUnknown)
                 serviced = FiledUndetermined(serviced);
+            else if (cancelled)
+                serviced = AuditService.FiledCancelled(serviced);
 
             Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender",
                 "BlockedSenders", address, opResult.Success, ticketNumber: ticket,

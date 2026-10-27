@@ -617,6 +617,26 @@ public sealed class UsageTelemetryServiceTests : IDisposable
     }
 
     [Fact]
+    public void AuditService_CountsOnlyARowFiledSuccess_AsASuccessfulAction()
+    {
+        // aud-a70 (13). Every result but "Failed" was counted a successful action: an ineligible eligibility check, an undetermined
+        // one, a permission change whose outcome could not be confirmed, a cancelled lookup. docs/UsageTelemetry-Plan.md specified
+        // result == "Success", and only that row is.
+        var (audit, usage) = CreateAudit();
+
+        audit.LogModuleAction("u", "1.1.1.1", "Do", "GroupManagement", "t", true);
+        audit.LogModuleAction("u", "1.1.1.1", "Do", "GroupManagement", "t", false);
+        audit.LogMigrationCheck("u", "1.1.1.1", "a@b.c", "Ineligible", "T1");
+        audit.LogMigrationCheck("u", "1.1.1.1", "a@b.c", "Undetermined", "T1");
+        audit.LogMailboxPermission("u", "1.1.1.1", "AddFullAccess", "t", "a", "FullAccess", false, "T1", filedAs: AuditResult.Undetermined);
+        audit.LogLookupAction("u", "1.1.1.1", "RecipientLookup", "t", false, "Cancelled by the operator",
+            extra: new Dictionary<string, object?> { ["result"] = "Cancelled" });
+        audit.LogMigrationCheck("u", "1.1.1.1", "a@b.c", "Eligible", "T1");
+
+        Assert.Equal(new bool?[] { true, false, false, false, false, false, true }, usage.Events.Select(e => e.Success));
+    }
+
+    [Fact]
     public void AuditService_NullSink_IsNoOp()
     {
         var config = AuditConfig();

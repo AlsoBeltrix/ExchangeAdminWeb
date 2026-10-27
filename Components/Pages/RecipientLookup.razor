@@ -224,9 +224,17 @@
             // shared catch did none of that: no audit row, though this page says all lookups are logged, and an activity that
             // ended "This did not finish.".
             RecipientInfoResult lookup;
+            var cancelled = false;
             try
             {
                 lookup = await LookupService.GetRecipientInfoAsync(target, activity.CancellationToken); // kd-37: the token the navigation guard cancels, down to the vault request
+            }
+            catch (OperationCanceledException) when (activity.CancellationToken.IsCancellationRequested)
+            {
+                // kd-57. The operator's cancel is not a lookup that failed: it is filed Cancelled, in the app's one phrase for it. It
+                // went down the catch below - result Failed, in the framework's words "The operation was canceled.".
+                lookup = new RecipientInfoResult { EmailAddress = target, Error = AuditService.CancelledByTheOperator };
+                cancelled = true;
             }
             catch (Exception ex)
             {
@@ -239,7 +247,8 @@
             // An audit write that throws is logged, and never shown as the lookup's failure: the lookup was made.
             try
             {
-                Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", target, lookup.Error == null, lookup.Error);
+                Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", target, lookup.Error == null, lookup.Error,
+                    extra: cancelled ? AuditService.FiledCancelled() : null);
             }
             catch (Exception ex)
             {

@@ -518,7 +518,7 @@
                     var notifyPerm = string.Join("+", applied);
                     try { await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isAdd); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to {User} of the change on {Target} could not be sent; the change stands", user, target); }
                     try { await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isAdd); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
-                } await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(Email, opResult.UnconfirmedRights ?? [], target, target, user, currentUser, isAdd, Logger); // kd-44: a right whose outcome is unknown tells the user and the owner it may have changed
+                }
 
                 result = SelfGrantRefusalRecord.Said(opResult, rowWritten);
                 activity.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
@@ -526,7 +526,7 @@
             catch (Exception ex)
             {
                 step = PermissionChangeFailure.StageOf(step, ex); var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The permission change on {Target} failed at {Step}", target, step); var failedPermType = string.Join("+", new[] { fullAccess ? "FullAccess" : null, sendAs ? "SendAs" : null }.OfType<string>()); // aud-a71: recorded as ExecuteOnPrem's catch records - a write that threw may have applied, so its row is filed Undetermined, a throw before or after it Failed (aud-a73), and a write the service says was never sent Failed, nothing written (aud-a76)
-                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{failedPermType}", target, user, failedPermType, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox), filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{failedPermType}", target, user, failedPermType, ticket, failure, target, failedPermType, isAdd, Logger); /* aud-a70 (15), kd-44 */ try { activity.Complete(false, failed); } catch (Exception completeEx) { Logger.LogWarning(completeEx, "The progress of the change on {Target} could not be completed; the result stands", target); } // aud-a70 (9): a completion that throws no longer leaves the handler
+                var failed = SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{failedPermType}", target, user, failedPermType, false, ticket, errorDetail: failure, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox), filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedSingleChangeRecord); result = PermissionResult.Fail(failed); await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{failedPermType}", target, user, failedPermType, ticket, failure, Logger); /* aud-a70 (15): administrators only - kd-44 reversed, owner 2026-10-27 */ try { activity.Complete(false, failed); } catch (Exception completeEx) { Logger.LogWarning(completeEx, "The progress of the change on {Target} could not be completed; the result stands", target); } // aud-a70 (9): a completion that throws no longer leaves the handler
             }
         }
         finally
@@ -735,7 +735,7 @@
                 var notifyPerm = string.Join("+", applied.Count > 0 ? applied : new[] { permType });
                 try { await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to {User} of the change on {Target} could not be sent; the change stands", user, target); }
                 try { await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant); } catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "The notification to the owner of {Target} could not be sent; the change stands", target); }
-            } await PermissionChangeNotifier.NotifyAffectedOfUnconfirmedAsync(Email, opResult.UnconfirmedRights ?? [], target, target, user, currentUser, isAdd, Logger); // kd-44: as SubmitSingle's
+            }
 
             result = outcome = SelfGrantRefusalRecord.Said(opResult, rowsWritten);
         }
@@ -744,7 +744,7 @@
             step = PermissionChangeFailure.StageOf(step, ex); var failure = PermissionChangeFailure.Banner(step, ex); Logger.LogWarning(ex, "The on-premises permission change on {Target} failed at {Step}", target, step); // aud-a76: a write the service says was never sent is the connection's failure - Failed, nothing written
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(failure, () => Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType,
-                false, ticket, errorDetail: failure, extra: onPremExtra, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); await PermissionChangeNotifier.NotifyIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, action, target, user, permType, ticket, failure, target, permType, isAdd, Logger); // aud-a70 (15): an Undetermined change tells the administrators - and, kd-44, the user and the owner; aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73); aud-a70 (4): with the identity written and the servicer note
+                false, ticket, errorDetail: failure, extra: onPremExtra, filedAs: PermissionChangeFailure.AuditResultOf(step)), Logger, target, SelfGrantRefusalRecord.FailedChangeRecord)); await PermissionChangeNotifier.NotifyAdminIfUnconfirmedAsync(PermissionChangeFailure.AuditResultOf(step), Email, currentUser, clientIpAddress, action, target, user, permType, ticket, failure, Logger); // aud-a70 (15): an Undetermined change tells the administrators, and only them (kd-44 reversed, owner 2026-10-27); aud-a75: a write that threw is filed Undetermined, a throw before or after it Failed (aud-a73); aud-a70 (4): with the identity written and the servicer note
         }
         finally
         {

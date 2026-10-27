@@ -8,7 +8,7 @@ the write failed..." with `Success=false` and records a Failed row beside the su
 credential (aud-a60). (3) `Components/Pages/AdminSettings.razor` 282 and 289 (the credential's placeholder
 and hint: "Required when groups or OUs are configured" / "Read-only AD credential for group membership and
 OU checks") should say it is also needed for Mailbox and Calendar Permissions grants to groups.
-**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex perm-batch-11 raised kd-43 (against (12)/(14)) and kd-44 (against (15)), both MEDIUM; closes when they land. (6) and (13) are owner calls, held; (10) is a coder dispute awaiting owner adjudication; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
+**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex perm-batch-11 raised kd-43 (against (12)/(14)) and kd-44 (against (15)), both MEDIUM, since merged; kd-44 was then reversed by owner ruling 2026-10-27 (`kd-44.md`), so (15) stands as it was written: administrators only. (13) fixed on `fix/kd44-a70-13` under the 2026-10-27 mandate (see "(13) - fixed 2026-10-27" below), verified on branch, awaiting merge, unreviewed until the single final codex-commercial review. (6) owner YES 2026-10-26, not implemented here; (10) the coder's dispute upheld by the owner 2026-10-26, closed; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
 **Branch**: `fix/a70` (from master `eb017102`)
 **Commit**: (1) `13909c2f`; (4) `83311a2b`; (5) `9b0aa71b` and its count-pin repair `dc3abcd7`; (9) `fe99aff4`; (17) `d0ed01eb`; (12), (14) `7576cea7`; (15) `0ef2ac77`; (7) `32d548ec`; (11), (8) `f374e13a`; (2), (3) `a4155f5c`; module versions and this record's close: the branch head
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidates 2-4 and its follow-up)
@@ -115,8 +115,8 @@ Invoke-Command runs the script, then writes a `PSRemotingTransportException` as 
 notification - its action marked `_UNCONFIRMED`, not a success, the banner as its detail; a throw logged, the result
 standing. A result left unconfirmed through (14) reaches the success path's administrator notification already: its action
 takes the same mark there (Mailbox 510 and 729, Calendar 485 and 671). No user or owner notification in either case: those
-say access changed, which nobody can say (revised by kd-44, `kd-44.md`: a distinct, neutral notice now tells them it could
-not be confirmed). A change that wrote nothing (Failed) is unchanged. Through a helper rather than a
+say access changed, which nobody can say (kd-44 added a distinct, neutral notice to them; the owner's 2026-10-27 ruling
+reversed it - administrators only, as here; `kd-44.md`). A change that wrote nothing (Failed) is unchanged. Through a helper rather than a
 second `Email.SendAdminNotificationAsync(` in `SubmitSingle`: ProgressRegistry holds every such call ahead of the handler's
 first `Complete`, which a call in the catch is not. After (12) and (14) no failure the services let out reaches
 `ExecuteOnPrem`'s catch at the write step - the call there is kept for the shape, and is not proven by a test (Known gaps).
@@ -155,9 +155,9 @@ Not implemented, each with its reason:
   Nothing changed beyond fail-closed as it stands: without the credential, a grantee Exchange names is still looked up as
   the session (aud-a69's refusal-only evidence). Recommendation in the hand-back.
 - (10) Disputed - see Coder dispute.
-- (13) An owner call (the record says so): whether Undetermined counts as neither success nor failure in usage telemetry
-  and the audit's trace operation. `IsSuccessfulAuditResult` (`Services/AuditService.cs` 590-591) is unchanged.
-  Recommendation in the hand-back.
+- (13) An owner call when this was written: whether Undetermined counts as neither success nor failure in usage telemetry
+  and the audit's trace operation. Since fixed as a bug under the owner's 2026-10-27 mandate, on `fix/kd44-a70-13` - see
+  "(13) - fixed 2026-10-27" at the end of this record.
 - (16) Kept by design: aud-a76's Plan (item 2) chose not to rest "nothing was written" on the pool's reading of the
   pre-flight error, so a Calendar removal retried after it, whose retry cannot connect, stays Undetermined - conservative,
   the operator rechecks. `PermissionWriteSubmission`'s remarks and `CalendarPermissionService` 88-89 say so already; nothing
@@ -362,7 +362,7 @@ Planning Rules). Recommendation: decline (10), or route it with (6) to the owner
 
 ## Known gaps
 
-- Owner calls (6) and (13), not implemented; (16) kept by design (above).
+- (6) owner YES 2026-10-26, not implemented here; (13) fixed 2026-10-27 (its own section below); (16) kept by design (above).
 - (14)'s reading of a failed command rests on the pool's own signals: an Exchange refusal whose words name a session or a
   connection is read as the session's (Undetermined - the conservative side); a session failure whose words name neither
   and is not a remoting transport failure is read as Exchange's answer (Failed, as before this fix). Labelled assumption, not
@@ -370,8 +370,8 @@ Planning Rules). Recommendation: decline (10), or route it with (6) to the owner
   `PSRemotingTransportException` (the harness models it so).
 - (14) on the bulk paths: the row's audit record is Undetermined and its message says not confirmed, but its CSV entry keeps
   the status FAILED and counts among the run's failures - the report's statuses are unchanged.
-- (15): no user or owner notification for an unconfirmed change (they say access changed) - revised by kd-44 (`kd-44.md`): they
-  now get a distinct, neutral notice that it could not be confirmed. After (12) and (14) no failure the
+- (15): no user or owner notification for an unconfirmed change (they say access changed) - kd-44 added a distinct notice to
+  them and the owner's 2026-10-27 ruling reversed it (`kd-44.md`): administrators only, as (15) left it. After (12) and (14) no failure the
   services let out reaches `ExecuteOnPrem`'s catch at the write step, so its Undetermined notification is kept for the shape
   and unproven by any test; `SubmitSingle`'s is proven (the Calendar removal whose retry cannot connect).
 - (4): the servicer note rides the same dictionary as the identity written, which the tests pin; no serviced fixture drives
@@ -462,3 +462,86 @@ the banner and the audit row do too.
 ## Reviewer comments (supervisor, perm-batch-11)
 
 Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / frontier=standard pair (grade fallback, owner 2026-08-03) [escalated: T1 *secret* test path]; codex-cli 0.163.0; base eb017102 head d609001e (merged ea565cbd); 2026-10-23 evening; capability proof succeeded (AGENTS.md read, git show --stat d609001e). Two MEDIUM candidates, admitted as kd-43 and kd-44. Codex confirmed clean: the UPN-only lookup, the dynamic-group refusal, the guarded success rows, the on-prem refusal and failure rows, Undetermined bulk filing, the completion guards and the banner collapse; MigrationService.cs is in the diff only for its result-copy helpers carrying UnconfirmedRights. Artefacts: `.agents/review/perm-batch-11.result.txt`, `.stream.log`, `prompt-perm-batch-11.md`.
+
+## (13) - fixed 2026-10-27 (implementer, branch `fix/kd44-a70-13`, from master `3f7eaa07`)
+
+Held as an owner call until the owner asked "how is ineligible a success" (`.agents/decisions.md` 2026-10-26, item 4) and
+restated the mandate on 2026-10-27 (same file, the entry above it, item 0: find and fix bugs, remove or significantly change
+no intended functionality). Under it this is a bug: `docs/UsageTelemetry-Plan.md` (the `AuditService` change, about line 343)
+specified a usage action as successful when its result is `"Success"`, and the hook was built on the trace's older
+`IsSuccessfulAuditResult`, which read every result but `"Failed"` as one.
+
+**The fix.** `Services/AuditService.cs` `IsSuccessfulAuditResult` (597 at `3f7eaa07`) is true for `"Success"` alone,
+case-insensitively as before; it is `internal` now so the tests read it. Its two callers in `WriteAuditEvent` are
+unchanged: the trace's implicit operation (523-525) and the usage count (542-545). So Ineligible, Undetermined, Cancelled
+(kd-57, the next commit), Failed and a missing result complete the implicit operation as not succeeded and count as an
+action that did not succeed. One wording change rides with it: that operation's completion message said "Audit event
+recorded failure" for every non-success, which would now call an ineligible check a failure. A Failed row keeps those words;
+any other is "Audit event recorded result <result>" (`NotSucceededMessage`).
+
+**Every result the app files** (the brief's enumeration; a grep for `"result"`, any case, through `Components`, `Services`,
+`Modules` and `Models`, and every `filedAs:` argument). An audit row's result is set only in `AuditService`'s methods, or by
+a caller through `extra` (merged last):
+- `Success` - the success of every method: `LogMailboxPermission`, `LogCalendarPermission` and `LogMigrationAction` through
+  `ResultText`; `LogMigrationBatch`, `LogModuleAction`, `LogLookupAction`, `LogMfaResetAction`, `LogConferenceRoomAction` and
+  `LogADAttributeEdit` from their bool; `LogSettingsChange` always; `LogMigrationCheck` for the status Eligible.
+- `Failed` - the failure of every method by its bool or `ResultText`; `LogSettingsChangeFailed` and
+  `LogConnectionPoolDrainFailed` always.
+- `Undetermined` - `ResultText` for `filedAs: AuditResult.Undetermined` (the permission pages and services through
+  `PermissionChangeFailure.AuditResultOf` and `FiledAs`, Migration through its `neverSent` choice); `LogMigrationCheck` for any
+  status but Eligible and Ineligible (aud-a28z part 5); and Blocked Senders' unblock whose outcome is unknown, through
+  `extra["result"]` (kd-6, `FiledUndetermined`).
+- `Ineligible` - `LogMigrationCheck` for the status Ineligible.
+- Nothing else. No other caller puts a `"result"` key in `extra`; `ConferenceRoomBulkProcessor`'s `"Result"` is a line of an
+  administrator mail, not an audit field. No module files a success under another word, so no spelling needed mapping.
+- Not audit results, so not this predicate: the trace steps' own words (`Success`, `Failed`, `Blocked`, `Serviced`,
+  `Skipped`, `Warning`). `OperationTraceService.Step` completes a standalone step's operation as succeeded for every step
+  result but "Failed" (about line 128) - the same shape, in the diagnostic trace only, with no usage count; noted, not changed.
+- The other readers of an audit result are unchanged: the Admin Event Log's filter and badge, `EventLogCsvFormatter`,
+  `ADAttributeEditorUndoService` (its own category) and the writer's dropped-row report.
+
+**aud-a28z part 5.** Its rule - an eligibility check is filed Success, Ineligible or Undetermined for what the check found -
+does not depend on this predicate: it decides the row's result, which the predicate then reads. It is kept as it is
+(`LogMigrationCheck` untouched). What part 5 also recorded - "the usage count's success flag is unchanged: any result but
+'Failed' counts as a success, Ineligible and Undetermined alike" - was a statement that it left the predicate alone, and is
+what this fix changes: an ineligible or undetermined check now counts as an action that did not succeed, and its implicit
+operation completes as not succeeded, naming the result.
+
+**Visible effect.** The Admin Event Log's Usage view counts, per module, the actions whose success flag is false in its
+"Failed" column (`UsageEventRepository.ModuleSummary`, `success = 0`), so that column now also counts an ineligible or
+undetermined eligibility check, a permission change whose outcome could not be confirmed, and (kd-57) a cancelled lookup -
+the actions that did not succeed, as the plan defined them. The audit rows, their results and the event log's Result filter
+are unchanged. Usage rows already written keep the flag they were written with.
+
+**Tests.**
+- `AuditServiceTests.OnlyTheResultSuccess_IsASuccessfulAuditResult` (9 rows): Success in three cases true; Failed,
+  Ineligible, Undetermined, Cancelled, empty and null false.
+- `AuditServiceTests.TheRowsImplicitOperation_SucceedsOnlyForARowFiledSuccess` (6 rows, the trace call site): a row of each
+  result the app files, through the method that files it, and the implicit operation's completion - Success only for the
+  Success row; Failed with "Audit event recorded failure" for the Failed row; Failed naming the result for the others.
+- `UsageTelemetryServiceTests.AuditService_CountsOnlyARowFiledSuccess_AsASuccessfulAction` (the usage call site): seven rows,
+  the success flags `true, false, false, false, false, false, true`.
+
+### (13) - guard proof
+
+Filter `FullyQualifiedName~AuditServiceTests|FullyQualifiedName~UsageTelemetryServiceTests|FullyQualifiedName~AuditWriterThrowFree|FullyQualifiedName~AuditExtraChannel|FullyQualifiedName~EventLogSectionsTarget`,
+165 tests, 165/165 on the fixed tree. Fixed-file MD5: `Services/AuditService.cs` `D1DA67D0481CBF17D665EAE032E0B251`; every
+restore matched it byte for byte.
+
+| # | Mutation | Mutant MD5 | Named tests failing |
+|---|---|---|---|
+| M13 | Ineligible counted as a success again (the brief's): `\|\| string.Equals(result, "Ineligible", ...)` | `476B24646AE1E70AC04DD89626C74A4A` | 3 of 165: `OnlyTheResultSuccess_IsASuccessfulAuditResult(result: "Ineligible", ...)`, `TheRowsImplicitOperation_SucceedsOnlyForARowFiledSuccess(filed: "an ineligible eligibility check", ...)`, `AuditService_CountsOnlyARowFiledSuccess_AsASuccessfulAction` |
+| E13a | extra: the old predicate restored (every result but Failed) | `45B12F82303C409360F953DBCFE4BBEE` | 10 of 165: the predicate's Ineligible, Undetermined, Cancelled, empty and null rows; the trace test's four non-success, non-Failed rows; the usage test |
+| E13b | extra: the completion message back to "Audit event recorded failure" for every non-success | `5470FAA3C11EDC0E0ACFE900DA514B46` | 4 of 165: the trace test's Ineligible, two Undetermined and Cancelled rows |
+| E13c | extra: the usage call site alone on the old rule (inline) | `1D0A1BA5EE92EC14F3EFF878E4B59606` | 1 of 165: `AuditService_CountsOnlyARowFiledSuccess_AsASuccessfulAction` |
+| E13d | extra: the trace call site alone on the old rule (inline) | `C34164F940121D47D46C43ECF2966992` | 4 of 165: the trace test's Ineligible, two Undetermined and Cancelled rows |
+
+Every mutant failed on its own behaviour; E13c and E13d show each call site has a test of its own.
+
+**Versions.** `AuditService` is shared infrastructure, so the base app version bump is owed by the Constitution's rule
+(Deployment And Versioning) - `<VersionPrefix>` 2.35.0 in `ExchangeAdminWeb.csproj`, not bumped here (the brief: the
+supervisor's). No module version: no module's own behaviour changed, only the shared count and trace.
+
+**Gates on this commit's tree** (2026-10-27): `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` exit 0,
+7,367 passed / 0 failed / 0 skipped; `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0;
+`git diff --check HEAD` exit 0; `tools/Test-AsciiOnly.ps1` passed. The Release build is run on the branch's final tree.

@@ -67,10 +67,12 @@ public class BlockedSenderService : ExchangeServiceBase
     /// Stopping the wait does not stop the call: the pooled pipeline runs on, and the pool returns
     /// or discards its connection when it ends, which is logged. What the caller is told depends on
     /// whether the command had been sent, settled once by <see cref="UnblockSubmission"/>: a call
-    /// abandoned before it was sent returns a failed result saying nothing was changed, and it never
-    /// sends afterwards; one abandoned after may have unblocked the sender, so it throws
-    /// <see cref="BlockedSenderUnblockUnconfirmedException"/>, which the page files Undetermined
-    /// (the aud-a73 rule: a write whose outcome is unknown is not a failure).
+    /// abandoned before it was sent never sends afterwards, and says nothing was changed - a wait that
+    /// ran out as a failed result, a cancel (kd-57) as an <see cref="OperationCanceledException"/> in
+    /// the app's phrase for one, which the page files Cancelled; one abandoned after may have
+    /// unblocked the sender, so it throws <see cref="BlockedSenderUnblockUnconfirmedException"/>,
+    /// which the page files Undetermined (the aud-a73 rule: a write whose outcome is unknown is not a
+    /// failure - and a cancel that came after the send does not make it a cancel).
     /// </para>
     /// </remarks>
     public async Task<PermissionResult> UnblockSenderAsync(string senderAddress, string reason,
@@ -114,9 +116,17 @@ public class BlockedSenderService : ExchangeServiceBase
 
             if (submission.TryAbandon())
             {
-                return PermissionResult.Fail(timedOut
-                    ? $"The unblock of {address} could not start within {DescribeBound(UnblockBound)}, so nothing was changed and the sender is still blocked. Try again."
-                    : $"The unblock of {address} was cancelled before it was sent, so nothing was changed and the sender is still blocked.");
+                // kd-57. A cancel before the send is a cancel, not a failure: thrown as one, in the app's phrase for it, for the
+                // page to file Cancelled. A wait that ran out before the send stays a failed result.
+                if (!timedOut)
+                {
+                    throw new OperationCanceledException(
+                        $"{AuditService.CancelledByTheOperator} before the unblock of {address} was sent, so nothing was changed and the sender is still blocked.",
+                        ex, cancellationToken);
+                }
+
+                return PermissionResult.Fail(
+                    $"The unblock of {address} could not start within {DescribeBound(UnblockBound)}, so nothing was changed and the sender is still blocked. Try again.");
             }
 
             throw new BlockedSenderUnblockUnconfirmedException(address,
