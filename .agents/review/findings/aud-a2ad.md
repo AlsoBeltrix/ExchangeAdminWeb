@@ -1,37 +1,63 @@
-# aud-a2ad: restore Room Finder's creation of a building's room list, with the protected-target check kept before the add
+# aud-a2ad: remove every protected-principal check the weekend added to Conference Rooms, and restore room-list creation
 
-**Severity**: HIGH-class by provenance - this row reverses the shape aud-a2ab chose and must not reopen the hole it
-closed any wider than the owner has ruled. Owner ruling 2026-10-26 (`.agents/decisions.md`): "functionality CANNOT
-change ... resolve this without removing anything or causing undue extra work." Room Finder apply creates a building's
-room list again when none exists (the behaviour before `3bfdc1af`), and kd-66's preview wording goes back to saying
-the list will be created. The created list is checked against Protected Group Targets BEFORE the room is added to it
-(the post-creation re-check aud-a2e introduced, which aud-a2ab kept as "the add's own guard"); a refused add leaves the
-new, empty list and the room's metadata as written and says so. That ordering is a scoped, owner-ruled exception,
-recorded beside Self-Service Groups and Comms-10k, pinned by a tripwire test, and stated in the Constitution's list
-of exceptions by the implementing agent (a docs edit, with a pointer to the ruling).
-**Status**: Open - approved by owner ruling 2026-10-26; the next serial slice after cons-7
-**Branch**: -
+**Severity**: HIGH-class by provenance - this row reverses weekend work under an owner ruling and must leave the module's
+pre-weekend behaviour intact while keeping the weekend's genuine fixes.
+**Owner ruling** (2026-10-26, `.agents/decisions.md`, the "later rulings" entry, item 2): "protected principals or groups
+are, ONCE AGAIN, OUT OF SCOPE FOR THIS MODULE. DO NOT BRING ME ANYTHING ABOUT PROTECTED PRINCIPALS RELATED ISSUES.
+REMOVE ALL OF THAT ILLEGALLY ADDED BULLSHIT AND LIMIT TO FIXING FUCKING ISSUES." And on room-list creation:
+"functionality CANNOT change. this is a top tier module and the stakeholders fought hard to get it where it was."
+There is NO scoped exception and NO check before the add (the earlier shape of this record is superseded).
+**Status**: Open - approved by owner ruling; the step 2 slice of the close-out plan in `.agents/state.md`
+**Branch**: `fix/a2ad` (worktree `D:\source\ExchangeAdminWeb-wt\a2ad`, from master)
 **Commit**: -
-**Reviewer**: owner ruling
+**Reviewer**: owner ruling; the one codex-commercial review at the end of the stream
 
-## Evidence
+## What goes (added since `eb017102`, the pre-weekend master)
 
-`Services/ConferenceRoomService.cs` as of `3bfdc1af`: `PreflightRoomListAsync` refuses when no list exists
-(aud-a2ab); the creation path it bypassed; `ConferenceRoomListWriteTargetTests` about 406 asserting refusal before
-`Set-Place`; `Components/Pages/ConferenceRooms.razor` about 204 (kd-66's preview wording).
+- **aud-a2e** (`ebd66b91`): the Protected Group Targets check on the room list a Room Finder row writes into -
+  `CheckRoomListTarget`, `RoomListTargetRefusal`, the missing-list and synced-list "cannot be checked" refusals, the
+  `ProtectedPrincipalService` / `ProtectedPrincipalServicerService` constructor parameters and fields on
+  `ConferenceRoomService`, the `actingUser` threading added for the servicer grant on the list, the list-as-write-target
+  identity resolution (`ResolvedDirectoryPrincipal` for the list, its Entra object id read), the bulk processor and
+  `IConferenceRoomBulkOperations` changes that carry it, the page changes in `Components/Pages/ConferenceRooms.razor`
+  that call it, and the tests that pin it (`ConferenceRoomListWriteTargetTests`, `ConferenceRoomRoomListPreflightTests`,
+  the a2e parts of `ConferenceRoomBulkProcessorTests`, `ConferenceRoomDirectoryAuditTests`,
+  `ConferenceRoomWriteIdentityTests`, `ExchangeWriteHarness`). The doc edits a2e made to
+  `docs/ProtectedGroupWriteTarget-Plan.md` and `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` go back to their
+  `eb017102` text.
+- **aud-a2z** (`170b182f`): the synced list's on-prem group must carry the list's address - this exists only to feed the
+  a2e check's identity; it goes with it (`ConferenceRoomListGroupAddressTests` with it).
+- **aud-a2ab** (`c38defa0`): the refusal of a Building whose room list does not exist. Creation comes back: the module
+  creates the building's room list when Exchange affirmatively reports none, exactly as at `eb017102`, then adds the room.
+  kd-68 (the refusal's audit fields) is superseded by this restore - close it so.
+- **kd-66** (`5798e45e`): the preview goes back to marking a missing room list "new" (it will be created); the
+  `ConferenceRoomMissingListPreviewTests` assertion that it says "refused" is reversed to assert "new", or removed.
 
-## Approach (to be written by the implementing agent before code)
+## What stays (genuine fixes, by name)
 
-- Restore creation on the missing-list path exactly as it was before aud-a2ab (`git show ebd66b91:Services/ConferenceRoomService.cs`
-  is the last shape with creation AND aud-a2e's post-creation check); keep aud-a2ac's ambiguous-lookup refusal (an
-  AMBIGUOUS or FAILED lookup still refuses before any write - only a confirmed absence proceeds to create).
-- The post-creation check before the add stays and is pinned: tripwire test asserting that a protected created list
-  is refused at the add, with the list created and the metadata written, and that the audit row says both.
-- kd-66: the preview says the list will be created, as before.
-- Constitution: add the exception to the list the Self-Service Groups and Comms-10k exceptions are in, one sentence,
-  pointing at the 2026-10-26 ruling. `.agents/repo-guidance.md` Known Failure Class 3 lists the exceptions too; add
-  it there.
-- Mutations: the post-creation check removed (the tripwire must fail); creation removed again (the restore test must fail).
+- **aud-a2ac** (`fefb3e6a`): only Exchange's affirmative "no such object" means a building has no room list; an
+  ambiguous name or a failed lookup refuses the row before any write. Creation proceeds ONLY after a confirmed absence.
+- **aud-a2aa** (`26e8cd9b`): the neutral ambiguity message.
+- **kd-52, kd-27, kd-5, kd-32** job-control audit and re-authorization; **kd-29, aud-a2y** refusal rows and
+  "nothing was written" wording; **kd-28** room type by name; **kd-7** blank-ticket refusal on the four writes.
+- **The July 2026 room-mailbox protection gate** (`Services/ConferenceRoomProtectionGate.cs`, `2a97d097`) is
+  pre-weekend, decided behaviour: not touched.
+
+## Approach (the implementing agent writes its plan here before code, then executes)
+
+- Start from `git diff eb017102 master -- Services/ConferenceRoomService.cs Components/Pages/ConferenceRooms.razor
+  Services/Jobs/ConferenceRoomBulkProcessor.cs Services/Jobs/IConferenceRoomBulkOperations.cs Models/ConferenceRoomModels.cs`
+  and classify every hunk as a2e/a2z/a2ab/kd-66 (goes) or one of the keeps (stays). Record the classification here.
+- Remove by hand, hunk by hunk; do not `git checkout eb017102 --` any file, because every file also carries keeps.
+- Prove the restore: a test that a confirmed-missing list is created and the room added (the pre-weekend
+  `ConferenceRoomWriteIdentityTests` shape), and that no protected-principal service is consulted on the list path
+  (the stand-in records no call). Mutation: creation removed again - the restore test must fail.
+- Re-anchor `ClickGateRegistry` / `ProgressRegistry` entries for `ConferenceRooms.razor` per
+  `.agents/playbooks/clickgate-reanchor.md` if line counts move.
+- Bump the Conference Rooms module version once in `Modules/ModuleCatalog.cs`; replace the a2e/a2z/a2ab/kd-66 note
+  lines with one note naming this row and the ruling.
+- Gates: Release build (0 errors), full `dotnet test ExchangeAdminWeb.slnx`, `dotnet format --verify-no-changes`,
+  `git diff --check HEAD`, `tools/Test-AsciiOnly.ps1`. ONE compile at a time on this host.
 
 ## Guard proof
 
