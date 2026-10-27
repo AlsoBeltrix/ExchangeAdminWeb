@@ -9,7 +9,7 @@ again before that wait ends, a second B load takes a newer generation. The older
 generation. The newer B load then resumes, sees `requested == loadedModuleId` and returns at the no-op. Nothing
 reaches `module = next; LoadState()`. This is precisely the "a live load abandoned with nothing to finish the page"
 case cons-6's counter placement was meant to avoid.
-**Status**: Verified on branch; awaiting merge
+**Status**: Merged to master at `0769536e` (2026-10-26); awaiting the single final codex-commercial review
 **Branch**: `fix/a64-a67` (from `eb017102`)
 **Commit**: the `fix(cons-7)` commit on `fix/a64-a67`, the first after `bcaabba7`
 **Reviewer**: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 554ad4da head bcaabba7 (merged d28c0d25); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat bcaabba7)
