@@ -445,7 +445,10 @@ public sealed class ModuleCatalog
             // a denied bulk run's audit row carries its count and only its first fifty names (kd-36).
             // 1.26.0: both create refusals judge the ticket by the shared TicketPresence rule, so one
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.26.0",
+            // 1.26.1: both eligibility checks and both creates act on and record the address or file, direction,
+            // ticket, batch name and auto choices submitted - read above their first await - and a second click
+            // while the page is busy is ignored (kd-72).
+            Version = "1.26.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

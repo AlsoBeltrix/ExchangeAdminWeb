@@ -1959,8 +1959,19 @@
 
     private async Task CheckSingleEligibility()
     {
+        // kd-72. A second click while the page is busy is ignored, not run beside it: Check is disabled on IsBusy,
+        // but the browser's copy of that is one round trip stale.
+        if (IsBusy)
+            return;
         if (string.IsNullOrWhiteSpace(singleEmail))
             return;
+
+        // kd-72. What this check asks about and records, read once, above the yield below. The address, direction
+        // and ticket were read after it - into the check, its audit row, the notice and the catch - and their
+        // controls reach the browser's disabled state a round trip late.
+        var email = singleEmail;
+        var direction = singleMigrationDirection;
+        var ticket = singleTicketNumber;
 
         isLoading = true;
         singleResult = null;
@@ -1973,7 +1984,7 @@
         string? checkFailure = null; // aud-a23i: why the check reached no answer, for its activity; an answer, either way, is a check that succeeded
         try
         {
-            singleResult = await MigrationSvc.CheckMigrationEligibilityAsync(singleEmail.Trim(), singleMigrationDirection);
+            singleResult = await MigrationSvc.CheckMigrationEligibilityAsync(email.Trim(), direction);
             checkFailure = singleResult.Status == MigrationStatus.Undetermined ? string.Join("; ", singleResult.IneligibilityReasons) : null;
             var ipAddress = clientIpAddress;
 
@@ -1985,27 +1996,27 @@
                 var protectedNote = $"PROTECTED PRINCIPAL — escalate (not migrated){(string.IsNullOrWhiteSpace(singleResult.ProtectionNote) ? "" : $": {singleResult.ProtectionNote}")}";
                 checkDetail = string.IsNullOrWhiteSpace(checkDetail) ? protectedNote : $"{checkDetail}; {protectedNote}";
             }
-            try { Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
-                singleTicketNumber, checkDetail); }
-            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the audit is its own step - a throw from it reached the check's catch and replaced the verdict
+            try { Audit.LogMigrationCheck(currentUser, ipAddress, email, singleResult.Status.ToString(),
+                ticket, checkDetail); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", email); } // aud-a23m: the audit is its own step - a throw from it reached the check's catch and replaced the verdict
 
             try { await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"CheckMigrationEligibility_{singleMigrationDirection}", singleEmail, "N/A",
-                singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, singleTicketNumber,
+                currentUser, ipAddress, $"CheckMigrationEligibility_{direction}", email, "N/A",
+                singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, ticket,
                 checkDetail); }
-            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: so is the notification (Constitution: its failure must not change or mask the result)
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for the Migration eligibility check of {Email}", email); } // aud-a23m: so is the notification (Constitution: its failure must not change or mask the result)
         }
         catch (Exception ex)
         {
             singleResult = new MigrationEligibilityResult
             {
-                EmailAddress = singleEmail,
+                EmailAddress = email,
                 Status = MigrationStatus.Undetermined // aud-a23h: a throw before the service returned is no verdict either
             };
             singleResult.IneligibilityReasons.Add($"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}"); // kd-34: the error's own words (aud-a23i's helper) - a sign-in that fails under Stop arrives as PowerShell's Stop exception, "The running command stopped because ..." in front
             checkFailure = $"Could not be determined: {ExchangeServiceBase.ResolveFailure(ex).primary}";
-            try { Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
-                "Error", singleTicketNumber, ExchangeServiceBase.ResolveFailure(ex).primary); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", singleEmail); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
+            try { Audit.LogMigrationCheck(currentUser, clientIpAddress, email.Trim(),
+                "Error", ticket, ExchangeServiceBase.ResolveFailure(ex).primary); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Migration eligibility check of {Email}", email); } // aud-a23m: the catch's own audit guarded too, so nothing escapes the handler
         }
         finally
         {
@@ -2016,6 +2027,21 @@
 
     private async Task CreateSingleMigrationBatch()
     {
+        // kd-72. A second click while the page is busy is ignored, not run beside it: Create is disabled on IsBusy,
+        // but the browser's copy of that is one round trip stale.
+        if (IsBusy)
+            return;
+
+        // kd-72. What this create writes and records, read once, above the first await. The direction, ticket,
+        // batch name and auto-start and auto-complete choices were read after the authorization re-check and the
+        // yield - into the batch, its audit rows and the notice - and the direction select and the ticket box are
+        // not disabled while a create runs, so a change landing there created a batch nobody submitted.
+        var direction = singleMigrationDirection;
+        var ticket = singleTicketNumber;
+        var batchName = singleBatchName;
+        var autoStart = singleAutoStart;
+        var autoComplete = singleAutoComplete;
+
         // Set before the first await, not after the authorization round-trip. Until the flag is
         // set the page's busy predicate reads false, so the circuit stays interactive across the
         // authorization await and the operator can click this again, or anything else. The
@@ -2031,19 +2057,19 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{singleMigrationDirection}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", singleTicketNumber, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
+                { singleCreateResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{direction}", "create a migration batch", singleResult?.EmailAddress ?? "(no eligibility check)", ticket, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            if (MigrationService.RefusesSingleCreate(singleResult, singleTicketNumber, out var singleRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
+            if (MigrationService.RefusesSingleCreate(singleResult, ticket, out var singleRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
                 { singleCreateResult = PermissionResult.Fail(createFailure = singleRefusal); return; }
 
             await Task.Yield();
 
-            var finalBatchName = string.IsNullOrWhiteSpace(singleBatchName)
+            var finalBatchName = string.IsNullOrWhiteSpace(batchName)
                 ? singleResult.EmailAddress
-                : singleBatchName.Trim();
+                : batchName.Trim();
 
             singleCreateResult = await MigrationSvc.CreateMigrationBatchAsync(
-                singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete, authState.User);
+                direction, new List<string> { singleResult.EmailAddress }, finalBatchName, autoStart, autoComplete, authState.User);
             createFailure = singleCreateResult.Success ? null : singleCreateResult.Message; // aud-a23m: set where the outcome is known, so no later await can change it
             var ipAddress = clientIpAddress;
             var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
@@ -2053,16 +2079,16 @@
             {
                 // A serviced override succeeded, so it cannot ride errorDetail - that field is
                 // written as null on success and the record of who permitted it would vanish.
-                Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
-                    singleCreatedCount, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message,
+                Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, direction.ToString(),
+                    singleCreatedCount, autoStart, autoComplete, ticket, singleCreateResult.Success, singleCreateResult.Message,
                     ProtectedPrincipalServicing.Extra(singleCreateResult.ServicedNote));
 
                 // Audit every protected-principal exclusion as its own denial row, never silent.
                 foreach (var excluded in singleExcluded)
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
-                        $"CreateMigrationBatch_{singleMigrationDirection}_ProtectedExclusion", excluded,
-                        false, singleTicketNumber, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
+                        $"CreateMigrationBatch_{direction}_ProtectedExclusion", excluded,
+                        false, ticket, singleCreateResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
                 }
             }
             catch (Exception ex)
@@ -2074,10 +2100,10 @@
                 ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(singleExcluded, singleCreateResult.UnverifiedTargets)} {string.Join("; ", singleExcluded)}" // aud-a23p: each kind of exclusion counted apart
                 : "";
             try { await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
-                singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}{singleExclusionNote}",
-                singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message); }
-            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", singleMigrationDirection, finalBatchName); } // aud-a23m: a notification that threw reached the catch below and replaced the created batch's result
+                currentUser, ipAddress, $"CreateMigrationBatch_{direction}", finalBatchName,
+                singleResult.EmailAddress, $"AutoStart:{autoStart} AutoComplete:{autoComplete}{singleExclusionNote}",
+                singleCreateResult.Success, ticket, singleCreateResult.Success ? null : singleCreateResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", direction, finalBatchName); } // aud-a23m: a notification that threw reached the catch below and replaced the created batch's result
         }
         catch (Exception ex)
         {
@@ -2100,8 +2126,17 @@
 
     private async Task CheckBulkEligibility()
     {
+        // kd-72. A second click while the page is busy is ignored, as in CheckSingleEligibility.
+        if (IsBusy)
+            return;
         if (csvFile == null)
             return;
+
+        // kd-72. What this check reads and records, read once, above the yield below: the file, the direction
+        // and the ticket were read after it, into the check, its audit rows and the notice.
+        var file = csvFile;
+        var direction = migrationDirection;
+        var ticket = bulkTicketNumber;
 
         isLoading = true;
         bulkResult = null;
@@ -2114,24 +2149,24 @@
         string? bulkFailure = null; // aud-a23i: why the run failed, or how many rows reached no answer, for its activity
         try
         {
-            await using var stream = csvFile.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            await using var stream = file.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
             await using var memoryStream = new MemoryStream();
             await stream.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
 
-            bulkResult = await MigrationSvc.CheckBulkMigrationEligibilityAsync(memoryStream, migrationDirection);
+            bulkResult = await MigrationSvc.CheckBulkMigrationEligibilityAsync(memoryStream, direction);
             bulkFailure = bulkResult.UndeterminedUsers > 0 ? $"{bulkResult.UndeterminedUsers} of {bulkResult.TotalUsers} eligibility checks could not be determined" : null;
             var ipAddress = clientIpAddress;
 
             Audit.LogMigrationAction(currentUser, ipAddress,
-                $"BulkEligibilityCheck_{migrationDirection}", csvFile.Name, true, bulkTicketNumber,
+                $"BulkEligibilityCheck_{direction}", file.Name, true, ticket,
                 $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible");
 
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{migrationDirection}", "Bulk Operation", csvFile.Name,
-                    $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible", true, bulkTicketNumber, null);
+                    currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{direction}", "Bulk Operation", file.Name,
+                    $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible", true, ticket, null);
             }
             catch (Exception ex)
             {
@@ -2145,11 +2180,11 @@
                 BatchName = "Error",
                 Success = false,
                 Message = ExchangeServiceBase.ResolveFailure(ex).primary, // kd-34: the error's own words (aud-a23i's helper), not PowerShell's Stop prefix
-                Direction = migrationDirection
+                Direction = direction
             };
             bulkFailure = $"The bulk eligibility check failed: {ExchangeServiceBase.ResolveFailure(ex).primary}";
             Audit.LogMigrationAction(currentUser, clientIpAddress,
-                $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ExchangeServiceBase.ResolveFailure(ex).primary);
+                $"BulkEligibilityCheck_{direction}", file?.Name ?? "Unknown", false, ticket, ExchangeServiceBase.ResolveFailure(ex).primary);
         }
         finally
         {
@@ -2160,6 +2195,18 @@
 
     private async Task CreateMigrationBatch()
     {
+        // kd-72. A second click while the page is busy is ignored, as in CreateSingleMigrationBatch.
+        if (IsBusy)
+            return;
+
+        // kd-72. What this create writes and records, read once, above the first await, as in
+        // CreateSingleMigrationBatch: the direction select and the ticket box are not disabled while a create runs.
+        var direction = migrationDirection;
+        var ticket = bulkTicketNumber;
+        var batchName = bulkBatchName;
+        var autoStart = bulkAutoStart;
+        var autoComplete = bulkAutoComplete;
+
         // Set before the first await - see CreateSingleMigrationBatch for why.
         isCreating = true;
         createResult = null;
@@ -2172,9 +2219,9 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{migrationDirection}", "create a migration batch", string.IsNullOrWhiteSpace(bulkBatchName) ? "(bulk batch)" : bulkBatchName.Trim(), bulkTicketNumber, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
+                { createResult = PermissionResult.Fail(createFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, $"CreateMigrationBatch_{direction}", "create a migration batch", string.IsNullOrWhiteSpace(batchName) ? "(bulk batch)" : batchName.Trim(), ticket, "MigrationCreate")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
 
-            if (MigrationService.RefusesBulkCreate(bulkResult, bulkTicketNumber, out var bulkRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
+            if (MigrationService.RefusesBulkCreate(bulkResult, ticket, out var bulkRefusal)) // aud-a23q: a guard return says why nothing was created; it said nothing
                 { createResult = PermissionResult.Fail(createFailure = bulkRefusal); return; }
 
             await Task.Yield();
@@ -2184,12 +2231,12 @@
                 .Select(r => r.EmailAddress)
                 .ToList();
 
-            var finalBatchName = string.IsNullOrWhiteSpace(bulkBatchName)
-                ? $"{DateTime.Now:yyyy-MM-dd}_{(migrationDirection == MigrationDirection.ToCloud ? "Move" : "MoveBack")}"
-                : bulkBatchName.Trim();
+            var finalBatchName = string.IsNullOrWhiteSpace(batchName)
+                ? $"{DateTime.Now:yyyy-MM-dd}_{(direction == MigrationDirection.ToCloud ? "Move" : "MoveBack")}"
+                : batchName.Trim();
 
             createResult = await MigrationSvc.CreateMigrationBatchAsync(
-                migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete, authState.User);
+                direction, eligibleEmails, finalBatchName, autoStart, autoComplete, authState.User);
             createFailure = createResult.Success ? null : createResult.Message; // aud-a23m: the same
             var ipAddress = clientIpAddress;
             var bulkExcluded = createResult.ExcludedTargets ?? Array.Empty<string>();
@@ -2199,16 +2246,16 @@
             {
                 // A serviced override succeeded, so it cannot ride errorDetail - that field is
                 // written as null on success and the record of who permitted it would vanish.
-                Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, migrationDirection.ToString(),
-                    createdCount, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message,
+                Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, direction.ToString(),
+                    createdCount, autoStart, autoComplete, ticket, createResult.Success, createResult.Message,
                     ProtectedPrincipalServicing.Extra(createResult.ServicedNote));
 
                 // Audit every protected-principal exclusion as its own denial row, never silent.
                 foreach (var excluded in bulkExcluded)
                 {
                     Audit.LogMigrationAction(currentUser, ipAddress,
-                        $"CreateMigrationBatch_{migrationDirection}_ProtectedExclusion", excluded,
-                        false, bulkTicketNumber, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
+                        $"CreateMigrationBatch_{direction}_ProtectedExclusion", excluded,
+                        false, ticket, createResult.UnverifiedTargets?.Contains(excluded) == true ? "Excluded - could not be verified as unprotected, not migrated" : "Excluded — protected principal, not migrated"); // aud-a23p: an entry whose protection check did not answer is filed as such, not as a protected principal
                 }
             }
             catch (Exception ex)
@@ -2220,10 +2267,10 @@
                 ? $" | EXCLUDED (not migrated): {MigrationService.ExclusionSummary(bulkExcluded, createResult.UnverifiedTargets)} {string.Join("; ", bulkExcluded)}" // aud-a23p: each kind of exclusion counted apart
                 : "";
             try { await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
-                $"{createdCount} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}{bulkExclusionNote}",
-                createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message); }
-            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", migrationDirection, finalBatchName); } // aud-a23m: the same for the bulk create
+                currentUser, ipAddress, $"CreateMigrationBatch_{direction}", finalBatchName,
+                $"{createdCount} users", $"AutoStart:{autoStart} AutoComplete:{autoComplete}{bulkExclusionNote}",
+                createResult.Success, ticket, createResult.Success ? null : createResult.Message); }
+            catch (Exception notifyEx) { Logger.LogWarning(notifyEx, "Failed to send admin notification for CreateMigrationBatch_{Direction} on {Batch}", direction, finalBatchName); } // aud-a23m: the same for the bulk create
         }
         catch (Exception ex)
         {
