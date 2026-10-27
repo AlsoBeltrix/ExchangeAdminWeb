@@ -119,11 +119,12 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// <summary>
     /// Mailbox Permissions' <c>SubmitSingle</c> over a Full Access grant to the alias - or to <paramref name="grantee"/>, on
     /// <paramref name="target"/> - with the mail and the progress service a test gives (aud-a53, aud-a59), and the pool the
-    /// page's own service borrows from, the harness's unless a test gives one (aud-a71).
+    /// page's own service borrows from, the harness's unless a test gives one (aud-a71) - or the removal of that right, when
+    /// <paramref name="removal"/> says so (aud-a70 (6)).
     /// </summary>
     private async Task<PermissionResult> SubmitMailboxGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
         string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
-        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false)
+        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false, bool removal = false)
     {
         var page = new MailboxPermissions();
         Wire(page, resolver, audit, logger, email, progress);
@@ -134,6 +135,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         if (target is not null) SetField(page, "targetMailbox", target);
         if (ticket is not null) SetField(page, "ticketNumber", ticket);
         if (reauthorizationDenied) DenyThePage(page, MailboxPage);
+        if (removal) SetField(page, "tabIndex", 1);
 
         await Call(page, "SubmitSingle");
 
@@ -144,7 +146,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// <summary>Calendar Permissions' <c>SubmitSingle</c> over a Reviewer grant, as <see cref="SubmitMailboxGrant"/>.</summary>
     private async Task<PermissionResult> SubmitCalendarGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
         string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
-        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false)
+        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false, bool removal = false)
     {
         var page = new CalendarPermissions();
         Wire(page, resolver, audit, logger, email, progress);
@@ -154,6 +156,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         if (target is not null) SetField(page, "targetMailbox", target);
         if (ticket is not null) SetField(page, "ticketNumber", ticket);
         if (reauthorizationDenied) DenyThePage(page, CalendarPage);
+        if (removal) SetField(page, "tabIndex", 1);
 
         await Call(page, "SubmitSingle");
 
@@ -321,12 +324,13 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// What the operator's Continue reaches: <paramref name="page"/>'s <c>ExecuteOnPrem</c>, over a staged Full Access
     /// (Mailbox Permissions) or Reviewer (Calendar Permissions) grant to <paramref name="grantee"/>; the result and the
     /// warnings the page logged; the mail service a test gives (aud-a53); the staged target a test gives, and an exception the
-    /// on-premises permission check throws (aud-a59); an exception the write's on-premises connect throws (aud-a75).
+    /// on-premises permission check throws (aud-a59); an exception the write's on-premises connect throws (aud-a75); the
+    /// removal of that right in place of its grant, when <paramref name="removal"/> says so (aud-a70 (6)).
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> ConfirmOnPrem(
         string page, string grantee, IIdentityResolver resolver, AuditService audit, EmailService? email = null,
         string target = Target, Exception? onPremAuthorization = null, Exception? onPremConnect = null, bool onPremDenied = false,
-        IActivityProgress? progress = null)
+        IActivityProgress? progress = null, bool removal = false)
     {
         ComponentBase component;
         Func<IReadOnlyList<(string Message, Exception? Exception)>> warnings;
@@ -350,6 +354,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             warnings = () => logger.Warnings;
         }
         Stage(component, grantee, target);
+        if (removal) SetField(component, "tabIndex", 1);
         if (onPremAuthorization is not null || onPremDenied)
         {
             // aud-a70 (5): or the operator is not permitted to change on-premises permissions.
@@ -477,22 +482,22 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
     /// <summary>
     /// <paramref name="page"/>'s <c>SubmitSingle</c> over a Full Access or Reviewer grant to the alias, or to
-    /// <paramref name="grantee"/> on <paramref name="target"/>, the page's service over <paramref name="pool"/> when given;
-    /// the result and the page's warnings.
+    /// <paramref name="grantee"/> on <paramref name="target"/>, the page's service over <paramref name="pool"/> when given -
+    /// or the removal of that right, when <paramref name="removal"/> says so; the result and the page's warnings.
     /// </summary>
     private async Task<(PermissionResult Result, IReadOnlyList<(string Message, Exception? Exception)> Warnings)> Submit(
         string page, IIdentityResolver resolver, AuditService audit, string? grantee = null, EmailService? email = null,
         IActivityProgress? progress = null, string? target = null, ExoConnectionPool? pool = null, string? ticket = null,
-        bool reauthorizationDenied = false)
+        bool reauthorizationDenied = false, bool removal = false)
     {
         if (page == MailboxPage)
         {
             var logger = new CapturingLogger<MailboxPermissions>();
-            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target, pool, ticket, reauthorizationDenied), logger.Warnings);
+            return (await SubmitMailboxGrant(resolver, audit, logger, grantee, email, progress, target, pool, ticket, reauthorizationDenied, removal), logger.Warnings);
         }
 
         var calendarLogger = new CapturingLogger<CalendarPermissions>();
-        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target, pool, ticket, reauthorizationDenied), calendarLogger.Warnings);
+        return (await SubmitCalendarGrant(resolver, audit, calendarLogger, grantee, email, progress, target, pool, ticket, reauthorizationDenied, removal), calendarLogger.Warnings);
     }
 
     [Theory]
@@ -1905,6 +1910,142 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (message, exception) = Assert.Single(warnings);
         Assert.Same(failure, exception);
         Assert.Contains("could not be completed", message, StringComparison.Ordinal);
+    }
+
+    // ---- aud-a70 (6): every grant is refused while the directory-read credential cannot be had ---------------------------
+
+    private const string Delegates = "delegates@contoso.test";
+
+    /// <summary>aud-a70 (6): the pages this is pinned on.</summary>
+    private static readonly string[] CredentialPages = [MailboxPage, CalendarPage];
+
+    /// <summary>
+    /// Each page, each way the credential cannot be had (<see cref="ExchangeWriteHarness.DirectoryReadCredentialsWithheld"/>)
+    /// and each kind of grantee Exchange names: a person, or a group.
+    /// </summary>
+    public static TheoryData<string, string, string> GrantsWithoutTheCredential
+    {
+        get
+        {
+            var data = new TheoryData<string, string, string>();
+            foreach (var page in CredentialPages)
+                foreach (var shape in ExchangeWriteHarness.DirectoryReadCredentialsWithheld)
+                    foreach (var grantee in new[] { "a person", "a group" })
+                        data.Add(page, shape, grantee);
+            return data;
+        }
+    }
+
+    /// <summary>Each page and each way the credential cannot be had.</summary>
+    public static TheoryData<string, string> PagesWithoutTheCredential
+    {
+        get
+        {
+            var data = new TheoryData<string, string>();
+            foreach (var page in CredentialPages)
+                foreach (var shape in ExchangeWriteHarness.DirectoryReadCredentialsWithheld)
+                    data.Add(page, shape);
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Exchange knows the operator as <see cref="ExchangeNamesTheAliasAsTheOperator"/> does, names <see cref="Other"/> as a
+    /// person and <see cref="Delegates"/> as a group; the forest holds the group too.
+    /// </summary>
+    private IIdentityResolver ExchangeNamesAPersonAndAGroup()
+    {
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates);
+        var resolver = ExchangeNamesTheAliasAsTheOperator();
+        resolver.ResolveRecipientAsync(Other).Returns(new ResolvedRecipient(Other, "ext-other", "UserMailbox", ExistsOnPrem: true, ExchangeGuid: Guid.NewGuid()));
+        resolver.ResolveRecipientAsync(Delegates).Returns(new ResolvedRecipient(Delegates, "ext-delegates", "MailUniversalSecurityGroup", ExistsOnPrem: true));
+        return resolver;
+    }
+
+    /// <summary>The grantee a test names - "a person" or "a group" - and the check's refusal of a grant to it without the credential.</summary>
+    private static (string Grantee, string Refusal) WithoutTheCredential(string grantee, string problem) => grantee == "a group"
+        ? (Delegates, $"Access denied: The self-grant check could not be completed: whether you are a member of the group '{Delegates}' could not be read: {problem}; nothing was written. Contact your administrator.")
+        : (Other, $"Access denied: The self-grant check could not be completed: the on-premises directory could not resolve '{Other}': {problem}; nothing was written. Contact your administrator.");
+
+    [Theory]
+    [MemberData(nameof(GrantsWithoutTheCredential))]
+    public async Task ASingleGrant_WithoutTheDirectoryReadCredential_IsRefusedNamingIt_RecordedAsTheChecksRefusal(string page, string shape, string grantee)
+    {
+        // aud-a70 (6), owner ruling 2026-10-26. A grant to a person Exchange names went ahead without the credential, its
+        // grantee looked up as the session; one to a group was refused. Every grant is refused now, as the group's always was:
+        // the check's refusal naming the credential's problem, recorded as the self-grant check's refusal, nothing written.
+        var problem = _h.WithholdDirectoryReadCredential(shape);
+        var (who, refusal) = WithoutTheCredential(grantee, problem);
+
+        var (result, warnings) = await Submit(page, ExchangeNamesAPersonAndAGroup(), _h.Audit, grantee: who);
+
+        Assert.False(result.Success);
+        Assert.Equal(refusal, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttempt" : "SetCalendar_SelfGrantAttempt", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(refusal, Text(record, "error"));
+        Assert.Equal(who, Text(record, "affectedUser"));
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, _h.Connects);
+        Assert.Empty(warnings);
+    }
+
+    [Theory]
+    [MemberData(nameof(GrantsWithoutTheCredential))]
+    public async Task TheOnPremReCheck_WithoutTheDirectoryReadCredential_RefusesTheGrant_BeforeAnythingIsSent(string page, string shape, string grantee)
+    {
+        // aud-a70 (6). The re-check right before the on-premises write is the same check: had the credential become impossible to
+        // have while the operator confirmed, the grant is refused there - the banner says the check had passed before - and
+        // nothing is sent.
+        var problem = _h.WithholdDirectoryReadCredential(shape);
+        var (who, refusal) = WithoutTheCredential(grantee, problem);
+
+        var (result, warnings) = await ConfirmOnPrem(page, who, ExchangeNamesAPersonAndAGroup(), _h.Audit);
+
+        Assert.False(result.Success);
+        Assert.Equal(refusal + " The same check had passed before you confirmed; made again right before the write, it refused.", result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttemptAtWrite" : "SetCalendar_SelfGrantAttemptAtWrite", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(refusal, Text(record, "error"));
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+        Assert.Empty(_h.Writes);
+        Assert.Empty(warnings);
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesWithoutTheCredential))]
+    public async Task ASingleRemoval_WithoutTheDirectoryReadCredential_IsWritten_TheSelfGrantCheckNotAsked(string page, string shape)
+    {
+        // aud-a70 (6). A removal grants no one anything: the page asks the self-grant check for a grant alone, so a removal needs
+        // no credential and is written as before.
+        _h.WithholdDirectoryReadCredential(shape);
+
+        var (result, _) = await Submit(page, ExchangeNamesAPersonAndAGroup(), _h.Audit, grantee: Other, removal: true);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(page == MailboxPage ? "Remove-MailboxPermission" : "Remove-MailboxFolderPermission", Assert.Single(_h.Writes));
+        Assert.Equal(page == MailboxPage ? "RemoveFullAccess" : "RemoveCalendar", Text(Assert.Single(_h.AuditRows()), "action"));
+        Assert.Equal(0, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Calls);
+    }
+
+    [Theory]
+    [MemberData(nameof(PagesWithoutTheCredential))]
+    public async Task AnOnPremRemoval_WithoutTheDirectoryReadCredential_IsWritten_TheSelfGrantCheckNotAsked(string page, string shape)
+    {
+        // aud-a70 (6). Nor does the on-premises write ask it of a removal.
+        _h.WithholdDirectoryReadCredential(shape);
+
+        var (result, _) = await ConfirmOnPrem(page, Other, ExchangeNamesAPersonAndAGroup(), _h.Audit, removal: true);
+
+        Assert.True(result.Success, result.Message);
+        Assert.NotEmpty(_h.CallsTo("Invoke-Command"));
+        Assert.Equal(page == MailboxPage ? "Remove-MailboxPermission" : "Remove-MailboxFolderPermission", Assert.Single(_h.Writes));
+        Assert.Equal(page == MailboxPage ? "OnPrem_RemoveFullAccess" : "OnPrem_RemoveCalendar", Text(Assert.Single(_h.AuditRows()), "action"));
+        Assert.Equal(0, _h.DirectoryReadFetches);
+        Assert.Empty(_h.Forest.Calls);
     }
 
     /// <summary>Keeps every warning a page logs, with its exception.</summary>

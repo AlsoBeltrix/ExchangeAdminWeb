@@ -36,22 +36,27 @@ public class SelfGrantDocumentationTests
     [Fact]
     public void TheReadme_SaysTheCheckNeedsTheDirectoryReadCredential_AndWhatItRefusesWithoutIt()
     {
-        // aud-a70 (2): since aud-a60 and aud-a69 a grant to a group, or to a grantee only the directory holds, needs it.
+        // aud-a70 (2): since aud-a60 and aud-a69 a grant to a group, or to a grantee only the directory holds, needed it.
+        // aud-a70 (6): every grant does, and the README said a grant to a person Exchange names still went ahead.
         var section = ReadmeSelfGrantSection();
 
         Assert.Contains("**Needs the Directory Read Credential** (Admin Settings, Protected principals)", section, StringComparison.Ordinal);
-        Assert.Contains("Without it, a grant to a group the on-premises directory holds, or to a grantee only that directory holds, is refused as incomplete, naming the setting", section, StringComparison.Ordinal);
+        Assert.Contains("While the check is on (Prevent Self-Grant, the default), every grant needs it: without it, every grant is refused as incomplete, naming the setting - to a person or to a group, whichever directory holds the grantee - and nothing is written.", section, StringComparison.Ordinal);
+        Assert.Contains("A removal is not checked and does not need it.", section, StringComparison.Ordinal);
         Assert.Contains("With it configured, each check fetches it once", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("still goes ahead", section, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AdminSettings_SaysTheDirectoryReadCredentialIsWhatPermissionGrantsToGroupsNeed()
+    public void AdminSettings_SaysEveryPermissionGrantNeedsTheDirectoryReadCredential()
     {
-        // aud-a70 (3): the credential's placeholder and hint named the protected-principal rules only.
+        // aud-a70 (3): the credential's placeholder and hint named the protected-principal rules only. aud-a70 (6): they named
+        // grants to groups and to grantees only the directory holds; every grant needs it.
         var page = OneSpaced(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminSettings.razor")));
 
-        Assert.Contains("placeholder=\"Required for group and OU rules, and for permission grants to groups\"", page, StringComparison.Ordinal);
-        Assert.Contains("Mailbox Permissions and Calendar Permissions also need it to grant to a group, or to a grantee only the on-premises directory holds: without it such a grant is refused.", page, StringComparison.Ordinal);
+        Assert.Contains("placeholder=\"Required for group and OU rules, and for every permission grant\"", page, StringComparison.Ordinal);
+        Assert.Contains("While Prevent Self-Grant is on, Mailbox Permissions and Calendar Permissions also need it for every grant: without it every grant is refused. A removal does not need it.", page, StringComparison.Ordinal);
         Assert.DoesNotContain("Required when groups or OUs are configured", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("also need it to grant to a group", page, StringComparison.Ordinal);
     }
 }

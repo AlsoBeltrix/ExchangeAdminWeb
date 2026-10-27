@@ -291,6 +291,95 @@ public sealed class PermissionPagesCancellationTests : IDisposable
         Assert.Equal(Failure, Text(record, "error"));
     }
 
+    // ---- aud-a70 (6): the operator's cancel and the self-grant check's credential -----------------------------------------
+
+    /// <summary>aud-a70 (6): the pages this is pinned on.</summary>
+    public static TheoryData<string> CredentialPages => [MailboxPage, CalendarPage];
+
+    /// <summary>
+    /// <paramref name="component"/>'s validator over an Exchange that names <see cref="Other"/> as a person - so the grant needs
+    /// the directory-read credential (aud-a70 (6)) - whose credential fetch says it was asked (<paramref name="asked"/>), then
+    /// answers as <paramref name="answer"/> does when it completes.
+    /// </summary>
+    private void CheckCredentialAnswersWith(ComponentBase component, TaskCompletionSource asked,
+        Task<(string username, string password, string domain)?> answer)
+    {
+        var resolver = ExchangeKnowsTheTargetAndTheOperator();
+        resolver.ResolveRecipientAsync(Other).Returns(
+            new ResolvedRecipient(Other, "ext-other", "UserMailbox", ExistsOnPrem: true, ExchangeGuid: Guid.NewGuid()));
+        var validator = _h.NothingProtectedValidator(resolver);
+        validator.DirectoryReadSecretFetch = _ =>
+        {
+            asked.TrySetResult();
+            return answer;
+        };
+        Set(component, "Validator", validator);
+    }
+
+    // The self-grant check's credential fetch is handed no token, so the operator's cancel is not seen there: the credential
+    // arrives, the check passes, and the cancel stops the change at the write's own credential fetch, which runs next - filed
+    // Cancelled, nothing sent, as kd-59 files it. Every grant now needs the check's credential (aud-a70 (6)); its refusal does
+    // not take the cancel's place.
+    [Theory]
+    [MemberData(nameof(CredentialPages))]
+    public async Task ACancelWhileTheSelfGrantCheckHasItsCredentialFetched_IsFiledCancelled_NotTheCredentialRefusal(string page)
+    {
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var component = PageFor(page, progress);
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = new TaskCompletionSource<(string username, string password, string domain)?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CheckCredentialAnswersWith(component, asked, answer.Task);
+
+        var run = ExecuteOnPrem(component);
+        await asked.Task.WaitAsync(Bound, TestContext.Current.CancellationToken);
+        await cancel.CancelAsync();
+        answer.SetResult(("svc-dirread", "stand-in-secret", "CONTOSO"));
+        await run.WaitAsync(Bound, TestContext.Current.CancellationToken);
+
+        const string Cancelled = "Cancelled by the operator before the change was sent. Nothing was written.";
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+        Assert.Empty(_h.Writes);
+        Assert.Equal(0, Credentials(page).SecretRequests); // the write's vault request never went out: its token was cancelled
+        var result = Assert.IsType<PermissionResult>(GetField(component, "result"));
+        Assert.Equal(Cancelled, result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(OnPremAction(page, grant: true), Text(record, "action"));
+        Assert.Equal("Cancelled", Text(record, "result"));
+        Assert.Equal(Cancelled, Text(record, "error"));
+    }
+
+    // kd-59's rule from the other side: the check's fetch fails for a reason of its own while the operator happens to cancel,
+    // and that failure is the answer - the grant refused, naming the credential's problem, filed Failed. Only a cancellation
+    // that stopped the change is the operator's cancel, and none reached that fetch.
+    [Theory]
+    [MemberData(nameof(CredentialPages))]
+    public async Task TheSelfGrantChecksCredentialFailing_AsTheOperatorCancels_IsTheCredentialRefusal(string page)
+    {
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var component = PageFor(page, progress);
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = new TaskCompletionSource<(string username, string password, string domain)?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CheckCredentialAnswersWith(component, asked, answer.Task);
+
+        var run = ExecuteOnPrem(component);
+        await asked.Task.WaitAsync(Bound, TestContext.Current.CancellationToken);
+        await cancel.CancelAsync();
+        answer.SetException(new InvalidOperationException("the secret store is unreachable"));
+        await run.WaitAsync(Bound, TestContext.Current.CancellationToken);
+
+        const string Refusal = "Access denied: The self-grant check could not be completed: the on-premises directory could not resolve 'other@contoso.test': the protected-principal directory-read credential could not be retrieved; nothing was written. Contact your administrator.";
+        Assert.Empty(_h.CallsTo("Invoke-Command"));
+        Assert.Equal(0, Credentials(page).SecretRequests);
+        var result = Assert.IsType<PermissionResult>(GetField(component, "result"));
+        Assert.Equal(Refusal + " The same check had passed before you confirmed; made again right before the write, it refused.", result.Message);
+        var record = Assert.Single(_h.AuditRows());
+        Assert.Equal(page == MailboxPage ? "AddFullAccess_SelfGrantAttemptAtWrite" : "SetCalendar_SelfGrantAttemptAtWrite", Text(record, "action"));
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(Refusal, Text(record, "error"));
+    }
+
     private static void Set(object page, string property, object? value) =>
         page.GetType().GetProperty(property, Members)!.SetValue(page, value);
 

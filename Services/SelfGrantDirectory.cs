@@ -126,19 +126,12 @@ internal sealed class SelfGrantDirectory : IDisposable
     /// <summary>
     /// Every object in the forest a grantee identity can name (<see cref="GranteeFilter"/>), read under
     /// <paramref name="credential"/> - the protected-principal directory-read credential (aud-a69): an object the session's
-    /// identity cannot see reads as no row, and no row lets a grantee through.
+    /// identity cannot see reads as no row, and no row lets a grantee through. aud-a70 (6): the only way a grantee is looked
+    /// up - the session-identity form for a grantee Exchange names is gone, and without the credential the grant is refused.
     /// </summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindNamedBy(string identity, string? canonicalAddress, PSCredential credential) =>
         Search(GranteeFilter(identity, canonicalAddress), _globalCatalog,
             credential ?? throw new ArgumentNullException(nameof(credential)));
-
-    /// <summary>
-    /// <see cref="FindNamedBy"/> under the session's own identity (aud-a69): only for a grantee Exchange Online names when the
-    /// directory-read credential cannot be had, where an object it finds can add a refusal and its empty answer clears nothing
-    /// Exchange's comparison did not.
-    /// </summary>
-    internal IReadOnlyList<SelfGrantDirectoryObject> FindNamedByUnderSessionIdentity(string identity, string? canonicalAddress) =>
-        Search(GranteeFilter(identity, canonicalAddress), _globalCatalog, credential: null);
 
     /// <summary>
     /// Every object a grantee identity can name: the identities Exchange accepts for a grantee that the directory holds -
