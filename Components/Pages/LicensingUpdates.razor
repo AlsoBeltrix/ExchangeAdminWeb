@@ -351,6 +351,10 @@
 
     private async Task RunApply()
     {
+        // kd-74. A second click while an apply runs is ignored, not run beside it: Apply is disabled while
+        // isProcessing, but the browser's copy of that is one round trip stale, and a second run applied the
+        // same rows again - a second bulk licence change and a second notification.
+        if (isProcessing) return;
         if (previewResult == null) return;
         isProcessing = true;
         operationResult = null;

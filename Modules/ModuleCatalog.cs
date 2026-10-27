@@ -1507,7 +1507,9 @@ public sealed class ModuleCatalog
             // (docs/ProgressCoverage-Plan.md S5).
             // 1.1.6: a preview runs against the licence type submitted - read above its paint yield - and a
             // second click during one is ignored (kd-72).
-            Version = "1.1.6",
+            // 1.1.7: a second click on Apply during an apply is ignored, so a double click no longer runs a second bulk
+            // licence change over the same rows (kd-74).
+            Version = "1.1.7",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
