@@ -8,9 +8,9 @@ the write failed..." with `Success=false` and records a Failed row beside the su
 credential (aud-a60). (3) `Components/Pages/AdminSettings.razor` 282 and 289 (the credential's placeholder
 and hint: "Required when groups or OUs are configured" / "Read-only AD credential for group membership and
 OU checks") should say it is also needed for Mailbox and Calendar Permissions grants to groups.
-**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex perm-batch-11 raised kd-43 (against (12)/(14)) and kd-44 (against (15)), both MEDIUM, since merged; kd-44 was then reversed by owner ruling 2026-10-27 (`kd-44.md`), so (15) stands as it was written: administrators only. (13) fixed on `fix/kd44-a70-13` under the 2026-10-27 mandate (see "(13) - fixed 2026-10-27" below), verified on branch, awaiting merge, unreviewed until the single final codex-commercial review. (6) owner YES 2026-10-26, not implemented here; (10) the coder's dispute upheld by the owner 2026-10-26, closed; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
-**Branch**: `fix/a70` (from master `eb017102`)
-**Commit**: (1) `13909c2f`; (4) `83311a2b`; (5) `9b0aa71b` and its count-pin repair `dc3abcd7`; (9) `fe99aff4`; (17) `d0ed01eb`; (12), (14) `7576cea7`; (15) `0ef2ac77`; (7) `32d548ec`; (11), (8) `f374e13a`; (2), (3) `a4155f5c`; module versions and this record's close: the branch head
+**Status**: 15 of 17 sub-items merged to master `ea565cbd` (head `d609001e`); codex perm-batch-11 raised kd-43 (against (12)/(14)) and kd-44 (against (15)), both MEDIUM, since merged; kd-44 was then reversed by owner ruling 2026-10-27 (`kd-44.md`), so (15) stands as it was written: administrators only. (13) fixed on `fix/kd44-a70-13` under the 2026-10-27 mandate (see "(13) - fixed 2026-10-27" below) and merged at `d5d4524e`, unreviewed until the single final codex-commercial review. (6) fixed 2026-10-27 on `fix/a70-6` under the owner's YES of 2026-10-26 (see "(6) - every grant refused without the directory-read credential" at the end of this record): verified on branch, gates green (7,530 tests), awaiting merge, unreviewed until the single final codex-commercial review; base app bump owed (`PermissionValidator`, `SelfGrantDirectory` are shared). (10) the coder's dispute upheld by the owner 2026-10-26, closed; (16) kept by design. One mid-branch commit `9b0aa71b` was red on the full suite and repaired by `dc3abcd7` (noted, not a defect on the merged head)
+**Branch**: `fix/a70` (from master `eb017102`); (6) `fix/a70-6` (from master `7ef50c41`)
+**Commit**: (1) `13909c2f`; (4) `83311a2b`; (5) `9b0aa71b` and its count-pin repair `dc3abcd7`; (9) `fe99aff4`; (17) `d0ed01eb`; (12), (14) `7576cea7`; (15) `0ef2ac77`; (7) `32d548ec`; (11), (8) `f374e13a`; (2), (3) `a4155f5c`; module versions and this record's close: the branch head. (6): `d7c9ec5c` (the shared check, Mailbox Permissions), `18d2467d` (Calendar Permissions), `36a9f2e9` (the docs), and the branch head (this record's gates)
 **Reviewer**: implementer (surfaced by the aud-a60/a61/a53/a59/psl-9 agent, 2026-10-23, candidates 2-4 and its follow-up)
 
 ## Evidence
@@ -153,7 +153,8 @@ directory holds, and that such a grant is refused without it. In place (1,436 li
 Not implemented, each with its reason:
 - (6) An owner call (the record says so): whether to refuse every grant while the directory-read credential cannot be had.
   Nothing changed beyond fail-closed as it stands: without the credential, a grantee Exchange names is still looked up as
-  the session (aud-a69's refusal-only evidence). Recommendation in the hand-back.
+  the session (aud-a69's refusal-only evidence). Recommendation in the hand-back. The owner said yes on 2026-10-26; fixed
+  2026-10-27 on `fix/a70-6` - see "(6) - every grant refused without the directory-read credential" at the end of this record.
 - (10) Disputed - see Coder dispute.
 - (13) An owner call when this was written: whether Undetermined counts as neither success nor failure in usage telemetry
   and the audit's trace operation. Since fixed as a bug under the owner's 2026-10-27 mandate, on `fix/kd44-a70-13` - see
@@ -362,7 +363,8 @@ Planning Rules). Recommendation: decline (10), or route it with (6) to the owner
 
 ## Known gaps
 
-- (6) owner YES 2026-10-26, not implemented here; (13) fixed 2026-10-27 (its own section below); (16) kept by design (above).
+- (6) owner YES 2026-10-26, fixed 2026-10-27 on `fix/a70-6` (its own section at the end, with its own known gaps); (13) fixed
+  2026-10-27 (its own section below); (16) kept by design (above).
 - (14)'s reading of a failed command rests on the pool's own signals: an Exchange refusal whose words name a session or a
   connection is read as the session's (Undetermined - the conservative side); a session failure whose words name neither
   and is not a remoting transport failure is read as Exchange's answer (Failed, as before this fix). Labelled assumption, not
@@ -779,3 +781,52 @@ The same driver; filter `FullyQualifiedName~SelfGrantDocumentation|FullyQualifie
 | M6d (the record's) | the README as it stood (`7ef50c41`) | `1CE94290C68E164AE285C962B24A01F1` | 1: `TheReadme_SaysTheCheckNeedsTheDirectoryReadCredential_AndWhatItRefusesWithoutIt` |
 | M6e | the Admin Settings hint as it stood | `6767882B39203A2A9AB976180606D9C9` | 1: `AdminSettings_SaysEveryPermissionGrantNeedsTheDirectoryReadCredential` |
 | E6f | the placeholder as it stood | `8CAE2C8561EDE426D004A2E45559D3B5` | 3: the same test, and `SettingsNoOpAndUnreadableSecretTests`' two that find the input by it |
+
+Commit `36a9f2e9`.
+
+### Known gaps - (6)
+
+- **Deployment note, a labelled assumption (not verified - nothing here can read a deployment).** The owner's condition is met
+  where the Directory Read Credential (Admin Settings, Protected principals) is configured and can be retrieved: grants go on
+  as before. Where it is not, every Mailbox Permissions and Calendar Permissions grant is refused from this release on, naming
+  the setting, while Prevent Self-Grant is on - before, only grants to groups and to grantees only the directory holds were.
+  Check that setting on the instance before deploying.
+- Without the credential a check still opens its directory session and asks Exchange its two lookups before it refuses - the
+  order as it was, so a grant Exchange names as the operator's own is refused as a self-grant. A cost of the refused case only.
+- No operator cancel reaches the check's credential fetch, as before: threading the activity's token into the check is the
+  kd-58 class (cancellation reaching the shared reads), not done. A cancel during it is seen at the on-premises write's own
+  credential fetch (kd-59); `SubmitSingle`'s cloud write and the bulk rows see no cancel at all (kd-58), unchanged.
+- "Cancelled" goes through the test seam: production's fetch passes `DelineaService` no token, and it answers a request that
+  gave up with null, which is `DirectoryReadCredentialNotRetrieved` - the same refusal. A fetch that throws is the same again.
+- aud-a69's E4 site (the synced nested group's own no-credential refusal) is gone with the code it mutated;
+  `ASyncedGroupInACloudOnlyGroup_WithoutTheDirectoryReadCredential_IsRefused_NamingIt_AndNotLookedUpAsTheSession` now holds the
+  (6) refusal, in the same words, before the nested group is looked at.
+- A Calendar "set" counts as a grant whatever its level, "None" included - unchanged; so a set to None now needs the credential.
+- Rows already written stay as written. Nothing ran against Exchange, a directory, Graph or a secret store: the harness's pools
+  and stand-ins, `SelfGrantDirectoryStandIn`, the stand-in secret fetch, `CancellableVaultCredentials` for the write's vault.
+
+### Versions - (6)
+
+Mailbox Permissions 1.6.3 -> 1.6.4 (`d7c9ec5c`), Calendar Permissions 1.4.3 -> 1.4.4 (`18d2467d`), each a patch step noting
+aud-a70 (6) and the ruling. `PermissionValidator` and `SelfGrantDirectory` are shared infrastructure, so the base app version
+bump is owed by the Constitution's rule (Deployment And Versioning) - `<VersionPrefix>` 2.35.0, not bumped here.
+
+### Branch-tip gates - (6), 2026-10-27
+
+On the branch's final code, `36a9f2e9` (the docs commit; the commit after it adds this record's gates and the index row only,
+`.agents/` markdown), each gate run alone, nothing else building or testing on the host:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: exit 0, 0 errors, 19 warnings - the baseline set
+  (AccountLockoutRemediationService, Comms10kApprovedSetTests x2, GroupManagement x8, HeaderAnalysisService x3, MessageTrace 617
+  CS0414, MigrationReportExportProcessor, RiskyUsers, SelfServiceGroups x2), none in a file this branch touched.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` (Debug, as the gate is written): exit 0, 7,530 passed /
+  0 failed / 0 skipped - 7,504 at `d7c9ec5c`, 7,530 at `18d2467d`.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: exit 0, and over the
+  whole branch, `git diff --check 7ef50c41`: exit 0. `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1`: passed.
+- No PowerShell changed, so PSScriptAnalyzer and Pester were not run. Nothing was deployed; no manual check was run. No coder
+  self-review verdict is claimed.
+
+### Closeout - (6)
+
+Fixed on `fix/a70-6`, not merged, not pushed. Pending: the supervisor's merge and branch deletion; the single final
+codex-commercial review; the base app version bump at close; the deployment note above.
