@@ -20,7 +20,7 @@ are Opus 5.5; codex is gone and one codex-commercial review runs at the very end
 
 **Step 3 - DONE.** cons-7 was already on master (`0769536e`). Master gated at `56cc4153`: Release build 0 errors; 7355 passed, 0 failed, 0 skipped; Pester 508; PSScriptAnalyzer 0 errors; format, whitespace and ASCII clean. The nine weekend branches are verified in master by patch identity; three deleted; six worktrees (a2e, a68-kd2, a70, cdt36, kd7-kd8, psl10-a2y) kept only for the uncommitted step 4 work the killed agents left, which the step 4 agents resume from.
 
-**Step 4 - IN PROGRESS, one agent at a time (first: kd-39/kd-41 on `fix/kd39-kd41`):** the two permission-page guards (kd-39: a
+**Step 4 - IN PROGRESS, one agent at a time.** Landed: kd-39, kd-41 (`3f7eaa07`); kd-44 reversal, aud-a70 (13), kd-57 (merged after `6ff1f095`); kd-51 (merged after `7d6e3648`). kd-67 declined (wording true at all four sites). Running: kd-59, kd-58 sizing, kd-70, kd-71 on `fix/kd59-kd70`. Original list: the two permission-page guards (kd-39: a
 notification or progress call that fails no longer shows a finished bulk run as failed or escapes the handler) and the
 copied field (kd-41); kd-44's notice to the affected user and the mailbox owner REMOVED by owner ruling 2026-10-27
 ("remove to affected target, keep to admin" - back to administrators only); Self-Service Groups no longer locks up
