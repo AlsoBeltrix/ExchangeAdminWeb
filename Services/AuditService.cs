@@ -520,8 +520,9 @@ public class AuditService
                 result: outcome == JsonlWriteOutcome.Written ? "Success" : "Failed",
                 details: AuditWrittenDetails(evt, outcome));
 
-            var operationSucceeded = IsSuccessfulAuditResult(GetString(evt, "result"));
-            var operationMessage = operationSucceeded ? null : "Audit event recorded failure";
+            var result = GetString(evt, "result");
+            var operationSucceeded = IsSuccessfulAuditResult(result);
+            var operationMessage = operationSucceeded ? null : NotSucceededMessage(result);
             implicitScope?.Complete(operationSucceeded, operationMessage);
         }
         finally
@@ -594,8 +595,21 @@ public class AuditService
         }
     }
 
-    private static bool IsSuccessfulAuditResult(string? result)
-        => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);
+    // aud-a70 (13). Whether a row's result is a success, for the two readers in WriteAuditEvent: the trace's implicit operation and
+    // the usage count. Only "Success" is. It was every result but "Failed", so a permission change filed Undetermined (aud-a73),
+    // an eligibility check filed Ineligible or Undetermined (aud-a28z part 5) and any other result a caller files completed the
+    // operation as succeeded and were counted as successful actions; docs/UsageTelemetry-Plan.md specified result == "Success".
+    // Every success the app files is spelled "Success" (aud-a70.md lists the results it files); the comparison stays
+    // case-insensitive, as it was.
+    internal static bool IsSuccessfulAuditResult(string? result)
+        => string.Equals(result, "Success", StringComparison.OrdinalIgnoreCase);
+
+    // aud-a70 (13). The completion message of an implicit operation whose row is not a success. A Failed row keeps its words; any
+    // other result is named, so an Ineligible check or an Undetermined change is not read as a failure in the trace.
+    private static string NotSucceededMessage(string? result) =>
+        string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase)
+            ? "Audit event recorded failure"
+            : $"Audit event recorded result {(string.IsNullOrWhiteSpace(result) ? "(none)" : result)}";
 
     // aud-a73. A permission row's result - kd-33: and a Migration action's - the caller's explicit one when it gives one, else
     // Success or Failed from its bool, as every row was filed before. A value outside the enum is no explicit result.

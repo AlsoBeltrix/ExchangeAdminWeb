@@ -321,6 +321,78 @@ public class AuditServiceTests : IDisposable
         Assert.Contains(operationEvents, e => e.GetProperty("operationId").GetString() == auditOperationId && e.GetProperty("eventType").GetString() == "operation.complete");
     }
 
+    // ---- aud-a70 (13): only a row filed Success is a success - for the trace's implicit operation and for the usage count ----
+
+    [Theory]
+    [InlineData("Success", true)]
+    [InlineData("success", true)]
+    [InlineData("SUCCESS", true)]
+    [InlineData("Failed", false)]
+    [InlineData("Ineligible", false)]
+    [InlineData("Undetermined", false)]
+    [InlineData("Cancelled", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void OnlyTheResultSuccess_IsASuccessfulAuditResult(string? result, bool success)
+        => Assert.Equal(success, AuditService.IsSuccessfulAuditResult(result));
+
+    /// <summary>A row filed under each result the app files (aud-a70.md lists them), through the method that files it.</summary>
+    private void FileARow(string filed)
+    {
+        switch (filed)
+        {
+            case "a change that succeeded":
+                _audit.LogModuleAction("admin", "10.0.0.1", "AddMember", "GroupManagement", "group-1", success: true, "INC001");
+                break;
+            case "a change that failed":
+                _audit.LogModuleAction("admin", "10.0.0.1", "AddMember", "GroupManagement", "group-1", success: false, "INC001", "refused");
+                break;
+            case "an ineligible eligibility check":
+                _audit.LogMigrationCheck("admin", "10.0.0.1", "user@co.com", "Ineligible", "REQ001", "Has an archive");
+                break;
+            case "an undetermined eligibility check":
+                _audit.LogMigrationCheck("admin", "10.0.0.1", "user@co.com", "Undetermined", "REQ001");
+                break;
+            case "a permission change whose outcome is unknown":
+                _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "shared@co.com", "user@co.com", "FullAccess",
+                    success: false, "INC001", errorDetail: "could not be confirmed", filedAs: AuditResult.Undetermined);
+                break;
+            case "a cancelled lookup":
+                _audit.LogLookupAction("admin", "10.0.0.1", "RecipientLookup", "user@co.com", success: false, "Cancelled by the operator",
+                    extra: new Dictionary<string, object?> { ["result"] = "Cancelled" });
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(filed), filed, null);
+        }
+    }
+
+    [Theory]
+    [InlineData("a change that succeeded", "Success", "Success", null)]
+    [InlineData("a change that failed", "Failed", "Failed", "Audit event recorded failure")]
+    [InlineData("an ineligible eligibility check", "Ineligible", "Failed", "Audit event recorded result Ineligible")]
+    [InlineData("an undetermined eligibility check", "Undetermined", "Failed", "Audit event recorded result Undetermined")]
+    [InlineData("a permission change whose outcome is unknown", "Undetermined", "Failed", "Audit event recorded result Undetermined")]
+    [InlineData("a cancelled lookup", "Cancelled", "Failed", "Audit event recorded result Cancelled")]
+    public void TheRowsImplicitOperation_SucceedsOnlyForARowFiledSuccess(string filed, string result, string completed, string? message)
+    {
+        // aud-a70 (13). Every result but "Failed" completed the operation as succeeded, so the trace said an ineligible check, a
+        // change that may not have been made and a cancelled lookup had all succeeded. A row not filed Success completes it as
+        // not succeeded, and the message names the row's result, so none of them reads as a failure either.
+        FileARow(filed);
+
+        var row = ReadAuditEvents().Single().RootElement;
+        Assert.Equal(result, row.GetProperty("result").GetString());
+        var complete = ReadOperationEvents().Select(e => e.RootElement)
+            .Single(e => e.GetProperty("eventType").GetString() == "operation.complete"
+                && e.GetProperty("operationId").GetString() == row.GetProperty("operationId").GetString());
+        Assert.Equal(completed, complete.GetProperty("result").GetString());
+        if (message is null)
+            Assert.False(complete.TryGetProperty("details", out var details) && details.ValueKind == JsonValueKind.Object
+                && details.TryGetProperty("message", out _));
+        else
+            Assert.Equal(message, complete.GetProperty("details").GetProperty("message").GetString());
+    }
+
     [Fact]
     public void OperationTrace_DoesNotWriteRawExceptionMessages()
     {
