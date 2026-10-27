@@ -423,4 +423,4 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-27, slice 6.** kd-72 (the owner's production report: a run must use the value submitted; Delegation Report and twelve more pages, 13 commits, 52 mutants, 46 new tests): ~837K agent tokens, 461 tool uses, 2 h 4 min; 7448 tests on the branch; merged `e24887ed`.
 **2026-10-27, slice 7.** kd-73 (two cancel checks) and kd-74 (two busy guards, two banner-dismiss hardenings): ~517K agent tokens, 309 tool uses, 1 h 12 min; 7464 tests on the branch, 11 mutants; merged `7ef50c41`.
 
-**2026-10-27, slice 8.** aud-a70 (6) (every grant refused without the directory-read credential; removals unaffected): ~? agent tokens (hand-back gave none), 15 mutants; 7530 tests on the branch; merged.
+**2026-10-27, slice 8.** aud-a70 (6) (every grant refused without the directory-read credential; removals unaffected): ~540K agent tokens, 238 tool uses, 1 h 14 min, 15 mutants; 7530 tests on the branch; merged.
