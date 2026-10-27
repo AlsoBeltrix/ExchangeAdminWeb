@@ -7,9 +7,10 @@ are, ONCE AGAIN, OUT OF SCOPE FOR THIS MODULE. DO NOT BRING ME ANYTHING ABOUT PR
 REMOVE ALL OF THAT ILLEGALLY ADDED BULLSHIT AND LIMIT TO FIXING FUCKING ISSUES." And on room-list creation:
 "functionality CANNOT change. this is a top tier module and the stakeholders fought hard to get it where it was."
 There is NO scoped exception and NO check before the add (the earlier shape of this record is superseded).
-**Status**: Open - approved by owner ruling; the step 2 slice of the close-out plan in `.agents/state.md`
-**Branch**: `fix/a2ad` (worktree `D:\source\ExchangeAdminWeb-wt\a2ad`, from master)
-**Commit**: -
+**Status**: Verified on branch; awaiting merge - UNREVIEWED until the single final codex-commercial review (approved by
+owner ruling; the step 2 slice of the close-out plan in `.agents/state.md`)
+**Branch**: `fix/a2ad` (worktree `D:\source\ExchangeAdminWeb-wt\a2ad`, from master at `20e6b507`)
+**Commit**: `c22cecc5` (code, tests, docs, catalog); this record in the commit after it
 **Reviewer**: owner ruling; the one codex-commercial review at the end of the stream
 
 ## What goes (added since `eb017102`, the pre-weekend master)
@@ -59,6 +60,159 @@ There is NO scoped exception and NO check before the add (the earlier shape of t
 - Gates: Release build (0 errors), full `dotnet test ExchangeAdminWeb.slnx`, `dotnet format --verify-no-changes`,
   `git diff --check HEAD`, `tools/Test-AsciiOnly.ps1`. ONE compile at a time on this host.
 
+### Hunk classification (written before the code, against `git diff eb017102 20e6b507`)
+
+Read from `git show` of each of the four commits and of every other weekend commit on the same files. "Goes" is removed
+by hand; "stays" is not touched. A cross-check was built in the session scratchpad only (3-way reverts of `170b182f`,
+`c38defa0`, `ebd66b91` and `5798e45e` from HEAD's text with `git merge-file`, never in a worktree): its two conflicts were
+exactly the two places a keep sits beside a go (the a2ac resolution try/catch beside the a2e preflight tuple; kd-28's
+`TypesApplied` beside a2e's `ActingUsers`), and with those resolved it is pre-weekend plus the keeps. The hand edit is
+compared with it before the commit.
+
+`Services/ConferenceRoomService.cs`
+- Goes, a2e: `using System.Security.Claims`; the `_protectedPrincipals`/`_servicers` fields and the two optional
+  constructor parameters; the `RoomListTarget` parameters `ExternalDirectoryObjectId` and `DirectoryGroup` and their doc
+  lines; the `ReadExternalDirectoryObjectId(...)` argument on FindRoomList's two returns (the lines around them are
+  a2ac's and stay) and the helper itself; the whole "room list as a write target" block (`CloudListTarget`,
+  `CheckRoomListTarget`, `RoomListTargetRefusal`, `RoomListNotCheckedRefusal`); `actingUser` on
+  `SetRoomMetadataAndListAsync` and its doc; the preflight's tuple, `roomList = checkedList` and `RoomListServicedNote`
+  in the row; `actingUser` and the serviced-note merge at the row's add; in `AddToRoomListAsync` the `actingUser`
+  parameter, `listRefusal`/`servicedNote`/`createdTarget`, the check before the cloud add and the refusal handling after
+  `RunAsync`; `PreflightRoomListAsync` back to `Task<string?>` with no `actingUser`, its cloud-list check, its on-prem
+  group check and `list with { DirectoryGroup = group }`; `AddToRoomListViaAdAsync` back to its three-value result and
+  `(room, roomEmail, roomListName, listAddress)` parameters, without its pre-write check and serviced notes (and the a2u
+  comment back to its own words); `ResolveAdGroupGuid` and `ReadAdGroupInItsDomain` back to `(error, objectGuid,
+  distinguishedName)`, without the sAMAccountName refusal and the `ResolvedDirectoryPrincipal` snapshot.
+- Goes, a2z: `-Properties mail` on the in-domain re-read and the mail comparison after it.
+- Goes, a2ab: `RoomListDoesNotExistRefusal` and the preflight's refusal of a list that does not exist - back to
+  `if (!list.Exists) return null;`, so the add creates it.
+- Stays: aud-a2ac (FindRoomList's comment and `ReadRoomList` calls, `ReadRoomList`, `RoomListNotResolvedRefusal`, the
+  resolution try/catch in the row - the rule that only an affirmative "no such object" is absence and that anything
+  else refuses before any write); aud-a2y (1) (SetRoomTypeAsync's room read logged and rethrown); kd-7/kd-24/kd-23
+  (`TicketRefusalStep`, `WithRefusal`, `RequireTicket`).
+
+`Models/ConferenceRoomModels.cs` - goes: a2e's `RoomListServicedNote`. Stays: kd-28's `RoomTypeNames`.
+
+`Services/Jobs/IConferenceRoomBulkOperations.cs` - goes: all of it is a2e (the using, the remarks paragraph,
+`actingUser`); the file returns to its pre-weekend text.
+
+`Services/Jobs/ConferenceRoomBulkProcessor.cs` - goes: a2e's comment and `actingUser: null` in `ApplyFinderRowAsync`.
+Stays: kd-23's ticket refusal; aud-a2y/kd-28's type parse and "Nothing was written."
+
+`Components/Pages/ConferenceRooms.razor` - goes: kd-66's badge (back to `badge bg-info` "new") and its warning, with the
+legacy warning unfolded back onto its two lines; a2e's `await CurrentUserAsync()` argument and
+`GroupManagementService.CombineNotes(serviced, r.RoomListServicedNote)` (back to `serviced`). Stays: kd-5/kd-27/kd-32
+(job controls), kd-7/kd-24 (`RequireTicket`), kd-52/kd-29 (`AuditRefusal`, refusal rows), kd-28, aud-a2y. Both kd-66
+edits were in place (-1/+1), so the restore is too: 1758 lines before and after, and no `ClickGateRegistry` or
+`ProgressRegistry` entry moves.
+
+`Program.cs` - nothing: a2e registered nothing; its two weekend hunks are aud-a67 (10) and aud-a29g.
+`Services/ConferenceRoomProtectionGate.cs` - nothing: the July gate, with aud-a2aa's message, is not touched.
+`Modules/ModuleCatalog.cs` - the Conference Rooms notes for 2.7.0 (a2e), 2.14.0 (a2ab), 2.16.0 (a2z) and 2.18.0 (kd-66)
+are replaced by one 2.19.1 note naming this row and the ruling; 2.19.0 -> 2.19.1. No other module's entry.
+Docs - `docs/ProtectedGroupWriteTarget-Plan.md` and `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md`: only `ebd66b91`
+touched either since `eb017102`, so both are restored whole to their `eb017102` text.
+
+Tests
+- Deleted: `ConferenceRoomListWriteTargetTests.cs` (a2e, with a2ab's three tests), `ConferenceRoomListGroupAddressTests.cs`
+  (a2z).
+- Reversed: `ConferenceRoomMissingListPreviewTests.cs` (kd-66) now asserts the "new" badge and no refusal warning.
+- `ExchangeWriteHarness.cs` - goes, a2e: `CreatedListAddress`, `ListExternalIds`, `ListMembersClearedAfterSetPlace`,
+  `DirectoryGroupSamAccountNames`, `DirectoryGroupAsChecked`, `ProtectedPrincipals`, `Servicers`, `HarnessEnvironment`,
+  `HarnessDelinea`, their runspace variables and stand-in lines, `Get-StandInGroupSam`; a2z: `DirectoryGroupMailInItsDomain`
+  and the stand-in's mail answer. Stays: aud-a2ac (`MissingLists` as ObjectNotFound, `AmbiguousLists`,
+  `ListsAnsweringTwice`), aud-a70 (14) (`OnPremTransportFailures`).
+- `ConferenceRoomWriteIdentityTests.cs` - goes: a2e's constructor arguments, `actingUser` arguments and the a2u test's
+  cleared-group list; a2ab's `NoListYet` and its two direct-call tests, restored to their pre-weekend row shape
+  (`AListTheRowCreates_IsNamedByTheGuidTheCreationReturned`, `AListCreatedWithoutAGuid_IsNotAddedToByItsName`). Stays:
+  kd-37's cancellation token, aud-a2y (1)'s test. Added: the list path consults no protected-principal service.
+- `ConferenceRoomRoomListPreflightTests.cs`, `ConferenceRoomDirectoryAuditTests.cs` - goes: a2e's constructor arguments,
+  `actingUser` arguments, `TheSyncedList`'s cleared group. Stays: kd-37.
+- `ConferenceRoomBulkProcessorTests.cs` - goes: a2e's `ActingUsers`, the stub's `actingUser`,
+  `AFinderRow_HandsTheRoomListCheckNoOperator`. Stays: kd-28's `TypesApplied` and the aud-a2y/kd-28 tests.
+- a2e's signature carried into keep files written after it - the a2e part goes, the tests stay:
+  `ConferenceRoomListLookupTests.cs` (aud-a2ac: constructor arguments, `actingUser`; and
+  `BothNamesConfirmedNotFound_IsABuildingWithNoRoomList`, which asserted a2ab's refusal, now asserts the list is created and
+  the room added), `ConferenceRoomBulkTicketTests.cs` (kd-23: the stub's `actingUser`), `ConferenceRoomPageTests.cs`
+  (aud-a2y: constructor arguments).
+
 ## Guard proof
 
-Pending.
+**Cross-check.** After the hand edit, every file with a mechanical reference is byte-identical to it:
+`Services/ConferenceRoomService.cs`, `Components/Pages/ConferenceRooms.razor`, `Models/ConferenceRoomModels.cs`,
+`Services/Jobs/ConferenceRoomBulkProcessor.cs`, `Services/Jobs/IConferenceRoomBulkOperations.cs` (which is also its
+`eb017102` text), `ExchangeAdminWeb.Tests/ExchangeWriteHarness.cs`, and `ConferenceRoomWriteIdentityTests.cs` (before the
+new test below was added), `ConferenceRoomRoomListPreflightTests.cs`, `ConferenceRoomDirectoryAuditTests.cs`,
+`ConferenceRoomBulkProcessorTests.cs`. The service has no `ClaimsPrincipal`, `ProtectedPrincipalService`,
+`ProtectedPrincipalServicerService` or Protected Group Targets reference left, and nothing in the repo names a removed
+member. The page is 1758 lines before and after, so the line-keyed registries pass unchanged.
+
+**The restore tests.**
+- `ConferenceRoomWriteIdentityTests.AListTheRowCreates_IsNamedByTheGuidTheCreationReturned` and
+  `AListCreatedWithoutAGuid_IsNotAddedToByItsName` - the pre-weekend row-shape tests, back to their `eb017102` text: a
+  building both of whose list names Exchange reports missing (the stand-in's ObjectNotFound, aud-a2ac's one absence) has
+  the list created and the room added by the Guid the creation returned; a creation that returns no Guid fails the row
+  partial and adds nothing by name.
+- `ConferenceRoomListLookupTests.BothNamesConfirmedNotFound_IsABuildingWithNoRoomList_SoTheListIsCreatedAndTheRoomAdded`
+  - reversed from a2ab's refusal: one `New-DistributionGroup` (the canonical name, `-RoomList`), the add naming the
+  created Guid and the validated room, the row a success. Its neighbours, kept, assert that an ambiguous or failed lookup
+  refuses with no `New-DistributionGroup` at all - creation follows only Exchange's affirmative "no such object".
+- `ConferenceRoomWriteIdentityTests.TheRoomListPath_ConsultsNoProtectedPrincipalService_WhenTheContainerHoldsOne` - new.
+  The production `ConferenceRoomService` is resolved from a `ServiceCollection` that registers it as `Program.cs` does
+  (`AddScoped`) and also holds a recording `ProtectedPrincipalService` (every virtual member recorded, each answering
+  protected or failed) and a real `ProtectedPrincipalServicerService`, so a constructor asking for either would be handed
+  them. The missing list is created, the room added, and the stand-in records no call.
+- `ConferenceRoomMissingListPreviewTests` - reversed: the missing list's badge is `bg-info` "new", and no warning says
+  the row will be refused.
+
+**Mutation log.** Before: `Services/ConferenceRoomService.cs` md5 `55a02807987cbf376229e2903bc2f146`,
+`Components/Pages/ConferenceRooms.razor` md5 `a93ab6309a7f161c7f75ca3c3c0c0b88`. Each mutation was made on the worktree
+file, built and run (the Conference Rooms tests, 442; the page tests read the page at run time), and restored by copying
+back a pre-mutation copy, re-hashed.
+- M1, creation removed in a2ab's shape - `PreflightRoomListAsync`'s `if (!list.Exists) return null;` made to return a
+  refusal (md5 `c46966e7c09dce84b7285ece9aacb1a8`): 4 failed, 438 passed - exactly `BothNamesConfirmedNotFound...`,
+  `AListTheRowCreates...`, `AListCreatedWithoutAGuid...` and `TheRoomListPath_ConsultsNo...`. Restored:
+  `55a02807987cbf376229e2903bc2f146`.
+- M2, creation removed in the add - `AddToRoomListAsync`'s `New-DistributionGroup` block deleted (md5
+  `0ff1c6eec12871f3856e612d530a2272`): the same 4 failed, 438 passed. Restored: `55a02807987cbf376229e2903bc2f146`.
+- M3, a consult put back - an optional `ProtectedPrincipalService` constructor parameter, read once before the cloud add
+  with its answer ignored (md5 `7b283efaf2aaa732a83a81af3b14235c`): 1 failed, 441 passed - `TheRoomListPath_ConsultsNo...`
+  alone, "Assert.Empty() Failure: Collection was not empty". The row still succeeded; only the stand-in's record caught
+  it. Restored: `55a02807987cbf376229e2903bc2f146`.
+- M4, kd-66's badge put back (page md5 `a7cc4a66348a719af59e5035a2b625e8`, 1758 lines): `AMissingRoomList_IsLabelledNew`
+  alone fails. Restored: `a93ab6309a7f161c7f75ca3c3c0c0b88`.
+- M5, kd-66's warning put back in place - the legacy warning folded, the refusal warning on the freed line (md5
+  `803c33cd1a012c2b754c2876fd4bbda9`, 1758 lines): `AMissingRoomList_IsNotPreviewedAsARefusal` alone fails. Restored:
+  `a93ab6309a7f161c7f75ca3c3c0c0b88`.
+
+The solution was rebuilt after the last restore, before the gates below.
+
+**Gates** (on `fix/a2ad` before `c22cecc5` was made, each run alone - one compile at a time on this host):
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: 0 errors, 19 warnings, every one pre-existing and none in a file this
+  row touches.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: 7351 passed, 0 failed, 0 skipped.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: clean.
+- `git diff --check HEAD`: clean.
+- `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1`: passed.
+
+Not run: a live Room Finder apply against Exchange Online and the directory; the stand-ins answer as the tests describe.
+
+## Notes for the supervisor (facts found while doing this row; none changes what was done)
+
+- **aud-a2z's own record calls it "LOW - correctness only"**: a lagging global catalog could have a room added to a
+  group that no longer carries the list's address - a wrong-group write rather than a protection check. It was removed
+  with the rest because this brief lists it as feeding a2e's snapshot (its approach section says the snapshot keeps the
+  list's address as its mail). If it is wanted back, it stands alone on the pre-weekend resolver - `-Properties mail` and
+  a three-line comparison in `ReadAdGroupInItsDomain` - and would be a row of its own.
+- **The Constitution does not yet carry the third exemption.** Item 2 of the 2026-10-26/27 later-rulings entry says the
+  protected-principal rule "carries Conference Rooms as its third module-scoped exemption ... by this ruling", but
+  `docs/ProjectConstitution.md` (Protected Principals) still lists only Self-Service Groups and Comms-10k, so its first
+  bullet still reads as covering the room-list write. Not edited here: outside this row's brief.
+- **The same entry says the module "does not consult Protected Group Targets or the protected-principal list at all"**,
+  while this brief keeps the July 2026 room-mailbox gate (`Services/ConferenceRoomProtectionGate.cs`), which consults the
+  protected-principal list for the room. The brief's reading - the ruling removes what the weekend added - is the one
+  followed.
+- **The keep list is not the whole weekend on these files.** kd-23, kd-24, kd-37, aud-a70 (14), aud-a67 (10) and aud-a29g
+  also touched them; none is a protected-principal change and all are kept.
+- **The rows this one reverses** (aud-a2e, aud-a2z, aud-a2ab, kd-66 in `.agents/review/index.md`) still describe their
+  landed state; only this row's index line was in scope here.
