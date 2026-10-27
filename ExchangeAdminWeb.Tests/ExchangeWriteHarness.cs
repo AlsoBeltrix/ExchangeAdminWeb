@@ -156,24 +156,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public string? CreatedListGuid { get; set; } = DefaultCreatedListGuid;
 
     /// <summary>
-    /// aud-a2e. The <c>PrimarySmtpAddress</c> of the group the stand-in <c>New-DistributionGroup</c> returns; null, as unless a
-    /// test sets one, returns the group without it. Read when an Exchange runspace opens.
-    /// </summary>
-    public string? CreatedListAddress { get; set; }
-
-    /// <summary>
-    /// aud-a2e. What the stand-in <c>Get-DistributionGroup</c> reports as <c>ExternalDirectoryObjectId</c>, by list name - the
-    /// list's Entra object id. A list not named here reports none.
-    /// </summary>
-    public Hashtable ListExternalIds { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
-
-    /// <summary>
-    /// aud-a2e. Once a <c>Set-Place</c> has been recorded, the stand-in <c>Get-DistributionGroupMember</c> reports no members:
-    /// the room taken off its list between the preflight's membership read and the add's. Read when an Exchange runspace opens.
-    /// </summary>
-    public bool ListMembersClearedAfterSetPlace { get; set; }
-
-    /// <summary>
     /// aud-a2m. A list name that a second recipient also answers to, and that recipient's <c>Guid</c>: the
     /// stand-in <c>Get-DistributionGroupMember</c> and <c>Add-DistributionGroupMember</c> refuse that name as
     /// ambiguous, as Exchange refuses an identity matching more than one object. Every other identity -
@@ -203,13 +185,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
     }
 
     /// <summary>
-    /// aud-a2e. The <c>SamAccountName</c> a stand-in <c>Get-ADGroup -Identity</c> answers for a group, by objectGUID: what a
-    /// sAMAccountName pattern rule is matched against. A group not named here answers its CN, <c>Group &lt;objectGUID&gt;</c>,
-    /// as a real group always has one; a null or blank value answers none.
-    /// </summary>
-    public Hashtable DirectoryGroupSamAccountNames { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
-
-    /// <summary>
     /// aud-a2z. The <c>mail</c> a stand-in <c>Get-ADGroup -Identity</c> answers, when asked for it, for a group by
     /// objectGUID: its own domain moved on from the address the catalog search still matches it by. A group not named here
     /// answers the mail the search matches (<see cref="DirectoryGroupAttributes"/>); a null value answers none.
@@ -218,15 +193,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
 
     /// <summary>The objectGUID of the one group the stand-in <c>Get-ADGroup</c> search returns unless a test changes it.</summary>
     public const string DefaultDirectoryGroupGuid = "99999999-9999-9999-9999-999999999999";
-
-    /// <summary>
-    /// aud-a2e. A stand-in group as the room-list preflight hands it to the add once the Protected Group Targets check has
-    /// cleared it (<see cref="ConferenceRoomService.RoomListTarget.DirectoryGroup"/>): what its own domain answers for it, the
-    /// list's address as its mail.
-    /// </summary>
-    public static ResolvedDirectoryPrincipal DirectoryGroupAsChecked(string objectGuid = DefaultDirectoryGroupGuid, string mail = DefaultListAddress) =>
-        new("ConferenceRoomService-AD", $"Group {objectGuid}", string.Empty, $"Group {objectGuid}", mail,
-            DirectoryGroupDn(objectGuid), objectGuid, null);
 
     /// <summary>
     /// The objectGUIDs of the stand-in directory's groups: one unless a test changes it. A
@@ -605,45 +571,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
         };
     }
 
-    private ProtectedPrincipalService? _protectedPrincipals;
-    private ProtectedPrincipalServicerService? _servicers;
-
-    /// <summary>
-    /// aud-a2e. A real protected-principal service over this harness's own store, nothing protected until a test saves rules
-    /// (<see cref="ProtectedPrincipalService.SaveConfig"/>): the Protected Group Targets check the Conference Rooms room-list
-    /// writes consult. One instance per harness, so a rule saved through it is the rule the service under test reads.
-    /// </summary>
-    public ProtectedPrincipalService ProtectedPrincipals => _protectedPrincipals ??= new ProtectedPrincipalService(
-        HarnessEnvironment(), Config, ModuleConfig, TestConfigStore.CreateProtectedPrincipal(Dir), HarnessDelinea(),
-        NullLogger<ProtectedPrincipalService>.Instance);
-
-    /// <summary>
-    /// aud-a2e. The servicer grants over this harness's section access: none until a test saves a
-    /// <see cref="ProtectedPrincipalServicerService.SectionKeyFor"/> row through a <see cref="SectionAccessRepository"/> on
-    /// <see cref="Dir"/>.
-    /// </summary>
-    public ProtectedPrincipalServicerService Servicers => _servicers ??= new ProtectedPrincipalServicerService(
-        new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, HarnessEnvironment(), new ModuleCatalog(),
-            new SectionAccessRepository(TestConfigStore.Create(Dir))),
-        NullLogger<ProtectedPrincipalServicerService>.Instance);
-
-    private IWebHostEnvironment HarnessEnvironment()
-    {
-        var env = Substitute.For<IWebHostEnvironment>();
-        env.ContentRootPath.Returns(Dir);
-        return env;
-    }
-
-    // A secret store no test reaches: the write-target check reads no credential.
-    private DelineaService HarnessDelinea()
-    {
-        var httpClientFactory = Substitute.For<IHttpClientFactory>();
-        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient());
-        var extLog = new ExtendedLogService(Config, HarnessEnvironment(), TestConfigStore.CreateAppSettings(Dir),
-            NullLogger<ExtendedLogService>.Instance);
-        return new DelineaService(httpClientFactory, Config, NullLogger<DelineaService>.Instance, extLog, Trace);
-    }
-
     /// <summary>
     /// An Exchange resolver that knows <paramref name="typed"/> as <paramref name="mailbox"/> and
     /// nobody else: every other identity, the self-grant check's included, is "no such recipient".
@@ -778,10 +705,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("AmbiguousLists", AmbiguousLists);
         rs.SessionStateProxy.SetVariable("ListsAnsweringTwice", ListsAnsweringTwice);
         rs.SessionStateProxy.SetVariable("CreatedListGuid", CreatedListGuid);
-        rs.SessionStateProxy.SetVariable("CreatedListAddress", CreatedListAddress);
-        rs.SessionStateProxy.SetVariable("ListExternalIds", ListExternalIds);
-        rs.SessionStateProxy.SetVariable("ListMembersClearedAfterSetPlace", ListMembersClearedAfterSetPlace);
-        rs.SessionStateProxy.SetVariable("DirectoryGroupSamAccountNames", DirectoryGroupSamAccountNames);
         rs.SessionStateProxy.SetVariable("DirectoryGroupMailInItsDomain", DirectoryGroupMailInItsDomain);
         rs.SessionStateProxy.SetVariable("ListNamesakes", ListNamesakes);
         rs.SessionStateProxy.SetVariable("DirectoryGroupAttributes", DirectoryGroupAttributes);
@@ -976,20 +899,16 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 $state = $global:ListSyncState["$Identity"]
                 if ($null -eq $state) { $list.Remove('IsDirSynced') } else { $list['IsDirSynced'] = $state }
             }
-            # aud-a2e. Its Entra object id (ListExternalIds), when a test gives it one.
-            if ($global:ListExternalIds.ContainsKey("$Identity")) { $list['ExternalDirectoryObjectId'] = $global:ListExternalIds["$Identity"] }
             New-Object psobject -Property $list
             # aud-a2ac. A second answer for a name in ListsAnsweringTwice.
             if (@($global:ListsAnsweringTwice | Where-Object { "$_" -ieq "$Identity" }).Count -gt 0) { New-Object psobject -Property $list }
         }
         # aud-a2m. Returns the group it made, as the real cmdlet does: CreatedListGuid its Guid, a null none.
-        # aud-a2e. And CreatedListAddress its PrimarySmtpAddress, a null none.
         function global:New-DistributionGroup {
             [CmdletBinding()] param($Name, [switch] $RoomList)
             Write-StandInCall 'New-DistributionGroup' $PSBoundParameters
             $group = @{ Name = "$Name" }
             if ($null -ne $global:CreatedListGuid) { $group['Guid'] = ConvertTo-StandInGuid $global:CreatedListGuid }
-            if ($null -ne $global:CreatedListAddress) { $group['PrimarySmtpAddress'] = "$($global:CreatedListAddress)" }
             New-Object psobject -Property $group
         }
         # aud-a2m. A list name a second recipient also answers to (ListNamesakes) matches two objects, and Exchange
@@ -1009,8 +928,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 return
             }
             $members = @($global:ListMembers)
-            # aud-a2e. ListMembersClearedAfterSetPlace: none once a Set-Place is recorded - the room taken off its list in between.
-            if ($global:ListMembersClearedAfterSetPlace -and @($global:Calls | Where-Object { $_['__Command'] -eq 'Set-Place' }).Count -gt 0) { $members = @() }
             if ("$ResultSize" -ne 'Unlimited') { $members = @($members | Select-Object -First ([int]"$ResultSize")) }
             foreach ($member in $members) { [pscustomobject]@{ PrimarySmtpAddress = $member } }
         }
@@ -1276,11 +1193,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $answer = $global:DirectoryGroupReadBack["$Identity"]
             if ($memberRead -and $global:DirectoryGroupMemberReadBack.ContainsKey("$Identity")) { $answer = $global:DirectoryGroupMemberReadBack["$Identity"] }
             $row = @{ ObjectGUID = [guid]"$(if ($answer) { $answer } else { $group[0] })"; DistinguishedName = (Get-StandInGroupDn "$($group[0])") }
-            # aud-a2e. And its sAMAccountName and name, as a read of the real cmdlet's default property set answers them.
-            $sam = Get-StandInGroupSam "$($group[0])"
-            if ($sam) { $row['SamAccountName'] = $sam }
-            $name = Get-StandInGroupAttribute "$($group[0])" 'name'
-            if ($name) { $row['Name'] = $name }
             # aud-a2z. Its mail only when asked for (outside the real cmdlet's default set): DirectoryGroupMailInItsDomain,
             # else the mail the catalog search matches it by.
             if (@($Properties) -contains 'mail') {
@@ -1289,11 +1201,6 @@ internal sealed class ExchangeWriteHarness : IDisposable
             }
             if ($memberRead) { $row['member'] = [string[]]@($global:DirectoryGroupMembers) }
             New-Object psobject -Property $row
-        }
-        # aud-a2e. A group's sAMAccountName (DirectoryGroupSamAccountNames), else its CN.
-        function global:Get-StandInGroupSam([string] $Guid) {
-            if ($global:DirectoryGroupSamAccountNames.ContainsKey($Guid)) { return "$($global:DirectoryGroupSamAccountNames[$Guid])" }
-            return "Group $Guid"
         }
         # aud-a2j. The on-prem room-list add's write. Its group must be one the call reaches - routed to the
         # group's own domain - and a write sent to the catalog is refused, as the read-only catalog refuses it.

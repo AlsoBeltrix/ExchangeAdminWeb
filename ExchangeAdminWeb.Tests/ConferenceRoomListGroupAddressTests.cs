@@ -53,8 +53,7 @@ public sealed class ConferenceRoomListGroupAddressTests : IDisposable
 
     /// <summary>The room service with its credential and directory runspace replaced by the harness.</summary>
     private sealed class Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
-        : ConferenceRoomService(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance,
-            h.ProtectedPrincipals, h.Servicers)
+        : ConferenceRoomService(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken = default) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
@@ -74,7 +73,7 @@ public sealed class ConferenceRoomListGroupAddressTests : IDisposable
     private static ValidatedMailbox Room() => ExchangeWriteHarness.Validated(Checked, CheckedObject);
 
     private static Task<RoomOperationResult> Apply(ConferenceRoomService service) =>
-        service.SetRoomMetadataAndListAsync(Typed, Room(), actingUser: null, "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+        service.SetRoomMetadataAndListAsync(Typed, Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
 
     // The Get-ADGroup reads of the group's member attribute: the membership reads, before and after the write.
     private int MembershipReads() => _h.CallsTo("Get-ADGroup").Count(c =>
@@ -137,9 +136,9 @@ public sealed class ConferenceRoomListGroupAddressTests : IDisposable
         // on-prem, and the refusal, coming after the row's other writes, does not claim nothing was written.
         _h.DirectoryGroupMailInItsDomain[GroupGuid] = Moved;
         var list = new ConferenceRoomService.RoomListTarget(List, Exists: true, IsLegacy: false, IsDirSynced: true,
-            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid, DirectoryGroup: ExchangeWriteHarness.DirectoryGroupAsChecked());
+            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
 
-        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, list, actingUser: null);
+        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, list);
 
         Assert.False(result.Success);
         Assert.Empty(_h.CallsTo("Set-ADGroup"));

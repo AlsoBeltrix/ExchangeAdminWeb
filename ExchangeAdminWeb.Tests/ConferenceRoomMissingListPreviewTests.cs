@@ -3,56 +3,37 @@ using System.Text.RegularExpressions;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// kd-66: the Room Finder preview says what the apply will do with a building that has no room list. aud-a2ab stopped the
-/// module creating one, so a row the preview labelled "new" is now refused; the preview tells the operator that, and what
-/// to do about it, before they apply.
+/// aud-a2ad: the Room Finder preview marks a building with no room list "new", because the apply creates that list when
+/// Exchange affirmatively reports none and then adds the room. This is the module's behaviour before kd-66 and aud-a2ab,
+/// restored by the owner's ruling of 2026-10-26: the preview no longer says such a row will be refused.
 /// </summary>
 /// <remarks>
 /// Source-level, because this repo has no bUnit harness and the page's markup cannot be rendered in a test - the same
 /// reason <see cref="ValidatedWriteCallSiteTests"/> and the ClickGate and Progress registries scan the page's text. The
-/// page is line-keyed, so the edit was made in place: <c>ClickGateTests</c> holds the line count (1758) and fails if it
-/// moved, which is this change's other guard.
+/// page is line-keyed, so the restore was made in place: <c>ClickGateTests</c> holds the line count (1758) and fails if it
+/// moved.
 /// </remarks>
 public sealed class ConferenceRoomMissingListPreviewTests
 {
     private static string Page() => File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "ConferenceRooms.razor"));
 
     [Fact]
-    public void AMissingRoomList_IsNoLongerLabelledNew()
+    public void AMissingRoomList_IsLabelledNew()
     {
-        // The finding: the badge promised a list the apply will not create.
+        // The row will create the list, so the badge says so.
         var page = Page();
 
-        Assert.DoesNotContain("<span class=\"badge bg-info\">new</span>", page, StringComparison.Ordinal);
-        Assert.Matches(new Regex(@"!row\.RoomListExists && row\.RoomResolved.*badge bg-danger.*does not exist"), page);
+        Assert.Contains("@if (!row.RoomListExists && row.RoomResolved) { <span class=\"badge bg-info\">new</span> }", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("badge bg-danger\">does not exist", page, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AMissingRoomList_IsPreviewedAsARefusal_NamingTheListAndWhatToDo()
+    public void AMissingRoomList_IsNotPreviewedAsARefusal()
     {
-        // The visible half, in the warnings column the preview already renders: the list by name, that the row will be
-        // refused, and that the operator creates it in Exchange Online and re-runs - the refusal's own advice
-        // (ConferenceRoomService.RoomListDoesNotExistRefusal), said before the apply rather than after it.
+        // No warning tells the operator the row will be refused or sends them to create the list themselves.
         var page = Page();
 
-        var warning = Assert.Single(Regex.Matches(page, @"if \(!listExists\) preview\.Warnings\.Add\(\$""([^""]+)""\);")
-            .Select(m => m.Groups[1].Value));
-        Assert.Contains("{preview.RoomListName}", warning, StringComparison.Ordinal);
-        Assert.Contains("does not exist", warning, StringComparison.Ordinal);
-        Assert.Contains("refused", warning, StringComparison.Ordinal);
-        Assert.Contains("create the list in Exchange Online", warning, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void ThePreviewsOtherWarnings_AreUnchanged()
-    {
-        // The legacy warning was folded onto one line to keep the page's line count, which the line-keyed registries
-        // require - its text did not change, and neither did the stray-city one beside it.
-        var page = Page();
-
-        Assert.Contains(
-            "if (isLegacy) preview.Warnings.Add($\"Using legacy room list '{listName}'. New naming would be '{ConferenceRoomService.BuildRoomListName(row.Building)}'.\");",
-            page, StringComparison.Ordinal);
-        Assert.Contains("A city-named list '{strayCityList}' also exists.", page, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"if \(!listExists\) preview\.Warnings\.Add"), page);
+        Assert.DoesNotContain("This row will be refused", page, StringComparison.Ordinal);
     }
 }

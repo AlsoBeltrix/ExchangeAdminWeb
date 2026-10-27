@@ -32,20 +32,16 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         public readonly List<string> FinderCalls = new();
         public readonly List<string> TypeCalls = new();
         public readonly List<ValidatedMailbox?> Rooms = new();
-        // aud-a2e. The operator each Room Finder row was handed, for the room list's write-target check.
-        public readonly List<System.Security.Claims.ClaimsPrincipal?> ActingUsers = new();
         // kd-28. The type each Room Type row was applied as.
         public readonly List<RoomType> TypesApplied = new();
         public Func<string, RoomOperationResult> Result = email =>
             new RoomOperationResult { Email = email, Success = true, Message = "ok" };
 
-        public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, System.Security.Claims.ClaimsPrincipal? actingUser,
-            string city, string building, int capacity,
+        public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
             string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone)
         {
             FinderCalls.Add(roomEmail);
             Rooms.Add(room);
-            ActingUsers.Add(actingUser);
             return Task.FromResult(Result(roomEmail));
         }
 
@@ -240,19 +236,6 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             newValues: Arg.Any<Dictionary<string, object?>?>(),
             extra: Arg.Is<Dictionary<string, object?>?>(x =>
                 x != null && Equals(x[ValidatedMailbox.AuditKey], FakePpService.RoomGuid.ToString("D"))));
-    }
-
-    [Fact]
-    public async Task AFinderRow_HandsTheRoomListCheckNoOperator()
-    {
-        // aud-a2e. A row runs off-circuit, under nobody: the room list's write-target check gets no operator, so a protected
-        // list refuses a bulk row whoever submitted it - the room gate's rule (user: null), for the list.
-        var f = CreateFixture();
-
-        var outcome = await f.Processor.ProcessRowAsync(FinderJob("AllUsers", "room1@x"), 0, CancellationToken.None);
-
-        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
-        Assert.Null(Assert.Single(f.Rooms.ActingUsers));
     }
 
     [Fact]

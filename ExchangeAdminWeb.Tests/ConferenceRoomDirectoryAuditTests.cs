@@ -433,10 +433,8 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     {
         private readonly ExchangeWriteHarness _h;
 
-        // aud-a2e. With the harness's protection services - nothing protected - as the container supplies them.
         public Service(ExchangeWriteHarness h)
-            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, NullLogger<ConferenceRoomService>.Instance,
-                h.ProtectedPrincipals, h.Servicers) => _h = h;
+            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));

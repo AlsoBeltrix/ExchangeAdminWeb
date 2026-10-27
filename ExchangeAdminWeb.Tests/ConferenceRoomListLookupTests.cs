@@ -42,8 +42,7 @@ public sealed class ConferenceRoomListLookupTests : IDisposable
     public void Dispose() => _h.Dispose();
 
     private sealed class Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
-        : ConferenceRoomService(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance,
-            h.ProtectedPrincipals, h.Servicers)
+        : ConferenceRoomService(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance)
     {
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken = default) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
@@ -63,7 +62,7 @@ public sealed class ConferenceRoomListLookupTests : IDisposable
     private static ValidatedMailbox Room() => ExchangeWriteHarness.Validated(Checked, CheckedObject);
 
     private static Task<RoomOperationResult> Apply(ConferenceRoomService service) =>
-        service.SetRoomMetadataAndListAsync(Typed, Room(), actingUser: null, "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+        service.SetRoomMetadataAndListAsync(Typed, Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
 
     private void AssertRefusedBeforeAnyWrite(RoomOperationResult result)
     {
@@ -149,19 +148,27 @@ public sealed class ConferenceRoomListLookupTests : IDisposable
     }
 
     [Fact]
-    public async Task BothNamesConfirmedNotFound_IsABuildingWithNoRoomList()
+    public async Task BothNamesConfirmedNotFound_IsABuildingWithNoRoomList_SoTheListIsCreatedAndTheRoomAdded()
     {
-        // Both affirmatively absent: the building genuinely has no list, which since aud-a2ab refuses the row with that
-        // reason - not the resolution refusal above.
+        // Both affirmatively absent: the building genuinely has no list, so the row creates it - cloud-side, by the
+        // canonical name, as a room list - and adds the room to the object the creation returned (aud-a2ad: the module's
+        // behaviour before aud-a2ab, restored by the owner's ruling of 2026-10-26). Only this answer leads to a creation:
+        // every lookup above that is ambiguous or failed refuses with no New-DistributionGroup at all.
         _h.MissingLists.Add(List);
         _h.MissingLists.Add(Legacy);
 
         var result = await Apply(new Service(_h));
 
-        Assert.False(result.Success);
-        Assert.Equal($"{ConferenceRoomService.RoomListDoesNotExistRefusal(List)} Nothing was written.", result.Message);
-        Assert.Contains(result.Steps, s => s.Stage == "Room list preflight" && !s.Success);
-        Assert.Empty(_h.Writes);
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        var created = Assert.Single(_h.CallsTo("New-DistributionGroup"));
+        Assert.Equal(List, ExchangeWriteHarness.Bound(created, "Name"));
+        Assert.True(created.ContainsKey("RoomList"), "the list is created as a room list");
+        Assert.Contains(result.Steps, s => s.Stage == $"Create room list '{List}'" && s.Success);
+        var added = Assert.Single(_h.CallsTo("Add-DistributionGroupMember"));
+        Assert.Equal(ExchangeWriteHarness.DefaultCreatedListGuid, ExchangeWriteHarness.Bound(added, "Identity"));
+        Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Bound(added, "Member"));
+        Assert.Contains(result.Steps, s => s.Stage == $"Add to '{List}'" && s.Success);
     }
 
     [Fact]

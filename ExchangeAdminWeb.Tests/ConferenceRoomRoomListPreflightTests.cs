@@ -68,10 +68,8 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         // provider returns no credential at all for a secret without a password (DelineaService).
         public string? IncompleteCredentialFor;
 
-        // aud-a2e. With the harness's protection services - nothing protected - as the container supplies them.
         public Service(ExchangeWriteHarness h, ILogger<ConferenceRoomService>? logger = null)
-            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance,
-                h.ProtectedPrincipals, h.Servicers) => _h = h;
+            : base(h.Pool, null!, h.ModuleConfig, null!, h.Trace, h.Config, logger ?? NullLogger<ConferenceRoomService>.Instance) => _h = h;
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken)
         {
@@ -88,7 +86,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     private static ValidatedMailbox Room(string? directoryObject = CheckedObject) => ExchangeWriteHarness.Validated(Checked, directoryObject);
 
     private static Task<RoomOperationResult> Apply(Service service, ValidatedMailbox room, string city = "")
-        => service.SetRoomMetadataAndListAsync(Typed, room, actingUser: null, city, Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+        => service.SetRoomMetadataAndListAsync(Typed, room, city, Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
 
     [Fact]
     public async Task ACloudOnlyRoom_ForARoomListSyncedFromOnPremises_IsRefusedBeforeAnyWrite()
@@ -149,7 +147,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var service = new Service(_h) { NoCredential = true };
 
         var result = await service.SetRoomMetadataAndListAsync(
-            "Room One", Room(), actingUser: null, "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(["Set-Place", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration"], _h.Writes);
@@ -263,7 +261,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var service = new Service(_h) { NoCredential = true };
 
         var result = await service.SetRoomMetadataAndListAsync(
-            "Room One", Room(), actingUser: null, "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
+            "Room One", Room(), "", Building, 8, "2", "Second", "TV", "Polycom", "", "", "GMT Standard Time");
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(["Set-Place", "Set-MailboxRegionalConfiguration", "Set-MailboxCalendarConfiguration"], _h.Writes);
@@ -1161,11 +1159,9 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     }
 
     // aud-a2p. The list as the preflight reads a synced one: existing, synchronized from on-premises, with the
-    // harness's address and Guid - the list the on-prem add is handed. aud-a2e: and, as the preflight hands it on, with
-    // the on-prem group its write-target check cleared, which the add checks its cloud write against.
+    // harness's address and Guid - the list the on-prem add is handed.
     private static ConferenceRoomService.RoomListTarget TheSyncedList() =>
-        new(List, Exists: true, IsLegacy: false, IsDirSynced: true, ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid,
-            DirectoryGroup: ExchangeWriteHarness.DirectoryGroupAsChecked());
+        new(List, Exists: true, IsLegacy: false, IsDirSynced: true, ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
 
     [Theory]
     [InlineData("already a member")]
@@ -1183,7 +1179,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         else if (outcome == "confirmed after a refused add")
             _h.AnotherAddLandsFirst = true;
 
-        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, TheSyncedList(), actingUser: null);
+        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, TheSyncedList());
 
         Assert.True(result.Success, result.Message);
         var added = ConferenceRoomService.BuildRoomListAddedMessage(List, viaOnPrem: true);
@@ -1239,7 +1235,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         if (alreadyThere)
             _h.ListMembers.Add(Typed);
 
-        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, TheCloudList(), actingUser: null);
+        var result = await new Service(_h).AddToRoomListAsync(Room(), Typed, Typed, TheCloudList());
 
         Assert.True(result.Success, result.Message);
         var added = ConferenceRoomService.BuildRoomListAddedMessage(List, viaOnPrem: false);
@@ -1723,7 +1719,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var logger = new CapturingLogger();
         var list = refusal == "no address" ? TheSyncedList() with { PrimarySmtpAddress = null } : TheSyncedList();
 
-        var result = await new Service(_h, logger).AddToRoomListAsync(Room(), Typed, Typed, list, actingUser: null);
+        var result = await new Service(_h, logger).AddToRoomListAsync(Room(), Typed, Typed, list);
 
         Assert.False(result.Success);
         Assert.Null(result.WrittenDirectoryObject);

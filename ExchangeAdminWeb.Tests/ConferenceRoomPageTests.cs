@@ -324,7 +324,7 @@ public sealed class ConferenceRoomPageTests : IDisposable
         if (jobs is not null)
             SetProperty(page, "BulkJobs", jobs);
         SetProperty(page, "RoomService", new ConferenceRoomService(_h.Pool, null!, _h.ModuleConfig, null!, _h.Trace, _h.Config,
-            NullLogger<ConferenceRoomService>.Instance, _h.ProtectedPrincipals, _h.Servicers));
+            NullLogger<ConferenceRoomService>.Instance));
         SetProperty(page, "Audit", _h.Audit);
         SetProperty(page, "Email", Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance));
         SetProperty(page, "ServiceNow", new ServiceNowService(_h.Config, NullLogger<ServiceNowService>.Instance, HttpClients()));

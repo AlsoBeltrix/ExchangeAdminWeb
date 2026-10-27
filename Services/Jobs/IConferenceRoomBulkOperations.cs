@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services.Jobs;
@@ -15,15 +14,11 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// aud-a2d. Each operation takes the room the protection gate validated as well as the row's typed
 /// address: the writes are bound to <c>room</c>, the address is for messages and the audit target.
 /// Null refuses.
-///
-/// aud-a2e. The Room Finder operation also takes the acting user, for the servicer grant on a room
-/// list protected as a write target. The bulk processor passes null - a row runs off-circuit, under no
-/// operator, and never services - as it does to the room gate.
 /// </remarks>
 public interface IConferenceRoomBulkOperations
 {
     Task<RoomOperationResult> SetRoomMetadataAndListAsync(
-        string roomEmail, ValidatedMailbox? room, ClaimsPrincipal? actingUser, string city, string building, int capacity,
+        string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
         string floor, string floorLabel, string displayDevice, string videoDevice,
         string countryOrRegion, string state, string timezone);
 

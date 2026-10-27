@@ -958,10 +958,6 @@ public sealed class ModuleCatalog
             // 2.6.7: the bulk-jobs panel reports the unbounded reads it has to do. The three
             // store reads were split into a silent LoadJobsFromStore so the per-row JobChanged
             // path cannot strobe the frame (docs/ProgressCoverage-Plan.md S5).
-            // 2.7.0: the room list a Room Finder row adds the room to is checked as a write
-            // target (Protected Group Targets) before anything is written and again before each
-            // write into it; a protected list refuses the row unless an authorised servicer acts
-            // on the page (aud-a2e).
             // 2.8.0: a blank ticket is refused by all four write handlers, before their
             // authorization re-check; the dormant ServiceNow client passed one (kd-7).
             // 2.9.0: a Room Type apply whose room read throws leaves one warning in the application
@@ -983,10 +979,6 @@ public sealed class ModuleCatalog
             // 2.13.0: a
             // write refused at its access re-check - Room Finder or Room Type, single or CSV - is audited
             // once, as a refusal, as the job controls' is (kd-52).
-            // 2.14.0: a Building whose room list does not exist refuses the row before any write - a
-            // list that does not exist cannot be checked against Protected Group Targets, so the
-            // module no longer creates one (aud-a2ab). One step past master's 2.13.0, which already
-            // carries this branch's 2.7.0 and the kd-* bumps made while the branch was stopped.
             // 2.15.0: only Exchange's affirmative "no such object" means a building has no room
             // list; an ambiguous name or a failed lookup refuses the row before any write, where
             // it used to arrive as an empty answer and read as absence (aud-a2ac).
@@ -995,12 +987,14 @@ public sealed class ModuleCatalog
             // 2.17.0: an ambiguous identity is told as what it is - more than one directory
             // object, or the two directories not naming the same one - rather than always as
             // "multiple AD users" (aud-a2aa).
-            // 2.18.0: the Room Finder preview says a building's room list does not exist and that
-            // the row will be refused until it is created, where it marked the row "new" and the
-            // apply then refused it (kd-66).
             // 2.19.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "2.19.0",
+            // 2.19.1: protected principals are out of scope for this module (owner ruling 2026-10-26,
+            // .agents/decisions.md): every protected-principal check the weekend added (aud-a2e,
+            // aud-a2ab, kd-66) is removed, and a building whose room list Exchange affirmatively
+            // reports missing gets the list created and the room added, the preview marking it
+            // "new", as before (aud-a2ad). aud-a2z's address re-check stays: it is a correctness check.
+            Version = "2.19.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

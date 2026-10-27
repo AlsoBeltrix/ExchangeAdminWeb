@@ -244,14 +244,6 @@ public class RoomOperationResult
     // (ConferenceRoomService.AttributesConfirmedAuditKey). The sibling of DirectoryMembershipConfirmed.
     // Null otherwise.
     public string? DirectoryAttributesConfirmed { get; set; }
-
-    // aud-a2e. Set when the room list this operation adds the room to is a protected write target
-    // (Protected Group Targets) and an authorised Conference Rooms servicer's grant let the operation
-    // past it: the shared gate's note, naming the authorising group and the rules overridden. Set from
-    // the moment the grant applied, so a later failure still carries it (pgwt-7). The caller records it
-    // in the audit event's extra under protectedPrincipalServiced, beside the room gate's own note -
-    // never as an error detail, which a succeeding audit drops. Null otherwise.
-    public string? RoomListServicedNote { get; set; }
 }
 
 public class RoomOperationStep
