@@ -521,7 +521,9 @@ public sealed class ModuleCatalog
             // so one with nothing visible in it no longer passes (kd-45).
             // 1.8.1: a live detail download the operator cancels is filed Cancelled, not Failed, in the
             // app's one phrase for a cancel, "Cancelled by the operator" (kd-57).
-            Version = "1.8.1",
+            // 1.8.2: the search and the delivery detail pass the operator's cancel to the on-premises credential
+            // fetch, so a cancel during it stops the on-premises read; filed Cancelled (kd-59).
+            Version = "1.8.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -12,15 +12,20 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
     public MessageTraceService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MessageTraceService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MessageTrace", operationTrace) { }
 
-    public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId = null)
+    /// <param name="cancellationToken">
+    /// kd-59. The page's activity token, for the on-premises half's credential fetch (kd-37's seam): a cancel during that read
+    /// stops it, and comes out of here as a cancellation - the operator's, not a backend that failed - once the cloud half,
+    /// which takes no token (kd-58), has ended. A cancellation the token did not cause is a backend that failed, as before.
+    /// </param>
+    public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId = null, CancellationToken cancellationToken = default)
     {
         // The cloud query is CHUNKED; the on-prem one is not. Get-MessageTraceV2 refuses a window
         // wider than 10 days (measured 2026-08-06: 10 accepted, 11 returns a 400), while
         // Get-MessageTrackingLog has no such limit - so chunking both would issue N pointless
         // on-prem queries and risk duplicating on-prem rows.
         var responses = await Task.WhenAll(
-            RunMessageTraceBackendAsync(() => GetChunkedCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "Exchange Online"),
-            RunMessageTraceBackendAsync(() => GetOnPremMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "On-prem"));
+            RunMessageTraceBackendAsync(() => GetChunkedCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "Exchange Online", cancellationToken),
+            RunMessageTraceBackendAsync(() => GetOnPremMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId, cancellationToken), "On-prem", cancellationToken));
 
         var merged = new MessageTraceResponse();
         var backendNames = new[] { "Exchange Online", "On-prem" };
@@ -106,7 +111,8 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                 DetailBackend.Cloud => GetCloudMessageDetailAsync(message),
                 _ => Task.FromResult(UnknownBackendDetail(message))
             },
-            ex => _logger.LogError(ex, "Message delivery detail failed before returning a result for {MessageId}", message.MessageId));
+            ex => _logger.LogError(ex, "Message delivery detail failed before returning a result for {MessageId}", message.MessageId),
+            ct);
     }
 
     // Pure outer fail-soft guard, extracted so it is unit-testable without a live pool / on-prem
@@ -114,10 +120,13 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
     // throw from the backend query - including EXO borrow/config/pool/connect and on-prem
     // throttle-timeout failures that occur before the inner catches run - becomes a fail-soft
     // detail with Error set and Events empty. GetMessageDetailAsync therefore never throws.
+    // kd-59: a cancellation of the caller's own token is one of those throws, and the detail says
+    // so (Cancelled) - the page files it as the operator's cancel; the job reads the error as before.
     internal static async Task<MessageTraceDetail> RunDetailBackendAsync(
         MessageTraceResult message,
         Func<Task<MessageTraceDetail>> query,
-        Action<Exception>? onError = null)
+        Action<Exception>? onError = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
@@ -126,7 +135,12 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         catch (Exception ex)
         {
             onError?.Invoke(ex);
-            return new MessageTraceDetail { Summary = message, Error = $"Delivery detail failed: {ex.Message}" };
+            return new MessageTraceDetail
+            {
+                Summary = message,
+                Error = $"Delivery detail failed: {ex.Message}",
+                Cancelled = ex is OperationCanceledException && cancellationToken.IsCancellationRequested,
+            };
         }
     }
 
@@ -186,7 +200,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
             return new MessageTraceDetail { Summary = message, Error = "On-prem delivery detail unavailable: OnPremExchange:ServerUri is not configured." };
 
-        var creds = await GetModuleCredentialsAsync("on-prem message tracking detail");
+        var creds = await GetModuleCredentialsAsync("on-prem message tracking detail", ct); // kd-59: the token this method already held, now to the vault
         if (creds is null)
             return new MessageTraceDetail { Summary = message, Error = "On-prem delivery detail unavailable: credentials could not be retrieved from Delinea." };
 
@@ -406,13 +420,16 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         return merged;
     }
 
-    private async Task<MessageTraceResponse> RunMessageTraceBackendAsync(Func<Task<MessageTraceResponse>> query, string backend)
+    // kd-59: a cancellation of the search's own token goes out as it is - the operator's cancel is not a backend that failed,
+    // and the page files it Cancelled (kd-57). Any other throw, a cancellation the token did not cause included, is this
+    // backend's failure, as it always was.
+    private async Task<MessageTraceResponse> RunMessageTraceBackendAsync(Func<Task<MessageTraceResponse>> query, string backend, CancellationToken cancellationToken)
     {
         try
         {
             return await query();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
             _logger.LogError(ex, "{Backend} message trace backend failed before returning a response", backend);
             return new MessageTraceResponse { Error = $"{backend} trace failed: {ex.Message}" };
@@ -503,7 +520,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         }, allowRetry: true);
     }
 
-    private async Task<MessageTraceResponse> GetOnPremMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)
+    private async Task<MessageTraceResponse> GetOnPremMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId, CancellationToken cancellationToken)
     {
         var response = new MessageTraceResponse();
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
@@ -512,7 +529,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             return response;
         }
 
-        var creds = await GetModuleCredentialsAsync("on-prem message tracking");
+        var creds = await GetModuleCredentialsAsync("on-prem message tracking", cancellationToken); // kd-59: the search's token, so a cancel stops the vault request
         if (creds is null)
         {
             response.Error = "On-prem message tracking failed: Message Analysis DelineaSecretId is not configured or credentials are unavailable.";

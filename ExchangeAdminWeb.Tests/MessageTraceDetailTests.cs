@@ -81,7 +81,8 @@ public sealed class MessageTraceDetailTests
 
         var detail = await MessageTraceService.RunDetailBackendAsync(
             summary,
-            () => throw new InvalidOperationException("Exchange service is busy. Please try again shortly."));
+            () => throw new InvalidOperationException("Exchange service is busy. Please try again shortly."),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Same(summary, detail.Summary);
         Assert.Empty(detail.Events);
@@ -96,7 +97,8 @@ public sealed class MessageTraceDetailTests
 
         var detail = await MessageTraceService.RunDetailBackendAsync(
             expected.Summary!,
-            () => Task.FromResult(expected));
+            () => Task.FromResult(expected),
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Same(expected, detail);
     }

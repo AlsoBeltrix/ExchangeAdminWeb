@@ -825,8 +825,8 @@
             // made it unnecessary (docs/MessageTraceHistoricalRetirement-Plan.md), so the chunked
             // search sat in the build while the page walked past it. Do not reintroduce a
             // date-width branch here - the service splits wide ranges into windows itself.
-            await RunRealtimeTrace();
-            activity.Complete(true, response?.Results?.Count is int n ? $"{n:N0} message(s)" : null);
+            var cancelled = await RunRealtimeTrace(activity.CancellationToken); // kd-59: the token the navigation guard cancels, to the on-premises half's credential fetch
+            activity.Complete(!cancelled, cancelled ? AuditService.CancelledByTheOperator : response?.Results?.Count is int n ? $"{n:N0} message(s)" : null);
         }
         catch (Exception ex)
         {
@@ -841,7 +841,8 @@
         }
     }
 
-    private async Task RunRealtimeTrace()
+    // kd-59: true when the operator's cancel ended the search - the cancellation of this token, which is the activity's.
+    private async Task<bool> RunRealtimeTrace(CancellationToken cancellationToken)
     {
         try
         {
@@ -850,18 +851,30 @@
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
                 startDate, EffectiveEndDate(endDate),
                 string.IsNullOrWhiteSpace(subjectFilter) ? null : subjectFilter.Trim(),
-                string.IsNullOrWhiteSpace(messageId) ? null : messageId.Trim());
+                string.IsNullOrWhiteSpace(messageId) ? null : messageId.Trim(),
+                cancellationToken);
 
             var target = TraceTarget();
             var auditDetail = response.Error ?? (response.Warnings.Any() ? string.Join(" | ", response.Warnings.Distinct(StringComparer.OrdinalIgnoreCase)) : null);
             var auditSuccess = response.Error == null && !response.Warnings.Any();
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, auditSuccess, auditDetail, ticketNumber.Trim());
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // kd-59. The operator's cancel stopped the on-premises half at its credential fetch. Not a search that failed: filed
+            // Cancelled, in the app's phrase for a cancel (kd-57). Any other cancellation is a search that failed, below.
+            response = new MessageTraceResponse { Error = AuditService.CancelledByTheOperator };
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", TraceTarget(), false, AuditService.CancelledByTheOperator,
+                ticketNumber.Trim(), AuditService.FiledCancelled());
+            return true;
+        }
         catch (Exception ex)
         {
             response = new MessageTraceResponse { Error = ex.Message };
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", TraceTarget(), false, ex.Message, ticketNumber.Trim());
         }
+
+        return false;
     }
 
     private async Task AnalyzePastedHeaders()
@@ -1070,10 +1083,17 @@
         try
         {
             // Fail-soft: the seam sets Error rather than throwing; render it inline, never blank the list.
-            var fetched = await MsgTrace.GetMessageDetailAsync(msg);
+            var fetched = await MsgTrace.GetMessageDetailAsync(msg, detailActivity.CancellationToken); // kd-59: the token the navigation guard cancels, to the on-premises read's credential fetch
+            // kd-59. The seam never throws (the detail job relies on that), so it says when the token it was given - this
+            // activity's - stopped the read: the operator's cancel, filed Cancelled in the app's phrase for one (kd-57). Any
+            // other failure, a cancellation that token did not cause included, is a read that failed, in its own words.
+            var cancelled = fetched.Cancelled;
+            if (cancelled)
+                fetched = new MessageTraceDetail { Summary = msg, Error = AuditService.CancelledByTheOperator };
             var success = string.IsNullOrEmpty(fetched.Error);
             detailActivity.Complete(success, fetched.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, fetched.Error, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, fetched.Error, ticketNumber.Trim(),
+                cancelled ? AuditService.FiledCancelled() : null);
             if (token == detailRequestToken)
             {
                 detail = fetched;

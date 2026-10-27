@@ -48,7 +48,8 @@ public class MessageTracePageRoutingTests
         // windows itself. The page must not decide anything about width.
         var body = GetMethodBody("RunTrace");
 
-        Assert.Contains("await RunRealtimeTrace()", body);
+        // kd-59: the call now hands the search the activity's token, the one the navigation guard cancels.
+        Assert.Contains("await RunRealtimeTrace(activity.CancellationToken)", body);
     }
 
     [Fact]
