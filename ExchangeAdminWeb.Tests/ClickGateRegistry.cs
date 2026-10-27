@@ -3541,7 +3541,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1768,
+        ExpectedLineCount = 1791,
 
         Predicates =
         [
@@ -3743,7 +3743,9 @@ public static class ClickGateRegistry
                 "no handler starts reading result back. The moment one does - result.Success after "
                 + "an await is the shape - this control can null it under them, and the exemption "
                 + "needs a PostAwaitLiveRead and a PrerequisiteBeforeExemptionHolds before it holds "
-                + "again"),
+                + "again. It lapsed once: ApplyFinderCsv and ApplyTypeCsv completed their activity "
+                + "from result in their finally, after awaiting RefreshJobs, until kd-74 (4) moved "
+                + "them to a local (ConferenceRoomCsvApplyCompletionTests)"),
 
             // The jobs scope. Line is the only key for 508 and 572: the two Details buttons were
             // byte-identical, same label and same handler in two different loops, which is exactly

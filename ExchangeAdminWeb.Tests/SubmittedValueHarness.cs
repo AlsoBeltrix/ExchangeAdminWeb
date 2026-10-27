@@ -124,6 +124,33 @@ internal static class SubmittedValueHarness
         }
     }
 
+    /// <summary>
+    /// kd-74. As <see cref="RunWithChangeWhileSuspended"/>, but the change lands at the first suspension at which
+    /// <paramref name="when"/> holds rather than at the first await: the handler is pumped one continuation at a time,
+    /// <paramref name="when"/> read between them - where a queued browser event lands - and once it holds with the
+    /// handler still suspended, <paramref name="change"/> runs and the handler is pumped to the end.
+    /// </summary>
+    public static void RunWithChangeWhen(Func<Task> handler, Func<bool> when, Action change)
+    {
+        var previous = SynchronizationContext.Current;
+        var pump = new HeldContinuations();
+        SynchronizationContext.SetSynchronizationContext(pump);
+        try
+        {
+            var running = handler();
+            pump.RunUntil(() => running.IsCompleted || when(), TimeSpan.FromSeconds(30));
+            Assert.False(running.IsCompleted, "The handler finished before the moment the change was to land in.");
+
+            change();
+
+            pump.RunUntil(running, TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+    }
+
     /// <summary>A context that holds posted continuations until the test runs them.</summary>
     internal sealed class HeldContinuations : SynchronizationContext
     {
@@ -132,6 +159,19 @@ internal static class SubmittedValueHarness
         public override void Post(SendOrPostCallback d, object? state) => _posted.Add((d, state));
 
         public override void Send(SendOrPostCallback d, object? state) => d(state);
+
+        /// <summary>kd-74. Runs posted continuations, one at a time, until <paramref name="condition"/> holds.</summary>
+        public void RunUntil(Func<bool> condition, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (!condition())
+            {
+                var left = deadline - DateTime.UtcNow;
+                Assert.True(left > TimeSpan.Zero, "the moment never came");
+                if (_posted.TryTake(out var next, TimeSpan.FromMilliseconds(Math.Min(left.TotalMilliseconds, 100))))
+                    next.Callback(next.State);
+            }
+        }
 
         public void RunUntil(Task task, TimeSpan timeout)
         {

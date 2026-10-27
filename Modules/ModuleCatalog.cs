@@ -1056,7 +1056,10 @@ public sealed class ModuleCatalog
             // nothing written, filed Cancelled; after Set-Place the row runs on, as before (kd-59).
             // 2.19.3: the apply looks at that cancel once more immediately before Set-Place, so one landing after the
             // preflights' credential fetches also ends the row with nothing written, filed Cancelled (kd-73).
-            Version = "2.19.3",
+            // 2.19.4: the two CSV applies complete their progress activity from their own outcome, so dismissing the
+            // result banner while the job list refreshes no longer ends the bar as not succeeded for a job that was
+            // submitted (kd-74).
+            Version = "2.19.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
