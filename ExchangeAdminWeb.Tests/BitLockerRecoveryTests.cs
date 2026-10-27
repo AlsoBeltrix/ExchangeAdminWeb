@@ -855,9 +855,11 @@ public sealed class BitLockerRecoveryTests : IDisposable
     {
         var body = GetPageMethodBody("SearchAsync");
 
-        Assert.Contains("SearchByKeyIdAsync(keyId, searchTicket", body);
-        Assert.Contains("SearchByComputerNameAsync(searchTerm, searchTicket", body);
-        Assert.Contains("ticketNumber: searchTicket", body);
+        // kd-72: the values the search was submitted with, read above its yield - not the live boxes.
+        Assert.Contains("SearchByKeyIdAsync(submittedKeyId, submittedTicket", body);
+        Assert.Contains("SearchByComputerNameAsync(submittedTerm, submittedTicket", body);
+        Assert.Contains("ticketNumber: submittedTicket", body);
+        Assert.Contains("searchTicket = submittedTicket;", body);
     }
 
     [Fact]
@@ -1041,7 +1043,8 @@ public sealed class BitLockerRecoveryTests : IDisposable
 
         var liveBranch = System.Text.RegularExpressions.Regex.Match(
             source,
-            @"Progress\.Begin\(.*?includeLiveAd.*?this can take a while on a broad name",
+            // kd-72: the choice is the one submitted, read above the yield into liveAd.
+            @"Progress\.Begin\(.*?\bliveAd\b.*?this can take a while on a broad name",
             System.Text.RegularExpressions.RegexOptions.Singleline);
 
         Assert.True(liveBranch.Success,

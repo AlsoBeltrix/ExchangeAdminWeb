@@ -287,6 +287,20 @@
 
     private async Task SearchAsync()
     {
+        // kd-72. A second submit while a search runs is ignored, not run beside it: Enter checks
+        // isSearching and the button is disabled on it, but the browser's copy of that is a round trip stale.
+        if (isSearching)
+            return;
+
+        // kd-72. What this search runs on and records, read once, above the paint yield below. The three
+        // boxes bind on input and are not disabled while a search runs, so a keystroke - or a tick of the
+        // live-AD box - landing in the yield changed the search, its label and its audit row.
+        var byKeyId = !string.IsNullOrWhiteSpace(keyId);
+        var submittedKeyId = keyId;
+        var submittedTerm = searchTerm;
+        var submittedTicket = ticketNumber.Trim();
+        var liveAd = includeLiveAd;
+
         isSearching = true;
         errorMessage = null;
         revealed.Clear();
@@ -310,15 +324,15 @@
         // The live Active Directory half of this is the slow part, by the page's own copy.
         using var activity = Progress.Begin(
             "BitLocker Recovery",
-            includeLiveAd
+            liveAd
                 ? "Searching the archive and live AD - this can take a while on a broad name"
                 : "Searching the archive",
             ActivitySize.Unknown);
 
         try
         {
-            // A recovery-screen identifier targets one key, so it wins when both are given.
-            var byKeyId = !string.IsNullOrWhiteSpace(keyId);
+            // A recovery-screen identifier targets one key, so it wins when both are given - byKeyId,
+            // read with the rest above the yield.
 
             // NOT the raw box contents. The recovery-screen box legitimately accepts a pasted
             // 48-digit recovery key, and auditing that verbatim would write a working
@@ -326,19 +340,19 @@
             // than may reveal a key, and reachable without tripping the RevealRecoveryKey event
             // that exists to record exactly that disclosure.
             var target = byKeyId
-                ? AuditSearchTarget(keyId)
-                : searchTerm.Trim();
+                ? AuditSearchTarget(submittedKeyId)
+                : submittedTerm.Trim();
 
-            searchedLiveAd = includeLiveAd;
+            searchedLiveAd = liveAd;
 
             // One recovery call is one ticket across several search refinements,
             // so the box is not cleared; the value that ran THIS search is
             // captured for the reveal audit.
-            searchTicket = ticketNumber.Trim();
+            searchTicket = submittedTicket;
 
             var result = byKeyId
-                ? await RecoveryService.SearchByKeyIdAsync(keyId, searchTicket, includeLiveAd)
-                : await RecoveryService.SearchByComputerNameAsync(searchTerm, searchTicket, includeLiveAd);
+                ? await RecoveryService.SearchByKeyIdAsync(submittedKeyId, submittedTicket, liveAd)
+                : await RecoveryService.SearchByComputerNameAsync(submittedTerm, submittedTicket, liveAd);
 
             searched = true;
             activity.Complete(result.Success, result.Success ? $"{results.Count:N0} found" : result.Error);
@@ -363,7 +377,7 @@
                 target,
                 result.Success,
                 result.Success ? null : result.Error,
-                ticketNumber: searchTicket));
+                ticketNumber: submittedTicket));
         }
         catch (Exception ex)
         {

@@ -608,14 +608,19 @@
     /// </summary>
     private async Task LookupUserAsync()
     {
+        // kd-72. A second submit while a read runs is ignored, not run beside it: the button and the box
+        // are disabled while isLoading, but the browser's copy of that is one round trip stale.
+        if (isLoading) return;
         if (string.IsNullOrWhiteSpace(lookupUpn)) return;
+
+        // kd-72. The user this lookup is for, read once, above the yield. The box binds on input, so a
+        // keystroke landing in the yield used to change the user looked up, labelled and audited.
+        var target = lookupUpn.Trim();
 
         isLoading = true;
         lookup = null;
         lookupError = null;
         await Task.Yield();
-
-        var target = lookupUpn.Trim();
 
         // Reported to the status frame for as long as it runs. Indeterminate: Entra does not
         // tell us how long a lookup will take, and a made-up percentage is the one thing the
@@ -651,6 +656,17 @@
 
     private async Task LoadRiskyUsersAsync()
     {
+        // kd-72. A second submit while a read runs is ignored, as in LookupUserAsync.
+        if (isLoading) return;
+
+        // kd-72. The filter this query runs and audits, read once, above the yield: the filter text binds on
+        // input, so a keystroke landing in the yield used to change the query and the row naming it.
+        var filter = new RiskyUserFilter(
+            string.IsNullOrWhiteSpace(riskLevelFilter) ? null : riskLevelFilter,
+            string.IsNullOrWhiteSpace(riskStateFilter) ? null : riskStateFilter,
+            string.IsNullOrWhiteSpace(upnContains) ? null : upnContains.Trim());
+        var target = DescribeFilter(filter);
+
         isLoading = true;
         // Cleared at the start of every query, not only the first (S3 rule 1) - otherwise a
         // second query would render the first query's now-stale verdict while it is in flight.
@@ -670,12 +686,6 @@
         actionTicket = "";
         rowOutcomes.Clear();
         await Task.Yield();
-
-        var filter = new RiskyUserFilter(
-            string.IsNullOrWhiteSpace(riskLevelFilter) ? null : riskLevelFilter,
-            string.IsNullOrWhiteSpace(riskStateFilter) ? null : riskStateFilter,
-            string.IsNullOrWhiteSpace(upnContains) ? null : upnContains.Trim());
-        var target = DescribeFilter(filter);
 
         using var activity = Progress.Begin(
             "Risky Users", "Querying Entra ID Protection", ActivitySize.Unknown);

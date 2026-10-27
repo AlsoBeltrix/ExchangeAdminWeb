@@ -336,6 +336,10 @@
     /// </remarks>
     private async Task PerformLookup()
     {
+        // kd-72. A second submit while a lookup or a disable runs is ignored, as Enter and the disabled
+        // Lookup already intend - the browser's copy of that disabled attribute is one round trip stale.
+        if (isLoading || isDisabling) return;
+
         isLoading = true;
         BeginNewOperation();
 
@@ -416,7 +420,7 @@
         catch (Exception ex)
         {
             lookupError = ex.Message;
-            Logger.LogError(ex, "Emergency disable lookup failed for {Identity}", searchIdentity);
+            Logger.LogError(ex, "Emergency disable lookup failed for {Identity}", identity);
         }
         finally
         {
@@ -433,7 +437,19 @@
 
     private async Task ExecuteDisable()
     {
+        // kd-72. A second click while a disable runs is ignored, not run beside it: the button is disabled
+        // while isDisabling, but the browser's copy of that is one round trip stale.
+        if (isDisabling) return;
         if (resolvedPrincipal == null || !confirmed) return;
+
+        // kd-72. What this disable acts on and records, read once, above the yield. The ticket and the
+        // lockdown choice were read after the yield and the authorization re-check, and the account after
+        // them too, so a keystroke or a tick landing there - or a lookup, which clears all three - changed
+        // the account disabled and the ticket and lockdown choice the write and its record carried.
+        var principal = resolvedPrincipal;
+        var ticket = ticketNumber.Trim();
+        var moveToLockdown = moveToLockdownOu;
+
         isDisabling = true;
         operationResult = null;
         await Task.Yield();
@@ -451,14 +467,14 @@
             // A multi-step write across AD and the session stores, so the operator needs to see
             // it is still going rather than clicking a second time on an account disable.
             using var activity = Progress.Begin(
-                "Emergency Disable", $"Disabling {resolvedPrincipal.DisplayName}", ActivitySize.Unknown);
+                "Emergency Disable", $"Disabling {principal.DisplayName}", ActivitySize.Unknown);
 
-            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User, moveToLockdownOu);
+            disableResult = await DisableService.DisableAsync(principal, ticket, currentUser, clientIpAddress, authState.User, moveToLockdown);
             activity.Complete(disableResult.Success, disableResult.Error);
 
             if (disableResult.Success)
             {
-                operationResult = (true, $"Account {resolvedPrincipal.DisplayName} has been disabled. {SecurityNotificationText.For(disableResult.Notification)}");
+                operationResult = (true, $"Account {principal.DisplayName} has been disabled. {SecurityNotificationText.For(disableResult.Notification)}");
             }
             else
             {

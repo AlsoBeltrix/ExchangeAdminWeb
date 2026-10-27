@@ -24,8 +24,10 @@
             <div class="row g-3 mb-3">
                 <div class="col-md-5">
                     <label class="form-label">Email Address</label>
-                    <input type="email" class="form-control" @bind="emailAddress" placeholder="user@example.com"
-                           disabled="@isLoading" @onkeydown="HandleKeyDown" />
+                    @* kd-72: bound on input, not on change. Enter's keydown reaches the server before the
+                       change event, so a change-bound box ran the report on the address it held before. *@
+                    <input type="email" class="form-control" @bind="emailAddress" @bind:event="oninput"
+                           placeholder="user@example.com" disabled="@isLoading" @onkeydown="HandleKeyDown" />
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
                     <button class="btn btn-primary" @onclick="RunReport"
@@ -143,7 +145,16 @@
 
     private async Task RunReport()
     {
+        // kd-72. A second submit while a report runs is ignored, not run beside it: the box and the
+        // button are disabled while isLoading, but the browser's copy of that is one round trip stale.
+        if (isLoading) return;
         if (string.IsNullOrWhiteSpace(emailAddress)) return;
+
+        // kd-72. The mailbox this report is for, read once, here, before the first await. The box
+        // stays bound while the read runs, so a change landing during it - in production, the
+        // change event Enter's keydown had outrun - made the audit row name another mailbox than
+        // the label and the results. The label, the read, the audit row and the catch use this.
+        var target = emailAddress.Trim();
 
         isLoading = true;
         result = null;
@@ -151,23 +162,23 @@
         // Three nested permission loops per recipient, so this is one of the slowest reads in
         // the app. Indeterminate: the recipient count is not known until it is walked.
         using var activity = Progress.Begin(
-            "Delegation Report", $"Reading delegation for {emailAddress.Trim()}", ActivitySize.Unknown);
+            "Delegation Report", $"Reading delegation for {target}", ActivitySize.Unknown);
 
         try
         {
-            result = await DelegationService.GetMailboxDelegationAsync(emailAddress.Trim());
+            result = await DelegationService.GetMailboxDelegationAsync(target);
 
             // A18: a report missing a section it could not read is not a successful report.
             // It used to audit as a clean success, so a read that silently returned nothing
             // looked identical to a mailbox that genuinely has no delegates.
             var problem = result.Error ?? result.CalendarError;
             activity.Complete(problem == null, problem);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "DelegationReport", emailAddress.Trim(), problem == null, problem);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "DelegationReport", target, problem == null, problem);
         }
         catch (Exception ex)
         {
             activity.Complete(false, ex.Message);
-            result = new DelegationReportResult { EmailAddress = emailAddress, Error = ex.Message };
+            result = new DelegationReportResult { EmailAddress = target, Error = ex.Message };
         }
         finally
         {

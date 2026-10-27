@@ -298,6 +298,14 @@
 
     private async Task PerformSearch()
     {
+        // kd-72. A second submit while a lookup runs is ignored, not run beside it: Enter checks isLoading and
+        // the button is disabled on it, but the browser's copy of that is one round trip stale.
+        if (isLoading) return;
+
+        // kd-72. The identity this lookup is for, read once, above the yield below. The box binds on input,
+        // so a keystroke landing in the yield changed the identity looked up and labelled.
+        var identity = searchIdentity.Trim();
+
         isLoading = true;
         searchError = null;
         protectedBlocked = false;
@@ -328,11 +336,11 @@
         // with no message and the banner carries the reason, as ConfirmSave records.
         (bool success, string? message)? completed = null;
         using var activity = Progress.Begin(
-            "AD Attribute Editor", $"Looking up {searchIdentity.Trim()}", ActivitySize.Unknown);
+            "AD Attribute Editor", $"Looking up {identity}", ActivitySize.Unknown);
 
         try
         {
-            var result = await EditorService.LookupAsync(searchIdentity.Trim());
+            var result = await EditorService.LookupAsync(identity);
 
             if (!result.Success)
             {
@@ -409,7 +417,7 @@
         {
             searchError = ex.Message;
             completed = (false, ex.Message);
-            Logger.LogError(ex, "AD attribute lookup failed for {Identity}", searchIdentity);
+            Logger.LogError(ex, "AD attribute lookup failed for {Identity}", identity);
         }
         finally
         {
@@ -480,12 +488,20 @@
 
     private async Task ConfirmSave()
     {
+        // kd-72. A second confirm while a save runs is ignored, not run beside it: the button is disabled while
+        // isSaving, but the browser's copy of that is one round trip stale.
+        if (isSaving) return;
+
         isSaving = true;
 
         // Read before the first await, because the success branch below empties pendingChanges
         // while this handler is still running and the label must not change under the operator.
         var saveTarget = lookupResult?.Principal?.UserPrincipalName ?? searchIdentity.Trim();
         var changeCount = pendingChanges.Count;
+
+        // kd-72. The ticket too: the box binds on input, and it was read after the yield - into both refusal
+        // records, SaveAsync's audit row and notice, and the catch's record and email.
+        var ticket = ticketNumber.Trim();
 
         // Audit finding A14. The PRINCIPAL too, not just its label. A search running
         // concurrently nulls lookupResult and then replaces it with a different user, and
@@ -505,7 +521,7 @@
             // aud-a28g. A refused attempt like any other, and one SaveAsync - which records every
             // result it returns - never sees, so the page records it. There is no principal to name,
             // hence "(none)", as aud-a28d's undo refusals without a target record it.
-            EditorService.LogSaveRefused(null, currentUser, clientIpAddress, ticketNumber.Trim(), "Lookup", operationResult.Value.message);
+            EditorService.LogSaveRefused(null, currentUser, clientIpAddress, ticket, "Lookup", operationResult.Value.message);
             return;
         }
 
@@ -543,7 +559,7 @@
                 operationResult = (false, "Authorization denied.");
                 // aud-a28g. The re-check stays here because the page holds the principal, so the
                 // page records its refusal: SaveAsync is never reached.
-                EditorService.LogSaveRefused(target, currentUser, clientIpAddress, ticketNumber.Trim(), "Authorization", operationResult.Value.message);
+                EditorService.LogSaveRefused(target, currentUser, clientIpAddress, ticket, "Authorization", operationResult.Value.message);
                 return;
             }
 
@@ -560,7 +576,7 @@
             // so neither branch below sends a notice. Only the catch does, for an exception
             // SaveAsync never returns.
             activity.Step("writing the attributes to Active Directory and notifying administrators");
-            var result = await EditorService.SaveAsync(target, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim(), actingUser: authState.User, maxLevel: saveMaxLevel);
+            var result = await EditorService.SaveAsync(target, proposedValues, currentUser, clientIpAddress, ticket, actingUser: authState.User, maxLevel: saveMaxLevel);
 
             if (result.Success)
             {
@@ -606,9 +622,9 @@
             // aud-a28g. The record for an exception SaveAsync did not return - it records every result
             // it does return, so this is never a second record for one attempt. Not a refusal: the
             // write may have been reached.
-            EditorService.LogSaveFailed(target, currentUser, clientIpAddress, ticketNumber.Trim(), ex.Message);
+            EditorService.LogSaveFailed(target, currentUser, clientIpAddress, ticket, ex.Message);
             // The page's one remaining notice: an exception, which SaveAsync never returns.
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = target.UserPrincipalName }, ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticket, new Dictionary<string, string> { ["Target"] = target.UserPrincipalName }, ex.Message); } catch { }
         }
         finally
         {

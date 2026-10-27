@@ -134,7 +134,9 @@ public sealed class ModuleCatalog
             // runspace drain (docs/ProgressCoverage-Plan.md S2).
             // 1.0.5: that drain runs off the circuit, so the page stays live while the pooled
             // connections are disconnected (aud-a67).
-            Version = "1.0.5",
+            // 1.0.6: both saves write the toggle and the connection fields as they stood at the click, read above
+            // their yield (kd-72).
+            Version = "1.0.6",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",
@@ -443,7 +445,10 @@ public sealed class ModuleCatalog
             // a denied bulk run's audit row carries its count and only its first fifty names (kd-36).
             // 1.26.0: both create refusals judge the ticket by the shared TicketPresence rule, so one
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.26.0",
+            // 1.26.1: both eligibility checks and both creates act on and record the address or file, direction,
+            // ticket, batch name and auto choices submitted - read above their first await - and a second click
+            // while the page is busy is ignored (kd-72).
+            Version = "1.26.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -478,7 +483,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.1",
+            // 1.1.2: a report is for the mailbox submitted - read once before the first await, the box bound on
+            // input so Enter submits what it shows - and a second submit during a run is ignored (kd-72).
+            Version = "1.1.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -529,7 +536,10 @@ public sealed class ModuleCatalog
             // fetch, so a cancel during it stops the on-premises read; filed Cancelled (kd-59).
             // 1.8.3: a live detail download stops at the operator's cancel before the next message and pushes no CSV,
             // filed Cancelled; a cancellation that is not theirs - a browser call that timed out - is a failed download (kd-70).
-            Version = "1.8.3",
+            // 1.8.4: a trace audits the addresses and ticket it searched with, and header analysis, a delivery detail and
+            // a live download the ticket at their click - each read before its await - and a second trace, analysis or
+            // download during one is ignored (kd-72).
+            Version = "1.8.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -614,7 +624,9 @@ public sealed class ModuleCatalog
             // 1.5.1: an unblock the operator cancels before it was sent is filed Cancelled, not Failed,
             // and says so in the app's phrase for a cancel - nothing was changed (kd-57). One cancelled
             // after it was sent stays Undetermined.
-            Version = "1.5.1",
+            // 1.5.2: an unblock acts on and records the address, ticket and reason confirmed - read above its
+            // yield - and a second click during one is ignored (kd-72).
+            Version = "1.5.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -895,7 +907,9 @@ public sealed class ModuleCatalog
             // - the shared TicketPresence rule (kd-48).
             // 1.6.0: the reset reads its ticket, its listed user and its method list at the click rather
             // than after the yield, so a keystroke in that window cannot change what is recorded (kd-46).
-            Version = "1.6.0",
+            // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
+            // before, and a second submit during a listing is ignored (kd-72).
+            Version = "1.6.1",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -925,7 +939,9 @@ public sealed class ModuleCatalog
             // which since kd-24 and kd-48 refuses a ticket made only of control characters, or one
             // with nothing visible in it - tickets this module used to accept. No code of its own
             // changed (kd-50).
-            Version = "1.1.0",
+            // 1.1.1: a reset writes, mails and records the ticket and force-change choice confirmed - read above
+            // its yield (kd-72).
+            Version = "1.1.1",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
@@ -1108,7 +1124,9 @@ public sealed class ModuleCatalog
             // taken for the disable's, the lockdown move's or the password reset's own error (psl-10).
             // 1.7.0: the disable's mandatory ticket is judged by the shared TicketPresence rule, so one
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.7.0",
+            // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
+            // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
+            Version = "1.7.1",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1191,7 +1209,9 @@ public sealed class ModuleCatalog
             // (docs/ProgressCoverage-Plan.md S3).
             // 1.6.0: a remediation's ticket presence is the shared TicketPresence rule, so a ticket
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.6.0",
+            // 1.6.1: a lookup and a list query read the user and the filter they were submitted with, above
+            // their yield, and a second submit during one is ignored (kd-72).
+            Version = "1.6.1",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1260,7 +1280,9 @@ public sealed class ModuleCatalog
             // 1.3.0: that ticket goes through the shared TicketValidationService, which since kd-24
             // and kd-48 refuses a ticket made only of control characters, or one with nothing visible
             // in it - tickets this module used to accept. No code of its own changed (kd-50).
-            Version = "1.3.0",
+            // 1.3.1: a search runs on, labels and audits the name, recovery value, ticket and live-AD choice it
+            // was submitted with - read above its paint yield - and a second submit during one is ignored (kd-72).
+            Version = "1.3.1",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
@@ -1479,7 +1501,9 @@ public sealed class ModuleCatalog
             // 1.1.3: the preview reports the Delinea fetch, the two-minute AD throttle wait and
             // the per-row directory resolve instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.1.5",
+            // 1.1.6: a preview runs against the licence type submitted - read above its paint yield - and a
+            // second click during one is ignored (kd-72).
+            Version = "1.1.6",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1513,7 +1537,9 @@ public sealed class ModuleCatalog
             // notifies administrators; it did neither (review of aud-a26).
             // 1.7.3: an allowlist save that meets a busy settings store says so and is recorded as
             // a refusal, where it showed the provider's error code (aud-a67).
-            Version = "1.7.3",
+            // 1.7.4: a lookup runs on the identity submitted and a save records the ticket submitted - both read
+            // above their yield - and a second submit during either is ignored (kd-72).
+            Version = "1.7.4",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
@@ -1549,7 +1575,9 @@ public sealed class ModuleCatalog
             // (docs/ProtectedGroupWriteTarget-Plan.md T0) - pgwt-8.
             // 1.2.2: the page reports to the status frame at all - the staleness sweep and the
             // four protected-principal Add paths were silent (docs/ProgressCoverage-Plan.md S4).
-            Version = "1.2.2",
+            // 1.2.3: the enablement, protected-principal and log-level saves write the toggles, the directory-read
+            // secret ID and the level as they stood at the click, read above their yield (kd-72).
+            Version = "1.2.3",
             MainPermission = new(
                 "Access",
                 "AdminSettings",
