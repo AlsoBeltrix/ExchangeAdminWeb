@@ -478,7 +478,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.1",
+            // 1.1.2: a report is for the mailbox submitted - read once before the first await, the box bound on
+            // input so Enter submits what it shows - and a second submit during a run is ignored (kd-72).
+            Version = "1.1.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
