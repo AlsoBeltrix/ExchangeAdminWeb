@@ -418,3 +418,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-27, slices 2 and 3 of the close-out.** kd-39/kd-41 (permission-page completion guard, copied field): ~181K agent tokens, 102 tool uses, 26 min, merged `3f7eaa07`. kd-44 reversal / aud-a70 (13) / kd-57 (administrators-only notice, only Success counts, cancels filed Cancelled): ~525K agent tokens across a session restart, merged (three findings, three commits); two LOWs admitted from its reading (kd-70, kd-71). Base bump owed for AuditService and PermissionResult.
 
 **2026-10-27, slice 4.** kd-51 (Self-Service Groups: Back ends the running load and clears the busy flag; a retired load cannot lower a newer load's flag) with kd-67 contested and declined: ~267K agent tokens, 133 tool uses, 35 min; 7373 tests on the branch.
+
+**2026-10-27, slice 5.** kd-59 (four modules), kd-70, kd-71, kd-58 sized for a plan: ~668K agent tokens, 370 tool uses, 2 h 4 min; 7402 tests on the branch, 34 mutants; merged `a9cdf00d`.
