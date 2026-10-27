@@ -296,10 +296,18 @@
     ///
     /// No snapshot: the InputFile at :61 is disabled="@(isProcessing || previewResult != null)"
     /// and isProcessing is raised above the yield, so selectedFile cannot be replaced under this.
+    ///
+    /// The licence type IS snapshotted (kd-72). The select carries the same disabled clause, but the
+    /// browser's copy of it is one round trip stale and a pick in the select lands in one event, so a
+    /// pick in the yield used to preview the rows against a type the operator did not submit.
     /// </remarks>
     private async Task RunPreview()
     {
+        // kd-72. A second click while a preview runs is ignored, not run beside it: Preview is disabled
+        // while isProcessing, but the browser's copy of that is one round trip stale.
+        if (isProcessing) return;
         if (selectedFile == null) return;
+        var licenseType = selectedLicenseType;
         isProcessing = true;
         previewError = null;
         previewResult = null;
@@ -314,7 +322,7 @@
         try
         {
             await using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            var result = await LicenseService.PreviewCsvAsync(stream, selectedFile.Name, selectedLicenseType, currentUser, clientIpAddress);
+            var result = await LicenseService.PreviewCsvAsync(stream, selectedFile.Name, licenseType, currentUser, clientIpAddress);
 
             if (!result.Success)
             {

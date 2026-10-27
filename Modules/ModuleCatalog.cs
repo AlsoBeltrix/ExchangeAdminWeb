@@ -1489,7 +1489,9 @@ public sealed class ModuleCatalog
             // 1.1.3: the preview reports the Delinea fetch, the two-minute AD throttle wait and
             // the per-row directory resolve instead of running with the frame idle
             // (docs/ProgressCoverage-Plan.md S5).
-            Version = "1.1.5",
+            // 1.1.6: a preview runs against the licence type submitted - read above its paint yield - and a
+            // second click during one is ignored (kd-72).
+            Version = "1.1.6",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
