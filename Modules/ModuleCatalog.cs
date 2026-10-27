@@ -177,7 +177,9 @@ public sealed class ModuleCatalog
             // 1.6.2: kd-44 reversed by owner ruling 2026-10-27 ("remove to affected target, keep to admin") - a change whose
             // outcome could not be confirmed tells the administrators alone again; kd-44's notice to the user and the mailbox
             // owner, single change and bulk row alike, is gone.
-            Version = "1.6.2",
+            // 1.6.3: an on-premises change passes the operator's cancel to its credential fetch, so a cancel during it stops
+            // the change before it is sent - nothing written, filed Cancelled (kd-59).
+            Version = "1.6.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -458,7 +458,13 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// restricted language mode can still run it - the same shape <c>OnPremRecipientExists</c>
     /// uses. That the pipeline binds there is an assumption recorded in aud-a2d.
     /// </remarks>
-    public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs)
+    /// <param name="cancellationToken">
+    /// kd-59. The page's activity token, for the credential fetch (kd-37's seam): a cancel during it leaves, as every throw
+    /// before the mark does, as a <see cref="PermissionWriteNotSubmittedException"/> - nothing was sent - with the
+    /// cancellation as its cause. Nothing after the fetch takes it: once the credential is in hand the write runs as before.
+    /// </param>
+    public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
@@ -467,7 +473,7 @@ public class MailboxPermissionService : ExchangeServiceBase
         // throw from any of them leaves as a PermissionWriteNotSubmittedException: nothing was sent. Each right's own
         // failure is a result (TryRightOnPrem), as before.
         var submission = new PermissionWriteSubmission();
-        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation"));
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation", cancellationToken)); // kd-59
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -529,15 +535,16 @@ public class MailboxPermissionService : ExchangeServiceBase
         }), _onPremThrottle));
     }
 
-    /// <summary>The on-premises revoke; bound exactly as <see cref="AddMailboxPermissionsOnPremAsync"/>.</summary>
-    public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs)
+    /// <summary>The on-premises revoke; bound exactly as <see cref="AddMailboxPermissionsOnPremAsync"/>, its token too (kd-59).</summary>
+    public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
         // aud-a76: marked as AddMailboxPermissionsOnPremAsync is.
         var submission = new PermissionWriteSubmission();
-        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation"));
+        var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation", cancellationToken)); // kd-59
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
