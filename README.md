@@ -705,6 +705,17 @@ environments; it is intentionally separate from the standalone installer.
 .\deploy.ps1
 ```
 
+`deploy.ps1` updates in place when the publish folder already holds `appsettings.json`.
+`-Force` (which regenerates `appsettings.json`) and `-ConfirmFreshInstall` take the fresh-install
+path, which points the IIS application at the run's `-PublishPath` and `-AppPoolName`: if the
+application already exists with another folder or pool, the run is refused before anything is
+configured, unless `-AllowRepoint` says the move is intended. An upgrade is checked the same way,
+before it configures the pool or grants any folder access, and is refused, `-AllowRepoint` or not:
+an upgrade never moves the application. A `-AllowRepoint` move to another folder takes its backups
+from the folder the application is leaving and carries that configuration's `ConfigStore:Path`
+into the new `appsettings.json`; it is refused if that folder keeps its own config database (move
+the database to a shared path first with `tools\Move-ConfigDbToShared.ps1`).
+
 The deploy/install scripts will:
 - Stop the application pool
 - Build and publish the application

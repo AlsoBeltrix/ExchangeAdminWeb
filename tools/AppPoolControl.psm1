@@ -259,7 +259,9 @@ function ConvertTo-ComparablePhysicalPath {
     # One spelling per folder: environment variables expanded, made absolute and normalised
     # (slashes, dot segments), trailing separators dropped. The callers compare the result
     # ordinal and case-insensitive, by equality or at a directory boundary
-    # (Test-PhysicalPathInside) - never by bare prefix. Not exported.
+    # (Test-PhysicalPathInside) - never by bare prefix. Exported for deploy.ps1 (cdt-36): its check
+    # that a run does not move an existing application compares folders with this, as
+    # Assert-AppPoolServesPath does later in the same run, so the two agree on what one folder is.
     param([string]$Path)
 
     if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
@@ -271,6 +273,95 @@ function ConvertTo-ComparablePhysicalPath {
     }
     return $full.TrimEnd('\', '/')
 }
+
+Export-ModuleMember -Function ConvertTo-ComparablePhysicalPath
+
+# cdt-46. GetFinalPathNameByHandle through a small type compiled on first use: the filesystem's own
+# answer to which folder a spelling names. C# 5, so the Windows PowerShell 5.1 compiler takes it too.
+$script:FinalPathSource = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace AppPoolControlNative
+{
+    public static class FinalPath
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, StringBuilder filePath, uint filePathLength, uint flags);
+
+        public static string Get(string path)
+        {
+            // FILE_READ_ATTRIBUTES; share read, write and delete; OPEN_EXISTING; BACKUP_SEMANTICS, which opens folders.
+            using (SafeFileHandle handle = CreateFileW(path, 0x80, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) { return null; }
+                StringBuilder buffer = new StringBuilder(1024);
+                uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+                if (length >= buffer.Capacity)
+                {
+                    buffer = new StringBuilder((int)length + 1);
+                    length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+                }
+                if (length == 0 || length >= buffer.Capacity) { return null; }
+                string text = buffer.ToString();
+                if (text.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) { return @"\\" + text.Substring(8); }
+                if (text.StartsWith(@"\\?\", StringComparison.Ordinal)) { return text.Substring(4); }
+                return text;
+            }
+        }
+    }
+}
+'@
+
+function Resolve-FinalPhysicalPath {
+    # cdt-46. The final spelling of a folder that exists, as the filesystem resolves it: 8.3 short
+    # names expanded to long ones, junctions and symbolic links followed, the case on disk. $null when
+    # the path cannot be opened - it does not exist, access is denied - or the type cannot be compiled,
+    # so a caller falls back to the lexical comparison and fails closed. Takes a comparable form
+    # (ConvertTo-ComparablePhysicalPath) and returns one, trailing separators dropped. Not exported.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+    try {
+        $type = 'AppPoolControlNative.FinalPath' -as [type]
+        if ($null -eq $type) {
+            Add-Type -TypeDefinition $script:FinalPathSource -Language CSharp -ErrorAction Stop
+            $type = 'AppPoolControlNative.FinalPath' -as [type]
+        }
+        $final = $type::Get($Path)
+    } catch {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($final)) { return $null }
+    return $final.TrimEnd('\', '/')
+}
+
+function Test-SamePhysicalFolder {
+    # cdt-44. True when two spellings name the same folder: both through
+    # ConvertTo-ComparablePhysicalPath, then equal, ordinal and case-insensitive - never by prefix. A
+    # spelling that reads as empty is never the same folder as anything. deploy.ps1 asks this twice,
+    # in its check that a run does not move an existing application and in its choice of which
+    # folder's configuration is live, so the two answers cannot disagree.
+    # cdt-46. Or both spellings exist and resolve to one final path: an 8.3 short name, a junction. A
+    # spelling that does not resolve is not taken as the same folder, so the caller fails closed.
+    param([string]$Path, [string]$Other)
+
+    $first = ConvertTo-ComparablePhysicalPath $Path
+    $second = ConvertTo-ComparablePhysicalPath $Other
+    if ([string]::IsNullOrWhiteSpace($first) -or [string]::IsNullOrWhiteSpace($second)) { return $false }
+    if ([string]::Equals($first, $second, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    $firstFinal = Resolve-FinalPhysicalPath $first
+    $secondFinal = Resolve-FinalPhysicalPath $second
+    if ($null -eq $firstFinal -or $null -eq $secondFinal) { return $false }
+    return [string]::Equals($firstFinal, $secondFinal, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+Export-ModuleMember -Function Test-SamePhysicalFolder
 
 function Test-PhysicalPathInside {
     # aud-a38f. True when Path is Root or lies inside it: equal, or Root followed by a directory
@@ -379,6 +470,34 @@ function Assert-AppPoolServesPath {
     )
 
     $target = ConvertTo-ComparablePhysicalPath $PhysicalPath
+    # cdt-46. And, when the folder exists, the final path the filesystem resolves it to, so a node IIS
+    # spells with an 8.3 short name or through a junction is matched too. A node is at the folder, or
+    # inside it, when either its lexical or its final form says so - never fewer nodes than the lexical
+    # comparison alone: a node rooted inside the folder through a junction that leads elsewhere stays
+    # inside, and one whose files reach into the folder through a junction elsewhere is inside as well.
+    $targetFinal = Resolve-FinalPhysicalPath $target
+    $finals = @{}
+    $finalOf = {
+        param([string]$Lexical)
+        if (-not $finals.ContainsKey($Lexical)) { $finals[$Lexical] = Resolve-FinalPhysicalPath $Lexical }
+        $finals[$Lexical]
+    }
+    $isAtFolder = {
+        param($Node)
+        $lexical = ConvertTo-ComparablePhysicalPath $Node.PhysicalPath
+        if ([string]::Equals($lexical, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        if ($null -eq $targetFinal) { return $false }
+        $final = & $finalOf $lexical
+        return ($null -ne $final -and [string]::Equals($final, $targetFinal, [System.StringComparison]::OrdinalIgnoreCase))
+    }
+    $isInFolder = {
+        param($Node)
+        $lexical = ConvertTo-ComparablePhysicalPath $Node.PhysicalPath
+        if (Test-PhysicalPathInside $lexical $target) { return $true }
+        if ($null -eq $targetFinal) { return $false }
+        $final = & $finalOf $lexical
+        return ($null -ne $final -and (Test-PhysicalPathInside $final $targetFinal))
+    }
 
     try {
         $applications = @(& $ApplicationsProbe)
@@ -386,10 +505,8 @@ function Assert-AppPoolServesPath {
         throw "Cannot read the IIS sites and applications, so it cannot be confirmed that app pool '$Name' is what serves '$PhysicalPath': $($_.Exception.Message)"
     }
 
-    $inside = @($applications | Where-Object { Test-PhysicalPathInside (ConvertTo-ComparablePhysicalPath $_.PhysicalPath) $target })
-    $serving = @($inside | Where-Object {
-            [string]::Equals((ConvertTo-ComparablePhysicalPath $_.PhysicalPath), $target, [System.StringComparison]::OrdinalIgnoreCase)
-        })
+    $inside = @($applications | Where-Object { & $isInFolder $_ })
+    $serving = @($inside | Where-Object { & $isAtFolder $_ })
 
     # Which nodes must run under the named pool. Refuse: the folder's own. A node inside it is refused
     # below whatever its pool, and in the same refusal as every other nested node: "name the pool that
@@ -437,7 +554,7 @@ function Assert-AppPoolServesPath {
     # under the named pool passed, its pool was stopped, and the mirror then replaced or purged its
     # files while the run reported success.
     if ($NestedNodes -eq 'Refuse') {
-        $nested = @($inside | Where-Object { -not [string]::Equals((ConvertTo-ComparablePhysicalPath $_.PhysicalPath), $target, [System.StringComparison]::OrdinalIgnoreCase) })
+        $nested = @($inside | Where-Object { -not (& $isAtFolder $_) })
         if ($nested.Count -gt 0) {
             $named = @($nested | ForEach-Object { "$($_.Location) runs under '$($_.ApplicationPool)', with its files at '$($_.PhysicalPath)'" }) -join '; '
             throw "IIS serves content from inside '$PhysicalPath': $named. The mirror replaces '$PhysicalPath' with the publish output and purges whatever that output lacks, so it would replace or purge those files, whatever pool serves them. Move each out of '$PhysicalPath', or remove it from IIS."
@@ -449,3 +566,73 @@ function Assert-AppPoolServesPath {
 }
 
 Export-ModuleMember -Function Assert-AppPoolServesPath
+
+function Get-AppPoolOtherApplication {
+    <#
+    .SYNOPSIS
+        Lists the IIS applications an app pool serves besides the instance whose files are at a folder.
+
+    .DESCRIPTION
+        cdt-54. Stopping a pool stops every application it serves. Assert-AppPoolServesPath looks only
+        at what is at or inside the folder about to be replaced, so an application elsewhere that runs
+        under the same pool was stopped with it, unannounced. This lists those: every site root and
+        application IIS runs under the named pool whose files are neither at the folder nor inside it.
+        The folder's own nodes are the instance being deployed; a node inside the folder is refused
+        before the stop anyway (aud-a38i).
+
+        Folders compare as in Assert-AppPoolServesPath: lexically, at a directory boundary, or by
+        final path when both resolve (cdt-46). Pool names compare case-insensitively. It errs toward
+        listing: a node is left out only when its lexical or final path puts it at or inside the
+        folder, so an application with no folder, or one whose folder cannot be resolved, is listed.
+
+        Virtual directories are not read. Each belongs to an application, which is listed if it is
+        another one; counting them would report the instance's own virtual directories as other
+        applications.
+
+    .OUTPUTS
+        Location, ApplicationPool and PhysicalPath of each other application; nothing when there is
+        none. Throws when IIS cannot be read.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PhysicalPath,
+
+        # Every site root and application IIS knows: the first half of Assert-AppPoolServesPath's
+        # probe, without the virtual directories.
+        [scriptblock]$ApplicationsProbe = {
+            foreach ($site in @(Get-Website)) {
+                [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
+                foreach ($app in @(Get-WebApplication -Site $site.name)) {
+                    [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
+                }
+            }
+        }
+    )
+
+    try {
+        $applications = @(& $ApplicationsProbe)
+    } catch {
+        throw "Cannot read the IIS sites and applications, so the applications app pool '$Name' serves besides the one at '$PhysicalPath' cannot be listed: $($_.Exception.Message)"
+    }
+
+    $target = ConvertTo-ComparablePhysicalPath $PhysicalPath
+    $targetFinal = Resolve-FinalPhysicalPath $target
+    foreach ($node in $applications) {
+        if (-not [string]::Equals([string]$node.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $lexical = ConvertTo-ComparablePhysicalPath $node.PhysicalPath
+        if ($lexical) {
+            if (Test-PhysicalPathInside $lexical $target) { continue }
+            if ($null -ne $targetFinal) {
+                $final = Resolve-FinalPhysicalPath $lexical
+                if ($null -ne $final -and (Test-PhysicalPathInside $final $targetFinal)) { continue }
+            }
+        }
+        $node
+    }
+}
+
+Export-ModuleMember -Function Get-AppPoolOtherApplication

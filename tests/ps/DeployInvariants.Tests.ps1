@@ -733,6 +733,1053 @@ Describe 'deploy.ps1' {
             -Because 'an unexpected INSTALL usually means the target parameters are wrong'
     }
 
+    It 'refuses a fresh-install or -Force run that would move an existing application, unless -AllowRepoint names the move (cdt-36)' {
+        # The fresh-install branch - every -Force run, and -ConfirmFreshInstall - set an EXISTING
+        # application's physicalPath and applicationPool to this run's -PublishPath and -AppPoolName,
+        # so a mistyped or defaulted value moved the live application. Runs the real function, lifted
+        # by AST, with deploy.ps1's own helpers and the module's real ConvertTo-ComparablePhysicalPath.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            $fn = Find-FunctionDefinition $s $name
+            $fn | Should -Not -BeNullOrEmpty -Because "deploy.ps1 defines $name"
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt36Printed.Add("$Object") }
+            $check = {
+                param([bool]$Exists, [string]$Pool, [string]$Folder, [bool]$Allow)
+                $script:cdt36Printed = New-Object System.Collections.Generic.List[string]
+                $thrown = $null
+                try {
+                    Assert-ApplicationTargetUnchanged -Location 'Example Site/ExampleApp' -Exists $Exists -ExistingPool $Pool -ExistingPhysicalPath $Folder -AppPoolName 'ExamplePool' -PublishPath 'D:\example\publish' -AllowRepoint:$Allow
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt36Printed -join "`n") }
+            }
+
+            $fresh = & $check $false '' '' $false
+            $fresh.Thrown | Should -BeNullOrEmpty -Because 'with no application there is nothing to move'
+            $fresh.Printed | Should -BeLike "*No IIS application Example Site/ExampleApp yet*'D:\example\publish'*'ExamplePool'*"
+
+            foreach ($spelling in 'D:\example\publish', 'd:\EXAMPLE\Publish', 'D:\example\publish\', 'D:/example/publish', 'D:\example\x\..\publish') {
+                $same = & $check $true 'examplepool' $spelling $false
+                $same.Thrown | Should -BeNullOrEmpty -Because "'$spelling' is the folder this run names, and pool names compare case-insensitively"
+                $same.Printed | Should -BeLike "*runs under app pool 'examplepool' with its files at '$spelling'*deployed in place*" -Because 'what was compared is printed'
+            }
+            $env:CDT36_ROOT = 'D:\example'
+            try {
+                (& $check $true 'ExamplePool' '%CDT36_ROOT%\publish' $false).Thrown | Should -BeNullOrEmpty -Because 'IIS often stores the folder with an environment variable'
+            } finally {
+                Remove-Item Env:\CDT36_ROOT -ErrorAction SilentlyContinue
+            }
+
+            $cases = @(
+                @{ Case = 'a different pool'; Pool = 'OtherPool'; Folder = 'D:\example\publish'; Expect = @("app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')") }
+                @{ Case = 'a different folder'; Pool = 'ExamplePool'; Folder = 'D:\example\other'; Expect = @("files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')") }
+                @{ Case = 'both'; Pool = 'OtherPool'; Folder = 'D:\example\other'; Expect = @("app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')", "files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')") }
+                @{ Case = 'a folder that only starts with the run''s'; Pool = 'ExamplePool'; Folder = 'D:\example\publishOld'; Expect = @("files at 'D:\example\publishOld'") }
+                @{ Case = 'an application with no folder'; Pool = 'ExamplePool'; Folder = ''; Expect = @("files at '' (this run: -PublishPath 'D:\example\publish')") }
+            )
+            foreach ($c in $cases) {
+                $refused = & $check $true $c.Pool $c.Folder $false
+                $refused.Thrown | Should -Not -BeNullOrEmpty -Because "a run must not move the live application ($($c.Case))"
+                foreach ($text in $c.Expect) { $refused.Thrown | Should -BeLike "*$text*" -Because "the refusal names what IIS reports and what the run names ($($c.Case))" }
+                $refused.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists*Re-run with -AppPoolName '$($c.Pool)' -PublishPath '$($c.Folder)' to deploy it in place, or add -AllowRepoint if the move is intended. Nothing was deployed."
+
+                $moved = & $check $true $c.Pool $c.Folder $true
+                $moved.Thrown | Should -BeNullOrEmpty -Because "-AllowRepoint is the explicit consent to the move ($($c.Case))"
+                foreach ($text in $c.Expect) { $moved.Printed | Should -BeLike "*$text*" -Because 'the warning names what is moved' }
+                $moved.Printed | Should -BeLike "*-AllowRepoint: this run MOVES it to app pool 'ExamplePool' with its files at 'D:\example\publish'*"
+            }
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'runs the real check before a fresh-install or -Force run configures anything: one IIS read, the comparison printed, nothing changed (cdt-36)' {
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        # The check is script-level statements, from its step line to the assertion; since cdt-42 they
+        # run on every run, so no condition wraps them.
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Step "Checking IIS application $ParentSite/$AppAlias"') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Assert-ApplicationTargetUnchanged *') { $i } })
+        $from.Count | Should -Be 1 -Because 'one script-level step line opens the check'
+        $to.Count | Should -Be 1 -Because 'one script-level statement checks the application'
+        $to[0] | Should -BeGreaterThan $from[0]
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt36Printed.Add("$Object") }
+            ${function:Get-WebApplication} = {
+                param($Name, $Site, $ErrorAction)
+                $script:cdt36Calls.Add("lookup($Site/$Name|$ErrorAction)")
+                if ($script:cdt36Iis -eq 'throws') { throw 'Cannot read configuration file due to insufficient permissions' }
+                if ($script:cdt36Iis -eq 'absent') { return }
+                $pool, $folder = $script:cdt36Iis -split '\|', 2
+                [pscustomobject]@{ applicationPool = $pool; PhysicalPath = $folder }
+            }
+            # Everything that would change IIS, an ACL or a file records itself: none may run here.
+            foreach ($cmd in 'New-WebAppPool', 'Set-ItemProperty', 'New-WebApplication', 'Set-WebConfigurationProperty', 'Remove-WebConfigurationProperty', 'Stop-WebAppPool', 'Start-WebAppPool', 'Stop-AppPoolVerified', 'Start-AppPoolVerified', 'Set-AclChecked', 'icacls', 'robocopy', 'dotnet', 'New-Item', 'Copy-Item', 'Remove-Item', 'Set-Content') {
+                Set-Item -Path "function:$cmd" -Value ([scriptblock]::Create("`$script:cdt36Calls.Add('$cmd')"))
+            }
+
+            $run = {
+                param([string]$Iis, [string]$Mode, [bool]$Allow)
+                $script:cdt36Iis = $Iis
+                $script:cdt36Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt36Printed = New-Object System.Collections.Generic.List[string]
+                # Read only by the lifted statement. -Force and -ConfirmFreshInstall both make the run a
+                # fresh install; an upgrade has appsettings.json and neither switch.
+                Set-Variable -Name isUpgrade -Value ($Mode -eq 'upgrade')
+                Set-Variable -Name Force -Value ([switch]($Mode -eq 'force'))
+                Set-Variable -Name ConfirmFreshInstall -Value ([switch]($Mode -eq 'confirm'))
+                Set-Variable -Name AllowRepoint -Value ([switch]$Allow)
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt36Calls -join ','); Printed = ($script:cdt36Printed -join "`n") }
+            }
+            $read = 'lookup(Example Site/ExampleApp|Stop)'
+
+            foreach ($mode in 'force', 'confirm') {
+                $same = & $run 'ExamplePool|D:\example\publish' $mode $false
+                $same.Thrown | Should -BeNullOrEmpty -Because "IIS serves the application from the pool and folder this $mode run names"
+                $same.Calls | Should -BeExactly $read -Because 'the one IIS call is the read'
+                $same.Printed | Should -BeLike "*Checking IIS application Example Site/ExampleApp*runs under app pool 'ExamplePool' with its files at 'D:\example\publish'*deployed in place*" -Because 'what was compared is printed'
+
+                $pool = & $run 'OtherPool|D:\example\publish' $mode $false
+                $pool.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')*Nothing was deployed." -Because "a $mode run must not move the application into another pool"
+                $pool.Calls | Should -BeExactly $read -Because 'the refusal comes before anything is changed'
+
+                $folder = & $run 'ExamplePool|D:\example\other' $mode $false
+                $folder.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')*Nothing was deployed." -Because "a $mode run must not move the application to another folder"
+                $folder.Calls | Should -BeExactly $read
+
+                $moved = & $run 'OtherPool|D:\example\other' $mode $true
+                $moved.Thrown | Should -BeNullOrEmpty -Because '-AllowRepoint is the explicit way to move the application'
+                $moved.Calls | Should -BeExactly $read -Because 'the move is the fresh-install branch''s, later; this only reads'
+                $moved.Printed | Should -BeLike "*app pool 'OtherPool'*files at 'D:\example\other'*-AllowRepoint: this run MOVES it*"
+
+                $absent = & $run 'absent' $mode $false
+                $absent.Thrown | Should -BeNullOrEmpty -Because 'with no application there is nothing to move'
+                $absent.Calls | Should -BeExactly $read
+                $absent.Printed | Should -BeLike '*No IIS application Example Site/ExampleApp yet*'
+
+                $unreadable = & $run 'throws' $mode $true
+                $unreadable.Thrown | Should -BeLike 'Cannot read IIS application Example Site/ExampleApp (Cannot read configuration file due to insufficient permissions)*Nothing was deployed.' -Because 'a run that cannot read the application cannot show it does not move it, -AllowRepoint or not'
+                $unreadable.Calls | Should -BeExactly $read
+            }
+
+            # cdt-42 checks an upgrade too, and its own tests cover what it refuses there. Here: the same
+            # values pass, and the read is still the one call.
+            $upgrade = & $run 'ExamplePool|D:\example\publish' 'upgrade' $false
+            $upgrade.Thrown | Should -BeNullOrEmpty -Because 'an upgrade of the application IIS serves from this pool and folder proceeds'
+            $upgrade.Calls | Should -BeExactly $read -Because 'an upgrade reads the application before anything as well (cdt-42), and changes nothing here'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'checks the application at script level, after the consent check and before anything is configured, and nothing catches its refusal (cdt-36, AST)' {
+        $statements = @($s.Ast.EndBlock.Statements)
+        $find = { param($test) for ($i = 0; $i -lt $statements.Count; $i++) { if (& $test $statements[$i]) { $i } } }
+
+        # The step line, the variable's reset, the read and the assertion: four consecutive script-level
+        # statements, under no condition - since cdt-42 every run checks, upgrades included.
+        $stepAt = @(& $find { param($st) $st.Extent.Text -eq 'Write-Step "Checking IIS application $ParentSite/$AppAlias"' })
+        $stepAt.Count | Should -Be 1 -Because 'the application is checked once, at script level'
+        $check = $stepAt
+        $readAt = @(& $find { param($st) $st -is [System.Management.Automation.Language.TryStatementAst] -and $st.Body.Extent.Text -match ([regex]::Escape('$existingApplication = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction Stop')) })
+        $readAt.Count | Should -Be 1 -Because 'the application is read once, at script level'
+        $assertAt = @(& $find { param($st) $st.Extent.Text -like 'Assert-ApplicationTargetUnchanged *' })
+        $assertAt.Count | Should -Be 1 -Because 'and checked once, at script level'
+        $statements[$stepAt[0] + 1].Extent.Text | Should -BeExactly '$existingApplication = $null'
+        $readAt[0] | Should -Be ($stepAt[0] + 2)
+        $assertAt[0] | Should -Be ($readAt[0] + 1) -Because 'nothing runs between the read and the check'
+
+        $read = $statements[$readAt[0]]
+        $read.CatchClauses.Count | Should -Be 1
+        $read.Finally | Should -BeNullOrEmpty
+        @($read.CatchClauses[0].Body.Statements).Count | Should -Be 1
+        $read.CatchClauses[0].Body.Statements[0].Extent.Text | Should -BeLike 'Write-Fail "Cannot read IIS application $ParentSite/$AppAlias *' -Because 'a lookup that fails refuses the run'
+
+        $asserts = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-ApplicationTargetUnchanged' }, $true))
+        $asserts.Count | Should -Be 1 -Because 'one call, in the script itself'
+        $assert = $asserts[0]
+        [object]::ReferenceEquals($assert.Parent.Parent, $s.Ast.EndBlock) | Should -BeTrue -Because 'a statement of the script itself: nothing conditional or catching sits around it, so every run checks (cdt-42)'
+        foreach ($pair in @(
+                @('Location', '"$ParentSite/$AppAlias"'),
+                @('Exists', '($null -ne $existingApplication)'),
+                @('ExistingPool', '"$($existingApplication.applicationPool)"'),
+                @('ExistingPhysicalPath', '"$($existingApplication.PhysicalPath)"'),
+                @('AppPoolName', '$AppPoolName'),
+                @('PublishPath', '$PublishPath'),
+                @('AllowRepoint', '$AllowRepoint'),
+                @('Upgrade', '$isUpgrade'))) {
+            Get-NamedArgumentText $assert $pair[0] | Should -BeExactly $pair[1] -Because "-$($pair[0]) carries what IIS reported or what this run names"
+        }
+
+        # In order: the consent check and the banner, this statement, then everything that prompts,
+        # reads the pool or configures anything.
+        $consent = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Clauses[0].Item1.Extent.Text -eq '-not $isUpgrade -and -not $Force -and -not $ConfirmFreshInstall' })
+        $banner = @(& $find { param($st) $st.Extent.Text -eq 'Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray' })
+        $collect = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Extent.Text -match 'Write-Step "Collecting configuration values"' })
+        $poolRead = @(& $find { param($st) $st.Extent.Text -like '$poolExists = *' })
+        $changes = @(& $find { param($st)
+                -not ($st -is [System.Management.Automation.Language.FunctionDefinitionAst]) -and
+                $null -ne $st.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -in @('New-WebAppPool', 'Set-ItemProperty', 'Set-AclChecked', 'New-WebApplication', 'Set-WebConfigurationProperty', 'Remove-WebConfigurationProperty', 'robocopy', 'dotnet', 'Stop-AppPoolVerified') }, $true) })
+        $modeTry = @(& $find { param($st) $st -is [System.Management.Automation.Language.TryStatementAst] -and $null -ne $st.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$isUpgrade' }, $true) })
+        foreach ($anchor in @(@('consent check', $consent), @('banner', $banner), @('config collection', $collect), @('pool read', $poolRead), @('mode branch', $modeTry))) {
+            @($anchor[1]).Count | Should -Be 1 -Because "the $($anchor[0]) is one script-level statement"
+        }
+        $changes.Count | Should -BeGreaterThan 0
+
+        $consent[0] | Should -BeLessThan $check[0] -Because 'an unconsented fresh install is still refused by the consent check first'
+        $banner[0] | Should -BeLessThan $check[0]
+        $assertAt[0] | Should -BeLessThan $collect[0] -Because 'a run that would move the application is refused before anything is prompted for'
+        $assertAt[0] | Should -BeLessThan $poolRead[0] -Because 'and before the pool it names is read (cdt-42)'
+        $assertAt[0] | Should -BeLessThan $changes[0] -Because 'it refuses before IIS, an ACL or the publish folder is touched - on an upgrade too (cdt-42)'
+        $assertAt[0] | Should -BeLessThan $modeTry[0]
+
+        # cdt-45: and before the run writes anything at all. The backup folder and the pre-force copy
+        # used to come before the consent check; they follow the check now, and nothing above the
+        # check's step line runs a command that writes.
+        $backupFolder = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Clauses[0].Item1.Extent.Text -eq '-not (Test-Path $BackupDir)' })
+        $preForceCopy = @(& $find { param($st) $st -is [System.Management.Automation.Language.IfStatementAst] -and $st.Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-force.bak"')) })
+        $backupFolder.Count | Should -Be 1 -Because 'the backup folder is created by one script-level statement'
+        $preForceCopy.Count | Should -Be 1 -Because 'the pre-force copy is one script-level statement'
+        $assertAt[0] | Should -BeLessThan $backupFolder[0] -Because 'a refused run creates no backup folder (cdt-45)'
+        $assertAt[0] | Should -BeLessThan $preForceCopy[0] -Because 'a refused run copies no appsettings.json (cdt-45)'
+        $writers = @('New-Item', 'Copy-Item', 'Move-Item', 'Remove-Item', 'Set-Content', 'Add-Content', 'Out-File', 'Set-ItemProperty', 'New-WebAppPool', 'New-WebApplication', 'Set-WebConfigurationProperty', 'Remove-WebConfigurationProperty', 'Set-AclChecked', 'icacls', 'robocopy', 'dotnet', 'Backup-SqliteConfigDb', 'Write-AppSettingsFile')
+        $earlyWrites = @(for ($i = 0; $i -lt $check[0]; $i++) {
+                $st = $statements[$i]
+                if ($st -is [System.Management.Automation.Language.FunctionDefinitionAst]) { continue }
+                foreach ($command in @($st.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+                    if ($command.GetCommandName() -in $writers) { "line $($command.Extent.StartLineNumber): $($command.Extent.Text)" }
+                }
+            })
+        $earlyWrites | Should -BeNullOrEmpty -Because 'nothing may be written before the check has read the application (cdt-45)'
+
+        $switch = @($s.Ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'AllowRepoint' })
+        $switch.Count | Should -Be 1
+        $switch[0].StaticType | Should -Be ([System.Management.Automation.SwitchParameter]) -Because 'a move is opted into by name, never defaulted'
+    }
+
+    It 'refuses an upgrade whose pool or folder does not serve the application, -AllowRepoint or not (cdt-42)' {
+        # An upgrade never moves the application, but it configures the pool and the folders it names
+        # before its own binding check, so on an upgrade every difference refuses: the switch that
+        # consents to a fresh install's move cannot make an upgrade right.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt42Printed.Add("$Object") }
+            $check = {
+                param([bool]$Exists, [string]$Pool, [string]$Folder, [bool]$Allow)
+                $script:cdt42Printed = New-Object System.Collections.Generic.List[string]
+                $thrown = $null
+                try {
+                    Assert-ApplicationTargetUnchanged -Location 'Example Site/ExampleApp' -Exists $Exists -ExistingPool $Pool -ExistingPhysicalPath $Folder -AppPoolName 'ExamplePool' -PublishPath 'D:\example\publish' -AllowRepoint:$Allow -Upgrade
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt42Printed -join "`n") }
+            }
+
+            (& $check $false '' '' $false).Thrown | Should -BeNullOrEmpty -Because 'an upgrade whose application is missing creates it later, as before'
+            $same = & $check $true 'examplepool' 'd:\EXAMPLE\publish\' $false
+            $same.Thrown | Should -BeNullOrEmpty -Because 'the same pool and folder, however spelled, is the application this upgrade deploys to'
+            $same.Printed | Should -BeLike '*deployed in place*'
+
+            $cases = @(
+                @{ Case = 'another pool'; Pool = 'OtherPool'; Folder = 'D:\example\publish'; Expect = "app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')" }
+                @{ Case = 'another folder'; Pool = 'ExamplePool'; Folder = 'D:\example\other'; Expect = "files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')" }
+                @{ Case = 'a folder that only starts with the run''s'; Pool = 'ExamplePool'; Folder = 'D:\example\publishOld'; Expect = "files at 'D:\example\publishOld'" }
+                @{ Case = 'no folder'; Pool = 'ExamplePool'; Folder = ''; Expect = "files at '' (this run: -PublishPath 'D:\example\publish')" }
+            )
+            foreach ($c in $cases) {
+                foreach ($allow in $false, $true) {
+                    $r = & $check $true $c.Pool $c.Folder $allow
+                    $r.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with *$($c.Expect)*An upgrade configures the app pool and the folders it names before it deploys, and never moves the application*Re-run with -AppPoolName '$($c.Pool)' -PublishPath '$($c.Folder)', or move the application in IIS first.*Nothing was deployed." -Because "an upgrade must not configure a pool or folder that does not serve the application ($($c.Case), -AllowRepoint $allow)"
+                    if ($allow) {
+                        $r.Thrown | Should -BeLike '*-AllowRepoint does not apply: only a -Force or -ConfirmFreshInstall run re-points an application.*'
+                    } else {
+                        $r.Thrown | Should -Not -BeLike '*-AllowRepoint does not apply*'
+                    }
+                    $r.Printed | Should -Not -BeLike '*MOVES it*' -Because 'an upgrade never moves the application'
+                }
+            }
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'runs an upgrade''s real steps from the check through the ACL grants: a pool or folder that does not serve the application is refused before the pool is configured or any folder is granted (cdt-42)' {
+        # The upgrade path configured the pool -AppPoolName names and granted its account Modify on this
+        # instance's folders, and only then, inside its branch, asked IIS which pool serves the
+        # application. The real statements run here in order, from the one after the banner through the
+        # last grant, with IIS, the pool provider, the certificate store, the folders and the ACL helper
+        # stubbed, each call recorded.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Prompt-Value', 'Prompt-SecureValue', 'SecureString-ToPlain', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Success "Config folder ACL set: $configFolder"') { $i } })
+        $from.Count | Should -Be 1 -Because 'the banner names the application once'
+        $to.Count | Should -Be 1 -Because 'the last grant reports once'
+        $region = ($statements[($from[0] + 1)..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+        $region | Should -Match ([regex]::Escape('Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name managedRuntimeVersion')) -Because 'the region holds the pool step'
+        $region | Should -Match ([regex]::Escape('Set-AclChecked $configFolder $ServiceAccount')) -Because 'and the grants'
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt42Printed.Add("$Object") }
+            ${function:Get-WebApplication} = {
+                param($Name, $Site, $ErrorAction)
+                $null = $ErrorAction
+                $script:cdt42Calls.Add("lookup($Site/$Name)")
+                if ($script:cdt42Iis -eq 'throws') { throw 'Cannot read configuration file due to insufficient permissions' }
+                if ($script:cdt42Iis -eq 'absent') { return }
+                $pool, $folder = $script:cdt42Iis -split '\|', 2
+                [pscustomobject]@{ applicationPool = $pool; PhysicalPath = $folder }
+            }
+            # The pool the run names exists and runs as a user - another instance's pool would - and
+            # every folder exists, so nothing is created.
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $script:cdt42Calls.Add("exists($Path)"); $true }
+            ${function:Get-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name) $script:cdt42Calls.Add("read($Path|$Name)"); [pscustomobject]@{ identityType = 'SpecificUser'; userName = 'EXAMPLE\svc-other' } }
+            ${function:New-WebAppPool} = { param($Name) $script:cdt42Calls.Add("New-WebAppPool($Name)") }
+            ${function:Set-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name, $Value) $null = $Value; $script:cdt42Calls.Add("set($Path|$Name)") }
+            ${function:Get-ChildItem} = { param([Parameter(Position = 0)]$Path) $script:cdt42Calls.Add("certs($Path)") }
+            ${function:New-Item} = { $script:cdt42Calls.Add('New-Item') }
+            ${function:Set-AclChecked} = { param([Parameter(Position = 0)]$Path, [Parameter(Position = 1)]$Identity, [Parameter(Position = 2)]$Rights) $script:cdt42Calls.Add("grant($Path|$Identity|$Rights)") }
+
+            $run = {
+                param([string]$Iis, [bool]$Allow)
+                $script:cdt42Iis = $Iis
+                $script:cdt42Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt42Printed = New-Object System.Collections.Generic.List[string]
+                # Read only by the lifted statements: an upgrade - appsettings.json present, no -Force.
+                Set-Variable -Name isUpgrade -Value $true
+                Set-Variable -Name Force -Value ([switch]$false)
+                Set-Variable -Name ConfirmFreshInstall -Value ([switch]$false)
+                Set-Variable -Name AllowRepoint -Value ([switch]$Allow)
+                Set-Variable -Name NonInteractive -Value ([switch]$true)
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                Set-Variable -Name LogRoot -Value 'D:\example\logs'
+                Set-Variable -Name CertSubject -Value 'CN=Example'
+                Set-Variable -Name ServiceAccount -Value $null
+                Set-Variable -Name ServiceAccountPassword -Value $null
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = @($script:cdt42Calls); Printed = ($script:cdt42Printed -join "`n") }
+            }
+            $read = 'lookup(Example Site/ExampleApp)'
+
+            $same = & $run 'ExamplePool|D:\example\publish' $false
+            $same.Thrown | Should -BeNullOrEmpty -Because 'the pool and folder IIS serves the application from are the ones this upgrade names'
+            $same.Calls[0] | Should -BeExactly $read -Because 'the application is read before anything else'
+            $same.Calls | Should -Contain 'set(IIS:\AppPools\ExamplePool|managedRuntimeVersion)' -Because 'the pool step runs once the check passes'
+            $same.Calls | Should -Contain 'grant(D:\example\publish\config|EXAMPLE\svc-other|(OI)(CI)M)' -Because 'and so do the grants'
+
+            $cases = @(
+                @{ Case = 'another existing pool that runs as a user'; Iis = 'OtherPool|D:\example\publish'; Allow = $false; Expect = "IIS application Example Site/ExampleApp already exists, with app pool 'OtherPool' (this run: -AppPoolName 'ExamplePool')*An upgrade configures*" }
+                @{ Case = 'another folder'; Iis = 'ExamplePool|D:\example\other'; Allow = $false; Expect = "IIS application Example Site/ExampleApp already exists, with files at 'D:\example\other' (this run: -PublishPath 'D:\example\publish')*An upgrade configures*" }
+                @{ Case = 'another pool, with -AllowRepoint'; Iis = 'OtherPool|D:\example\publish'; Allow = $true; Expect = '*An upgrade configures*-AllowRepoint does not apply*' }
+                @{ Case = 'an application IIS cannot read'; Iis = 'throws'; Allow = $false; Expect = 'Cannot read IIS application Example Site/ExampleApp (Cannot read configuration file due to insufficient permissions)*' }
+            )
+            foreach ($c in $cases) {
+                $r = & $run $c.Iis $c.Allow
+                $r.Thrown | Should -BeLike "$($c.Expect)Nothing was deployed." -Because "an upgrade must be refused before it changes anything ($($c.Case))"
+                ($r.Calls -join ',') | Should -BeExactly $read -Because "the read is the only call - no pool read, set or creation, no folder, no grant ($($c.Case))"
+            }
+
+            $absent = & $run 'absent' $false
+            $absent.Thrown | Should -BeNullOrEmpty -Because 'an upgrade whose application is missing still goes on to create it, as before'
+            $absent.Calls[0] | Should -BeExactly $read
+            $absent.Calls | Should -Contain 'set(IIS:\AppPools\ExamplePool|startMode)'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'runs a -Force run''s real steps from the check through the pre-force copy: a run the check refuses creates no backup folder and copies nothing (cdt-45)' {
+        # The backup folder was created, and appsettings.json copied into it, before the check that
+        # then refused the run. The real statements run here in order, from the one after the banner
+        # through the pre-force copy, with IIS, the folders and the copy stubbed, each call recorded.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-force.bak"'))) { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1 -Because 'one script-level statement takes the pre-force copy'
+        $to[0] | Should -BeGreaterThan $from[0]
+        $region = ($statements[($from[0] + 1)..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt45Printed.Add("$Object") }
+            ${function:Get-WebApplication} = {
+                param($Name, $Site, $ErrorAction)
+                $null = $ErrorAction
+                $script:cdt45Calls.Add("lookup($Site/$Name)")
+                $pool, $folder = $script:cdt45Iis -split '\|', 2
+                [pscustomobject]@{ applicationPool = $pool; PhysicalPath = $folder }
+            }
+            # The backup folder does not exist yet; the run's appsettings.json does. -LiteralPath since
+            # cdt-55, whose check asks whether the folder the application runs from has that file.
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path, $LiteralPath) $asked = "$Path$LiteralPath"; $script:cdt45Calls.Add("exists($asked)"); $asked -like '*appsettings.json' }
+            ${function:New-Item} = { param($ItemType, $Path, [switch]$Force) $null = $ItemType, $Force; $script:cdt45Calls.Add("New-Item($Path)") }
+            ${function:Copy-Item} = { param([Parameter(Position = 0)]$Path, [Parameter(Position = 1)]$Destination) $script:cdt45Calls.Add("Copy-Item($Path|$Destination)") }
+
+            $run = {
+                param([string]$Iis)
+                $script:cdt45Iis = $Iis
+                $script:cdt45Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt45Printed = New-Object System.Collections.Generic.List[string]
+                # Read only by the lifted statements: -Force over an existing deployment.
+                Set-Variable -Name isUpgrade -Value $false
+                Set-Variable -Name Force -Value ([switch]$true)
+                Set-Variable -Name ConfirmFreshInstall -Value ([switch]$false)
+                Set-Variable -Name AllowRepoint -Value ([switch]$false)
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value 'D:\example\publish'
+                Set-Variable -Name configPath -Value 'D:\example\publish\appsettings.json'
+                Set-Variable -Name LogRoot -Value 'D:\example\logs'
+                Set-Variable -Name timestamp -Value '20261023000000'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = ($script:cdt45Calls -join ','); Printed = ($script:cdt45Printed -join "`n") }
+            }
+            $read = 'lookup(Example Site/ExampleApp)'
+
+            foreach ($iis in 'OtherPool|D:\example\publish', 'ExamplePool|D:\example\other') {
+                $refused = & $run $iis
+                $refused.Thrown | Should -BeLike 'IIS application Example Site/ExampleApp already exists, with *Nothing was deployed.' -Because "the check refuses this -Force run ($iis)"
+                $refused.Calls | Should -BeExactly $read -Because "a refused run creates no backup folder and copies nothing ($iis)"
+            }
+
+            $same = & $run 'ExamplePool|D:\example\publish'
+            $same.Thrown | Should -BeNullOrEmpty
+            $same.Calls | Should -BeExactly ($read + ',exists(D:\example\publish\appsettings.json),exists(D:\example\logs\ExchangeAdminWeb\ConfigBackups),New-Item(D:\example\logs\ExchangeAdminWeb\ConfigBackups),exists(D:\example\publish\appsettings.json),Copy-Item(D:\example\publish\appsettings.json|D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak)') -Because 'a run the checks pass reads that its folder has an appsettings.json (cdt-55), then creates the backup folder and takes the copy, after the IIS read'
+            $same.Printed | Should -BeLike '*Existing config backed up to D:\example\logs\ExchangeAdminWeb\ConfigBackups\appsettings.20261023000000.pre-force.bak*'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'takes a -AllowRepoint move''s configuration from the folder IIS serves now, and refuses a move that would strand its database (cdt-44, real files)' {
+        # The backup and the ConfigStore:Path carry-forward read -PublishPath, which in a move is only
+        # where the application is going. The real script-level statements from the serving-folder
+        # choice through the pre-move copy run here against temporary folders, with the real modules.
+        foreach ($name in 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$servingFolder = $PublishPath') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-move.bak"'))) { $i } })
+        $from.Count | Should -Be 1 -Because 'one script-level statement starts the serving-folder choice'
+        $to.Count | Should -Be 1 -Because 'one script-level statement takes the pre-move copy'
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt44_' + [guid]::NewGuid().ToString('N'))
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt44Printed.Add("$Object") }
+            $case = 0
+            $run = {
+                param([string]$OldSettings, [bool]$OldDb, [string]$Served, [bool]$Upgrade, [bool]$Allow, [string]$Publish = '<new>', [string]$NewSettings = '')
+                $script:cdt44Printed = New-Object System.Collections.Generic.List[string]
+                $script:case++
+                $base = Join-Path $root "case$($script:case)"
+                $old = Join-Path $base 'old'
+                $new = Join-Path $base 'new'
+                New-Item -ItemType Directory -Path (Join-Path $old 'config'), $new, (Join-Path $base 'shared') -Force | Out-Null
+                if ($OldSettings) { Set-Content -LiteralPath (Join-Path $old 'appsettings.json') -Value ($OldSettings.Replace('<shared>', (Join-Path $base 'shared\exchangeadmin.db').Replace('\', '\\'))) -Encoding UTF8 }
+                if ($OldDb) { Set-Content -LiteralPath (Join-Path $old 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8 }
+                if ($NewSettings) { Set-Content -LiteralPath (Join-Path $new 'appsettings.json') -Value $NewSettings -Encoding UTF8 }
+                Set-Content -LiteralPath (Join-Path $base 'shared\exchangeadmin.db') -Value 'db' -Encoding UTF8
+                # Read only by the lifted statements.
+                Set-Variable -Name isUpgrade -Value $Upgrade
+                Set-Variable -Name Force -Value ([switch]$true)
+                Set-Variable -Name AllowRepoint -Value ([switch]$Allow)
+                Set-Variable -Name existingApplication -Value ([pscustomobject]@{ applicationPool = 'ExamplePool'; PhysicalPath = $Served.Replace('<old>', $old).Replace('<new>', $new) })
+                $publishFolder = $Publish.Replace('<old>', $old).Replace('<new>', $new)
+                Set-Variable -Name PublishPath -Value $publishFolder
+                Set-Variable -Name configPath -Value (Join-Path $publishFolder 'appsettings.json')
+                Set-Variable -Name LogRoot -Value (Join-Path $base 'logs')
+                Set-Variable -Name timestamp -Value '20261023000000'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                $backups = Join-Path $base 'logs\ExchangeAdminWeb\ConfigBackups'
+                [pscustomobject]@{
+                    Thrown        = $thrown
+                    Old           = $old
+                    New           = $new
+                    ServingFolder = $servingFolder
+                    BackupFolder  = (Test-Path -LiteralPath $backups)
+                    MoveCopy      = (Join-Path $backups 'appsettings.20261023000000.pre-move.bak')
+                    Printed       = ($script:cdt44Printed -join "`n")
+                }
+            }
+            $shared = '{ "ConfigStore": { "Path": "<shared>" }, "AllowedHosts": "*" }'
+            $own = '{ "AllowedHosts": "*" }'
+
+            $moved = & $run $shared $true '<old>' $false $true
+            $moved.Thrown | Should -BeNullOrEmpty -Because 'a move whose configuration names a shared database carries it'
+            $moved.ServingFolder | Should -BeExactly $moved.Old -Because 'the configuration the application runs on now is in the folder IIS serves it from'
+            Test-Path -LiteralPath $moved.MoveCopy | Should -BeTrue -Because 'the appsettings.json the application runs on now is kept'
+            (Get-Content -LiteralPath $moved.MoveCopy -Raw) | Should -BeLike '*"ConfigStore"*' -Because 'the copy is the old folder''s file, not the new folder''s'
+            $moved.Printed | Should -BeLike "*-AllowRepoint: the configuration is backed up from '$($moved.Old)'*"
+
+            $stranded = & $run $own $true '<old>' $false $true
+            $stranded.Thrown | Should -BeLike "IIS application Example Site/ExampleApp keeps its config database inside the folder it is being moved from ('$($stranded.Old)\config\exchangeadmin.db')*names no ConfigStore:Path*Nothing was deployed." -Because 'the move would leave the database behind and open an empty one'
+            $stranded.BackupFolder | Should -BeFalse -Because 'the refusal comes before anything is written'
+
+            $empty = & $run $own $false '<old>' $false $true
+            $empty.Thrown | Should -BeNullOrEmpty -Because 'an old folder with no database yet has nothing to strand'
+            $empty.ServingFolder | Should -BeExactly $empty.Old
+            Test-Path -LiteralPath $empty.MoveCopy | Should -BeTrue
+
+            foreach ($outside in @(
+                    @{ Case = 'the same folder'; Served = '<new>'; Upgrade = $false; Allow = $true }
+                    @{ Case = 'an upgrade'; Served = '<old>'; Upgrade = $true; Allow = $true }
+                    @{ Case = 'no -AllowRepoint'; Served = '<old>'; Upgrade = $false; Allow = $false }
+                    @{ Case = 'no folder reported'; Served = ''; Upgrade = $false; Allow = $true })) {
+                # The run's own folder has an appsettings.json, as it must when it deploys over an existing
+                # application without moving it: without one the run is refused (cdt-55, its own test).
+                $r = & $run $shared $true $outside.Served $outside.Upgrade $outside.Allow '<new>' $own
+                $r.Thrown | Should -BeNullOrEmpty -Because "nothing is moved ($($outside.Case)), so nothing is refused here"
+                $r.ServingFolder | Should -BeExactly $r.New -Because "outside a move the configuration is -PublishPath's, as before ($($outside.Case))"
+                Test-Path -LiteralPath $r.MoveCopy | Should -BeFalse -Because "there is no move to keep a copy for ($($outside.Case))"
+            }
+
+            # A -AllowRepoint run that moves only the pool: IIS spells the folder with a trailing
+            # separator, and the folder stays, with its appsettings.json and the database kept inside it -
+            # nothing is stranded, and nothing is moved.
+            $poolOnly = & $run $own $true '<old>\' $false $true '<old>'
+            $poolOnly.Thrown | Should -BeNullOrEmpty -Because 'the folder keeps its database; refusing would block a pool-only move'
+            $poolOnly.ServingFolder | Should -BeExactly $poolOnly.Old -Because 'the configuration is -PublishPath''s'
+            Test-Path -LiteralPath $poolOnly.MoveCopy | Should -BeFalse -Because 'the folder does not move, so there is no move to keep a copy for'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'backs up, and carries ConfigStore:Path from, the serving folder in the -Force branch, not the new -PublishPath (cdt-44, real files)' {
+        # The fresh-install branch's real statements from the ConfigStore:Path read through the
+        # verified backup, lifted by AST and run against temporary folders with the real module; only
+        # the backup tool is stubbed, recording which database it was asked to back up.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $branch = @((Get-FreshInstallBranch $s).Statements)
+        $from = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i].Extent.Text -like '$configStorePathSetting = *') { $i } })
+        $to = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $branch[$i].Extent.Text -match 'Backup-SqliteConfigDb') { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1 -Because 'one statement of the branch takes the verified backup'
+        $region = ($branch[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        # The rest-of-config copy in that region reads $runtimeConfigDir, set once above the branches:
+        # it must be the serving folder's config\ too, not -PublishPath's.
+        $configDirs = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -eq 'runtimeConfigDir' }, $true))
+        $configDirs.Count | Should -Be 1
+        $configDirs[0].Right.Extent.Text | Should -BeExactly 'Join-Path $servingFolder "config"' -Because 'the live configuration directory is the serving folder''s (cdt-44)'
+
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt44b_' + [guid]::NewGuid().ToString('N'))
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $Object, $ForegroundColor }
+            ${function:Backup-SqliteConfigDb} = {
+                param($DbPath, $DestDir, $Timestamp, $AppPath)
+                $null = $AppPath
+                $script:cdt44Backups.Add("$DbPath|$DestDir")
+                Join-Path $DestDir "exchangeadmin.$Timestamp.db"
+            }
+            $old = Join-Path $root 'old'
+            $new = Join-Path $root 'new'
+            $sharedDb = Join-Path $root 'shared\exchangeadmin.db'
+            New-Item -ItemType Directory -Path (Join-Path $old 'config'), $new, (Join-Path $root 'shared'), (Join-Path $root 'backups') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $old 'appsettings.json') -Value ('{ "ConfigStore": { "Path": "' + $sharedDb.Replace('\', '\\') + '" } }') -Encoding UTF8
+            Set-Content -LiteralPath $sharedDb -Value 'db' -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $old 'config\sectionaccess.json') -Value '{}' -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $old 'config\exchangeadmin-jobs.db') -Value 'jobs' -Encoding UTF8
+
+            $script:cdt44Backups = New-Object System.Collections.Generic.List[string]
+            # Read only by the lifted statements: a -AllowRepoint move off $old (what the script-level
+            # choice sets), with nothing in the new folder yet.
+            $servingFolder = $old
+            $servingConfigPath = Join-Path $old 'appsettings.json'
+            $runtimeConfigDir = Join-Path $old 'config'
+            $PublishPath = $new
+            $configPath = Join-Path $new 'appsettings.json'
+            $BackupDir = Join-Path $root 'backups'
+            $timestamp = '20261023000000'
+            $StagingPath = 'D:\example\staging'
+            $configCopyExclusions = @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm', 'exchangeadmin-jobs.db', 'exchangeadmin-jobs.db-wal', 'exchangeadmin-jobs.db-shm', 'exchangeadmin-usage.db', 'exchangeadmin-usage.db-wal', 'exchangeadmin-usage.db-shm')
+            $null = $servingFolder, $servingConfigPath, $runtimeConfigDir, $PublishPath, $configPath, $BackupDir, $timestamp, $StagingPath, $configCopyExclusions
+            $ErrorActionPreference = 'Stop'
+            . ([scriptblock]::Create($region))
+
+            $configStorePathSetting | Should -BeExactly $sharedDb -Because 'the key carried into the regenerated appsettings.json is the one the application runs on now'
+            ($script:cdt44Backups -join ';') | Should -BeExactly "$sharedDb|$(Join-Path $root 'backups\config.20261023000000.pre-force.bak')" -Because 'the verified backup is of the database the application opens now, before it is moved'
+            $copied = @(Get-ChildItem -LiteralPath (Join-Path $root 'backups\config.20261023000000.pre-force.bak') -File | ForEach-Object Name)
+            $copied | Should -Contain 'sectionaccess.json' -Because 'the rest of the old folder''s config\ is kept'
+            $copied | Should -Not -Contain 'exchangeadmin-jobs.db' -Because 'the per-instance databases stay out of the backup (cdt-10)'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'deploys in place when IIS spells the folder through a junction, and names a spelling it cannot resolve on disk (cdt-46, real files)' {
+        # The check took one folder under two spellings for a move - a refusal, or with -AllowRepoint a
+        # "MOVES it" for a folder that stays. The real function, lifted, against a temporary folder and
+        # a junction to it, with the real module.
+        foreach ($name in 'Write-Success', 'Write-Warn', 'Write-Fail', 'Assert-ApplicationTargetUnchanged') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt46d_' + [guid]::NewGuid().ToString('N'))
+        $folder = Join-Path $root 'Publish Folder With A Long Name'
+        $sibling = Join-Path $root 'Another Publish Folder'
+        $link = Join-Path $root 'link'
+        try {
+            New-Item -ItemType Directory -Path $folder, $sibling -Force | Out-Null
+            $null = cmd /c "mklink /J `"$link`" `"$folder`""
+            Test-Path -LiteralPath $link | Should -BeTrue -Because 'the junction fixture exists'
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt46Printed.Add("$Object") }
+            $check = {
+                param([string]$Served, [string]$Publish, [bool]$Allow, [bool]$Upgrade)
+                $script:cdt46Printed = New-Object System.Collections.Generic.List[string]
+                $thrown = $null
+                try {
+                    Assert-ApplicationTargetUnchanged -Location 'Example Site/ExampleApp' -Exists $true -ExistingPool 'ExamplePool' -ExistingPhysicalPath $Served -AppPoolName 'ExamplePool' -PublishPath $Publish -AllowRepoint:$Allow -Upgrade:$Upgrade
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt46Printed -join "`n") }
+            }
+
+            foreach ($mode in @(@{ Allow = $false; Upgrade = $false }, @{ Allow = $true; Upgrade = $false }, @{ Allow = $false; Upgrade = $true })) {
+                $same = & $check $link $folder $mode.Allow $mode.Upgrade
+                $same.Thrown | Should -BeNullOrEmpty -Because "the junction is the folder this run names (-AllowRepoint $($mode.Allow), upgrade $($mode.Upgrade))"
+                $same.Printed | Should -BeLike '*deployed in place*'
+                $same.Printed | Should -Not -BeLike '*MOVES it*' -Because 'nothing moves'
+            }
+
+            $missing = Join-Path $root 'missing'
+            $unresolved = & $check $folder $missing $false $false
+            $unresolved.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with files at '$folder' (this run: -PublishPath '$missing'). A spelling that cannot be resolved on disk is not taken as the same folder: '$missing'. -Force and -ConfirmFreshInstall*Nothing was deployed." -Because 'a folder that does not exist cannot be shown to be the same one under another spelling, and the refusal says which'
+
+            $different = & $check $folder $sibling $false $false
+            $different.Thrown | Should -BeLike "IIS application Example Site/ExampleApp already exists, with files at '$folder' (this run: -PublishPath '$sibling'). -Force and -ConfirmFreshInstall*" -Because 'two folders that both exist and differ are refused as before, with no note'
+        } finally {
+            if (Test-Path -LiteralPath $link) { [System.IO.Directory]::Delete($link) }
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'reports the active jobs of the instance a -AllowRepoint move takes down before the re-point, and checks the stopped pool''s own (cdt-49)' {
+        # The one check came after the re-point - which already took the instance IIS ran down - and read
+        # the serving folder whatever pool the stop then acted on. The fresh-install branch's real
+        # statements from the move report through the check before the stop, with IIS and the jobs
+        # check stubbed, each call recorded in order.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $branch = @((Get-FreshInstallBranch $s).Statements)
+        $from = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i].Extent.Text -like '$movedOffPool = *') { $i } })
+        # Up to the statement right before the binding read, whatever the check before the stop reads.
+        $bound = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i].Extent.Text -like '$boundPool = *') { $i } })
+        $from.Count | Should -Be 1 -Because 'one statement of the branch starts the move report'
+        $bound.Count | Should -Be 1
+        $to = @($bound[0] - 1)
+        $branch[$to[0]].Extent.Text | Should -Match 'Assert-NoActiveBulkJobsBeforeRecycle' -Because 'the jobs of the pool that is stopped are checked right before its binding is read'
+        $region = ($branch[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt49Printed.Add("$Object") }
+            ${function:Get-Website} = { param($Name, $ErrorAction) $null = $ErrorAction; [pscustomobject]@{ name = $Name } }
+            ${function:Get-WebApplication} = { param($Name, $Site, $ErrorAction) $null = $Name, $Site, $ErrorAction; $script:cdt49App }
+            ${function:Set-ItemProperty} = { param([Parameter(Position = 0)]$Path, $Name, $Value) $null = $Path, $Value; $script:cdt49Calls.Add("set($Name)") }
+            ${function:Test-Path} = { param([Parameter(Position = 0)]$Path) $null = $Path; $true }
+            ${function:New-Item} = { $script:cdt49Calls.Add('New-Item') }
+            ${function:New-WebApplication} = { $script:cdt49Calls.Add('New-WebApplication') }
+            ${function:Set-WebConfigurationProperty} = { $script:cdt49Calls.Add('auth') }
+            ${function:Remove-WebConfigurationProperty} = { $script:cdt49Calls.Add('auth') }
+            ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $null = $AppPath; $script:cdt49Calls.Add("jobs($ConfigDir)"); 0 }
+            # Since cdt-54 the stop step opens with the report of the pool's other applications. It has
+            # its own tests, so here it records nothing.
+            ${function:Write-AppPoolSharingReport} = { param($AppPoolName, $PublishPath, $StagingPath) $null = $AppPoolName, $PublishPath, $StagingPath }
+
+            $run = {
+                param([string]$OldPool, [string]$OldFolder, [string]$Pool, [bool]$Allow, [bool]$Exists)
+                $script:cdt49Calls = New-Object System.Collections.Generic.List[string]
+                $script:cdt49Printed = New-Object System.Collections.Generic.List[string]
+                $app = $null
+                if ($Exists) { $app = [pscustomobject]@{ applicationPool = $OldPool; PhysicalPath = $OldFolder } }
+                $script:cdt49App = $app
+                $publish = 'D:\example\publish'
+                $moves = $Allow -and $Exists -and -not (Test-SamePhysicalFolder -Path $OldFolder -Other $publish)
+                $serving = $publish
+                if ($moves) { $serving = $OldFolder }
+                # Read only by the lifted statements: what the script level set before the branch.
+                Set-Variable -Name AllowRepoint -Value ([switch]$Allow)
+                Set-Variable -Name existingApplication -Value $app
+                Set-Variable -Name movesFolder -Value $moves
+                Set-Variable -Name servingFolder -Value $serving
+                Set-Variable -Name runtimeConfigDir -Value (Join-Path $serving 'config')
+                Set-Variable -Name PublishPath -Value $publish
+                Set-Variable -Name AppPoolName -Value $Pool
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                Set-Variable -Name StagingPath -Value 'D:\example\staging'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Calls = @($script:cdt49Calls | Where-Object { $_ -ne 'auth' }); Printed = ($script:cdt49Printed -join "`n") }
+            }
+
+            $both = & $run 'OldPool' 'D:\example\old' 'NewPool' $true $true
+            $both.Thrown | Should -BeNullOrEmpty
+            ($both.Calls -join ',') | Should -BeExactly 'jobs(D:\example\old\config),set(physicalPath),set(applicationPool),jobs(D:\example\publish\config)' -Because 'the instance the move takes down is reported before the re-point, and the pool that is stopped is checked from its own folder'
+            $both.Printed | Should -BeLike "*Active bulk jobs of the instance IIS runs today, under app pool 'OldPool' with its files at 'D:\example\old': re-pointing the application interrupts them.*Active bulk jobs of app pool 'NewPool', with its files at 'D:\example\publish', which is stopped next:*" -Because 'each check says which instance it read'
+
+            $poolOnly = & $run 'OldPool' 'D:\example\publish' 'NewPool' $true $true
+            ($poolOnly.Calls -join ',') | Should -BeExactly 'jobs(D:\example\publish\config),set(physicalPath),set(applicationPool)' -Because 'a pool-only move reports the instance once, before the re-point; the stopped pool now serves the same folder'
+            $poolOnly.Printed | Should -BeLike "*under app pool 'OldPool' with its files at 'D:\example\publish': re-pointing*"
+
+            $inPlace = & $run 'ExamplePool' 'D:\example\publish' 'ExamplePool' $false $true
+            ($inPlace.Calls -join ',') | Should -BeExactly 'set(physicalPath),set(applicationPool),jobs(D:\example\publish\config)' -Because 'a run that moves nothing checks once, before the stop, as before'
+
+            $fresh = & $run '' '' 'ExamplePool' $false $false
+            ($fresh.Calls -join ',') | Should -BeExactly 'New-WebApplication,jobs(D:\example\publish\config)' -Because 'a fresh install checks once, before the stop'
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'names every other application the stopped pool serves and reads their bulk jobs, as a warning and never a refusal (cdt-54)' {
+        # The checks before each stop looked only at this instance, so an application elsewhere under the
+        # same pool went down with it unannounced and its bulk jobs were never read. deploy.ps1's real
+        # report, lifted, with the real module, IIS answered through the module's probe parameter, and
+        # the jobs check stubbed. A script block value in $PSDefaultParameterValues is evaluated to produce
+        # the default, so each case hands over a block that returns its probe ({ { ... } }), and each probe
+        # records that it was consulted: one handed over bare is run, not passed, and the real IIS read
+        # runs instead.
+        foreach ($name in 'Write-Warn', 'Write-AppPoolSharingReport') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $script:cdt54Printed.Add("$ForegroundColor|$Object") }
+            ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $script:cdt54Jobs.Add("jobs($ConfigDir|$AppPath)"); 0 }
+            $report = {
+                param([scriptblock]$ProbeDefault)
+                $script:cdt54Printed = New-Object System.Collections.Generic.List[string]
+                $script:cdt54Jobs = New-Object System.Collections.Generic.List[string]
+                $script:cdt54Probed = 0
+                $PSDefaultParameterValues = @{ 'Get-AppPoolOtherApplication:ApplicationsProbe' = $ProbeDefault }
+                $thrown = $null
+                try {
+                    Write-AppPoolSharingReport -AppPoolName 'ExamplePool' -PublishPath 'D:\example\publish' -StagingPath 'D:\example\staging'
+                } catch {
+                    $thrown = $_.Exception.Message
+                }
+                [pscustomobject]@{ Thrown = $thrown; Printed = ($script:cdt54Printed -join "`n"); Jobs = ($script:cdt54Jobs -join ','); Probed = $script:cdt54Probed }
+            }
+            $instance = [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish' }
+            $otherPool = [pscustomobject]@{ Location = 'Example Site/'; ApplicationPool = 'SitePool'; PhysicalPath = 'D:\example\site' }
+
+            $alone = & $report { { $script:cdt54Probed++; $instance; $otherPool } }
+            $alone.Probed | Should -Be 1 -Because 'the test''s probe is the one consulted'
+            $alone.Thrown | Should -BeNullOrEmpty
+            $alone.Printed | Should -BeExactly "DarkGray|       App pool 'ExamplePool' serves no IIS application other than this instance at 'D:\example\publish': stopping it stops nothing else." -Because 'a pool that serves only this instance says so, and nothing is read'
+            $alone.Jobs | Should -BeExactly ''
+
+            $env:CDT54_ROOT = 'D:\example'
+            try {
+                $shared = & $report {
+                    {
+                        $script:cdt54Probed++
+                        $instance
+                        $otherPool
+                        [pscustomobject]@{ Location = 'Other Site/'; ApplicationPool = 'examplepool'; PhysicalPath = '%CDT54_ROOT%\other' }
+                        [pscustomobject]@{ Location = 'Example Site/Static'; ApplicationPool = 'ExamplePool'; PhysicalPath = '' }
+                    }
+                }
+            } finally {
+                Remove-Item Env:\CDT54_ROOT -ErrorAction SilentlyContinue
+            }
+            $shared.Probed | Should -Be 1
+            $shared.Thrown | Should -BeNullOrEmpty -Because 'other applications in the pool are a warning, never a refusal'
+            $shared.Printed | Should -BeLike "*Yellow|  !  App pool 'ExamplePool' also serves 2 other IIS application(s), which stop with it: Other Site/ with its files at '%CDT54_ROOT%\other'; Example Site/Static with its files at ''.*"
+            $shared.Printed | Should -BeLike "*DarkGray|       Active bulk jobs of IIS application Other Site/, with its files at '%CDT54_ROOT%\other', which stops with the pool:*"
+            $shared.Printed | Should -Not -BeLike '*Active bulk jobs of IIS application Example Site/Static*' -Because 'an application with no folder has no jobs database to read'
+            $shared.Jobs | Should -BeExactly 'jobs(D:\example\other\config|D:\example\staging)' -Because 'each other application''s jobs are read from its own config folder, its environment variables expanded, with the staged build''s tool'
+
+            $unreadable = & $report { { $script:cdt54Probed++; throw 'Access is denied' } }
+            $unreadable.Probed | Should -Be 1
+            $unreadable.Thrown | Should -BeNullOrEmpty -Because 'an unreadable listing is a warning here; the check that the pool serves the folder refuses it before the stop'
+            $unreadable.Printed | Should -BeLike "Yellow|  !  Stopping app pool 'ExamplePool' may stop other IIS applications too, and their active bulk jobs are not read: Cannot read the IIS sites and applications*Access is denied"
+            $unreadable.Jobs | Should -BeExactly ''
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'reports the pool''s other applications once in each branch, first in its stop step, before the binding read and the stop (cdt-54, AST)' {
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2, 'Stopping app pool'), @('-Force', $modeIf.ElseClause, 'Stopping app pool for file deployment'))) {
+            $statements = @($entry[1].Statements)
+            $reports = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like 'Write-AppPoolSharingReport *') { $i } })
+            $reports.Count | Should -Be 1 -Because "the $($entry[0]) branch reports the pool's other applications once, unconditionally"
+            $statements[$reports[0]].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -AppPoolName $AppPoolName -PublishPath $PublishPath -StagingPath $StagingPath'
+            $statements[$reports[0] - 1].Extent.Text | Should -BeExactly "Write-Step `"$($entry[2])`"" -Because 'it opens the stop step'
+            $lookupAt = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like '$boundPool = try { (Get-WebApplication*') { $i } })
+            $stopAt = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -like '$poolState = Stop-AppPoolVerified -Name $AppPoolName') { $i } })
+            $lookupAt.Count | Should -Be 1
+            $stopAt.Count | Should -Be 1
+            $reports[0] | Should -BeLessThan $lookupAt[0]
+            $reports[0] | Should -BeLessThan $stopAt[0] -Because "the $($entry[0]) run names what the stop takes down before it stops anything"
+        }
+        $calls = @($s.Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true))
+        $calls.Count | Should -Be 2 -Because 'one call per stop, and no other'
+    }
+    It 'refuses a -AllowRepoint move off a folder whose appsettings.json is gone but whose own config database remains (cdt-51, real files)' {
+        # The stranded-database guard asked only when the old folder still had an appsettings.json, so a
+        # folder that had lost it moved without a word, leaving its config\exchangeadmin.db behind
+        # unbacked-up. The real statements from the serving-folder choice through the pre-move copy,
+        # against temporary folders with the real modules.
+        foreach ($name in 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$servingFolder = $PublishPath') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-move.bak"'))) { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt51_' + [guid]::NewGuid().ToString('N'))
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt51Printed.Add("$Object") }
+            $script:cdt51Case = 0
+            $run = {
+                param([string]$OldSettings, [bool]$OldDb)
+                $script:cdt51Printed = New-Object System.Collections.Generic.List[string]
+                $script:cdt51Case++
+                $base = Join-Path $root "case$($script:cdt51Case)"
+                $old = Join-Path $base 'old'
+                $new = Join-Path $base 'new'
+                New-Item -ItemType Directory -Path (Join-Path $old 'config'), $new -Force | Out-Null
+                if ($OldSettings) { Set-Content -LiteralPath (Join-Path $old 'appsettings.json') -Value $OldSettings -Encoding UTF8 }
+                if ($OldDb) { Set-Content -LiteralPath (Join-Path $old 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8 }
+                # Read only by the lifted statements: a -Force -AllowRepoint move from $old to $new.
+                Set-Variable -Name isUpgrade -Value $false
+                Set-Variable -Name Force -Value ([switch]$true)
+                Set-Variable -Name AllowRepoint -Value ([switch]$true)
+                Set-Variable -Name existingApplication -Value ([pscustomobject]@{ applicationPool = 'ExamplePool'; PhysicalPath = $old })
+                Set-Variable -Name PublishPath -Value $new
+                Set-Variable -Name configPath -Value (Join-Path $new 'appsettings.json')
+                Set-Variable -Name LogRoot -Value (Join-Path $base 'logs')
+                Set-Variable -Name timestamp -Value '20261023000000'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                $backups = Join-Path $base 'logs\ExchangeAdminWeb\ConfigBackups'
+                [pscustomobject]@{
+                    Thrown        = $thrown
+                    Old           = $old
+                    ServingFolder = $servingFolder
+                    BackupFolder  = (Test-Path -LiteralPath $backups)
+                    MoveCopy      = (Test-Path -LiteralPath (Join-Path $backups 'appsettings.20261023000000.pre-move.bak'))
+                    Printed       = ($script:cdt51Printed -join "`n")
+                }
+            }
+
+            $gone = & $run '' $true
+            $gone.Thrown | Should -BeLike "IIS application Example Site/ExampleApp keeps its config database inside the folder it is being moved from ('$((ConvertTo-ComparablePhysicalPath $gone.Old))\config\exchangeadmin.db'): it has no appsettings.json to name one, so after the move it would open a new, empty database*with no verified backup taken. Restore the appsettings.json that names it, or move the database to a shared path first (tools\Move-ConfigDbToShared.ps1)*Nothing was deployed." -Because 'a missing appsettings.json names no ConfigStore:Path either, so the database it ran on would be stranded'
+            $gone.BackupFolder | Should -BeFalse -Because 'the refusal comes before anything is written'
+
+            $unnamed = & $run '{ "AllowedHosts": "*" }' $true
+            $unnamed.Thrown | Should -BeLike "*keeps its config database inside the folder it is being moved from*: its appsettings.json names no ConfigStore:Path, so after the move*" -Because 'the cdt-44 case keeps its own words'
+            # A folder with neither an appsettings.json nor a database went ahead here until cdt-55, which
+            # refuses it in the check after this one: see that finding's test.
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses to deploy over an existing application whose folder has no appsettings.json, moved or not, whatever its config folder holds (cdt-55, real files)' {
+        # An existing application whose appsettings.json was gone was deployed over when its folder had no
+        # config\exchangeadmin.db either: the run generated an appsettings.json without ConfigStore:Path,
+        # and the restarted application opened a database of its own, leaving the shared one it had been
+        # running on. The real statements from the serving-folder choice through the pre-move copy,
+        # against temporary folders with the real modules.
+        foreach ($name in 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $statements = @($s.Ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$servingFolder = $PublishPath') { $i } })
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Extent.Text -match ([regex]::Escape('"appsettings.${timestamp}.pre-move.bak"'))) { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1
+        $region = ($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt55_' + [guid]::NewGuid().ToString('N'))
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt55Printed.Add("$Object") }
+            $script:cdt55Case = 0
+            $run = {
+                param([bool]$Exists, [bool]$Moves, [string]$Settings, [bool]$Db, [bool]$Upgrade = $false)
+                $script:cdt55Printed = New-Object System.Collections.Generic.List[string]
+                $script:cdt55Case++
+                $base = Join-Path $root "case$($script:cdt55Case)"
+                $old = Join-Path $base 'old'
+                $new = Join-Path $base 'new'
+                New-Item -ItemType Directory -Path (Join-Path $old 'config'), (Join-Path $new 'config') -Force | Out-Null
+                # The folder the application runs from: the old one in a move, else the run's own.
+                $serving = $new
+                if ($Moves) { $serving = $old }
+                if ($Settings) { Set-Content -LiteralPath (Join-Path $serving 'appsettings.json') -Value $Settings -Encoding UTF8 }
+                if ($Db) { Set-Content -LiteralPath (Join-Path $serving 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8 }
+                $app = $null
+                if ($Exists) { $app = [pscustomobject]@{ applicationPool = 'ExamplePool'; PhysicalPath = $serving } }
+                # Read only by the lifted statements: a -Force run (an upgrade has no -Force), with -AllowRepoint when it moves.
+                Set-Variable -Name isUpgrade -Value $Upgrade
+                Set-Variable -Name Force -Value ([switch](-not $Upgrade))
+                Set-Variable -Name AllowRepoint -Value ([switch]$Moves)
+                Set-Variable -Name existingApplication -Value $app
+                Set-Variable -Name PublishPath -Value $new
+                Set-Variable -Name configPath -Value (Join-Path $new 'appsettings.json')
+                Set-Variable -Name LogRoot -Value (Join-Path $base 'logs')
+                Set-Variable -Name timestamp -Value '20261023000000'
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{
+                    Thrown       = $thrown
+                    Serving      = $serving
+                    Logs         = (Join-Path $base 'logs')
+                    BackupFolder = (Test-Path -LiteralPath (Join-Path $base 'logs\ExchangeAdminWeb\ConfigBackups'))
+                }
+            }
+
+            $refusal = "IIS application Example Site/ExampleApp exists, but the folder it runs from has no appsettings.json ('{0}\appsettings.json'). Its running process may have been started with a ConfigStore:Path naming a shared config database*Restore that appsettings.json - earlier deploys keep copies of it under '{1}\ExchangeAdminWeb\ConfigBackups'*remove it from IIS, or move it by hand, before re-running. Nothing was deployed."
+            foreach ($case in @(
+                    @{ Case = 'a move off a folder with neither an appsettings.json nor a database'; Moves = $true; Db = $false }
+                    @{ Case = 'in place, with no database either'; Moves = $false; Db = $false }
+                    @{ Case = 'in place, though its default database is there'; Moves = $false; Db = $true })) {
+                $r = & $run $true $case.Moves '' $case.Db
+                $r.Thrown | Should -BeLike ($refusal -f (ConvertTo-ComparablePhysicalPath $r.Serving), $r.Logs) -Because "nothing on disk says which database the application runs on ($($case.Case))"
+                $r.BackupFolder | Should -BeFalse -Because "the refusal comes before anything is written ($($case.Case))"
+            }
+
+            $stranding = & $run $true $true '' $true
+            $stranding.Thrown | Should -BeLike '*keeps its config database inside the folder it is being moved from*it has no appsettings.json to name one*' -Because 'a move that would strand the old folder''s database keeps the cdt-51 refusal and its words'
+
+            foreach ($case in @(
+                    @{ Case = 'an in-place run whose folder has its appsettings.json'; Exists = $true; Moves = $false; Settings = '{ "AllowedHosts": "*" }' }
+                    @{ Case = 'a move whose old folder has its appsettings.json'; Exists = $true; Moves = $true; Settings = '{ "AllowedHosts": "*" }' }
+                    @{ Case = 'a fresh install that IIS has no application for'; Exists = $false; Moves = $false; Settings = '' })) {
+                $r = & $run $case.Exists $case.Moves $case.Settings $false
+                $r.Thrown | Should -BeNullOrEmpty -Because "$($case.Case) is not refused here"
+            }
+            $upgrade = & $run $true $false '{ "AllowedHosts": "*" }' $false $true
+            $upgrade.Thrown | Should -BeNullOrEmpty -Because 'an upgrade has its appsettings.json by definition'
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+    It 'takes the verified backup of a serving folder''s own database when its appsettings.json is gone (cdt-51, real files)' {
+        # The fresh-install branch's verified backup was gated on the serving folder's appsettings.json
+        # alone, so a folder that had lost it kept its config\exchangeadmin.db with no backup before the
+        # deploy (Invariant 3). The branch's real statements from the ConfigStore:Path read through the
+        # backup, against temporary folders; only the backup tool is stubbed.
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $branch = @((Get-FreshInstallBranch $s).Statements)
+        $from = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i].Extent.Text -like '$configStorePathSetting = *') { $i } })
+        $to = @(for ($i = 0; $i -lt $branch.Count; $i++) { if ($branch[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $branch[$i].Extent.Text -match 'Backup-SqliteConfigDb') { $i } })
+        $from.Count | Should -Be 1
+        $to.Count | Should -Be 1
+        $region = ($branch[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n"
+
+        Import-Module (Join-Path $RepoRoot 'tools/SqliteConfigBackup.psm1') -Force
+        $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt51b_' + [guid]::NewGuid().ToString('N'))
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $Object, $ForegroundColor }
+            ${function:Backup-SqliteConfigDb} = {
+                param($DbPath, $DestDir, $Timestamp, $AppPath)
+                $null = $AppPath
+                $script:cdt51Backups.Add("$DbPath")
+                Join-Path $DestDir "exchangeadmin.$Timestamp.db"
+            }
+            foreach ($case in @(@{ Name = 'own database, no appsettings.json'; Db = $true; Expect = 1 }, @{ Name = 'neither'; Db = $false; Expect = 0 })) {
+                $folder = Join-Path $root ($case.Name -replace '[^a-z]', '')
+                New-Item -ItemType Directory -Path (Join-Path $folder 'config'), (Join-Path $root 'backups') -Force | Out-Null
+                if ($case.Db) { Set-Content -LiteralPath (Join-Path $folder 'config\exchangeadmin.db') -Value 'db' -Encoding UTF8 }
+                $script:cdt51Backups = New-Object System.Collections.Generic.List[string]
+                # Read only by the lifted statements: a -Force run over a folder whose appsettings.json is gone.
+                $servingFolder = $folder
+                $servingConfigPath = Join-Path $folder 'appsettings.json'
+                $runtimeConfigDir = Join-Path $folder 'config'
+                $PublishPath = $folder
+                $configPath = $servingConfigPath
+                $BackupDir = Join-Path $root 'backups'
+                $timestamp = '20261023000000'
+                $StagingPath = 'D:\example\staging'
+                $configCopyExclusions = @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm', 'exchangeadmin-jobs.db', 'exchangeadmin-jobs.db-wal', 'exchangeadmin-jobs.db-shm', 'exchangeadmin-usage.db', 'exchangeadmin-usage.db-wal', 'exchangeadmin-usage.db-shm')
+                $null = $servingFolder, $servingConfigPath, $runtimeConfigDir, $PublishPath, $configPath, $BackupDir, $timestamp, $StagingPath, $configCopyExclusions
+                $ErrorActionPreference = 'Stop'
+                . ([scriptblock]::Create($region))
+                $script:cdt51Backups.Count | Should -Be $case.Expect -Because "the verified backup runs when the folder's own database exists ($($case.Name))"
+                if ($case.Expect -eq 1) {
+                    $script:cdt51Backups[0] | Should -BeExactly (Join-Path $folder 'config\exchangeadmin.db') -Because 'the database backed up is the one the instance opens'
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'backs up the runtime config directory before the upgrade mirror (incident fix #4)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
@@ -840,9 +1887,16 @@ Describe 'deploy.ps1' {
                     $node -is [System.Management.Automation.Language.CommandAst] -and
                     $node.GetCommandName() -eq 'Assert-NoActiveBulkJobsBeforeRecycle'
                 }, $true))
-        $jobChecks.Count | Should -Be 2 -Because 'the upgrade and the fresh-install path both recycle'
+        # The upgrade's check and, since cdt-49, the fresh-install path's two: the report of the instance a
+        # -AllowRepoint move takes down (the serving folder's, $runtimeConfigDir) and the check before the
+        # stop, of the instance the stop acts on ($stoppedConfigDir, -PublishPath's config\). Since cdt-54,
+        # one more, in Write-AppPoolSharingReport, which both branches call before their stop: each other
+        # application the pool serves ($otherConfigDir, that application's config\).
+        $jobChecks.Count | Should -Be 4 -Because 'the upgrade recycles; the fresh-install path reports a moved instance and checks the stopped one; the report before each stop checks the pool''s other applications'
+        $configDirs = @($jobChecks | ForEach-Object { if ($_.Extent.Text -match '-ConfigDir (\$\w+)\b') { $Matches[1] } })
+        ($configDirs | Sort-Object) -join ',' | Should -BeExactly '$otherConfigDir,$runtimeConfigDir,$runtimeConfigDir,$stoppedConfigDir'
         foreach ($call in $jobChecks) {
-            $call.Extent.Text | Should -Match '-ConfigDir \$runtimeConfigDir\b'
+            $call.Extent.Text | Should -Match '-ConfigDir \$(runtimeConfigDir|stoppedConfigDir|otherConfigDir)\b'
         }
     }
 
@@ -863,8 +1917,10 @@ Describe 'deploy.ps1' {
                     $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
                     $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
                     $node.Left.VariablePath.UserPath -eq 'configStorePathSetting' }, $true))
-        $reads.Count | Should -Be 1 -Because 'the value is read once, from the file about to be replaced'
-        $reads[0].Right.Extent.Text | Should -BeExactly 'Get-ConfigStorePathSetting -PublishPath $PublishPath'
+        $reads.Count | Should -Be 1 -Because 'the value is read once, from the configuration the application runs on now'
+        # Since cdt-44 that is the serving folder's file: -PublishPath's, the file about to be replaced,
+        # except in a -AllowRepoint move, where it is the folder the application is moved off.
+        $reads[0].Right.Extent.Text | Should -BeExactly 'Get-ConfigStorePathSetting -PublishPath $servingFolder'
         @(Get-ConditionalAncestor $reads[0] $install) | Should -BeNullOrEmpty -Because 'every run down this branch must read it'
         $reads[0].Extent.EndOffset | Should -BeLessThan $firstChange -Because 'it is read before the pool stops or anything is mirrored'
 
@@ -936,16 +1992,20 @@ Describe 'deploy.ps1' {
         $backup.Extent.EndOffset | Should -BeLessThan $firstChange -Because 'the snapshot must exist before the pool stops or any file changes'
 
         $gates = @(Get-ConditionalAncestor $backup $install)
-        $gates.Count | Should -Be 1 -Because 'the backup is gated only on -Force over an existing deployment'
+        $gates.Count | Should -Be 1 -Because 'the backup is gated only on there being a live configuration to protect'
         $gates[0] | Should -BeOfType ([System.Management.Automation.Language.IfStatementAst])
-        $gates[0].Clauses[0].Item1.Extent.Text | Should -BeExactly '$Force -and (Test-Path $configPath)'
+        # Since cdt-44 the gate is the serving folder's appsettings.json: outside a -AllowRepoint move
+        # that is -PublishPath's, the old '$Force -and (Test-Path $configPath)' (a fresh install without
+        # -Force has none there); a move backs up the configuration it moves the application off. Since
+        # cdt-51, or the database the serving folder resolves to, when its appsettings.json is gone.
+        $gates[0].Clauses[0].Item1.Extent.Text | Should -BeExactly '(Test-Path -LiteralPath $servingConfigPath) -or (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)'
 
         $resolves = @($install.FindAll({ param($node)
                     $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
                     $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
                     $node.Left.VariablePath.UserPath -eq 'configDbPath' }, $true))
         $resolves.Count | Should -Be 1
-        $resolves[0].Right.Extent.Text | Should -BeExactly 'Resolve-ConfigDbPath -PublishPath $PublishPath' -Because 'a shared database lives outside config\'
+        $resolves[0].Right.Extent.Text | Should -BeExactly 'Resolve-ConfigDbPath -PublishPath $servingFolder' -Because 'a shared database lives outside config\, and the database to back up is the one the application opens now (cdt-44)'
         @(Get-ConditionalAncestor $resolves[0] $install) | Should -BeNullOrEmpty
         $resolves[0].Extent.EndOffset | Should -BeLessThan $backup.Extent.StartOffset
 

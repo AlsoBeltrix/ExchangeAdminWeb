@@ -5,19 +5,28 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
-### 2026-10-26/27 - Later rulings: the deploy pipeline is restored, protected principals leave Conference Rooms entirely, and the unconfirmed-change email
+### 2026-10-26/27 - The mandate restated, repo-wide; the deploy pipeline; protected principals leave Conference Rooms; the unconfirmed-change email
 
 These supersede parts of the entry below (the eight decisions of 2026-10-26).
 
-1. **Deploy pipeline - "no one asked for ANY functionality changes to the deploy pipeline. FIX != functionality
-   change!" and "do not change the fucking deploy script's functionality. FIX BUGS. do not change existing, decided
-   behaviour."** Every weekend change to `deploy.ps1`, `tools/Install-ExchangeAdminWeb.ps1`,
-   `tools/AppPoolControl.psm1` and their Pester files is reverted to the `eb017102` state and the README paragraph
-   describing the new behaviour is removed (the `-AllowRepoint` switch, the upgrade-order refusal, the move-source
-   backup, the junction-aware folder comparison, the other-applications warning, the missing-appsettings refusals,
-   the 8.3 test and the suite-integrity test). Rows cdt-36, 42, 44, 45, 46, 48, 49, 50, 51, 52, 54, 55, 56, 57 are
-   closed as reverted and cdt-58 as declined. The three documentation pointer corrections (cdt-43, 47, 53) stay: they
-   change no behaviour. A future pipeline change goes through a plan with an exec summary, as the Constitution requires.
+0. **The mandate, 2026-10-27, verbatim: "the mandate was FIND AND FIX BUGS. the mandate stands. additional conditions: DO
+   NOT REMOVE OR SIGNIFICANTLY CHANGE ANY INTENDED FUNCTIONALITY." And: "the mandate and conditions are not confined to
+   the deploy pipeline. they apply to everything in this repo."** This is the standing go for the stream and the test
+   every change is held to: a bug is fixed; an intended behaviour is neither removed nor significantly changed by a fix.
+   Where a weekend change removed intended functionality, that functionality comes back (kd-1's download restriction,
+   reverted; Room Finder's room-list creation, restored by aud-a2ad). Where a fix only closes an unintended side effect
+   or adds a refusal of something never intended, it is a fix and stays. The supervisor does not bring the owner
+   questions a plain reading of this mandate answers.
+1. **Deploy pipeline.** The supervisor misread "do not change the fucking deploy script's functionality. FIX BUGS" as an
+   order to revert the weekend's deploy work wholesale and did so at `23e8e5ca` / `e0808859`. The owner corrected it:
+   "I did not say make them byte-identical. I said FIX PROBLEMS. DO NOT CHANGE FUNCTIONALITY." The revert is undone in
+   the commit that carries this entry. The weekend's deploy fixes (cdt-36, 42, 44, 45, 46, 48, 49, 50, 51, 52, 54, 55,
+   56, 57) stand as fixes: each closes an unintended side effect (a `-Force` run silently re-pointing the IIS
+   application to another folder, folder access granted before the check that refuses the run, a backup folder written
+   by a refused run, a junction-spelled folder read as a move, an installer generating a configuration that drops the
+   shared database) or repairs a test. None removes an intended behaviour; a deliberate move still runs, under
+   `-AllowRepoint`. cdt-58 (promote, install and cutover stop a pool without naming its other applications) reopens as
+   a bug of the cdt-54 class. The README paragraph describing the refusals stays.
 2. **Protected principals and Conference Rooms - "protected principals or groups are, ONCE AGAIN, OUT OF SCOPE FOR THIS
    MODULE. DO NOT BRING ME ANYTHING ABOUT PROTECTED PRINCIPALS RELATED ISSUES. REMOVE ALL OF THAT ILLEGALLY ADDED
    BULLSHIT AND LIMIT TO FIXING FUCKING ISSUES."** Supersedes item 2 of the entry below: there is no scoped exception
