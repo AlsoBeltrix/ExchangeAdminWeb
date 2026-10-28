@@ -177,8 +177,9 @@ public class InFlightWorkGuardTests
     {
         // kd-37, kd-58 A2 and A3: the lookup's Exchange Online read and its on-premises reads.
         ["RecipientLookup.razor"] = ["$\"Looking up {target}\""],
-        // kd-81, kd-58 A2 and A3: the single change - its location read, and its looks before its first write command.
-        ["MailboxPermissions.razor"] = ["$\"Updating permissions on {target}\""],
+        // kd-81, kd-58 A2, A3 and A6: the single change - its location read, its wait for a pool connection and its look before
+        // its first write command; kd-59, kd-58 A6: the on-premises change - every step before its first command is sent.
+        ["MailboxPermissions.razor"] = ["$\"Updating permissions on {target}\"", "$\"Updating on-premises permissions on {onPremTarget}\""],
         ["CalendarPermissions.razor"] = ["$\"Updating calendar permissions on {target}\""],
         // kd-6, kd-76: an unblock is never sent once the operator has cancelled; one already sent runs on and is recorded.
         ["BlockedSenders.razor"] = ["$\"Unblocking {address}\""],

@@ -197,7 +197,13 @@ public sealed class ModuleCatalog
             // 1.6.7: and the location read's on-premises half (kd-58, CancellationDepth A3, through the shared read): a cancel
             // while it waits for the on-premises server, as its session opens, between connect attempts or between its two
             // reads ends the change there, nothing written. The on-premises change itself is unchanged until its own slice.
-            Version = "1.6.7",
+            // 1.6.8: the on-premises change takes the operator's cancel at every step before its first command (kd-58,
+            // CancellationDepth A6): a cancel while it waits for the on-premises server, as its session opens, between connect
+            // attempts or after the connect ends it there - "Cancelled by the operator before the change was sent. Nothing was
+            // written.", filed Cancelled, no one notified - where it waited its turn, connected and was sent. And the single
+            // Exchange Online change's own wait for a free connection takes it: a cancel there ends the change at once, nothing
+            // read or sent. A command already sent runs to its end. The leave prompt says so for the on-premises change too.
+            Version = "1.6.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -28,6 +28,7 @@ namespace ExchangeAdminWeb.Tests;
 /// stand-in New-PSSessionOption and New-PSSession. The throttle is the base's own, process-wide, so a test that holds its two
 /// slots holds them only until the read it waits on has ended. Every wait bounded. No Exchange, no vault, no directory.
 /// </remarks>
+[Collection(OnPremThrottleCollection.Name)] // kd-58 A6: it holds the throttle's two slots, as PermissionOnPremChangeCancellationTests does
 public sealed class ExchangeServiceBaseOnPremCancellationTests : IDisposable
 {
     private const string Address = "alice@contoso.test";

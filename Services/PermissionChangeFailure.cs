@@ -74,10 +74,11 @@ internal static class PermissionChangeFailure
 
     /// <summary>
     /// kd-59. Whether <paramref name="ex"/> is the operator's cancel of an on-premises change: a write the service says was
-    /// never sent (aud-a76), stopped by a cancellation - the credential fetch is the step that takes the activity's token -
-    /// with that token, <paramref name="activity"/>, cancelled. Any other throw, a cancellation the operator did not ask for
-    /// included, is a failure in its own words. kd-81: a single Exchange Online change's own looks at the token - as it
-    /// starts, and inside its pooled call before its first write command - leave the same way.
+    /// never sent (aud-a76), stopped by a cancellation - at the credential fetch, and, since kd-58 A6 (Mailbox Permissions),
+    /// at the server's queue, the session's open, the connect or the last look before the mark - with the activity's token,
+    /// <paramref name="activity"/>, cancelled. Any other throw, a cancellation the operator did not ask for included, is a
+    /// failure in its own words. kd-81: a single Exchange Online change's own looks at the token - as it starts, by its wait
+    /// for a pool connection (kd-58 A6) and inside its pooled call before its first write command - leave the same way.
     /// </summary>
     internal static bool CancelledBeforeItWasSent(Exception ex, CancellationToken activity) =>
         ex is PermissionWriteNotSubmittedException { InnerException: OperationCanceledException } && activity.IsCancellationRequested;

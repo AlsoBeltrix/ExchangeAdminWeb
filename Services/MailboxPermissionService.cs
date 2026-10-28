@@ -5,7 +5,6 @@ using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExchangeAdminWeb.Models;
-using System.Management.Automation.Runspaces;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -36,13 +35,13 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// Null refuses before a connection is borrowed; the typed string is never written.
     /// </param>
     /// <param name="cancellationToken">
-    /// kd-81. The page's activity token, the one the navigation guard cancels. Looked at twice, both times before anything is
-    /// sent: as the change starts - a token already cancelled asks the pool for nothing (kd-76's shape) - and inside the pooled
-    /// call, once its connection is held, immediately before the first write command, because the pool's wait for a free
-    /// connection takes no token. A cancel at either point leaves as every throw before the mark does: a
-    /// <see cref="PermissionWriteNotSubmittedException"/>, nothing sent, the cancellation its cause - which the page files
-    /// Cancelled (kd-57, kd-59). Nothing after the first write command looks at it: once a right is sent the change runs on.
-    /// The CSV loop passes none, so its rows run as before.
+    /// kd-81. The page's activity token, the one the navigation guard cancels. Looked at only before anything is sent: as the
+    /// change starts - a token already cancelled asks the pool for nothing (kd-76's shape); by the pool's wait for a free
+    /// connection and as that wait returns (kd-58 A6, E4) - a cancel during the wait ends the change at once, no connection
+    /// used; and inside the pooled call, the connection held and the reads done, immediately before the first write command.
+    /// A cancel at any of them leaves as every throw before the mark does: a <see cref="PermissionWriteNotSubmittedException"/>,
+    /// nothing sent, the cancellation its cause - which the page files Cancelled (kd-57, kd-59). Nothing after the first write
+    /// command looks at it: once a right is sent the change runs on. The CSV loop passes none, so its rows run as before.
     /// </param>
     public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs, bool autoMapping,
         CancellationToken cancellationToken = default)
@@ -78,10 +77,11 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 var outcomes = new List<RightOutcome>();
 
-                // kd-81. The pool's wait for this connection took no token, so a cancel made during it is looked at here, the
-                // connection held and the reads done, immediately before the first write command. Thrown: RunPooledQueryAsync
-                // lets a throw out to its caller, and the pool takes its connection back as for any other throw - before the
-                // mark, so nothing was sent. The pool runs this call once (no retry), so no earlier attempt can have sent anything.
+                // kd-81. A cancel made since the pool's wait returned - during the reads above - is looked at here, the
+                // connection held and the reads done, immediately before the first write command (kd-58 A6: one made during
+                // the wait ended the change there). Thrown: RunPooledQueryAsync lets a throw out to its caller, and the pool
+                // takes its connection back as for any other throw - before the mark, so nothing was sent. The pool runs this
+                // call once (no retry), so no earlier attempt can have sent anything.
                 cancellationToken.ThrowIfCancellationRequested();
                 submission.Submitting(); // aud-a76: the first write command is invoked below
 
@@ -113,12 +113,12 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
 
                 return MailboxPermissionOutcome.ForGrant(targetMailbox, user, outcomes);
-            });
+            }, cancellationToken: cancellationToken); // kd-58 A6 (E4): the wait for a connection takes the token, the call does not
         });
     }
 
     /// <param name="mailbox">As on <see cref="AddMailboxPermissionsAsync"/>: null refuses.</param>
-    /// <param name="cancellationToken">kd-81. As on <see cref="AddMailboxPermissionsAsync"/>: looked at as the change starts and immediately before its first write command, nothing after.</param>
+    /// <param name="cancellationToken">kd-81. As on <see cref="AddMailboxPermissionsAsync"/>: looked at as the change starts, by the pool's wait for a connection (kd-58 A6) and immediately before its first write command, nothing after.</param>
     public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs,
         CancellationToken cancellationToken = default)
     {
@@ -145,7 +145,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
 
                 var outcomes = new List<RightOutcome>();
-                cancellationToken.ThrowIfCancellationRequested(); // kd-81: a cancel made while this call waited for its connection
+                cancellationToken.ThrowIfCancellationRequested(); // kd-81: a cancel made during the reads above (kd-58 A6: one during the wait ended it there)
                 submission.Submitting(); // aud-a76: the first write command is invoked below
 
                 if (fullAccess)
@@ -175,7 +175,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
 
                 return MailboxPermissionOutcome.ForRevoke(targetMailbox, user, outcomes);
-            });
+            }, cancellationToken: cancellationToken); // kd-58 A6 (E4): the wait for a connection takes the token, the call does not
         });
     }
 
@@ -487,9 +487,12 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// uses. That the pipeline binds there is an assumption recorded in aud-a2d.
     /// </remarks>
     /// <param name="cancellationToken">
-    /// kd-59. The page's activity token, for the credential fetch (kd-37's seam): a cancel during it leaves, as every throw
-    /// before the mark does, as a <see cref="PermissionWriteNotSubmittedException"/> - nothing was sent - with the
-    /// cancellation as its cause. Nothing after the fetch takes it: once the credential is in hand the write runs as before.
+    /// kd-59. The page's activity token, for every step before the first command is sent: the credential fetch (kd-37's seam)
+    /// and, since kd-58 A6 (E7), the wait for one of the on-premises server's two slots, a look before the session's runspace
+    /// opens and once it has, each connect attempt and the pause between attempts, and a last look immediately before the
+    /// mark. A cancel at any of them leaves, as every throw before the mark does, as a
+    /// <see cref="PermissionWriteNotSubmittedException"/> - nothing was sent - with the cancellation as its cause; a session
+    /// already opened is still removed. Nothing after the mark takes it: once a command is sent the write runs on.
     /// </param>
     public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs,
         CancellationToken cancellationToken = default)
@@ -499,7 +502,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
         // aud-a76: the credentials, the throttle, the runspace, the connect and the session read come before the mark, so a
         // throw from any of them leaves as a PermissionWriteNotSubmittedException: nothing was sent. Each right's own
-        // failure is a result (TryRightOnPrem), as before.
+        // failure is a result (TryRightOnPrem), as before. kd-58 A6 (E7): and each of them takes the operator's cancel.
         var submission = new PermissionWriteSubmission();
         var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation", cancellationToken)); // kd-59
         if (creds is null)
@@ -507,17 +510,15 @@ public class MailboxPermissionService : ExchangeServiceBase
 
         return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 E7: a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 E7: before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: the last look, immediately before the mark
                 submission.Submitting(); // aud-a76: the first Invoke-Command is sent below
 
                 var outcomes = new List<RightOutcome>();
@@ -560,17 +561,17 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle));
+        }), _onPremThrottle, cancellationToken)); // kd-58 E7: the wait for one of the server's two slots takes the token
     }
 
-    /// <summary>The on-premises revoke; bound exactly as <see cref="AddMailboxPermissionsOnPremAsync"/>, its token too (kd-59).</summary>
+    /// <summary>The on-premises revoke; bound exactly as <see cref="AddMailboxPermissionsOnPremAsync"/>, its token too (kd-59, kd-58 A6).</summary>
     public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs,
         CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
-        // aud-a76: marked as AddMailboxPermissionsOnPremAsync is.
+        // aud-a76: marked as AddMailboxPermissionsOnPremAsync is; kd-58 A6 (E7): and takes the cancel as it does.
         var submission = new PermissionWriteSubmission();
         var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem mailbox permission operation", cancellationToken)); // kd-59
         if (creds is null)
@@ -578,17 +579,15 @@ public class MailboxPermissionService : ExchangeServiceBase
 
         return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 E7: a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 E7: before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: the last look, immediately before the mark
                 submission.Submitting(); // aud-a76: the first Invoke-Command is sent below
 
                 var outcomes = new List<RightOutcome>();
@@ -631,6 +630,6 @@ public class MailboxPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle));
+        }), _onPremThrottle, cancellationToken)); // kd-58 E7: the wait for one of the server's two slots takes the token
     }
 }

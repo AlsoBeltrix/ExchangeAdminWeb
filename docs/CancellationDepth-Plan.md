@@ -500,8 +500,8 @@ at a time (`.agents/decisions.md` 2026-10-26). C1 is last.
 | A3 | kd-58 | The base, on-premises: E7 (`ThrottledAsync`, the runspace open, `ConnectOnPrem`); the base's two on-premises reads, which Recipient Lookup uses | `Services/ExchangeServiceBase.cs` |
 | A4 | new (14.1) | Mailbox Permissions, the single cloud change: location read, pool wait, a check before `Submitting()`, the page's cancel catch | `Services/MailboxPermissionService.cs`, `Components/Pages/MailboxPermissions.razor` |
 | A5 | new (14.1) | Calendar Permissions, the same | `Services/CalendarPermissionService.cs`, `Components/Pages/CalendarPermissions.razor` |
-| A6 | kd-58 | Mailbox Permissions, the on-premises change: E7 before `Submitting()` | `Services/MailboxPermissionService.cs` |
-| A7 | kd-58 | Calendar Permissions, the same | `Services/CalendarPermissionService.cs` |
+| A6 | kd-58 | Mailbox Permissions, the on-premises change: E7 before `Submitting()`; and the single cloud change's own wait for a pool connection (E4; the supervisor's ruling, 2026-10-28) | `Services/MailboxPermissionService.cs`, `Components/Pages/MailboxPermissions.razor` (3.8a's declaration) |
+| A7 | kd-58 | Calendar Permissions, the same | `Services/CalendarPermissionService.cs`, `Components/Pages/CalendarPermissions.razor` (3.8a's declaration) |
 | A8 | kd-58 | Conference Rooms, single-room setup: the reads before Set-Place, the preflights' directory steps, Set-Place's pool wait | `Services/ConferenceRoomService.cs` |
 | A9 | kd-58 | Conference Rooms, Room Finder bulk rows: the job's token; the stopped row's record | `Services/ConferenceRoomService.cs`, `Services/Jobs/IConferenceRoomBulkOperations.cs`, `Services/Jobs/ConferenceRoomBulkProcessor.cs` |
 | A10 | kd-58 | Message Trace: cloud window and detail reads, their catches; the on-premises search and detail (E7) | `Services/MessageTraceService.cs` |
@@ -537,7 +537,11 @@ Per-slice notes:
   pages are line-keyed in `ClickGateRegistry`: re-anchor with `.agents/playbooks/clickgate-reanchor.md` if the line
   count moves. Reproduce the fault first (section 9).
 - **A6, A7.** `MailboxPermissionService.cs` 466 and 539, `CalendarPermissionService.cs` 407 and 480 pass their existing
-  token to `ThrottledAsync`, `ConnectOnPrem` and the E7 checks; kd-59's page catch already files the result.
+  token to `ThrottledAsync`, `ConnectOnPrem` and the E7 checks; kd-59's page catch already files the result. **Added by
+  the supervisor's ruling (2026-10-28) - kd-81's remainder:** the single cloud change hands its token to its own borrow
+  (E4) - Mailbox's `RunPooledQueryAsync`, Calendar's `RunAsync` - so a cancel while it waits for a pool connection ends it
+  at once, still before anything is sent; kd-81's look before the first write command stays, for a cancel made during the
+  reads. The page's on-premises activity declares that it takes the cancel (3.8a).
 - **A8.** Every catch on the way out lets the operator's cancel pass: the room read's (`ConferenceRoomService.cs`
   562-566 logs a warning and rethrows - no warning for a cancel) and the room-list resolution's (608-616 turns any throw
   into a refusal - filter it). Set-Place's `RunAsync` takes the token for its borrow; kd-75's in-call check stays.
@@ -616,7 +620,9 @@ own words; a cancel after the mark lets the change finish with its own result. M
 the in-call check removed; the page's cancel catch removed.
 
 **A6, A7.** As A4's, at the throttle, the runspace open and the connect, all before the mark; kd-59's
-`PermissionPagesCancellationTests` stay green.
+`PermissionPagesCancellationTests` stay green. And the cloud change's own wait (the supervisor's ruling): a cancel during
+it ends the change at once, every connection still held, nothing asked of Exchange; kd-81's look stays covered by a
+cancel during the change's reads. Mutations: each token dropped, each look removed, the page's declaration removed.
 
 **A8.** Cancelled during the room read, the room-list resolution, a preflight's directory step and Set-Place's pool wait
 (kd-75's two tests stay): each ends before Set-Place, filed Cancelled, "Nothing was written."; kd-59's
@@ -720,7 +726,9 @@ owner's (`.agents/decisions.md` 2026-10-26).
 1. That Mailbox and Calendar Permissions' single cloud change, and their on-premises change after the credential
    returns, can be made after the operator's cancel. Read from the code - the activity's token is not passed, and the
    borrow and the throttle take none; kd-59's record says the same of the on-premises half - not reproduced. A4 and A5
-   reproduce it before fixing it.
+   reproduce it before fixing it. **Reproduced at A6 for Mailbox Permissions' on-premises change**: A6's tests run against
+   the service as it was (kd-58's A6 section) - a change cancelled while it waited for the server, or once its session had
+   opened, was sent, both rights, after the cancel.
 2. That PowerShell reports `Stopped` (or `Stopping`) in `InvocationStateInfo` after a stop, and `Completed` or `Failed`
    after every normal end, on this host's SDK: documented behaviour, to be confirmed by A1's tests. No pooled call uses
    a local `Select-Object -First` (none was found), which ends a pipeline early without stopping it.
@@ -804,11 +812,17 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   are annotated in section 13. Left for the supervisor (kd-58's record): the permission changes' own wait for a pool
   connection, part of A4/A5 that kd-81 could not reach, can now take the token through E4 - unassigned. The base bump stays
   owed (C1).
-- 2026-10-28, **The leave prompt, page-aware** (the supervisor's ruling on A2's note; 3.8a) - `feat/cancellation-depth`, the
-  commit that adds this line: each activity declares at `Progress.Begin` whether its work takes the operator's cancel, and
+- 2026-10-28, **The leave prompt, page-aware** (the supervisor's ruling on A2's note; 3.8a) - `feat/cancellation-depth`
+  `dc2a0db9`: each activity declares at `Progress.Begin` whether its work takes the operator's cancel, and
   the guard tells the three cases only to work that takes it - "Leaving will not stop the operation in progress; it will
   complete and be recorded." to work that does not. Declared now: Recipient Lookup's lookup, the permission pages' single
   change and Blocked Senders' unblock (kd-6, kd-76); each module slice declares its own as it adopts the token. Pinned per
   page, over every page that begins an activity. The supervisor also assigned kd-81's remainder to A6 and A7: the
   permission changes' own wait for a pool connection takes the token, cloud and on-premises alike. No module bump - the
   guard is shared; the base bump stays owed (C1).
+- 2026-10-28, **A6, Mailbox Permissions** - `feat/cancellation-depth`, the commit that adds this line: the on-premises change
+  takes the cancel at every step before its first command (E7) - the server's queue, a look before and after its runspace
+  opens, the connect, a last look before the mark - and the single cloud change's own wait for a pool connection takes it
+  (E4, kd-81's remainder); kd-81's look before the first write stays. The page's on-premises activity declares that it
+  takes the cancel (3.8a). Found and fixed in the tests: the two test classes that hold the on-premises server's two
+  slots now share a collection, so they never run at once. Mailbox Permissions 1.6.7 -> 1.6.8; the base bump stays owed.
