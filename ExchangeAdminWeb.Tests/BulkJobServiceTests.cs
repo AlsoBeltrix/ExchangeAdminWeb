@@ -1138,6 +1138,50 @@ public class BulkJobServiceTests
         return waits;
     }
 
+    // -------------------------------------------------------------------------
+    // kd-85 (1): a queued job's cancel whose read of the job fails is answered as its write landed
+    // -------------------------------------------------------------------------
+    // TryCancelJob read the cancelled job back for its completion hook outside any try. A read the store failed, after it took
+    // the cancel, threw out of CancelJob and CancelOwnedJob though the job was cancelled, and every caller files a throw as a
+    // cancel that failed: Admin Bulk Jobs and Conference Rooms audited it Failed with the store's message and threw on to the
+    // circuit, and Comms-10k said the job action failed. The read is now in one try with the hook, as the runner's tail has
+    // it (kd-84): its failure is logged as a notification failure, the hook is skipped, and the cancel is answered as its
+    // write landed.
+
+    [Theory]
+    [InlineData(nameof(BulkJobService.CancelJob))]
+    [InlineData(nameof(BulkJobService.CancelOwnedJob))]
+    public void ACancelWhoseReadOfTheJobFails_IsAnsweredAsItsWriteLanded_AndIsANotificationFailure(string entryPoint)
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(h.NewJob("j1", "SS"));
+        // The store takes the cancel - j1 finished Cancelled from Queued - and fails the read of j1 right after it, once.
+        FailTheReadOfTheFinishedJobOnce(h, log, "j1");
+
+        // Admin Bulk Jobs and Conference Rooms cancel through CancelJob, Comms-10k through CancelOwnedJob, and each files
+        // and shows the cancel as this answers it.
+        var cancelled = entryPoint == nameof(BulkJobService.CancelJob)
+            ? h.Service.CancelJob("j1")
+            : h.Service.CancelOwnedJob("Test", "T", "u", "j1", out _);
+
+        // Answered as the write landed: the job was cancelled.
+        Assert.True(cancelled);
+        // Said once, as a notification failure, with the failed read's own exception.
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Error, said.Level);
+        Assert.Equal("Completion notification for bulk job j1 failed (non-fatal)", said.Message);
+        Assert.Contains("no such table: bulk_job", Assert.IsType<SqliteException>(said.Exception).Message);
+        // The cancel stands as its write left it, and the job never ran.
+        var j1 = h.Repository.Get("j1")!;
+        Assert.Equal(BulkJobStatus.Cancelled, j1.Status);
+        Assert.Equal("Cancelled before it started.", j1.Message);
+        Assert.Equal(0, j1.ProcessedRows);
+        // The hook was skipped, the job it is given not having been read: no processor was built for it.
+        lock (h.CreatedProcessors)
+            Assert.Empty(h.CreatedProcessors);
+    }
+
     private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 5000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();

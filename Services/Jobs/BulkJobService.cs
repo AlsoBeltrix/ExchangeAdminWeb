@@ -183,6 +183,14 @@ public sealed class BulkJobService
     /// cancellation was requested; false when it was neither - already finished, or no longer there. Discarded until a
     /// caller needed it to audit the cancel truthfully.
     /// </returns>
+    /// <remarks>
+    /// kd-85. A queued job's cancel reads the job back for its completion hook once the cancel has landed, and that read was
+    /// outside any try: a read the store failed threw out of this method and <see cref="CancelOwnedJob"/> though the job was
+    /// cancelled, and every caller files a throw as a cancel that failed - Admin Bulk Jobs and Conference Rooms audited it
+    /// Failed with the store's message and threw on to the circuit, and Comms-10k said the job action failed and audited it
+    /// refused or failed. The read is now in one try with the hook, as the runner's tail has it (kd-84): its failure is a
+    /// notification failure, logged as one, no hook runs, and the answer is the write's - true, the job cancelled.
+    /// </remarks>
     public bool CancelJob(string id)
         => TryCancelJob(id);
 
@@ -194,9 +202,19 @@ public sealed class BulkJobService
         if (_repository.TryFinish(id, BulkJobStatus.Cancelled, "Cancelled before it started.", DateTime.UtcNow, BulkJobStatus.Queued))
         {
             RaiseChanged(id);
-            var cancelledJob = _repository.Get(id);
-            if (cancelledJob is not null)
-                NotifyCompleted(cancelledJob);
+            // kd-85. The read is the completion notification's first step, so it is in one try with the hook, as in the
+            // runner's tail (kd-84): a read the store fails after it took the cancel is a failed notification, logged as one,
+            // and the cancel is answered as its write landed (the remarks on CancelJob).
+            try
+            {
+                var cancelledJob = _repository.Get(id);
+                if (cancelledJob is not null)
+                    NotifyCompleted(cancelledJob);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Completion notification for bulk job {Job} failed (non-fatal)", id);
+            }
             return true;
         }
 
