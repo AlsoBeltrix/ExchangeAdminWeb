@@ -745,7 +745,7 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
         # The cutover runs at the top level, so it cannot be dot-sourced. Its stop step and the
         # helpers that step calls are lifted out of the file unchanged, so the tests below drive
         # the code that ships, with the real Stop-AppPoolVerified underneath.
-        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Invoke-PlanOrAction', 'Stop-AppPoolChecked') {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Invoke-PlanOrAction', 'Write-AppPoolSharingReport', 'Stop-AppPoolChecked') {
             . ([scriptblock]::Create((Get-CutoverFunction $name).Extent.Text))
         }
         Import-Module (Join-Path $PSScriptRoot '..' '..' 'tools' 'AppPoolControl.psm1') -Force
@@ -769,9 +769,20 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
         # block that returns it (the aud-a38b lesson), and each test proves its probe was asked.
         function New-PoolProbe {
             [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
-                Justification = 'Exists and State are used inside GetNewClosure blocks; the analyzer cannot see into them')]
-            param([scriptblock]$Exists, [scriptblock]$State, [int]$TimeoutSeconds = 60)
+                Justification = 'Exists, State and Others are used inside GetNewClosure blocks; the analyzer cannot see into them')]
+            param(
+                [scriptblock]$Exists,
+                [scriptblock]$State,
+                [int]$TimeoutSeconds = 60,
+                # cdt-58: what IIS reports to the sharing report before the stop. By default the
+                # instance alone, which is at its folder and so no OTHER application.
+                [scriptblock]$Others = {
+                    $script:cutoverEvents.Add('other-applications probe')
+                    [pscustomobject]@{ Location = 'Web/dev'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = 'X:\dev' }
+                }
+            )
             @{
+                'Get-AppPoolOtherApplication:ApplicationsProbe' = { $Others }.GetNewClosure()
                 'Stop-AppPoolVerified:ExistsProbe'    = { $Exists }.GetNewClosure()
                 'Stop-AppPoolVerified:StopAction'     = { { param($PoolName) $script:cutoverEvents.Add("verified stop: $PoolName") } }
                 'Stop-AppPoolVerified:StateProbe'     = { $State }.GetNewClosure()
@@ -792,7 +803,7 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
             Set-Variable -Name PlanOnly -Value $false
             $PSDefaultParameterValues = New-PoolProbe -Exists { $script:cutoverEvents.Add('exists probe'); $true } -State { 'Stopped' }
 
-            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev'
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev'
 
             $script:cutoverEvents | Should -Contain 'exists probe'
             $script:cutoverEvents | Should -Contain 'verified stop: aud-a38e-dev'
@@ -804,7 +815,7 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
             Set-Variable -Name PlanOnly -Value $false
             $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Started' } -TimeoutSeconds 0
 
-            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' } |
+            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev' } |
                 Should -Throw -ExpectedMessage "*'aud-a38e-dev' is still 'Started'*"
             $script:cutoverEvents | Should -Contain 'verified stop: aud-a38e-dev'
         }
@@ -815,7 +826,7 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
             Set-Variable -Name PlanOnly -Value $false
             $PSDefaultParameterValues = New-PoolProbe -Exists { $script:cutoverEvents.Add('exists probe'); $false } -State { 'Started' }
 
-            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' } |
+            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev' } |
                 Should -Throw -ExpectedMessage "*'aud-a38e-dev' does not exist*No database was copied*"
             $script:cutoverEvents | Should -Contain 'exists probe'
         }
@@ -824,8 +835,10 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
             # The module answers Stopped, Absent or throws today. A new answer is not a stop.
             Set-Variable -Name PlanOnly -Value $false
             Mock Stop-AppPoolVerified { 'Stopping' }
+            # cdt-58: the report before the stop asks the stand-in, never IIS.
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
 
-            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' } |
+            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev' } |
                 Should -Throw -ExpectedMessage "*'aud-a38e-dev' was not confirmed stopped (IIS reported 'Stopping')*"
             Should -Invoke Stop-AppPoolVerified -Times 1 -Exactly
         }
@@ -834,7 +847,7 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
             Set-Variable -Name PlanOnly -Value $false
             $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
 
-            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev'
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev'
 
             $jobs = $script:cutoverEvents.IndexOf('jobs: X:\dev\config X:\dev PlanOnly=False')
             $stop = $script:cutoverEvents.IndexOf('verified stop: aud-a38e-dev')
@@ -848,13 +861,127 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
                 -Exists { $script:cutoverEvents.Add('exists probe'); $true } `
                 -State { $script:cutoverEvents.Add('state probe'); 'Stopped' }
 
-            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev'
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev'
 
             $script:cutoverEvents | Should -Not -Contain 'exists probe'
             $script:cutoverEvents | Should -Not -Contain 'state probe'
             @($script:cutoverEvents | Where-Object { $_ -like 'verified stop:*' -or $_ -like 'bare Stop-WebAppPool:*' -or $_ -like 'Get-ItemProperty:*' }).Count | Should -Be 0
             $script:cutoverEvents | Should -Contain 'jobs: X:\dev\config X:\dev PlanOnly=True'
             @($script:cutoverEvents | Where-Object { $_ -like 'plan: Stop app pool aud-a38e-dev and confirm IIS reports it Stopped*' }).Count | Should -Be 1
+        }
+    }
+
+    Context 'cdt-58: what else the pool serves is named, and its jobs read, before the stop' {
+
+        # The checks before each stop looked only at the instance: its jobs, and (step 1b) the IIS nodes
+        # at or inside its folder. An application the same pool serves from elsewhere went down with it
+        # unannounced, and stayed down while the databases were copied; its bulk jobs were never read.
+
+        BeforeAll {
+            # A drive letter this host does not have, so that an application IIS still names on it can be
+            # listed. Join-Path throws on such a drive (checked in the test that uses it).
+            $inUse = @([System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() })
+            $inUse += @(Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name.ToUpperInvariant() })
+            $script:Cdt58MissingDrive = @('Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y', 'Z', 'J', 'K', 'L', 'M', 'N', 'O', 'P' | Where-Object { $inUse -notcontains $_ })[0]
+        }
+
+        BeforeEach {
+            # Every line the lifted functions print, in order with the stand-ins' events. Defined in the
+            # test's own scope, so it goes with the test.
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cutoverEvents.Add("said: $Object") }
+        }
+
+        It 'names every other application the pool serves, reads the jobs of each whose folder is on disk, then the instance''s own, then stops' {
+            $reports = Join-Path $TestDrive 'reports'
+            New-Item -ItemType Directory -Path $reports -Force | Out-Null
+            $gone = Join-Path $TestDrive 'gone'
+            $script:Cdt58MissingDrive | Should -Not -BeNullOrEmpty -Because 'the test needs a drive letter this host does not have'
+            $lost = "$($script:Cdt58MissingDrive):\lost"
+            { Join-Path $lost 'config' -ErrorAction Stop } | Should -Throw -Because "the drive '$($script:Cdt58MissingDrive):' does not exist here, which is the case the on-disk guard is for"
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' } -Others {
+                $script:cutoverEvents.Add('other-applications probe')
+                [pscustomobject]@{ Location = 'Web/dev'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = 'X:\dev' }
+                [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'AUD-A38E-DEV'; PhysicalPath = $reports }
+                [pscustomobject]@{ Location = 'Other/'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = '' }
+                [pscustomobject]@{ Location = 'Other/gone'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = $gone }
+                [pscustomobject]@{ Location = 'Other/lost'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = $lost }
+                [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38e-prod'; PhysicalPath = 'X:\prod' }
+            }
+
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev'
+
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *  !  *' }) |
+                Should -Be @("said:   !  App pool 'aud-a38e-dev' also serves 4 other IIS application(s), which stop with it: Web/reports with its files at '$reports'; Other/ with its files at ''; Other/gone with its files at '$gone'; Other/lost with its files at '$lost'.") -Because 'the instance is at its folder, and the other pool''s application stops with its own pool'
+            @($script:cutoverEvents | Where-Object { $_ -like 'jobs: *' }) |
+                Should -Be @("jobs: $reports\config X:\dev PlanOnly=False", 'jobs: X:\dev\config X:\dev PlanOnly=False') -Because 'the other application with a folder on disk is read from its own config folder with the cutover''s tool, before the instance; one with no folder, a folder that is gone or a drive that is not there holds no jobs database'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *Active bulk jobs of IIS application*' }) |
+                Should -Be @("said:        Active bulk jobs of IIS application Web/reports, with its files at '$reports', which stops with the pool:")
+            $header = @($script:cutoverEvents | Where-Object { $_ -like 'said: >>> Stop app pool aud-a38e-dev *' })
+            $header | Should -Be @("said: >>> Stop app pool aud-a38e-dev and confirm IIS reports it Stopped before any database is copied (names the IIS applications it serves besides X:\dev, and warns about active bulk jobs, first)")
+            $report = $script:cutoverEvents.IndexOf('other-applications probe')
+            $report | Should -BeGreaterThan $script:cutoverEvents.IndexOf($header[0]) -Because 'the report is the first thing the step does'
+            $script:cutoverEvents.IndexOf("jobs: $reports\config X:\dev PlanOnly=False") | Should -BeGreaterThan $report
+            $script:cutoverEvents.IndexOf('verified stop: aud-a38e-dev') | Should -BeGreaterThan $script:cutoverEvents.IndexOf('jobs: X:\dev\config X:\dev PlanOnly=False') -Because 'the operator is told what the stop takes down before it is stopped'
+        }
+
+        It 'says so when the pool serves nothing else, and reads only the instance''s jobs' {
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev'
+
+            $script:cutoverEvents | Should -Contain 'other-applications probe'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *serves no*' }) |
+                Should -Be @("said:        App pool 'aud-a38e-dev' serves no IIS application other than this instance at 'X:\dev': stopping it stops nothing else.")
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *  !  *' }) | Should -BeNullOrEmpty -Because 'nothing else stops, so there is nothing to warn about'
+            @($script:cutoverEvents | Where-Object { $_ -like 'jobs: *' }) | Should -Be @('jobs: X:\dev\config X:\dev PlanOnly=False')
+            $script:cutoverEvents | Should -Contain 'verified stop: aud-a38e-dev'
+        }
+
+        It 'only warns when the listing cannot be read, and the stop goes on: step 1b already confirmed the pool' {
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' } -Others { $script:cutoverEvents.Add('other-applications probe'); throw 'Access is denied' }
+
+            { Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev' } | Should -Not -Throw
+
+            $script:cutoverEvents | Should -Contain 'other-applications probe'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *  !  *' }) |
+                Should -Be @("said:   !  Stopping app pool 'aud-a38e-dev' may stop other IIS applications too, and their active bulk jobs are not read: Cannot read the IIS sites and applications, so the applications app pool 'aud-a38e-dev' serves besides the one at 'X:\dev' cannot be listed: Access is denied")
+            @($script:cutoverEvents | Where-Object { $_ -like 'jobs: *' }) | Should -Be @('jobs: X:\dev\config X:\dev PlanOnly=False')
+            $script:cutoverEvents | Should -Contain 'verified stop: aud-a38e-dev'
+        }
+
+        It 'in plan mode prints the step, saying it names them, and runs no report' {
+            Set-Variable -Name PlanOnly -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir 'X:\dev\config' -AppPath 'X:\dev' -PublishPath 'X:\dev'
+
+            $script:cutoverEvents | Should -Not -Contain 'other-applications probe' -Because 'the step is planned, not run'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *' }) | Should -BeNullOrEmpty
+            @($script:cutoverEvents | Where-Object { $_ -like 'plan: *' }) |
+                Should -Be @('plan: Stop app pool aud-a38e-dev and confirm IIS reports it Stopped before any database is copied (names the IIS applications it serves besides X:\dev, and warns about active bulk jobs, first)')
+        }
+
+        It 'reports first in the stop step''s action, and each call site passes its own instance''s folder (AST)' {
+            $stop = Get-CutoverFunction 'Stop-AppPoolChecked'
+            $plan = @($stop.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-PlanOrAction' }, $true))
+            $plan.Count | Should -Be 1
+            $action = @($plan[0].CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.ScriptBlockExpressionAst] })
+            $statements = @($action[0].ScriptBlock.EndBlock.Statements)
+            $statements[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath' -Because 'the report is the first thing the step does, so it comes before the instance''s jobs and the stop'
+            $statements[1].Extent.Text | Should -BeExactly 'Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null'
+            @(Get-CutoverCommand 'Write-AppPoolSharingReport').Count | Should -Be 1 -Because 'one stop step serves both pools'
+            $helper = @(Get-CutoverCommand 'Get-AppPoolOtherApplication')
+            $helper.Count | Should -Be 1 -Because 'the report is the only caller, and it asks the shared module'
+            $sharing = Get-CutoverFunction 'Write-AppPoolSharingReport'
+            $helper[0].Extent.StartOffset | Should -BeGreaterThan $sharing.Extent.StartOffset
+            $helper[0].Extent.EndOffset | Should -BeLessThan $sharing.Extent.EndOffset
+            $stops = @(Get-CutoverCommand 'Stop-AppPoolChecked')
+            $stops.Count | Should -Be 2
+            $stops[0].Extent.Text | Should -BeExactly 'Stop-AppPoolChecked -Name $DevAppPoolName -ConfigDir $devConfigDir -AppPath $DevPublishPath -PublishPath $DevPublishPath'
+            $stops[1].Extent.Text | Should -BeExactly 'Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir $prodConfigDir -AppPath $DevPublishPath -PublishPath $ProdPublishPath'
         }
     }
 

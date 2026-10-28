@@ -21,8 +21,9 @@
     Steps (each honours -PlanOnly):
       1. Assert both builds are at or above -MinimumAppVersion, and that IIS serves each
          publish folder from the app pool named for it and from no other.
-      2. Stop both app pools and confirm IIS reports each Stopped (warning about any active
-         bulk job first). Nothing is copied until both are confirmed.
+      2. Stop both app pools and confirm IIS reports each Stopped (naming the other IIS
+         applications each pool serves, which stop with it, and warning about any active bulk
+         job first). Nothing is copied until both are confirmed.
       3. Take verified backups of BOTH current databases into -BackupRoot.
       4. VACUUM INTO dev's database to -SharedDbPath and integrity-check the result.
       5. Grant both app pool identities (OI)(CI)M on the shared directory.
@@ -242,10 +243,52 @@ function Assert-PoolServesInstance {
     Write-Ok "$Label folder $PublishPath is served by app pool $Name and no other"
 }
 
-function Stop-AppPoolChecked {
-    param([string]$Name, [string]$ConfigDir, [string]$AppPath)
+function Write-AppPoolSharingReport {
+    # cdt-58, the cdt-54 report for the cutover. Stopping a pool stops every application it serves, and
+    # the checks before each stop look only at the instance: its jobs, and the IIS nodes at or inside its
+    # folder (step 1b). Another application under the same pool went down with it unannounced, and its
+    # bulk jobs were never read; here the pool then stays stopped while the databases are copied. So
+    # name every other application the pool serves, and read the bulk jobs of each. A warning, never a
+    # refusal: tools\JobStateWarning.psm1 records the owner's policy for what a recycle interrupts -
+    # warn, do not hard-block - and the cutover replaces no one's files. An unreadable IIS listing is a
+    # warning too: step 1b's serving check read the same listing, and would have refused it, before
+    # anything was stopped.
+    # A folder that is not on disk is not read: it holds no jobs database, and Join-Path throws on a
+    # drive that does not exist, which would turn this warning into a refusal.
+    param(
+        [string]$Name,
+        [string]$PublishPath,
+        [string]$AppPath
+    )
 
-    Invoke-PlanOrAction "Stop app pool $Name and confirm IIS reports it Stopped before any database is copied (warns about active bulk jobs first)" {
+    try {
+        $others = @(Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath)
+    } catch {
+        Write-Warn "Stopping app pool '$Name' may stop other IIS applications too, and their active bulk jobs are not read: $($_.Exception.Message)"
+        return
+    }
+    if ($others.Count -eq 0) {
+        Write-Host "       App pool '$Name' serves no IIS application other than this instance at '$PublishPath': stopping it stops nothing else." -ForegroundColor DarkGray
+        return
+    }
+    $named = @($others | ForEach-Object { "$($_.Location) with its files at '$($_.PhysicalPath)'" }) -join '; '
+    Write-Warn "App pool '$Name' also serves $($others.Count) other IIS application(s), which stop with it: $named."
+    foreach ($other in $others) {
+        $otherFolder = ConvertTo-ComparablePhysicalPath $other.PhysicalPath
+        if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
+        $otherConfigDir = Join-Path $otherFolder 'config'
+        Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath | Out-Null
+    }
+}
+
+function Stop-AppPoolChecked {
+    param([string]$Name, [string]$ConfigDir, [string]$AppPath, [string]$PublishPath)
+
+    Invoke-PlanOrAction "Stop app pool $Name and confirm IIS reports it Stopped before any database is copied (names the IIS applications it serves besides $PublishPath, and warns about active bulk jobs, first)" {
+        # cdt-58: the stop takes down every application the pool serves, not only this instance. Name
+        # the others and read their active bulk jobs first, before this instance's own.
+        Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath
         Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null
         # aud-a38e: this was a bare Stop-WebAppPool and a three-second sleep - a guess about how
         # long a worker takes to exit - and then "stopped" was printed either way and steps 3 and
@@ -769,9 +812,9 @@ $sharedWritten = $false
 $appsettingsTouched = @()
 $startedAt = Get-Date
 try {
-    # Step 2 - stop both pools.
-    Stop-AppPoolChecked -Name $DevAppPoolName -ConfigDir $devConfigDir -AppPath $DevPublishPath
-    Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir $prodConfigDir -AppPath $DevPublishPath
+    # Step 2 - stop both pools. Each names what else its pool serves first, from its own folder (cdt-58).
+    Stop-AppPoolChecked -Name $DevAppPoolName -ConfigDir $devConfigDir -AppPath $DevPublishPath -PublishPath $DevPublishPath
+    Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir $prodConfigDir -AppPath $DevPublishPath -PublishPath $ProdPublishPath
 
     # Step 3 - verified backups of BOTH current databases.
     Invoke-PlanOrAction "Verified backup of dev DB $devDb to $devBackupFile via $($configDbToolPlan.Summary) backup" {
