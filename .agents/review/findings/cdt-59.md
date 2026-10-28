@@ -7,10 +7,11 @@ with an on-disk check; deploy.ps1 does not. Confirmed by the cdt-58 agent under 
 (2) LOW: `tools/Install-ExchangeAdminWeb.ps1` reads no bulk jobs at all before stopping the pool - neither its own instance's
 nor the other applications' (cdt-57's known gap, carried into cdt-58). (3) Trivial: `tools/JobStateWarning.psm1`'s header lists
 `deploy-pipeline.ps1` as a caller, which it is not, and omits the cutover.
-**Status**: In progress on branch - (1) and (2) fixed and verified on branch (Pester 526 of 526, their 7 mutants caught);
-(3) pending; not merged; UNREVIEWED - admitted 2026-10-27 from the cdt-58 agent's hand-back; inside the mandate
+**Status**: Fixed on branch, one commit per sub-item; verified on branch (Pester 526 of 526, 7 mutants caught); not merged;
+UNREVIEWED - admitted 2026-10-27 from the cdt-58 agent's hand-back; inside the mandate
 **Branch**: `fix/cdt59` (worktree `D:\source\ExchangeAdminWeb-wt\cdt59`), from master `1d61ab9b`
-**Commit**: (1) deploy.ps1 `bbfad818`; (2) the installer, in the commit that adds this line
+**Commit**: (1) deploy.ps1 `bbfad818`; (2) the installer `b12496fa`; (3) the module header, and this closeout, in the
+commit that adds this line (its SHA in the implementer's hand-back)
 **Reviewer**: implementer (candidate)
 
 ## Evidence
@@ -69,8 +70,9 @@ either). deploy.ps1 still has no plan mode, and the report still refuses nothing
   now ends "and their active bulk jobs are not read" (713), the promotion's words, since the report now reads them; and,
   after the warning, the promotion's loop (722-728), line for line: for each other application whose folder is on disk, a
   grey line naming it, then `Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir <its folder>\config -AppPath $AppPath`.
-- The cdt-58 step (1163-1171): its description now ends "and warn about the active bulk jobs the stop interrupts, theirs
-  and this instance's"; its body is the report, now with `-AppPath $stagingPath`, then
+- The cdt-58 step: a cdt-59 comment (1163-1167), then the step (1168-1171), whose description now ends "and warn about
+  the active bulk jobs the stop interrupts, theirs and this instance's"; its body is the report, now with
+  `-AppPath $stagingPath`, then
   `Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $configDir -AppPath $stagingPath | Out-Null`. The folder check stays the
   statement right before the stop (cdt-32's pin).
 
@@ -95,7 +97,11 @@ whose folder holds a jobs database, each introduced by a grey line naming it, an
 jobs warning, loud and listing them. A fresh install has no jobs database, so nothing more is shown. The listing-failure
 warning names the jobs as unread. Nothing new is refused; a plan's line for the step says what a real run reads.
 
-**(3) the module header.** Pending.
+**(3) the module header.** `tools/JobStateWarning.psm1` 6-9 now names as its callers the four scripts that import it,
+found by searching for the import: deploy.ps1, the promotion, the cutover (`tools/Move-ConfigDbToShared.ps1`) and, since
+(2), the installer - every script that stops a pool, each before its stop. It says that `tools/deploy-pipeline.ps1` does
+not import it, since it stops a pool only through deploy.ps1 and the promotion. A comment; nothing else in the module
+changes.
 
 ## Files changed
 
@@ -105,6 +111,7 @@ Each file at the base `1d61ab9b` (its blob), and the md5 of the working-tree byt
 - `tests/ps/DeployInvariants.Tests.ps1`: blob `3a2a3e93f2c5`; after `F109BA6E1FFDEEB02D8E76D7C3D94D1B`
 - `tools/Install-ExchangeAdminWeb.ps1`: blob `389edde40b67`; after `63BFEAAFB3982393C373377965977A86`
 - `tests/ps/InstallerConfigBackup.Tests.ps1`: blob `7eccd31ef998`; after `2F6E68C88F712DEA7DE6E2F0029F2E89`
+- `tools/JobStateWarning.psm1`: blob `5829a762c1d7`; after `D314D1F768D6A7A18BFD53E62F45361A`
 - this record and its row in `.agents/review/index.md`
 
 No version bump: ops scripts, nothing the app ships changes.
@@ -168,6 +175,13 @@ file parse under Windows PowerShell 5.1 with 0 errors. Both files stay CRLF. Wit
 new, `PSAvoidUsingWriteHost` on the report's grey line (726) - the scripts' convention for read-only report lines, as with
 cdt-54's and cdt-58's; none new in deploy.ps1 or either test file.
 
+(3) is a comment, so it has no test and no mutant. Its four callers are the files that hold
+`Import-Module (Join-Path $PSScriptRoot '...JobStateWarning.psm1') -Force`: deploy.ps1 (307), the promotion (25), the
+cutover (88) and the installer (865). Gates after (3), on the final code: `Invoke-Pester tests/ps` 526 passed, 0 failed, 0
+skipped; `Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error` 0, and the module's warnings unchanged (2 and 2);
+`tools/Test-AsciiOnly.ps1` passed; `git diff --check HEAD` clean; the module parses under Windows PowerShell 5.1 with 0
+errors and stays CRLF.
+
 The first full Pester run built the app once: `tests/ps/Get-BuiltApp.ps1` runs `dotnet build ExchangeAdminWeb.csproj -c
 Release` when the worktree has no build output, and this fresh worktree had none (20:39:45-20:39:56; `bin/Release` and
 `obj/`, both git-ignored). Every later run used that output; the brief had reserved the compile slot, so this is reported
@@ -181,7 +195,23 @@ None.
 
 ## Known gaps
 
-Pending the remaining sub-items.
+Found and not fixed - candidates, outside this record:
+
+- **This instance's own jobs warning follows the others' grey lines with no line of its own.** In the promotion, the
+  cutover, deploy.ps1's upgrade branch and now the installer, the report's last grey line ("Active bulk jobs of IIS
+  application X ..., which stops with the pool:") is followed by X's read and then by this instance's, which prints no
+  heading. When X has no active jobs and this instance has some, the jobs warning reads on screen as X's. The warnings are
+  right and nothing is refused; only the attribution is ambiguous. deploy.ps1's fresh-install branch already names its own
+  (cdt-49). The installer follows the promotion's shape, as briefed.
+- A folder that `[System.IO.Directory]::Exists` cannot see - a share this account cannot reach, a folder it may not list -
+  is named and not read, as one that is not there; its jobs database could not have been read either.
+- cdt-58's installer report test (1635) names `D:\example\other` and assumes it is not on disk, as the suite's other
+  `D:\example` paths are fake. On a host where it existed, the report would also print a grey line for it and that test
+  would fail (mutation I3 shows the line).
+- A plan of the installer shows no active jobs: there is no staged build to read them with, and a plan reads nothing.
+
+Closed here, from the cdt-58 record's known gaps: deploy.ps1's report on a missing drive (1) and the installer reading no
+bulk jobs (2), which was also cdt-57's known gap. Those records are not edited here.
 
 ## Reviewer comments
 
@@ -189,4 +219,4 @@ None yet.
 
 ## Closeout
 
-Pending: (2) and (3), merge into `master`, codex review, branch deletion.
+Pending: merge into `master`, codex review, branch deletion.

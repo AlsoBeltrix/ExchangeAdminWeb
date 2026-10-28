@@ -3,8 +3,10 @@
     Warn (never block) about active bulk jobs before an app-pool recycle.
 
 .DESCRIPTION
-    Shared by every deploy/promote script that stops or recycles the app pool (deploy.ps1,
-    tools/deploy-pipeline.ps1, tools/promote-dev-to-prod.ps1). The Bulk Job Runner
+    Shared by every script that stops the app pool, each of which imports it and warns before its
+    stop: deploy.ps1, tools/promote-dev-to-prod.ps1, tools/Move-ConfigDbToShared.ps1 (the cutover)
+    and tools/Install-ExchangeAdminWeb.ps1. tools/deploy-pipeline.ps1 does not import it: it stops a
+    pool only through deploy.ps1 and the promotion. The Bulk Job Runner
     (docs/BulkJobRunner-Plan.md) runs durable batches server-side; a recycle INTERRUPTS any
     Running or Queued job (there is no resume - startup flips them to Interrupted). Operators
     should know that before they recycle.
