@@ -638,7 +638,10 @@ public sealed class ModuleCatalog
             // after it was sent stays Undetermined.
             // 1.5.2: an unblock acts on and records the address, ticket and reason confirmed - read above its
             // yield - and a second click during one is ignored (kd-72).
-            Version = "1.5.2",
+            // 1.5.3: an unblock cancelled during the checks before it starts nothing, and a cancel made before the
+            // Exchange Online call claims the send stops that call from sending - each filed Cancelled, nothing changed
+            // (kd-76). A cancel after the send still leaves the outcome Undetermined.
+            Version = "1.5.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
