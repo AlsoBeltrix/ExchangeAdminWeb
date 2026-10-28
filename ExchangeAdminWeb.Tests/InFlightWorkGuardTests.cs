@@ -183,6 +183,8 @@ public class InFlightWorkGuardTests
         ["CalendarPermissions.razor"] = ["$\"Updating calendar permissions on {target}\"", "$\"Updating on-premises calendar permissions on {onPremTarget}\""],
         // kd-6, kd-76: an unblock is never sent once the operator has cancelled; one already sent runs on and is recorded.
         ["BlockedSenders.razor"] = ["$\"Unblocking {address}\""],
+        // kd-59, kd-73, kd-75, kd-58 A8: the single-room setup - every step before Set-Place; once it is sent the row runs on.
+        ["ConferenceRooms.razor"] = ["$\"Updating {email}\""],
     };
 
     public static TheoryData<string> PagesWithActivities => [.. PagesThatBeginActivities()];

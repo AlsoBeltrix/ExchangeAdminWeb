@@ -375,6 +375,10 @@ Room mailbox metadata configuration and booking policy management.
   - **Executive** — Exec VP/admin groups, 1080-day window
 - CSV bulk upload for multi-room setup
 - Room list management (add/remove rooms from room lists)
+- **Leaving the page** during a single-room setup cancels it at its next step before Set-Place - the room read, the room
+  list's resolution, a preflight's Active Directory step, or the wait for a free Exchange Online connection: nothing is
+  written, and it is filed `Cancelled`, "Cancelled by the operator. Nothing was written.". Once Set-Place is sent the setup
+  runs to its end, so the room is never left half-configured.
 - Section access key: `ConferenceRooms`
 
 ### Emergency Disable (`/emergency-disable`)
@@ -918,7 +922,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 - **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
 - **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff). The on-premises work that takes the operator's cancel - Recipient Lookup's reads, the permission pages' mailbox location read and both permission pages' on-premises changes - stops waiting for one of the two (up to two minutes) at once, and looks at the cancel again as the session opens, before each connect attempt, during the pause between attempts, between its reads and, for a change, immediately before its first command is sent; a connect attempt or a command already sent runs to its end, and the session is still removed.
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.
-- **Leaving a page while work runs:** the app asks first, and the prompt says what leaving does to each operation still running. Work that takes the cancel - today Recipient Lookup's lookup, a single Mailbox or Calendar Permissions change, an on-premises Mailbox or Calendar Permissions change, and a Blocked Senders unblock - is cancelled on OK, and the prompt says what that does: work still waiting its turn is cancelled; a command already sent to Exchange or the directory finishes and is recorded, and anything already changed stays changed; a bulk job is not affected, because it never depended on the page. For any other work it says "Leaving will not stop the operation in progress; it will complete and be recorded."
+- **Leaving a page while work runs:** the app asks first, and the prompt says what leaving does to each operation still running. Work that takes the cancel - today Recipient Lookup's lookup, a single Mailbox or Calendar Permissions change, an on-premises Mailbox or Calendar Permissions change, a Conference Rooms single-room setup, and a Blocked Senders unblock - is cancelled on OK, and the prompt says what that does: work still waiting its turn is cancelled; a command already sent to Exchange or the directory finishes and is recorded, and anything already changed stays changed; a bulk job is not affected, because it never depended on the page. For any other work it says "Leaving will not stop the operation in progress; it will complete and be recorded."
 - **Audit + Operation Trace:** Append-only JSONL files rotated daily/weekly/monthly; every audit transaction includes a correlated `operationId` plus structured `operation.*` records for SIEM ingestion.
 - **Extended Logging:** Separate JSONL diagnostic log with runtime-configurable level (Admin Settings). Viewable from Event Log page.
 - **Credential Management:** Delinea Secret Server SDK auth via Windows PasswordVault. Per-module secrets isolated in Secret Server.

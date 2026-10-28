@@ -826,10 +826,16 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   (E4, kd-81's remainder); kd-81's look before the first write stays. The page's on-premises activity declares that it
   takes the cancel (3.8a). Found and fixed in the tests: the two test classes that hold the on-premises server's two
   slots now share a collection, so they never run at once. Mailbox Permissions 1.6.7 -> 1.6.8; the base bump stays owed.
-- 2026-10-28, **A7, Calendar Permissions** - `feat/cancellation-depth`, the commit that adds this line: as A6 - the
+- 2026-10-28, **A7, Calendar Permissions** - `feat/cancellation-depth` `1a16e761`: as A6 - the
   on-premises set and removal take the cancel at every step before their command (E7), the single cloud change's own wait
   for a pool connection takes it (E4), and the page's on-premises activity declares it (3.8a). Beyond the letter, recorded
   in kd-58's A7 section: the cloud removal, which the pool runs again after Exchange's pre-flight answer, hands its borrow
   a token that stops at the removal's claim of its send - settled with the cancel under one lock - so a retry of a removal
   already sent is never stopped (kd-59's rule; the existing test of that retry pins it). Calendar Permissions 1.4.7 ->
   1.4.8; the base bump stays owed.
+- 2026-10-28, **A8, Conference Rooms' single-room setup** - `feat/cancellation-depth`, the commit that adds this line: the
+  room read, the room list's resolution and the room-list membership read take the cancel at their waits and between their
+  commands (E3, the read helper), each preflight's directory steps look at it before they start (E7), Set-Place's wait for
+  a connection takes it (E4), and every catch on the way lets it through - no warning, refusal or error for a cancel.
+  kd-75's look inside Set-Place's call stays. The page's setup declares that it takes the cancel (3.8a). The bulk row still
+  passes none until A9. Conference Rooms 2.19.9 -> 2.19.10; the base bump stays owed.

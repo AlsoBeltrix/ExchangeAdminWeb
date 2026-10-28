@@ -1063,7 +1063,7 @@
         // the local in the same statement.
         RoomOperationResult? completed = null;
         using var activity = Progress.Begin(
-            "Conference Rooms", $"Updating {email}", ActivitySize.Unknown);
+            "Conference Rooms", $"Updating {email}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the setup takes the cancel before Set-Place (kd-59, kd-73, kd-75, kd-58 A8)
 
         try
         {
@@ -1109,7 +1109,7 @@
                     var r = await RoomService.SetRoomMetadataAndListAsync(
                         email, room, cityName, buildingName, seats,
                         floorName, floorText, display, video,
-                        country, stateName, tz, activity.CancellationToken); // kd-59, kd-73, kd-75: the token the navigation guard cancels, to the preflights' credential fetches and the checks before Set-Place
+                        country, stateName, tz, activity.CancellationToken); // kd-59, kd-73, kd-75, kd-58 A8: the token the navigation guard cancels, to every step before Set-Place - the room read, the room list's resolution, the preflights and Set-Place's wait for a connection
 
                     op.Complete(r.Success, r.Message);
 
@@ -1120,9 +1120,9 @@
         }
         catch (OperationCanceledException) when (activity.CancellationToken.IsCancellationRequested)
         {
-            // kd-59, kd-73, kd-75. The operator's cancel, at a preflight's credential fetch or a check just before Set-Place - the only
-            // places the token reaches, all before Set-Place - so nothing was written. Filed Cancelled in the app's phrase for a
-            // cancel (kd-57), not as a row that failed, and the administrators told as for one. Any other cancellation fails, below.
+            // kd-59, kd-73, kd-75, kd-58 A8. The operator's cancel, at a step before Set-Place - the room read, the room list's
+            // resolution, a preflight, Set-Place's wait - the only places the token reaches, so nothing was written. Filed Cancelled
+            // in the app's phrase for a cancel (kd-57), and the administrators told as for a failed row. Any other cancellation fails, below.
             var cancelled = $"{AuditService.CancelledByTheOperator}. Nothing was written.";
             result = completed = new RoomOperationResult { Email = email, Success = false, Message = cancelled };
             AuditFinderAction(email, false, ticket, cancelled, cancelled: true);

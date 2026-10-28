@@ -116,7 +116,15 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
             return answered;
         }
 
-        protected override Runspace OpenDirectoryRunspace() => _h.OpenDirectoryRunspace();
+        /// <summary>kd-58 A8. Run as a directory runspace opens: where a test cancels at a preflight's directory step.</summary>
+        public Action? AsTheDirectoryRunspaceOpens { get; init; }
+
+        protected override Runspace OpenDirectoryRunspace()
+        {
+            var runspace = _h.OpenDirectoryRunspace();
+            AsTheDirectoryRunspaceOpens?.Invoke();
+            return runspace;
+        }
     }
 
     private static ValidatedMailbox Room() => ExchangeWriteHarness.Validated(Checked, CheckedObject);
@@ -160,8 +168,9 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
     }
 
     // kd-73 (2), the gap kd-59 left: a cancel landing once the last preflight's credential has come back - here the room-list
-    // preflight's, the second of two - while its directory reads run, which take no token. Before, nothing looked at the
-    // token again and the row went on to Set-Place. The check just before Set-Place ends it there, nothing written.
+    // preflight's, the second of two - while its directory reads run, which took no token. Before, nothing looked at the
+    // token again and the row went on to Set-Place. The check just before Set-Place ended it there, nothing written; since
+    // kd-58 A8 the directory steps' own looks end it sooner, as ConferenceRoomSetupCancellationTests shows.
     [Fact]
     public async Task ACancelAfterTheLastPreflightsCredentialRead_EndsTheRowBeforeSetPlace()
     {
@@ -185,8 +194,9 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
     }
 
     // kd-73 (2) at the page: the activity's token cancelled once the City/State/Country preflight's credential has come back,
-    // while its directory reads and the room list's resolution run. The row ends at the check before Set-Place: nothing
-    // written, shown and filed Cancelled, the administrators told - as for a cancel at the fetch itself.
+    // while its directory reads and the room list's resolution run. The row ends there - at the check before Set-Place, and
+    // since kd-58 A8 at the first of those steps' own looks: nothing written, shown and filed Cancelled, the administrators
+    // told - as for a cancel at the fetch itself.
     [Fact]
     public async Task ACancelOfTheSetupsActivity_AfterThePreflightsCredentialRead_IsFiledCancelled_WithNothingWritten()
     {
@@ -222,9 +232,10 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
 
     // kd-75, the finding: the check before Set-Place runs before RunAsync, and RunAsync's borrow then waits for a free pool
     // connection with no token. Every connection held elsewhere, the operator cancels during that wait: before, nothing looked
-    // at the token again, and once a connection freed Set-Place ran and the row wrote. The look inside the pooled call ends
-    // the row there, as a cancellation, nothing written. A list synchronized from on-premises, so the room-list preflight's
-    // credential fetch comes after the row's last pool read before Set-Place: the pool is taken there.
+    // at the token again, and once a connection freed Set-Place ran and the row wrote. The look inside the pooled call ended
+    // the row there, as a cancellation, nothing written; since kd-58 A8 the wait itself takes the token and ends it sooner
+    // (ConferenceRoomSetupCancellationTests). A list synchronized from on-premises, so the room-list preflight's credential
+    // fetch comes after the row's last pool read before Set-Place: the pool is taken there.
     [Fact]
     public async Task ACancelWhileSetPlaceWaitsForAPoolConnection_EndsTheRowWithNothingWritten()
     {
@@ -303,6 +314,37 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         Assert.Equal(Cancelled, shown.Message);
         Assert.Equal((false, Cancelled), Assert.Single(progress.Handles).Outcome);
         Assert.False((bool)GetField(page, "isLoading")!);
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata");
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
+        Assert.Equal(Cancelled, row.GetProperty("error").GetString());
+        var (success, error) = AdminNotification();
+        Assert.False(success);
+        Assert.Equal(Cancelled, error);
+    }
+
+    // kd-58 A8 at the page: the activity's token cancelled as the City/State/Country preflight's directory runspace opens,
+    // its credential back. The look before the module's import ends the row: shown and filed Cancelled in kd-57's words,
+    // nothing written, the administrators told as for a failed row - not the "could not be validated" refusal the preflight's
+    // catch made of every throw.
+    [Fact]
+    public async Task ACancelOfTheSetupsActivity_AtAPreflightsDirectoryStep_IsFiledCancelled_WithNothingWritten()
+    {
+        _credentials.WaitsAtSecretRequest = int.MaxValue;
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var service = new Service(_h, _credentials.Service) { AsTheDirectoryRunspaceOpens = cancel.Cancel };
+        var page = BuildPage(service, progress, city: "Dublin");
+
+        await SetupSingleRoom(page).WaitAsync(Bound, TestContext.Current.CancellationToken);
+
+        const string Cancelled = "Cancelled by the operator. Nothing was written.";
+        Assert.True(cancel.IsCancellationRequested);
+        Assert.Empty(_h.CallsTo("Set-Place"));
+        Assert.Empty(_h.Writes);
+        var shown = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        Assert.False(shown.Success);
+        Assert.Equal(Cancelled, shown.Message);
+        Assert.Equal((false, Cancelled), Assert.Single(progress.Handles).Outcome);
         var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata");
         Assert.Equal("Cancelled", row.GetProperty("result").GetString());
         Assert.Equal(Cancelled, row.GetProperty("error").GetString());

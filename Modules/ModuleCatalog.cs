@@ -1168,7 +1168,13 @@ public sealed class ModuleCatalog
             // what it did, "The Room Type (bulk) job was removed; the job list could not be refreshed." (or why it was not
             // removed, with the same note), keeps its audit row and goes no further; before, the reload's error reached the
             // circuit (kd-82).
-            Version = "2.19.9",
+            // 2.19.10: a single-room setup takes the operator's cancel at every step before Set-Place (kd-58,
+            // CancellationDepth A8): the room read, the room list's resolution, its membership read, each preflight's Active
+            // Directory step and Set-Place's wait for a free Exchange Online connection - "Cancelled by the operator. Nothing
+            // was written.", filed Cancelled, the administrators told - where each ran to its end, and a cancel at a
+            // preflight's directory step read "City/State/Country could not be validated before writing ..." and was filed
+            // Failed. Once Set-Place is sent the setup runs on. The leave prompt says so.
+            Version = "2.19.10",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

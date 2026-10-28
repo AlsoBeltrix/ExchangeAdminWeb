@@ -87,12 +87,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// The room the protection gate validated, read by its GUID (aud-a2d) - the room every write
     /// of the operation is bound to. Throws unless Exchange returns exactly that mailbox.
     /// </summary>
-    public async Task<RoomInfo?> GetRoomInfoAsync(ValidatedMailbox room)
+    /// <param name="cancellationToken">
+    /// kd-58 A8 (E3). The caller's cancel: the read's wait for a connection, and the gaps between its commands - Get-Mailbox,
+    /// Get-Place, Get-MailboxRegionalConfiguration, each a Get- command through the base's helpers. None, the default - the
+    /// page's capture of the old values, the Type path - reads as before.
+    /// </param>
+    public async Task<RoomInfo?> GetRoomInfoAsync(ValidatedMailbox room, CancellationToken cancellationToken = default)
     {
         // Read-only: safe to retry on a dead pooled session.
-        return await RunPooledQueryAsync(
+        return await RunPooledReadAsync(
             (ps, tracker) => ReadRoomDetails(ps, tracker, ReadValidatedMailbox(ps, tracker, room), room.Identity),
-            allowRetry: true);
+            cancellationToken, allowRetry: true);
     }
 
     /// <summary>The rest of a room read, for the mailbox <paramref name="mbx"/> already read by <paramref name="identity"/>.</summary>
@@ -114,7 +119,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             var regional = regionalResults.FirstOrDefault();
             timezone = regional?.Properties["TimeZone"]?.Value?.ToString() ?? "";
         }
-        catch { /* best-effort */ }
+        catch (Exception ex) when (!(ex is OperationCanceledException && tracker.ReadCancellation.IsCancellationRequested))
+        {
+            /* best-effort - but not over the caller's cancel (kd-58 A8), which ends the read here */
+        }
 
         return new RoomInfo
         {
@@ -464,9 +472,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     private static string? ReadPrimarySmtpAddress(PSObject list) =>
         list.Properties["PrimarySmtpAddress"]?.Value?.ToString();
 
-    // The apply's room list, read before any write (aud-a2f). Read-only: safe to retry.
-    private Task<RoomListTarget> ResolveRoomListTargetAsync(string building) =>
-        RunPooledQueryAsync((ps, tracker) => FindRoomList(ps, tracker, building), allowRetry: true);
+    // The apply's room list, read before any write (aud-a2f). Read-only: safe to retry. kd-58 A8 (E3): the caller's cancel
+    // ends it at its wait for a connection or between its two reads (FindRoomList: Get-DistributionGroup through the helpers).
+    private Task<RoomListTarget> ResolveRoomListTargetAsync(string building, CancellationToken cancellationToken) =>
+        RunPooledReadAsync((ps, tracker) => FindRoomList(ps, tracker, building), cancellationToken, allowRetry: true);
 
     private static readonly HashSet<string> ValidRoomRecipientTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -482,9 +491,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// the Type path - logs it where it refuses and appends " Nothing was written.", the shape ConfirmDirectoryObject has
     /// had since aud-a2r. A line here as well would log every such refusal twice.
     /// </remarks>
-    private async Task<(RoomInfo? info, string? error)> ValidateRoomRecipientAsync(ValidatedMailbox room, string roomEmail)
+    private async Task<(RoomInfo? info, string? error)> ValidateRoomRecipientAsync(ValidatedMailbox room, string roomEmail, CancellationToken cancellationToken = default)
     {
-        var info = await GetRoomInfoAsync(room);
+        var info = await GetRoomInfoAsync(room, cancellationToken); // kd-58 A8: the Finder row's read takes the cancel; the Type path's passes none
         if (info == null)
             return (null, $"Room '{roomEmail}' not found.");
         if (!ValidRoomRecipientTypes.Contains(info.RecipientTypeDetails))
@@ -507,8 +516,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// cancel during either ends the row as a cancellation with nothing written. kd-73: and looked
     /// at once more immediately before Set-Place, so a cancel landing after those fetches ends the
     /// row the same way. kd-75: and a last time inside Set-Place's pooled call, before its command is
-    /// built, because the pool's wait for a free connection takes no token - a cancel during that wait
-    /// ends the row the same way, nothing having been sent. The fetches after Set-Place take none on
+    /// built - once because the pool's wait for a free connection took no token. kd-58 A8: before all
+    /// of those, the room read and the room-list resolution - their waits for a connection and the gaps
+    /// between their commands (E3) - the room-list membership read, each preflight's directory steps
+    /// (the runspace, the ActiveDirectory module's import, each read), and Set-Place's own wait for a
+    /// connection (E4) take it too, and every catch on the way lets the operator's cancel through; the
+    /// row ends as a cancellation with nothing written. The fetches after Set-Place take none on
     /// purpose: a cancel there would leave the room half-configured, the partial these preflights
     /// exist to prevent, so once the first write is made the row runs on.
     /// </param>
@@ -557,9 +570,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         (RoomInfo? info, string? error) recipient;
         try
         {
-            recipient = await ValidateRoomRecipientAsync(room, roomEmail);
+            recipient = await ValidateRoomRecipientAsync(room, roomEmail, cancellationToken); // kd-58 A8: the read takes the cancel
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // kd-58 A8: the operator's cancel is no failed read
         {
             _logger.LogWarning(ex, "Room Finder apply for {Room}: reading the room failed; nothing was written: {Error}", roomEmail, ex.Message);
             throw;
@@ -603,9 +616,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // read as "this list does not exist", which sent the row to the legacy name or on as if the building had none.
             try
             {
-                roomList = await ResolveRoomListTargetAsync(building);
+                roomList = await ResolveRoomListTargetAsync(building, cancellationToken); // kd-58 A8: the resolution takes the cancel
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // kd-58 A8: the operator's cancel is no refusal
             {
                 var refusal = RoomListNotResolvedRefusal(BuildRoomListName(building), ex.Message);
                 _logger.LogWarning(ex, "Room-list resolution for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, BuildRoomListName(building), refusal);
@@ -626,9 +639,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
 
         // kd-73. The operator's cancel, looked at once more before the first write. It can land after the last
-        // preflight's credential fetch - during the preflights' directory reads or the room list's resolution, which
-        // take no token - and nothing has been written yet, so the row still ends as a cancellation with nothing
-        // written. Nothing after this line takes the token (kd-59): once Set-Place is sent, the row runs on.
+        // preflight's last directory read (kd-58 A8 gave those steps and the room list's resolution looks of their own)
+        // and nothing has been written yet, so the row still ends as a cancellation with nothing written. Past
+        // Set-Place's wait for a connection nothing takes the token (kd-59): once Set-Place is sent, the row runs on.
         cancellationToken.ThrowIfCancellationRequested();
 
         // Step 1: Set-Place (EXO) - Building/Capacity/Floor/devices are NOT dir-synced, so
@@ -639,11 +652,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         var cancelledBeforeSetPlace = false;
         var placeResult = await RunAsync((ps, tracker) =>
         {
-            // kd-75. The check above runs before RunAsync, whose borrow then waits for a free pool connection and takes no
-            // token, so a cancel during that wait was not seen and Set-Place ran once a connection freed. So the token is
-            // looked at here too, once the connection is held and before the command is built - on a retry as well, which
-            // runs only when the first attempt provably sent nothing. Nothing has been sent, so the row still ends as a
-            // cancellation with nothing written. Marked rather than thrown: RunAsync takes a throw for a failed Set-Place.
+            // kd-75. The check above runs before RunAsync, whose borrow then waited for a free pool connection with no token,
+            // so a cancel during that wait was not seen and Set-Place ran once a connection freed. kd-58 A8: the borrow takes
+            // the token now (E4), and a cancel during the wait ends the row there. The token is still looked at here, once
+            // the connection is held and before the command is built - for the moment between the borrow's last look and
+            // this call, and on a retry, which runs only when the first attempt provably sent nothing. Nothing has been
+            // sent, so the row still ends as a cancellation with nothing written. Marked rather than thrown: RunAsync takes
+            // a throw for a failed Set-Place.
             if (cancellationToken.IsCancellationRequested)
             {
                 cancelledBeforeSetPlace = true;
@@ -665,7 +680,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 placeCmd.AddParameter("VideoDeviceName", videoDevice);
             Invoke(ps, tracker);
             result.Steps.Add(new RoomOperationStep { Stage = "Set-Place", Success = true });
-        }, allowRetry: true);
+        }, allowRetry: true, cancellationToken: cancellationToken); // kd-58 A8 (E4): the wait for a connection takes the token, the call does not
 
         // kd-75. Thrown here, once the pool has the connection back, as the check before RunAsync throws: the page files it
         // Cancelled (kd-57), not as a Set-Place that failed.
@@ -961,16 +976,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // aud-a2f. Whether the room is already on the list, read before any write. Read-only: safe to retry.
     // The whole list, as the add reads it (aud-a2h): Exchange Online's default page is 1000 members,
     // and a synced room past it was refused for want of an on-prem proof the add would not have needed.
-    // By the list's Guid, as the add reads it (aud-a2m).
-    private Task<bool> IsOnRoomListAsync(string listGuid, string roomPrimary) =>
-        RunPooledQueryAsync((ps, tracker) =>
+    // By the list's Guid, as the add reads it (aud-a2m). kd-58 A8 (E3): before Set-Place - the room-list preflight is its one
+    // caller - so it takes the caller's cancel: its wait for a connection and its one command.
+    private Task<bool> IsOnRoomListAsync(string listGuid, string roomPrimary, CancellationToken cancellationToken) =>
+        RunPooledReadAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-DistributionGroupMember")
               .AddParameter("Identity", listGuid)
               .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "SilentlyContinue");
             return IsListMember(InvokeOptional(ps, tracker), roomPrimary);
-        }, allowRetry: true);
+        }, cancellationToken, allowRetry: true);
 
     // -------------------------------------------------------------------------
     // Room Type - full 6-type implementation matching PS script
@@ -1785,6 +1801,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             var step = "opening the directory runspace";
             try
             {
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
@@ -1793,11 +1810,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // (aud-a2r's): its throw is the step's error, named by the step, and it leaves no record in the stream for
                 // the object read's own HadErrors check (ConfirmDirectoryObject) to take. The other three paths import so too.
                 step = "importing the ActiveDirectory module";
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 ActiveDirectoryModuleImport.Import(ps);
 
                 step = "preparing the module's AD credential";
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
                 step = "reading the AD object";
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 var objectError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
                 // Before any write, so the refusal says nothing was written: ConfirmDirectoryObject leaves that to its
                 // caller (aud-a2r), its callers on the write paths coming after Set-Place - and leaves the log line to
@@ -1822,6 +1841,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // Exactly the object, through exactly that server. Any failure - unreachable, refused,
                 // another object or none answering - refuses the row while nothing is written, naming the
                 // server. No other server is tried: only this one is where the write goes.
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 string? routeError;
                 try
                 {
@@ -1838,7 +1858,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 }
                 return (null, server);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // kd-58 A8: the operator's cancel is no failed step
             {
                 _logger.LogError(ex, "Set-ADUser preflight for {Room} on the AD object {Object}: {Step} failed; nothing was written", roomEmail, objectGuid, step);
                 return ($"City/State/Country could not be validated before writing on the AD object {objectGuid}: {step} failed: {Sentence(ex.Message)} Nothing was written.", null);
@@ -2057,7 +2077,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // same test - so nothing on-prem is needed or asked for. Without this, a synced room re-run on
         // its synced list was refused whenever Active Directory could not be proven: a row that, before
         // this preflight existed, completed without touching the list at all.
-        if (await IsOnRoomListAsync(list.Guid, roomPrimary))
+        if (await IsOnRoomListAsync(list.Guid, roomPrimary, cancellationToken)) // kd-58 A8: before Set-Place, so it takes the cancel
             return null;
 
         if (room.DirectoryObjectGuid is not { } roomGuid)
@@ -2091,11 +2111,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             var step = "opening the directory runspace";
             try
             {
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 using var runspace = OpenDirectoryRunspace();
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
                 step = "importing the ActiveDirectory module";
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 ActiveDirectoryModuleImport.Import(ps);
 
                 step = "preparing the module's AD credential";
@@ -2104,6 +2126,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // The two objects the on-prem add names - the room's proven object and the list's
                 // group - each read here exactly as the add will read them, without writing.
                 step = "reading the room's AD object";
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 var roomError = ConfirmDirectoryObject(ps, roomGuid, roomEmail, credential, out var roomDn);
                 // Before any write: the refusal says so, as the resolver's and the membership read's below do (aud-a2r),
                 // and is logged, as theirs are (aud-a2t, aud-a2u).
@@ -2115,6 +2138,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
                 // The resolver's refusals are shared with the add, which meets them after the writes,
                 // so here, as for the membership read below, the preflight says nothing was written.
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 var (groupError, groupGuid, groupDn) = ResolveAdGroupGuid(ps, list.Name, list.PrimarySmtpAddress, credential, ref step);
                 if (groupError != null)
                 {
@@ -2134,6 +2158,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // which fails on a group past the ADWS cap or with a member in another domain - after
                 // Set-Place and the timezone had committed, so such a list made every row partial.
                 step = "reading the membership of the list's group";
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 var (memberError, _) = ReadOnPremListMembership(ps, groupGuid, groupDn, roomDn, list.Name, credential);
                 if (memberError is null)
                     return null;
@@ -2143,7 +2168,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 _logger.LogWarning("On-prem room-list preflight for {Room} on {List} refused the row; nothing was written: {Refusal}", roomEmail, list.Name, memberError);
                 return $"{memberError} Nothing was written.";
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // kd-58 A8: the operator's cancel is no failed step
             {
                 _logger.LogError(ex, "On-prem room-list preflight for {Room} on {List}: {Step} failed; nothing was written", roomEmail, list.Name, step);
                 return $"Failed to validate the on-prem room list '{list.Name}' before writing: {step} failed: {Sentence(ex.Message)} Nothing was written.";
