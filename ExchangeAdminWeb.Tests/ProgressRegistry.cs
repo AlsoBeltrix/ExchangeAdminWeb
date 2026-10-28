@@ -927,7 +927,10 @@ public static class ProgressRegistry
                 + "method's own code. Email.SendCloudPasswordResetAsync( is deliberately NOT "
                 + "named either: it sits between the PATCH and the last notification, strictly "
                 + "inside the window those two already pin at both ends, so it would add a "
-                + "string and no constraint"),
+                + "string and no constraint. ResetService.SetEmployeeIdAsync( (module 1.2.0, the "
+                + "employee-ID save) is not named for the same reason: it sits between the derive "
+                + "and the PATCH, inside the window, and the sixth step it reports is part of the "
+                + "activity's fixed size (docs/CloudPasswordResetEmployeeId-Plan.md 4.5)"),
         ],
         Exempt = [new("OnInitializedAsync", AuthPreambleOnly)],
     };

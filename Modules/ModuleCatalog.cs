@@ -953,7 +953,7 @@ public sealed class ModuleCatalog
         {
             Id = "CloudPasswordReset",
             DisplayName = "Cloud Password Reset",
-            Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner, found from the employee ID on the account, and the reset is recorded in the audit log.",
+            Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner, found from the employee ID on the account, and the reset is recorded in the audit log. An account with no employee ID can, when the module is set to, have its owner found from its name and that owner's employee ID saved on it first.",
             Route = "cloud-password-reset",
             IconCss = "bi bi-person-fill-nav-menu",
             Category = ModuleCategories.IdentityAndAccess,
@@ -971,11 +971,20 @@ public sealed class ModuleCatalog
             // changed (kd-50).
             // 1.1.1: a reset writes, mails and records the ticket and force-change choice confirmed - read above
             // its yield (kd-72).
-            Version = "1.1.1",
+            // 1.2.0: a missing employee ID can be filled in (docs/CloudPasswordResetEmployeeId-Plan.md), off until
+            // FillMissingEmployeeId is switched on. The owner is read from the account's name less a configured
+            // ending, as a logon name across the host's forest; their employee ID must lead back to them alone and
+            // they must have a mailbox. The preflight shows that owner, the confirm saves the number on the account
+            // (its own audit event, CloudPasswordReset_EmployeeIdSet, and its own admin alert) and then resets and
+            // mails as for any account with a number. A refused or unknown save does not stop the reset. Every
+            // event gains employeeIdFill, employeeIdFillValue and employeeIdFillSource. A failed lookup leaves
+            // today's refusal and today's reveal exactly as they were. No new permission: anyone who can reset
+            // can trigger the save.
+            Version = "1.2.0",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
-                "Open the module and reset the password of an Entra ID cloud-only account, including accounts holding administrative roles. The new password is emailed to the account's owner and is never shown to the operator.",
+                "Open the module and reset the password of an Entra ID cloud-only account, including accounts holding administrative roles. The new password is emailed to the account's owner and is never shown to the operator. When filling in a missing employee ID is switched on, a reset of an account with none first saves, on that account, the employee ID of the owner its name points to.",
                 FailClosed: true),
             GranularPermissions = [
                 new("Reveal", "CloudPasswordResetReveal",
@@ -984,7 +993,12 @@ public sealed class ModuleCatalog
             ],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
-                new("ValidateTickets", "Validate ServiceNow tickets", "On: a ticket must validate through ServiceNow before a reset runs. Off: any non-blank ticket is accepted as audit metadata.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean)
+                new("ValidateTickets", "Validate ServiceNow tickets", "On: a ticket must validate through ServiceNow before a reset runs. Off: any non-blank ticket is accepted as audit metadata.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
+                // docs/CloudPasswordResetEmployeeId-Plan.md 4.3. Off by default; the endings have no default, because they
+                // are a fact about one deployment and this repo names none (Architectural Invariant 7). The keys are
+                // CloudPasswordResetService's FillMissingEmployeeIdKey and OwnerNameEndingsKey; a catalog test holds them equal.
+                new("FillMissingEmployeeId", "Fill in a missing employee ID", "On: when an account has no employee ID, the module looks for its owner by the account's name - the part before the @, less one of the endings below - as a logon name across this server's forest. When exactly one person answers to it, carries an employee ID that leads back to them alone and has a mailbox, the reset shows that person before it is confirmed, saves their employee ID on the account, then resets the password and emails it to them. Anyone who can reset passwords here can trigger that save. When nobody suitable is found, a person who cannot see passwords on screen is refused as before, and a person who can sees the password once, as before. Off: an account with no employee ID is handled exactly as before. Saving the number needs the module's Entra app to be allowed to write user details; until it is, resets still go out and the administrators are told the number was not saved.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
+                new("OwnerNameEndings", "Cloud admin account name endings", "Comma-separated endings that your cloud admin account names add to their owner's logon name. The longest one an account's name ends with is removed, ignoring case, before the owner is looked up. Leave blank if the names add nothing.", Required: false)
             ]
         },
         new()

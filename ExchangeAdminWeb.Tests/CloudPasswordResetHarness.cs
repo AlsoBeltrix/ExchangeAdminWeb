@@ -21,10 +21,21 @@ internal sealed class CloudPasswordResetHarness : IDisposable
 {
     private readonly TempDir _dir = new();
 
+    /// <param name="forest">The directory the service's lookups read.</param>
+    /// <param name="moduleConfig">This module's config, written to a real store before the service is built.</param>
+    /// <param name="corruptConfig">A module config that cannot be read at all.</param>
+    /// <param name="standInGraph">
+    /// Hand the service a Graph client over <see cref="Graph"/> through its test seam, so every Graph call - the read,
+    /// the save, the reset - lands there with no secret configured. Off, a call that needs Graph finds no secret and
+    /// sends nothing, which is what the save's own tests rely on.
+    /// </param>
     public CloudPasswordResetHarness(
-        StandInForest forest, IReadOnlyDictionary<string, string>? moduleConfig = null, bool corruptConfig = false)
+        StandInForest forest, IReadOnlyDictionary<string, string>? moduleConfig = null, bool corruptConfig = false,
+        bool standInGraph = false)
     {
         Forest = forest;
+        Tickets.ValidateAsync(Arg.Any<string>(), Arg.Any<string?>())
+            .Returns(Task.FromResult(new TicketGateResult(TicketGateOutcome.Accepted, null)));
 
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(_dir.Path);
@@ -53,10 +64,30 @@ internal sealed class CloudPasswordResetHarness : IDisposable
         var delinea = new DelineaService(httpClientFactory, settings, NullLogger<DelineaService>.Instance, extendedLog, trace);
 
         Service = new CloudPasswordResetService(
-            Log, ModuleConfig, delinea, httpClientFactory, forest.Service(), Substitute.For<ITicketValidator>(), new PasswordGenerator());
+            Log, ModuleConfig, delinea, httpClientFactory, forest.Service(), Tickets, new PasswordGenerator())
+        {
+            GraphClientForTests = standInGraph ? GraphClient : null,
+        };
+
+        Environment = env;
+        Settings = settings;
+        Delinea = delinea;
     }
 
+    /// <summary>The temp directory everything here writes under, removed on dispose.</summary>
+    public string TempPath => _dir.Path;
+
+    public IWebHostEnvironment Environment { get; }
+
+    public IConfiguration Settings { get; }
+
+    /// <summary>Constructed, never asked: nothing here configures a secret for it to read.</summary>
+    public DelineaService Delinea { get; }
+
     public StandInForest Forest { get; }
+
+    /// <summary>The ticket gate. Accepts by default; a test may make it refuse.</summary>
+    public ITicketValidator Tickets { get; } = Substitute.For<ITicketValidator>();
 
     public ModuleConfigService ModuleConfig { get; }
 
@@ -78,8 +109,8 @@ internal sealed class CloudPasswordResetHarness : IDisposable
 
         public List<Request> Requests { get; } = [];
 
-        /// <summary>How Graph answers; a test may throw from here to stand for a request lost in flight.</summary>
-        public Func<HttpRequestMessage, HttpResponseMessage> Respond { get; set; } = _ => new HttpResponseMessage(HttpStatusCode.NoContent);
+        /// <summary>How Graph answers the recorded request; a test may throw from here to stand for one lost in flight.</summary>
+        public Func<Request, HttpResponseMessage> Respond { get; set; } = _ => new HttpResponseMessage(HttpStatusCode.NoContent);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -92,8 +123,9 @@ internal sealed class CloudPasswordResetHarness : IDisposable
             }
 
             var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new Request(request.Method, request.RequestUri, body));
-            return Respond(request);
+            var recorded = new Request(request.Method, request.RequestUri, body);
+            Requests.Add(recorded);
+            return Respond(recorded);
         }
     }
 

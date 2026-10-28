@@ -1,7 +1,7 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 and S2 committed
-on `feat/cpr-employee-id`, not merged; base bump owed (status log). S3 next.**
+Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1, S2 and S3
+committed on `feat/cpr-employee-id`, not merged. S4 next.**
 Owner: Michael
 Module: `CloudPasswordReset` (`Modules/ModuleCatalog.cs:877`, version `1.1.0`)
 Extends: `docs/CloudPasswordReset-Plan.md` (Implemented 2026-09-23, unproven against the live
@@ -1145,3 +1145,55 @@ should carry:
   restored to it byte-exact, MD5 `81c565b171fb4c53d4b93b84d56ec3f7` before and after each. A
   deployment domain written into the shared search service's code failed T12's code-only guard,
   restored to `d520887ab3fedd37a7e698546055c51c`. No version bump, per section 7.
+- 2026-10-28: **S3 committed on `feat/cpr-employee-id`, not merged.** The switch is declared in
+  the same commit as the page's save and confirmed-plan comparison, so the fill-in cannot be
+  switched on without them. Module `CloudPasswordReset` `1.1.1` -> `1.2.0` (master had moved past
+  the `1.1.0` section 7 names), with its `1.2.0:` catalog note.
+  - **Catalog.** `FillMissingEmployeeId` (Boolean, default `false`) and `OwnerNameEndings` (Text,
+    no default), with hints in the wording rule: what a person can do ("Anyone who can reset
+    passwords here can trigger that save", "a person who cannot see passwords on screen"). The
+    module and reset-permission descriptions say a reset may first save the owner's employee ID
+    on the account. No new permission (J4).
+  - **Page.** The Employee ID row shows the planned number and the directory account it comes
+    from; after a failed lookup, "Not set" and one muted line per outcome; with the fill-in off,
+    exactly what it showed before. The confirm prompt names the number and the directory account
+    (4.5). The confirmed-plan comparison also compares the number to be saved. After the
+    notifications gate, a planned fill-in re-checks the reset permission, saves the number on the
+    fresh read's object id, audits `CloudPasswordReset_EmployeeIdSet` (`passwordDelivery` `n/a`,
+    `revealUsed` false, the save's sentence as the error on failure), alerts the administrators
+    (the number, the account it came from, its ObjectGUID, the outcome and the sentence - so a
+    refused save tells them the number was not saved) and goes on to the reset whatever came back.
+    Every event carries `employeeIdFill`, `employeeIdFillValue` and `employeeIdFillSource` from
+    the one builder, `NotAttempted` until this reset has derived; the reset's alert gains
+    "Employee ID filled in" and "Filled in from"; the result names what became of a save on every
+    path after it. Unchanged, byte for byte: `WhyResetUnavailable`, the reveal-gate message and
+    `DestinationRefusalText`.
+  - **Progress.** Six steps. The new one reads "saving the employee ID" or "employee ID already
+    set", as 4.5 says, and also "no employee ID to save" - a third label this slice added for the
+    path neither of those is true on: an account without a number going to the reveal. The
+    registry entry is text-anchored and still holds; its note now says why the save needs no anchor
+    of its own (it sits inside the window the derive and the last alert pin). The page has no
+    line-keyed ClickGateRegistry entries (it is on the not-converted list) and no control was
+    added, so nothing was re-anchored.
+  - **Records in this commit.** The module plan's audit section and field table gain the action,
+    the three fields, `n/a` for `passwordDelivery` on the save's event and the new meaning of
+    `destinationEmployeeId`. README's module section describes the fill-in and the write grant
+    (assumption A1, still unconfirmed).
+  - **A test seam in the service.** `GraphClientForTests` (internal, init-only, null in
+    production, the psl-11 shape) hands a Graph client over a stand-in handler, so the page's
+    confirm flow runs end to end in tests with no Secret Server.
+  - **Tests.** `ExchangeAdminWeb.Tests/CloudPasswordResetEmployeeIdPageTests.cs`, 28 cases. T13-T18 and T20
+    are source guards. T15, T18, T19, T20 and T21 also run, with AC-F1 to AC-F6, through
+    `ExchangeAdminWeb.Tests/CloudPasswordResetPageRun.cs`: the real page handlers over the real
+    service, the stand-in forest, a stand-in Graph, the real audit writer and recording mail, read
+    back from where each record went. T22 is the catalog. The existing version assertion moved to
+    `1.2.0`; no other existing test changed.
+  - **Mutations**, each restored byte-exact: the page to MD5 `49f8146219083b6d01ce1681ce2a035b`,
+    the service to `dc854c0d86e80834c54332cc5f6b33de`. M11 (the protection check moved below the
+    save) failed T13 and T15. M12 (the re-check before the save removed) failed T14 and the run
+    where the permission is lost before the save. M13 (a return after a refused save) failed T15,
+    the refused-save run and T19. M14 (one character of the reveal-gate message) failed T17 and
+    both verbatim-refusal runs. M15 (the number dropped from the comparison) failed T18 and the
+    changed-number run. M16 (the source field dropped from the save's event) failed T19 and the
+    planned run. M17 (the alert skipped on a failed save) failed T20 and both failed-save runs.
+    M18 (the address taken from the name lookup's match) failed T21 and S2's classifier test.

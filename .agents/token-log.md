@@ -437,3 +437,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, CloudPasswordResetEmployeeId S1** (shared logon-name lookup; one Opus 5.5 agent in worktree `cpr-s1`, branch `feat/cpr-employee-id`, dispatched by the supervising session). The agent cannot see its own share: `tools/Get-TokenUsage.ps1 -GroupBy Session` folds it into the supervising session (252ce28d, 2,376 requests for the day at S1, est $583 at opus-5 list rates, supervisor and every agent together). The agent-token, tool-use and time figures are the supervisor's hand-back notification's.
 
 **2026-10-28, CloudPasswordResetEmployeeId S2** (the service: setting, name rule, classifier, lookup inside DeriveDestination, SetEmployeeIdAsync; same agent and session as S1). Not separable from the S1 line for the same reason; the supervisor's hand-back figures cover S1 and S2 together.
+
+**2026-10-28, CloudPasswordResetEmployeeId S3** (the page and the descriptor; the same agent, continued by the supervisor after the S1-S2 hand-back). Not separable for the same reason; the supervisor's figures for the continuation cover S3 and S4 together.

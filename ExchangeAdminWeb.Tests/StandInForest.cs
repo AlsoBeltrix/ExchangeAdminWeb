@@ -76,6 +76,12 @@ public sealed class StandInForest
     /// <summary>A failure decided per query; <see cref="Failure.None"/> lets the domain answer.</summary>
     public Func<UserQuery, Failure>? QueryFailure { get; set; }
 
+    /// <summary>
+    /// What one query returns for a user, rewritten per query: a directory whose two answers about one user disagree,
+    /// so a test can tell which lookup's answer a caller used.
+    /// </summary>
+    public Func<UserQuery, User, User>? Rewrite { get; set; }
+
     /// <summary>Every directory command the search session ran, in order: "Get-ADForest" or "Get-ADUser".</summary>
     public List<string> Commands { get; } = [];
 
@@ -94,6 +100,9 @@ public sealed class StandInForest
         _users.Add(user);
         return user;
     }
+
+    /// <summary>Takes a user out of the forest, as a re-stamp or a rename between two reads would.</summary>
+    public void Remove(User user) => _users.Remove(user);
 
     /// <summary>Make every query against <paramref name="domain"/> fail.</summary>
     public void Fail(string domain, Failure failure) => _domainFailures[domain] = failure;
@@ -140,7 +149,7 @@ public sealed class StandInForest
         if (resultSetSize > 0)
             hits = hits.Take(resultSetSize);
 
-        return new Answer { Output = hits.Select(ToPSObject).Cast<object?>().ToArray() };
+        return new Answer { Output = hits.Select(user => Rewrite?.Invoke(query, user) ?? user).Select(ToPSObject).Cast<object?>().ToArray() };
     }
 
     private const string ProbeImport = """

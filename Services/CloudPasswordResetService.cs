@@ -262,8 +262,16 @@ public class CloudPasswordResetService
         }
     }
 
+    // A TEST SEAM, in the psl-11 shape (ADDirectorySearchService.CreateSearchRunspace): a test hands the service a
+    // Graph client over a stand-in handler, so the page's confirm flow runs end to end with no Secret Server and no
+    // Graph. Production never sets it, and every operation builds its client from the module's own secret as before.
+    internal Func<GraphTokenClient>? GraphClientForTests { get; init; }
+
     private async Task<GraphTokenClient?> GetGraphClientAsync()
     {
+        if (GraphClientForTests is { } standIn)
+            return standIn();
+
         var secretIdStr = _moduleConfig.GetValue(ModuleId, "GraphDelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
         {

@@ -607,7 +607,10 @@ one and hitting it on a client that cannot service the change is locked out.
   action, category, target, success, ticket, errorDetail, extra)`
   (`Services/AuditService.cs:199`), `category: "CloudPasswordReset"`, actions
   `CloudPasswordReset_Preview`, `CloudPasswordReset_Execute`,
-  `CloudPasswordReset_Revealed` and `CloudPasswordReset_DeliveryFailed`. **The exact field set
+  `CloudPasswordReset_Revealed` and `CloudPasswordReset_DeliveryFailed`, and from module `1.2.0`
+  `CloudPasswordReset_EmployeeIdSet`, written immediately after a save of a filled-in employee ID,
+  success for `Written` and failure otherwise (`docs/CloudPasswordResetEmployeeId-Plan.md` 4.8).
+  **The exact field set
   every one of these carries is specified in Audit fields, and Splunk, below** -- these events
   are forwarded to a SIEM, so the keys are an interface, not a convenience.
 - **The serviced note rides `extra`, never `errorDetail`.** `LogModuleAction` writes
@@ -727,12 +730,15 @@ These ride in `extra`:
 | `targetObjectId` | string | The Entra object id (GUID). Stable across renames, unlike the UPN. |
 | `targetCloudOnly` | bool | Always `true` on a successful reset; `false` on a synced-account refusal. |
 | `destinationAddress` | string | The address the module derived, recorded lowercased, or `"n/a"`, whether or not the send then succeeded; null on the reveal path and on refusals that happened before the derivation ran or that the derivation itself caused. **This is the field that answers "where did the password actually go".** |
-| `destinationEmployeeId` | string | The `employeeId` the address was derived FROM, as read off the target account. Null when the target had none, or when the refusal happened before it was read. Present on successes and on every derivation refusal: without it, `destinationAddress` says where the password went but nothing says why there, and a wrong destination cannot be traced back to the directory record that caused it. |
+| `destinationEmployeeId` | string | The `employeeId` the address was derived FROM, as read off the target account. Null when the target had none, or when the refusal happened before it was read. Present on successes and on every derivation refusal: without it, `destinationAddress` says where the password went but nothing says why there, and a wrong destination cannot be traced back to the directory record that caused it. From module `1.2.0`, on a planned or saved fill-in it is the number the fill-in found, and after a failed lookup it is `"n/a"` because the account had none (`employeeIdFill` says why). |
 | `forceChangePasswordNextSignIn` | bool | Exactly what went in the PATCH body, under the Graph property's own name so the audit and the API cannot drift apart. |
-| `passwordDelivery` | string | One of `Sent`, `SendFailed`, `Revealed`, `NotAttempted`, `Indeterminate`. **`Indeterminate` means the write was ISSUED and its outcome is unknown** - a transport failure after the request left, where Graph may have applied it. It is not a refusal and must never be recorded as `NotAttempted`, which would state that no change was made (finding `cpr-8`). |
+| `passwordDelivery` | string | One of `Sent`, `SendFailed`, `Revealed`, `NotAttempted`, `Indeterminate`, and `"n/a"` on a `CloudPasswordReset_EmployeeIdSet` event, which is not about the password (module `1.2.0`). **`Indeterminate` means the write was ISSUED and its outcome is unknown** - a transport failure after the request left, where Graph may have applied it. It is not a refusal and must never be recorded as `NotAttempted`, which would state that no change was made (finding `cpr-8`). |
 | `revealUsed` | bool | True only on the reveal path. Redundant against `passwordDelivery` by design: an alert on a single boolean is harder to get wrong than one on a string. |
 | `refusalReason` | string | `"n/a"` on an ordinary success. On a REVEAL it carries the derivation failure the operator pushed past, not null - the reveal is a success but it overrode something, and which one matters after an incident. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationNoEmployeeId`, `DestinationNoMatch`, `DestinationAmbiguous`, `DestinationNoMailbox`, `DestinationLookupFailed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`, `WriteIndeterminate`. |
 | `protectedPrincipalServiced` | string | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
+| `employeeIdFill` | string | Module `1.2.0`, the employee-ID fill-in (`docs/CloudPasswordResetEmployeeId-Plan.md` 4.8), as this reset found it. One of: `NotNeeded` (the account had a number), `NotAttempted` (the operation stopped before the lookup), `Off`, `SettingUnreadable`, `OwnerNotFound`, `OwnerAmbiguous`, `OwnerLookupFailed`, `OwnerHasNoEmployeeId`, `EmployeeIdShared`, `EmployeeIdMismatch`, `OwnerHasNoMailbox`, `Planned` (found, but the reset stopped before the save), `Written`, `WriteRejected`, `WriteIndeterminate`. `OwnerLookupFailed` is a search that did not complete, never an absence. |
+| `employeeIdFillValue` | string | Module `1.2.0`. The number the lookup found or the save wrote; `"n/a"` until the lookup found a single owner who carries one. |
+| `employeeIdFillSource` | string | Module `1.2.0`. The ObjectGUID of the directory account the number was read from - immutable, the choice `targetObjectId` makes; `"n/a"` when no single owner was found. |
 
 Refusal events carry the **same** field set as successes, so one search over
 `category=CloudPasswordReset` returns uniform records and a missing field always means a bug

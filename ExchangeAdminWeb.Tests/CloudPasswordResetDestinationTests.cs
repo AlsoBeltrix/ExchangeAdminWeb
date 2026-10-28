@@ -374,7 +374,7 @@ public class CloudPasswordResetCatalogTests
         Assert.Equal("Identity & Access", module.Category);
         Assert.False(module.EnabledByDefault);
         Assert.False(module.IsSystemModule);
-        Assert.Equal("1.1.1", module.Version);
+        Assert.Equal("1.2.0", module.Version);
     }
 
     [Fact]
