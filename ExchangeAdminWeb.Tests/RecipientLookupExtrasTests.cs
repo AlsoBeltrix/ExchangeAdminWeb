@@ -1,6 +1,9 @@
+using System.Reflection;
 using ExchangeAdminWeb.Models;
+using Microsoft.Extensions.Logging.Abstractions;
 using static ExchangeAdminWeb.Tests.MigrationStubExchange;
 using static ExchangeAdminWeb.Tests.RecipientLookupClassificationTests;
+using Page = ExchangeAdminWeb.Components.Pages.RecipientLookup;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -322,5 +325,57 @@ public sealed class RecipientLookupExtrasTests : IDisposable
         _exchange.Failures[$"Get-MailboxStatistics {Address}"] = Refused("the mailbox database is offline");
         var unread = RowsOf(Rendered(await LookedUp()));
         Assert.Equal(("Could not be read", "No"), (unread["Last User Activity"], unread["Account Disabled"]));
+    }
+
+    // ---- E8: the audit row keeps the address the lookup resolved to -------------------------------
+
+    private const string Alias = "alias@contoso.test";
+
+    // The page's own lookup, typed as the operator typed it, and the one audit row it wrote.
+    private async Task<System.Text.Json.JsonElement> AuditedLookup(string typed)
+    {
+        var page = new Page();
+        Inject(page, "LookupService", _exchange.RecipientLookup());
+        Inject(page, "Audit", _exchange.Audit);
+        Inject(page, "Progress", new RecordingProgress());
+        Inject(page, "Logger", NullLogger<Page>.Instance);
+        typeof(Page).GetField("emailAddress", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, typed);
+        typeof(Page).GetField("currentUser", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, "CONTOSO\\operator");
+
+        await (Task)typeof(Page).GetMethod("RunLookup", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+
+        return Assert.Single(_exchange.AuditEvents());
+    }
+
+    private static void Inject(Page page, string property, object? value) =>
+        typeof(Page).GetProperty(property, Members)!.SetValue(page, value);
+
+    // A lookup typed by alias: target stays what was typed, and the row also keeps the primary address it resolved to, so a
+    // search of the log by that address finds it.
+    [Fact]
+    public async Task ALookupThatFoundARecipient_KeepsTheAddressItResolvedTo()
+    {
+        _exchange.Recipients[Alias] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailContact"), ("PrimarySmtpAddress", Address));
+
+        var row = await AuditedLookup(Alias);
+
+        Assert.Equal(("Success", Alias, Address),
+            (row.GetProperty("result").GetString(), row.GetProperty("target").GetString(), row.GetProperty("resolvedAddress").GetString()));
+    }
+
+    // Nothing was resolved - not found, or found with no primary address reported: the row is as it was.
+    [Theory]
+    [InlineData("not found")]
+    [InlineData("no primary address")]
+    public async Task ALookupThatResolvedNoAddress_KeepsNone(string how)
+    {
+        if (how == "no primary address")
+            _exchange.Recipients[Alias] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailContact"));
+
+        var row = await AuditedLookup(Alias);
+
+        Assert.Equal(how == "not found" ? "Failed" : "Success", row.GetProperty("result").GetString());
+        Assert.Equal(Alias, row.GetProperty("target").GetString());
+        Assert.False(row.TryGetProperty("resolvedAddress", out _));
     }
 }

@@ -113,6 +113,7 @@ public sealed class RecipientLookupCancellationTests : IDisposable
         var row = Assert.Single(_exchange.AuditEvents());
         Assert.Equal("Cancelled", row.GetProperty("result").GetString());
         Assert.Equal(shown.Error, row.GetProperty("error").GetString());
+        Assert.False(row.TryGetProperty("resolvedAddress", out _)); // RecipientLookupAccuracy E8: a cancelled lookup resolved nothing
     }
 
     // Finding kd-61. The credential paths that answer before the vault is reached - no secret ID set here - looked at no

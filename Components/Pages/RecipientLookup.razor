@@ -377,10 +377,16 @@
             activity.Complete(lookup.Error == null, lookup.Error);
 
             // An audit write that throws is logged, and never shown as the lookup's failure: the lookup was made.
+            // RecipientLookupAccuracy E8. target stays what was typed; a lookup that found a recipient also keeps the primary
+            // address Exchange Online returned, so a search of the log by that address finds lookups typed by alias or another
+            // address. Taken from the lookup's own result, not read again. A cancelled lookup found nothing: filed as before (kd-57).
+            var resolved = lookup.Error == null && lookup.PrimarySmtpAddress is { } primary
+                ? new Dictionary<string, object?> { ["resolvedAddress"] = primary }
+                : null;
             try
             {
                 Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", target, lookup.Error == null, lookup.Error,
-                    extra: cancelled ? AuditService.FiledCancelled() : null);
+                    extra: cancelled ? AuditService.FiledCancelled(resolved) : resolved);
             }
             catch (Exception ex)
             {

@@ -613,7 +613,9 @@ public sealed class ModuleCatalog
             // 1.6.0: a cloud mailbox's settings from the rows already read - archive status, whether forwarding keeps a copy,
             // send-on-behalf delegates, account disabled, and the last real user activity beside Last Logon (E3). Holds are not
             // read or shown.
-            Version = "1.6.0",
+            // 1.7.0: the lookup's audit row also keeps resolvedAddress, the primary address it found, so a search of the log by
+            // that address finds lookups typed by alias or by another address; target stays what was typed (E8).
+            Version = "1.7.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

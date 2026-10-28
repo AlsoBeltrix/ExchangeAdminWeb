@@ -1106,7 +1106,7 @@ share one root: see [Shared log root](#shared-log-root-dev-and-prod-on-one-serve
 - MigrationCheck: `target`, `status`, `reasons`
 - MigrationBatch: `batchName`, `direction`, `userCount`, `autoStart`, `autoComplete`
 - MigrationAction: `target`
-- Lookup: `target`
+- Lookup: `target`; Recipient Lookup also `resolvedAddress`, the primary address the lookup found, when it found one
 - AdminSettings: `section`, `added`, `removed`
 - MfaReset: `target`, `methodsRemoved`
 - GroupManagement: `target`, `member`, `operation`, `backend`

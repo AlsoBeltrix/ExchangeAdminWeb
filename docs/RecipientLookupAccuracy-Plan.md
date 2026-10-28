@@ -1251,3 +1251,14 @@ he leaves them; and the extras he accepted and declined, by number.
   | ME3b an unreported delegate list shown as "None" | `a7a1e4842c704134ff58a588099ba359` | 2 | the not-reported cases |
   | ME3c Last User Activity read from LastLogonTime | `9be77163cf7af8d310d8e22cc8befd26` | 1 | the last-activity test |
   | ME3d a setting row without its kind's words | `54780e60198a11a6ac1e0524fdc6db48` | 1 | the kinds' words test |
+- 2026-10-28, **E8 landed** (the audit row keeps the resolved address): the page's lookup row gains `resolvedAddress`, the
+  primary address N1 returned, when the lookup found a recipient that has one; `target` stays the typed text; a cancelled
+  lookup is filed as before (kd-57), with no resolved address; `AuditService` unchanged (the page passes `extra`).
+  README's audit field list says so. Recipient Lookup 1.7.0. Three tests and one assertion added to kd-57's cancel test.
+  Mutations (restored byte-exact; original page `680a0d898781e9a7e2933c2e418559cd`; counts of 279):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME8a no resolved address written | `7107ddf2c377a1fbfb7f1dab83e6a15d` | 1 | the found-by-alias test |
+  | ME8b the typed text written as the resolved address | `210e878df075b8dca851e75d2d24ba3e` | 1 | the found-by-alias test |
+  | ME8c a resolved address written though nothing was resolved | `344e30df0e9f2dfa6553c18852318442` | 3 | not found, no primary, kd-57's cancel |
