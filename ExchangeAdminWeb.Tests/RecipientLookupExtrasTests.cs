@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Reflection;
 using ExchangeAdminWeb.Models;
+using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.Extensions.Logging.Abstractions;
 using static ExchangeAdminWeb.Tests.MigrationStubExchange;
 using static ExchangeAdminWeb.Tests.RecipientLookupClassificationTests;
@@ -377,5 +380,126 @@ public sealed class RecipientLookupExtrasTests : IDisposable
         Assert.Equal(how == "not found" ? "Failed" : "Success", row.GetProperty("result").GetString());
         Assert.Equal(Alias, row.GetProperty("target").GetString());
         Assert.False(row.TryGetProperty("resolvedAddress", out _));
+    }
+
+    // ---- E7: show all details ---------------------------------------------------------------------
+
+#pragma warning disable BL0006 // the page's compiled render tree is read directly; no renderer is involved
+    // The page showing the result, its "Show all details" switch as given - page state, set as the bound checkbox sets it.
+    private static string RenderedWithAllDetails(RecipientInfoResult result, bool on)
+    {
+        var page = new Page();
+        typeof(Page).GetField("result", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, result);
+        typeof(Page).GetField("showAllDetails", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, on);
+        var culture = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        try
+        {
+            using var builder = new RenderTreeBuilder();
+            typeof(Page).GetMethod("BuildRenderTree", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [builder]);
+            var frames = builder.GetFrames();
+            return string.Concat(frames.Array.Take(frames.Count).Select(frame => frame.FrameType switch
+            {
+                RenderTreeFrameType.Text => frame.TextContent,
+                RenderTreeFrameType.Markup => frame.MarkupContent,
+                _ => "",
+            }));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+        }
+    }
+#pragma warning restore BL0006
+
+    private static readonly string[] TwentyFiveAddresses =
+        [.. Enumerable.Range(1, 25).Select(n => $"smtp:alice{n:00}@contoso.test")];
+
+    // A cloud mailbox whose recipient row carries 25 addresses, hold properties and one long value.
+    private void ACloudMailboxWithEverything()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "UserMailbox"), ("PrimarySmtpAddress", Address),
+            ("IsDirSynced", false), ("EmailAddresses", TwentyFiveAddresses), ("CustomAttribute1", new string('x', 600)),
+            ("LitigationHoldEnabled", true), ("InPlaceHolds", new[] { "UniH1234" }), ("ComplianceTagHoldApplied", false),
+            ("RetentionComment", "kept for case 4711"), ("RetentionUrl", "https://legal.contoso.test/4711"));
+        _exchange.Mailboxes[Address] = Row(("PrimarySmtpAddress", Address), ("RecipientTypeDetails", "UserMailbox"),
+            ("LitigationHoldDate", "2026-01-01"), ("ArchiveStatus", "Active"));
+    }
+
+    // Off by default: the first 20 addresses, as before, and no property list.
+    [Fact]
+    public async Task TheSwitch_IsOffByDefault_ShowingTheFirstTwentyAddresses()
+    {
+        ACloudMailboxWithEverything();
+        var result = await LookedUp();
+
+        var page = Rendered(result);
+
+        Assert.Contains("...and 5 more", page, StringComparison.Ordinal);
+        Assert.DoesNotContain(TwentyFiveAddresses[20], page, StringComparison.Ordinal);
+        Assert.DoesNotContain("All details", page, StringComparison.Ordinal);
+        Assert.Contains("Show all details", page, StringComparison.Ordinal);
+    }
+
+    // On: every address - the page hid the rest with no way to see them - and every property each read returned, by read.
+    [Fact]
+    public async Task TheSwitch_ShowsEveryAddress_AndEveryPropertyEachReadReturned()
+    {
+        ACloudMailboxWithEverything();
+        var result = await LookedUp();
+
+        var page = RenderedWithAllDetails(result, on: true);
+
+        Assert.All(TwentyFiveAddresses, address => Assert.Contains(address, page, StringComparison.Ordinal));
+        Assert.DoesNotContain("...and", page, StringComparison.Ordinal);
+        Assert.Contains("All details", page, StringComparison.Ordinal);
+        Assert.Equal(["Exchange Online Get-Recipient", "Exchange Online Get-Mailbox", "Exchange Online Get-MailboxStatistics",
+            "Exchange Online Get-MailboxStatistics -Archive"], result.Details.Select(read => read.Read).ToArray());
+        foreach (var read in result.Details)
+            Assert.Contains(read.Read, page, StringComparison.Ordinal);
+        Assert.Contains(("RecipientTypeDetails", "UserMailbox"), result.Details[0].Properties.Select(p => (p.Key, p.Value)));
+        Assert.Contains(("ArchiveStatus", "Active"), result.Details[1].Properties.Select(p => (p.Key, p.Value)));
+    }
+
+    // Extra 3b was not taken: a hold - usually a legal or HR matter - is not shown, whichever read returned it.
+    [Fact]
+    public async Task TheSwitch_LeavesOutHolds()
+    {
+        ACloudMailboxWithEverything();
+        var result = await LookedUp();
+
+        var page = RenderedWithAllDetails(result, on: true);
+
+        foreach (var hold in new[] { "LitigationHold", "InPlaceHolds", "UniH1234", "ComplianceTagHoldApplied", "RetentionComment", "case 4711", "RetentionUrl" })
+            Assert.DoesNotContain(hold, page, StringComparison.Ordinal);
+    }
+
+    // A long value is cut at a fixed length, and says so.
+    [Fact]
+    public async Task TheSwitch_CutsALongValue_AndSaysSo()
+    {
+        ACloudMailboxWithEverything();
+        var result = await LookedUp();
+
+        var shown = result.Details[0].Properties.Single(property => property.Key == "CustomAttribute1").Value;
+
+        Assert.Equal(new string('x', 500) + " ... (cut at 500 of 600 characters)", shown);
+        Assert.Contains(shown, RenderedWithAllDetails(result, on: true), StringComparison.Ordinal);
+    }
+
+    // On-premises Exchange's answer is listed too; the switch reads nothing more.
+    [Fact]
+    public async Task TheSwitch_ListsOnPremisesExchangesAnswer_AndReadsNothingMore()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailUser"), ("IsDirSynced", true));
+        _exchange.OnPremRecipients[Address] = Row(("RecipientType", "UserMailbox"), ("RecipientTypeDetails", "UserMailbox"));
+        var result = await LookedUp();
+        var calls = _exchange.CallList();
+
+        var page = RenderedWithAllDetails(result, on: true);
+
+        Assert.Equal(["Exchange Online Get-Recipient", "On-premises Get-Recipient"], result.Details.Select(read => read.Read).ToArray());
+        Assert.Contains("On-premises Get-Recipient", page, StringComparison.Ordinal);
+        Assert.Equal(calls, _exchange.CallList());
     }
 }

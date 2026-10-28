@@ -1262,3 +1262,17 @@ he leaves them; and the extras he accepted and declined, by number.
   | ME8a no resolved address written | `7107ddf2c377a1fbfb7f1dab83e6a15d` | 1 | the found-by-alias test |
   | ME8b the typed text written as the resolved address | `210e878df075b8dca851e75d2d24ba3e` | 1 | the found-by-alias test |
   | ME8c a resolved address written though nothing was resolved | `344e30df0e9f2dfa6553c18852318442` | 3 | not found, no primary, kd-57's cancel |
+- 2026-10-28, **E7 landed** (show all details): a switch above Email Addresses, off by default, a bound checkbox (page
+  state only; no handler, so no `ProgressRegistry` entry; the page has no line-keyed `ClickGateRegistry` entries, so
+  nothing is re-anchored - both suites green); on, every email address and, under "All details", every property N1, N2,
+  N3, N3's `-Archive` and N4 returned (`RecipientInfoResult.Details`), holds left out by name (A16), a value over 500
+  characters cut and said to be; Recipient Lookup 1.8.0. Five tests. Mutations (restored byte-exact; originals: service
+  `2a9d1eeeb3c75e45ae7dc75c3053e4a7`, page `5443973981a6d6da3a0ffdf7ad15f26d`; counts of 284):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME7a the hold filter removed | `6a8bcf0cfca723c958739dabb5d155ba` | 1 | the holds test |
+  | ME7b the retention notes let through | `71fd3e9f1078a678b6ba95e59cfad670` | 1 | the holds test |
+  | ME7c a long value not cut | `c3c5aff9453e6a3b61d4e64639238aa6` | 1 | the long-value test |
+  | ME7d the switch still shows 20 addresses | `9bad0afae17be238a44d2c79a0d72693` | 1 | the switch-on test |
+  | ME7e the switch on by default | `01177228bfa574b2d888ee7dcfb8d434` | 1 | the off-by-default test |

@@ -615,7 +615,9 @@ public sealed class ModuleCatalog
             // read or shown.
             // 1.7.0: the lookup's audit row also keeps resolvedAddress, the primary address it found, so a search of the log by
             // that address finds lookups typed by alias or by another address; target stays what was typed (E8).
-            Version = "1.7.0",
+            // 1.8.0: a "Show all details" switch, off by default: every email address rather than the first 20, and every
+            // property each read returned, holds left out (E7).
+            Version = "1.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

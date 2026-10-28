@@ -228,10 +228,23 @@ public class RecipientInfoResult
     public List<string> Warnings { get; set; } = new();
     public string? Error { get; set; }
 
+    /// <summary>
+    /// RecipientLookupAccuracy E7. Every property each read returned, by read, for the page's "Show all details" switch:
+    /// hold properties left out (extra 3b was not taken), each value cut at <see cref="RecipientReadDetails.ValueLimit"/>.
+    /// </summary>
+    public List<RecipientReadDetails> Details { get; } = new();
+
     // RecipientLookupAccuracy S2. The sum only when both sizes were read: a missing part counted as 0 made an on-premises
     // mailbox's size alone read as its total.
     public double? TotalSizeGB => MailboxSizeGB.HasValue && DeletedItemSizeGB.HasValue
         ? MailboxSizeGB.Value + DeletedItemSizeGB.Value : null;
+}
+
+/// <summary>RecipientLookupAccuracy E7. One read's properties, by name and value, in the order Exchange returned them.</summary>
+public sealed record RecipientReadDetails(string Read, IReadOnlyList<KeyValuePair<string, string>> Properties)
+{
+    /// <summary>The longest value shown in full; a longer one is cut there and says so.</summary>
+    public const int ValueLimit = 500;
 }
 
 public class OutOfOfficeResult

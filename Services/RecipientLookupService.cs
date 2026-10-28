@@ -55,6 +55,7 @@ public class RecipientLookupService : ExchangeServiceBase
                 r.HiddenFromAddressLists = RecipientClassification.ReadFlag(recip.Properties["HiddenFromAddressListsEnabled"]?.Value);
                 r.ExternalEmailAddress = Reported(recip, "ExternalEmailAddress");
                 r.WhenChanged = ReportedTime.Read(recip.Properties["WhenChanged"]?.Value);
+                r.Details.Add(Details("Exchange Online Get-Recipient", recip)); // E7
                 // RecipientLookupAccuracy S3. Every later read asks about the object Get-Recipient found - its primary address,
                 // or the typed text when Exchange reported none - not about whatever the typed text resolves to again. The address
                 // goes as a parameter value, never as script text.
@@ -103,6 +104,7 @@ public class RecipientLookupService : ExchangeServiceBase
 
                 if (mbx != null)
                 {
+                    r.Details.Add(Details("Exchange Online Get-Mailbox", mbx)); // E7
                     ownType = mbx.Properties["RecipientTypeDetails"]?.Value?.ToString();
                     r.ForwardingAddress = mbx.Properties["ForwardingSmtpAddress"]?.Value?.ToString()
                         ?? mbx.Properties["ForwardingAddress"]?.Value?.ToString();
@@ -132,6 +134,7 @@ public class RecipientLookupService : ExchangeServiceBase
                         var stat = stats.FirstOrDefault();
                         if (stat != null)
                         {
+                            r.Details.Add(Details("Exchange Online Get-MailboxStatistics", stat)); // E7
                             r.ItemCount = ParseLong(stat.Properties["ItemCount"]?.Value);
                             r.DeletedItemCount = ParseLong(stat.Properties["DeletedItemCount"]?.Value);
                             r.LastLogonTime = ReportedTime.Read(stat.Properties["LastLogonTime"]?.Value);
@@ -176,6 +179,7 @@ public class RecipientLookupService : ExchangeServiceBase
                         }
                         else
                         {
+                            r.Details.Add(Details("Exchange Online Get-MailboxStatistics -Archive", archiveStat)); // E7
                             r.ArchiveEnabled = true;
                             r.ArchiveItemCount = ParseLong(archiveStat.Properties["ItemCount"]?.Value);
                             r.ArchiveDeletedItemCount = ParseLong(archiveStat.Properties["DeletedItemCount"]?.Value);
@@ -221,7 +225,9 @@ public class RecipientLookupService : ExchangeServiceBase
         {
             try
             {
-                (onPrem, onPremType) = await ReadOnPremRecipientAsync(address, cancellationToken);
+                IReadOnlyList<RecipientReadDetails> onPremDetails;
+                (onPrem, onPremType, onPremDetails) = await ReadOnPremRecipientAsync(address, cancellationToken);
+                result.Details.AddRange(onPremDetails); // E7
             }
             catch (Exception ex) when (!IsCancellation(ex))
             {
@@ -287,7 +293,8 @@ public class RecipientLookupService : ExchangeServiceBase
     // for the caller's catch. A cancellation is let through (aud-a23g's rule). ASSUMPTION, unverified (no live call; the
     // plan's A3, A4): the module's account may run Get-Recipient, and remoting keeps its not-found record's shape; if not, the
     // lookup reads "Could not be determined" in the cmdlet's own words - visible, never a guess.
-    private async Task<(OnPremRecipientAnswer answer, string? type)> ReadOnPremRecipientAsync(string address, CancellationToken cancellationToken)
+    // E7: also every property of each row it returned, for "Show all details".
+    private async Task<(OnPremRecipientAnswer answer, string? type, IReadOnlyList<RecipientReadDetails> details)> ReadOnPremRecipientAsync(string address, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
         {
@@ -337,11 +344,14 @@ public class RecipientLookupService : ExchangeServiceBase
                     throw new InvalidOperationException($"Get-Recipient failed: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
                 }
 
+                IReadOnlyList<RecipientReadDetails> details = rows.Count == 1
+                    ? [Details("On-premises Get-Recipient", rows[0])]
+                    : [.. rows.Select((row, index) => Details($"On-premises Get-Recipient, row {index + 1}", row))];
                 return rows.Count switch
                 {
-                    0 => (OnPremRecipientAnswer.NotFound, (string?)null),
-                    1 => (OnPremRecipientAnswer.Found, rows[0].Properties["RecipientTypeDetails"]?.Value?.ToString()),
-                    _ => (OnPremRecipientAnswer.MoreThanOne, null),
+                    0 => (OnPremRecipientAnswer.NotFound, (string?)null, details),
+                    1 => (OnPremRecipientAnswer.Found, rows[0].Properties["RecipientTypeDetails"]?.Value?.ToString(), details),
+                    _ => (OnPremRecipientAnswer.MoreThanOne, null, details),
                 };
             }
             catch (Exception ex) when (!IsCancellation(ex))
@@ -375,6 +385,52 @@ public class RecipientLookupService : ExchangeServiceBase
             _ => [value],
         };
         return [.. values.Select(item => item?.ToString()?.Trim()).Where(item => !string.IsNullOrEmpty(item)).Select(item => item!)];
+    }
+
+    // E7. Every property of a row, by name and value in the order Exchange returned them: a many-valued one joined with "; ",
+    // a value longer than the limit cut there and said to be, one whose getter fails said so. Holds are left out.
+    private static RecipientReadDetails Details(string read, PSObject row)
+    {
+        var properties = new List<KeyValuePair<string, string>>();
+        foreach (var property in row.Properties)
+        {
+            if (IsHoldProperty(property.Name))
+                continue;
+            string shown;
+            try
+            {
+                shown = Shown(property.Value);
+            }
+            catch (Exception ex) when (!IsCancellation(ex))
+            {
+                shown = $"(could not be read: {ResolveFailure(ex).primary.TrimEnd('.')})";
+            }
+            properties.Add(new(property.Name, shown));
+        }
+        return new(read, properties);
+    }
+
+    // E7 (the display section's A16). Litigation, retention, in-place, compliance-tag and delay holds, and the retention notes
+    // beside them: a hold usually means a legal or HR matter, and extra 3b, which would show them, was not taken. By name,
+    // so a hold property this list does not know is left out too, if its name carries "Hold".
+    internal static bool IsHoldProperty(string name) =>
+        name.Contains("Hold", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("RetentionComment", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("RetentionUrl", StringComparison.OrdinalIgnoreCase);
+
+    private static string Shown(object? value)
+    {
+        var inner = value is PSObject wrapped ? wrapped.BaseObject : value;
+        var text = inner switch
+        {
+            null => "",
+            string single => single,
+            System.Collections.IEnumerable many => string.Join("; ", many.Cast<object?>().Select(item => item?.ToString() ?? "")),
+            _ => inner.ToString() ?? "",
+        };
+        return text.Length <= RecipientReadDetails.ValueLimit
+            ? text
+            : $"{text[..RecipientReadDetails.ValueLimit]} ... (cut at {RecipientReadDetails.ValueLimit} of {text.Length} characters)";
     }
 
     // Two rows are enough to tell one recipient from more than one (U2).
