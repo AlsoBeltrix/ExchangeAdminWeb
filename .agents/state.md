@@ -8,46 +8,45 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### THE PLAN TO CLOSE THE STREAM - approved by the owner 2026-10-27 ("go"); progress is marked per step
+### Close-out of the fix-everything stream - 2026-10-27, REVIEWED; five review findings open before a deploy
 
-The mandate (`.agents/decisions.md`, top entry, item 0): find and fix bugs; remove or significantly change no intended functionality - repo-wide. Rulings carried out: protected principals and protected
-groups are out of scope for the Conference Rooms module, with no exception; one agent and one compile at a time; agents
-are Opus 5.5; codex is gone and one codex-commercial review runs at the very end.
+**Mandate** (`.agents/decisions.md`, top entries): find and fix bugs; remove or significantly change no intended
+functionality, judged by the operator's experience. One Opus 5.5 agent at a time, one compile at a time, one
+codex-commercial review at the end.
 
-**Step 1 - CLOSED, the other way.** The supervisor reverted the weekend's deploy work wholesale (`23e8e5ca`, `e0808859`); the owner corrected it ("I did not say make them byte-identical. I said FIX PROBLEMS. DO NOT CHANGE FUNCTIONALITY") and restated the mandate repo-wide: find and fix bugs; remove or significantly change no intended functionality (`.agents/decisions.md`, item 0 of the top entry). The deploy fixes are reinstated at `1b2e015e`; cdt-58 reopens into step 4. Pester 508, PSScriptAnalyzer 0 errors, ASCII and whitespace clean.
+**Master at the review (`b9c8f19b`), every gate green and re-run by the supervisor:** Release build 0 errors (19 known
+warnings); xUnit 7524 passed, 0 failed, 0 skipped (the 8 live-directory cases are opt-in by settings file, psl-10 (5));
+Pester 526 passed; PSScriptAnalyzer 0 errors; `dotnet format`, `git diff --check` and the ASCII lint clean. Base app
+version bumped 2.35.0 -> 2.36.0 in the closing commit (shared services changed: AuditService, PermissionResult,
+PermissionValidator, SelfGrantDirectory, PermissionChangeNotifier, EmailService). Every worktree and fix branch is gone;
+master holds everything.
 
-**Step 2 - DONE (`56cc4153`).** Every protected-principal check the weekend added to Conference Rooms is out (aud-a2e, aud-a2ab, kd-66 reversed); a building whose room list Exchange affirmatively reports missing has it created and the room added, the preview marks it "new"; aud-a2z kept as a correctness check; the July room-mailbox gate untouched. Exemption written into the Constitution and Known Failure Class 3 (`7ece7227`). Conference Rooms 2.19.1.
+**Landed today, in order:** aud-a2ad (Conference Rooms: every weekend protected-principal check out, room-list creation
+back, aud-a2z kept); kd-39, kd-41; kd-44 reversed, aud-a70 (13), kd-57; kd-51 (kd-67 declined); kd-59 in four modules,
+kd-70, kd-71, kd-58 sized for a plan; kd-72 (the owner's production report - a run uses the value submitted; Delegation
+Report and twelve more pages); kd-73, kd-74; aud-a70 (6); aud-a29g's held calls closed on the owner's answers; cdt-58,
+psl-10 (5); cdt-59. The deploy-pipeline work (cdt-36..57) stands as fixes under the mandate after a wholesale revert was
+undone. kd-60 closed by sweep. Two plans drafted and the first approved: `docs/CloudPasswordResetEmployeeId-Plan.md`
+(Approved, queued) and `docs/RecipientLookupAccuracy-Plan.md` (Draft, awaiting the owner's go and extras by number).
 
-**Step 3 - DONE.** cons-7 was already on master (`0769536e`). Master gated at `56cc4153`: Release build 0 errors; 7355 passed, 0 failed, 0 skipped; Pester 508; PSScriptAnalyzer 0 errors; format, whitespace and ASCII clean. The nine weekend branches are verified in master by patch identity; three deleted; six worktrees (a2e, a68-kd2, a70, cdt36, kd7-kd8, psl10-a2y) kept only for the uncommitted step 4 work the killed agents left, which the step 4 agents resume from.
+**The single review** (`.agents/review/final-review-2026-10-27.result.md`; prompt beside it; codex-commercial,
+gpt-6-astra, max, read-only, range `162cb44d..b9c8f19b`): no defect in authorization, protected principals, bulk
+aggregation, the kd-72 pattern, merge interactions, PowerShell exit codes or encoding, or functionality preservation.
+Five findings, verdict DO NOT SHIP until fixed:
+- kd-75 MEDIUM - Conference Rooms can start Set-Place after a cancel that lands during the pool-connection wait.
+- kd-76 MEDIUM - Blocked Senders starts the unblock before it looks at an already-cancelled token.
+- kd-77 LOW - a finished bulk job removed twice says "it has not finished".
+- cdt-60 LOW - the cutover's sharing report hides nested applications it stops; `-PlanOnly` still runs the live jobs
+  query (pre-existing).
 
-**Step 4 - IN PROGRESS, one agent at a time.** Landed: kd-39, kd-41 (`3f7eaa07`); kd-44 reversal, aud-a70 (13), kd-57 (merged after `6ff1f095`); kd-51 (merged after `7d6e3648`). kd-67 declined (wording true at all four sites). Running: kd-59, kd-58 sizing, kd-70, kd-71 on `fix/kd59-kd70`. Original list: the two permission-page guards (kd-39: a
-notification or progress call that fails no longer shows a finished bulk run as failed or escapes the handler) and the
-copied field (kd-41); kd-44's notice to the affected user and the mailbox owner REMOVED by owner ruling 2026-10-27
-("remove to affected target, keep to admin" - back to administrators only); Self-Service Groups no longer locks up
-when a member load hangs and the operator goes back (kd-51); the cancel button reaches the credential read in the
-other modules (kd-67); the audit-category and wording fixes already open (kd-59/kd-58 sizing and the kd-63 class); aud-a70 (13) and cdt-58 (above);
-aud-a70 (6) every grant refused without the directory-read credential (owner "yes"); aud-a29g (b) 403 for a user who
-loses all access, (a) fixed or documented.
+**Open, by status:** the four review findings above (`[ ]`); kd-58 (`[!]`, needs a written plan - the cloud reads
+cannot be cancelled without touching the pool's retry loop and lifetime); aud-a67 (12) (`[~]`, needs a plan). Everything
+else in `.agents/review/index.md` is closed.
 
-**Step 5 - two things the supervisor does without an agent:** kd-60 (the test stand-in countdown that makes "zero
-items" return two) and psl-10 (5) (the two live-directory test classes leave the default run). Owner: tests are the
-agents' own business.
-
-**Step 6 - gates, then the one review, then close.** Full build, full suite, format, PowerShell checks green. One
-codex-commercial review (`C:\Users\mcoelho\.local\bin\codex-commercial.ps1`, stdin prompt; re-probe the incantation
-once first) over everything merged since Thursday that no reviewer has seen, aimed at authorization, audit and the
-files parallel branches both touched. Fix what it raises. Then one base app version bump, this file rewritten to the
-closed state, the token log, and a deployable master handed over.
-
-**Read under the mandate, no owner word needed (the owner may veto any with one word):**
-- kd-48 (merged `b482db4c`): a ticket made only of invisible characters now counts as blank for the mandatory-field
-  check. A bug fix; which modules require a ticket does not change. Stays.
-- aud-a70 (13): the usage counters and the audit''s success flag count every result but the word "Failed" as a
-  success, so Ineligible and Undetermined rows are tallied as successes. A bug; fixed in step 4 (only "Success" counts).
-- aud-a29g (c): the open tab''s timer check reads the directory fresh rather than reusing the remembered answer. The
-  cautious side, as landed. Left alone.
-- cdt-58: promote, install and cutover stop a pool without naming its other applications - the cdt-54 class. Step 4.
-Settled 2026-10-27 by the owner: kd-44 back to administrators only; kd-28 stays as landed and is not raised again.
+**Next step:** the owner's word on fixing kd-75, kd-76, kd-77 and cdt-60 (the review used the one allowed dispatch, so
+their fixes close on guard proof alone), then a deploy of 2.36.0 through `tools/deploy-pipeline.ps1 -Dev`. Check Admin
+Settings > Protected principals has the Directory Read Credential configured on the instance before deploying: after
+aud-a70 (6), every Mailbox and Calendar Permissions grant is refused without it.
 ### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
