@@ -431,3 +431,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, after the review (continued).** kd-79: ~211K agent tokens, 91 tool uses, 21 min. kd-80: ~322K, 145 tool uses, 57 min. kd-81 cloud half (two modules): ~944K, 746 tool uses, 1 h 50 min; 7567 tests on the branch. CancellationDepth plan draft: ~546K, 98 tool uses, 40 min. kd-82 in progress.
 
 **2026-10-28, the job-service tail.** kd-82: ~448K agent tokens, 230 tool uses, 54 min. kd-83: ~344K, 120 tool uses, 47 min. kd-84: ~236K, 75 tool uses, 22 min. kd-85: ~302K, 118 tool uses, 30 min. kd-86 in progress. Each of these was found by the agent before it while reading the same service; the class (a read or reload after a landed write, outside any try) is now closed across BulkJobService and the three job pages.
+
+**2026-10-28, close.** kd-86: ~277K agent tokens, 102 tool uses, 24 min. Final master b8c1457a: 7585 xUnit, 531 Pester, all gates green. Stream closed; nothing open but the two plan-gated items and the three plans.
