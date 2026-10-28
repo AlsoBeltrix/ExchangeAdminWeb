@@ -344,6 +344,29 @@ public class BulkJobServiceTests
     }
 
     [Fact]
+    public async Task DeleteJob_ConcurrentRemovalsOfOneFinishedJob_RemoveItOnce_AndTellTheRestItIsGone()
+    {
+        // kd-77. Removals of one finished job, released together: exactly one removes it, and every other is told it no longer
+        // exists. With a read and a separate delete, a removal that read the job before another deleted it was told it had not
+        // finished. Each on a thread of its own, so the release does not wait on the thread pool.
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("j1", "S", "Completed"));
+        const int Removals = 8;
+        using var start = new Barrier(Removals);
+
+        var outcomes = await Task.WhenAll(Enumerable.Range(0, Removals).Select(_ => Task.Factory.StartNew(() =>
+        {
+            Assert.True(start.SignalAndWait(TimeSpan.FromSeconds(30)), "the removals were never released together");
+            h.Service.DeleteJob("Test", "j1", out var outcome);
+            return outcome;
+        }, TestContext.Current.CancellationToken, TaskCreationOptions.LongRunning, TaskScheduler.Default)));
+
+        Assert.Single(outcomes, o => o == BulkJobRemoval.Removed);
+        Assert.Equal(Removals - 1, outcomes.Count(o => o == BulkJobRemoval.NotFound));
+        Assert.Null(h.Repository.Get("j1"));
+    }
+
+    [Fact]
     public async Task CancelJob_Queued_FinishesAsCancelled_NeverRuns()
     {
         using var h = new Harness();

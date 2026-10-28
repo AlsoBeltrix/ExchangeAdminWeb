@@ -1664,7 +1664,9 @@ public sealed class ModuleCatalog
             // 1.2.0: a cancel or a removal is filed under the category of the module whose job it is,
             // not always ConferenceRooms, and the event log offers every such category (kd-53). A
             // removal that did not happen says why - the job has not finished, or is gone (kd-54).
-            Version = "1.2.0",
+            // 1.2.1: the removal and its reason are decided in one step in the job store, so a job another
+            // administrator removed a moment earlier is told - and audited - as gone, not as not finished (kd-77).
+            Version = "1.2.1",
             // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy

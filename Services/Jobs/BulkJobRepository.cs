@@ -334,6 +334,65 @@ public sealed class BulkJobRepository
         return affected == 1;
     }
 
+    /// <summary>
+    /// kd-77. Deletes one finished job of <paramref name="moduleId"/> and its rows, as <see cref="Delete"/> does, and says what
+    /// happened: <see cref="BulkJobRemoval.Removed"/>, or why not - <see cref="BulkJobRemoval.NotFound"/> (no such job: removed
+    /// already, or pruned), <see cref="BulkJobRemoval.NotThisModule"/> or <see cref="BulkJobRemoval.NotFinished"/>.
+    /// </summary>
+    /// <remarks>
+    /// Decided in one write transaction. The service used to read the job and then delete it in separate transactions, and to
+    /// take a delete that found no finished row for a job that had not finished: two administrators removing the same finished
+    /// job both read it, the first deleted it, and the second was told - and its audit row said - that it had not finished.
+    /// BEGIN IMMEDIATE takes the write lock before the read, so the job read here is the one the delete acts on, and a
+    /// removal that loses the race reads no job at all. The module compares as the service always compared it, ordinal and
+    /// case-insensitive, after the read; the terminal check stays in the delete's SQL, as in <see cref="Delete"/>.
+    /// </remarks>
+    public BulkJobRemoval Remove(string jobId, string moduleId)
+    {
+        using var connection = _factory.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
+
+        BulkJob job;
+        using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = SelectColumns + " WHERE id = $id;";
+            read.Parameters.AddWithValue("$id", jobId);
+            using var reader = read.ExecuteReader();
+            if (!reader.Read())
+                return BulkJobRemoval.NotFound;
+            job = ReadJob(reader);
+        }
+
+        if (!string.Equals(job.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase))
+            return BulkJobRemoval.NotThisModule;
+
+        int affected;
+        using (var delete = connection.CreateCommand())
+        {
+            delete.Transaction = transaction;
+            delete.CommandText =
+                """
+                DELETE FROM bulk_job
+                WHERE id = $id
+                  AND status IN ($completed, $cancelled, $interrupted);
+                """;
+            delete.Parameters.AddWithValue("$id", jobId);
+            delete.Parameters.AddWithValue("$completed", BulkJobStatus.Completed.ToString());
+            delete.Parameters.AddWithValue("$cancelled", BulkJobStatus.Cancelled.ToString());
+            delete.Parameters.AddWithValue("$interrupted", BulkJobStatus.Interrupted.ToString());
+            affected = delete.ExecuteNonQuery();
+        }
+
+        // The job exists and is this module's, read under the write lock: a delete that removed nothing found it still queued
+        // or running. Nothing was deleted, so nothing is committed.
+        if (affected != 1)
+            return BulkJobRemoval.NotFinished;
+
+        transaction.Commit();
+        return BulkJobRemoval.Removed;
+    }
+
     // -------------------------------------------------------------------------
     // Reads
     // -------------------------------------------------------------------------
