@@ -587,7 +587,11 @@ public sealed class ModuleCatalog
             // before the next window instead of after the last, filed Cancelled (kd-73).
             // 1.8.6: on the Downloadable Reports sub-page a second Download click during a download is ignored, so a
             // double click no longer reads, pushes and audits the export twice (kd-74).
-            Version = "1.8.6",
+            // 1.8.7: a search, a delivery detail and a detail download take the operator's cancel while they wait for a free
+            // Exchange Online connection or for the on-premises server, as the on-premises session opens, at its connect and
+            // between its reads (kd-58, CancellationDepth A10) - "Cancelled by the operator", filed Cancelled - where each
+            // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
+            Version = "1.8.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

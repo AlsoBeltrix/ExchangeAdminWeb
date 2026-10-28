@@ -185,6 +185,9 @@ public class InFlightWorkGuardTests
         ["BlockedSenders.razor"] = ["$\"Unblocking {address}\""],
         // kd-59, kd-73, kd-75, kd-58 A8: the single-room setup - every step before Set-Place; once it is sent the row runs on.
         ["ConferenceRooms.razor"] = ["$\"Updating {email}\""],
+        // kd-59, kd-70, kd-73, kd-58 A10: the search, a detail read and the detail download - their waits, the gaps between
+        // their reads and windows, and the download's loop.
+        ["MessageTrace.razor"] = ["\"Searching message trace\"", "$\"Loading delivery detail for {target}\"", "\"Downloading delivery detail\""],
     };
 
     public static TheoryData<string> PagesWithActivities => [.. PagesThatBeginActivities()];

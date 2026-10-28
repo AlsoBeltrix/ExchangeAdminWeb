@@ -218,7 +218,8 @@ public sealed class ExchangeServiceBaseReadCancellationTests : IDisposable
                 }
                 foreach (Match added in Regex.Matches(arguments, @"\.AddCommand\(\s*(?<name>[^,)]*)"))
                 {
-                    if (!Regex.IsMatch(added.Groups["name"].Value, "^\"Get-[A-Za-z]+\"$"))
+                    // kd-58 A10: a name may end in a version, as Get-MessageTraceV2 does; still a Get- command, by name.
+                    if (!Regex.IsMatch(added.Groups["name"].Value, "^\"Get-[A-Za-z][A-Za-z0-9]*\"$"))
                         offences.Add($"{site}: adds {added.Groups["name"].Value}, not a Get- command by name");
                 }
                 foreach (Match forbidden in Regex.Matches(arguments, @"\.(AddScript|AddStatement|Invoke|BeginInvoke|InvokeAsync)\s*[(<]"))

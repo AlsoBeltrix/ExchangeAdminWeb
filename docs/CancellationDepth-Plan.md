@@ -1,6 +1,6 @@
 # Cancellation Depth - Plan
 
-Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3 are on `feat/cancellation-depth` (section 15).**
+Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3, the page-aware leave prompt and the module slices A6-A10 are on `feat/cancellation-depth` (section 15); Part B (B1-B3) and C1 remain.**
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -842,9 +842,14 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   a connection takes it (E4), and every catch on the way lets it through - no warning, refusal or error for a cancel.
   kd-75's look inside Set-Place's call stays. The page's setup declares that it takes the cancel (3.8a). The bulk row still
   passes none until A9. Conference Rooms 2.19.9 -> 2.19.10; the base bump stays owed.
-- 2026-10-28, **A9, the Room Finder bulk rows** - `feat/cancellation-depth`, the commit that adds this line: the seam takes the
+- 2026-10-28, **A9, the Room Finder bulk rows** - `feat/cancellation-depth` `eb09473d`: the seam takes the
   job's token and the service's explicit implementation passes it on, so a row's steps before Set-Place take the job's
   cancel as the page's setup takes its activity's (A8); the processor files a row the token stopped - the operator's cancel
   request Cancelled under the job's captured actor, address and ticket, the host stopping Failed in its own words - and lets
   the cancel go on to the runner, which stops the batch without recording the row. Assumption 8 settled with a narrow seam,
   `IBulkJobCancelRequests` (the job store's persisted flag). Conference Rooms 2.19.10 -> 2.19.11; the base bump stays owed.
+- 2026-10-28, **A10, Message Trace** - `feat/cancellation-depth`, the commit that adds this line: the cloud search's windows
+  and the cloud detail read on the read helper with the search's or the detail's token (E3), their catches letting the
+  cancel through; the on-premises search and detail with E7 - the server's queue, the runspace, the connect and a look
+  before each read, their catches letting it through. The search, a detail read and the detail download declare that they
+  take the cancel (3.8a). Message Trace 1.8.6 -> 1.8.7; the base bump stays owed.
