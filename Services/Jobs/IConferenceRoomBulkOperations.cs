@@ -17,10 +17,14 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// </remarks>
 public interface IConferenceRoomBulkOperations
 {
+    /// <param name="cancellationToken">
+    /// kd-58 A9. The job's token - the operator's cancel request, or the host stopping - for the row's steps before
+    /// Set-Place, as the page's single-room setup takes its activity's (A8). Once Set-Place is sent the row runs on.
+    /// </param>
     Task<RoomOperationResult> SetRoomMetadataAndListAsync(
         string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
         string floor, string floorLabel, string displayDevice, string videoDevice,
-        string countryOrRegion, string state, string timezone);
+        string countryOrRegion, string state, string timezone, CancellationToken cancellationToken);
 
     Task<RoomOperationResult> SetRoomTypeAsync(
         string roomEmail, ValidatedMailbox? room, RoomType roomType, string timezone,

@@ -747,7 +747,10 @@ owner's (`.agents/decisions.md` 2026-10-26).
    calls exist was not counted. Not exercised by A1-A3: the methods they gave tokens are called from test helpers, not
    test methods, and none was raised.
 8. That the Room Finder bulk processor needs a narrow way to ask whether a job's cancel was the operator's (the
-   persisted cancel flag) - it has none today. The rule is fixed here; the mechanism is the implementer's.
+   persisted cancel flag) - it has none today. The rule is fixed here; the mechanism is the implementer's. **Settled at A9**:
+   a narrow seam, `IBulkJobCancelRequests.IsCancelRequested(jobId)`, implemented by `BulkJobRepository` (the flag's store)
+   and registered as that singleton; the operator's request sets the flag before it signals the job's token, the host's
+   shutdown never sets it (kd-58's A9 section).
 9. That a late save's message appears on the next module's page when its handler completes - aud-a66's existing
    mechanism, not seen in a browser.
 10. That the `ProgressRegistry` exemption for settings saves (159-162) is a settled engineering choice: it is recorded
@@ -833,9 +836,15 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   a token that stops at the removal's claim of its send - settled with the cancel under one lock - so a retry of a removal
   already sent is never stopped (kd-59's rule; the existing test of that retry pins it). Calendar Permissions 1.4.7 ->
   1.4.8; the base bump stays owed.
-- 2026-10-28, **A8, Conference Rooms' single-room setup** - `feat/cancellation-depth`, the commit that adds this line: the
+- 2026-10-28, **A8, Conference Rooms' single-room setup** - `feat/cancellation-depth` `b9f7ed78`: the
   room read, the room list's resolution and the room-list membership read take the cancel at their waits and between their
   commands (E3, the read helper), each preflight's directory steps look at it before they start (E7), Set-Place's wait for
   a connection takes it (E4), and every catch on the way lets it through - no warning, refusal or error for a cancel.
   kd-75's look inside Set-Place's call stays. The page's setup declares that it takes the cancel (3.8a). The bulk row still
   passes none until A9. Conference Rooms 2.19.9 -> 2.19.10; the base bump stays owed.
+- 2026-10-28, **A9, the Room Finder bulk rows** - `feat/cancellation-depth`, the commit that adds this line: the seam takes the
+  job's token and the service's explicit implementation passes it on, so a row's steps before Set-Place take the job's
+  cancel as the page's setup takes its activity's (A8); the processor files a row the token stopped - the operator's cancel
+  request Cancelled under the job's captured actor, address and ticket, the host stopping Failed in its own words - and lets
+  the cancel go on to the runner, which stops the batch without recording the row. Assumption 8 settled with a narrow seam,
+  `IBulkJobCancelRequests` (the job store's persisted flag). Conference Rooms 2.19.10 -> 2.19.11; the base bump stays owed.

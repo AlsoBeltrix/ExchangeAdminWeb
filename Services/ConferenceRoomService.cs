@@ -788,14 +788,15 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         return result;
     }
 
-    // kd-59. The bulk job's row, as it was: it passes no token (the job is not the page's activity), so its rows are
-    // unchanged by the page's cancel reaching the preflights.
+    // kd-58 A9. The bulk job's row, with the job's own token - the operator's cancel request, or the host stopping - which
+    // reaches the row's steps before Set-Place as the page's activity token does (A8). It passed none (kd-59), so a job's
+    // cancel waited for the row to finish before it stopped the batch.
     Task<RoomOperationResult> Jobs.IConferenceRoomBulkOperations.SetRoomMetadataAndListAsync(
         string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
         string floor, string floorLabel, string displayDevice, string videoDevice,
-        string countryOrRegion, string state, string timezone) =>
+        string countryOrRegion, string state, string timezone, CancellationToken cancellationToken) =>
         SetRoomMetadataAndListAsync(roomEmail, room, city, building, capacity, floor, floorLabel, displayDevice, videoDevice,
-            countryOrRegion, state, timezone, CancellationToken.None);
+            countryOrRegion, state, timezone, cancellationToken);
 
     /// <param name="room">The validated room (aud-a2d): the member added, by GUID or proven objectGUID.</param>
     /// <param name="roomPrimary">

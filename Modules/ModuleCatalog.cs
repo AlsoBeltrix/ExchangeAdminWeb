@@ -1174,7 +1174,12 @@ public sealed class ModuleCatalog
             // was written.", filed Cancelled, the administrators told - where each ran to its end, and a cancel at a
             // preflight's directory step read "City/State/Country could not be validated before writing ..." and was filed
             // Failed. Once Set-Place is sent the setup runs on. The leave prompt says so.
-            Version = "2.19.10",
+            // 2.19.11: a Room Finder job's row takes the job's cancel at the same steps (kd-58, CancellationDepth A9): cancelled
+            // on the Bulk Jobs page while a row is before Set-Place, the row ends there - nothing written, its audit entry
+            // Cancelled, "Cancelled by the operator. Nothing was written.", under the submitter and ticket, no row outcome -
+            // and the job stops; before, the row ran to its end first. A row the service's shutdown stops is filed Failed,
+            // "The service stopped before this row was written. Nothing was written."
+            Version = "2.19.11",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

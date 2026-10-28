@@ -115,7 +115,8 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         public readonly List<string> TypeCalls = new();
 
         public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
-            string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone)
+            string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone,
+            CancellationToken cancellationToken)
         {
             FinderCalls.Add(roomEmail);
             return Task.FromResult(new RoomOperationResult { Email = roomEmail, Success = true, Message = "ok" });
@@ -191,7 +192,7 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         var rooms = new FakeRoomOps();
         var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, enablement, trace,
             new AuditService(log, trace), Substitute.For<EmailService>(config, NullLogger<EmailService>.Instance),
-            NullLogger<ConferenceRoomBulkProcessor>.Instance);
+            NullLogger<ConferenceRoomBulkProcessor>.Instance, Substitute.For<IBulkJobCancelRequests>());
         return new Fixture(rooms, pp, processor);
     }
 

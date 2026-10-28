@@ -379,6 +379,10 @@ Room mailbox metadata configuration and booking policy management.
   list's resolution, a preflight's Active Directory step, or the wait for a free Exchange Online connection: nothing is
   written, and it is filed `Cancelled`, "Cancelled by the operator. Nothing was written.". Once Set-Place is sent the setup
   runs to its end, so the room is never left half-configured.
+- **Cancelling a Room Finder job** on the Bulk Jobs page stops the row in hand at the same steps: nothing is written for it,
+  its audit entry is `Cancelled`, "Cancelled by the operator. Nothing was written.", under the submitter's name and ticket,
+  and it is not listed among the job's row outcomes. A row already past Set-Place finishes and is recorded. A row stopped by
+  the service shutting down is filed `Failed`, "The service stopped before this row was written. Nothing was written.".
 - Section access key: `ConferenceRooms`
 
 ### Emergency Disable (`/emergency-disable`)

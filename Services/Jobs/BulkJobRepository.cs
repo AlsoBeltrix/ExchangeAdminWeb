@@ -10,7 +10,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// exchangeadmin-jobs.db), NOT the config-store factory - the two databases are deliberately
 /// separate (docs/BulkJobRunner-Plan.md).
 /// </summary>
-public sealed class BulkJobRepository
+public sealed class BulkJobRepository : IBulkJobCancelRequests
 {
     private readonly SqliteConnectionFactory _factory;
 
