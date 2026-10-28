@@ -923,23 +923,23 @@
     private async Task RemoveJob(ExchangeAdminWeb.Services.Jobs.BulkJob job)
     {
         if (!await JobControlAllowedAsync("ConferenceRooms_RemoveBulkJob", job)) return;
-        var removed = BulkJobs.DeleteJob(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id);
 
-        try
+        // kd-78. A removal that did not happen says why, in the banner and in the row, and the row carries kd-32's refusal
+        // fields - the job's state refused it, nothing was changed - in Admin Bulk Jobs' words (kd-54). The reason is the
+        // store's own answer, decided in the one transaction that would have deleted the job (kd-77); the row was Failed with
+        // no reason and the banner said nothing. A removal that happens is audited as before and leaves the banner as it was.
+        var removed = BulkJobs.DeleteJob(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id, out var outcome);
+        var because = removed ? null : outcome switch
         {
-            Audit.LogConferenceRoomAction(
-                currentUser, clientIpAddress, "ConferenceRooms_RemoveBulkJob",
-                target: job.Id, success: removed, ticketNumber: job.Ticket ?? "",
-                oldValues: new Dictionary<string, object?>
-                {
-                    ["JobType"] = job.JobType,
-                    ["Status"] = job.Status.ToString(),
-                    ["SubmittedBy"] = job.SubmittedBy,
-                    ["SubmittedAtUtc"] = job.SubmittedAtUtc,
-                    ["TotalRows"] = job.TotalRows
-                });
-        }
-        catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
+            ExchangeAdminWeb.Services.Jobs.BulkJobRemoval.NotFound => "it no longer exists.",
+            ExchangeAdminWeb.Services.Jobs.BulkJobRemoval.NotThisModule => "it belongs to another module.",
+            _ => "it has not finished."
+        };
+
+        AuditJobControl("ConferenceRooms_RemoveBulkJob", job, removed,
+            because is null ? null : $"The job was not removed: {because}", because is null ? null : "JobState");
+        if (because is not null)
+            result = new RoomOperationResult { Success = false, Message = $"Could not remove the {JobKindLabel(job)} job - {because}" };
 
         await RefreshJobs();
     }
