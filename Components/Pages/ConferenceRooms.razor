@@ -912,7 +912,7 @@
     // jobs database, which is what makes a hard delete acceptable: who cleared what survives the
     // row. Audit failure must not make a completed removal look failed, hence the same
     // catch-and-log shape as the other audit helpers on this page.
-    // Takes the RENDERED row, not its id. recentJobs is replaced wholesale by RefreshJobs, which
+    // Takes the RENDERED row, not its id. recentJobs is replaced wholesale by LoadJobsFromStore, which
     // OnJobChanged calls off the runner's thread at any moment and with no click involved, and it is
     // itself a windowed read, so looking the job up by id here read a collection that could have
     // been swapped between the render that drew this button and the click that pressed it. When the
@@ -959,7 +959,26 @@
         if (because is not null)
             result = new RoomOperationResult { Success = false, Message = $"Could not remove the {JobKindLabel(job)} job - {because}" };
 
-        await RefreshJobs();
+        // kd-82. The reload sat outside any try, so a jobs store that failed this read - after a removal that happened and
+        // was filed Success above - threw to the circuit instead of the list refreshing. It has its own try, as the store
+        // call above has (kd-79): the throw is logged, the banner says what the removal did and that the list could not be
+        // refreshed, and nothing escapes. Nothing more is filed: the row above is the removal's record, and it stands. The
+        // list stays as it was shown until the next read that works.
+        try
+        {
+            await RefreshJobs();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "The job list could not be refreshed after the removal of bulk job {JobId}", job.Id);
+            result = new RoomOperationResult
+            {
+                Success = removed,
+                Message = removed
+                    ? $"The {JobKindLabel(job)} job was removed; the job list could not be refreshed."
+                    : $"Could not remove the {JobKindLabel(job)} job - {because} The job list could not be refreshed."
+            };
+        }
     }
     private void AuditJobControl(string action, ExchangeAdminWeb.Services.Jobs.BulkJob job, bool success, string? error, string? refusedAt = null) { try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, action, target: job.Id, success: success, ticketNumber: job.Ticket ?? "", errorDetail: error, oldValues: new Dictionary<string, object?> { ["JobType"] = job.JobType, ["Status"] = job.Status.ToString(), ["SubmittedBy"] = job.SubmittedBy, ["SubmittedAtUtc"] = job.SubmittedAtUtc, ["TotalRows"] = job.TotalRows }, extra: refusedAt is null ? null : new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false }); } catch (Exception ex) { Logger.LogError(ex, "Audit failed"); } }
     private string JobDisplayStatus(ExchangeAdminWeb.Services.Jobs.BulkJob job)

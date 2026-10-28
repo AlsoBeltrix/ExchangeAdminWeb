@@ -1093,7 +1093,11 @@ public sealed class ModuleCatalog
             // "The job was queued; the job list could not be refreshed.", and files nothing; before, the banner showed the
             // reload's error and a Failed "(bulk)" row was filed for a job that ran, so the operator might queue the file
             // twice (kd-80).
-            Version = "2.19.8",
+            // 2.19.9: a job removal whose list cannot be reloaded afterwards - the jobs database failing that read - says
+            // what it did, "The Room Type (bulk) job was removed; the job list could not be refreshed." (or why it was not
+            // removed, with the same note), keeps its audit row and goes no further; before, the reload's error reached the
+            // circuit (kd-82).
+            Version = "2.19.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

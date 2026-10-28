@@ -3481,19 +3481,23 @@ public static class ClickGateRegistry
     /// BulkJob, so what the operator saw is what gets audited.
     /// </para>
     /// <para>
-    /// <b>That last hazard is NOT enforced by this registry, and the gap is worth naming rather than
-    /// papering over.</b> <see cref="PageGateEntry.PostAwaitLiveReads"/> is the field for "a value
-    /// another control can change while this handler is suspended", and
+    /// <b>That last hazard is not held by the obligation built for hazards of its kind, and what
+    /// does hold it is worth naming.</b> <see cref="PageGateEntry.PostAwaitLiveReads"/> is the
+    /// field for "a value another control can change while this handler is suspended", and
     /// <see cref="ClickGateTests.NoHandlerReadsARegisteredFieldLiveAfterItsFirstAwait"/> asserts it
     /// by requiring a first await and scanning below it. RemoveJob had none at the conversion. It
     /// awaits now - kd-27's access re-check first, the reload last - but the staleness is still
     /// between render and click, not across one of its suspensions, and neither of the obligation's
     /// two shapes (a local captured from the field at entry, or one published from an await) fits a
     /// handler that takes the rendered row as its parameter, so registering it there fails on the
-    /// correct page instead of protecting anything. The paragraph above is therefore prose, and
-    /// prose is unenforced: a future edit reverting RemoveJob to take an id and re-look-up the row
-    /// would pass this whole suite. The page's own comment on the method carries the same warning,
-    /// which is two unenforced copies rather than one enforced one.
+    /// correct page instead of protecting anything. Two other assertions hold it (kd-82 ran a revert
+    /// to an id against both, and both failed): ExemptControl 575's snippet pins the markup's
+    /// "() => RemoveJob(job)", so a call that passes the id fails
+    /// <see cref="ClickGateTests.EveryRegisteredExemptionStillPointsAtARealControl"/>; and
+    /// ConferenceRoomPageTests calls RemoveJob with the rendered BulkJob - which a handler taking an
+    /// id cannot accept - and reads the audit row's ticket and old values back from that row, on a
+    /// page whose job lists were never loaded, so a handler that looked the row up again would find
+    /// nothing there. The page's own comment on the method carries the same warning.
     /// </para>
     /// <para>
     /// <b>Exemptions are ten of fourteen buttons, which is high and is deliberate.</b>
@@ -3545,7 +3549,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1844,
+        ExpectedLineCount = 1863,
 
         Predicates =
         [
@@ -3796,7 +3800,8 @@ public static class ClickGateRegistry
                 + "delete went through by id anyway, and a durable record was destroyed with an "
                 + "audit row carrying no ticket and no old values. It now takes the rendered "
                 + "BulkJob. No gate could have closed that - the staleness is between render and "
-                + "click - and no assertion in this suite holds it either; see the remarks",
+                + "click; this entry's snippet and ConferenceRoomPageTests' removal tests hold it "
+                + "(kd-82); see the remarks",
                 ConditionThatKeepsItTrue:
                 "RemoveJob keeps taking the rendered BulkJob and never looks a row up in "
                 + "recentJobs, activeJobs or any other collection RefreshJobs replaces"),
