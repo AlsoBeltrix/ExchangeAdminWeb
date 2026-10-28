@@ -6,7 +6,7 @@
 application with active jobs unnamed. The cdt-58 record already noted the nested gap. (2) Pre-existing: `tools/JobStateWarning.psm1`
 about 151 calls `Get-ActiveBulkJobs` (which runs the app's `db active-jobs` tool, about 88) BEFORE it branches on `-PlanOnly`,
 so a plan-only cutover or promotion opens the real jobs databases (read-only, but a real read - Invariant 4).
-**Status**: (1) fixed on branch, verified; (2) in progress
+**Status**: Fixed on branch, verified; closes on guard proof - the single review dispatch is spent
 **Branch**: `fix/review-findings` (worktree `D:\source\ExchangeAdminWeb-wt\review-findings`, from master `ec5a19f7`)
 **Commit**: one per sub-item - each is the commit that adds its section below (`git log -- .agents/review/findings/cdt-60.md`)
 **Reviewer**: codex-commercial / gpt-6-astra / max / read-only; session 01a18016-55c8-7262-bdc3-d3d86c927988; 2026-10-27
@@ -78,3 +78,48 @@ lists the nested node with the switch and leaves it out without it. All four sta
 scripts, nothing the app ships changes.
 
 Not run: a real cutover against IIS with a nested application.
+
+## As implemented - (2) a plan reads no jobs database (implementer, 2026-10-27; lines at this commit)
+
+Read first, confirmed at `ec5a19f7`: `Assert-NoActiveBulkJobsBeforeRecycle` (`tools/JobStateWarning.psm1` 138) ran
+`Get-ActiveBulkJobs` (151) - which launches `<ProgramFiles>\dotnet\dotnet.exe <AppPath>\ExchangeAdminWeb.dll db active-jobs
+<db>` when the database exists (88) - and only then branched on `-PlanOnly` (153). Two callers pass `-PlanOnly`: the cutover's
+plan (`tools/Move-ConfigDbToShared.ps1` 318) and the promotion's dry run (`tools/promote-dev-to-prod.ps1` 270). deploy.ps1
+has no plan mode and the installer never passes it (cdt-59's AST pin).
+
+- **The plan branch first** (152-159). With `-PlanOnly` the function prints one DarkGray plan line naming the database a real
+  run reads and the build whose db tool reads it - "PLAN: would check for active bulk jobs before recycle:
+  exchangeadmin-jobs.db in <ConfigDir>, read with the db tool of the app in <AppPath> (a plan reads no jobs database)." - and
+  returns 0, nothing checked. The line is built by interpolation, not `Join-Path`, so a folder on a drive the host lacks
+  cannot throw from a plan (the cdt-58/59 lesson). A real run is unchanged from the read on (161).
+- The module header (25-27) and the help for `-PlanOnly` and the output (133-137) say so.
+
+**What the operator sees - a behaviour change in plan output, named here for the supervisor.** A plan-only cutover or a
+promotion dry run no longer lists the active bulk jobs a real run would interrupt ("PLAN: recycle WOULD interrupt N active
+bulk job(s): ..."); it says which jobs database a real run reads. Listing them needs the live read the review found, so the
+two cannot both stand. A real run is unchanged: it reads and warns, loudly, before the stop. Briefed by the supervisor under
+the mandate; the plan's preview of active jobs was the only thing it showed that it no longer shows.
+
+### Guard proof - (2)
+
+- `tests/ps/JobStateWarning.Tests.ps1`, Describe `cdt-60 (2): a plan launches no db tool and reads no jobs database` (167),
+  2 tests. The module's tool resolver (`Get-ConfigDbToolForJobs`, private) is mocked to hand back a recording stand-in - a
+  script the module runs as it runs the .NET host, which logs each call's arguments and answers one active job - over a jobs
+  database that exists. (191) plan mode: no call logged, the resolver not even asked, no warning, the one plan line word for
+  word, 0 returned. (202) the control, a real run: one call, `stand-in.dll db active-jobs <config>\exchangeadmin-jobs.db`, 1
+  returned and the ACTIVE warning given.
+- The existing plan test (111) followed the code: it asserted that a plan over the real built app counted the database's
+  running job (1), which is the live read this fixes; it now asserts 0, with a comment saying why.
+
+| # | Mutation | md5 mutant | Failing |
+| --- | --- | --- | --- |
+| C60d (the record's) | the branch moved back after the read | `CE69F31969340E621D559B1A19AB7623` | 1 of 11: (191), "a plan launches no db tool", got a logged call |
+
+Fixed-file MD5 `tools/JobStateWarning.psm1` `AF12732365488F0F6F6A1FE770DB6CFE` (CRLF); restore byte-exact. Under the mutant the
+real-app plan test (111) still passed - the mutant still returns 0 after its read - so the stand-in's log is the pin.
+
+Checks: `JobStateWarning.Tests.ps1` 11 of 11; the whole of `tests/ps` - deploy.ps1's, the promotion's, the cutover's and the
+installer's suites among them - 531 passed, 0 failed, 0 skipped (526 at the base, +3 for (1), +2 here). Under Windows
+PowerShell 5.1.20348.5756 and pwsh 7.6.9 (scratch `bin/rf-scratch/probe-cdt60b-51.ps1`): the module imports, a plan over a real
+folder and over a drive the host lacks returns 0 with no throw; the module and its tests parse with 0 errors. CRLF, ASCII.
+No version bump: ops scripts.
