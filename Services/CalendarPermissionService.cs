@@ -26,7 +26,18 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// The mailbox the protected-principal check validated (aud-a2d). Its GUID is the mailbox part
     /// of the folder identity written; null refuses before a connection is borrowed.
     /// </param>
-    public async Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, CalendarAccessRight accessRight)
+    /// <param name="cancellationToken">
+    /// kd-81. The page's activity token, the one the navigation guard cancels - looked at as Mailbox Permissions' change looks
+    /// at its own, both times before anything is sent: as the change starts - a token already cancelled asks the pool for
+    /// nothing (kd-76's shape) - and inside the pooled call, once its connection is held, immediately before the Set is built,
+    /// because the pool's wait for a free connection takes no token. <c>RunAsync</c> takes a throw in its call for a failed
+    /// write, so there the look marks the cancel and the call returns before its command; the cancel is thrown once
+    /// <c>RunAsync</c> has returned, inside the mark (kd-75's shape): a <see cref="PermissionWriteNotSubmittedException"/>,
+    /// nothing sent, which the page files Cancelled (kd-57, kd-59). Nothing after the Set looks at it - the Add it falls back
+    /// to included. The CSV loop passes none, so its rows run as before.
+    /// </param>
+    public async Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, CalendarAccessRight accessRight,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
@@ -34,69 +45,97 @@ public class CalendarPermissionService : ExchangeServiceBase
         string? calendarPath = null;
         string? resolvedMailbox = null;
         ConnectionErrorTracker? attempt = null;
+        var cancelledBeforeTheSet = false; // kd-81: the look inside the call saw the operator's cancel
 
         // aud-a76. RunAsync makes every failure of the operation a result, so the one throw that leaves is the pool's - its
-        // borrow, before the mark below - and it leaves as a PermissionWriteNotSubmittedException: nothing was sent.
+        // borrow, before the mark below - and it leaves as a PermissionWriteNotSubmittedException: nothing was sent. kd-81: and
+        // the operator's cancel, thrown before the mark too.
         var submission = new PermissionWriteSubmission();
-        var result = await submission.TrackAsync(() => RunAsync((ps, tracker) =>
+        var result = await submission.TrackAsync(async () =>
         {
-            attempt = tracker; // aud-a70 (14): what this attempt's invokes, and RunAsync's own catch, read its failure as
-            resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
-            ValidateRecipient(ps, user);
-
-            // aud-a2d. The folder identity was built from the primary address the TYPED string
-            // resolved to, and Exchange resolved that address again on write. It is built from the
-            // validated mailbox's GUID now, and the folder name is read from that mailbox too - a
-            // localized name ("Kalender") belongs to one mailbox, not to whatever a string names.
-            calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
-            var level = accessRight.ToString();
-
-            ps.AddCommand("Set-MailboxFolderPermission")
-              .AddParameter("Identity", calendarPath)
-              .AddParameter("User", user)
-              .AddParameter("AccessRights", level)
-              .AddParameter("ErrorAction", "Stop");
-            submission.Submitting(); // aud-a76: the write command is invoked next
-            // kd-43. The Set and its Add fallback each read their own failure, on a tracker of their own, carried to the
-            // attempt's tracker - which the pool reads to discard the connection, and Unanswered to read the outcome.
-            var set = new ConnectionErrorTracker();
-            try
+            // kd-81 (kd-76's shape). A token already cancelled starts nothing: no connection is asked for.
+            cancellationToken.ThrowIfCancellationRequested();
+            var setResult = await RunAsync((ps, tracker) =>
             {
-                Invoke(ps, set);
-            }
-            catch (Exception setFailure) when (!OutcomeUnknown(setFailure, set) && NamesNoPermissionEntry(setFailure))
-            {
-                // Exchange answered that the user holds no entry on the folder to set: add one. The one refusal an Add
-                // follows - any other is the write's own answer.
-                ps.Commands.Clear();
-                ps.Streams.Error.Clear();
-                ps.AddCommand("Add-MailboxFolderPermission")
+                attempt = tracker; // aud-a70 (14): what this attempt's invokes, and RunAsync's own catch, read its failure as
+                resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
+                ValidateRecipient(ps, user);
+
+                // aud-a2d. The folder identity was built from the primary address the TYPED string
+                // resolved to, and Exchange resolved that address again on write. It is built from the
+                // validated mailbox's GUID now, and the folder name is read from that mailbox too - a
+                // localized name ("Kalender") belongs to one mailbox, not to whatever a string names.
+                calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
+                var level = accessRight.ToString();
+
+                // kd-81. The pool's wait for this connection took no token, so a cancel made during it is looked at here, the
+                // connection held and the reads done, before the Set is built. Marked rather than thrown: RunAsync takes a
+                // throw in its call for a failed Set. The Set is not retried, so no earlier attempt can have sent anything.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    cancelledBeforeTheSet = true;
+                    return;
+                }
+
+                ps.AddCommand("Set-MailboxFolderPermission")
                   .AddParameter("Identity", calendarPath)
                   .AddParameter("User", user)
                   .AddParameter("AccessRights", level)
                   .AddParameter("ErrorAction", "Stop");
-                var add = new ConnectionErrorTracker();
+                submission.Submitting(); // aud-a76: the write command is invoked next
+                // kd-43. The Set and its Add fallback each read their own failure, on a tracker of their own, carried to the
+                // attempt's tracker - which the pool reads to discard the connection, and Unanswered to read the outcome.
+                var set = new ConnectionErrorTracker();
                 try
                 {
-                    Invoke(ps, add);
+                    Invoke(ps, set);
+                }
+                catch (Exception setFailure) when (!OutcomeUnknown(setFailure, set) && NamesNoPermissionEntry(setFailure))
+                {
+                    // Exchange answered that the user holds no entry on the folder to set: add one. The one refusal an Add
+                    // follows - any other is the write's own answer.
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                    ps.AddCommand("Add-MailboxFolderPermission")
+                      .AddParameter("Identity", calendarPath)
+                      .AddParameter("User", user)
+                      .AddParameter("AccessRights", level)
+                      .AddParameter("ErrorAction", "Stop");
+                    var add = new ConnectionErrorTracker();
+                    try
+                    {
+                        Invoke(ps, add);
+                    }
+                    finally
+                    {
+                        Carry(add, tracker);
+                    }
                 }
                 finally
                 {
-                    Carry(add, tracker);
+                    // A Set whose session failed once it was sent is not followed by anything on that session: it may have
+                    // taken, and an Add sent there met the pre-flight error, which read as "nothing ran" (kd-43).
+                    Carry(set, tracker);
                 }
-            }
-            finally
-            {
-                // A Set whose session failed once it was sent is not followed by anything on that session: it may have
-                // taken, and an Add sent there met the pre-flight error, which read as "nothing ran" (kd-43).
-                Carry(set, tracker);
-            }
-        }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null)));
+            }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null));
+
+            // kd-81. Thrown here, once the pool has the connection back, inside the mark: nothing was sent, so it leaves as not
+            // sent - not as the failed Set RunAsync would have made of a throw in its call.
+            if (cancelledBeforeTheSet)
+                throw new OperationCanceledException(cancellationToken);
+            return setResult;
+        });
         return Unanswered(result, submission, attempt, $"Whether {user} was granted {accessRight} on the calendar of {resolvedMailbox ?? targetMailbox} could not be confirmed");
     }
 
     /// <param name="mailbox">As on <see cref="SetCalendarPermissionAsync"/>: null refuses.</param>
-    public async Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user)
+    /// <param name="cancellationToken">
+    /// kd-81. As on <see cref="SetCalendarPermissionAsync"/>, and the look inside the call only while nothing has been sent: the
+    /// pool runs this removal again when its session answers with the pre-flight error, and a run after one that reached its
+    /// command comes after the first write command, which nothing looks past (kd-59; the mark is never cleared, aud-a76).
+    /// </param>
+    public async Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
@@ -104,6 +143,7 @@ public class CalendarPermissionService : ExchangeServiceBase
         string? calendarPath = null;
         string? resolvedMailbox = null;
         ConnectionErrorTracker? attempt = null;
+        var cancelledBeforeTheRemoval = false; // kd-81: as the Set's
 
         // Single-write (Remove-MailboxFolderPermission): safe to retry on a dead pooled session.
         // The preceding Get-* validations are reads. SetCalendarPermissionAsync is deliberately
@@ -111,21 +151,38 @@ public class CalendarPermissionService : ExchangeServiceBase
         // aud-a76: marked as SetCalendarPermissionAsync is. The mark outlives a retry: once a first
         // attempt reached its command, a retry whose borrow then fails is still a submitted write.
         var submission = new PermissionWriteSubmission();
-        var result = await submission.TrackAsync(() => RunAsync((ps, tracker) =>
+        var result = await submission.TrackAsync(async () =>
         {
-            attempt = tracker; // aud-a70 (14): as SetCalendarPermissionAsync's; a retry's attempt replaces the first's
-            resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
-            ValidateRecipient(ps, user);
+            cancellationToken.ThrowIfCancellationRequested(); // kd-81 (kd-76's shape): a token already cancelled starts nothing
+            var removal = await RunAsync((ps, tracker) =>
+            {
+                attempt = tracker; // aud-a70 (14): as SetCalendarPermissionAsync's; a retry's attempt replaces the first's
+                resolvedMailbox = BindValidatedMailbox(ps, tracker, mailbox);
+                ValidateRecipient(ps, user);
 
-            // The validated mailbox's folder, by its GUID - see SetCalendarPermissionAsync.
-            calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
-            ps.AddCommand("Remove-MailboxFolderPermission")
-              .AddParameter("Identity", calendarPath)
-              .AddParameter("User", user)
-              .AddParameter("Confirm", false);
-            submission.Submitting(); // aud-a76: the write command is invoked next
-            Invoke(ps, tracker);
-        }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true));
+                // The validated mailbox's folder, by its GUID - see SetCalendarPermissionAsync.
+                calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
+
+                // kd-81. As the Set's look, and only while nothing has been sent: an attempt after one that reached its
+                // command - the pool's retry on the pre-flight error - comes after the first write command (see the parameter).
+                if (!submission.Submitted && cancellationToken.IsCancellationRequested)
+                {
+                    cancelledBeforeTheRemoval = true;
+                    return;
+                }
+
+                ps.AddCommand("Remove-MailboxFolderPermission")
+                  .AddParameter("Identity", calendarPath)
+                  .AddParameter("User", user)
+                  .AddParameter("Confirm", false);
+                submission.Submitting(); // aud-a76: the write command is invoked next
+                Invoke(ps, tracker);
+            }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true);
+
+            if (cancelledBeforeTheRemoval)
+                throw new OperationCanceledException(cancellationToken); // kd-81: as the Set's, inside the mark: nothing was sent
+            return removal;
+        });
         return Unanswered(result, submission, attempt, $"Whether the calendar permission of {user} on the calendar of {resolvedMailbox ?? targetMailbox} was removed could not be confirmed");
     }
 

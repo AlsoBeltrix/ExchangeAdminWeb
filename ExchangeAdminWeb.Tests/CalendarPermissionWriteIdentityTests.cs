@@ -42,7 +42,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     [Fact]
     public async Task ASet_WritesTheValidatedMailboxsCalendar_NotTheStringTyped()
     {
-        var result = await Service().SetCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, CalendarAccessRight.Reviewer);
+        var result = await Service().SetCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, CalendarAccessRight.Reviewer, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-Mailbox")), "Identity"));
@@ -58,7 +58,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         // must take the same folder identity.
         _h.Failures["Set-MailboxFolderPermission"] = "There is no existing permission entry found for user: jdoe.";
 
-        var result = await Service().SetCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, CalendarAccessRight.Reviewer);
+        var result = await Service().SetCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, CalendarAccessRight.Reviewer, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Folder(Checked), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Add-MailboxFolderPermission")), "Identity"));
@@ -67,7 +67,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     [Fact]
     public async Task ARemove_WritesTheValidatedMailboxsCalendar_NotTheStringTyped()
     {
-        var result = await Service().RemoveCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee);
+        var result = await Service().RemoveCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-Mailbox")), "Identity"));
@@ -80,8 +80,8 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     public async Task WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed(bool set)
     {
         var result = set
-            ? await Service().SetCalendarPermissionAsync(Typed, null, Trustee, CalendarAccessRight.Reviewer)
-            : await Service().RemoveCalendarPermissionAsync(Typed, null, Trustee);
+            ? await Service().SetCalendarPermissionAsync(Typed, null, Trustee, CalendarAccessRight.Reviewer, TestContext.Current.CancellationToken)
+            : await Service().RemoveCalendarPermissionAsync(Typed, null, Trustee, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal(ValidatedMailbox.Refusal(Typed), result.Message);
@@ -94,7 +94,7 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
     {
         _h.Mailboxes[Checked.ToString("D")] = _h.Mailboxes["vip@contoso.test"];
 
-        var result = await Service().SetCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, CalendarAccessRight.Reviewer);
+        var result = await Service().SetCalendarPermissionAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, CalendarAccessRight.Reviewer, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Contains("different mailbox", result.Message, StringComparison.Ordinal);

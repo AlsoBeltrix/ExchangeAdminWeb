@@ -74,10 +74,10 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
     /// <summary>Each page's two single changes: the grant (tab 0) and the removal (tab 1).</summary>
     public static TheoryData<string, bool> Changes => new()
     {
-        { MailboxPage, true }, { MailboxPage, false },
+        { MailboxPage, true }, { MailboxPage, false }, { CalendarPage, true }, { CalendarPage, false },
     };
 
-    public static TheoryData<string> Pages => [MailboxPage];
+    public static TheoryData<string> Pages => [MailboxPage, CalendarPage];
 
     private static string ModuleOf(string page) => page == MailboxPage ? "MailboxPermissions" : "CalendarPermissions";
 
@@ -106,6 +106,10 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
                 Target, validated, Other, fullAccess: true, sendAs: true, autoMapping: false, cancellationToken),
             (MailboxPage, false) => ((MailboxPermissionService)service).RemoveMailboxPermissionsAsync(
                 Target, validated, Other, fullAccess: true, sendAs: true, cancellationToken),
+            (CalendarPage, true) => ((CalendarPermissionService)service).SetCalendarPermissionAsync(
+                Target, validated, Other, CalendarAccessRight.Reviewer, cancellationToken),
+            (CalendarPage, false) => ((CalendarPermissionService)service).RemoveCalendarPermissionAsync(
+                Target, validated, Other, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(page), page, "not a page these tests drive"),
         };
     }
