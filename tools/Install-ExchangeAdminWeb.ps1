@@ -687,6 +687,34 @@ function Assert-ApplicationTargetUnchanged {
     }
 }
 
+function Write-AppPoolSharingReport {
+    # cdt-58, the cdt-54 report in this installer's terms. Stopping a pool stops every application it
+    # serves, and the folder check before the stop asks only about -PublishPath, so another application
+    # under the same pool went down with it unannounced. So name each one first. A warning, never a
+    # refusal: nothing of theirs is replaced - a node inside the publish folder is refused before the
+    # stop whatever its pool (aud-a38i) - and an unreadable IIS listing is refused by that folder
+    # check, which reads the same listing. The helper is tools\AppPoolControl.psm1's, which the
+    # installer imports below, before this runs, as it does for cdt-48's comparison (Architectural
+    # Invariant 1). This installer reads no bulk jobs, its own included, so it reads none of theirs.
+    param(
+        [string]$Name,
+        [string]$PublishPath
+    )
+
+    try {
+        $others = @(Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath)
+    } catch {
+        Write-Warn "Stopping app pool '$Name' may stop other IIS applications too, and they cannot be named: $($_.Exception.Message)"
+        return
+    }
+    if ($others.Count -eq 0) {
+        Write-Host "       App pool '$Name' serves no IIS application other than this instance at '$PublishPath': stopping it stops nothing else." -ForegroundColor DarkGray
+        return
+    }
+    $named = @($others | ForEach-Object { "$($_.Location) with its files at '$($_.PhysicalPath)'" }) -join '; '
+    Write-Warn "App pool '$Name' also serves $($others.Count) other IIS application(s), which stop with it: $named."
+}
+
 function Assert-ExistingApplicationConfigKnown {
     # cdt-57, the cdt-55 rule in this installer's terms. An existing application whose folder has lost
     # its appsettings.json is not deployed over. Nothing on disk then says which config database its
@@ -1107,6 +1135,14 @@ try {
         Write-Ok "Config database backed up (verified) to $backupFile"
     }
 
+    }
+
+    # cdt-58: the stop below takes down every application app pool -AppPoolName serves, not only this
+    # one, and the folder check next asks only about $PublishPath. Name the others first, in a step of
+    # its own so a plan prints it. It refuses nothing, and it comes before the folder check, so that
+    # check stays the statement right before the stop (cdt-32) and refuses an unreadable listing.
+    Invoke-PlanOrAction "Name the IIS applications app pool $AppPoolName serves besides $PublishPath, which stop with it" {
+        Write-AppPoolSharingReport -Name $AppPoolName -PublishPath $PublishPath
     }
 
     # cdt-32: the stop below proves that -AppPoolName stopped, not that nothing else serves the folder

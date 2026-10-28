@@ -1353,6 +1353,9 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath; if (-not $PlanOnly -and $script:cdt23Case -eq 'ToolMissing') { throw 'The config DB tool is missing: ExchangeAdminWeb.dll not found.' }; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        # Since cdt-58 the region names the pool's other applications before the folder check; that
+        # report has its own tests (the cdt-58 Describe), so here it says and records nothing.
+        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath) $null = $Name, $PublishPath }
         # Since cdt-32 the region asks IIS what serves the folder before the stop; that check has its
         # own tests (the cdt-32 Describe), so here it passes and records nothing.
         ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
@@ -1453,6 +1456,9 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
         ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        # cdt-58: the report of the pool's other applications, recorded so its place in the region is
+        # pinned here by running it; what it says has its own tests (the cdt-58 Describe).
+        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath) $null = $PublishPath; $script:cdt32Calls.Add("report($Name)") }
         ${function:Assert-AppPoolServesPath} = {
             param($Name, $PhysicalPath, $NestedNodes)
             $script:cdt32Calls.Add("serves($NestedNodes)")
@@ -1493,18 +1499,20 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
 
         $script:cdt32Thrown = $null
         $elsewhere = & $run $true $false
-        $elsewhere.Calls | Should -BeExactly 'serves(Refuse)' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored'
+        $elsewhere.Calls | Should -BeExactly 'report(ExamplePool),serves(Refuse)' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored; the report (cdt-58) comes first and refuses nothing'
         $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own'
         $elsewhere.StagingLeft | Should -BeFalse -Because 'the refusal happens inside the try that removes staging'
 
         $alone = & $run $false $false
         $alone.Thrown | Should -BeNullOrEmpty
-        $alone.Calls | Should -BeExactly 'serves(Refuse),stop,mirror,start,manifest' -Because 'the check comes right before the stop'
+        $alone.Calls | Should -BeExactly 'report(ExamplePool),serves(Refuse),stop,mirror,start,manifest' -Because 'the report names what else stops, then the check comes right before the stop'
 
         $planned = & $run $true $true
         $planned.Thrown | Should -BeNullOrEmpty
-        $planned.Calls | Should -Not -Match 'serves' -Because 'a plan prints the check and runs nothing'
+        $planned.Calls | Should -Not -Match 'serves|report' -Because 'a plan prints the report and the check and runs neither'
         $planned.Said | Should -Match ([regex]::Escape('PLAN Confirm that IIS serves ')) -Because 'the plan shows the check'
+        $planned.Said.IndexOf('PLAN Name the IIS applications app pool ExamplePool serves besides ') | Should -BeGreaterOrEqual 0 -Because 'the plan shows the report (cdt-58)'
+        $planned.Said.IndexOf('PLAN Name the IIS applications app pool ExamplePool serves besides ') | Should -BeLessThan $planned.Said.IndexOf('PLAN Confirm that IIS serves ')
     }
 }
 
@@ -1548,6 +1556,8 @@ Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
         ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        # cdt-58's report and cdt-32's check have their own tests; here they pass and record nothing.
+        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath) $null = $Name, $PublishPath }
         ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('stop'); $script:cdt33StopResult }
         ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt33Calls.Add('mirror') }
@@ -1586,6 +1596,94 @@ Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
         $stopped = & $run 'Stopped' 6>$null
         $stopped.Thrown | Should -BeNullOrEmpty
         $stopped.Calls | Should -BeExactly 'stop,mirror,start,manifest'
+    }
+}
+
+Describe 'cdt-58: the installer names the IIS applications that stop with its pool' {
+    # The checks before the stop asked only about -PublishPath, so an application the same pool serves
+    # from elsewhere went down with the stop unannounced.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt58Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Warn', 'Write-AppPoolSharingReport') {
+            $fn = $script:Cdt58Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        # The installer's own import, so the report asks the real helper; IIS only through the probe.
+        Import-Module (Join-Path $PSScriptRoot '..\..\tools\AppPoolControl.psm1') -Force
+    }
+
+    AfterAll {
+        Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'names the others in one warning, says so when there are none, and only warns when IIS cannot be read' {
+        # A script block value in $PSDefaultParameterValues is evaluated to produce the default, so each
+        # case hands over a block that returns its probe; each probe records that it was consulted.
+        $report = {
+            param([scriptblock]$ProbeDefault)
+            $script:cdt58Said = New-Object System.Collections.Generic.List[string]
+            $script:cdt58Probed = 0
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt58Said.Add("$Object") }
+            $PSDefaultParameterValues = @{ 'Get-AppPoolOtherApplication:ApplicationsProbe' = $ProbeDefault }
+            $thrown = $null
+            try { Write-AppPoolSharingReport -Name 'ExamplePool' -PublishPath 'D:\example\publish' } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Thrown = $thrown; Said = @($script:cdt58Said); Probed = $script:cdt58Probed }
+        }
+
+        $alone = & $report {
+            {
+                $script:cdt58Probed++
+                [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish' }
+                [pscustomobject]@{ Location = 'Other Site/'; ApplicationPool = 'OtherPool'; PhysicalPath = 'D:\example\other' }
+            }
+        }
+        $alone.Probed | Should -Be 1 -Because "the test's probe is the one the report consulted"
+        $alone.Thrown | Should -BeNullOrEmpty
+        $alone.Said | Should -Be @("       App pool 'ExamplePool' serves no IIS application other than this instance at 'D:\example\publish': stopping it stops nothing else.") -Because 'another pool''s application does not stop with this one'
+
+        $shared = & $report {
+            {
+                $script:cdt58Probed++
+                [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish' }
+                [pscustomobject]@{ Location = 'Example Site/ExampleApp/api'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish\api' }
+                [pscustomobject]@{ Location = 'Other Site/'; ApplicationPool = 'examplepool'; PhysicalPath = 'D:\example\other' }
+                [pscustomobject]@{ Location = 'Example Site/Static'; ApplicationPool = 'ExamplePool'; PhysicalPath = '' }
+            }
+        }
+        $shared.Probed | Should -Be 1
+        $shared.Thrown | Should -BeNullOrEmpty -Because 'other applications in the pool are a warning, never a refusal'
+        $shared.Said | Should -Be @("  !  App pool 'ExamplePool' also serves 2 other IIS application(s), which stop with it: Other Site/ with its files at 'D:\example\other'; Example Site/Static with its files at ''.") -Because 'the instance and what is inside its folder are not other applications; the folder check refuses the latter before the stop'
+
+        $unreadable = & $report { { $script:cdt58Probed++; throw 'Access is denied' } }
+        $unreadable.Probed | Should -Be 1
+        $unreadable.Thrown | Should -BeNullOrEmpty -Because 'the folder check after it reads the same listing and refuses it before the stop'
+        $unreadable.Said | Should -Be @("  !  Stopping app pool 'ExamplePool' may stop other IIS applications too, and they cannot be named: Cannot read the IIS sites and applications, so the applications app pool 'ExamplePool' serves besides the one at 'D:\example\publish' cannot be listed: Access is denied")
+    }
+
+    It 'is a step of its own right before the folder check, and the one caller of the shared helper (AST)' {
+        $check = $script:Cdt58Ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -like 'Invoke-PlanOrAction "Confirm that IIS serves *' }, $true)
+        $check | Should -Not -BeNullOrEmpty
+        $statements = @($check.Parent.Parent.Statements)
+        $checkAt = [array]::IndexOf($statements, $check.Parent)
+        $checkAt | Should -BeGreaterThan 0
+        $step = $statements[$checkAt - 1].PipelineElements[0]
+        $step.GetCommandName() | Should -BeExactly 'Invoke-PlanOrAction' -Because 'the report is a step, so a plan prints it and runs nothing (Invariant 4)'
+        $step.CommandElements[1].Extent.Text | Should -BeExactly '"Name the IIS applications app pool $AppPoolName serves besides $PublishPath, which stop with it"'
+        $body = @($step.CommandElements[2].ScriptBlock.EndBlock.Statements)
+        $body.Count | Should -Be 1 -Because 'the step is the report and nothing else'
+        $body[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $AppPoolName -PublishPath $PublishPath'
+        @($script:Cdt58Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true)).Count |
+            Should -Be 1 -Because 'the installer stops one pool, once'
+        $helper = @($script:Cdt58Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-AppPoolOtherApplication' }, $true))
+        $helper.Count | Should -Be 1 -Because 'the report is the only caller, and it asks the shared module'
+        $sharing = $script:Cdt58Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-AppPoolSharingReport' }, $true)
+        $helper[0].Extent.StartOffset | Should -BeGreaterThan $sharing.Extent.StartOffset
+        $helper[0].Extent.EndOffset | Should -BeLessThan $sharing.Extent.EndOffset
     }
 }
 
