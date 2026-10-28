@@ -362,6 +362,20 @@ public sealed class BulkJobService
     // -------------------------------------------------------------------------
 
     /// <summary>
+    /// kd-82. How many times the pump reads the queue before it stops on a store that keeps failing: the first read and
+    /// five more, the waits between them doubling from one second (<see cref="QueueReadRetryDelay"/>) - about half a
+    /// minute of waiting in all.
+    /// </summary>
+    internal const int QueueReadAttempts = 6;
+
+    /// <summary>kd-82. The wait before the read that follows <paramref name="failedReads"/> failed ones: 1, 2, 4, 8, 16 s.</summary>
+    internal static TimeSpan QueueReadRetryDelay(int failedReads) => TimeSpan.FromSeconds(1 << (failedReads - 1));
+
+    /// <summary>Test seam (kd-82): how the pump waits before it reads the queue again. Production waits the delay.</summary>
+    internal Func<TimeSpan, CancellationToken, Task> WaitBeforeQueueRead { get; set; } =
+        static (delay, cancellationToken) => Task.Delay(delay, cancellationToken);
+
+    /// <summary>
     /// Starts the pump if it is not already running. The task is started with execution-context
     /// flow SUPPRESSED (review finding utei-1). The pump is long-lived and shared: it is started
     /// by whichever operator's browser circuit happened to enqueue first, then drains EVERY
@@ -407,31 +421,73 @@ public sealed class BulkJobService
     /// so the loop's only normal exit is the no-work path. Exposed internally so tests drive it
     /// deterministically instead of racing the background task.
     /// </summary>
+    /// <remarks>
+    /// kd-82. A read of the queue that fails is made again after a wait (<see cref="QueueReadRetryDelay"/>), up to
+    /// <see cref="QueueReadAttempts"/> reads in all. The loop stopped at the first failed read, and only the next Enqueue
+    /// started it again, so a job just queued - kd-80's case, a store failing a read just after the job's write - stayed
+    /// Queued until someone submitted another job in any module, or was marked Interrupted at the next restart. While it
+    /// waits the flag stays raised, so a job submitted meanwhile is read by this loop rather than starting a second one. A
+    /// store that keeps failing is not read for ever: after the last attempt the loop clears the flag, says so once and
+    /// stops, and the next Enqueue starts it again, as before. A run of failed reads is logged once either way - a warning
+    /// when the queue is read again, or the error when the loop stops.
+    /// </remarks>
     internal async Task DrainQueueAsync(CancellationToken shutdown)
     {
         try
         {
+            var failedReads = 0;
+            Exception? lastFailure = null;
             while (true)
             {
                 BulkJob? next;
-                lock (_gate)
+                try
                 {
-                    next = _repository.GetActive().FirstOrDefault(j => j.Status == BulkJobStatus.Queued);
-                    if (next is null)
+                    lock (_gate)
                     {
-                        _pumpRunning = false;
-                        return;
+                        next = _repository.GetActive().FirstOrDefault(j => j.Status == BulkJobStatus.Queued);
+                        if (next is null)
+                            _pumpRunning = false;
                     }
                 }
+                catch (Exception ex)
+                {
+                    failedReads++;
+                    if (failedReads >= QueueReadAttempts)
+                    {
+                        // The flag first, then the line: a submit that follows the line finds the loop stopped and starts it.
+                        lock (_gate) { _pumpRunning = false; }
+                        _logger.LogError(ex,
+                            "The bulk job queue could not be read in {Attempts} attempts; the runner has stopped and starts again when the next job is submitted",
+                            failedReads);
+                        return;
+                    }
+
+                    lastFailure = ex;
+                    await WaitBeforeQueueRead(QueueReadRetryDelay(failedReads), shutdown);
+                    continue;
+                }
+
+                if (failedReads > 0)
+                {
+                    _logger.LogWarning(lastFailure,
+                        "The bulk job queue could not be read {FailedReads} time(s); it was read on the next attempt and the runner carries on",
+                        failedReads);
+                    failedReads = 0;
+                    lastFailure = null;
+                }
+
+                if (next is null)
+                    return;
 
                 await RunJobAsync(next, shutdown);
             }
         }
         catch (Exception ex)
         {
-            // Defensive: RunJobAsync is designed not to throw, but if anything escapes (e.g. the
-            // repository read at the top of the loop), clear the flag so a later Enqueue can restart
-            // the pump rather than the app silently never running another job.
+            // Defensive: RunJobAsync is designed not to throw, and a failed read of the queue is
+            // handled above (kd-82), but if anything escapes (e.g. a wait before the next read that
+            // is cancelled), clear the flag so a later Enqueue can restart the pump rather than the
+            // app silently never running another job.
             _logger.LogError(ex, "Bulk job pump loop faulted");
             lock (_gate) { _pumpRunning = false; }
         }
