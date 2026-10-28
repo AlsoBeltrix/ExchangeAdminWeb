@@ -82,6 +82,14 @@
                                    after it - so the row says so. *@
                                 <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)@CopyNote(result, result.WhenCreated)</td></tr>
                                 <tr><td class="fw-bold">Last Logon</td><td>@(Unread(result) ?? Statistic(result, ShowTime(result.LastLogonTime)))</td></tr>
+                                @* RecipientLookupAccuracy E2. Directory facts from Exchange Online's own row: no read is added. A property it
+                                   did not return reads "Not reported by Exchange", never a default. *@
+                                <tr><td class="fw-bold">Synced from On-Premises</td><td>@YesNo(result.IsDirSynced)</td></tr>
+                                <tr><td class="fw-bold">Entra Object ID</td><td>@(result.EntraObjectId ?? NotReported)</td></tr>
+                                <tr><td class="fw-bold">Alias</td><td>@(result.Alias ?? NotReported)</td></tr>
+                                <tr><td class="fw-bold">Hidden from Address Book</td><td>@YesNo(result.HiddenFromAddressLists)</td></tr>
+                                <tr><td class="fw-bold">External Address</td><td>@(RecipientClassification.HasExternalAddress(result.RecipientType) ? result.ExternalEmailAddress ?? NotReported : "Not applicable")</td></tr>
+                                <tr><td class="fw-bold">Last Changed</td><td>@(result.WhenChanged is null ? NotReported : ShowTime(result.WhenChanged) + CopyNote(result, result.WhenChanged))</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -209,6 +217,16 @@
         reported is null ? "N/A" : OutOfOfficeRequest.ShowReported(reported, browserZone ?? TimeZoneInfo.Utc);
 
     private const string CouldNotBeRead = "Could not be read";
+
+    // E2. What a row the extras add says when Exchange's answer did not carry its property.
+    private const string NotReported = "Not reported by Exchange";
+
+    private static string YesNo(bool? reported) => reported switch
+    {
+        true => "Yes",
+        false => "No",
+        null => NotReported,
+    };
 
     // S3. What follows the primary address: what was typed, when it was anything else (compared without case); or, when
     // Exchange reported no primary address, that the address shown is the typed text.

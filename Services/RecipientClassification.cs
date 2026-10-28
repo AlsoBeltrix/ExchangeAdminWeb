@@ -216,13 +216,23 @@ internal static class RecipientClassification
     /// parsed, anything else not reported. The module's own parser: <c>ExchangeIdentityResolver</c>'s is private, and no
     /// shared file is edited (the plan's section 6).
     /// </summary>
-    internal static bool? ReadIsDirSynced(object? value) => value switch
+    internal static bool? ReadIsDirSynced(object? value) => ReadFlag(value);
+
+    /// <summary>E2. Any yes-or-no property Exchange reports, read as <see cref="ReadIsDirSynced"/> reads its own.</summary>
+    internal static bool? ReadFlag(object? value) => value switch
     {
-        PSObject wrapped when !ReferenceEquals(wrapped.BaseObject, wrapped) => ReadIsDirSynced(wrapped.BaseObject),
+        PSObject wrapped when !ReferenceEquals(wrapped.BaseObject, wrapped) => ReadFlag(wrapped.BaseObject),
         bool reported => reported,
         string text when bool.TryParse(text.Trim(), out var parsed) => parsed,
         _ => null,
     };
+
+    /// <summary>
+    /// E2. Whether Exchange Online's own type is one whose mail goes to an external address - a mail user (an on-premises
+    /// mailbox's cloud object among them), a guest or a contact - so the External Address row has a value to show.
+    /// </summary>
+    internal static bool HasExternalAddress(string? cloudType) =>
+        Word(cloudType) is MailUser or "GuestMailUser" or "MailContact" or "MailForestContact";
 
     // 3.4. Exchange Online's MailUser covers an on-premises mailbox seen from the cloud, a mail user whose mail goes to an
     // outside address, and one caught between states: only the side that holds it can say which.

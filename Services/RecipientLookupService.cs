@@ -48,6 +48,13 @@ public class RecipientLookupService : ExchangeServiceBase
                 var primary = recip.Properties["PrimarySmtpAddress"]?.Value?.ToString();
                 r.PrimarySmtpAddress = string.IsNullOrWhiteSpace(primary) ? null : primary.Trim();
                 r.IsDirSynced = RecipientClassification.ReadIsDirSynced(recip.Properties["IsDirSynced"]?.Value);
+                // E2. Directory facts from the same row: no read is added. ASSUMPTION, unverified (no live call; the plan's A2):
+                // Exchange Online's Get-Recipient returns them; one that does not come back reads "Not reported by Exchange".
+                r.EntraObjectId = Reported(recip, "ExternalDirectoryObjectId");
+                r.Alias = Reported(recip, "Alias");
+                r.HiddenFromAddressLists = RecipientClassification.ReadFlag(recip.Properties["HiddenFromAddressListsEnabled"]?.Value);
+                r.ExternalEmailAddress = Reported(recip, "ExternalEmailAddress");
+                r.WhenChanged = ReportedTime.Read(recip.Properties["WhenChanged"]?.Value);
                 // RecipientLookupAccuracy S3. Every later read asks about the object Get-Recipient found - its primary address,
                 // or the typed text when Exchange reported none - not about whatever the typed text resolves to again. The address
                 // goes as a parameter value, never as script text.
@@ -330,6 +337,10 @@ public class RecipientLookupService : ExchangeServiceBase
             }
         }), _onPremThrottle);
     }
+
+    // E2. A property as Exchange reported it, trimmed; null when it is absent or blank.
+    private static string? Reported(PSObject row, string name) =>
+        row.Properties[name]?.Value?.ToString() is { } value && !string.IsNullOrWhiteSpace(value) ? value.Trim() : null;
 
     // Two rows are enough to tell one recipient from more than one (U2).
     private const string OnPremRecipientRead =

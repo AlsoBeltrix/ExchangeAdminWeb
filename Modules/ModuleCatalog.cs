@@ -605,7 +605,9 @@ public sealed class ModuleCatalog
             // and every later read asks about that address, not the typed text (S3).
             // 1.3.3: Created says "(Exchange Online's copy)" for a recipient Exchange reports as synced from on-premises: the
             // date is that of Exchange Online's copy, not of the account (S4). The description's quotas stay; E1 shows them.
-            Version = "1.3.3",
+            // 1.4.0: directory facts from the recipient row already read - synced from on-premises or not, the Entra object ID,
+            // alias, hidden from the address book, where a mail user's, contact's or guest's mail goes, last changed (E2).
+            Version = "1.4.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

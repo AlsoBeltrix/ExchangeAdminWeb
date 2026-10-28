@@ -1211,3 +1211,16 @@ he leaves them; and the extras he accepted and declined, by number.
   | --- | --- | --- | --- |
   | M16 the note for a cloud-only recipient, not for a synced one | `d19812384d88509f247a2812fa10c76b` | 2 | T22, synced and cloud-only |
   | M16, second form: the note when the sync state was not reported | `4a84bbec9505142b83ba8c18bd159525` | 1 | T22, not reported |
+- 2026-10-28, **E2 landed** (directory facts): Synced from On-Premises, Entra Object ID, Alias, Hidden from Address Book,
+  External Address (a mail user's, contact's or guest's - an on-premises mailbox's cloud mail user included - else "Not
+  applicable"), Last Changed (with the copy note when synced), each "Not reported by Exchange" when absent; from N1's row,
+  no read added; Recipient Lookup 1.4.0. New file `RecipientLookupExtrasTests` (14 tests). Mutations (restored
+  byte-exact; originals: classifier `aac26e744e19a476ebf2a50f5ec376d5`, page `c4c7e233315536cc8c99c368f4bdeeca`, service
+  `4b647c04bf0b083f1b71c6a3113f10f6`; counts of 258):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME2a a mail user's external address withheld | `d59432536f90f694977b3142b5714be2` | 3 | the on-premises mailbox's, the mail user's |
+  | ME2b an external address shown for every kind | `92294670ac7bf086f8d80347f790cb22` | 4 | every "Not applicable" case |
+  | ME2c a fact Exchange did not return shown as "No" | `49d947ca53eab9a22bc0f21bacb62256` | 1 | the not-reported test |
+  | ME2d Last Changed not read | `f487d8c08e07393419dffa6951f6ceb9` | 3 | both Last Changed cases |

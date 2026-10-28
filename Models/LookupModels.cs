@@ -158,6 +158,13 @@ public class RecipientInfoResult
     /// <summary>S1. Exchange Online's <c>IsDirSynced</c>; null when it was not reported.</summary>
     public bool? IsDirSynced { get; set; }
 
+    // RecipientLookupAccuracy E2. Directory facts from Exchange Online's Get-Recipient row; null when not reported.
+    public string? EntraObjectId { get; set; }
+    public string? Alias { get; set; }
+    public bool? HiddenFromAddressLists { get; set; }
+    public string? ExternalEmailAddress { get; set; }
+    public ReportedTime? WhenChanged { get; set; }
+
     /// <summary>S1. On-premises Exchange's <c>RecipientTypeDetails</c>, when it was asked and found one.</summary>
     public string? OnPremRecipientType { get; set; }
 
