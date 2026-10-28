@@ -1190,3 +1190,14 @@ he leaves them; and the extras he accepted and declined, by number.
   | M11 a recipient with no mailbox shows today's mailbox rows | `3190e7cd516ccee78c07693a8e97929d` | 4 | T13 |
   | M12 an on-premises mailbox's unread rows shown as "None" and "N/A" | `87b231dfede711ac3d7a8ded7252c9cf` | 1 | T14 |
   | M13 Total Size sums a missing part as 0 | `8537284d4ede51aa9320464319a9c244` | 2 | T16, both missing-part cases |
+- 2026-10-28, **S3 landed** (Primary Email): the row shows Exchange's primary address, then "(looked up as ...)" when the
+  typed text was anything else, or the typed text "(as typed; Exchange reported no primary address)"; N2, both N3 reads
+  and N5 ask about the primary address; Recipient Lookup 1.3.2. Tests T19-T21 and the case-only control. Mutations
+  (restored byte-exact; originals: page `b3c3684ceead807eb837f711ddcd967d`, service `85d0cb35e1e0fa39d3ecb44c9ed83453`;
+  counts of 240):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M14 Primary Email shows the typed text | `78c63ae3fa12cb461bd7ce7ad598f204` | 3 | T19 |
+  | M15 the Exchange Online statistics read made with the typed text | `cfc8bcd988ffb854acbeee813d79e7e3` | 1 | T20, in the cloud |
+  | M15, second form: the on-premises size read made with the typed text | `cf7bd66d5ad44f11ac6635594a5c2888` | 1 | T20, on-premises |

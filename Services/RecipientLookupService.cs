@@ -48,6 +48,10 @@ public class RecipientLookupService : ExchangeServiceBase
                 var primary = recip.Properties["PrimarySmtpAddress"]?.Value?.ToString();
                 r.PrimarySmtpAddress = string.IsNullOrWhiteSpace(primary) ? null : primary.Trim();
                 r.IsDirSynced = RecipientClassification.ReadIsDirSynced(recip.Properties["IsDirSynced"]?.Value);
+                // RecipientLookupAccuracy S3. Every later read asks about the object Get-Recipient found - its primary address,
+                // or the typed text when Exchange reported none - not about whatever the typed text resolves to again. The address
+                // goes as a parameter value, never as script text.
+                var identity = r.PrimarySmtpAddress ?? emailAddress;
                 // aud-a23d. Both times through the one reader, not `as DateTime?`: any other type came
                 // back as null and the page showed "N/A", as if none were set. Which types the Exchange
                 // Online module hands back is an unverified assumption; one this app cannot read is
@@ -75,7 +79,7 @@ public class RecipientLookupService : ExchangeServiceBase
                 if (RecipientClassification.AsksExchangeOnlineMailbox(r.RecipientType))
                 {
                     ps.AddCommand("Get-Mailbox")
-                      .AddParameter("Identity", emailAddress)
+                      .AddParameter("Identity", identity)
                       .AddParameter("ErrorAction", "Stop");
                     try
                     {
@@ -99,7 +103,7 @@ public class RecipientLookupService : ExchangeServiceBase
                     try
                     {
                         ps.AddCommand("Get-MailboxStatistics")
-                          .AddParameter("Identity", emailAddress)
+                          .AddParameter("Identity", identity)
                           .AddParameter("ErrorAction", "Stop");
                         var stats = Invoke(ps, tracker);
                         var stat = stats.FirstOrDefault();
@@ -136,7 +140,7 @@ public class RecipientLookupService : ExchangeServiceBase
                     try
                     {
                         ps.AddCommand("Get-MailboxStatistics")
-                          .AddParameter("Identity", emailAddress)
+                          .AddParameter("Identity", identity)
                           .AddParameter("Archive", true)
                           .AddParameter("ErrorAction", "Stop");
                         var archiveStats = Invoke(ps, tracker);
@@ -156,7 +160,7 @@ public class RecipientLookupService : ExchangeServiceBase
                     }
                     catch (Exception ex) when (IsNotFound(ex))
                     {
-                        _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
+                        _logger.LogInformation("No archive mailbox found for {Email}", identity);
                     }
                     catch (Exception ex) when (!IsCancellation(ex))
                     {
@@ -184,7 +188,7 @@ public class RecipientLookupService : ExchangeServiceBase
             return result;
 
         // S1. On-premises is asked about the primary address Exchange Online returned (the typed text when it reported none),
-        // so its answer is about the object Exchange Online found.
+        // so its answer is about the object Exchange Online found; S3, the on-premises sizes too.
         var address = result.PrimarySmtpAddress ?? emailAddress;
         var onPrem = OnPremRecipientAnswer.NotAsked;
         string? onPremType = null;
@@ -221,7 +225,7 @@ public class RecipientLookupService : ExchangeServiceBase
                 // aud-a23o. A size only when it was read; one that could not be is a warning naming why. An unparseable size
                 // showed 0 GB, a failed archive read 0 GB, and any failure "unavailable (connection not configured)", a cause
                 // it guessed.
-                var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress, cancellationToken);
+                var onPremSize = await GetOnPremMailboxSizeAsync(address, cancellationToken);
                 if (onPremSize.MailboxUnreadable is null)
                     result.MailboxSizeGB = onPremSize.MailboxGB;
                 else

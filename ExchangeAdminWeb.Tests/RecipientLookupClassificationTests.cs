@@ -648,6 +648,81 @@ public sealed class RecipientLookupClassificationTests : IDisposable
             Assert.Equal((row, "Not read for this recipient type"), (row, rows[row]));
     }
 
+    // ---- S3: Primary Email, and the reads bound to it -------------------------------------------
+
+    private const string Typed = "alias@contoso.test";
+
+    // T19. It showed whatever was typed - another of the recipient's addresses, an alias, a name - as its primary address.
+    [Theory]
+    [InlineData(Typed)]
+    [InlineData("Alice")]
+    public async Task ARecipientTypedByAnotherName_ShowsItsPrimaryAddress_AndWhatWasTyped(string typed)
+    {
+        Recipient("UserMailbox", synced: false, typed: typed);
+        _exchange.Mailboxes[Address] = CloudMailbox(Address);
+
+        var result = await LookedUp(typed);
+
+        Assert.Equal($"{Address} (looked up as {typed})", RowsOf(Rendered(result))["Primary Email"]);
+    }
+
+    // What was typed, in another case, is the same address: nothing follows it.
+    [Fact]
+    public async Task ThePrimaryAddressTypedInAnotherCase_IsShownAlone()
+    {
+        Recipient("UserMailbox", synced: false, typed: "ALICE@contoso.test");
+        _exchange.Mailboxes[Address] = CloudMailbox(Address);
+
+        var result = await LookedUp("ALICE@contoso.test");
+
+        Assert.Equal(Address, RowsOf(Rendered(result))["Primary Email"]);
+    }
+
+    // T20. Every later read asks about the object Get-Recipient found, not about what was typed: Exchange Online's mailbox and
+    // both statistics reads, and on-premises Exchange's recipient and size reads.
+    [Theory]
+    [InlineData("in the cloud")]
+    [InlineData("on-premises")]
+    public async Task EveryLaterRead_AsksAboutThePrimaryAddress(string held)
+    {
+        if (held == "in the cloud")
+        {
+            Recipient("UserMailbox", synced: false, typed: Typed);
+            _exchange.Mailboxes[Address] = CloudMailbox(Address);
+        }
+        else
+        {
+            Recipient("MailUser", synced: true, typed: Typed);
+            _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+        }
+
+        var result = await LookedUp(Typed);
+
+        Assert.Null(result.Error);
+        Assert.Empty(result.Warnings);
+        var calls = _exchange.CallList();
+        Assert.Equal($"Get-Recipient {Typed}", calls[0]);
+        Assert.All(calls.Skip(1), call => Assert.EndsWith(" " + Address, call, StringComparison.Ordinal));
+        string[] later = held == "in the cloud"
+            ? [$"Get-Mailbox {Address}", $"Get-MailboxStatistics {Address}", $"Get-MailboxStatistics -Archive {Address}"]
+            : [$"OnPrem Get-Recipient {Address}", $"OnPrem Get-MailboxStatistics {Address}", $"OnPrem Get-MailboxStatistics -Archive {Address}"];
+        Assert.Equal(later, calls.Skip(1).ToArray());
+    }
+
+    // T21. Exchange reported no primary address: the typed text is shown as such, and the reads ask about it.
+    [Fact]
+    public async Task NoPrimaryAddressReported_TheTypedTextIsShownAsTyped_AndTheReadsUseIt()
+    {
+        Recipient("UserMailbox", synced: false, typed: Typed, primary: null);
+        _exchange.Mailboxes[Typed] = CloudMailbox(Typed);
+
+        var result = await LookedUp(Typed);
+
+        Assert.Equal($"{Typed} (as typed; Exchange reported no primary address)", RowsOf(Rendered(result))["Primary Email"]);
+        Assert.All(_exchange.CallList(), call => Assert.EndsWith(" " + Typed, call, StringComparison.Ordinal));
+        Assert.Equal(RecipientLocationClass.Cloud, result.LocationClass);
+    }
+
     // T18. "Not applicable" is the answer, not a warning; "Could not be determined" keeps the warning colour.
     [Fact]
     public async Task NotApplicable_IsNotInTheWarningColour_ButCouldNotBeDetermined_Is()

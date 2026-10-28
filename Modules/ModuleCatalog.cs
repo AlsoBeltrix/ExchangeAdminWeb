@@ -601,7 +601,9 @@ public sealed class ModuleCatalog
             // applicable", saying why, and one the two sides do not settle "Could not be determined"; every mailbox row says
             // "Not applicable", "Not read ..." or "Could not be read" where it stated an absence it never read, and Total Size
             // is a sum only when both sizes were read (S2).
-            Version = "1.3.1",
+            // 1.3.2: Primary Email is the recipient's primary address, with what was typed beside it when it was anything else,
+            // and every later read asks about that address, not the typed text (S3).
+            Version = "1.3.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -62,7 +62,9 @@
                         <table class="table table-sm">
                             <tbody>
                                 <tr><td class="fw-bold" style="width:180px">Display Name</td><td>@result.DisplayName</td></tr>
-                                <tr><td class="fw-bold">Primary Email</td><td>@result.EmailAddress</td></tr>
+                                @* RecipientLookupAccuracy S3. Exchange's primary address, where this row showed whatever was typed; what was
+                                   typed beside it when it was anything else, so the operator sees what the lookup resolved to. *@
+                                <tr><td class="fw-bold">Primary Email</td><td>@(result.PrimarySmtpAddress ?? result.EmailAddress)<small class="text-muted">@PrimaryEmailNote(result)</small></td></tr>
                                 @* RecipientLookupAccuracy S1. What the recipient is, named from Exchange's own answers on the side that
                                    holds it (RecipientClassification); beneath it, in small print, Exchange's raw words - what this row
                                    showed before. *@
@@ -204,6 +206,13 @@
         reported is null ? "N/A" : OutOfOfficeRequest.ShowReported(reported, browserZone ?? TimeZoneInfo.Utc);
 
     private const string CouldNotBeRead = "Could not be read";
+
+    // S3. What follows the primary address: what was typed, when it was anything else (compared without case); or, when
+    // Exchange reported no primary address, that the address shown is the typed text.
+    private static string PrimaryEmailNote(RecipientInfoResult r) =>
+        r.PrimarySmtpAddress is null ? " (as typed; Exchange reported no primary address)"
+        : string.Equals(r.PrimarySmtpAddress, r.EmailAddress, StringComparison.OrdinalIgnoreCase) ? ""
+        : $" (looked up as {r.EmailAddress})";
 
     // RecipientLookupAccuracy S2 (the plan's 3.6). What a mailbox row says when this recipient's kind means its value was not
     // read, or does not apply - or when the Exchange Online mailbox read itself failed (aud-a54); null when the row shows its
