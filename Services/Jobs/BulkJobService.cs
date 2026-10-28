@@ -691,6 +691,11 @@ public sealed class BulkJobService
     /// left as it is, for the next start to mark Interrupted, the queue read passes it over from then on, and the runner goes
     /// on to the next job - no <see cref="JobChanged"/> and no completion hook, since nothing was written. A run of failed
     /// writes is logged once either way - a warning when a write is then made, or the error when the job is left.
+    /// kd-84. The read of the job after its write, for the completion hook, was outside any try: a read the store failed
+    /// threw out of this tail - from the job's own try into the backstop, which logged an unexpected fault and wrote again
+    /// over nothing, and from the backstop out of <see cref="RunJobAsync"/>, which stopped the runner until the next submit.
+    /// It is now in one try with the hook, and its failure is a notification failure: logged as one, the status written
+    /// stands, no hook runs, and the runner goes on.
     /// </remarks>
     private async Task FinishAndNotify(IServiceScope scope, string jobId, BulkJobStatus terminal,
         string? message, params BulkJobStatus[] allowedFrom)
@@ -733,9 +738,18 @@ public sealed class BulkJobService
         if (!transitioned)
             return;
 
-        var finalJob = _repository.Get(jobId);
-        if (finalJob is not null)
-            NotifyCompletedInScope(scope, finalJob);
+        // kd-84. The read is the completion notification's first step, so it is in one try with the hook: a read the store
+        // fails is a failed notification, logged as one, and nothing leaves this tail (the remarks).
+        try
+        {
+            var finalJob = _repository.Get(jobId);
+            if (finalJob is not null)
+                NotifyCompletedInScope(scope, finalJob);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Completion notification for bulk job {Job} failed (non-fatal)", jobId);
+        }
     }
 
     private IBulkJobProcessor? ResolveProcessor(IServiceScope scope, string moduleId)

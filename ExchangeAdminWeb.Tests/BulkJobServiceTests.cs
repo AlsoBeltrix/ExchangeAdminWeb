@@ -746,6 +746,9 @@ public class BulkJobServiceTests
 
         public Task FirstError => _firstError.Task;
 
+        /// <summary>kd-84. Called after each line is kept, on the logging thread; null unless a test sets it.</summary>
+        public Action? AfterEachLine { get; set; }
+
         public IReadOnlyList<(LogLevel Level, string Message, Exception? Exception)> Entries
         {
             get
@@ -766,6 +769,7 @@ public class BulkJobServiceTests
                 _entries.Add((logLevel, formatter(state, exception), exception));
             if (logLevel >= LogLevel.Error)
                 _firstError.TrySetResult();
+            AfterEachLine?.Invoke();
         }
     }
 
@@ -1004,6 +1008,133 @@ public class BulkJobServiceTests
 
             return Task.CompletedTask;
         };
+        return waits;
+    }
+
+    // -------------------------------------------------------------------------
+    // kd-84: a read of the finished job that fails is a notification failure
+    // -------------------------------------------------------------------------
+    // FinishAndNotify read the job back for its completion hook outside any try. A read the store failed, after it took the
+    // job's final write, threw out of the tail: from the job's own try into the backstop - "faulted unexpectedly", for a job
+    // that had finished - and from the backstop out of the runner, which stopped until the next submit with the jobs behind
+    // it Queued. The read is now in one try with the hook: its failure is logged as a notification failure, the job's status
+    // stands, and the runner goes on to the next job.
+
+    [Fact]
+    public async Task AReadOfTheFinishedJobThatFails_IsANotificationFailure_ItsStatusStands_AndTheJobBehindItRuns()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("j1", "SS"), new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("j2", "S"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+        // The store takes j1's final write, and fails the read of j1 right after it, once.
+        FailTheReadOfTheFinishedJobOnce(h, log, "j1");
+        var waits = RecordEveryWait(h);
+
+        // One drive of the runner, as a submit starts it.
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // Said once, as a notification failure, with the failed read's own exception.
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Error, said.Level);
+        Assert.Equal("Completion notification for bulk job j1 failed (non-fatal)", said.Message);
+        Assert.Contains("no such table: bulk_job", Assert.IsType<SqliteException>(said.Exception).Message);
+        // j1's status stands as its final write left it: Completed, its rows, no message - nothing written over it. Its hook
+        // did not run, the job it is given not having been read; the job behind it ran in the same drive, and its hook did.
+        var j1 = h.Repository.Get("j1")!;
+        Assert.Equal(BulkJobStatus.Completed, j1.Status);
+        Assert.Equal(2, j1.SuccessCount);
+        Assert.Null(j1.Message);
+        Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("j2")!.Status);
+        Assert.Equal(new[] { 0, 1 }, h.CreatedProcessors.Select(p => p.CompletionCalls));
+        // The store failed that one read and nothing else: the runner waited before no read of the queue and no write.
+        lock (waits)
+            Assert.Empty(waits);
+    }
+
+    [Fact]
+    public async Task AReadOfAFaultedJobThatFails_AfterItsInterruptedStatusLands_DoesNotStopTheRunner()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("j1", "SS"), new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("j2", "S"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+        // j1 faults - the store refuses its first row's record, which nothing in the job's own try takes - so the runner's
+        // backstop finishes it Interrupted; the store takes that write, and fails the read of j1 right after it, once.
+        FailRowWrites(h, "j1");
+        FailTheReadOfTheFinishedJobOnce(h, log, "j1");
+        var waits = RecordEveryWait(h);
+
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The runner carried on: the job behind it ran in the same drive, and its hook fired; j1's could not.
+        Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("j2")!.Status);
+        Assert.Equal(new[] { 0, 1 }, h.CreatedProcessors.Select(p => p.CompletionCalls));
+        // Said: the fault, and then the read, as a notification failure - each with the store's own exception.
+        Assert.Collection(log.Entries,
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal("Bulk job j1 faulted unexpectedly", said.Message);
+                Assert.Contains(RowWriteRefused, Assert.IsType<SqliteException>(said.Exception).Message);
+            },
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal("Completion notification for bulk job j1 failed (non-fatal)", said.Message);
+                Assert.Contains("no such table: bulk_job", Assert.IsType<SqliteException>(said.Exception).Message);
+            });
+        // j1's status stands as the backstop's write left it: Interrupted, with the fault, and no row recorded.
+        var j1 = h.Repository.Get("j1")!;
+        Assert.Equal(BulkJobStatus.Interrupted, j1.Status);
+        Assert.Equal($"Job faulted: {log.Entries[0].Exception!.Message}", j1.Message);
+        Assert.Equal(0, j1.ProcessedRows);
+        lock (waits)
+            Assert.Empty(waits);
+    }
+
+    // kd-84's stand-in for a store that fails one read: the read of a job just after its final status has landed. The jobs
+    // table is renamed away (kd-82's stand-in) when JobChanged announces that status - the runner raises it between the
+    // write and the read - and renamed back at the next line the runner logs, whatever that line says: so that read meets
+    // "no such table", and every read and write after it is made as before.
+    private static void FailTheReadOfTheFinishedJobOnce(Harness h, CapturingLogger log, string jobId)
+    {
+        var engaged = false;
+        var away = false;
+        h.Service.JobChanged += id =>
+        {
+            if (engaged || id != jobId || h.Repository.Get(jobId)?.IsTerminal != true)
+                return;
+            RenameJobsTable(h, "bulk_job", "bulk_job_held");
+            engaged = away = true;
+        };
+        log.AfterEachLine = () =>
+        {
+            if (!away)
+                return;
+            RenameJobsTable(h, "bulk_job_held", "bulk_job");
+            away = false;
+        };
+    }
+
+    // A fault the job's own try does not take: a trigger that refuses one job's row records, so the runner's backstop
+    // finishes the job, Interrupted with the store's message.
+    private const string RowWriteRefused = "The store did not take the row.";
+
+    private static void FailRowWrites(Harness h, string jobId) => ExecuteOnJobsStore(h,
+        $"""
+        CREATE TRIGGER kd84_fail_row BEFORE INSERT ON bulk_job_row
+        WHEN NEW.job_id = '{jobId}'
+        BEGIN SELECT RAISE(ABORT, '{RowWriteRefused}'); END;
+        """);
+
+    // Every wait the runner makes - before a read of the queue or a final status write - recorded and made at once, in
+    // kd-83's recorder, which ends a runner past 50 waits so that one that never stops fails its test rather than hangs it.
+    private static List<TimeSpan> RecordEveryWait(Harness h)
+    {
+        var waits = RecordWaitsBeforeFinalWrite(h);
+        var record = h.Service.WaitBeforeFinalWrite;
+        h.Service.WaitBeforeQueueRead = (delay, _) => record(delay);
         return waits;
     }
 
