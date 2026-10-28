@@ -1067,7 +1067,9 @@ public sealed class ModuleCatalog
             // 2.19.4: the two CSV applies complete their progress activity from their own outcome, so dismissing the
             // result banner while the job list refreshes no longer ends the bar as not succeeded for a job that was
             // submitted (kd-74).
-            Version = "2.19.4",
+            // 2.19.5: and a last time inside Set-Place's call, once it holds a pool connection, so a cancel made while every
+            // connection was busy ends the row with nothing written, filed Cancelled, instead of Set-Place running (kd-75).
+            Version = "2.19.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

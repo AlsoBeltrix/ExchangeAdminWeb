@@ -506,9 +506,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// City/State/Country one and the on-prem room-list one - which both run before Set-Place, so a
     /// cancel during either ends the row as a cancellation with nothing written. kd-73: and looked
     /// at once more immediately before Set-Place, so a cancel landing after those fetches ends the
-    /// row the same way. The fetches after Set-Place take none on purpose: a cancel there would leave
-    /// the room half-configured, the partial these preflights exist to prevent, so once the first
-    /// write is made the row runs on.
+    /// row the same way. kd-75: and a last time inside Set-Place's pooled call, before its command is
+    /// built, because the pool's wait for a free connection takes no token - a cancel during that wait
+    /// ends the row the same way, nothing having been sent. The fetches after Set-Place take none on
+    /// purpose: a cancel there would leave the room half-configured, the partial these preflights
+    /// exist to prevent, so once the first write is made the row runs on.
     /// </param>
     public async Task<RoomOperationResult> SetRoomMetadataAndListAsync(
         string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
@@ -634,8 +636,20 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // written on-prem in Step 2.
         // Single-write (Set-Place): safe to retry on a dead pooled session. This is the step
         // that failed mid-batch in the observed bug (CR-BUG-1) before any cmdlet committed.
+        var cancelledBeforeSetPlace = false;
         var placeResult = await RunAsync((ps, tracker) =>
         {
+            // kd-75. The check above runs before RunAsync, whose borrow then waits for a free pool connection and takes no
+            // token, so a cancel during that wait was not seen and Set-Place ran once a connection freed. So the token is
+            // looked at here too, once the connection is held and before the command is built - on a retry as well, which
+            // runs only when the first attempt provably sent nothing. Nothing has been sent, so the row still ends as a
+            // cancellation with nothing written. Marked rather than thrown: RunAsync takes a throw for a failed Set-Place.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                cancelledBeforeSetPlace = true;
+                return;
+            }
+
             _operationTrace?.Step("SetPlace", backend: "EXO", command: "Set-Place", target: room.Identity);
             var placeCmd = ps.AddCommand("Set-Place")
               .AddParameter("Identity", room.Identity)
@@ -652,6 +666,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             Invoke(ps, tracker);
             result.Steps.Add(new RoomOperationStep { Stage = "Set-Place", Success = true });
         }, allowRetry: true);
+
+        // kd-75. Thrown here, once the pool has the connection back, as the check before RunAsync throws: the page files it
+        // Cancelled (kd-57), not as a Set-Place that failed.
+        if (cancelledBeforeSetPlace)
+            throw new OperationCanceledException(cancellationToken);
 
         if (!placeResult.Success)
         {
