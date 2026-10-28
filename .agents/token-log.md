@@ -441,3 +441,4 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, CloudPasswordResetEmployeeId S3** (the page and the descriptor; the same agent, continued by the supervisor after the S1-S2 hand-back). Not separable for the same reason; the supervisor's figures for the continuation cover S3 and S4 together.
 
 **2026-10-28, CloudPasswordResetEmployeeId S4** (records: the module doc, the module plan's pointers, this plan's version note, acceptance table and status, findings cpe-1 to cpe-4; same agent and continuation as S3, whose line covers it).
+**2026-10-28, Cloud Password Reset employee ID (S1-S4).** One Opus 5.5 agent across two dispatches: ~785K agent tokens, 397 tool uses, 2 h 3 min; 7799 tests on the branch; merged `683a8ce7`. In-app help plan draft in progress.
