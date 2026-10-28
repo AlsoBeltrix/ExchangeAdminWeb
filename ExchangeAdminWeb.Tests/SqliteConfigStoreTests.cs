@@ -33,7 +33,7 @@ public class SqliteConfigStoreTests
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('a', '1');";
             command.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, store.GetChangeToken());
 
@@ -43,7 +43,7 @@ public class SqliteConfigStoreTests
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('b', '2');";
             command.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, store.GetChangeToken());
     }
@@ -61,7 +61,7 @@ public class SqliteConfigStoreTests
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('keep', 'yes');";
             command.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
         var tokenBefore = store.GetChangeToken();
 
         // A throwing write must roll back BOTH its row and the token bump.
@@ -73,7 +73,7 @@ public class SqliteConfigStoreTests
                 command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('bad', 'no');";
                 command.ExecuteNonQuery();
                 throw new InvalidOperationException("boom");
-            }));
+            }, TestContext.Current.CancellationToken));
 
         Assert.Equal(tokenBefore, store.GetChangeToken());
 
@@ -98,7 +98,7 @@ public class SqliteConfigStoreTests
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('color', 'blue');";
             command.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         var value = store.Read(connection =>
         {
@@ -122,7 +122,7 @@ public class SqliteConfigStoreTests
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('shared', 'ok');";
             command.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Simulate the mixed Singleton/Scoped readers: many overlapping reads must all succeed
         // against their own short-lived connections (the factory must not hand out one shared

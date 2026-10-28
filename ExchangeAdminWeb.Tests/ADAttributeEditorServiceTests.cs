@@ -638,7 +638,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             mark.Transaction = tx;
             mark.CommandText = "INSERT INTO editable_attribute_present (marker) VALUES (1) ON CONFLICT(marker) DO NOTHING;";
             mark.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
         service.InvalidateAllowlistCache();
 
         Assert.Null(service.GetAllowlist());
@@ -686,7 +686,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             cmd.Transaction = tx;
             cmd.CommandText = "DROP TABLE editable_attribute;";
             cmd.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Inside the throttle the cache still hands back the stale-but-valid list...
         var stillCached = service.GetAllowlist();
@@ -732,7 +732,7 @@ public class ADAttributeEditorServiceTests : IDisposable
                 "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) " +
                 "VALUES ('department', 'Department', 'Choice', '{not valid json', 0, 0, 1);";
             insert.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
         Assert.Same(cached, service.GetAllowlist());
 
         var result = service.SaveAllowlistAndAudit(

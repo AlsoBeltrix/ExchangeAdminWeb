@@ -441,3 +441,80 @@ Named for the owner as the one thing in this record left undone.
 ## Reviewer comments (supervisor, settings-batch-8)
 
 Reviewer: codex / @azure-openai-eus2-global/gpt-5.5-dzs / xhigh / standard; codex-cli 0.163.0; base 620e9d5a head f08a664a (merged fe67668d, with d0fc4c70); 2026-10-26; capability proof succeeded (AGENTS.md read, git show --stat f08a664a). Two candidates, admitted as cons-4 (MEDIUM, a stale module load landing after a newer route) and cons-5 (LOW, a dropped second save). Codex found nothing in the log-folder start-up construction and recovery, the telemetry streak reset, the bulk-job range defaults, the Config DB and BitLocker busy-timeout surfacing, or the Exchange Online drain's failure handling. Artefacts: `.agents/review/settings-batch-8.result.txt`, `.stream.log`, `prompt-settings-batch-8.md`.
+
+## (12), under docs/CancellationDepth-Plan.md Part B (2026-10-28)
+
+The plan (approved 2026-10-28) took the item on as its Part B: a save the page has stopped waiting for is cancelled, and a
+cancelled write means nothing written. Each slice's section follows; kd-58's record holds Part A.
+
+### B1, the store (implementer, 2026-10-28; lines at this commit)
+
+Read first, at `da9e0a0b`: `IConfigStore.Write` took no token, and `SqliteConfigStore.Write` opened its connection, began
+`BEGIN IMMEDIATE`, ran the callback, bumped the change token and committed with nothing between them that a cancel could
+reach.
+
+- **The interface** (`Services/Storage/IConfigStore.cs`): two token-taking writes as default members (55, 62), each looking at
+  the token once and then calling the token-less write - so the test stand-ins that implement the interface compile
+  unchanged (the local precedent is `IBulkJobProcessor.OnJobCompletedAsync`).
+- **The store** (`Services/Storage/SqliteConfigStore.cs`): implements both itself (40, 72); the token-less forms pass none. It
+  looks at four points and nowhere else (plan 4.4): before the connection opens (C1, 43), before `BEGIN IMMEDIATE` (C2, 45),
+  as it returns (C3, 53 - after any busy wait, so the callback never runs) and after the callback and the change-token bump,
+  before the commit (C4, 57). A throw at C3 or C4 leaves the `using` with the transaction uncommitted, and its disposal rolls
+  it back - the callback's rows and the bump together - so nothing is half-written and the other instance sees nothing.
+  After `Commit()` nothing looks: a cancel there is not honoured, the write returns its result, and the store alone decides
+  whether a write landed. An internal seam runs after the commit, for the tests (`AfterCommit`, 59, 67; null in the app).
+- **Not reached by any token**, as the plan says (4.4, 4.7): the busy wait inside `BEGIN IMMEDIATE` (five seconds) and a call
+  blocked inside the database file. A cancel during the wait is seen at C3 when the wait ends; a lock never freed fails busy,
+  and busy is what the write reports.
+- **The analyzer** (plan section 13, assumption 7, now counted): the overloads made xUnit1051 flag thirteen existing test
+  calls on the concrete store - `SqliteConfigStoreTests` (6), `SqliteBusyWaitTests` (2), `ADAttributeEditorServiceTests` (3),
+  `AllowlistBannerTests`, `SectionAccessServiceTests`. Each now passes `TestContext.Current.CancellationToken`, which no test
+  cancels: no behaviour changes, and the build's warnings stay the baseline 19.
+- No caller in the app passes a token yet: that is B2 and B3.
+
+**What the operator sees**: nothing yet - no save hands the store a token until B2.
+
+#### Guard proof - B1
+
+New `ExchangeAdminWeb.Tests/SqliteConfigStoreCancellationTests.cs`, 8 cases, a real store over a temporary database, each
+outcome read through a connection of its own, a held lock an unpooled connection's `BEGIN IMMEDIATE`:
+
+- `AWriteWhoseTokenIsAlreadyCancelled_WritesNothing_AndWaitsForNoLock` (both writes): no callback, no row, no token moved, and
+  no wait for the held lock.
+- `AWriteCancelledDuringTheBusyWait_TheLockThenFreed_RunsNoCallback_AndWritesNothing`: cancelled a second into the wait, the
+  lock then freed - a cancellation, the callback never run.
+- `AWriteCancelledInsideItsCallback_RollsBackWhole` (both writes): two rows inserted, then cancelled - no row, no token moved.
+- `AWriteCancelledAfterItsCommit_ReturnsItsResult_ItsRowsThere`: through the seam - the result returned, the row and the token
+  there.
+- `AWriteCancelledDuringABusyWaitThatNeverEnds_FailsBusy_NotAsACancel`: `ConfigStoreBusy.IsBusy`, nothing written.
+- `TheDefaultRefusesACancelledToken_AndTheAppsStoreImplementsBothTokenWritesItself`: a token-less stand-in's default refuses
+  before writing; the interface map shows `SqliteConfigStore` implementing both token writes.
+
+The two busy-wait cases wait by time - a second, inside the five-second wait - for the write to meet the lock; there is no
+seam to say it has. Fixed-file MD5s: `Services/Storage/SqliteConfigStore.cs` `05CC9DD2DB266CBE918FA44ED83EF4C2`,
+`Services/Storage/IConfigStore.cs` `1ED00B9065378656A6F6067E8D2734CF`. kd-58's harness and method; filter
+`FullyQualifiedName~SqliteConfigStoreCancellation`, 8 tests, 8/8 with the fix; every mutant compiled; every restore byte-exact.
+C1 and C2 cannot be told apart by a test - nothing observable lies between them - so they are mutated together.
+
+| # | Mutation | Mutant MD5 | Failed (of 8) |
+|---|---|---|---|
+| B1a | the looks before the open and before BEGIN (C1, C2) removed | `131DC640754860A05CFBDAB5B2A24019` | 2: AWriteWhoseTokenIsAlreadyCancelled_WritesNothing_AndWaitsForNoLock(True); AWriteWhoseTokenIsAlreadyCancelled_WritesNothing_AndWaitsForNoLock(False) |
+| B1b | the look as BEGIN returns (C3) removed | `7EFF0F2BAADDABB9F0C231F4E74B0701` | 1: AWriteCancelledDuringTheBusyWait_TheLockThenFreed_RunsNoCallback_AndWritesNothing |
+| B1c | the look before the commit (C4) removed | `06AC91F24CCA2915093099898525A45D` | 2: AWriteCancelledInsideItsCallback_RollsBackWhole(False); AWriteCancelledInsideItsCallback_RollsBackWhole(True) |
+| B1d | a look added after the commit | `6C534002EDB7A36A3055845A487F6426` | 1: AWriteCancelledAfterItsCommit_ReturnsItsResult_ItsRowsThere |
+| B1e | the interface's default write, returning a value, looks at nothing | `AB640659AB93DDFB3094D639B78A285C` | 1: TheDefaultRefusesACancelledToken_AndTheAppsStoreImplementsBothTokenWritesItself |
+| B1f | the interface's default write, returning none, looks at nothing | `CFC2E01C2B5FF3B63B5C6FE0A58972F2` | 1: TheDefaultRefusesACancelledToken_AndTheAppsStoreImplementsBothTokenWritesItself |
+| B1g | the store's no-result write drops the token | `44AC039D96282B491392AC22AC8FED7B` | 3: AWriteCancelledInsideItsCallback_RollsBackWhole(False); AWriteWhoseTokenIsAlreadyCancelled_WritesNothing_AndWaitsForNoLock(False); AWriteCancelledDuringTheBusyWait_TheLockThenFreed_RunsNoCallback_AndWritesNothing |
+
+Every mutant failed on its own behaviour, never on a count pin.
+
+#### Gates - B1
+
+On this commit's tree, each run alone (2026-10-28): `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental` exit 0,
+0 errors, 19 warnings - the baseline set, no xUnit1051 among them; `dotnet test ExchangeAdminWeb.slnx --
+xUnit.MaxParallelThreads=4` 8,157 passed / 0 failed / 0 skipped (A10's 8,149 and these 8); `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; after `git add -A`, `git diff --check HEAD` exit 0 and
+`pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` passed. No PowerShell file changed; nothing deployed; no manual check run.
+
+**Versions**: none. The store is shared - the base app version, by the supervisor's ruling, is 2.36.0's, not yet deployed (the
+plan's section 7).

@@ -348,7 +348,7 @@ public class SectionAccessServiceTests : IDisposable
             cmd.Transaction = tx;
             cmd.CommandText = "DROP TABLE section_access_present;";
             cmd.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         var service = CreateService();
 

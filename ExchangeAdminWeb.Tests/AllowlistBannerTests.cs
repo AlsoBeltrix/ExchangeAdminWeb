@@ -63,7 +63,7 @@ public sealed class AllowlistBannerTests : IDisposable
                 "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) "
                 + "VALUES ('employeeType', 'Employee Type', 'Choice', '{not valid json', 0, 1, 1);";
             insert.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         var text = LoadedBanner(out var corrupt);
 

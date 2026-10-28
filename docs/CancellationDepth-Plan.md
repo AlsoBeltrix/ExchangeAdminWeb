@@ -745,7 +745,8 @@ owner's (`.agents/decisions.md` 2026-10-26).
    (SQLite's native interrupt is believed not to shorten the busy handler's wait). Not relied on: no interrupt is used.
 7. That xUnit1051 flags every test call to a method that gained an optional token or a token overload; how many such
    calls exist was not counted. Not exercised by A1-A3: the methods they gave tokens are called from test helpers, not
-   test methods, and none was raised.
+   test methods, and none was raised. **Counted at B1**: the store's token overloads made it flag thirteen test calls on the
+   concrete store, in five test files; each now passes `TestContext.Current.CancellationToken` (aud-a67's B1 section).
 8. That the Room Finder bulk processor needs a narrow way to ask whether a job's cancel was the operator's (the
    persisted cancel flag) - it has none today. The rule is fixed here; the mechanism is the implementer's. **Settled at A9**:
    a narrow seam, `IBulkJobCancelRequests.IsCancelRequested(jobId)`, implemented by `BulkJobRepository` (the flag's store)
@@ -848,8 +849,13 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   request Cancelled under the job's captured actor, address and ticket, the host stopping Failed in its own words - and lets
   the cancel go on to the runner, which stops the batch without recording the row. Assumption 8 settled with a narrow seam,
   `IBulkJobCancelRequests` (the job store's persisted flag). Conference Rooms 2.19.10 -> 2.19.11; the base bump stays owed.
-- 2026-10-28, **A10, Message Trace** - `feat/cancellation-depth`, the commit that adds this line: the cloud search's windows
+- 2026-10-28, **A10, Message Trace** - `feat/cancellation-depth` `da9e0a0b`: the cloud search's windows
   and the cloud detail read on the read helper with the search's or the detail's token (E3), their catches letting the
   cancel through; the on-premises search and detail with E7 - the server's queue, the runspace, the connect and a look
   before each read, their catches letting it through. The search, a detail read and the detail download declare that they
   take the cancel (3.8a). Message Trace 1.8.6 -> 1.8.7; the base bump stays owed.
+- 2026-10-28, **B1, the store** - `feat/cancellation-depth`, the commit that adds this line (record: aud-a67's (12) section):
+  `IConfigStore` gains the two token writes as default members; `SqliteConfigStore` implements both, looking at C1-C4 and
+  nothing after the commit; an internal after-commit seam for the tests. The overloads made xUnit1051 flag thirteen test
+  calls on the concrete store (assumption 7, now counted); each passes the test's token. No caller in the app passes one yet.
+  No module bump.
