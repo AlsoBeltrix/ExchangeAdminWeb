@@ -145,6 +145,14 @@ directory and never reads a population - see `.agents/decisions.md` 2026-09-22, 
 enumerates the directory". The lookup is scoped to the subject of the operation, which is the
 shape every other directory read in this app already takes.
 
+> **From module `1.2.0` (`docs/CloudPasswordResetEmployeeId-Plan.md`), an account with no
+> `employeeId` has one more route, off until switched on.** The account's name proposes an owner
+> (the name before the `@` less a configured ending, as a logon name across the forest); that
+> owner's `employeeID` must lead back to them alone by the rule above, and they must have a
+> mailbox. The number is saved on the account, then the reset proceeds by steps 2 and 3. Two
+> forest searches, one name and one number, still for the one account being reset. When that
+> lookup fails, the account gets the `DestinationNoEmployeeId` row below, unchanged.
+
 **Every step fails closed for an operator holding only the reset permission, and a failure refuses
 rather than falling back.** There is no operator-typed fallback: an address the module cannot
 derive is one it cannot verify, and the whole point of deriving is that nobody chooses where an
@@ -209,6 +217,14 @@ employeeId true-up files are how the directory got populated and are **not part 
 The module still does not **validate** the derived address against anything else. It is whatever
 the directory says, and if the directory is wrong the mail goes to the wrong person. That is a
 directory-accuracy problem with a directory-accuracy fix, not something this module second-guesses.
+
+> **Changed at module `1.2.0`, narrowly.** The true-up files stay out and no CSV is read, but the
+> true-up script's per-account process came in: for an account with no `employeeId`, and only with
+> the fill-in switched on, the module derives the owner from the account's name and saves the
+> owner's number on that one account at the moment of its reset (owner, 2026-10-27;
+> `docs/CloudPasswordResetEmployeeId-Plan.md` section 1). There is still no owner map: nothing is
+> stored but the number on the account, which is the directory's own field.
+
 ## Scope
 
 IN: cloud-only Entra ID user accounts (`onPremisesSyncEnabled` not true), including
@@ -218,6 +234,11 @@ OUT: synced accounts (mastered on-premises -- L2 already resets those); guest / 
 (`userType` `Guest`); MFA methods (that is `MfaReset`); enabling, unblocking or unlocking an
 account; any `passwordProfile`-adjacent property other than the password itself; bulk reset;
 any stored owner mapping; any operator input that influences where the password is sent.
+
+> **From module `1.2.0` the module writes one other attribute:** `employeeId`, only on an account
+> that has none, only inside a confirmed reset of that account, with a value read from the
+> directory that no operator types or chooses, and never as an overwrite
+> (`docs/CloudPasswordResetEmployeeId-Plan.md` 4.4).
 
 **Reading a directory for a population is also OUT.** The destination lookup is one query for
 the one account being reset, at the moment it is reset. Nothing enumerates, surveys or
@@ -842,6 +863,10 @@ Outside the codebase; neither blocks the build, both block the first live call.
 3. **A Delinea Secret Server record** holding `Tenant ID`, `Application ID`, `Client Secret`,
    directly readable by the Delinea bootstrap credential with no checkout or approval
    workflow. Its id goes in the module's `GraphDelineaSecretId` config field.
+4. **From module `1.2.0`, and only to fill in missing employee IDs:** the same registration
+   allowed to write user details - **assumed** `User.ReadWrite.All` (application), not confirmed
+   (`docs/CloudPasswordResetEmployeeId-Plan.md` 4.6, assumption A1). Without it every save is
+   refused and the resets still go out. Record here what the first live save actually needed.
 
 ## Catalog descriptor
 
@@ -1042,12 +1067,19 @@ time:
   of the five derivation failures -- no `employeeId`, no match, more than one match, no mailbox,
   lookup failed -- refuses **before** the PATCH with its own `refusalReason`, and none falls back
   to any other destination.
+  **From module `1.2.0`:** "no `employeeId`" has one route to a destination, the owner-requested
+  fill-in (`docs/CloudPasswordResetEmployeeId-Plan.md`, AC-F3 and AC-F8): the name proposes an
+  owner and that owner's number decides the address by this same rule. It is not a fallback to
+  another destination and takes no operator input; when it fails, the refusal stands as written.
 - AC4 The destination reaches **both** records, with the identifier it was derived from. Every
   `CloudPasswordReset` audit event on a path that got as far as the derivation carries
   `destinationAddress` lowercased and `destinationEmployeeId` -- successes, delivery failures and
   derivation refusals alike -- and the administrator alert names the same address in its body. A
   test asserts the two records carry the same address for one reset, and that a derivation
   refusal still carries the `employeeId` it failed on.
+  **From module `1.2.0`:** on a planned or saved fill-in, `destinationEmployeeId` is the number
+  the fill-in found, and every event also carries `employeeIdFill`, `employeeIdFillValue` and
+  `employeeIdFillSource` (Audit fields, and Splunk, below).
 - AC4a The derivation reads **one account at a time**. No code path in this module enumerates,
   lists or filters a directory for more than the single target of the operation
   (`.agents/decisions.md` 2026-09-22). A source-text test asserts no unbounded directory query.

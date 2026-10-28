@@ -1030,6 +1030,8 @@ public class CloudPasswordResetNeutralityTests
     [Theory]
     [InlineData("Services/CloudPasswordResetService.cs")]
     [InlineData("Services/ADEmployeeIdLookup.cs")]
+    [InlineData("Components/Pages/CloudPasswordReset.razor")]
+    [InlineData("Modules/ModuleCatalog.cs")]
     public void The_fill_in_code_names_none_of_this_deployments_endings_or_domains_even_in_comments(string file)
     {
         var hits = DeploymentNames.Matches(Source(file)).Select(m => m.Value).ToList();
