@@ -74,6 +74,12 @@ public class BlockedSenderService : ExchangeServiceBase
     /// which the page files Undetermined (the aud-a73 rule: a write whose outcome is unknown is not a
     /// failure - and a cancel that came after the send does not make it a cancel).
     /// </para>
+    /// <para>
+    /// kd-76. A token already cancelled when the call is made starts nothing: no connection is asked
+    /// for and nothing is sent. And the token is part of the submission's guard, so a cancel made
+    /// before the pooled call claims the send wins even when the wait has not seen it yet - the claim
+    /// fails and nothing is sent.
+    /// </para>
     /// </remarks>
     public async Task<PermissionResult> UnblockSenderAsync(string senderAddress, string reason,
         CancellationToken cancellationToken = default)
@@ -82,11 +88,17 @@ public class BlockedSenderService : ExchangeServiceBase
         if (address is null)
             return PermissionResult.Fail("A sender address is required.");
 
-        var submission = new UnblockSubmission();
+        // kd-76. The page awaits its permission and protection checks before this call, and the operator can cancel during
+        // them, so the token can arrive cancelled. It was looked at only by the wait below, after RunAsync had started: with a
+        // warm pool the call could claim the send and unblock the sender first. A cancel before the call starts nothing.
+        if (cancellationToken.IsCancellationRequested)
+            throw CancelledBeforeTheSend(address, null, cancellationToken);
+
+        var submission = new UnblockSubmission(cancellationToken);
         var run = RunAsync((ps, tracker) =>
         {
-            // Checked BEFORE the command is built, so a call its caller has given up on leaves the
-            // borrowed pipeline exactly as it found it.
+            // Checked BEFORE the command is built, so a call its caller has given up on - or whose caller's
+            // token is cancelled (kd-76) - leaves the borrowed pipeline exactly as it found it.
             if (!submission.TrySend())
                 throw new OperationCanceledException("The unblock was abandoned before it was sent; nothing was sent.");
 
@@ -101,42 +113,50 @@ public class BlockedSenderService : ExchangeServiceBase
 
         try
         {
-            return await run.WaitAsync(UnblockBound, cancellationToken);
+            await run.WaitAsync(UnblockBound, cancellationToken);
         }
         catch (Exception ex) when (ex is TimeoutException
             || (ex is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
             // A run that ended in the same instant the wait gave up keeps its own outcome - or its own
-            // throw, which is then not this method's to reclassify.
-            if (run.IsCompleted)
-                return await run;
-
-            ObserveAbandoned(run, address);
-            var timedOut = ex is TimeoutException;
-
-            if (submission.TryAbandon())
+            // throw, which is then not this method's to reclassify: below, as for a wait that saw it end.
+            if (!run.IsCompleted)
             {
-                // kd-57. A cancel before the send is a cancel, not a failure: thrown as one, in the app's phrase for it, for the
-                // page to file Cancelled. A wait that ran out before the send stays a failed result.
-                if (!timedOut)
+                ObserveAbandoned(run, address);
+                var timedOut = ex is TimeoutException;
+
+                if (submission.TryAbandon())
                 {
-                    throw new OperationCanceledException(
-                        $"{AuditService.CancelledByTheOperator} before the unblock of {address} was sent, so nothing was changed and the sender is still blocked.",
-                        ex, cancellationToken);
+                    // kd-57. A cancel before the send is a cancel, not a failure: thrown as one, in the app's phrase for it, for
+                    // the page to file Cancelled. A wait that ran out before the send stays a failed result.
+                    if (!timedOut)
+                        throw CancelledBeforeTheSend(address, ex, cancellationToken);
+
+                    return PermissionResult.Fail(
+                        $"The unblock of {address} could not start within {DescribeBound(UnblockBound)}, so nothing was changed and the sender is still blocked. Try again.");
                 }
 
-                return PermissionResult.Fail(
-                    $"The unblock of {address} could not start within {DescribeBound(UnblockBound)}, so nothing was changed and the sender is still blocked. Try again.");
+                throw new BlockedSenderUnblockUnconfirmedException(address,
+                    (timedOut
+                        ? $"Exchange Online did not answer the unblock of {address} within {DescribeBound(UnblockBound)}"
+                        : $"The wait for the unblock of {address} was cancelled after it was sent")
+                    + ", so whether the sender was unblocked could not be confirmed. Refresh the list to see whether it is still blocked.",
+                    ex);
             }
-
-            throw new BlockedSenderUnblockUnconfirmedException(address,
-                (timedOut
-                    ? $"Exchange Online did not answer the unblock of {address} within {DescribeBound(UnblockBound)}"
-                    : $"The wait for the unblock of {address} was cancelled after it was sent")
-                + ", so whether the sender was unblocked could not be confirmed. Refresh the list to see whether it is still blocked.",
-                ex);
         }
+
+        // The run has ended. kd-76: when its guard saw the cancel before the claim, nothing was sent - a cancel, not the failed
+        // result the guard's refusal leaves - however the wait ended: given up, or returning that result because the run ended
+        // before the wait saw the cancel. Otherwise the run's own outcome, or its own throw.
+        if (submission.IsAbandoned)
+            throw CancelledBeforeTheSend(address, null, cancellationToken);
+        return await run;
     }
+
+    /// <summary>kd-57's cancel before the send, in the app's phrase for one: the page files it Cancelled.</summary>
+    private static OperationCanceledException CancelledBeforeTheSend(string address, Exception? cause, CancellationToken cancellationToken) =>
+        new($"{AuditService.CancelledByTheOperator} before the unblock of {address} was sent, so nothing was changed and the sender is still blocked.",
+            cause, cancellationToken);
 
     private static string DescribeBound(TimeSpan bound) =>
         bound >= TimeSpan.FromMinutes(1) ? $"{bound.TotalMinutes:0.#} minutes" : $"{bound.TotalSeconds:0.#} seconds";
@@ -159,20 +179,30 @@ public class BlockedSenderService : ExchangeServiceBase
     /// kd-6. The race between the pooled call sending the unblock and its caller giving up on it,
     /// settled once: whichever comes first wins. So "nothing was changed" is never said of a call that
     /// sends afterwards, and a call that sent is never reported as one that did not. A pool retry of a
-    /// call that already sent stays sent, as aud-a76's mark does.
+    /// call that already sent stays sent, as aud-a76's mark does. kd-76: the caller's token takes part,
+    /// so a cancel made before the call claims the send wins as the caller's giving up does, even
+    /// before the caller's wait has seen it.
     /// </summary>
-    internal sealed class UnblockSubmission
+    internal sealed class UnblockSubmission(CancellationToken cancellationToken)
     {
         private const int Pending = 0;
         private const int Sent = 1;
         private const int Abandoned = 2;
         private int _state;
 
-        /// <summary>The call is about to send. False once its caller has given up, and then it must not.</summary>
-        public bool TrySend() => Interlocked.CompareExchange(ref _state, Sent, Pending) != Abandoned;
+        /// <summary>
+        /// The call is about to send. False once its caller has given up, or once its caller's token is cancelled (kd-76), and
+        /// then it must not - a pool retry of a call that already sent excepted, which stays sent.
+        /// </summary>
+        public bool TrySend() => cancellationToken.IsCancellationRequested
+            ? Interlocked.CompareExchange(ref _state, Abandoned, Pending) == Sent
+            : Interlocked.CompareExchange(ref _state, Sent, Pending) != Abandoned;
 
         /// <summary>The caller gives up. False when the call has already sent, so its outcome is unknown.</summary>
         public bool TryAbandon() => Interlocked.CompareExchange(ref _state, Abandoned, Pending) != Sent;
+
+        /// <summary>kd-76. Nothing was sent, and nothing will be: the caller gave up, or the call saw the cancel first.</summary>
+        public bool IsAbandoned => Volatile.Read(ref _state) == Abandoned;
     }
 
     /// <summary>

@@ -17,7 +17,8 @@ namespace ExchangeAdminWeb.Tests;
 /// <summary>
 /// kd-26: Admin Bulk Jobs audits a cancel with what the cancel did - cancelled, not cancelled because the job had already
 /// finished or gone, refused, or failed - where it recorded Success after any cancel. kd-53: under the category of the
-/// module whose job it is. kd-54: and a removal that did not happen says why.
+/// module whose job it is. kd-54: and a removal that did not happen says why. kd-77: decided with the removal, so a job
+/// another administrator removed first is told as gone.
 /// </summary>
 /// <remarks>
 /// The real page, its injected services set through reflection (<see cref="ConferenceRoomPageTests"/>' idiom), its
@@ -190,6 +191,48 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
     }
 
     [Fact]
+    public async Task TwoAdministratorsRemovingTheSameFinishedJob_TheSecondIsToldItNoLongerExists()
+    {
+        // kd-77. The removal read the job and then deleted it in another step, and read a delete that removed nothing as a job
+        // that had not finished. Two administrators removing the same finished job both read it, the first deleted it, and the
+        // second was told - in its banner and its audit row - "it has not finished". Here the first removal is held inside its
+        // own write transaction, the job deleted and not yet committed, while the second reaches the store; then it commits.
+        var factory = NewJobsDatabase();
+        var (jobs, store) = JobService(factory);
+        var job = Job(BulkJobStatus.Completed);
+        store.Insert(job);
+        var page = BuildPage(jobs);
+
+        Task second;
+        using (var first = factory.Open())
+        {
+            using var removing = first.BeginTransaction(deferred: false);
+            using (var delete = first.CreateCommand())
+            {
+                delete.Transaction = removing;
+                delete.CommandText = "DELETE FROM bulk_job WHERE id = $id;";
+                delete.Parameters.AddWithValue("$id", job.Id);
+                Assert.Equal(1, delete.ExecuteNonQuery());
+            }
+
+            second = Task.Run(() => Remove(page, job), TestContext.Current.CancellationToken);
+            // Long enough for the second removal to reach the store; well inside the five seconds a store call waits for a
+            // write lock before it fails.
+            await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+            Assert.False(second.IsCompleted, "the second removal did not wait for the first's write lock");
+            removing.Commit();
+        }
+
+        await second.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        var row = TheRow(job, success: false, error: "The job was not removed: it no longer exists.", action: RemoveAction);
+        Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal($"Could not remove {Module} job T - it no longer exists.", GetField(page, "actionMessage"));
+        Assert.Null(store.Get(job.Id));
+    }
+
+    [Fact]
     public async Task ARemovalTheStoreFails_IsAuditedAsFailed_AndStillThrows()
     {
         // kd-62. The removal and its reason are one call now, and it is wrapped: a store that throws leaves the row it
@@ -249,6 +292,19 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
         var factory = new SqliteConnectionFactory(Path.Combine(_h.Dir, $"jobs-{Guid.NewGuid():N}.db"));
         if (migrated)
             new JobStoreMigrator(factory).Migrate();
+        return JobService(factory);
+    }
+
+    // kd-77. A jobs database of its own, migrated, for a test that also opens it.
+    private SqliteConnectionFactory NewJobsDatabase()
+    {
+        var factory = new SqliteConnectionFactory(Path.Combine(_h.Dir, $"jobs-{Guid.NewGuid():N}.db"));
+        new JobStoreMigrator(factory).Migrate();
+        return factory;
+    }
+
+    private (BulkJobService Jobs, BulkJobRepository Store) JobService(SqliteConnectionFactory factory)
+    {
         var store = new BulkJobRepository(factory);
         var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
         return (new BulkJobService(scopes, store, new BulkJobProcessorRegistry([]), _h.Config, NullLogger<BulkJobService>.Instance), store);

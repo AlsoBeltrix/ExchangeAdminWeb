@@ -22,9 +22,9 @@
     searched for on PATH. If the tool is missing or too old, or the DB is unreadable, we surface
     that as a soft note rather than failing - an unreadable job DB must not abort a deploy either.
 
-    Honors plan mode: pass -PlanOnly to report what WOULD be checked without side effects (there
-    are no writes here anyway; the flag keeps the calling scripts' plan/act model consistent and
-    the output phrased as a plan line).
+    Honors plan mode: pass -PlanOnly to report what a real run WOULD check - which jobs database,
+    read with which build's db tool - as a plan line, without checking it. A plan launches no tool
+    and opens no jobs database (cdt-60 (2), Architectural Invariant 4).
 #>
 
 Set-StrictMode -Version Latest
@@ -131,9 +131,10 @@ function Get-ActiveBulkJobs {
 .PARAMETER AppPath
     The folder holding the ExchangeAdminWeb.dll whose db mode runs the query.
 .PARAMETER PlanOnly
-    When set, reports as a plan line without implying an action was taken (there are no writes).
+    When set, prints the check a real run makes, as a plan line, and makes none: no tool is
+    launched and no jobs database is read (cdt-60 (2)).
 .OUTPUTS
-    The number of active jobs found (0 when none / not checkable).
+    The number of active jobs found (0 when none / not checkable, and in a plan, which checks nothing).
 #>
 function Assert-NoActiveBulkJobsBeforeRecycle {
     # Write-Host is intentional here: this is operator-facing console output during an interactive
@@ -148,19 +149,16 @@ function Assert-NoActiveBulkJobsBeforeRecycle {
         [switch]$PlanOnly
     )
 
-    $jobs = @(Get-ActiveBulkJobs -ConfigDir $ConfigDir -AppPath $AppPath)
-
+    # cdt-60 (2). A plan checks nothing (Architectural Invariant 4). The jobs were read first and the plan branch came after
+    # the read, so a plan-only cutover or promotion launched the app's db tool against the instances' real jobs databases.
+    # The plan says what a real run reads, and with which build; a string, not a path call, so a folder on a drive this
+    # host lacks cannot make the plan line throw.
     if ($PlanOnly) {
-        if ($jobs.Count -eq 0) {
-            Write-Host "PLAN: would check for active bulk jobs before recycle (none currently active)." -ForegroundColor DarkGray
-        } else {
-            Write-Host "PLAN: recycle WOULD interrupt $($jobs.Count) active bulk job(s):" -ForegroundColor Yellow
-            foreach ($j in $jobs) {
-                Write-Host "        [$($j.Status)] $($j.Kind) by $($j.SubmittedBy) ticket=$($j.Ticket) progress=$($j.Progress)" -ForegroundColor Yellow
-            }
-        }
-        return $jobs.Count
+        Write-Host "PLAN: would check for active bulk jobs before recycle: exchangeadmin-jobs.db in $ConfigDir, read with the db tool of the app in $AppPath (a plan reads no jobs database)." -ForegroundColor DarkGray
+        return 0
     }
+
+    $jobs = @(Get-ActiveBulkJobs -ConfigDir $ConfigDir -AppPath $AppPath)
 
     if ($jobs.Count -gt 0) {
         Write-Warning "=============================================================="

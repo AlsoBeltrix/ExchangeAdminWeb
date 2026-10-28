@@ -1072,7 +1072,7 @@
                     var r = await RoomService.SetRoomMetadataAndListAsync(
                         email, room, cityName, buildingName, seats,
                         floorName, floorText, display, video,
-                        country, stateName, tz, activity.CancellationToken); // kd-59, kd-73: the token the navigation guard cancels, to the preflights' credential fetches and the check before Set-Place
+                        country, stateName, tz, activity.CancellationToken); // kd-59, kd-73, kd-75: the token the navigation guard cancels, to the preflights' credential fetches and the checks before Set-Place
 
                     op.Complete(r.Success, r.Message);
 
@@ -1083,7 +1083,7 @@
         }
         catch (OperationCanceledException) when (activity.CancellationToken.IsCancellationRequested)
         {
-            // kd-59, kd-73. The operator's cancel, at a preflight's credential fetch or the check just before Set-Place - the only
+            // kd-59, kd-73, kd-75. The operator's cancel, at a preflight's credential fetch or a check just before Set-Place - the only
             // places the token reaches, all before Set-Place - so nothing was written. Filed Cancelled in the app's phrase for a
             // cancel (kd-57), not as a row that failed, and the administrators told as for one. Any other cancellation fails, below.
             var cancelled = $"{AuditService.CancelledByTheOperator}. Nothing was written.";

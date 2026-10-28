@@ -286,27 +286,17 @@ public sealed class BulkJobService
     /// checks the module and then deletes, and the delete takes only a terminal status. Admin Bulk Jobs read the job back
     /// itself to work it out, which asked the store a second question after one it had just refused - no row at all if that
     /// read threw - and answered from the moment after the refusal rather than the refusal.
+    /// kd-77. The read, the module check and the delete are one write transaction in the store
+    /// (<see cref="BulkJobRepository.Remove"/>). As separate steps, a job another administrator removed between this
+    /// method's read and its delete came back NotFinished - "it has not finished" in the banner and the audit row - where
+    /// it no longer exists.
     /// </remarks>
     public bool DeleteJob(string moduleId, string jobId, out BulkJobRemoval outcome)
     {
-        var job = _repository.Get(jobId);
-        if (job is null)
-        {
-            outcome = BulkJobRemoval.NotFound;
-            return false;
-        }
-
-        if (!string.Equals(job.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase))
-        {
-            outcome = BulkJobRemoval.NotThisModule;
-            return false;
-        }
-
-        var deleted = _repository.Delete(jobId);
+        outcome = _repository.Remove(jobId, moduleId);
+        var deleted = outcome == BulkJobRemoval.Removed;
         if (deleted)
             RaiseChanged(jobId);
-
-        outcome = deleted ? BulkJobRemoval.Removed : BulkJobRemoval.NotFinished;
         return deleted;
     }
 

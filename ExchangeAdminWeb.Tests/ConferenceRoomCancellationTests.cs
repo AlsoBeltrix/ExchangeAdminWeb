@@ -24,6 +24,7 @@ namespace ExchangeAdminWeb.Tests;
 /// Set-Place, so a cancel there ends the row with nothing written, filed Cancelled in the app's phrase for one (kd-57). The
 /// two fetches after Set-Place take none, on purpose: a cancel there would leave the room half-configured. kd-73 (2): a cancel
 /// landing after the preflights' fetches and before Set-Place is caught by one check just before Set-Place, the same way.
+/// kd-75: and one landing while Set-Place's call waits for a pool connection, by a look inside that call before its command.
 /// </summary>
 /// <remarks>
 /// The real service over <see cref="ExchangeWriteHarness"/> (stand-in Exchange and directory), its credentials through a
@@ -92,6 +93,12 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
 
         public string? AfterLookupFor { get; init; }
 
+        /// <summary>
+        /// kd-75. Awaited after <see cref="AfterLookup"/>, inside the row's own flow: where a test takes every pool connection,
+        /// so that Set-Place's call - the row's next pool borrow - waits for one.
+        /// </summary>
+        public Func<Task>? AfterLookupAsync { get; init; }
+
         protected override Task<ModuleCredentialLookup> LookupDirectoryCredentialAsync(string purpose, CancellationToken cancellationToken)
         {
             if (BeforeLookupFor is { } text && purpose.Contains(text, StringComparison.Ordinal))
@@ -104,6 +111,8 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         {
             var answered = await lookup;
             AfterLookup?.Invoke();
+            if (AfterLookupAsync is { } then)
+                await then();
             return answered;
         }
 
@@ -211,6 +220,97 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         Assert.Equal(Cancelled, error);
     }
 
+    // kd-75, the finding: the check before Set-Place runs before RunAsync, and RunAsync's borrow then waits for a free pool
+    // connection with no token. Every connection held elsewhere, the operator cancels during that wait: before, nothing looked
+    // at the token again, and once a connection freed Set-Place ran and the row wrote. The look inside the pooled call ends
+    // the row there, as a cancellation, nothing written. A list synchronized from on-premises, so the room-list preflight's
+    // credential fetch comes after the row's last pool read before Set-Place: the pool is taken there.
+    [Fact]
+    public async Task ACancelWhileSetPlaceWaitsForAPoolConnection_EndsTheRowWithNothingWritten()
+    {
+        _h.ListSyncState[List] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        _credentials.WaitsAtSecretRequest = int.MaxValue;
+        using var cancel = new CancellationTokenSource();
+        var holding = new TaskCompletionSource<List<PooledRunspace>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new Service(_h, _credentials.Service)
+        {
+            AfterLookupFor = "on-prem room-list membership preflight",
+            AfterLookupAsync = async () => holding.SetResult(await HoldEveryPoolConnection()),
+        };
+
+        var apply = Apply(service, cancel.Token);
+        var held = await holding.Task.WaitAsync(Bound, TestContext.Current.CancellationToken);
+        try
+        {
+            await WaitUntil(() => BorrowsWaitingForAPoolConnection() == 1, "Set-Place's call waits for a pool connection");
+            Assert.False(apply.IsCompleted);
+            await cancel.CancelAsync();
+            ReturnOne(held);
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => apply.WaitAsync(Bound, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            ReturnAll(held);
+        }
+
+        Assert.False(_credentials.RequestCancelled);
+        Assert.Empty(_h.CallsTo("Set-Place"));
+        Assert.Empty(_h.Writes);
+    }
+
+    // kd-75 at the page: the activity's token cancelled while Set-Place's call waits for a pool connection. Shown and filed
+    // Cancelled, nothing written, the administrators told - not the Failed RunAsync would have made of a throw in its call.
+    [Fact]
+    public async Task ACancelOfTheSetupsActivity_WhileSetPlaceWaitsForAPoolConnection_IsFiledCancelled_WithNothingWritten()
+    {
+        _h.ListSyncState[List] = true;
+        _h.Failures["Add-DistributionGroupMember"] = OnPremMastered;
+        _credentials.WaitsAtSecretRequest = int.MaxValue;
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var holding = new TaskCompletionSource<List<PooledRunspace>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new Service(_h, _credentials.Service)
+        {
+            AfterLookupFor = "on-prem room-list membership preflight",
+            AfterLookupAsync = async () => holding.SetResult(await HoldEveryPoolConnection()),
+        };
+        var page = BuildPage(service, progress, city: "Dublin");
+
+        var run = SetupSingleRoom(page);
+        var held = await holding.Task.WaitAsync(Bound, TestContext.Current.CancellationToken);
+        try
+        {
+            await WaitUntil(() => BorrowsWaitingForAPoolConnection() == 1, "Set-Place's call waits for a pool connection");
+            Assert.False(run.IsCompleted);
+            await cancel.CancelAsync();
+            ReturnOne(held);
+
+            await run.WaitAsync(Bound, TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            ReturnAll(held);
+        }
+
+        const string Cancelled = "Cancelled by the operator. Nothing was written.";
+        Assert.False(_credentials.RequestCancelled);
+        Assert.Empty(_h.CallsTo("Set-Place"));
+        Assert.Empty(_h.Writes);
+        var shown = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        Assert.False(shown.Success);
+        Assert.Equal(Cancelled, shown.Message);
+        Assert.Equal((false, Cancelled), Assert.Single(progress.Handles).Outcome);
+        Assert.False((bool)GetField(page, "isLoading")!);
+        var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata");
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
+        Assert.Equal(Cancelled, row.GetProperty("error").GetString());
+        var (success, error) = AdminNotification();
+        Assert.False(success);
+        Assert.Equal(Cancelled, error);
+    }
+
     // The deliberate limit: once Set-Place has committed, a cancel does not stop the row half-way - the room would be left
     // half-configured, the partial the preflights exist to prevent. The row finishes as it always did.
     [Fact]
@@ -302,6 +402,82 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         var row = Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata");
         Assert.Equal("Failed", row.GetProperty("result").GetString());
         Assert.Equal(shown.Message, row.GetProperty("error").GetString());
+    }
+
+    // ---- kd-75: the pool, saturated -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Every connection the pool admits at once - five (<c>ExoConnectionPool</c>'s slots) - borrowed and held, so the next
+    /// borrow waits for one to come back.
+    /// </summary>
+    private async Task<List<PooledRunspace>> HoldEveryPoolConnection()
+    {
+        var held = new List<PooledRunspace>();
+        for (var i = 0; i < 5; i++)
+            held.Add(await _h.Pool.BorrowAsync(TestContext.Current.CancellationToken));
+        return held;
+    }
+
+    private void ReturnOne(List<PooledRunspace> held)
+    {
+        _h.Pool.Return(held[0]);
+        held.RemoveAt(0);
+    }
+
+    private void ReturnAll(List<PooledRunspace> held)
+    {
+        foreach (var runspace in held)
+            _h.Pool.Return(runspace);
+        held.Clear();
+    }
+
+    /// <summary>
+    /// How many borrows are waiting for a free connection, from the pool's own trace: a slot asked for that was neither
+    /// granted nor refused. Read while a borrow waits, so a line still being written can be incomplete; it is skipped and
+    /// read whole the next time.
+    /// </summary>
+    private int BorrowsWaitingForAPoolConnection()
+    {
+        var (asked, granted, refused) = (0, 0, 0);
+        foreach (var path in _h.Jsonl.GetTraceLogPaths(DateTime.Now).Where(File.Exists))
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            while (reader.ReadLine() is { } line)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+                string? stage, result;
+                try
+                {
+                    using var step = System.Text.Json.JsonDocument.Parse(line);
+                    stage = step.RootElement.TryGetProperty("stage", out var s) ? s.GetString() : null;
+                    result = step.RootElement.TryGetProperty("result", out var r) ? r.GetString() : null;
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    continue;
+                }
+
+                if (stage == "ExoPoolSlotRequested" && result == "Failed")
+                    refused++;
+                else if (stage == "ExoPoolSlotRequested")
+                    asked++;
+                else if (stage == "ExoPoolSlotAcquired")
+                    granted++;
+            }
+        }
+        return asked - granted - refused;
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + Bound;
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting until {what}.");
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
     }
 
     // ---- the page harness, as ConferenceRoomDirectoryAuditTests builds it ------------------------------------------------

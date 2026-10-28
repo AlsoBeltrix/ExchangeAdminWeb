@@ -638,7 +638,10 @@ public sealed class ModuleCatalog
             // after it was sent stays Undetermined.
             // 1.5.2: an unblock acts on and records the address, ticket and reason confirmed - read above its
             // yield - and a second click during one is ignored (kd-72).
-            Version = "1.5.2",
+            // 1.5.3: an unblock cancelled during the checks before it starts nothing, and a cancel made before the
+            // Exchange Online call claims the send stops that call from sending - each filed Cancelled, nothing changed
+            // (kd-76). A cancel after the send still leaves the outcome Undetermined.
+            Version = "1.5.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1067,7 +1070,9 @@ public sealed class ModuleCatalog
             // 2.19.4: the two CSV applies complete their progress activity from their own outcome, so dismissing the
             // result banner while the job list refreshes no longer ends the bar as not succeeded for a job that was
             // submitted (kd-74).
-            Version = "2.19.4",
+            // 2.19.5: and a last time inside Set-Place's call, once it holds a pool connection, so a cancel made while every
+            // connection was busy ends the row with nothing written, filed Cancelled, instead of Set-Place running (kd-75).
+            Version = "2.19.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1659,7 +1664,9 @@ public sealed class ModuleCatalog
             // 1.2.0: a cancel or a removal is filed under the category of the module whose job it is,
             // not always ConferenceRooms, and the event log offers every such category (kd-53). A
             // removal that did not happen says why - the job has not finished, or is gone (kd-54).
-            Version = "1.2.0",
+            // 1.2.1: the removal and its reason are decided in one step in the job store, so a job another
+            // administrator removed a moment earlier is told - and audited - as gone, not as not finished (kd-77).
+            Version = "1.2.1",
             // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy

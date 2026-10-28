@@ -8,7 +8,8 @@ temp jobs DB:
   - a missing jobs DB returns nothing (no warning);
   - the warning never blocks (returns a count, does not throw);
   - a missing tool or an unreadable jobs DB is a soft warning, never a failure;
-  - PlanOnly reports without acting.
+  - PlanOnly reports without acting - and, since cdt-60 (2), without reading: no tool is launched
+    (a recording stand-in for the tool proves it).
 
 Nothing here skips: the app is built when no build output exists (Get-BuiltApp.ps1).
 #>
@@ -107,12 +108,14 @@ Describe 'JobStateWarning module' {
         } finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It 'PlanOnly reports without throwing and returns the count' {
+    It 'PlanOnly reports without throwing, reads nothing and returns 0, an active job in the database notwithstanding' {
+        # cdt-60 (2). This returned 1 here: the plan read the jobs database through the app's db tool, then reported. A plan
+        # checks nothing, so it cannot count the job; it says what a real run reads.
         $dir = New-TempConfigDir
         try {
             New-JobsDb -ConfigDir $dir -Statuses @('Running') | Out-Null
             $count = Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $dir -AppPath $script:AppPath -PlanOnly 3>$null 6>$null
-            $count | Should -Be 1
+            $count | Should -Be 0
         } finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -158,5 +161,50 @@ Describe 'JobStateWarning module' {
             $count = Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $dir -AppPath $script:AppPath 3>$null
             $count | Should -Be 0
         } finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+Describe 'cdt-60 (2): a plan launches no db tool and reads no jobs database' {
+
+    # The plan branch came after the read, so a plan-only cutover or promotion ran the app's db tool against the
+    # instances' real jobs databases. The tool here is a recording stand-in - a script the module runs as it runs the
+    # .NET host, which logs each call and answers one active job - so "no tool was launched" is read from its log.
+
+    BeforeAll {
+        $script:Cdt60Calls = Join-Path $TestDrive 'db-tool-calls.txt'
+        $script:Cdt60Tool = Join-Path $TestDrive 'db-tool-stand-in.ps1'
+        Set-Content -LiteralPath $script:Cdt60Tool -Encoding ascii -Value @(
+            "Add-Content -LiteralPath '$($script:Cdt60Calls)' -Value (`$args -join ' ')"
+            "'Running|SetMetadata_Bulk|user1|INC1|3/10'"
+            'exit 0'
+        )
+        Mock -ModuleName JobStateWarning Get-ConfigDbToolForJobs -MockWith ([scriptblock]::Create("@{ Host = '$($script:Cdt60Tool)'; Assembly = 'stand-in.dll' }"))
+    }
+
+    BeforeEach {
+        Remove-Item -LiteralPath $script:Cdt60Calls -ErrorAction SilentlyContinue
+        $script:Cdt60Config = Join-Path $TestDrive ('config-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:Cdt60Config | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Cdt60Config 'exchangeadmin-jobs.db') -Value 'a jobs database' -Encoding ascii
+    }
+
+    It 'in plan mode launches no tool, says what a real run reads, and returns 0' {
+        $out = @(Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $script:Cdt60Config -AppPath 'X:\app' -PlanOnly 6>&1 3>&1)
+
+        Test-Path -LiteralPath $script:Cdt60Calls | Should -BeFalse -Because 'a plan launches no db tool'
+        Should -Invoke Get-ConfigDbToolForJobs -ModuleName JobStateWarning -Times 0 -Exactly
+        @($out | Where-Object { $_ -is [int] }) | Should -Be @(0)
+        @($out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] }) | Should -BeNullOrEmpty
+        @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { "$_" }) |
+            Should -Be @("PLAN: would check for active bulk jobs before recycle: exchangeadmin-jobs.db in $($script:Cdt60Config), read with the db tool of the app in X:\app (a plan reads no jobs database).")
+    }
+
+    It 'in a real run (the control) launches the tool once against the jobs database, and warns about the job it reports' {
+        $warnings = @()
+        $count = Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $script:Cdt60Config -AppPath 'X:\app' -WarningVariable warnings 3>$null 6>$null
+
+        $count | Should -Be 1
+        @(Get-Content -LiteralPath $script:Cdt60Calls) | Should -Be @("stand-in.dll db active-jobs $(Join-Path $script:Cdt60Config 'exchangeadmin-jobs.db')")
+        "$warnings" | Should -BeLike '*1 bulk job(s) are ACTIVE*'
     }
 }

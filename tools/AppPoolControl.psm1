@@ -589,6 +589,12 @@ function Get-AppPoolOtherApplication {
         another one; counting them would report the instance's own virtual directories as other
         applications.
 
+        cdt-60. -IncludeNested leaves out only the nodes AT the folder - the instance itself - and
+        lists those inside it. It is for a caller whose serving check allows a node rooted inside the
+        instance's folder under the same pool (the cutover's -NestedNodes Allow): such a node stops
+        with the pool, so it is another application to name and to read for bulk jobs. Without the
+        switch, the rule above, for the callers that refuse a nested node before their stop.
+
     .OUTPUTS
         Location, ApplicationPool and PhysicalPath of each other application; nothing when there is
         none. Throws when IIS cannot be read.
@@ -610,7 +616,10 @@ function Get-AppPoolOtherApplication {
                     [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
                 }
             }
-        }
+        },
+
+        # cdt-60. Leave out only the nodes at the folder, and list those inside it (see the description).
+        [switch]$IncludeNested
     )
 
     try {
@@ -621,14 +630,20 @@ function Get-AppPoolOtherApplication {
 
     $target = ConvertTo-ComparablePhysicalPath $PhysicalPath
     $targetFinal = Resolve-FinalPhysicalPath $target
+    # The instance's own nodes, left out: those at the folder and, unless -IncludeNested, those inside it.
+    $isTheInstance = if ($IncludeNested) {
+        { param([string]$Path, [string]$Root) [string]::Equals($Path, $Root, [System.StringComparison]::OrdinalIgnoreCase) }
+    } else {
+        { param([string]$Path, [string]$Root) Test-PhysicalPathInside $Path $Root }
+    }
     foreach ($node in $applications) {
         if (-not [string]::Equals([string]$node.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
         $lexical = ConvertTo-ComparablePhysicalPath $node.PhysicalPath
         if ($lexical) {
-            if (Test-PhysicalPathInside $lexical $target) { continue }
+            if (& $isTheInstance $lexical $target) { continue }
             if ($null -ne $targetFinal) {
                 $final = Resolve-FinalPhysicalPath $lexical
-                if ($null -ne $final -and (Test-PhysicalPathInside $final $targetFinal)) { continue }
+                if ($null -ne $final -and (& $isTheInstance $final $targetFinal)) { continue }
             }
         }
         $node

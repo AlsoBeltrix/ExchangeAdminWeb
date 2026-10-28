@@ -727,6 +727,20 @@ internal sealed class MigrationStubExchange : IDisposable
             .ToList();
     }
 
+    /// <summary>kd-76. Every trace event written so far, oldest first - the pool's steps among them.</summary>
+    public IReadOnlyList<JsonElement> TraceEvents()
+    {
+        var folder = Path.Combine(_directory, "ExchangeAdminWeb");
+        if (!Directory.Exists(folder))
+            return [];
+        return Directory.GetFiles(folder, "exchangeadmin_*.jsonl")
+            .Where(file => Path.GetFileNameWithoutExtension(file).EndsWith("_trace", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(File.ReadAllLines)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToList();
+    }
+
     public void Dispose()
     {
         foreach (var pool in _pools)
