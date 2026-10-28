@@ -1,6 +1,6 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). All four slices
+Status: **Implemented 2026-10-28 (S1-S4 merged at `683a8ce7`); the manual live checks in section 13 are not yet run - the feature is off until switched on in the module settings.**
 committed on `feat/cpr-employee-id`, awaiting merge. Unproven against the live service: none of
 section 13's manual checks has been run.**
 Owner: Michael
