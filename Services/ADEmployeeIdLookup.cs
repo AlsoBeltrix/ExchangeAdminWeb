@@ -3,7 +3,8 @@ using System.Management.Automation;
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
-/// Forest-wide lookup of the one directory user carrying a given <c>employeeID</c>.
+/// Forest-wide lookups of the one directory user carrying a given <c>employeeID</c>, or a given
+/// logon name.
 /// </summary>
 /// <remarks>
 /// Added for Cloud Password Reset (docs/CloudPasswordReset-Plan.md, "Where the password goes"),
@@ -13,10 +14,16 @@ namespace ExchangeAdminWeb.Services;
 /// three things a second AD service would have had to duplicate and could have got subtly
 /// different.
 ///
-/// **This reads ONE employee ID per call and never enumerates.** The module calls it once, for
-/// the one account an operator is resetting (`.agents/decisions.md` 2026-09-22, "No tooling
-/// enumerates the directory"). The per-domain loop below is coverage for a single subject across
-/// a two-domain forest, not a sweep of a population.
+/// **Each lookup reads ONE employee ID or ONE logon name per call and never enumerates.** The
+/// module calls them for the one account an operator is resetting (`.agents/decisions.md`
+/// 2026-09-22, "No tooling enumerates the directory"). The per-domain loop below is coverage for
+/// a single subject across every domain of the forest, not a sweep of a population.
+///
+/// **The two lookups share one wrapper and one per-domain loop**
+/// (<see cref="FindOneUserAcrossForest"/>, <see cref="SearchEveryDomainForOneUser"/>), so their
+/// failure semantics cannot drift. The logon-name lookup was added for the employee-ID fill-in
+/// (docs/CloudPasswordResetEmployeeId-Plan.md 4.2), and a second copy of the loop is how one of
+/// them would come to read a failed domain as an empty one.
 /// </remarks>
 public sealed partial class ADDirectorySearchService
 {
@@ -57,9 +64,71 @@ public sealed partial class ADDirectorySearchService
     /// lookup does not need the protected-principal directory-read secret
     /// (`.agents/decisions.md` 2026-07-31).
     /// </remarks>
-    public DirectoryValidationResult FindUserByEmployeeId(string employeeId)
+    public DirectoryValidationResult FindUserByEmployeeId(string employeeId) =>
+        FindOneUserAcrossForest(employeeId, BuildEmployeeIdFilter, "employeeID");
+
+    /// <summary>
+    /// Find the single directory user whose <c>sAMAccountName</c> (the pre-Windows 2000 logon
+    /// name) equals <paramref name="logonName"/>, searching every domain in the host's forest.
+    /// </summary>
+    /// <returns>
+    /// The same four answers as <see cref="FindUserByEmployeeId"/>: Found with
+    /// <c>Ambiguous = false</c> for exactly one user, Found with <c>Ambiguous = true</c> for more
+    /// than one, NotFound when every domain was searched and nobody answers to the name, and
+    /// Unavailable when the search did not complete. The match carries the user's
+    /// <c>employeeID</c> (<see cref="ADSearchResult.EmployeeId"/>), mail and ObjectGUID.
+    /// </returns>
+    /// <remarks>
+    /// Added for Cloud Password Reset's fill-in of a missing employee ID
+    /// (docs/CloudPasswordResetEmployeeId-Plan.md 4.2), which reads the probable owner of an
+    /// unstamped cloud account from the account's name and then verifies that owner by number
+    /// through <see cref="FindUserByEmployeeId"/>.
+    ///
+    /// **A logon name is unique within a domain, not within a forest**: two domains can each hold
+    /// the same one. So this searches every domain, exactly as the employee-ID lookup does, and two
+    /// hits anywhere read as Ambiguous. The caller must refuse rather than pick, because picking
+    /// here is choosing whose mailbox receives a password.
+    ///
+    /// **Each domain directly, never the global catalog**, for the employee-ID lookup's reasons and
+    /// because the match must carry the owner's real <c>employeeID</c>, which the catalog does not
+    /// replicate by default. A domain that cannot be searched makes the whole lookup Unavailable,
+    /// never NotFound.
+    ///
+    /// Read-only, under the app pool's ambient identity, like <see cref="FindUserByEmployeeId"/>.
+    /// </remarks>
+    public DirectoryValidationResult FindUserByLogonName(string logonName) =>
+        FindOneUserAcrossForest(logonName, BuildLogonNameFilter, "logon-name");
+
+    /// <summary>The LDAP filter for an exact employeeID match, escaped.</summary>
+    /// <remarks>
+    /// Escaping is not decoration here. An employee ID comes from a directory attribute, not from
+    /// a fixed list, and an unescaped <c>*</c> turns this equality test into a wildcard that
+    /// matches every stamped user in the domain. That would read as Ambiguous at best and, for a
+    /// domain with one stamped user, as a confident wrong match.
+    /// </remarks>
+    internal static string BuildEmployeeIdFilter(string employeeId) =>
+        $"(employeeID={ProtectedPrincipalService.EscapeLdapFilter(employeeId)})";
+
+    /// <summary>The LDAP filter for an exact logon-name (sAMAccountName) match, escaped.</summary>
+    /// <remarks>
+    /// An equality test and nothing else. The name comes from a cloud account's name, which is not
+    /// a fixed list either, and an unescaped <c>*</c>, <c>(</c>, <c>)</c>, <c>\</c> or NUL would
+    /// turn the test into a wildcard or into a different filter: a lookup that answers for people
+    /// the name does not name.
+    /// </remarks>
+    internal static string BuildLogonNameFilter(string logonName) =>
+        $"(sAMAccountName={ProtectedPrincipalService.EscapeLdapFilter(logonName)})";
+
+    /// <summary>
+    /// The one wrapper both forest-wide single-user lookups run in: blank input, availability, the
+    /// shared throttle, and the rule that a lookup which did not complete is Unavailable.
+    /// </summary>
+    /// <param name="value">The employee ID or logon name, trimmed here.</param>
+    /// <param name="buildFilter">The escaped equality filter for <paramref name="value"/>.</param>
+    /// <param name="lookupKind">Names the lookup in the log, so the two stay distinguishable there.</param>
+    private DirectoryValidationResult FindOneUserAcrossForest(string value, Func<string, string> buildFilter, string lookupKind)
     {
-        if (string.IsNullOrWhiteSpace(employeeId))
+        if (string.IsNullOrWhiteSpace(value))
             return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.BlankInput), null);
 
         if (!IsAvailable)
@@ -69,13 +138,13 @@ public sealed partial class ADDirectorySearchService
         {
             if (!_runspaceLock.Wait(TimeSpan.FromSeconds(30)))
             {
-                _logger.LogWarning("AD employeeID lookup throttle timeout");
+                _logger.LogWarning("AD {LookupKind} lookup throttle timeout", lookupKind);
                 return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.ThrottleTimeout), null);
             }
 
             try
             {
-                return ExecuteFindUserByEmployeeId(employeeId.Trim());
+                return SearchEveryDomainForOneUser(buildFilter(value.Trim()), lookupKind);
             }
             catch
             {
@@ -91,28 +160,28 @@ public sealed partial class ADDirectorySearchService
         catch (Exception ex)
         {
             // Unavailable, never NotFound: the lookup did not complete, which is not evidence
-            // that nobody carries the id.
-            _logger.LogWarning(ex, "AD employeeID lookup failed");
+            // that nobody carries the value.
+            _logger.LogWarning(ex, "AD {LookupKind} lookup failed", lookupKind);
             return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.LookupThrew), null);
         }
     }
 
-    /// <summary>The LDAP filter for an exact employeeID match, escaped.</summary>
+    /// <summary>
+    /// Run <paramref name="ldapFilter"/> against every domain of the host's forest, each domain
+    /// directly, and say whether exactly one user answered.
+    /// </summary>
     /// <remarks>
-    /// Escaping is not decoration here. An employee ID comes from a directory attribute, not from
-    /// a fixed list, and an unescaped <c>*</c> turns this equality test into a wildcard that
-    /// matches every stamped user in the domain. That would read as Ambiguous at best and, for a
-    /// domain with one stamped user, as a confident wrong match.
+    /// Called with <see cref="_runspaceLock"/> held. Any one domain's error ends the search as
+    /// Unavailable - a match in the domain that failed is exactly what would make another domain's
+    /// single hit ambiguous - and so does a forest whose domains cannot be listed. At most two
+    /// users per domain are asked for: two is all it takes to know the answer is ambiguous.
     /// </remarks>
-    internal static string BuildEmployeeIdFilter(string employeeId) =>
-        $"(employeeID={ProtectedPrincipalService.EscapeLdapFilter(employeeId)})";
-
-    private DirectoryValidationResult ExecuteFindUserByEmployeeId(string employeeId)
+    private DirectoryValidationResult SearchEveryDomainForOneUser(string ldapFilter, string lookupKind)
     {
         var domains = GetForestDomains();
         if (domains.Count == 0)
         {
-            _logger.LogWarning("AD employeeID lookup could not enumerate forest domains");
+            _logger.LogWarning("AD {LookupKind} lookup could not enumerate forest domains", lookupKind);
             return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.LookupThrew), null);
         }
 
@@ -126,7 +195,7 @@ public sealed partial class ADDirectorySearchService
 
             ps.AddCommand("Get-ADUser")
               .AddParameter("Server", domain)
-              .AddParameter("LDAPFilter", BuildEmployeeIdFilter(employeeId))
+              .AddParameter("LDAPFilter", ldapFilter)
               .AddParameter("Properties", new[] { "DisplayName", "mail", "Enabled", "employeeID", "ObjectGUID" })
               .AddParameter("ResultSetSize", 2)
               .AddParameter("ErrorAction", "Stop");
@@ -137,11 +206,13 @@ public sealed partial class ADDirectorySearchService
             {
                 var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADUser failed";
                 ps.Streams.Error.Clear();
-                _logger.LogWarning("AD employeeID lookup errored against {Domain}: {Error}", domain, errMsg);
+                _logger.LogWarning("AD {LookupKind} lookup errored against {Domain}: {Error}", lookupKind, domain, errMsg);
                 return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.CmdletReportedErrors), null);
             }
 
-            matches.AddRange(found.Where(o => o is not null));
+            var hits = found.Where(o => o is not null).ToList();
+            _logger.LogDebug("AD {LookupKind} lookup matched {Count} user(s) in {Domain}", lookupKind, hits.Count, domain);
+            matches.AddRange(hits);
         }
 
         if (matches.Count == 0)
@@ -159,7 +230,8 @@ public sealed partial class ADDirectorySearchService
                 UserPrincipalName: obj.Properties["UserPrincipalName"]?.Value?.ToString(),
                 Email: obj.Properties["mail"]?.Value?.ToString(),
                 ObjectType: "User",
-                ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString()),
+                ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString(),
+                EmployeeId: obj.Properties["employeeID"]?.Value?.ToString()),
             Ambiguous: matches.Count > 1);
     }
 
@@ -204,7 +276,7 @@ public sealed partial class ADDirectorySearchService
                 // whose whole job is to tell those causes apart.
                 var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADForest failed";
                 ps.Streams.Error.Clear();
-                _logger.LogWarning("Could not enumerate forest domains for an employeeID lookup: {Error}", errMsg);
+                _logger.LogWarning("Could not enumerate forest domains for a forest-wide user lookup: {Error}", errMsg);
                 return [];
             }
 
@@ -212,7 +284,7 @@ public sealed partial class ADDirectorySearchService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not enumerate forest domains for an employeeID lookup");
+            _logger.LogWarning(ex, "Could not enumerate forest domains for a forest-wide user lookup");
             return [];
         }
     }

@@ -1,6 +1,7 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 dispatched.**
+Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 committed on
+`feat/cpr-employee-id`, not merged; base bump owed (status log).**
 Owner: Michael
 Module: `CloudPasswordReset` (`Modules/ModuleCatalog.cs:877`, version `1.1.0`)
 Extends: `docs/CloudPasswordReset-Plan.md` (Implemented 2026-09-23, unproven against the live
@@ -1080,3 +1081,21 @@ should carry:
 **Status log:**
 
 - 2026-10-27: drafted from the owner's request and his same-day clarification. Not approved.
+- 2026-10-28: **S1 committed on `feat/cpr-employee-id`, not merged.** `FindUserByLogonName` sits
+  beside `FindUserByEmployeeId` in `Services/ADEmployeeIdLookup.cs`, and both now run through one
+  wrapper (`FindOneUserAcrossForest`) and one per-domain loop (`SearchEveryDomainForOneUser`), so
+  their failure semantics cannot drift. `BuildLogonNameFilter` is the escaped equality;
+  `ADSearchResult` gains an optional `EmployeeId` (null default) that both lookups fill. The
+  existing lookup's own log lines render as before; the forest-enumeration line now says "a
+  forest-wide user lookup", because both lookups use it. Tests T1-T5 are `ForestUserLookupTests` (48 cases)
+  over a new stand-in forest, `ExchangeAdminWeb.Tests/StandInForest.cs`, behind the psl-11
+  search-session seam: the real service runs its real commands, no directory is reached, and every
+  failure case runs against both lookups. Mutations, each restored byte-exact (MD5
+  `327a0b2a28d9ff3576a23b129f3c34e5` before and after every row): M1, escaping dropped, failed 7
+  T1 cases; M2, a domain's error continuing the loop, failed 6 T3 cases; M3, the global catalog
+  queried instead of each domain, failed 27 cases including every T2 case and the source guard.
+  **Base version bump owed, not made** (the supervisor's instruction for this dispatch): master
+  already holds `2.36.0`, the value section 7 expected S1 to set, so by section 7's own rule ("bump
+  from what master holds") the owed bump is `2.36.0` -> `2.37.0` in `<VersionPrefix>`,
+  `AssemblyVersion` and `FileVersion`. `2.36.0` is not yet deployed; whether it absorbs this change
+  instead is the owner's call.
