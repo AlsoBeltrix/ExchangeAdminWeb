@@ -424,3 +424,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-27, slice 7.** kd-73 (two cancel checks) and kd-74 (two busy guards, two banner-dismiss hardenings): ~517K agent tokens, 309 tool uses, 1 h 12 min; 7464 tests on the branch, 11 mutants; merged `7ef50c41`.
 
 **2026-10-27, slice 8.** aud-a70 (6) (every grant refused without the directory-read credential; removals unaffected): ~540K agent tokens, 238 tool uses, 1 h 14 min, 15 mutants; 7530 tests on the branch; merged.
+
+**2026-10-27, slice 9.** cdt-58 (three scripts) and psl-10 (5) (live-directory classes opt-in by settings file): ~542K agent tokens, 263 tool uses, 1 h; Pester 520, xUnit default run 7524 (8 live cases out, 2 tripwires in); merged `857accaf`.
