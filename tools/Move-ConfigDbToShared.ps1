@@ -255,6 +255,11 @@ function Write-AppPoolSharingReport {
     # anything was stopped.
     # A folder that is not on disk is not read: it holds no jobs database, and Join-Path throws on a
     # drive that does not exist, which would turn this warning into a refusal.
+    # cdt-60: -IncludeNested. Step 1b allows a node rooted inside the instance's folder under the same
+    # pool (-NestedNodes Allow, aud-a38j), and the stop takes it down too; the shared rule left out
+    # every node at or inside the folder, so such an application was never named, its jobs never read,
+    # and the report said the stop stopped nothing else. Only the instance itself - the nodes at its
+    # folder - is left out here.
     param(
         [string]$Name,
         [string]$PublishPath,
@@ -262,7 +267,7 @@ function Write-AppPoolSharingReport {
     )
 
     try {
-        $others = @(Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath)
+        $others = @(Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath -IncludeNested)
     } catch {
         Write-Warn "Stopping app pool '$Name' may stop other IIS applications too, and their active bulk jobs are not read: $($_.Exception.Message)"
         return

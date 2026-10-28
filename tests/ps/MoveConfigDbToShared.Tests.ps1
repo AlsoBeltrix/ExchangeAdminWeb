@@ -925,6 +925,33 @@ Describe 'aud-a38e: the cutover confirms each pool stopped before copying its da
             $script:cutoverEvents.IndexOf('verified stop: aud-a38e-dev') | Should -BeGreaterThan $script:cutoverEvents.IndexOf('jobs: X:\dev\config X:\dev PlanOnly=False') -Because 'the operator is told what the stop takes down before it is stopped'
         }
 
+        It 'names an application rooted inside the instance''s folder under the same pool, and reads its jobs before the instance''s own (cdt-60)' {
+            # cdt-60. Step 1b allows such a node (-NestedNodes Allow, aud-a38j) and the stop takes it down, but the report used
+            # the shared rule, which leaves out everything at or inside the folder: the nested application went unnamed, its
+            # bulk jobs unread, and the report said that stopping the pool stopped nothing else.
+            $dev = Join-Path $TestDrive 'cdt60-dev'
+            $reports = Join-Path $dev 'Reports'
+            New-Item -ItemType Directory -Path $reports -Force | Out-Null
+            Set-Variable -Name PlanOnly -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' } -Others {
+                $script:cutoverEvents.Add('other-applications probe')
+                [pscustomobject]@{ Location = 'Web/'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = $dev }
+                [pscustomobject]@{ Location = 'Web/Reports'; ApplicationPool = 'aud-a38e-dev'; PhysicalPath = $reports }
+            }
+
+            Stop-AppPoolChecked -Name 'aud-a38e-dev' -ConfigDir "$dev\config" -AppPath $dev -PublishPath $dev
+
+            $script:cutoverEvents | Should -Contain 'other-applications probe'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *serves no*' }) | Should -BeNullOrEmpty -Because 'the nested application stops with the pool'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *  !  *' }) |
+                Should -Be @("said:   !  App pool 'aud-a38e-dev' also serves 1 other IIS application(s), which stop with it: Web/Reports with its files at '$reports'.") -Because 'the node at the folder is the instance; the one inside it is another application'
+            @($script:cutoverEvents | Where-Object { $_ -like 'jobs: *' }) |
+                Should -Be @("jobs: $reports\config $dev PlanOnly=False", "jobs: $dev\config $dev PlanOnly=False") -Because 'the nested application keeps its jobs database in its own config folder'
+            @($script:cutoverEvents | Where-Object { $_ -like 'said: *Active bulk jobs of IIS application*' }) |
+                Should -Be @("said:        Active bulk jobs of IIS application Web/Reports, with its files at '$reports', which stops with the pool:")
+            $script:cutoverEvents.IndexOf('verified stop: aud-a38e-dev') | Should -BeGreaterThan $script:cutoverEvents.IndexOf("jobs: $dev\config $dev PlanOnly=False")
+        }
+
         It 'says so when the pool serves nothing else, and reads only the instance''s jobs' {
             Set-Variable -Name PlanOnly -Value $false
             $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }

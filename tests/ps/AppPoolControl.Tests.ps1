@@ -1526,6 +1526,50 @@ Describe 'cdt-54: Get-AppPoolOtherApplication lists what else a stop of the pool
         }
     }
 
+    It 'with -IncludeNested, lists the pool''s applications inside the folder and leaves out only the instance itself, however IIS spells it (cdt-60)' {
+        # cdt-60. The cutover's serving check allows a node rooted inside the instance's folder under the same pool, and its
+        # stop takes that node down; the rule above, which leaves out everything at or inside the folder, never named it.
+        $env:CDT54_ROOT = 'D:\sites'
+        try {
+            $probe = {
+                Get-PoolNode -Location 'Web/App' -ApplicationPool 'ExamplePool' -PhysicalPath 'd:\SITES\app\'
+                Get-PoolNode -Location 'Web2/App' -ApplicationPool 'ExamplePool' -PhysicalPath '%CDT54_ROOT%\App'
+                Get-PoolNode -Location 'Web3/App' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:/sites/App'
+                Get-PoolNode -Location 'Web/App/api' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:\sites\App\api'
+                Get-PoolNode -Location 'Web/App/Reports' -ApplicationPool 'examplepool' -PhysicalPath 'D:\sites\App\Reports\'
+                Get-PoolNode -Location 'Web/App/Other' -ApplicationPool 'OtherPool' -PhysicalPath 'D:\sites\App\Other'
+                Get-PoolNode -Location 'Web/AppOther' -ApplicationPool 'ExamplePool' -PhysicalPath 'D:\sites\AppOther'
+            }
+            $nested = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\sites\App' -IncludeNested -ApplicationsProbe $probe)
+            $default = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe $probe)
+        } finally {
+            Remove-Item Env:\CDT54_ROOT -ErrorAction SilentlyContinue
+        }
+        ($nested | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App/api,Web/App/Reports,Web/AppOther' -Because 'the nodes at the folder, however spelled, are the instance; the pool''s nodes inside it stop with it; another pool''s node does not'
+        ($default | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/AppOther' -Because 'without the switch the rule is unchanged for the callers that refuse a nested node'
+    }
+
+    It 'with -IncludeNested, takes a junction to the folder for the instance and lists a real folder inside it (cdt-60, real files)' {
+        $script:Cdt60Root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt60_' + [guid]::NewGuid().ToString('N'))
+        $script:Cdt60Folder = Join-Path $script:Cdt60Root 'Publish Folder'
+        $script:Cdt60Inside = Join-Path $script:Cdt60Folder 'Reports'
+        $script:Cdt60Link = Join-Path $script:Cdt60Root 'link'
+        try {
+            New-Item -ItemType Directory -Path $script:Cdt60Inside -Force | Out-Null
+            $null = cmd /c "mklink /J `"$script:Cdt60Link`" `"$script:Cdt60Folder`""
+            Test-Path -LiteralPath $script:Cdt60Link | Should -BeTrue -Because 'the junction fixture exists'
+
+            $others = @(Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath $script:Cdt60Folder -IncludeNested -ApplicationsProbe {
+                    Get-PoolNode -Location 'Web/App' -ApplicationPool 'ExamplePool' -PhysicalPath $script:Cdt60Link
+                    Get-PoolNode -Location 'Web/App/Reports' -ApplicationPool 'ExamplePool' -PhysicalPath $script:Cdt60Inside
+                })
+            ($others | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App/Reports' -Because 'IIS at the junction is the instance''s folder; the folder inside it is another application'
+        } finally {
+            if (Test-Path -LiteralPath $script:Cdt60Link) { [System.IO.Directory]::Delete($script:Cdt60Link) }
+            Remove-Item -LiteralPath $script:Cdt60Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'throws, naming the pool and the folder, when IIS cannot be read' {
         { Get-AppPoolOtherApplication -Name 'ExamplePool' -PhysicalPath 'D:\sites\App' -ApplicationsProbe { throw 'Access is denied' } } |
             Should -Throw -ExpectedMessage "Cannot read the IIS sites and applications, so the applications app pool 'ExamplePool' serves besides the one at 'D:\sites\App' cannot be listed: Access is denied"
