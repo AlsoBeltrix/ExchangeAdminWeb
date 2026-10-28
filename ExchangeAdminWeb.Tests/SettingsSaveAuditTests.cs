@@ -786,6 +786,14 @@ public sealed class SettingsSaveAuditTests : IDisposable
         // kd-58 B2: and every cancellation catch - the page's own token only, filed as the PageMoved refusal. A save that
         // takes that token has one, or its cancellation would reach the catch above and be filed as a failure.
         var cancels = CancelCatchBlocks(page, signature).ToList();
+        if (signature.Contains(AllowlistSave, StringComparison.Ordinal))
+        {
+            // kd-58 B3: the allowlist save's cancellation is its service's record, as its every other outcome is (aud-a28l);
+            // the page catches none.
+            Assert.Empty(cancels);
+            return;
+        }
+
         if (signature.Contains("CancellationToken pageGaveUp", StringComparison.Ordinal))
             Assert.True(cancels.Count > 0, $"{signature} takes the page's token and has no catch for it");
         foreach (var (block, written) in cancels)

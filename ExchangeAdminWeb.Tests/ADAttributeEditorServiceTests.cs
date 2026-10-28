@@ -448,7 +448,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             new("department", "Department", "Choice", new[] { "IT", "HR" }, true, false, null, null),
             new("title", "Job Title", "String", null, false, true, 100, null)
         };
-        var saved = service.SaveAllowlistAndAudit(newAttrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        var saved = service.SaveAllowlistAndAudit(newAttrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
         Assert.True(saved.Success, saved.Error);
 
         // Subsequent get should reflect the new data
@@ -567,7 +567,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Contains("Job Title", service.LegacyAllowlistImportRefusal, StringComparison.Ordinal);
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("department", "Department", "String", null, false, true, null, null)],
-            service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+            service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
         Assert.Contains("config/ad-editable-attributes.json", result.Error, StringComparison.Ordinal);
@@ -737,7 +737,7 @@ public class ADAttributeEditorServiceTests : IDisposable
 
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("title", "Title", "String", null, false, true, null, null)],
-            loaded.Version, "EXAMPLE\\admin", "10.0.0.9");
+            loaded.Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
@@ -804,7 +804,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             new("department", "Department", "Choice", new[] { "IT", "HR" }, true, false, null, null)
         };
 
-        var saved = service.SaveAllowlistAndAudit(attrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        var saved = service.SaveAllowlistAndAudit(attrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
         Assert.True(saved.Success, saved.Error);
         service.InvalidateAllowlistCache();
 

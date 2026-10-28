@@ -1678,7 +1678,9 @@ public sealed class ModuleCatalog
             // a refusal, where it showed the provider's error code (aud-a67).
             // 1.7.4: a lookup runs on the identity submitted and a save records the ticket submitted - both read
             // above their yield - and a second submit during either is ignored (kd-72).
-            Version = "1.7.4",
+            // 1.7.5: an allowlist save the Module Configuration page stops waiting for - it moved to another module - writes
+            // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
+            Version = "1.7.5",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

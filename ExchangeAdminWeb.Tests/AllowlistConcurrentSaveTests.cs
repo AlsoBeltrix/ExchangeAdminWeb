@@ -80,7 +80,7 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         var page = _h.Service.LoadAllowlistForEditing();
         OtherInstanceAdds(Row("employeeID", "Employee ID"));
 
-        var result = _h.Service.SaveAllowlistAndAudit(With(page, Row("employeeNumber", "Employee Number")), page.Version, AdminA, Ip);
+        var result = _h.Service.SaveAllowlistAndAudit(With(page, Row("employeeNumber", "Employee Number")), page.Version, AdminA, Ip, TestContext.Current.CancellationToken);
 
         AssertConflictRefusal(result);
         Assert.Contains("employeeID", StoredNames());
@@ -95,7 +95,7 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         var page = _h.Service.LoadAllowlistForEditing();
         _h.AllowlistStore.BeforeWrite = () => OtherInstanceAdds(Row("employeeID", "Employee ID"));
 
-        var result = _h.Service.SaveAllowlistAndAudit(With(page, Row("employeeNumber", "Employee Number")), page.Version, AdminA, Ip);
+        var result = _h.Service.SaveAllowlistAndAudit(With(page, Row("employeeNumber", "Employee Number")), page.Version, AdminA, Ip, TestContext.Current.CancellationToken);
 
         Assert.Null(_h.AllowlistStore.BeforeWrite);
         AssertConflictRefusal(result);
@@ -112,7 +112,7 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         OtherInstanceAdds(Row("employeeID", "Employee ID"));
         var token = _h.AllowlistStore.GetChangeToken();
 
-        var result = _h.Service.SaveAllowlistAndAudit(With(page, Row("employeeNumber", "Employee Number")), page.Version, AdminA, Ip);
+        var result = _h.Service.SaveAllowlistAndAudit(With(page, Row("employeeNumber", "Employee Number")), page.Version, AdminA, Ip, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal(token, _h.AllowlistStore.GetChangeToken());
@@ -128,7 +128,7 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
             .Append(Row("employeeNumber", "Employee Number"))
             .ToList();
 
-        var result = _h.Service.SaveAllowlistAndAudit(edited, page.Version, AdminA, Ip);
+        var result = _h.Service.SaveAllowlistAndAudit(edited, page.Version, AdminA, Ip, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Error);
         Assert.Contains("employeeNumber", StoredNames());
@@ -148,10 +148,10 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         var page = _h.Service.LoadAllowlistForEditing();
         var first = With(page, Row("employeeID", "Employee ID"));
 
-        var saved = _h.Service.SaveAllowlistAndAudit(first, page.Version, AdminA, Ip);
+        var saved = _h.Service.SaveAllowlistAndAudit(first, page.Version, AdminA, Ip, TestContext.Current.CancellationToken);
         Assert.True(saved.Success, saved.Error);
         var second = _h.Service.SaveAllowlistAndAudit(
-            first.Append(Row("employeeNumber", "Employee Number")).ToList(), saved.Version!, AdminA, Ip);
+            first.Append(Row("employeeNumber", "Employee Number")).ToList(), saved.Version!, AdminA, Ip, TestContext.Current.CancellationToken);
 
         Assert.True(second.Success, second.Error);
         Assert.Contains("employeeID", StoredNames());
@@ -169,7 +169,7 @@ public sealed class AllowlistConcurrentSaveTests : IDisposable
         Assert.Contains("AttrEditorService.LoadAllowlistForEditing()", load, StringComparison.Ordinal);
         Assert.Contains("allowlistVersion = ", load, StringComparison.Ordinal);
 
-        var save = AuditCategoryFilingTests.MethodBody(code, "private async Task SaveAllowlistAsync()");
+        var save = AuditCategoryFilingTests.MethodBody(code, "private async Task SaveAllowlistAsync(CancellationToken pageGaveUp = default)");
         Assert.Contains("var version = allowlistVersion;", save, StringComparison.Ordinal);
         Assert.Contains("SaveAllowlistAndAudit(rows, version, ", save, StringComparison.Ordinal);
         Assert.Contains("allowlistVersion = result.Version", save, StringComparison.Ordinal);

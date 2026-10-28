@@ -662,3 +662,72 @@ no settings page was rendered in a browser.
 
 **Versions**: none. The Module Configuration page and the four settings services are app-wide; the base version is 2.36.0's,
 not yet deployed (the supervisor's ruling; the plan's section 7).
+
+### B3, the attribute allowlist save (implementer, 2026-10-28; lines at this commit)
+
+Read first, at `d2ef22bf`: the allowlist save is the fifth save on Module Configuration, and its records are its service's
+(aud-a28l). `ADAttributeEditorService.SaveAllowlistAndAudit` decides inside one store write, records every outcome and
+returns it without throwing; the page records only its own authorization re-check and the move before the write (aud-a66).
+It took no token, so a save the route change had given up on still committed whenever the store answered.
+
+- **The token's path** (plan 4.3): `StartSaveAsync` hands the allowlist save the page's token (`ModuleConfig.razor` 913), the
+  save passes it to `SaveAllowlistAndAudit` (2470; the save's signature 2414), the service to
+  `AttributeEditorRepository.ReplaceAllowlist` (`ADAttributeEditorService.cs` 449, 468), and the repository to the store's
+  write (`AttributeEditorRepository.cs` 109, 129; B1). Optional last parameters; every other caller passes none. Nothing after
+  the commit takes it - not the cache invalidation, not the success record.
+- **The service's own refusal** (plan 4.6): `SaveAllowlistAndAudit` catches a cancellation of its own token ahead of the catch
+  that records a failure (470) and records `LogAllowlistSaveRefused(performedBy, ip, "PageMoved",
+  SettingsSaveAudit.PageMovedRefusal)` - result Failed, section `ADAttributeEditor:Allowlist`, `refusedAt` PageMoved,
+  `mutationAttempted` false - and returns it as a refusal. The page writes nothing for it: it shows the result it is given,
+  named for its module, as for every outcome that ends on another load. The words moved to
+  `SettingsSaveAudit.PageMovedRefusal` (`Services/SettingsSaveAudit.cs` 65) so the page's saves and the service say the same;
+  the page's constant is now that one (`ModuleConfig.razor` 965). A busy store the page gave up on during the wait is still
+  the service's busy refusal.
+- **The tripwire and a pin**: `SettingsSaveAuditTests` holds that the allowlist save catches no cancellation - its records are
+  the service's; `AllowlistSaveAuditTests.ASaveThePageGaveUpOn_IsTheServicesOwnPageMovedRefusal_ForItsOwnTokenOnly` holds the
+  service's catch to its own token, ahead of the failure's, filing PageMoved in the shared words - the shape no case can tell
+  from a catch that takes any cancellation. Two source scans name the save's new signature (`AllowlistConcurrentSaveTests`,
+  `AllowlistSaveAuditTests`), and twelve test calls to `SaveAllowlistAndAudit` pass `TestContext.Current.CancellationToken`
+  (xUnit1051).
+
+**What the operator sees**: as B2 - after the notice, an allowlist save that had not committed ends "AD Attribute Editor: Not
+saved: the page moved to another module while this save waited, so nothing was written. Open the module again and save.",
+and the allowlist is as it was. Before this it committed and ended "AD Attribute Editor: The attribute allowlist was saved."
+
+#### Guard proof - B3
+
+`SettingsModuleMoveTests`' B2 cases take the allowlist save as their fifth: on the AD Attribute Editor, a row added
+(`department`, Department), the same four cases - inside its write past the bound (nothing stored, one record, written by the
+service, "AD Attribute Editor: Not saved: ..."), released inside the bound (saved), committed before the give-up (reported
+saved, its success record), and busy (the busy refusal) - with the pin above. **Reproduction**: with the page as committed
+before B3 (MD5 `2B49AB173F0FC6B2BFB96862D0AE2F36`, B2's) and everything else as here, the allowlist's main case failed - the
+row stored after the page moved - beside five source scans that read the save by its new signature; the page was restored
+byte-exact (`A1308F2059D9C7B4550A4D24DC89CF05`).
+
+kd-58's harness and method; the B2 filter with `|FullyQualifiedName~ADAttributeEditor`, 587 tests, green on the fix; every
+mutant compiled; every restore byte-exact. Fixed-file MD5s: `Services/ADAttributeEditorService.cs`
+`A8A1C731737E04441939BC90EBC65DA6`, `Services/Storage/AttributeEditorRepository.cs` `ED58692CECD66B855883199803ADCF28`,
+`Components/Pages/ModuleConfig.razor` `A1308F2059D9C7B4550A4D24DC89CF05`. "Main" is
+`ASaveInsideItsWriteWhenTheRouteChangeGivesUp_WritesNothing_AndIsRefusedAsPageMoved(Editable Attributes)`, "the pin" the
+`AllowlistSaveAuditTests` case above.
+
+| # | Mutation | Mutant MD5 | Failed (of 587) |
+|---|---|---|---|
+| B3a | the service's cancel branch removed | `F52D4280F89DFA44286008B0087E08C7` | 2: main - a Failed record with no `refusedAt`, the plan's named mutation; the pin |
+| B3b | the allowlist save does not pass its token to the service | `2765A888D48C0EE6865BE793DC244C95` | 1: main - the row stored |
+| B3c | `StartSaveAsync` hands the allowlist save no token | `1FD9F63C546603466FB016A50482452F` | 1: main |
+| B3d | the service does not pass the token to its repository | `4B4F39F7E3E8C2BD7C2C746B80BE3712` | 2: main - the row stored; the pin |
+| B3e | the repository does not pass the token to the store | `DB3644B986E19BD09CED6910CFC4A634` | 1: main |
+| B3f | the service's cancel catch takes any cancellation (its filter dropped) | `12C217ED8B92C0CE5439BCAB00549E8B` | 1: the pin - no behaviour case can tell, as for B2n |
+| B3g | the page catches the allowlist save's cancellation itself, recording it a second time | `50DCD1A4B5EA1924EFFE411BEF328E10` | 1: the tripwire (allowlist) - "the page catches none" |
+
+#### Gates - B3
+
+On this commit's tree, each run alone (2026-10-28): `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental` exit 0,
+0 errors, 19 warnings - the baseline set, no xUnit1051 among them; `dotnet test ExchangeAdminWeb.slnx --
+xUnit.MaxParallelThreads=4` 8,181 passed / 0 failed / 0 skipped (B2's 8,176 and these 5); `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; after `git add -A`, `git diff --check HEAD` exit 0 and
+`pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` passed. No PowerShell file changed; nothing deployed; no manual check run.
+
+**Versions**: AD Attribute Editor 1.7.4 -> 1.7.5 (`Modules/ModuleCatalog.cs` 1683). No base bump: 2.36.0, not yet deployed,
+absorbs the shared text in `SettingsSaveAudit` and the Module Configuration page's part (the plan's section 7).

@@ -910,7 +910,7 @@
             SecStatus => SaveModuleEnablementAsync(giveUp.Token),
             SecAccess => SaveSectionAccessAsync(giveUp.Token),
             SecConfig => SaveConfigAsync(giveUp.Token),
-            SecAttrs => SaveAllowlistAsync(),
+            SecAttrs => SaveAllowlistAsync(giveUp.Token),
             SecAdmins => SaveModuleAdminsAsync(giveUp.Token),
             _ => Task.CompletedTask,
         };
@@ -960,9 +960,9 @@
 
     // aud-a66. What a save says, and records, when its page moved to another module while it waited - for the directory, or
     // for its authorization re-check - before it wrote anything. kd-58 B2: and when the route change gave up on it inside its
-    // store write, which the store then rolled back whole.
-    private const string PageMovedRefusal =
-        "Not saved: the page moved to another module while this save waited, so nothing was written. Open the module again and save.";
+    // store write, which the store then rolled back whole. kd-58 B3: the words are SettingsSaveAudit's, which the allowlist
+    // save's service records with too.
+    private const string PageMovedRefusal = SettingsSaveAudit.PageMovedRefusal;
 
     // aud-a66. A save's message on a load other than the one it began on: named for its module, so it cannot be read as being
     // about the module shown.
@@ -2411,7 +2411,7 @@
         allowlistAttributes[idx].Choices = parsed.Length > 0 ? parsed : null;
     }
 
-    private async Task SaveAllowlistAsync()
+    private async Task SaveAllowlistAsync(CancellationToken pageGaveUp = default)
     {
         if (module == null) return;
 
@@ -2465,7 +2465,9 @@
                 return;
             }
 
-            var result = await Task.Run(() => AttrEditorService.SaveAllowlistAndAudit(rows, version, performedBy, ip));
+            // kd-58 B3. With the page's token: a save the route change gives up on inside its write is the service's own
+            // PageMoved refusal, returned like any other outcome - the page writes nothing for it.
+            var result = await Task.Run(() => AttrEditorService.SaveAllowlistAndAudit(rows, version, performedBy, ip, pageGaveUp));
             // aud-a66. Finished after the page moved: the outcome is told, named for its module, and the allowlist state the
             // page holds - version, banner, count - is left alone.
             if (!Holds(started))

@@ -1,6 +1,6 @@
 # Cancellation Depth - Plan
 
-Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3, the page-aware leave prompt and the module slices A6-A10, B1 and B2 are on `feat/cancellation-depth` (section 15); B3 and C1 remain.**
+Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3, the page-aware leave prompt, the module slices A6-A10 and Part B (B1-B3) are on `feat/cancellation-depth` (section 15); C1 remains.**
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -859,7 +859,7 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   nothing after the commit; an internal after-commit seam for the tests. The overloads made xUnit1051 flag thirteen test
   calls on the concrete store (assumption 7, now counted); each passes the test's token. No caller in the app passes one yet.
   No module bump.
-- 2026-10-28, **B2, the four Module Configuration saves** - `feat/cancellation-depth`, the commit that adds this line
+- 2026-10-28, **B2, the four Module Configuration saves** - `feat/cancellation-depth` `d2ef22bf`
   (record: aud-a67's (12) section): the page makes a token per save in `StartSaveAsync` and cancels it only when the route
   change stops waiting (`WaitForThisLoadsSavesAsync`); the status, access, configuration and admins saves pass it through
   their services and repositories to the store (B1), and each files a cancellation of it as the page's existing PageMoved
@@ -870,3 +870,10 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   the route change gives up on, so the moved check before the write was tested only through it - and a case for a save the
   route change never waited for pins that check again. No module bump - the page and the services are app-wide (2.36.0's,
   not yet deployed).
+- 2026-10-28, **B3, the attribute allowlist save** - `feat/cancellation-depth`, the commit that adds this line (record:
+  aud-a67's (12) section): the page hands the allowlist save its token, and the save passes it to
+  `SaveAllowlistAndAudit`, which passes it to `ReplaceAllowlist` and the store; a cancellation of it is the service's own
+  PageMoved refusal, recorded by the service and returned, in the page's words - now `SettingsSaveAudit.PageMovedRefusal`,
+  which the page's constant points to - and the page writes nothing for it. The catch tripwire holds that the page catches
+  none; a source pin holds the service's catch to its own token. Twelve test calls pass the test's token (xUnit1051). AD
+  Attribute Editor 1.7.4 -> 1.7.5.

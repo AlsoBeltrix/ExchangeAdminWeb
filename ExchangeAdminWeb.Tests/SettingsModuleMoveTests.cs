@@ -352,22 +352,39 @@ public sealed class SettingsModuleMoveTests : IDisposable
 
     // ---- kd-58 B2: a save the route change gives up on -------------------------------------------
 
-    /// <summary>The four saves the page's own token reaches (docs/CancellationDepth-Plan.md 4.3); the allowlist's is B3's.</summary>
-    public static TheoryData<string> TheFourSaves => ["Module Status", "Section Access", "Configuration", "Module Admins"];
+    /// <summary>
+    /// The saves the page's own token reaches (docs/CancellationDepth-Plan.md 4.3): the four B2 gave it to, and the
+    /// allowlist's (B3), whose records are its service's.
+    /// </summary>
+    public static TheoryData<string> TheSaves => ["Module Status", "Section Access", "Configuration", "Module Admins", "Editable Attributes"];
 
     private const string PickedName = "Directory-Admins";
 
+    private const string AttributeEditor = "ADAttributeEditor";
+
     /// <summary>
-    /// A save on the first module with one edit made: the store its write goes through, the section its records file under,
-    /// what that store holds for it, and what it says once saved on a page that has moved on.
+    /// A save with one edit made - on the first module, the allowlist's on the module it belongs to: that module, the store
+    /// its write goes through, the section its records file under, what that store holds for it, and what it says once saved
+    /// on a page that has moved on.
     /// </summary>
     private sealed record EditedSave(
-        ModuleConfigPage Page, AttributeEditorHarness.SwitchableStore Store, string Section, Func<string> Stored, string Saved);
+        ModuleConfigPage Page, string ModuleId, AttributeEditorHarness.SwitchableStore Store, string Section, Func<string> Stored, string Saved);
 
-    private async Task<EditedSave> EditedOnTheFirstModule(string tab)
+    private async Task<EditedSave> Edited(string tab)
     {
         if (tab == "Module Admins")
-            return new(await AdminsWithAGroupAdded(), _h.AdminsStore, $"ModuleAdmins:{First}", () => string.Join(",", StoredAdmins(First)), "Module admins saved.");
+            return new(await AdminsWithAGroupAdded(), First, _h.AdminsStore, $"ModuleAdmins:{First}", () => string.Join(",", StoredAdmins(First)), "Module admins saved.");
+
+        if (tab == "Editable Attributes")
+        {
+            var editor = _h.OpenModuleConfig(AttributeEditor, _h.CreateAttributeEditor());
+            Set(editor, "tab", tab);
+            await _h.RunAsync(editor, "AddAttribute");
+            await _h.RunAsync(editor, "UpdateAttrName", 0, new ChangeEventArgs { Value = "department" });
+            await _h.RunAsync(editor, "UpdateAttrLabel", 0, new ChangeEventArgs { Value = "Department" });
+            return new(editor, AttributeEditor, _h.AllowlistStore, "ADAttributeEditor:Allowlist",
+                () => string.Join(",", StoredAllowlist()), "The attribute allowlist was saved.");
+        }
 
         var alias = _h.Catalog.GetById(First)!.MainPermission.PolicyAlias;
         if (tab == "Section Access")
@@ -382,7 +399,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
         {
             case "Module Status":
                 await _h.RunAsync(page, "ToggleModuleEnabled", !Field<bool>(page, "moduleEnabled"));
-                return new(page, _h.EnablementStore, $"Module:{First}", _h.StoredEnablement, "Module status saved.");
+                return new(page, First, _h.EnablementStore, $"Module:{First}", _h.StoredEnablement, "Module status saved.");
             case "Section Access":
                 // A group picked from the directory, so the save has a display name to store once its grants are written.
                 await _h.OnDispatcherAsync(() =>
@@ -392,10 +409,10 @@ public sealed class SettingsModuleMoveTests : IDisposable
                 });
                 await _h.RunAsync(page, "AddAccessGroup", alias);
                 _h.GroupDirectory.Answer = SettingsPageHarness.StandInDirectory.Group;
-                return new(page, _h.SectionStore, alias, _h.StoredSectionAccess, "Section access saved.");
+                return new(page, First, _h.SectionStore, alias, _h.StoredSectionAccess, "Section access saved.");
             default:
                 await _h.RunAsync(page, "SetConfigValue", "DelineaSecretId", "4242");
-                return new(page, _h.ModuleConfigStore, $"ModuleConfig:{First}", () => _h.StoredModuleConfig(First), "Configuration saved.");
+                return new(page, First, _h.ModuleConfigStore, $"ModuleConfig:{First}", () => _h.StoredModuleConfig(First), "Configuration saved.");
         }
     }
 
@@ -467,12 +484,13 @@ public sealed class SettingsModuleMoveTests : IDisposable
     /// notice and cancels the save's own token; the write goes on, and the store rolls it back whole before its commit.
     /// Nothing is stored, no display name either; the save files the refusal aud-a66 files for the same move before the
     /// write, and says so, named for its module. Until B2 the write committed after the notice had said it would refuse.
+    /// kd-58 B3: the allowlist save the same, its record written by its service (aud-a28l), not by the page.
     /// </summary>
     [Theory]
-    [MemberData(nameof(TheFourSaves))]
+    [MemberData(nameof(TheSaves))]
     public async Task ASaveInsideItsWriteWhenTheRouteChangeGivesUp_WritesNothing_AndIsRefusedAsPageMoved(string tab)
     {
-        var save = await EditedOnTheFirstModule(tab);
+        var save = await Edited(tab);
         var stored = save.Stored();
         var token = save.Store.GetChangeToken();
         Set(save.Page, "saveWaitBound", Short);
@@ -484,7 +502,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
             var loading = await Open(save.Page, Second);
             await loading.WaitAsync(Long, Cancel);
             Assert.Equal(Second, Shown(save.Page));
-            Assert.Contains($"A save on {DisplayName(First)} had not finished", Status(save.Page), StringComparison.Ordinal);
+            Assert.Contains($"A save on {DisplayName(save.ModuleId)} had not finished", Status(save.Page), StringComparison.Ordinal);
         }
         finally
         {
@@ -504,16 +522,16 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
         Assert.StartsWith("Not saved: the page moved to another module", Text(record, "error"), StringComparison.Ordinal);
         Assert.Contains("nothing was written", Text(record, "error"), StringComparison.Ordinal);
-        Assert.Equal($"{DisplayName(First)}: {Text(record, "error")}", Status(save.Page));
+        Assert.Equal($"{DisplayName(save.ModuleId)}: {Text(record, "error")}", Status(save.Page));
         Assert.True(Field<bool>(save.Page, "statusIsError"));
     }
 
     /// <summary>kd-58 B2, the control: the same write released inside the bound saves as it did before, and the route change then loads.</summary>
     [Theory]
-    [MemberData(nameof(TheFourSaves))]
+    [MemberData(nameof(TheSaves))]
     public async Task ASaveInsideItsWriteReleasedInsideTheBound_SavesAsBefore(string tab)
     {
-        var save = await EditedOnTheFirstModule(tab);
+        var save = await Edited(tab);
         var stored = save.Stored();
         var (writing, release) = Hold(hook => save.Store.InsideWrite = hook);
         var saving = Save(save.Page);
@@ -551,10 +569,10 @@ public sealed class SettingsModuleMoveTests : IDisposable
     /// its own (aud-a66).
     /// </summary>
     [Theory]
-    [MemberData(nameof(TheFourSaves))]
+    [MemberData(nameof(TheSaves))]
     public async Task ASaveCommittedBeforeTheRouteChangeGivesUp_IsReportedSaved_WithItsSuccessRecord(string tab)
     {
-        var save = await EditedOnTheFirstModule(tab);
+        var save = await Edited(tab);
         var stored = save.Stored();
         Set(save.Page, "saveWaitBound", Short);
         var (committed, release) = Hold(hook => save.Store.AfterWrite = hook);
@@ -565,7 +583,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
             var loading = await Open(save.Page, Second);
             await loading.WaitAsync(Long, Cancel);
             Assert.Equal(Second, Shown(save.Page));
-            Assert.Contains($"A save on {DisplayName(First)} had not finished", Status(save.Page), StringComparison.Ordinal);
+            Assert.Contains($"A save on {DisplayName(save.ModuleId)} had not finished", Status(save.Page), StringComparison.Ordinal);
         }
         finally
         {
@@ -582,7 +600,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.Equal("Success", Text(record, "result"));
         Assert.Equal(save.Section, Text(record, "section"));
         Assert.False(record.TryGetProperty("refusedAt", out _));
-        Assert.Equal($"{DisplayName(First)}: {save.Saved}", Status(save.Page));
+        Assert.Equal($"{DisplayName(save.ModuleId)}: {save.Saved}", Status(save.Page));
         Assert.False(Field<bool>(save.Page, "statusIsError"));
     }
 
@@ -593,10 +611,10 @@ public sealed class SettingsModuleMoveTests : IDisposable
     /// move. Waits the store's real busy wait by design (SqliteConnectionFactory.BusyTimeout).
     /// </summary>
     [Theory]
-    [MemberData(nameof(TheFourSaves))]
+    [MemberData(nameof(TheSaves))]
     public async Task ASaveWaitingForABusyStoreWhenTheRouteChangeGivesUp_IsTheBusyRefusal(string tab)
     {
-        var save = await EditedOnTheFirstModule(tab);
+        var save = await Edited(tab);
         var stored = save.Stored();
         Set(save.Page, "saveWaitBound", Short);
         using var writing = new ManualResetEventSlim();
@@ -624,7 +642,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.Equal(save.Section, Text(record, "section"));
         Assert.Equal(SettingsSaveAudit.StoreBusy, Text(record, "refusedAt"));
         Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
-        Assert.Equal($"{DisplayName(First)}: {SettingsSaveAudit.StoreBusyMessage()}", Status(save.Page));
+        Assert.Equal($"{DisplayName(save.ModuleId)}: {SettingsSaveAudit.StoreBusyMessage()}", Status(save.Page));
     }
 
     /// <summary>
@@ -639,7 +657,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
     [InlineData("Module Admins")]
     public async Task ASaveTheRouteChangeNeverWaitedFor_IsRefusedByTheMovedCheck_ItsTokenLive(string tab)
     {
-        var save = await EditedOnTheFirstModule(tab);
+        var save = await Edited(tab);
         var stored = save.Stored();
         var routeAuthorized = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
@@ -664,7 +682,7 @@ public sealed class SettingsModuleMoveTests : IDisposable
         Assert.Equal(save.Section, Text(record, "section"));
         Assert.Equal("PageMoved", Text(record, "refusedAt"));
         Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
-        Assert.Equal($"{DisplayName(First)}: {Text(record, "error")}", Status(save.Page));
+        Assert.Equal($"{DisplayName(save.ModuleId)}: {Text(record, "error")}", Status(save.Page));
     }
 
     // ---- a save started while a load waits -----------------------------------------------------

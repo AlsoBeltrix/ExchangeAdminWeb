@@ -57,6 +57,14 @@ public static class SettingsSaveAudit
         IReadOnlyCollection<string>? sections = null) =>
         Write(audit, logger, performedBy, ip, section, reason, sections, null);
 
+    /// <summary>
+    /// aud-a66, kd-58 B2 and B3. What a Module Configuration save says, and records, when the page moved to another module
+    /// while it waited: before it wrote anything, or inside a store write the route change gave up on, which the store then
+    /// rolled back whole. One text for the page's saves and the allowlist's, whose records are its service's (aud-a28l).
+    /// </summary>
+    public const string PageMovedRefusal =
+        "Not saved: the page moved to another module while this save waited, so nothing was written. Open the module again and save.";
+
     /// <summary>The <c>refusedAt</c> of a save refused because the settings store was busy (aud-a28v, aud-a40).</summary>
     public const string StoreBusy = "StoreBusy";
 

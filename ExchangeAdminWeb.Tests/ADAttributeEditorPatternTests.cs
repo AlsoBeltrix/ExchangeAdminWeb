@@ -108,7 +108,7 @@ public sealed class ADAttributeEditorPatternTests : IDisposable
         var stored = view.Attributes!;
         var edited = stored.Select(a => a.Name == "title" ? a with { Pattern = "[" } : a).ToList();
 
-        var refused = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9");
+        var refused = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9", TestContext.Current.CancellationToken);
 
         Assert.False(refused.Success);
         Assert.Contains("Job Title", refused.Error, StringComparison.Ordinal);
@@ -124,7 +124,7 @@ public sealed class ADAttributeEditorPatternTests : IDisposable
         var view = _h.Service.LoadAllowlistForEditing();
         var edited = view.Attributes!.Select(a => a.Name == "title" ? a with { Pattern = "^[A-Z]" } : a).ToList();
 
-        var saved = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9");
+        var saved = _h.Service.SaveAllowlistAndAudit(edited, view.Version, "EXAMPLE\\allowlist-admin", "10.0.0.9", TestContext.Current.CancellationToken);
 
         Assert.True(saved.Success, saved.Error);
         Assert.True(_h.Allowlist.TryReadAllowlist(out var rows, out _));
