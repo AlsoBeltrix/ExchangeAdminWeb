@@ -433,3 +433,11 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, the job-service tail.** kd-82: ~448K agent tokens, 230 tool uses, 54 min. kd-83: ~344K, 120 tool uses, 47 min. kd-84: ~236K, 75 tool uses, 22 min. kd-85: ~302K, 118 tool uses, 30 min. kd-86 in progress. Each of these was found by the agent before it while reading the same service; the class (a read or reload after a landed write, outside any try) is now closed across BulkJobService and the three job pages.
 
 **2026-10-28, close.** kd-86: ~277K agent tokens, 102 tool uses, 24 min. Final master b8c1457a: 7585 xUnit, 531 Pester, all gates green. Stream closed; nothing open but the two plan-gated items and the three plans.
+
+**2026-10-28, CloudPasswordResetEmployeeId S1** (shared logon-name lookup; one Opus 5.5 agent in worktree `cpr-s1`, branch `feat/cpr-employee-id`, dispatched by the supervising session). The agent cannot see its own share: `tools/Get-TokenUsage.ps1 -GroupBy Session` folds it into the supervising session (252ce28d, 2,376 requests for the day at S1, est $583 at opus-5 list rates, supervisor and every agent together). The agent-token, tool-use and time figures are the supervisor's hand-back notification's.
+
+**2026-10-28, CloudPasswordResetEmployeeId S2** (the service: setting, name rule, classifier, lookup inside DeriveDestination, SetEmployeeIdAsync; same agent and session as S1). Not separable from the S1 line for the same reason; the supervisor's hand-back figures cover S1 and S2 together.
+
+**2026-10-28, CloudPasswordResetEmployeeId S3** (the page and the descriptor; the same agent, continued by the supervisor after the S1-S2 hand-back). Not separable for the same reason; the supervisor's figures for the continuation cover S3 and S4 together.
+
+**2026-10-28, CloudPasswordResetEmployeeId S4** (records: the module doc, the module plan's pointers, this plan's version note, acceptance table and status, findings cpe-1 to cpe-4; same agent and continuation as S3, whose line covers it).

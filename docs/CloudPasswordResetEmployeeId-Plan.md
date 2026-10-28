@@ -1,6 +1,8 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 dispatched.**
+Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). All four slices
+committed on `feat/cpr-employee-id`, awaiting merge. Unproven against the live service: none of
+section 13's manual checks has been run.**
 Owner: Michael
 Module: `CloudPasswordReset` (`Modules/ModuleCatalog.cs:877`, version `1.1.0`)
 Extends: `docs/CloudPasswordReset-Plan.md` (Implemented 2026-09-23, unproven against the live
@@ -721,6 +723,15 @@ The new step adds no refusal value of its own. The two refusals it can lead to a
 - If master has moved by the time a slice lands, bump from what master holds. This plan bumps
   each layer once.
 
+**As landed (2026-10-28).** Master had moved before S1: the fix-everything close-out set the base
+version to `2.36.0` and the module to `1.1.1`.
+- **Base: no bump.** `2.36.0` is not yet deployed (the owner's "not yet", `.agents/decisions.md`
+  2026-10-28), so it absorbs this plan's shared-infrastructure change rather than taking a second
+  number before it ships. That is the supervising session's instruction for S3 and S4. The S1 entry
+  in the status log below, written before the instruction, records the bump as owed (`2.36.0` ->
+  `2.37.0`); this note settles it.
+- **Module: `1.1.1` -> `1.2.0`** in S3, with its `1.2.0:` catalog note.
+
 ## 8. Slices
 
 **How the slices run:**
@@ -928,6 +939,27 @@ record.
 - **AC-F12.** No source file outside test fixtures names this deployment's account-name endings or
   domains.
 
+### Acceptance status, at S4 (2026-10-28)
+
+Every criterion has an automated test, each proven by a mutation (status log). **None has been
+checked against the live service:** the module itself has never run live, and the manual checks
+in section 13 need its registration, its Delinea record and the write grant (assumption A1).
+
+| AC | State | Held by (tests in `ExchangeAdminWeb.Tests/`) | Live check (section 13) |
+|---|---|---|---|
+| AC-F1 | Met in tests | `CloudPasswordResetFillDerivationTests` T9 (no name query, same refusals, `NotNeeded`); `CloudPasswordResetFillPageRunTests` (a stamped account: no save, every record `NotNeeded`) | 6, not run |
+| AC-F2 | Met in tests | T10 (off or unreadable: no query, today's destination); the page run with the switch off, both ways | 3 and 8, not run |
+| AC-F3 | Met in tests | The planned derivation; the page run: owner shown before confirm, save then reset, mail to the owner | 2, not run |
+| AC-F4 | Met in tests | T7 and the failed derivations (today's destination); the page runs: the refusal word for word and nothing written, the reveal and nothing saved | 3, not run |
+| AC-F5 | Met in tests | T11 (rejected, indeterminate, never "not saved" for unknown); the page runs: a refused and an unanswered save, the reset and mail still go, audited and alerted | 5, not run |
+| AC-F6 | Met in tests | T13, T14; the page run where the permission is lost before the save | - |
+| AC-F7 | Met in tests | T11 (one property, the object id); T9 (no plan for a stamped account); T16 | 2, not run |
+| AC-F8 | Met in tests | No owner or address parameter on the service; the name read only from Entra's UPN; the page's existing no-destination-control test | - |
+| AC-F9 | Met in tests | S1 T1 and T4; one name and one number per fill-in | - |
+| AC-F10 | Met in tests | S1 T3; T7 rows 2 and 6 | 4, not run |
+| AC-F11 | Met in tests | T19 run over every path: one key set, closed-list values; T20: no password in any row or alert | 2, not run |
+| AC-F12 | Met in tests | T12 over every production file the plan touches (the S1 and S2 files in full, the shared search service's code, and from S4 the page and the catalog in full); T22 over the descriptor's texts | - |
+
 ## 11. Risks, biggest first
 
 1. **A name points at the wrong person, and the save makes it stick.**
@@ -1080,3 +1112,139 @@ should carry:
 **Status log:**
 
 - 2026-10-27: drafted from the owner's request and his same-day clarification. Not approved.
+- 2026-10-28: **S1 committed on `feat/cpr-employee-id`, not merged.** `FindUserByLogonName` sits
+  beside `FindUserByEmployeeId` in `Services/ADEmployeeIdLookup.cs`, and both now run through one
+  wrapper (`FindOneUserAcrossForest`) and one per-domain loop (`SearchEveryDomainForOneUser`), so
+  their failure semantics cannot drift. `BuildLogonNameFilter` is the escaped equality;
+  `ADSearchResult` gains an optional `EmployeeId` (null default) that both lookups fill. The
+  existing lookup's own log lines render as before; the forest-enumeration line now says "a
+  forest-wide user lookup", because both lookups use it. Tests T1-T5 are `ForestUserLookupTests` (48 cases)
+  over a new stand-in forest, `ExchangeAdminWeb.Tests/StandInForest.cs`, behind the psl-11
+  search-session seam: the real service runs its real commands, no directory is reached, and every
+  failure case runs against both lookups. Mutations, each restored byte-exact (MD5
+  `327a0b2a28d9ff3576a23b129f3c34e5` before and after every row): M1, escaping dropped, failed 7
+  T1 cases; M2, a domain's error continuing the loop, failed 6 T3 cases; M3, the global catalog
+  queried instead of each domain, failed 27 cases including every T2 case and the source guard.
+  **Base version bump owed, not made** (the supervisor's instruction for this dispatch): master
+  already holds `2.36.0`, the value section 7 expected S1 to set, so by section 7's own rule ("bump
+  from what master holds") the owed bump is `2.36.0` -> `2.37.0` in `<VersionPrefix>`,
+  `AssemblyVersion` and `FileVersion`. `2.36.0` is not yet deployed; whether it absorbs this change
+  instead is the owner's call.
+- 2026-10-28: **S2 committed on `feat/cpr-employee-id`, not merged.** In
+  `CloudPasswordResetService`: the setting (`FillMissingEmployeeIdKey`, `OwnerNameEndingsKey`; read
+  at each operation through one `TryGetModuleConfig` call, the same test `IsModuleCorrupt` makes),
+  the name rule (`DeriveOwnerLogonName`), the classifier (`ClassifyEmployeeIdFill`, the 4.2 table
+  in order, rows 6-8 and 10-11 through the untouched `ClassifyDestination`), the lookup inside
+  `DeriveDestination` (`FillMissingEmployeeId`), and `SetEmployeeIdAsync` with its stub-testable
+  core `SendEmployeeIdAsync`. The fill-in outcome rides the destination record as an optional
+  `Fill` (`EmployeeIdFill`: outcome, number, source GUID, logon name, display name), and the closed
+  list of 4.8 is the enum `EmployeeIdFillOutcome`, whose zero value is `NotAttempted`.
+  `DeriveDestination`'s comment is updated as section 8 asks. Behaviour is unchanged: nothing can
+  switch the fill-in on until S3 declares the fields. **What S2 does not do, by section 8:** the
+  audit action `CloudPasswordReset_EmployeeIdSet`, the three fields on every event, and the alerts
+  are written by the page's single builders, so S3 wires them; S2 supplies the values they carry.
+  **Implementation choices S3 and a reviewer should know:**
+  - The name rule reads only a UPN Entra returned on the read. `CloudPasswordTarget` gains an
+    optional `UserPrincipalNameFromEntra` (default false), set by `ResolveTargetAsync`, which keeps
+    falling back to the typed text exactly as before when Graph omits the property. A name not
+    from Entra is `OwnerNotFound`, and no query runs (4.2 step 1, "never the operator's typed
+    text").
+  - A blank switch reads as off, as `ValidateTickets` reads one; only a non-blank non-boolean is
+    `SettingUnreadable`.
+  - A directory answer of Found with no user in it is `OwnerLookupFailed`: no answer to act on.
+  - GUIDs are compared in canonical form, and an empty GUID counts as missing.
+  - A Graph client that cannot be built is `WriteRejected`, since nothing was sent. Any throw from
+    the PATCH itself is `WriteIndeterminate`, because a throw cannot be placed before or after the
+    send (the `ResetPasswordAsync` precedent). The result message carries the status and never a
+    response body; the sanitized Graph error goes to the log alone.
+  - No length check on the number before the save: assumption A2 stays an assumption, and an
+    over-long value comes back from Entra as `WriteRejected`.
+  Tests: T6 `CloudPasswordResetOwnerNameTests`, T7 `CloudPasswordResetFillClassifierTests`, T8
+  `CloudPasswordResetFillSettingTests`, T9 and T10 with the fill-in end to end in
+  `CloudPasswordResetFillDerivationTests` (the real service over a real config store and the S1
+  stand-in forest, `ExchangeAdminWeb.Tests/CloudPasswordResetHarness.cs`), T11
+  `CloudPasswordResetEmployeeIdSaveTests` over a recording handler behind `GraphTokenClient`, T12
+  `CloudPasswordResetNeutralityTests`, and `CloudPasswordResetFillVocabularyTests` pinning the
+  closed list, the keys and the absence of any owner or address parameter. All in
+  `ExchangeAdminWeb.Tests/CloudPasswordResetEmployeeIdFillTests.cs`, 136 cases. Mutations, each
+  restored byte-exact: M4 case-sensitive endings failed 4 T6 cases and shortest-first failed 2; M5
+  failed 3 T7 cases; M6 failed 8 (T7 and the GUID-less end-to-end case); M7 failed 10 (T8 and
+  T10); M8 failed the 3 T9 cases; M9 failed 2 T11 cases; M10 failed 3. Beyond the table: a
+  deployment ending written into the service failed T12; a save inserted into the derive path
+  failed its source guard; an owner-address parameter on `DeriveDestination` failed the parameter
+  guard. Every one of those rows ran against the final `CloudPasswordResetService.cs` and was
+  restored to it byte-exact, MD5 `81c565b171fb4c53d4b93b84d56ec3f7` before and after each. A
+  deployment domain written into the shared search service's code failed T12's code-only guard,
+  restored to `d520887ab3fedd37a7e698546055c51c`. No version bump, per section 7.
+- 2026-10-28: **S3 committed on `feat/cpr-employee-id`, not merged.** The switch is declared in
+  the same commit as the page's save and confirmed-plan comparison, so the fill-in cannot be
+  switched on without them. Module `CloudPasswordReset` `1.1.1` -> `1.2.0` (master had moved past
+  the `1.1.0` section 7 names), with its `1.2.0:` catalog note.
+  - **Catalog.** `FillMissingEmployeeId` (Boolean, default `false`) and `OwnerNameEndings` (Text,
+    no default), with hints in the wording rule: what a person can do ("Anyone who can reset
+    passwords here can trigger that save", "a person who cannot see passwords on screen"). The
+    module and reset-permission descriptions say a reset may first save the owner's employee ID
+    on the account. No new permission (J4).
+  - **Page.** The Employee ID row shows the planned number and the directory account it comes
+    from; after a failed lookup, "Not set" and one muted line per outcome; with the fill-in off,
+    exactly what it showed before. The confirm prompt names the number and the directory account
+    (4.5). The confirmed-plan comparison also compares the number to be saved. After the
+    notifications gate, a planned fill-in re-checks the reset permission, saves the number on the
+    fresh read's object id, audits `CloudPasswordReset_EmployeeIdSet` (`passwordDelivery` `n/a`,
+    `revealUsed` false, the save's sentence as the error on failure), alerts the administrators
+    (the number, the account it came from, its ObjectGUID, the outcome and the sentence - so a
+    refused save tells them the number was not saved) and goes on to the reset whatever came back.
+    Every event carries `employeeIdFill`, `employeeIdFillValue` and `employeeIdFillSource` from
+    the one builder, `NotAttempted` until this reset has derived; the reset's alert gains
+    "Employee ID filled in" and "Filled in from"; the result names what became of a save on every
+    path after it. Unchanged, byte for byte: `WhyResetUnavailable`, the reveal-gate message and
+    `DestinationRefusalText`.
+  - **Progress.** Six steps. The new one reads "saving the employee ID" or "employee ID already
+    set", as 4.5 says, and also "no employee ID to save" - a third label this slice added for the
+    path neither of those is true on: an account without a number going to the reveal. The
+    registry entry is text-anchored and still holds; its note now says why the save needs no anchor
+    of its own (it sits inside the window the derive and the last alert pin). The page has no
+    line-keyed ClickGateRegistry entries (it is on the not-converted list) and no control was
+    added, so nothing was re-anchored.
+  - **Records in this commit.** The module plan's audit section and field table gain the action,
+    the three fields, `n/a` for `passwordDelivery` on the save's event and the new meaning of
+    `destinationEmployeeId`. README's module section describes the fill-in and the write grant
+    (assumption A1, still unconfirmed).
+  - **A test seam in the service.** `GraphClientForTests` (internal, init-only, null in
+    production, the psl-11 shape) hands a Graph client over a stand-in handler, so the page's
+    confirm flow runs end to end in tests with no Secret Server.
+  - **Tests.** `ExchangeAdminWeb.Tests/CloudPasswordResetEmployeeIdPageTests.cs`, 28 cases. T13-T18 and T20
+    are source guards. T15, T18, T19, T20 and T21 also run, with AC-F1 to AC-F6, through
+    `ExchangeAdminWeb.Tests/CloudPasswordResetPageRun.cs`: the real page handlers over the real
+    service, the stand-in forest, a stand-in Graph, the real audit writer and recording mail, read
+    back from where each record went. T22 is the catalog. The existing version assertion moved to
+    `1.2.0`; no other existing test changed.
+  - **Mutations**, each restored byte-exact: the page to MD5 `49f8146219083b6d01ce1681ce2a035b`,
+    the service to `dc854c0d86e80834c54332cc5f6b33de`. M11 (the protection check moved below the
+    save) failed T13 and T15. M12 (the re-check before the save removed) failed T14 and the run
+    where the permission is lost before the save. M13 (a return after a refused save) failed T15,
+    the refused-save run and T19. M14 (one character of the reveal-gate message) failed T17 and
+    both verbatim-refusal runs. M15 (the number dropped from the comparison) failed T18 and the
+    changed-number run. M16 (the source field dropped from the save's event) failed T19 and the
+    planned run. M17 (the alert skipped on a failed save) failed T20 and both failed-save runs.
+    M18 (the address taken from the name lookup's match) failed T21 and S2's classifier test.
+- 2026-10-28: **S4 committed on `feat/cpr-employee-id`, not merged.** The records:
+  - `docs/CloudPasswordReset.md`: what it does, permissions, configuration, the write grant as an
+    assumption, the refusal, the audit, the failure modes (the biggest risk first) and logging. It
+    also corrects a stale claim in passing: the audit uses the `"n/a"` sentinel, not explicit nulls.
+  - The module plan: pointers wherever its text no longer holds. "Where the password goes", "What
+    is not built", Scope, External prerequisites, AC3 and AC4 each say what changed at `1.2.0`; S3
+    already carried the audit table and the action list.
+  - This plan: the section 7 note (base `2.36.0`, not yet deployed, absorbs the change, so there is
+    no bump - the supervising session's instruction), the acceptance status table after section
+    10, the header and this entry.
+  - Findings `cpe-1` to `cpe-4` (`.agents/review/findings/`) with their index rows: section 14's
+    four follow-ups inside the repo, each open, logged and not approved. The fifth, the true-up
+    README naming a companion script that is not on disk, is outside the repo, so it is no finding
+    here.
+  - T12 now also scans the page and the catalog, the two production files S3 touched. A deployment
+    ending written into the page fails it, restored byte-exact to
+    `49f8146219083b6d01ce1681ce2a035b`.
+  - **Not done here, by the supervising session's instruction:** `.agents/state.md` and
+    `.agents/decisions.md`. The section 15 decision was recorded at approval (2026-10-27).
+  The README module section landed with S3.

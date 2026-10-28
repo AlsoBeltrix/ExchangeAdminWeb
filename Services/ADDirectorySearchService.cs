@@ -960,6 +960,14 @@ public sealed record DirectoryValidationResult(
 /// forest-wide search. Null when unknown - a picker showing several domains must then omit the
 /// label rather than assume the local one.
 /// </param>
+/// <param name="EmployeeId">
+/// The user's <c>employeeID</c>, populated by the forest-wide single-user lookups
+/// (<see cref="ADDirectorySearchService.FindUserByEmployeeId"/> and
+/// <see cref="ADDirectorySearchService.FindUserByLogonName"/>), which request it. Optional with a
+/// null default, the precedent <paramref name="ObjectSid"/> set, so the existing construction sites
+/// are unaffected. From those lookups null means the user carries none; from anywhere else it
+/// means the attribute was not read, and must not be taken for an answer.
+/// </param>
 public sealed record ADSearchResult(
     string DisplayName,
     string DistinguishedName,
@@ -969,7 +977,8 @@ public sealed record ADSearchResult(
     string ObjectType,
     string? ObjectSid = null,
     string? DnsDomain = null,
-    string? ObjectGuid = null)
+    string? ObjectGuid = null,
+    string? EmployeeId = null)
 {
     /// <summary>
     /// The NetBIOS-style label to show beside a name (<c>ANALOG</c>, <c>WINROOT</c>), or null.

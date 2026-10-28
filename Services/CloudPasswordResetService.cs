@@ -41,7 +41,110 @@ public enum CloudPasswordResetRefusal
     WriteIndeterminate,
 }
 
+/// <summary>
+/// What happened to a missing employee ID on one operation. These names reach the audit log as
+/// <c>employeeIdFill</c>.
+/// </summary>
+/// <remarks>
+/// A published interface, as <see cref="CloudPasswordResetRefusal"/> is. The closed list is
+/// docs/CloudPasswordResetEmployeeId-Plan.md 4.8, and the module plan's "Audit fields, and Splunk"
+/// table gains these rows in the same commit as the code that first audits them (that plan's S3).
+/// Renaming a member breaks a search; adding one means adding it to both tables.
+///
+/// <see cref="NotAttempted"/> is the zero value on purpose: a value nobody set reads as "the
+/// operation stopped before the lookup", never as an answer about the account.
+/// </remarks>
+public enum EmployeeIdFillOutcome
+{
+    /// <summary>The operation stopped before the lookup.</summary>
+    NotAttempted = 0,
+
+    /// <summary>The account carries an employee ID, so nothing was looked up or saved.</summary>
+    NotNeeded,
+
+    /// <summary>The fill-in is switched off for this module, which is its default.</summary>
+    Off,
+
+    /// <summary>The switch holds something other than true or false, or the module's config could not be read. Means off.</summary>
+    SettingUnreadable,
+
+    /// <summary>The account's name names nobody in the forest, or nothing was left of it.</summary>
+    OwnerNotFound,
+
+    /// <summary>The account's name matches more than one directory user.</summary>
+    OwnerAmbiguous,
+
+    /// <summary>A directory search did not complete. Never evidence that the owner is absent.</summary>
+    OwnerLookupFailed,
+
+    /// <summary>The owner the name points to carries no employee ID.</summary>
+    OwnerHasNoEmployeeId,
+
+    /// <summary>The owner's employee ID is carried by more than one directory user.</summary>
+    EmployeeIdShared,
+
+    /// <summary>The owner's employee ID does not lead back to the owner: to nobody, to someone else, or a GUID is missing.</summary>
+    EmployeeIdMismatch,
+
+    /// <summary>The owner has no mailbox to send to.</summary>
+    OwnerHasNoMailbox,
+
+    /// <summary>Found and verified. Recorded as such when the reset stopped before the save.</summary>
+    Planned,
+
+    /// <summary>Entra ID accepted the save.</summary>
+    Written,
+
+    /// <summary>The save was refused, or never sent. Nothing was written.</summary>
+    WriteRejected,
+
+    /// <summary>The save was sent and no answer came back, so it may have applied.</summary>
+    WriteIndeterminate,
+}
+
+/// <summary>
+/// The fill-in of a missing employee ID: its outcome, the number found, and the directory account
+/// it came from.
+/// </summary>
+/// <param name="Outcome">What happened.</param>
+/// <param name="EmployeeId">
+/// The number the owner's directory account carries, trimmed (<c>employeeIdFillValue</c>). Null
+/// until the lookup has found a single owner who carries one.
+/// </param>
+/// <param name="SourceObjectGuid">
+/// The ObjectGUID of the directory account the number was read from (<c>employeeIdFillSource</c>):
+/// immutable, the choice <c>targetObjectId</c> makes. Null when no single owner was found, or when
+/// that account answered without one.
+/// </param>
+/// <param name="SourceLogonName">That account's logon name, for the operator to check before confirming.</param>
+/// <param name="SourceDisplayName">That account's display name, likewise.</param>
+public sealed record EmployeeIdFill(
+    EmployeeIdFillOutcome Outcome,
+    string? EmployeeId = null,
+    string? SourceObjectGuid = null,
+    string? SourceLogonName = null,
+    string? SourceDisplayName = null);
+
+/// <summary>What became of a save of a found employee ID on the cloud account.</summary>
+/// <param name="Outcome">
+/// <see cref="EmployeeIdFillOutcome.Written"/>, <see cref="EmployeeIdFillOutcome.WriteRejected"/>
+/// or <see cref="EmployeeIdFillOutcome.WriteIndeterminate"/>, and nothing else.
+/// </param>
+/// <param name="Status">The HTTP status Entra ID answered with; null when nothing was sent or nothing came back.</param>
+/// <param name="Message">
+/// One sentence for the operator and the record: saved, not saved and why, or not known. It carries
+/// a status code at most, never a response body.
+/// </param>
+public sealed record EmployeeIdSaveResult(EmployeeIdFillOutcome Outcome, System.Net.HttpStatusCode? Status, string Message);
+
 /// <summary>What the preflight read about the account an operator named.</summary>
+/// <param name="UserPrincipalNameFromEntra">
+/// True only when <see cref="UserPrincipalName"/> is the value Entra ID returned on the read. When
+/// the response lacked it, the record carries the text the operator typed instead, and the
+/// employee-ID fill-in must not read an owner from that: the name it uses is Entra's, never the
+/// operator's (docs/CloudPasswordResetEmployeeId-Plan.md 4.2). False by default, so a record built
+/// anywhere else is not taken for Entra's word.
+/// </param>
 public sealed record CloudPasswordTarget(
     string ObjectId,
     string UserPrincipalName,
@@ -50,7 +153,8 @@ public sealed record CloudPasswordTarget(
     bool CloudOnly,
     string? EmployeeId,
     IReadOnlyList<string> DirectoryRoles,
-    bool DirectoryRolesReadFailed);
+    bool DirectoryRolesReadFailed,
+    bool UserPrincipalNameFromEntra = false);
 
 /// <summary>Where a reset's password would be sent, or why it cannot be.</summary>
 /// <remarks>
@@ -58,12 +162,21 @@ public sealed record CloudPasswordTarget(
 /// <see cref="CloudPasswordResetRefusal.None"/>. The two are never both set and never both empty:
 /// a destination either resolved or it did not, and there is no third state in which the caller
 /// should guess.
+///
+/// <see cref="Fill"/> says what happened to a missing employee ID
+/// (docs/CloudPasswordResetEmployeeId-Plan.md). <see cref="CloudPasswordResetService.DeriveDestination"/>
+/// always sets it; it is null only from <see cref="CloudPasswordResetService.ClassifyDestination"/>,
+/// the number-only rule, which knows nothing of the fill-in. A fill-in short of
+/// <see cref="EmployeeIdFillOutcome.Planned"/> leaves the rest of the record exactly as a missing
+/// number has always left it: <see cref="CloudPasswordResetRefusal.DestinationNoEmployeeId"/>, with no
+/// address and no employee ID.
 /// </remarks>
 public sealed record CloudPasswordDestination(
     string? Address,
     string? EmployeeId,
     string? OwnerDisplayName,
-    CloudPasswordResetRefusal Refusal)
+    CloudPasswordResetRefusal Refusal,
+    EmployeeIdFill? Fill = null)
 {
     public bool Resolved => Refusal == CloudPasswordResetRefusal.None && !string.IsNullOrWhiteSpace(Address);
 }
@@ -90,8 +203,10 @@ public sealed record CloudPasswordResetOutcome(
 /// caller, which is recorded at length in the plan so it is not "discovered" again.
 ///
 /// **This service has no destination parameter.** The recipient is derived from the target
-/// account's employee ID, so there is nothing for a caller to pass and therefore nothing for a
-/// future caller to pass wrongly. Owner instruction 2026-09-22.
+/// account's employee ID - or, for an account that carries none and with the fill-in switched on,
+/// from the employee ID of the owner the account's name proposes, verified by that number - so
+/// there is nothing for a caller to pass and therefore nothing for a future caller to pass wrongly.
+/// Owner instruction 2026-09-22; the fill-in is docs/CloudPasswordResetEmployeeId-Plan.md.
 /// </remarks>
 public class CloudPasswordResetService
 {
@@ -104,6 +219,20 @@ public class CloudPasswordResetService
     private readonly PasswordGenerator _generator;
 
     public const string ModuleId = "CloudPasswordReset";
+
+    /// <summary>
+    /// The module setting that switches the employee-ID fill-in on. Boolean; absent or blank is
+    /// off, and anything but true or false reads as unreadable, which is off too.
+    /// </summary>
+    public const string FillMissingEmployeeIdKey = "FillMissingEmployeeId";
+
+    /// <summary>
+    /// The module setting holding the endings a deployment's cloud admin account names add to the
+    /// owner's logon name, comma-separated. It has no default: whoever switches the fill-in on
+    /// enters them, because they are a fact about one deployment and the repo names none
+    /// (Architectural Invariant 7).
+    /// </summary>
+    public const string OwnerNameEndingsKey = "OwnerNameEndings";
 
     public CloudPasswordResetService(
         ILogger<CloudPasswordResetService> logger,
@@ -133,8 +262,16 @@ public class CloudPasswordResetService
         }
     }
 
+    // A TEST SEAM, in the psl-11 shape (ADDirectorySearchService.CreateSearchRunspace): a test hands the service a
+    // Graph client over a stand-in handler, so the page's confirm flow runs end to end with no Secret Server and no
+    // Graph. Production never sets it, and every operation builds its client from the module's own secret as before.
+    internal Func<GraphTokenClient>? GraphClientForTests { get; init; }
+
     private async Task<GraphTokenClient?> GetGraphClientAsync()
     {
+        if (GraphClientForTests is { } standIn)
+            return standIn();
+
         var secretIdStr = _moduleConfig.GetValue(ModuleId, "GraphDelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
         {
@@ -202,7 +339,11 @@ public class CloudPasswordResetService
         var employeeId = root.TryGetProperty("employeeId", out var empProp) ? empProp.GetString() : null;
         var objectId = root.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
         var displayName = root.TryGetProperty("displayName", out var dnProp) ? dnProp.GetString() ?? "" : "";
-        var upn = root.TryGetProperty("userPrincipalName", out var upnProp) ? upnProp.GetString() ?? userPrincipalName : userPrincipalName;
+        // Entra's own spelling of the UPN when it returned one; the typed text only when it did not,
+        // as before. Which of the two this is travels on the target, because the employee-ID
+        // fill-in may read an owner from Entra's name and never from the operator's.
+        var entraUpn = root.TryGetProperty("userPrincipalName", out var upnProp) ? upnProp.GetString() : null;
+        var upn = entraUpn ?? userPrincipalName;
         var enabled = !root.TryGetProperty("accountEnabled", out var enProp) || enProp.ValueKind != JsonValueKind.False;
 
         _logger.LogDebug(
@@ -235,7 +376,8 @@ public class CloudPasswordResetService
 
         var (roles, rolesReadFailed) = await ReadDirectoryRolesAsync(client, objectId);
 
-        return (new CloudPasswordTarget(objectId, upn, displayName, enabled, CloudOnly: true, employeeId, roles, rolesReadFailed),
+        return (new CloudPasswordTarget(objectId, upn, displayName, enabled, CloudOnly: true, employeeId, roles, rolesReadFailed,
+                    UserPrincipalNameFromEntra: !string.IsNullOrWhiteSpace(entraUpn)),
                 CloudPasswordResetRefusal.None, "");
     }
 
@@ -335,8 +477,20 @@ public class CloudPasswordResetService
     /// Work out where this account's password would be sent.
     /// </summary>
     /// <remarks>
-    /// The whole of the destination logic, and the reason this module has no address field. Each
-    /// failure is its own refusal and none falls back to another destination.
+    /// The whole of the destination logic, and the reason this module has no address field.
+    ///
+    /// **For an account that carries an employee ID**, each failure is its own refusal and none
+    /// falls back to another destination. The fill-in never runs for such an account and never
+    /// replaces its number; its outcome is <see cref="EmployeeIdFillOutcome.NotNeeded"/>.
+    ///
+    /// **For an account that carries none**, the owner-requested fill-in is the one route to a
+    /// destination (docs/CloudPasswordResetEmployeeId-Plan.md 4.2): the account's name proposes an
+    /// owner, and that owner's number decides the address under the same exact rule. Anything short
+    /// of <see cref="EmployeeIdFillOutcome.Planned"/> leaves the destination exactly where a missing
+    /// number has always left it, <see cref="CloudPasswordResetRefusal.DestinationNoEmployeeId"/>,
+    /// so the page's existing gates answer it as before: today's refusal, word for word, for an
+    /// operator who can open the module but cannot see the password, and today's reveal for one
+    /// who can. With the fill-in off, that is all that happens.
     ///
     /// <see cref="CloudPasswordResetRefusal.DestinationNoMatch"/> and
     /// <see cref="CloudPasswordResetRefusal.DestinationLookupFailed"/> are deliberately distinct:
@@ -347,11 +501,18 @@ public class CloudPasswordResetService
     {
         var employeeId = target.EmployeeId?.Trim();
 
-        DirectoryValidationResult? lookup = null;
+        CloudPasswordDestination destination;
         if (!string.IsNullOrWhiteSpace(employeeId))
-            lookup = _directory.FindUserByEmployeeId(employeeId);
-
-        var destination = ClassifyDestination(employeeId, lookup);
+        {
+            // The ordinary path, as it was before the fill-in existed: the account's own number
+            // decides, and nothing reads the account's name.
+            var byNumber = ClassifyDestination(employeeId, _directory.FindUserByEmployeeId(employeeId));
+            destination = byNumber with { Fill = new EmployeeIdFill(EmployeeIdFillOutcome.NotNeeded) };
+        }
+        else
+        {
+            destination = FillMissingEmployeeId(target);
+        }
 
         switch (destination.Refusal)
         {
@@ -369,6 +530,284 @@ public class CloudPasswordResetService
 
         return destination;
     }
+
+    /// <summary>
+    /// The fill-in for an account that carries no employee ID: the setting, the name rule, the
+    /// owner lookup, the number lookup and the classifier, read-only, for this one account.
+    /// </summary>
+    /// <remarks>
+    /// Runs inside <see cref="DeriveDestination"/>, so both of the page's callers already run it on
+    /// the thread pool with their progress reported. The setting is read here, at operation time and
+    /// never cached, so a change takes effect at the next preflight. Two forest searches at most, for
+    /// one name and one number (module plan AC4a), and the second runs only when the first found a
+    /// single owner who carries a number. Nothing is written here: the save is
+    /// <see cref="SetEmployeeIdAsync"/>, for the confirmed reset alone to call.
+    /// </remarks>
+    private CloudPasswordDestination FillMissingEmployeeId(CloudPasswordTarget target)
+    {
+        var setting = ReadFillSetting();
+
+        if (setting.Switch == FillSwitch.Unreadable)
+        {
+            // Error, and off. A switch nobody can read must not act as if it were on (Known Failure
+            // Class 3), and must not pass for one that was never set either.
+            _logger.LogError(
+                "The {Key} setting for Cloud Password Reset could not be read as true or false ({Value}); the employee ID fill-in is off for {Upn}",
+                FillMissingEmployeeIdKey, setting.RawSwitch ?? "the module config could not be read", target.UserPrincipalName);
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.SettingUnreadable));
+        }
+
+        if (setting.Switch == FillSwitch.Off)
+        {
+            _logger.LogDebug("The employee ID fill-in is off; {Upn} carries no employee ID", target.UserPrincipalName);
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.Off));
+        }
+
+        // The name as Entra returned it on the read, never the operator's typed text.
+        var (name, endingRemoved) = target.UserPrincipalNameFromEntra
+            ? DeriveOwnerLogonName(target.UserPrincipalName, setting.Endings)
+            : ("", null);
+
+        _logger.LogDebug(
+            "Employee ID fill-in for {Upn}: name tried {Name}, ending removed {Ending}, name read from Entra {FromEntra}",
+            target.UserPrincipalName, name, endingRemoved ?? "(none)", target.UserPrincipalNameFromEntra);
+
+        DirectoryValidationResult? ownerLookup = null;
+        DirectoryValidationResult? numberLookup = null;
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            ownerLookup = _directory.FindUserByLogonName(name);
+            var owner = ownerLookup.Match;
+
+            _logger.LogDebug(
+                "Owner lookup for {Name}: {Outcome}, ambiguous {Ambiguous}, guid {OwnerGuid}, logon name {LogonName}, employee ID {EmployeeId}",
+                name, ownerLookup.Outcome, ownerLookup.Ambiguous, owner?.ObjectGuid, owner?.SamAccountName, owner?.EmployeeId);
+
+            if (ownerLookup is { Outcome: DirectoryLookupOutcome.Found, Ambiguous: false, Match.EmployeeId: { } found }
+                && !string.IsNullOrWhiteSpace(found))
+            {
+                var number = found.Trim();
+                numberLookup = _directory.FindUserByEmployeeId(number);
+                var carrier = numberLookup.Match;
+
+                _logger.LogDebug(
+                    "Number lookup for {EmployeeId}: {Outcome}, ambiguous {Ambiguous}, carrier guid {CarrierGuid}, owner guid {OwnerGuid}, same account {Same}",
+                    number, numberLookup.Outcome, numberLookup.Ambiguous, carrier?.ObjectGuid, owner?.ObjectGuid,
+                    CanonicalGuid(owner?.ObjectGuid) is { } ownerGuid && ownerGuid == CanonicalGuid(carrier?.ObjectGuid));
+            }
+        }
+
+        var destination = ClassifyEmployeeIdFill(name, ownerLookup, numberLookup);
+        var fill = destination.Fill!;
+
+        switch (fill.Outcome)
+        {
+            case EmployeeIdFillOutcome.Planned:
+                _logger.LogDebug(
+                    "Employee ID fill-in planned for {Upn}: {EmployeeId} from directory account {LogonName} ({SourceGuid})",
+                    target.UserPrincipalName, fill.EmployeeId, fill.SourceLogonName, fill.SourceObjectGuid);
+                break;
+            case EmployeeIdFillOutcome.OwnerLookupFailed:
+                // Error, not Warning: a search that did not finish is the network, not an answer
+                // about the data.
+                _logger.LogError(
+                    "Employee ID fill-in for {Upn} did not complete: a directory search did not finish", target.UserPrincipalName);
+                break;
+            default:
+                _logger.LogWarning(
+                    "Employee ID fill-in for {Upn} found no owner to send to: {Outcome}", target.UserPrincipalName, fill.Outcome);
+                break;
+        }
+
+        return destination;
+    }
+
+    /// <summary>The fill-in switch, read three ways. Unreadable acts as off, and says so.</summary>
+    internal enum FillSwitch
+    {
+        Off,
+        On,
+        Unreadable,
+    }
+
+    /// <summary>The fill-in setting as read for one operation.</summary>
+    /// <param name="Switch">On, off, or unreadable.</param>
+    /// <param name="Endings">The configured endings; empty when none are, or when the setting is unreadable.</param>
+    /// <param name="RawSwitch">What the switch held, trimmed, for the log; null when nothing could be read.</param>
+    internal sealed record EmployeeIdFillSetting(FillSwitch Switch, IReadOnlyList<string> Endings, string? RawSwitch);
+
+    /// <summary>Read the fill-in setting now, from this module's config. Never cached.</summary>
+    /// <remarks>
+    /// One read of the module's config: <see cref="ModuleConfigService.TryGetModuleConfig"/> makes
+    /// the test <see cref="ModuleConfigService.IsModuleCorrupt"/> makes and returns the values in the
+    /// same call, so the switch is never read from a config the corruption check did not see.
+    /// </remarks>
+    internal EmployeeIdFillSetting ReadFillSetting()
+    {
+        var readable = _moduleConfig.TryGetModuleConfig(ModuleId, out var config);
+        config.TryGetValue(FillMissingEmployeeIdKey, out var rawSwitch);
+        config.TryGetValue(OwnerNameEndingsKey, out var rawEndings);
+        return ParseFillSetting(readable, rawSwitch, rawEndings);
+    }
+
+    /// <summary>
+    /// The fill-in setting as a pure function of what the config held, in the shape of the
+    /// <c>ValidateTickets</c> switch (<see cref="TicketValidationService"/>).
+    /// </summary>
+    /// <remarks>
+    /// Fail closed, and never silently. An unreadable config, or a switch that is not true or false,
+    /// is <see cref="FillSwitch.Unreadable"/>: off, and logged at Error by the caller. A mistyped
+    /// switch must not mean on, and must not pass for one that was never set. Absent or blank is the
+    /// default, off, because unset is not a mistype. The endings have no default.
+    /// </remarks>
+    internal static EmployeeIdFillSetting ParseFillSetting(bool configReadable, string? rawSwitch, string? rawEndings)
+    {
+        if (!configReadable)
+            return new EmployeeIdFillSetting(FillSwitch.Unreadable, [], null);
+
+        if (string.IsNullOrWhiteSpace(rawSwitch))
+            return new EmployeeIdFillSetting(FillSwitch.Off, ParseOwnerNameEndings(rawEndings), null);
+
+        if (!bool.TryParse(rawSwitch, out var on))
+            return new EmployeeIdFillSetting(FillSwitch.Unreadable, [], rawSwitch.Trim());
+
+        return new EmployeeIdFillSetting(on ? FillSwitch.On : FillSwitch.Off, ParseOwnerNameEndings(rawEndings), rawSwitch.Trim());
+    }
+
+    /// <summary>The configured endings: comma-separated, each trimmed, blank entries dropped.</summary>
+    internal static IReadOnlyList<string> ParseOwnerNameEndings(string? raw) =>
+        string.IsNullOrWhiteSpace(raw)
+            ? []
+            : raw.Split(',').Select(ending => ending.Trim()).Where(ending => ending.Length > 0).ToList();
+
+    /// <summary>
+    /// The owner's logon name a cloud account's name proposes: the local part of its UPN, less the
+    /// longest configured ending it ends with, removed once.
+    /// </summary>
+    /// <remarks>
+    /// The true-up script's rule (docs/CloudPasswordResetEmployeeId-Plan.md section 2, "From the
+    /// cloud account") with the endings configured rather than coded. Compared case-insensitively, at
+    /// the end only, and once; when two endings match, the longer wins, so an ending that is the tail
+    /// of another cannot leave the other's first characters behind. A name with no configured ending
+    /// is used whole, and so is every name when no ending is configured. The domain part plays no
+    /// part. Nothing else is changed: no punctuation folding, name-order handling or numeric-suffix
+    /// rules (J9). A blank result names nobody, and the caller runs no query for it.
+    /// </remarks>
+    /// <returns>The name, and the ending removed (null when none was) for the log.</returns>
+    internal static (string Name, string? EndingRemoved) DeriveOwnerLogonName(string? userPrincipalName, IReadOnlyList<string> endings)
+    {
+        if (string.IsNullOrWhiteSpace(userPrincipalName))
+            return ("", null);
+
+        var at = userPrincipalName.IndexOf('@');
+        var local = at >= 0 ? userPrincipalName[..at] : userPrincipalName;
+
+        var ending = endings
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate)
+                                && local.EndsWith(candidate, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(candidate => candidate.Length)
+            .FirstOrDefault();
+
+        return ending is null ? (local, null) : (local[..^ending.Length], ending);
+    }
+
+    /// <summary>
+    /// The fill-in decision, as a pure function of the name and what the two searches said: the
+    /// table in docs/CloudPasswordResetEmployeeId-Plan.md 4.2, in its order.
+    /// </summary>
+    /// <remarks>
+    /// Separated from <see cref="FillMissingEmployeeId"/> for the reason <see cref="ClassifyDestination"/>
+    /// is. A wrong answer here does not throw: it mails an admin password to the wrong person and saves
+    /// that person's number on the account, so every later reset goes to them too.
+    ///
+    /// 1. Name blank: <see cref="EmployeeIdFillOutcome.OwnerNotFound"/>.
+    /// 2. Owner search unavailable, or never run: <see cref="EmployeeIdFillOutcome.OwnerLookupFailed"/>.
+    ///    An unavailable search is never read as "nobody" (Known Failure Class 3).
+    /// 3. Owner search found nobody: OwnerNotFound.
+    /// 4. Owner search found several: <see cref="EmployeeIdFillOutcome.OwnerAmbiguous"/>. It outranks
+    ///    everything after it: with two owners the module does not know whose number or mailbox it
+    ///    would be examining.
+    /// 5. The owner carries no employeeID: <see cref="EmployeeIdFillOutcome.OwnerHasNoEmployeeId"/>.
+    /// 6-8. The number, classified by the module's existing rule (<see cref="ClassifyDestination"/>):
+    ///    unavailable or never run is OwnerLookupFailed; nobody carries it, the directory disagreeing
+    ///    with itself, is <see cref="EmployeeIdFillOutcome.EmployeeIdMismatch"/>; several carry it is
+    ///    <see cref="EmployeeIdFillOutcome.EmployeeIdShared"/>, ahead of the GUID and mailbox checks.
+    /// 9. The single carrier is not the owner by ObjectGUID, or either GUID is missing:
+    ///    EmployeeIdMismatch. This is what makes the address come from the number, not from the name.
+    /// 10. The carrier has no mailbox: <see cref="EmployeeIdFillOutcome.OwnerHasNoMailbox"/>.
+    /// 11. Otherwise <see cref="EmployeeIdFillOutcome.Planned"/>: the address is the number lookup's
+    ///    match's mail, trimmed and lowercased by <see cref="ClassifyDestination"/>, and the employee
+    ///    ID is the number. Rows 9 to 11 read the NUMBER lookup's match, never the name lookup's.
+    ///
+    /// Every outcome but Planned returns the destination a missing number has always produced.
+    /// </remarks>
+    internal static CloudPasswordDestination ClassifyEmployeeIdFill(
+        string? ownerName, DirectoryValidationResult? ownerLookup, DirectoryValidationResult? numberLookup)
+    {
+        // 1.
+        if (string.IsNullOrWhiteSpace(ownerName))
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.OwnerNotFound));
+
+        // 2. A null result means the search was never run, which is not evidence of absence.
+        if (ownerLookup is null || ownerLookup.Outcome == DirectoryLookupOutcome.Unavailable)
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.OwnerLookupFailed));
+
+        // 3.
+        if (ownerLookup.Outcome == DirectoryLookupOutcome.NotFound)
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.OwnerNotFound));
+
+        // 4.
+        if (ownerLookup.Ambiguous)
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.OwnerAmbiguous));
+
+        // A search that says Found and names nobody gave no answer to act on.
+        var owner = ownerLookup.Match;
+        if (owner is null)
+            return NoEmployeeId(new EmployeeIdFill(EmployeeIdFillOutcome.OwnerLookupFailed));
+
+        var ownerGuid = CanonicalGuid(owner.ObjectGuid);
+
+        // 5.
+        var number = owner.EmployeeId?.Trim();
+        if (string.IsNullOrWhiteSpace(number))
+            return NoEmployeeId(FillFrom(EmployeeIdFillOutcome.OwnerHasNoEmployeeId, null, owner, ownerGuid));
+
+        // 6-8, by the module's existing rule for a number.
+        var byNumber = ClassifyDestination(number, numberLookup);
+        switch (byNumber.Refusal)
+        {
+            case CloudPasswordResetRefusal.DestinationLookupFailed:
+                return NoEmployeeId(FillFrom(EmployeeIdFillOutcome.OwnerLookupFailed, number, owner, ownerGuid));
+            case CloudPasswordResetRefusal.DestinationNoMatch:
+                return NoEmployeeId(FillFrom(EmployeeIdFillOutcome.EmployeeIdMismatch, number, owner, ownerGuid));
+            case CloudPasswordResetRefusal.DestinationAmbiguous:
+                return NoEmployeeId(FillFrom(EmployeeIdFillOutcome.EmployeeIdShared, number, owner, ownerGuid));
+        }
+
+        // 9. The number must lead back to exactly this owner.
+        var carrierGuid = CanonicalGuid(numberLookup?.Match?.ObjectGuid);
+        if (ownerGuid is null || carrierGuid is null || ownerGuid != carrierGuid)
+            return NoEmployeeId(FillFrom(EmployeeIdFillOutcome.EmployeeIdMismatch, number, owner, ownerGuid));
+
+        // 10.
+        if (!byNumber.Resolved)
+            return NoEmployeeId(FillFrom(EmployeeIdFillOutcome.OwnerHasNoMailbox, number, owner, ownerGuid));
+
+        // 11.
+        return byNumber with { Fill = FillFrom(EmployeeIdFillOutcome.Planned, number, owner, ownerGuid) };
+    }
+
+    /// <summary>The destination a missing employee ID has always produced, carrying what the fill-in found.</summary>
+    private static CloudPasswordDestination NoEmployeeId(EmployeeIdFill fill) =>
+        new(null, null, null, CloudPasswordResetRefusal.DestinationNoEmployeeId, fill);
+
+    private static EmployeeIdFill FillFrom(EmployeeIdFillOutcome outcome, string? number, ADSearchResult owner, string? ownerGuid) =>
+        new(outcome, number, ownerGuid, owner.SamAccountName, owner.DisplayName);
+
+    /// <summary>A GUID in one canonical form, or null when there is none to compare.</summary>
+    private static string? CanonicalGuid(string? value) =>
+        Guid.TryParse(value?.Trim(), out var guid) && guid != Guid.Empty ? guid.ToString("D") : null;
 
     /// <summary>
     /// The destination decision, as a pure function of the employee ID and what the directory
@@ -533,5 +972,100 @@ public class CloudPasswordResetService
         _logger.LogError("Password reset for {ObjectId} failed with {Status}: {SafeError}", objectId, (int)status, safeError);
         return new CloudPasswordResetOutcome(false, null, CloudPasswordResetRefusal.GraphReadFailed,
             $"The password change failed ({(int)status}). No change was made.");
+    }
+
+    /// <summary>
+    /// Save a found employee ID on the cloud account: <c>PATCH /users/{objectId}</c> with
+    /// <c>{"employeeId": ...}</c> and nothing else, through this module's own Graph registration.
+    /// </summary>
+    /// <param name="objectId">The Entra object id from the confirmed reset's fresh read, never a UPN.</param>
+    /// <param name="employeeId">The number the fill-in found, sent exactly as given.</param>
+    /// <returns>
+    /// Written, WriteRejected or WriteIndeterminate. It never throws and never refuses: the reset
+    /// goes ahead whatever this returns (docs/CloudPasswordResetEmployeeId-Plan.md J2), and the
+    /// result says what became of the number.
+    /// </returns>
+    /// <remarks>
+    /// Bound to the object id for <see cref="ResetPasswordAsync"/>'s reason: a UPN can be renamed
+    /// between the read and the write, and the id cannot. There is no read-back (J8): nothing
+    /// downstream reads the saved value, and the next reset's fresh read will see it. Never an
+    /// overwrite: the caller saves only a number the fill-in planned, for an account whose fresh
+    /// read carried none (J7).
+    ///
+    /// The registration needs a grant to write the attribute that the reset alone does not; the
+    /// plan's assumption A1 names <c>User.ReadWrite.All</c>, and the first live save settles it.
+    /// Until the registration holds it, every save comes back WriteRejected and the resets still go
+    /// out.
+    /// </remarks>
+    public async Task<EmployeeIdSaveResult> SetEmployeeIdAsync(string objectId, string employeeId)
+    {
+        if (string.IsNullOrWhiteSpace(objectId) || string.IsNullOrWhiteSpace(employeeId))
+        {
+            return new EmployeeIdSaveResult(EmployeeIdFillOutcome.WriteRejected, null,
+                "The employee ID was not saved: no account or no number was supplied, so nothing was sent.");
+        }
+
+        GraphTokenClient? client;
+        try
+        {
+            client = await GetGraphClientAsync();
+        }
+        catch (Exception ex)
+        {
+            // Before any request, so the number was certainly not sent.
+            _logger.LogError(ex, "The Graph client for the employee ID save on {ObjectId} could not be built", objectId);
+            client = null;
+        }
+
+        if (client is null)
+        {
+            return new EmployeeIdSaveResult(EmployeeIdFillOutcome.WriteRejected, null,
+                "The employee ID was not saved: Cloud Password Reset is not configured, or its Graph credentials could not be read.");
+        }
+
+        return await SendEmployeeIdAsync(client, objectId, employeeId);
+    }
+
+    /// <summary>The save itself, over a client the caller built; separate so it runs over a stub handler.</summary>
+    /// <remarks>
+    /// A throw from the client is <see cref="EmployeeIdFillOutcome.WriteIndeterminate"/>, never
+    /// WriteRejected: the cpr-8 lesson <see cref="ResetPasswordAsync"/> records. GraphTokenClient
+    /// does not catch around the send, so a timeout or a dropped connection arrives here when the
+    /// change may have been applied, and "not saved" would be a claim nothing supports. A
+    /// non-success status is WriteRejected, with the status and no response body in the message;
+    /// the sanitized Graph error goes to the log alone.
+    /// </remarks>
+    internal async Task<EmployeeIdSaveResult> SendEmployeeIdAsync(GraphTokenClient client, string objectId, string employeeId)
+    {
+        // Exactly one property. A second one here would be a second write nobody approved.
+        var body = new Dictionary<string, string> { ["employeeId"] = employeeId };
+
+        bool ok;
+        System.Net.HttpStatusCode status;
+        string? safeError;
+
+        try
+        {
+            (ok, status, safeError) = await client.PatchWithStatusAsync($"/users/{Uri.EscapeDataString(objectId)}", body);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "The employee ID save for {ObjectId} was sent and its outcome is UNKNOWN; check the account's employee ID",
+                objectId);
+            return new EmployeeIdSaveResult(EmployeeIdFillOutcome.WriteIndeterminate, null,
+                "The employee ID was sent to Entra ID but no answer came back, so it is not known whether it was saved.");
+        }
+
+        if (ok)
+        {
+            _logger.LogInformation("Employee ID {EmployeeId} saved on {ObjectId}", employeeId, objectId);
+            return new EmployeeIdSaveResult(EmployeeIdFillOutcome.Written, status,
+                $"The employee ID {employeeId} was saved on the account.");
+        }
+
+        _logger.LogError("Entra refused the employee ID save for {ObjectId} with {Status}: {SafeError}", objectId, (int)status, safeError);
+        return new EmployeeIdSaveResult(EmployeeIdFillOutcome.WriteRejected, status,
+            $"The employee ID was not saved: Entra ID refused it ({(int)status}).");
     }
 }
