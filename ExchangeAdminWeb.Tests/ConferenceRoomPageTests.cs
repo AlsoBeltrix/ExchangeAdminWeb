@@ -381,6 +381,35 @@ public sealed class ConferenceRoomPageTests : IDisposable
             Assert.Equal(job.Status, store.Get(job.Id)!.Status);
     }
 
+    // ---- kd-79: a removal the store fails is audited, says so, and goes no further -------------------
+    // RemoveJob called the store outside any try, so a throw - a locked or unreadable jobs database - left the handler before
+    // its row and its banner and reached the circuit, the hole kd-62 closed on Admin Bulk Jobs. It is now audited Failed with
+    // the exception's class and message and no refusal fields, the banner says the removal could not be completed, and the
+    // exception goes no further.
+
+    [Fact]
+    public async Task ARemovalTheStoreFails_IsAuditedAsFailed_SaysSo_AndThrowsNothing()
+    {
+        // A jobs database with no tables: every store call throws - the removal's, and the list reload's after it.
+        var (jobs, _) = JobService(migrated: false);
+        var job = Job("job-8", BulkJobStatus.Completed);
+        var page = BuildPage(jobs);
+        var storeFailure = Assert.ThrowsAny<Exception>(() => jobs.DeleteJob(ConferenceRoomBulkProcessor.ModuleName, job.Id, out _));
+
+        var escaped = await Record.ExceptionAsync(() => Remove(page, job));
+
+        Assert.Null(escaped);
+        var row = Assert.Single(RemoveRows());
+        AssertTheRow(row, job, success: false,
+            error: $"The removal could not be completed: {storeFailure.GetType().Name}: {storeFailure.Message}");
+        // As kd-5's store failure: no refusal fields, since the store may have been reached.
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
+        var banner = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        Assert.False(banner.Success);
+        Assert.Equal("The removal of the Room Type (bulk) job could not be completed.", banner.Message);
+    }
+
     // ---- the page ------------------------------------------------------------------------------
 
     private Page BuildPage(BulkJobService? jobs = null, bool authorized = true)
