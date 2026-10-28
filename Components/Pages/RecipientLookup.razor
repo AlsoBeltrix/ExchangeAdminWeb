@@ -63,7 +63,10 @@
                             <tbody>
                                 <tr><td class="fw-bold" style="width:180px">Display Name</td><td>@result.DisplayName</td></tr>
                                 <tr><td class="fw-bold">Primary Email</td><td>@result.EmailAddress</td></tr>
-                                <tr><td class="fw-bold">Recipient Type</td><td>@result.RecipientType</td></tr>
+                                @* RecipientLookupAccuracy S1. What the recipient is, named from Exchange's own answers on the side that
+                                   holds it (RecipientClassification); beneath it, in small print, Exchange's raw words - what this row
+                                   showed before. *@
+                                <tr><td class="fw-bold">Recipient Type</td><td>@result.RecipientTypeLabel<br /><small class="text-muted">@result.RecipientTypeSmallPrint</small></td></tr>
                                 <tr>
                                     <td class="fw-bold">Mailbox Location</td>
                                     <td>

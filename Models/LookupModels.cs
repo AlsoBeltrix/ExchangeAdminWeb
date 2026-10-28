@@ -115,11 +115,61 @@ public class MessageTraceResponse
     public static readonly int MaxResults = 1000;
 }
 
+/// <summary>
+/// RecipientLookupAccuracy S1. Where a looked-up recipient's mailbox is, as far as Exchange's own answers settle it
+/// (<c>Services/RecipientClassification.cs</c>). Recipient Lookup's own, as <see cref="RecipientInfoResult"/> is.
+/// </summary>
+public enum RecipientLocationClass
+{
+    /// <summary>Exchange Online holds its mailbox, and this module reads it.</summary>
+    Cloud,
+
+    /// <summary>On-premises Exchange holds its mailbox.</summary>
+    OnPremises,
+
+    /// <summary>It has no mailbox: a list, group, contact, guest, mail user or mail-enabled public folder.</summary>
+    NotApplicable,
+
+    /// <summary>Exchange Online holds a mailbox of a kind this module does not read: a Microsoft 365 group's, a system mailbox.</summary>
+    ExchangeHeldNotRead,
+
+    /// <summary>The two sides disagree, or a side that had to be asked could not be.</summary>
+    Undetermined,
+}
+
 public class RecipientInfoResult
 {
+    /// <summary>What the operator typed, trimmed. Every read asked about it before RecipientLookupAccuracy S3.</summary>
     public required string EmailAddress { get; set; }
     public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Exchange Online's <c>RecipientTypeDetails</c>, as reported: what the type row showed before RecipientLookupAccuracy
+    /// S1, and now the first part of its small print. The row shows <see cref="RecipientTypeLabel"/>.
+    /// </summary>
     public string? RecipientType { get; set; }
+
+    /// <summary>S1. Exchange Online's coarser <c>RecipientType</c>, as reported.</summary>
+    public string? RecipientTypeCategory { get; set; }
+
+    /// <summary>S1. Exchange Online's <c>PrimarySmtpAddress</c>; null when it reported none.</summary>
+    public string? PrimarySmtpAddress { get; set; }
+
+    /// <summary>S1. Exchange Online's <c>IsDirSynced</c>; null when it was not reported.</summary>
+    public bool? IsDirSynced { get; set; }
+
+    /// <summary>S1. On-premises Exchange's <c>RecipientTypeDetails</c>, when it was asked and found one.</summary>
+    public string? OnPremRecipientType { get; set; }
+
+    /// <summary>S1. What the recipient is, in plain words, or "Could not be determined".</summary>
+    public string? RecipientTypeLabel { get; set; }
+
+    /// <summary>S1. Exchange's own type words from each side that answered, shown under the label.</summary>
+    public string? RecipientTypeSmallPrint { get; set; }
+
+    /// <summary>S1. Where its mailbox is; <see cref="MailboxLocation"/> is the word the page shows for it.</summary>
+    public RecipientLocationClass LocationClass { get; set; } = RecipientLocationClass.Undetermined;
+
     public string? MailboxLocation { get; set; }
     public string? ForwardingAddress { get; set; }
     public bool ArchiveEnabled { get; set; }

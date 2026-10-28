@@ -92,24 +92,29 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
     }
 
     // Exchange's own "no such object", in each shape it is read from: a recipient with no Exchange Online mailbox is not a
-    // mailbox, as before - nothing more is read and the page says so.
+    // mailbox, as before - nothing more is read and the page says so. RecipientLookupAccuracy S1: Get-Mailbox is no longer
+    // asked about a mail user, whose type already answers it, so the recipient here is one whose type Exchange did not
+    // report - Get-Mailbox decides - and which it reports as cloud-only, so on-premises is not asked either.
     [Theory]
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
     public async Task NoMailbox_IsNoMailbox(string shape)
     {
-        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailUser"));
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("IsDirSynced", false));
         _exchange.NotFound = NotFoundIn(shape);
         _exchange.OnPremConfigured = true;
 
         var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Null(result.Error);
+        Assert.Contains($"Get-Mailbox {Address}", _exchange.CallList());
         Assert.Null(result.MailboxUnreadable);
         Assert.Null(result.ArchiveUnreadable);
         Assert.Empty(result.Warnings);
         Assert.False(StatisticsWereAsked());
+        Assert.Equal(RecipientLocationClass.NotApplicable, result.LocationClass);
+        Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("OnPrem", StringComparison.Ordinal));
 
         var page = Rendered(result);
         Assert.Contains("Forwarding</td>None", page, StringComparison.Ordinal);

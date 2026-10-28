@@ -1153,3 +1153,24 @@ he leaves them; and the extras he accepted and declined, by number.
   started on branch `feat/recipient-lookup-accuracy` (worktree `rla`, from `01bf455e`) by one Opus 5.5 agent. Before any
   code, "Displayed fields per recipient kind" was written below the Exec summary, and README.md gained the Recipient
   Lookup section saying the same for operators.
+- 2026-10-28, **S1 landed** (what it is): `Services/RecipientClassification.cs` (3.3, 3.4, 3.5's words); Exchange Online's
+  `Get-Mailbox` only where its answer is open; the module's own on-premises `Get-Recipient` (N4) in place of the shared
+  location read, its address an `-ArgumentList` value; the type row with Exchange's raw words beneath; Recipient Lookup
+  1.3.0. Stand-in: on-premises `Get-Recipient` over `OnPremRecipients`, then `OnPremMailboxes` as `UserMailbox` and
+  `OnPremRemoteMailboxes` as `RemoteUserMailbox`; a session counter. 8.3's two S1 rewrites made. Gate: Release build 0
+  errors (19 known warnings); 7914 tests passed, 0 failed; format, `git diff --check`, ASCII lint clean. Mutations, each
+  confirmed applied by its MD5, its tests failing, then restored byte-exact with a fresh mtime (MD5 equal to the original:
+  page `596682828911129e9e99609bd3b9f1f0`, classifier `fb33400476648a8221d790808bc7f608`, service
+  `367c06f5c5010446139262fac01c7e99`); counts are of the 215 Recipient Lookup tests run:
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M1 type row shows N1's `RecipientTypeDetails` | `8b13950ca856d9feb892564973149d03` | 43 | every T5 case |
+  | M2 on-premises not-found is "Mail user" | `c75b98ede1af9f4530744bec7e957b0a` | 4 | T7 (D3), both sync states |
+  | M3 on-premises remote mailbox is "Cloud" | `41aed1cf3991392fc359292d1c142060` | 4 | T7 (D1) |
+  | M4 a side that could not be asked is "Mail user" | `68380745de53b5a5d0df6061cd473d05` | 7 | every T8 (U1) case |
+  | M5 `IsDirSynced` false ignored | `39c517cee71d9af7ca2ab02406a48ef1` | 10 | T4 |
+  | M6 `Get-Mailbox` asked for every type | `84c5f6066074b107d12aacb82c103d48` | 32 | T2, T12 |
+  | M7 the shared location read called as well | `767165d29ae996bfb89775fe4316beb4` | 48 | T12 |
+  | M8 N4's credential read without the token | `18612efd63ecaa25dd611d7b5f39a0a9` | 3 | kd-37's `ACancelDuringACredentialRead_SurfacesAsACancel("the location read", 1)` |
+  | M9 the address spliced into the remote script | `4110feef0dd3c61cf57856b79f7c9aab` | 1 | T11 |

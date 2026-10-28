@@ -593,7 +593,11 @@ public sealed class ModuleCatalog
             // 1.2.0: kd-37 - an operator cancel during the lookup stops it.
             // 1.2.1: kd-57 - that cancel is shown and filed as one: "Cancelled by the operator", result
             // Cancelled; it was a failed lookup in the framework's words, "The operation was canceled.".
-            Version = "1.2.1",
+            // 1.3.0: the type row names what the recipient is from Exchange's own answers on the side that holds it - an
+            // on-premises mailbox reads "Mailbox", from on-premises Exchange's Get-Recipient - with Exchange's raw words in
+            // small print beneath; Exchange Online's mailbox is read once, and on-premises is asked only about a mail user
+            // not reported as cloud-only (docs/RecipientLookupAccuracy-Plan.md S1).
+            Version = "1.3.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
