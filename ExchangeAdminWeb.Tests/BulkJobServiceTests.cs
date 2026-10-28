@@ -109,10 +109,16 @@ public class BulkJobServiceTests
                 lock (CreatedProcessors) CreatedProcessors.Add(p);
                 return p;
             });
+            // kd-83: a processor that cannot be built, served under a module of its own, so only a job of that module meets it.
+            services.AddScoped<UnbuildableDependency>(_ => throw new InvalidOperationException(UnbuildableDependency.Failure));
+            services.AddScoped<UnbuildableProcessor>();
             Provider = services.BuildServiceProvider();
 
-            var registry = new BulkJobProcessorRegistry(
-                new[] { new KeyValuePair<string, Type>("Test", typeof(FakeProcessor)) });
+            var registry = new BulkJobProcessorRegistry(new[]
+            {
+                new KeyValuePair<string, Type>("Test", typeof(FakeProcessor)),
+                new KeyValuePair<string, Type>(UnbuildableProcessor.Module, typeof(UnbuildableProcessor)),
+            });
             var config = new ConfigurationBuilder()
                 .AddInMemoryCollection(settings.ToDictionary(s => s.Key, s => (string?)s.Value))
                 .Build();
@@ -761,6 +767,244 @@ public class BulkJobServiceTests
             if (logLevel >= LogLevel.Error)
                 _firstError.TrySetResult();
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // kd-83: a job whose processor cannot be built stops the runner no more
+    // -------------------------------------------------------------------------
+    // RunJobAsync resolved the job's processor above its try, so a processor that could not be built - a scoped dependency
+    // whose construction throws - escaped to the loop's outer catch and stopped the runner with the job still Queued; being
+    // the oldest, it stopped the next submit's runner the same way, and every job behind it waited for a restart. Such a
+    // job is now Interrupted with the reason, and the runner goes on to the next job.
+
+    [Fact]
+    public async Task AJobWhoseProcessorCannotBeBuilt_IsInterruptedWithTheReason_AndTheJobBehindItRuns()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("unbuildable", "SS", moduleId: UnbuildableProcessor.Module),
+            new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("good", "SS"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+
+        // One drive of the runner, as a submit starts it.
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The job behind it ran, in the same drive, and its completion hook fired once.
+        var good = h.Repository.Get("good")!;
+        Assert.Equal(BulkJobStatus.Completed, good.Status);
+        Assert.Equal(2, good.SuccessCount);
+        Assert.Equal(1, Assert.Single(h.CreatedProcessors).CompletionCalls);
+        // The job whose processor could not be built is finished, with the reason, and ran nothing.
+        var unbuildable = h.Repository.Get("unbuildable")!;
+        Assert.Equal(BulkJobStatus.Interrupted, unbuildable.Status);
+        Assert.Equal($"The processor for module '{UnbuildableProcessor.Module}' could not be built: {UnbuildableDependency.Failure}",
+            unbuildable.Message);
+        Assert.Equal(0, unbuildable.ProcessedRows);
+        Assert.Empty(h.Repository.GetRows("unbuildable"));
+        // Said: the processor could not be built; and its completion hook - the processor's own - could not be run either,
+        // which is a notification failure, not the end of the runner.
+        Assert.Collection(log.Entries,
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal(
+                    $"The bulk job processor for module {UnbuildableProcessor.Module} could not be built; marking job unbuildable Interrupted",
+                    said.Message);
+                Assert.Equal(UnbuildableDependency.Failure, Assert.IsType<InvalidOperationException>(said.Exception).Message);
+            },
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal("Completion notification for bulk job unbuildable failed (non-fatal)", said.Message);
+                Assert.Equal(UnbuildableDependency.Failure, Assert.IsType<InvalidOperationException>(said.Exception).Message);
+            });
+    }
+
+    // kd-83's stand-in for a processor that cannot be built: its one dependency throws as it is constructed, as a scoped
+    // service that cannot be built does, so the container throws for the processor itself.
+    private sealed class UnbuildableDependency
+    {
+        public const string Failure = "The processor's dependency could not be built.";
+    }
+
+    private sealed class UnbuildableProcessor : IBulkJobProcessor
+    {
+        public const string Module = "Unbuildable";
+
+        public UnbuildableProcessor(UnbuildableDependency dependency) => ArgumentNullException.ThrowIfNull(dependency);
+
+        public string ModuleId => Module;
+
+        public int CountRows(BulkJob job) => throw new InvalidOperationException("The processor was built after all.");
+
+        public Task<BulkJobRowOutcome> ProcessRowAsync(BulkJob job, int rowIndex, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The processor was built after all.");
+    }
+
+    // -------------------------------------------------------------------------
+    // kd-83 (2): a final status write that fails is made again, a bounded number of times
+    // -------------------------------------------------------------------------
+    // A store that failed a job's final status write threw out of the runner's terminal tail: from the job's own try into
+    // the backstop, which wrote again, and from the backstop out of the runner, which stopped until the next submit with the
+    // job left Running or Queued. The write is now made again after a wait, up to FinalWriteAttempts writes; a store that
+    // keeps failing leaves the job for the next start, with one line saying so, and the runner goes on to the next job.
+
+    [Fact]
+    public async Task AFinalStatusWriteThatFails_IsMadeAgainAfterAWait_AndTheJobBehindItRuns()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("j1", "SS"), new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("j2", "S"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+        // The store fails j1's final status write, and takes it by the time the runner has waited.
+        FailFinalStatusWrites(h, "j1");
+        var waits = new List<TimeSpan>();
+        h.Service.WaitBeforeFinalWrite = delay =>
+        {
+            waits.Add(delay);
+            if (waits.Count == 1)
+                RecoverFinalStatusWrites(h);
+            return Task.CompletedTask;
+        };
+
+        // One drive of the runner, as a submit starts it.
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The runner waited once, the back-off's first wait of a second, and wrote the status again: Completed, as the job ran.
+        Assert.Equal(new[] { TimeSpan.FromSeconds(1) }, waits);
+        var j1 = h.Repository.Get("j1")!;
+        Assert.Equal(BulkJobStatus.Completed, j1.Status);
+        Assert.Equal(2, j1.SuccessCount);
+        Assert.Null(j1.Message);
+        // The job behind it ran, and each job's completion hook fired once - j1's once its status had landed.
+        Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("j2")!.Status);
+        Assert.Equal(new[] { 1, 1 }, h.CreatedProcessors.Select(p => p.CompletionCalls));
+        // Said once, with the failed write's own exception.
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Warning, said.Level);
+        Assert.Equal(
+            "The final status (Completed) of bulk job j1 could not be written 1 time(s); the next attempt succeeded and the runner carries on",
+            said.Message);
+        Assert.IsType<SqliteException>(said.Exception);
+    }
+
+    [Fact]
+    public async Task AFinalStatusWriteThatKeepsFailing_IsMadeABoundedNumberOfTimes_ThenTheJobIsLeftForTheNextStart_AndTheJobBehindItRuns()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("j1", "SS"), new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("j2", "S"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+        // The store fails every final status write of j1, and nothing else.
+        FailFinalStatusWrites(h, "j1");
+        var waits = RecordWaitsBeforeFinalWrite(h);
+
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The bound: FinalWriteAttempts writes with a wait between each two, doubling from a second, and then no more.
+        TimeSpan[] waited;
+        lock (waits)
+            waited = waits.ToArray();
+        Assert.Equal(BulkJobService.FinalWriteAttempts - 1, waited.Length);
+        Assert.Equal(new[] { 1, 2, 4, 8, 16 }.Select(seconds => TimeSpan.FromSeconds(seconds)), waited);
+        // Said once, with the last write's own exception.
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Error, said.Level);
+        Assert.Equal(
+            $"The final status (Completed) of bulk job j1 could not be written in {BulkJobService.FinalWriteAttempts} attempts; the job is left as it is, for the next start to mark Interrupted, and the runner carries on",
+            said.Message);
+        Assert.IsType<SqliteException>(said.Exception);
+        // Left as it is - Running, its rows recorded, no fault written over it - for the next start's sweep; and no completion
+        // hook for a result the store does not hold.
+        var j1 = h.Repository.Get("j1")!;
+        Assert.Equal(BulkJobStatus.Running, j1.Status);
+        Assert.Equal(2, j1.ProcessedRows);
+        Assert.Null(j1.Message);
+        // The runner carried on: the job behind it ran, and its hook fired.
+        Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("j2")!.Status);
+        Assert.Equal(new[] { 0, 1 }, h.CreatedProcessors.Select(p => p.CompletionCalls));
+    }
+
+    [Fact]
+    public async Task AJobLeftQueuedByAFinalStatusWriteThatKeepsFailing_IsNotTakenAgain_AndTheJobsBehindItRun()
+    {
+        // A job finished before it starts - here one of a module no processor is registered for - is written from Queued, so a
+        // write the store keeps failing leaves it Queued, the oldest job in the queue. Taken again, it would be written for
+        // ever, and the jobs behind it would wait.
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("orphan", "SS", moduleId: "Unknown"),
+            new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("good", "S"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+        FailFinalStatusWrites(h, "orphan");
+        var waits = RecordWaitsBeforeFinalWrite(h);
+
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The job behind it ran in the same drive; the orphan had one run of writes and was not taken again.
+        Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("good")!.Status);
+        lock (waits)
+            Assert.Equal(new[] { 1, 2, 4, 8, 16 }.Select(seconds => TimeSpan.FromSeconds(seconds)), waits);
+        Assert.Equal(BulkJobStatus.Queued, h.Repository.Get("orphan")!.Status);
+        Assert.Collection(log.Entries,
+            said => Assert.Equal("No bulk job processor registered for module Unknown; marking job orphan Interrupted", said.Message),
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal(
+                    $"The final status (Interrupted) of bulk job orphan could not be written in {BulkJobService.FinalWriteAttempts} attempts; the job is left as it is, for the next start to mark Interrupted, and the runner carries on",
+                    said.Message);
+                Assert.IsType<SqliteException>(said.Exception);
+            });
+
+        // Left for the next start, not the next submit: the runner a later submit starts runs its own job and passes the
+        // orphan over as well.
+        h.Service.Enqueue(h.NewJob("later", "S"));
+        await WaitUntil(() => h.Repository.Get("later")?.Status == BulkJobStatus.Completed, timeoutMs: 30000);
+        Assert.Equal(BulkJobStatus.Queued, h.Repository.Get("orphan")!.Status);
+        lock (waits)
+            Assert.Equal(BulkJobService.FinalWriteAttempts - 1, waits.Count);
+        Assert.Equal(2, log.Entries.Count);
+    }
+
+    // kd-83's stand-in for a store that fails a job's final status write: a trigger that refuses that one job's move to a
+    // finished status, so the runner's write meets a SqliteException at the call a locked, full or read-only store fails,
+    // while every other read and write - the job's start and its rows, the queue, the jobs behind it - is made as before.
+    // Dropped when the store recovers.
+    private static void FailFinalStatusWrites(Harness h, string jobId) => ExecuteOnJobsStore(h,
+        $"""
+        CREATE TRIGGER kd83_fail_final_status BEFORE UPDATE OF status ON bulk_job
+        WHEN NEW.id = '{jobId}' AND NEW.status IN ('Completed', 'Cancelled', 'Interrupted')
+        BEGIN SELECT RAISE(ABORT, 'The store did not take the final status write.'); END;
+        """);
+
+    private static void RecoverFinalStatusWrites(Harness h) => ExecuteOnJobsStore(h, "DROP TRIGGER kd83_fail_final_status;");
+
+    private static void ExecuteOnJobsStore(Harness h, string sql)
+    {
+        using var connection = new SqliteConnectionFactory(h.Repository.DatabasePath).Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
+    // Each wait before a final status write, recorded and made at once. A runner past 50 waits is ended here, so that a
+    // runner that never stops writing fails its test rather than hangs it.
+    private static List<TimeSpan> RecordWaitsBeforeFinalWrite(Harness h)
+    {
+        var waits = new List<TimeSpan>();
+        h.Service.WaitBeforeFinalWrite = delay =>
+        {
+            lock (waits)
+            {
+                waits.Add(delay);
+                if (waits.Count > 50)
+                    throw new InvalidOperationException("The runner is still writing the final status.");
+            }
+
+            return Task.CompletedTask;
+        };
+        return waits;
     }
 
     private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 5000)

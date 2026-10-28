@@ -53,6 +53,11 @@ public sealed class BulkJobService
     private readonly object _gate = new();
     private bool _pumpRunning;
 
+    // kd-83. Jobs whose final status the store would not take in FinalWriteAttempts writes: left as they are for the next
+    // start, which marks every unfinished job Interrupted, and passed over by the queue read until then - a job left Queued
+    // is still the oldest in the queue. Guarded by _gate, as that read is.
+    private readonly HashSet<string> _leftForNextStart = new(StringComparer.Ordinal);
+
     // Cancellation tokens for currently-executing jobs, keyed by job id. A cancel from any circuit
     // signals the running job's token; the runner also re-checks the persisted flag per row.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> _running = new();
@@ -376,6 +381,22 @@ public sealed class BulkJobService
         static (delay, cancellationToken) => Task.Delay(delay, cancellationToken);
 
     /// <summary>
+    /// kd-83. How many times the runner makes a job's final status write before it leaves the job for the next start: as
+    /// many as the queue read gets (<see cref="QueueReadAttempts"/>), with the same waits between them.
+    /// </summary>
+    internal const int FinalWriteAttempts = QueueReadAttempts;
+
+    /// <summary>kd-83. The wait before the write that follows <paramref name="failedWrites"/> failed ones: the queue read's back-off.</summary>
+    internal static TimeSpan FinalWriteRetryDelay(int failedWrites) => QueueReadRetryDelay(failedWrites);
+
+    /// <summary>
+    /// Test seam (kd-83): how the runner waits before it makes a job's final status write again. Production waits the delay.
+    /// Not cancelled, unlike the queue read's: the write records the job's result, and a cancelled wait would throw into the
+    /// job's backstop, which writes a fault over that result. The waits are bounded instead.
+    /// </summary>
+    internal Func<TimeSpan, Task> WaitBeforeFinalWrite { get; set; } = static delay => Task.Delay(delay);
+
+    /// <summary>
     /// Starts the pump if it is not already running. The task is started with execution-context
     /// flow SUPPRESSED (review finding utei-1). The pump is long-lived and shared: it is started
     /// by whichever operator's browser circuit happened to enqueue first, then drains EVERY
@@ -430,6 +451,9 @@ public sealed class BulkJobService
     /// store that keeps failing is not read for ever: after the last attempt the loop clears the flag, says so once and
     /// stops, and the next Enqueue starts it again, as before. A run of failed reads is logged once either way - a warning
     /// when the queue is read again, or the error when the loop stops.
+    /// kd-83. A job whose final status the store would not take (<see cref="FinishAndNotify"/>) is passed over by the read
+    /// from then on: one left Queued - a job finished before it started - is still the oldest in the queue, and taking it
+    /// again would write for it for ever while the jobs behind it waited.
     /// </remarks>
     internal async Task DrainQueueAsync(CancellationToken shutdown)
     {
@@ -444,7 +468,8 @@ public sealed class BulkJobService
                 {
                     lock (_gate)
                     {
-                        next = _repository.GetActive().FirstOrDefault(j => j.Status == BulkJobStatus.Queued);
+                        next = _repository.GetActive()
+                            .FirstOrDefault(j => j.Status == BulkJobStatus.Queued && !_leftForNextStart.Contains(j.Id));
                         if (next is null)
                             _pumpRunning = false;
                     }
@@ -497,22 +522,47 @@ public sealed class BulkJobService
     /// Runs one job to a terminal state. TOTAL by contract: it always drives the job to a terminal
     /// transition and fires the completion notification exactly once, and never throws - so the pump
     /// loop cannot die and a job can never be left stuck Running. Every terminal path (normal
-    /// completion, cancel, unregistered processor, payload failure, unexpected fault) routes through
-    /// the single finish-and-notify tail.
+    /// completion, cancel, unregistered processor, a processor that cannot be built, payload failure,
+    /// unexpected fault) routes through the single finish-and-notify tail.
     /// </summary>
+    /// <remarks>
+    /// kd-83. The job's processor is resolved inside the try. It was resolved above it, so a processor that could not be
+    /// built - a scoped dependency whose construction throws - escaped to the pump loop's outer catch and stopped the runner
+    /// with the job still Queued; being the oldest, that job was the first the next submit's runner read, so it stopped that
+    /// one too, and every job behind it waited for a restart to mark them all Interrupted. Such a job is now Interrupted
+    /// with the reason, as a job no processor is registered for is, through the same tail, and the runner goes on to the
+    /// next job.
+    /// kd-83 (2). The one job it does not finish is one whose final status the store will not take: the tail
+    /// (<see cref="FinishAndNotify"/>) leaves it as it is, Running or Queued, for the next start to mark Interrupted, and
+    /// returns, so the runner still goes on.
+    /// </remarks>
     private async Task RunJobAsync(BulkJob job, CancellationToken shutdown)
     {
         using var scope = _scopeFactory.CreateScope();
-        var processor = ResolveProcessor(scope, job.ModuleId);
         bool startedThisJob = false;
 
         try
         {
+            IBulkJobProcessor? processor;
+            try
+            {
+                processor = ResolveProcessor(scope, job.ModuleId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "The bulk job processor for module {Module} could not be built; marking job {Job} Interrupted",
+                    job.ModuleId, job.Id);
+                await FinishAndNotify(scope, job.Id, BulkJobStatus.Interrupted,
+                    $"The processor for module '{job.ModuleId}' could not be built: {ex.Message}",
+                    BulkJobStatus.Queued, BulkJobStatus.Running);
+                return;
+            }
+
             if (processor is null)
             {
                 _logger.LogError("No bulk job processor registered for module {Module}; marking job {Job} Interrupted",
                     job.ModuleId, job.Id);
-                FinishAndNotify(scope, job.Id, BulkJobStatus.Interrupted,
+                await FinishAndNotify(scope, job.Id, BulkJobStatus.Interrupted,
                     $"No processor registered for module '{job.ModuleId}'.",
                     BulkJobStatus.Queued, BulkJobStatus.Running);
                 return;
@@ -526,7 +576,7 @@ public sealed class BulkJobService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Bulk job {Job} payload could not be parsed", job.Id);
-                FinishAndNotify(scope, job.Id, BulkJobStatus.Completed,
+                await FinishAndNotify(scope, job.Id, BulkJobStatus.Completed,
                     $"Job could not start: {ex.Message}",
                     BulkJobStatus.Queued, BulkJobStatus.Running);
                 return;
@@ -543,7 +593,7 @@ public sealed class BulkJobService
             RaiseChanged(job.Id);
 
             var (terminal, message) = await ExecuteRowsAsync(job, processor, total, shutdown);
-            FinishAndNotify(scope, job.Id, terminal, message, BulkJobStatus.Running);
+            await FinishAndNotify(scope, job.Id, terminal, message, BulkJobStatus.Running);
         }
         catch (Exception ex)
         {
@@ -552,7 +602,7 @@ public sealed class BulkJobService
             _logger.LogError(ex, "Bulk job {Job} faulted unexpectedly", job.Id);
             if (startedThisJob)
                 _running.TryRemove(job.Id, out _);
-            FinishAndNotify(scope, job.Id, BulkJobStatus.Interrupted,
+            await FinishAndNotify(scope, job.Id, BulkJobStatus.Interrupted,
                 $"Job faulted: {ex.Message}", BulkJobStatus.Queued, BulkJobStatus.Running);
         }
     }
@@ -632,10 +682,53 @@ public sealed class BulkJobService
     /// the CAS did not fire (someone else already finished the job), the notification is skipped to
     /// avoid a duplicate - whoever won the transition owns the notification.
     /// </summary>
-    private void FinishAndNotify(IServiceScope scope, string jobId, BulkJobStatus terminal,
+    /// <remarks>
+    /// kd-83. A terminal write the store fails is made again after a wait, up to <see cref="FinalWriteAttempts"/> writes, the
+    /// waits the queue read's back-off (kd-82). A failed write threw out of this tail: from the job's own try into the
+    /// backstop, which wrote again - "Job faulted" with the store's message, over a job whose rows had all run, if that write
+    /// landed - and from the backstop out of <see cref="RunJobAsync"/>, which stopped the runner until the next submit with
+    /// the job left Running or Queued. A store that keeps failing is not written for ever: after the last attempt the job is
+    /// left as it is, for the next start to mark Interrupted, the queue read passes it over from then on, and the runner goes
+    /// on to the next job - no <see cref="JobChanged"/> and no completion hook, since nothing was written. A run of failed
+    /// writes is logged once either way - a warning when a write is then made, or the error when the job is left.
+    /// </remarks>
+    private async Task FinishAndNotify(IServiceScope scope, string jobId, BulkJobStatus terminal,
         string? message, params BulkJobStatus[] allowedFrom)
     {
-        var transitioned = _repository.TryFinish(jobId, terminal, message, DateTime.UtcNow, allowedFrom);
+        bool transitioned;
+        var failedWrites = 0;
+        Exception? lastFailure = null;
+        while (true)
+        {
+            try
+            {
+                transitioned = _repository.TryFinish(jobId, terminal, message, DateTime.UtcNow, allowedFrom);
+                break;
+            }
+            catch (Exception ex)
+            {
+                failedWrites++;
+                if (failedWrites >= FinalWriteAttempts)
+                {
+                    lock (_gate) { _leftForNextStart.Add(jobId); }
+                    _logger.LogError(ex,
+                        "The final status ({Status}) of bulk job {Job} could not be written in {Attempts} attempts; the job is left as it is, for the next start to mark Interrupted, and the runner carries on",
+                        terminal, jobId, failedWrites);
+                    return;
+                }
+
+                lastFailure = ex;
+                await WaitBeforeFinalWrite(FinalWriteRetryDelay(failedWrites));
+            }
+        }
+
+        if (failedWrites > 0)
+        {
+            _logger.LogWarning(lastFailure,
+                "The final status ({Status}) of bulk job {Job} could not be written {FailedWrites} time(s); the next attempt succeeded and the runner carries on",
+                terminal, jobId, failedWrites);
+        }
+
         RaiseChanged(jobId);
         if (!transitioned)
             return;
@@ -669,11 +762,15 @@ public sealed class BulkJobService
 
     private void NotifyCompletedInScope(IServiceScope scope, BulkJob job)
     {
-        var processor = ResolveProcessor(scope, job.ModuleId);
-        if (processor is null)
-            return;
         try
         {
+            // kd-83. The completion hook is the processor's, so the processor is built for it inside the try: for a job whose
+            // processor could not be built it fails again here, and that is a notification failure - logged, never a throw
+            // out of the runner's terminal tail.
+            var processor = ResolveProcessor(scope, job.ModuleId);
+            if (processor is null)
+                return;
+
             // Fail-safe: a notification failure must never change the (already-persisted) job result.
             processor.OnJobCompletedAsync(job).GetAwaiter().GetResult();
         }
