@@ -1030,6 +1030,12 @@ public class CircuitRevalidationTests
             return Task.CompletedTask;
         })(null!);
         await activity.WaitAsync(TimeSpan.FromSeconds(15), Ct);
+        // kd-82. The activity can be dropped before the check's audit line is written. The check revokes the circuit
+        // and then writes its line (Revoke: TryRevoke, then WriteAuditLine - revocation before audit, aud-a29b), and on a
+        // starved pool the gate's backstop can time the hold out in between: it finds the circuit revoked, writes nothing -
+        // the line is the check's - and drops the activity. So the line is read once the check itself has returned, which
+        // is after its Revoke has.
+        Assert.False(await gate.OpenCheck.WaitAsync(TimeSpan.FromSeconds(15), Ct));
 
         Assert.Equal(0, ran);
         Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);

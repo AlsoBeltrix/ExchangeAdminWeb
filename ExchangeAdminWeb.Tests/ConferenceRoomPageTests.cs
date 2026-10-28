@@ -8,6 +8,7 @@ using ExchangeAdminWeb.Services.Progress;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -408,6 +409,86 @@ public sealed class ConferenceRoomPageTests : IDisposable
         var banner = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
         Assert.False(banner.Success);
         Assert.Equal("The removal of the Room Type (bulk) job could not be completed.", banner.Message);
+    }
+
+    // ---- kd-82: a removal whose list reload fails says what it did, keeps its row, and goes no further -
+    // The reload after the store call sat outside any try, so a jobs store that failed that read - after a removal that
+    // happened and was filed Success - threw to the circuit instead of the list refreshing. The throw is now logged, the
+    // banner says what the removal did and that the list could not be refreshed, nothing escapes, and the removal's own
+    // row stands, with nothing more filed.
+
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("gone")]
+    public async Task ARemovalWhoseListReloadFails_SaysWhatItDid_KeepsItsRow_AndThrowsNothing(string state)
+    {
+        // "removed" is the finding: the job is deleted and filed Success, then the reload fails. "gone" is the not-removed
+        // answer this page meets (kd-78) - another administrator removed the job first - and the same reload failure.
+        var (jobs, store) = JobService();
+        var job = Job("job-9", BulkJobStatus.Completed);
+        if (state == "removed")
+            store.Insert(job);
+        var page = BuildPage(jobs);
+        var unreadable = FailTheReloadOnly(store);
+
+        var escaped = await Record.ExceptionAsync(() => Remove(page, job));
+
+        Assert.Null(escaped);
+        // The stand-in engaged: the reload began, and the store fails its read.
+        Assert.True(unreadable(), "the jobs store was not made unreadable when the reload began");
+        Assert.ThrowsAny<SqliteException>(() => jobs.GetActiveJobsByModule(ConferenceRoomBulkProcessor.ModuleName));
+        Assert.Empty(_progress.Active);
+
+        // The removal's own row, as without the failure, and no other row at all.
+        var row = Assert.Single(_h.AuditRows());
+        var banner = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        if (state == "removed")
+        {
+            AssertTheRow(row, job, success: true, error: null);
+            Assert.False(row.TryGetProperty("refusedAt", out _));
+            Assert.False(row.TryGetProperty("mutationAttempted", out _));
+            Assert.False(HeldInStore(store, job.Id), "the job was not removed");
+            Assert.True(banner.Success, $"the banner read: {banner.Message}");
+            Assert.Equal("The Room Type (bulk) job was removed; the job list could not be refreshed.", banner.Message);
+        }
+        else
+        {
+            AssertTheRow(row, job, success: false, error: "The job was not removed: it no longer exists.");
+            Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+            Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+            Assert.False(banner.Success);
+            Assert.Equal("Could not remove the Room Type (bulk) job - it no longer exists. The job list could not be refreshed.",
+                banner.Message);
+        }
+    }
+
+    // kd-82's stand-in: a jobs store that fails the list reload and nothing before it. RefreshJobs begins its "Loading the
+    // bulk job list" activity before it reads, by when the removal's own transaction is over, so the jobs table is renamed
+    // away the moment that activity begins and the reload's first read meets "no such table". Returns whether it ran.
+    private Func<bool> FailTheReloadOnly(BulkJobRepository store)
+    {
+        var renamed = false;
+        _progress.Changed += () =>
+        {
+            if (renamed || !_progress.Active.Any(activity => activity.Label == "Loading the bulk job list"))
+                return;
+            using var connection = new SqliteConnectionFactory(store.DatabasePath).Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE bulk_job RENAME TO bulk_job_held;";
+            command.ExecuteNonQuery();
+            renamed = true;
+        };
+        return () => renamed;
+    }
+
+    // Whether the job is still in the store, read where the stand-in keeps it.
+    private static bool HeldInStore(BulkJobRepository store, string id)
+    {
+        using var connection = new SqliteConnectionFactory(store.DatabasePath).Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM bulk_job_held WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", id);
+        return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) > 0;
     }
 
     // ---- the page ------------------------------------------------------------------------------

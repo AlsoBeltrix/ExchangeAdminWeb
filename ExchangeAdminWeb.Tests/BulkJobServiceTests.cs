@@ -1,8 +1,10 @@
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Jobs;
 using ExchangeAdminWeb.Services.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Tests;
@@ -87,6 +89,13 @@ public class BulkJobServiceTests
         /// Configuration the runner is built over; empty unless a test is about a setting (aud-a64).
         /// </param>
         public Harness(params (string Key, string Value)[] settings)
+            : this(NullLogger<BulkJobService>.Instance, settings)
+        {
+        }
+
+        /// <param name="logger">The runner's log; a null logger unless a test is about what the runner says (kd-82).</param>
+        /// <param name="settings">As the other constructor's.</param>
+        public Harness(ILogger<BulkJobService> logger, params (string Key, string Value)[] settings)
         {
             var factory = new SqliteConnectionFactory(System.IO.Path.Combine(Temp.Path, "exchangeadmin-jobs.db"));
             new JobStoreMigrator(factory).Migrate();
@@ -109,7 +118,7 @@ public class BulkJobServiceTests
                 .Build();
             Service = new BulkJobService(
                 Provider.GetRequiredService<IServiceScopeFactory>(),
-                Repository, registry, config, NullLogger<BulkJobService>.Instance);
+                Repository, registry, config, logger);
         }
 
         public BulkJob NewJob(string id, string payload, string status = "Queued", string moduleId = "Test") => new()
@@ -601,6 +610,156 @@ public class BulkJobServiceTests
         finally
         {
             UsageSession.Current.Value = null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // kd-82: a read of the queue that fails is made again, a bounded number of times
+    // -------------------------------------------------------------------------
+    // The runner stopped at its first failed read of the queue, and only the next Enqueue started it again: a job just
+    // queued - kd-80's case, the store failing a read just after the job's write - stayed Queued until someone submitted
+    // another job in any module, or was marked Interrupted at the next restart. The read is now made again after a wait,
+    // up to QueueReadAttempts reads, and a store that keeps failing stops the runner with one line saying so.
+
+    [Fact]
+    public async Task AQueueReadThatFails_IsMadeAgainAfterAWait_AndTheQueuedJobRunsWithoutAnotherSubmit()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(h.NewJob("j1", "SS"));
+        // The store fails the runner's first read, and can be read again by the time the runner has waited.
+        RenameJobsTable(h, "bulk_job", "bulk_job_held");
+        var waits = new List<TimeSpan>();
+        h.Service.WaitBeforeQueueRead = (delay, _) =>
+        {
+            waits.Add(delay);
+            if (waits.Count == 1)
+                RenameJobsTable(h, "bulk_job_held", "bulk_job");
+            return Task.CompletedTask;
+        };
+
+        // One drive of the runner, as the job's own submit starts it; nothing else drives it.
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The runner waited once, the back-off's first wait of a second, and read the queue again.
+        Assert.Equal(new[] { TimeSpan.FromSeconds(1) }, waits);
+        var job = h.Repository.Get("j1")!;
+        Assert.Equal(BulkJobStatus.Completed, job.Status);
+        Assert.Equal(2, job.SuccessCount);
+        // Said once, with the failed read's own exception: the queue could not be read once, and was then.
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Warning, said.Level);
+        Assert.Equal("The bulk job queue could not be read 1 time(s); it was read on the next attempt and the runner carries on", said.Message);
+        Assert.IsType<SqliteException>(said.Exception);
+    }
+
+    [Fact]
+    public async Task AQueueThatCannotBeRead_IsReadABoundedNumberOfTimes_ThenTheRunnerStopsAndSaysSoOnce()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        var waits = new List<TimeSpan>();
+        h.Service.WaitBeforeQueueRead = (delay, _) =>
+        {
+            lock (waits)
+            {
+                waits.Add(delay);
+                // A runner that never stops would read for ever; end it here, so that it fails this test rather than hangs it.
+                if (waits.Count > 50)
+                    throw new InvalidOperationException("The runner is still reading the queue.");
+            }
+
+            return Task.CompletedTask;
+        };
+        // kd-80's sequence, through a submit: the store takes the job's write and fails every read after it. Enqueue raises
+        // JobChanged once its insert has committed and before the runner reads, so the first event renames the table away.
+        var unreadable = false;
+        h.Service.JobChanged += _ =>
+        {
+            if (unreadable)
+                return;
+            RenameJobsTable(h, "bulk_job", "bulk_job_held");
+            unreadable = true;
+        };
+
+        h.Service.Enqueue(h.NewJob("j1", "SS"));
+        await log.FirstError.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.True(unreadable, "the store was not made unreadable after the write");
+        // The bound: QueueReadAttempts reads with a wait between each two, doubling from a second, and then no more.
+        TimeSpan[] waited;
+        lock (waits)
+            waited = waits.ToArray();
+        Assert.Equal(BulkJobService.QueueReadAttempts - 1, waited.Length);
+        Assert.Equal(new[] { 1, 2, 4, 8, 16 }.Select(seconds => TimeSpan.FromSeconds(seconds)), waited);
+        // Said once, with the last read's own exception.
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Error, said.Level);
+        Assert.Equal(
+            $"The bulk job queue could not be read in {BulkJobService.QueueReadAttempts} attempts; the runner has stopped and starts again when the next job is submitted",
+            said.Message);
+        Assert.IsType<SqliteException>(said.Exception);
+        Assert.Equal("Queued", HeldStatus(h, "j1"));
+
+        // Stopped, not wedged: once the store can be read again, the next submit starts the runner, and it runs the job that
+        // waited as well as its own.
+        RenameJobsTable(h, "bulk_job_held", "bulk_job");
+        h.Service.Enqueue(h.NewJob("j2", "S"));
+        await WaitUntil(() => h.Repository.Get("j1")?.Status == BulkJobStatus.Completed
+            && h.Repository.Get("j2")?.Status == BulkJobStatus.Completed, timeoutMs: 30000);
+        Assert.Single(log.Entries);
+        lock (waits)
+            Assert.Equal(BulkJobService.QueueReadAttempts - 1, waits.Count);
+    }
+
+    // kd-82's stand-in for a store that cannot be read: the jobs table renamed away, so a read of the queue meets "no such
+    // table", and renamed back when the store recovers. The rows stay where they were written.
+    private static void RenameJobsTable(Harness h, string from, string to)
+    {
+        using var connection = new SqliteConnectionFactory(h.Repository.DatabasePath).Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE {from} RENAME TO {to};";
+        command.ExecuteNonQuery();
+    }
+
+    // A job's status while the jobs table is renamed away, read where the stand-in keeps it.
+    private static string? HeldStatus(Harness h, string id)
+    {
+        using var connection = new SqliteConnectionFactory(h.Repository.DatabasePath).Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT status FROM bulk_job_held WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar() as string;
+    }
+
+    // The runner's log, kept: each line's level, its rendered message and its exception; and the first error, to wait on.
+    private sealed class CapturingLogger : ILogger<BulkJobService>
+    {
+        private readonly List<(LogLevel Level, string Message, Exception? Exception)> _entries = new();
+        private readonly TaskCompletionSource _firstError = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task FirstError => _firstError.Task;
+
+        public IReadOnlyList<(LogLevel Level, string Message, Exception? Exception)> Entries
+        {
+            get
+            {
+                lock (_entries)
+                    return _entries.ToList();
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries)
+                _entries.Add((logLevel, formatter(state, exception), exception));
+            if (logLevel >= LogLevel.Error)
+                _firstError.TrySetResult();
         }
     }
 
