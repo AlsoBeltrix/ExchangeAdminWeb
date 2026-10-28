@@ -458,7 +458,7 @@
             var step = PermissionChangeFailure.BeforeTheWrite; var changePermType = string.Join("+", new[] { fullAccess ? "FullAccess" : null, sendAs ? "SendAs" : null }.OfType<string>()); string Refused(string refusal) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{changePermType}", target, user, changePermType, false, ticket, errorDetail: refusal, extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox)), Logger, target, SelfGrantRefusalRecord.RefusedChangeRecord); // aud-a53: the stage a throw in the try below came from; aud-a70 (5): a refusal before the write is recorded, as a throw before it is
             try
             {
-                string location; try { location = await MailboxService.GetMailboxLocationAsync(validation.Mailbox); } catch (Exception locationEx) { result = PermissionResult.Fail(Refused(ExchangeServiceBase.LocationReadFailure(target, locationEx))); return; } // aud-a23o: a failed location read is refused as such, before any write; it reached the catch below, "Operation may have succeeded but audit logging failed"; aud-a70 (5): and recorded
+                string location; try { location = await MailboxService.GetMailboxLocationAsync(validation.Mailbox, activity.CancellationToken); } catch (Exception locationEx) when (!PermissionChangeFailure.CancelledBeforeItWasSent(locationEx, step, activity.CancellationToken)) { result = PermissionResult.Fail(Refused(ExchangeServiceBase.LocationReadFailure(target, locationEx))); return; } // aud-a23o: a failed location read is refused as such, before any write; it reached the catch below, "Operation may have succeeded but audit logging failed"; aud-a70 (5): and recorded; kd-81: the activity's token reaches its on-premises credential fetch (kd-37's seam), and the operator's cancel there goes to the cancel catch below
                 if (location == "Unknown")
                 {
                     result = PermissionResult.Fail(Refused($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found. Nothing was written."));
@@ -484,9 +484,9 @@
                     return;
                 }
                 step = PermissionChangeFailure.TheWrite;
-                var opResult = isAdd
-                    ? await MailboxService.AddMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs, autoMap)
-                    : await MailboxService.RemoveMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs);
+                var opResult = isAdd // kd-81: the activity's token, the one the navigation guard cancels - looked at as the change starts and once its connection is held, before its first write command
+                    ? await MailboxService.AddMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs, autoMap, activity.CancellationToken)
+                    : await MailboxService.RemoveMailboxPermissionsAsync(target, validation.Mailbox, user, fullAccess, sendAs, activity.CancellationToken);
                 step = PermissionChangeFailure.AfterTheWrite;
                 var perms = new List<string>();
                 if (fullAccess) perms.Add("FullAccess");
@@ -522,6 +522,17 @@
 
                 result = SelfGrantRefusalRecord.Said(opResult, rowWritten);
                 activity.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
+            }
+            catch (Exception ex) when (PermissionChangeFailure.CancelledBeforeItWasSent(ex, step, activity.CancellationToken))
+            {
+                // kd-81. The operator's cancel stopped the change before anything of it was sent - in the location read's on-premises
+                // credential fetch, as the change started, or while it waited for a pool connection (the service's look inside its
+                // call) - so it is filed as kd-59 files ExecuteOnPrem's: Cancelled, in the app's phrase for a cancel (kd-57), nothing
+                // written, and no notification, as for any write never sent. Every other throw, a cancellation the operator did not
+                // ask for included, is the catch below.
+                var cancelled = SelfGrantRefusalRecord.Banner(PermissionChangeFailure.CancelledBeforeTheWrite, () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}{changePermType}", target, user, changePermType, false, ticket, errorDetail: PermissionChangeFailure.CancelledBeforeTheWrite, extra: AuditService.FiledCancelled(ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(validation.ServicedNote), validation.Mailbox))), Logger, target, PermissionChangeFailure.CancelledSingleChangeRecord);
+                result = PermissionResult.Fail(cancelled);
+                try { activity.Complete(false, cancelled); } catch (Exception completeEx) { Logger.LogWarning(completeEx, "The progress of the change on {Target} could not be completed; the result stands", target); }
             }
             catch (Exception ex)
             {

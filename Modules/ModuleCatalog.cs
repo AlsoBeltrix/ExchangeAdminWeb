@@ -185,7 +185,12 @@ public sealed class ModuleCatalog
             // directory-read credential cannot be had - a grant to a person Exchange Online names as well as one to a group,
             // single change, on-premises re-check and bulk row alike - refused as incomplete naming the setting, nothing
             // written. A removal is not checked and goes ahead as before.
-            Version = "1.6.4",
+            // 1.6.5: the single Exchange Online change takes the operator's cancel (kd-81): a cancel made before the change
+            // starts, or while it waits for a free Exchange Online connection, stops it before anything is sent - nothing
+            // written, filed Cancelled, no one notified - where the change was made once a connection freed and filed and
+            // notified as made. The location read before it takes the cancel at its on-premises credential fetch. A change
+            // already sent runs to its end; the CSV run is unchanged.
+            Version = "1.6.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -237,7 +242,13 @@ public sealed class ModuleCatalog
             // refused while the protected-principal directory-read credential cannot be had, to a person Exchange Online names
             // as well as to a group, single change, on-premises re-check and bulk row alike - refused as incomplete naming the
             // setting, nothing written. A removal is not checked and goes ahead as before.
-            Version = "1.4.4",
+            // 1.4.5: as Mailbox Permissions 1.6.5 - the single Exchange Online change takes the operator's cancel (kd-81): a
+            // cancel made before the change starts, or while it waits for a free Exchange Online connection, stops it before
+            // anything is sent - nothing written, filed Cancelled, no one notified - where the calendar permission was set or
+            // removed once a connection freed and filed and notified as made. The location read before it takes the cancel at
+            // its on-premises credential fetch. A change already sent runs to its end, the Set's fallback Add included; the CSV
+            // run is unchanged.
+            Version = "1.4.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

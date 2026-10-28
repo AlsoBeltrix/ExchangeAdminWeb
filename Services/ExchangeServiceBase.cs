@@ -756,8 +756,13 @@ public abstract class ExchangeServiceBase
     /// the mailbox that will be written, not for whatever the typed string resolves to (aud-a2d).
     /// No mailbox is "Unknown", which every caller refuses.
     /// </summary>
-    public Task<string> GetMailboxLocationAsync(ValidatedMailbox? mailbox) =>
-        mailbox is null ? Task.FromResult("Unknown") : GetMailboxLocationAsync(mailbox.Identity);
+    /// <param name="cancellationToken">
+    /// kd-81. The caller's token, handed to the string form, which gives it to the on-premises read's credential fetch only
+    /// (kd-37's seam): the Exchange Online read, the throttle and the on-premises session take none. A caller that passes
+    /// none reads as before.
+    /// </param>
+    public Task<string> GetMailboxLocationAsync(ValidatedMailbox? mailbox, CancellationToken cancellationToken = default) =>
+        mailbox is null ? Task.FromResult("Unknown") : GetMailboxLocationAsync(mailbox.Identity, cancellationToken);
 
     protected async Task<bool> HasCloudMailboxAsync(string identity)
     {

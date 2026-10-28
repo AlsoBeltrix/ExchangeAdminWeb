@@ -59,7 +59,7 @@ internal static class PermissionChangeFailure
 
     /// <summary>
     /// kd-59. What an on-premises change says, banner and record, when the operator's cancel stopped it before its command was
-    /// sent: the app's phrase for a cancel (kd-57), and that nothing was written.
+    /// sent: the app's phrase for a cancel (kd-57), and that nothing was written. kd-81: a single Exchange Online change's too.
     /// </summary>
     internal const string CancelledBeforeTheWrite = AuditService.CancelledByTheOperator + " before the change was sent. Nothing was written.";
 
@@ -67,13 +67,29 @@ internal static class PermissionChangeFailure
     internal const string CancelledChangeRecord = "the cancelled on-premises change";
 
     /// <summary>
+    /// kd-81. The record of a single change (<c>SubmitSingle</c>) the operator's cancel stopped before anything was sent. Not
+    /// <see cref="CancelledChangeRecord"/>, whose words would misname a change Exchange Online was to write.
+    /// </summary>
+    internal const string CancelledSingleChangeRecord = "the cancelled permission change";
+
+    /// <summary>
     /// kd-59. Whether <paramref name="ex"/> is the operator's cancel of an on-premises change: a write the service says was
     /// never sent (aud-a76), stopped by a cancellation - the credential fetch is the step that takes the activity's token -
     /// with that token, <paramref name="activity"/>, cancelled. Any other throw, a cancellation the operator did not ask for
-    /// included, is a failure in its own words.
+    /// included, is a failure in its own words. kd-81: a single Exchange Online change's own looks at the token - as it
+    /// starts, and inside its pooled call before its first write command - leave the same way.
     /// </summary>
     internal static bool CancelledBeforeItWasSent(Exception ex, CancellationToken activity) =>
         ex is PermissionWriteNotSubmittedException { InnerException: OperationCanceledException } && activity.IsCancellationRequested;
+
+    /// <summary>
+    /// kd-81. <see cref="CancelledBeforeItWasSent(Exception, CancellationToken)"/> for a single change thrown at
+    /// <paramref name="step"/>: also a cancellation at <see cref="BeforeTheWrite"/> - the location read's, whose on-premises
+    /// half takes the activity's token (kd-37's seam) - with that token cancelled. Nothing can have been written at that step,
+    /// so it is the operator's cancel before anything was sent. Any other throw is a failure in its own words.
+    /// </summary>
+    internal static bool CancelledBeforeItWasSent(Exception ex, string step, CancellationToken activity) =>
+        CancelledBeforeItWasSent(ex, activity) || (step == BeforeTheWrite && ex is OperationCanceledException && activity.IsCancellationRequested);
 
     /// <summary>
     /// aud-a73. The result the record of a throw at <paramref name="step"/> is filed under: Undetermined at
