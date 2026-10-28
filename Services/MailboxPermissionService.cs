@@ -35,7 +35,17 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// The mailbox the protected-principal check validated (aud-a2d) - the only identity written.
     /// Null refuses before a connection is borrowed; the typed string is never written.
     /// </param>
-    public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
+    /// <param name="cancellationToken">
+    /// kd-81. The page's activity token, the one the navigation guard cancels. Looked at twice, both times before anything is
+    /// sent: as the change starts - a token already cancelled asks the pool for nothing (kd-76's shape) - and inside the pooled
+    /// call, once its connection is held, immediately before the first write command, because the pool's wait for a free
+    /// connection takes no token. A cancel at either point leaves as every throw before the mark does: a
+    /// <see cref="PermissionWriteNotSubmittedException"/>, nothing sent, the cancellation its cause - which the page files
+    /// Cancelled (kd-57, kd-59). Nothing after the first write command looks at it: once a right is sent the change runs on.
+    /// The CSV loop passes none, so its rows run as before.
+    /// </param>
+    public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs, bool autoMapping,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
@@ -48,107 +58,125 @@ public class MailboxPermissionService : ExchangeServiceBase
         // flags connection errors before throwing, so RunPooledQueryAsync discards a
         // poisoned pooled connection even though the per-right catch swallows the error.
         // aud-a76: so the one throw that leaves is the pool's - its borrow, before the mark below - and it leaves as a
-        // PermissionWriteNotSubmittedException: nothing was sent.
+        // PermissionWriteNotSubmittedException: nothing was sent. kd-81: and the operator's cancel, before the mark too.
         var submission = new PermissionWriteSubmission();
-        return submission.TrackAsync(() => RunPooledQueryAsync((ps, tracker) =>
+        return submission.TrackAsync(() =>
         {
-            try
+            // kd-81 (kd-76's shape). A token already cancelled starts nothing: no connection is asked for.
+            cancellationToken.ThrowIfCancellationRequested();
+            return RunPooledQueryAsync((ps, tracker) =>
             {
-                BindValidatedMailbox(ps, tracker, mailbox);
-                ValidateRecipient(ps, user);
-            }
-            catch (Exception ex)
-            {
-                return PermissionResult.Fail(ex.Message);
-            }
-
-            var outcomes = new List<RightOutcome>();
-            submission.Submitting(); // aud-a76: the first write command is invoked below
-
-            if (fullAccess)
-            {
-                outcomes.Add(TryRight(tracker, "FullAccess", own =>
+                try
                 {
-                    ps.AddCommand("Add-MailboxPermission")
-                      .AddParameter("Identity", mailbox.Identity)
-                      .AddParameter("User", user)
-                      .AddParameter("AccessRights", "FullAccess")
-                      .AddParameter("AutoMapping", autoMapping)
-                      .AddParameter("Confirm", false);
-                    Invoke(ps, own);
-                }));
-            }
-
-            if (sendAs)
-            {
-                outcomes.Add(TryRight(tracker, "SendAs", own =>
+                    BindValidatedMailbox(ps, tracker, mailbox);
+                    ValidateRecipient(ps, user);
+                }
+                catch (Exception ex)
                 {
-                    ps.AddCommand("Add-RecipientPermission")
-                      .AddParameter("Identity", mailbox.Identity)
-                      .AddParameter("Trustee", user)
-                      .AddParameter("AccessRights", "SendAs")
-                      .AddParameter("Confirm", false);
-                    Invoke(ps, own);
-                }));
-            }
+                    return PermissionResult.Fail(ex.Message);
+                }
 
-            return MailboxPermissionOutcome.ForGrant(targetMailbox, user, outcomes);
-        }));
+                var outcomes = new List<RightOutcome>();
+
+                // kd-81. The pool's wait for this connection took no token, so a cancel made during it is looked at here, the
+                // connection held and the reads done, immediately before the first write command. Thrown: RunPooledQueryAsync
+                // lets a throw out to its caller, and the pool takes its connection back as for any other throw - before the
+                // mark, so nothing was sent. The pool runs this call once (no retry), so no earlier attempt can have sent anything.
+                cancellationToken.ThrowIfCancellationRequested();
+                submission.Submitting(); // aud-a76: the first write command is invoked below
+
+                if (fullAccess)
+                {
+                    outcomes.Add(TryRight(tracker, "FullAccess", own =>
+                    {
+                        ps.AddCommand("Add-MailboxPermission")
+                          .AddParameter("Identity", mailbox.Identity)
+                          .AddParameter("User", user)
+                          .AddParameter("AccessRights", "FullAccess")
+                          .AddParameter("AutoMapping", autoMapping)
+                          .AddParameter("Confirm", false);
+                        Invoke(ps, own);
+                    }));
+                }
+
+                if (sendAs)
+                {
+                    outcomes.Add(TryRight(tracker, "SendAs", own =>
+                    {
+                        ps.AddCommand("Add-RecipientPermission")
+                          .AddParameter("Identity", mailbox.Identity)
+                          .AddParameter("Trustee", user)
+                          .AddParameter("AccessRights", "SendAs")
+                          .AddParameter("Confirm", false);
+                        Invoke(ps, own);
+                    }));
+                }
+
+                return MailboxPermissionOutcome.ForGrant(targetMailbox, user, outcomes);
+            });
+        });
     }
 
     /// <param name="mailbox">As on <see cref="AddMailboxPermissionsAsync"/>: null refuses.</param>
-    public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs)
+    /// <param name="cancellationToken">kd-81. As on <see cref="AddMailboxPermissionsAsync"/>: looked at as the change starts and immediately before its first write command, nothing after.</param>
+    public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, bool fullAccess, bool sendAs,
+        CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return Task.FromResult(PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox)));
 
         // Per-right try/catch with aggregation - see AddMailboxPermissionsAsync for why
         // the previous single-Fail RunAsync shape lost partial-success information, and for
-        // the mark (aud-a76).
+        // the mark (aud-a76) and the two looks at the operator's cancel (kd-81).
         var submission = new PermissionWriteSubmission();
-        return submission.TrackAsync(() => RunPooledQueryAsync((ps, tracker) =>
+        return submission.TrackAsync(() =>
         {
-            try
+            cancellationToken.ThrowIfCancellationRequested(); // kd-81 (kd-76's shape): a token already cancelled starts nothing
+            return RunPooledQueryAsync((ps, tracker) =>
             {
-                BindValidatedMailbox(ps, tracker, mailbox);
-                ValidateRecipient(ps, user);
-            }
-            catch (Exception ex)
-            {
-                return PermissionResult.Fail(ex.Message);
-            }
-
-            var outcomes = new List<RightOutcome>();
-            submission.Submitting(); // aud-a76: the first write command is invoked below
-
-            if (fullAccess)
-            {
-                outcomes.Add(TryRight(tracker, "FullAccess", own =>
+                try
                 {
-                    ps.AddCommand("Remove-MailboxPermission")
-                      .AddParameter("Identity", mailbox.Identity)
-                      .AddParameter("User", user)
-                      .AddParameter("AccessRights", "FullAccess")
-                      .AddParameter("Confirm", false);
-                    Invoke(ps, own);
-                }));
-            }
-
-            if (sendAs)
-            {
-                outcomes.Add(TryRight(tracker, "SendAs", own =>
+                    BindValidatedMailbox(ps, tracker, mailbox);
+                    ValidateRecipient(ps, user);
+                }
+                catch (Exception ex)
                 {
-                    ps.AddCommand("Remove-RecipientPermission")
-                      .AddParameter("Identity", mailbox.Identity)
-                      .AddParameter("Trustee", user)
-                      .AddParameter("AccessRights", "SendAs")
-                      .AddParameter("Confirm", false);
-                    Invoke(ps, own);
-                }));
-            }
+                    return PermissionResult.Fail(ex.Message);
+                }
 
-            return MailboxPermissionOutcome.ForRevoke(targetMailbox, user, outcomes);
-        }));
+                var outcomes = new List<RightOutcome>();
+                cancellationToken.ThrowIfCancellationRequested(); // kd-81: a cancel made while this call waited for its connection
+                submission.Submitting(); // aud-a76: the first write command is invoked below
+
+                if (fullAccess)
+                {
+                    outcomes.Add(TryRight(tracker, "FullAccess", own =>
+                    {
+                        ps.AddCommand("Remove-MailboxPermission")
+                          .AddParameter("Identity", mailbox.Identity)
+                          .AddParameter("User", user)
+                          .AddParameter("AccessRights", "FullAccess")
+                          .AddParameter("Confirm", false);
+                        Invoke(ps, own);
+                    }));
+                }
+
+                if (sendAs)
+                {
+                    outcomes.Add(TryRight(tracker, "SendAs", own =>
+                    {
+                        ps.AddCommand("Remove-RecipientPermission")
+                          .AddParameter("Identity", mailbox.Identity)
+                          .AddParameter("Trustee", user)
+                          .AddParameter("AccessRights", "SendAs")
+                          .AddParameter("Confirm", false);
+                        Invoke(ps, own);
+                    }));
+                }
+
+                return MailboxPermissionOutcome.ForRevoke(targetMailbox, user, outcomes);
+            });
+        });
     }
 
     /// <summary>

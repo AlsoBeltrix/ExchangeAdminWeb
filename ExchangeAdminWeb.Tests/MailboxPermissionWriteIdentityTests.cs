@@ -43,7 +43,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
     public async Task AGrant_WritesTheValidatedMailbox_NotTheStringTyped()
     {
         var result = await Service().AddMailboxPermissionsAsync(
-            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, autoMapping: false);
+            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, autoMapping: false, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Identity(Checked), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-Mailbox")), "Identity"));
@@ -57,7 +57,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
     public async Task ARevoke_WritesTheValidatedMailbox_NotTheStringTyped()
     {
         var result = await Service().RemoveMailboxPermissionsAsync(
-            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true);
+            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(Identity(Checked), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-Mailbox")), "Identity"));
@@ -71,8 +71,8 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
     public async Task WithoutAValidatedMailbox_NothingIsWritten_AndNoConnectionIsBorrowed(bool grant)
     {
         var result = grant
-            ? await Service().AddMailboxPermissionsAsync(Typed, null, Trustee, fullAccess: true, sendAs: true, autoMapping: false)
-            : await Service().RemoveMailboxPermissionsAsync(Typed, null, Trustee, fullAccess: true, sendAs: true);
+            ? await Service().AddMailboxPermissionsAsync(Typed, null, Trustee, fullAccess: true, sendAs: true, autoMapping: false, TestContext.Current.CancellationToken)
+            : await Service().RemoveMailboxPermissionsAsync(Typed, null, Trustee, fullAccess: true, sendAs: true, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Equal(ValidatedMailbox.Refusal(Typed), result.Message);
@@ -88,7 +88,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
         _h.Mailboxes[Identity(Checked)] = _h.Mailboxes["vip@contoso.test"];
 
         var result = await Service().AddMailboxPermissionsAsync(
-            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, autoMapping: false);
+            Typed, ExchangeWriteHarness.Validated(Checked), Trustee, fullAccess: true, sendAs: true, autoMapping: false, TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.Contains("different mailbox", result.Message, StringComparison.Ordinal);

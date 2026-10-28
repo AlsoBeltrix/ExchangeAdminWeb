@@ -17,7 +17,7 @@ namespace ExchangeAdminWeb.Tests;
 public sealed class ValidatedWriteCallSiteTests
 {
     [Theory]
-    [InlineData("MailboxPermissions.razor", @"MailboxService\.GetMailboxLocationAsync\(\s*validation\.Mailbox\s*\)")]
+    [InlineData("MailboxPermissions.razor", @"MailboxService\.GetMailboxLocationAsync\(\s*validation\.Mailbox\s*,\s*activity\.CancellationToken\s*\)")] // kd-81: and the activity's token
     [InlineData("MailboxPermissions.razor", @"MailboxService\.AddMailboxPermissionsAsync\(\s*target,\s*validation\.Mailbox,")]
     [InlineData("MailboxPermissions.razor", @"MailboxService\.RemoveMailboxPermissionsAsync\(\s*target,\s*validation\.Mailbox,")]
     [InlineData("MailboxPermissions.razor", @"MailboxService\.AddMailboxPermissionsOnPremAsync\(\s*target,\s*onPremValidation\.Mailbox,")]
@@ -41,7 +41,7 @@ public sealed class ValidatedWriteCallSiteTests
     }
 
     [Theory]
-    [InlineData("MailboxPermissions.razor", 4)]
+    [InlineData("MailboxPermissions.razor", 5)]
     [InlineData("CalendarPermissions.razor", 4)]
     [InlineData("OutOfOffice.razor", 1)]
     [InlineData("ConferenceRooms.razor", 2)]
@@ -50,6 +50,7 @@ public sealed class ValidatedWriteCallSiteTests
         // The audit keeps the typed target; the identity written rides in extra beside it. aud-a71: on the two permission
         // pages the single change's failure row records it too - the cloud success row, that failure row and the
         // on-premises write's rows. aud-a70 (5): and the row of a change refused before its write (SubmitSingle's Refused).
+        // kd-81: and the row of a single change the operator's cancel stopped before it was sent (SubmitSingle's cancel catch).
         var source = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page));
 
         Assert.Equal(expected, Regex.Matches(source, @"ValidatedMailbox\.WithWrittenIdentity\(").Count);

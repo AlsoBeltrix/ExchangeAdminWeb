@@ -305,17 +305,22 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     // Pinned on the line, as ValidatedWriteCallSiteTests pins the same call: a failed location read is refused there, before
     // any write, through LocationReadFailure. It reached each page's catch, "Operation may have succeeded but audit logging
     // failed: ...". aud-a70 (5): the refusal goes through the page's Refused, which records it -
-    // PermissionPagesSelfGrantTests.ARefusalBeforeTheWrite_IsRecordedAsFailed_NothingWasWritten drives it end to end.
+    // PermissionPagesSelfGrantTests.ARefusalBeforeTheWrite_IsRecordedAsFailed_NothingWasWritten drives it end to end. kd-81: on
+    // a page whose read takes the activity's token, the operator's cancel there is not a read that failed - it goes on to the
+    // page's cancel catch (PermissionCloudChangeCancellationTests drives it).
     [Theory]
-    [InlineData("CalendarPermissions.razor", "CalendarService")]
-    [InlineData("MailboxPermissions.razor", "MailboxService")]
-    public void APermissionsPage_RefusesALocationReadThatFailed_BeforeAnyWrite(string page, string service)
+    [InlineData("CalendarPermissions.razor", "CalendarService", false)]
+    [InlineData("MailboxPermissions.razor", "MailboxService", true)]
+    public void APermissionsPage_RefusesALocationReadThatFailed_BeforeAnyWrite(string page, string service, bool takesTheActivitysToken)
     {
         var source = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page));
+        var (token, cancel) = takesTheActivitysToken
+            ? (@", activity\.CancellationToken", @" when \(!PermissionChangeFailure\.CancelledBeforeItWasSent\(locationEx, step, activity\.CancellationToken\)\)")
+            : ("", "");
 
         Assert.Matches(new Regex(
-            $@"string location; try \{{ location = await {service}\.GetMailboxLocationAsync\(validation\.Mailbox\); \}} "
-            + @"catch \(Exception locationEx\) \{ result = PermissionResult\.Fail\(Refused\(ExchangeServiceBase\.LocationReadFailure\(target, locationEx\)\)\); return; \}"),
+            $@"string location; try \{{ location = await {service}\.GetMailboxLocationAsync\(validation\.Mailbox{token}\); \}} "
+            + $@"catch \(Exception locationEx\){cancel} \{{ result = PermissionResult\.Fail\(Refused\(ExchangeServiceBase\.LocationReadFailure\(target, locationEx\)\)\); return; \}}"),
             source);
         Assert.DoesNotMatch(new Regex(@"var location = await"), source);
     }
