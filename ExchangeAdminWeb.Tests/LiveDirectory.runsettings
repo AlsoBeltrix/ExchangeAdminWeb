@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  psl-10 (5). The opt-in run of the test classes that read a live directory ([Trait("Category", "LiveDirectory")]):
+  by hand, on a domain-joined host with RSAT, from the repository root,
+
+    dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings
+
+  (-s is the short form of the settings option). A run settings file named on the command line replaces the one the
+  test project names (ExchangeAdminWeb.Tests.runsettings, which filters the trait out), so this file's filter is the
+  only one, and the run is the live classes and nothing else. A filter option on the command line would not do it: it
+  is joined to the project's filter with AND, and the two together match no test. LiveDirectoryOptInTests holds this
+  shape.
+-->
+<RunSettings>
+  <RunConfiguration>
+    <TestCaseFilter>Category=LiveDirectory</TestCaseFilter>
+  </RunConfiguration>
+</RunSettings>

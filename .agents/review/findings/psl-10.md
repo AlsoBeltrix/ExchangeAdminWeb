@@ -13,10 +13,16 @@ through the production probe wherever AD is reachable; it could use the psl-8 st
 deliberately live classes `ADDirectoryLiveTests` (5) and `AdDirectoryForestSearchLiveTests` (3) query the
 live directory on every full-suite run on this host - the "no live directory calls" rule for agents is not
 met by the mandated gate itself; whether those classes stay in the default run is the owner's call.
-**Status**: (1)-(4) merged to master `07f2d371`; codex cr-batch-8 raised psl-11 (LOW) against (4); (5) is an owner call, held
-**Branch**: `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`)
-**Commit**: (1) `c4374938`, (2) `370e32f3`, (3) `313775a0`, (4) `91559b4a`; this closeout the commit that adds this line (SHA in the implementer's hand-back)
-**Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, candidates 2-6 of its hand-back)
+**Status**: (1)-(4) merged to master `07f2d371`; codex cr-batch-8 raised psl-11 (LOW) against (4). (5) fixed on branch
+`fix/a29g-cdt58-psl10`, verified on branch, not merged, UNREVIEWED - no longer an owner call: the owner ruled on 2026-10-27
+that test hygiene, these classes leaving the default run included, is the agents' own business (`.agents/decisions.md`,
+2026-10-26/27 item 3)
+**Branch**: (1)-(4) `fix/psl10-a2y` (worktree `D:\source\ExchangeAdminWeb-wt\psl10-a2y`, forked from master at `3e43b35b`);
+(5) `fix/a29g-cdt58-psl10` (worktree `D:\source\ExchangeAdminWeb-wt\a29g-cdt58-psl10`, from master `84c729d8`)
+**Commit**: (1) `c4374938`, (2) `370e32f3`, (3) `313775a0`, (4) `91559b4a`; their closeout `f7b794cb`. (5) the one commit
+that carries this record's (5) sections (its SHA in the implementer's hand-back)
+**Reviewer**: implementer (surfaced by the psl-8/a2w/a2x agent, 2026-10-23, candidates 2-6 of its hand-back); (5)
+implemented by the a29g-cdt58-psl10 agent
 
 ## Evidence
 
@@ -104,7 +110,8 @@ class reaches a live directory (the blank-input and short-term tests return befo
 say so. Mutation: the stand-in's session replaced by an empty one that cannot load anything (psl-8's P3 shape) - the pin on
 the stand-in's import fails. Not run, by design: the theory back on the production probe (the live call itself).
 
-**(5) The two deliberately live classes - an owner call, not changed.** See "Owner call" below.
+**(5) The two deliberately live classes - an owner call, not changed.** See "Owner call" below. Done since, on another
+branch, once the owner had ruled it the agents' business: "(5) As built, 2026-10-27" below.
 
 ## Owner call (item 5) - not implemented; what the opt-in would be
 
@@ -139,6 +146,53 @@ to take it:
 
 Until then, this branch's own suite runs exclude the two classes by `--filter "FullyQualifiedName!~ADDirectoryLiveTests&
 FullyQualifiedName!~AdDirectoryForestSearchLiveTests"`, under the standing no-probe instruction, and say so.
+
+## (5) As built, 2026-10-27 - the live classes leave the default run (branch `fix/a29g-cdt58-psl10`)
+
+**No longer an owner call.** The owner, 2026-10-27, verbatim: "I don't care about tests. tests do not override directives.
+tests are for YOU to validate what YOU did and what YOU are responsible for fixing." The decision entry (2026-10-26/27, item
+3) reads it as closing this call: these classes leaving the default run is the agents' own business. The brief: make them
+opt-in in the shape above, so that the default `dotnet test ExchangeAdminWeb.slnx` makes no live directory call.
+
+**What the call above left unchecked, measured on this branch's build** (no live case selected, except as said):
+
+- A run settings `TestCaseFilter` and a command-line `--filter` are joined with AND. With the project's file filtering
+  `FullyQualifiedName!~LiveDirectoryOptInTests`, `--filter "FullyQualifiedName~LiveDirectoryOptInTests"` answered "No test
+  matches the given testcase filter `(FullyQualifiedName!~LiveDirectoryOptInTests)&(FullyQualifiedName~LiveDirectoryOptInTests)`".
+  So once the project's settings filter the trait out, the call's opt-in, `--filter "Category=LiveDirectory"`, selects
+  nothing.
+- A run setting after the double dash, `RunConfiguration.TestCaseFilter=...`, does not replace the file's filter: the run
+  kept the file's. That measurement selected more than it should have: the file's temporary filter excluded only the
+  tripwire class, so the run was the whole suite but the tripwires - 7,530 passed, the eight live cases among them, which
+  read the live directory. It is the one live run this branch made outside the opt-in proof below; every later
+  measurement kept `Category!=LiveDirectory` in force or selected the tripwire class alone.
+- A settings file named on the command line (`-s`, the short form of `--settings`) replaces the project's: with a file
+  selecting the tripwire class alone, the run was its two cases.
+
+**Change** (test project only; no product code):
+
+1. `[Trait("Category", "LiveDirectory")]` on `ADDirectoryLiveTests` and `AdDirectoryForestSearchLiveTests`, beside their
+   `[Collection(LiveDirectoryCollection.Name)]`, which stays.
+2. `ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.runsettings`, `<TestCaseFilter>Category!=LiveDirectory</TestCaseFilter>`,
+   named by the test project (`RunSettingsFilePath`). Every run of the project takes it - the bare `dotnet test
+   ExchangeAdminWeb.slnx` and CI's `dotnet test ... --no-build --logger trx --collect ...` included - so neither
+   `.agents/repo-guidance.md`'s commands nor `.github/workflows/ci.yml` change. This is the call's parenthetical
+   alternative, not its recommendation (an explicit filter written into the gate and CI): with the gate's words unchanged,
+   the bare command, which the decision names, is the one that stops reading the directory, whoever types it.
+3. `ExchangeAdminWeb.Tests/LiveDirectory.runsettings`, `<TestCaseFilter>Category=LiveDirectory</TestCaseFilter>`: the
+   opt-in, because only a settings file named on the command line replaces the project's.
+4. `ExchangeAdminWeb.Tests/LiveDirectoryOptInTests.cs`, two tripwires: every class in `LiveDirectoryCollection` carries the
+   trait and no other class does (the two live classes named among them); the project names its run settings, whose filter
+   is exactly `Category!=LiveDirectory`, and the opt-in file's is exactly `Category=LiveDirectory`.
+5. The remarks of both live classes and of `LiveDirectoryCollection` (its membership rule now says a member carries the
+   trait) give the incantation; so do the two settings files.
+
+**The opt-in run**, by hand on a domain-joined host with RSAT, from the repository root:
+
+    dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings
+
+It runs the eight live cases and nothing else. `--filter "Category=LiveDirectory"` does not (it is joined to the project's
+filter and matches no test).
 
 ## Guard proof
 
@@ -221,6 +275,39 @@ answer nothing (it asserted only not-null, which a search answering anything wou
 
 Not run, by design: the theory back on the production probe - the live call this item removes.
 
+**(5) The live classes leave the default run** - branch `fix/a29g-cdt58-psl10`, 2026-10-27. Counts read from the TRX files
+(`bin/cdt58/trx`, scratch); the name sets compared ordinally.
+
+- **Before** (this branch before the (5) change; its test code is master `84c729d8`'s): discovery, `dotnet test
+  ExchangeAdminWeb.slnx -c Release --no-build --list-tests`, 7,530 cases, the eight live ones among them; the bare
+  default run is therefore those 7,530, the eight reading the live directory on this host. Run without them, by the old
+  exclusion filter (`FullyQualifiedName!~ADDirectoryLiveTests&FullyQualifiedName!~AdDirectoryForestSearchLiveTests`,
+  `-- xUnit.MaxParallelThreads=4`): 7,522 passed, 0 failed, 0 skipped.
+- **After**, the gate as written, `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4` (no filter, a Debug
+  build): 7,524 passed, 0 failed, 0 skipped. Against the run before: no test left it, and exactly the two tripwires joined
+  it. No case of either live class is in it. So the default run lost exactly the eight live cases (7,530 - 8 + 2).
+- **Opt-in**, `dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings`, run once: 8
+  passed, 0 failed, 0 skipped - the five `ADDirectoryLiveTests` and the three `AdDirectoryForestSearchLiveTests` cases,
+  nothing else. They passed, not skipped: the directory was reached and answered.
+- A sampler of the test host's TCP connections to the directory's ports (389, 636, 3268, 3269, 9389) saw none in the
+  default run - and none in the opt-in run either, which did reach the directory, so it proves nothing and is not offered
+  as evidence. That the default run reads no directory rests on the run's contents (above) and on the code: no other test
+  builds the production probe and reaches it (psl-8; item (4) above).
+
+Tripwire mutations (`bin/cdt58/Run-TripwireMutations.ps1`, scratch). Each run selects the tripwire class alone - by name,
+or through a settings file naming it, which replaces the project's - so no mutant can select a live case. Fixed and
+restored md5s are equal; the restored tree, rebuilt, passes both tripwires.
+
+| # | Mutation | File, md5 fixed = restored | md5 mutant | Failing (of the 2 tripwires) |
+| --- | --- | --- | --- | --- |
+| T1 | the trait removed from `ADDirectoryLiveTests` (rebuilt) | `ADDirectoryLiveTests.cs` `1B71C913B16849D738E353597832ED57` | `7F3023736F45FC6F9A3E207CEF5856D1` | 1: the collection-and-trait tripwire |
+| T2 | the project names no run settings | `ExchangeAdminWeb.Tests.csproj` `BEAB3AAC1615337567E5FEC9B6A921CF` | `961AD7B0BEC043182275D796515223FC` | 1: the settings tripwire |
+| T3 | the project's run settings lose their filter | `ExchangeAdminWeb.Tests.runsettings` `5951A63A4E5BF05A6FF9395EFE04149E` | `35BFA39C5A9772A25231AEE9147219C8` | 1: the settings tripwire |
+| T4 | the opt-in settings lose their filter (would run every test) | `LiveDirectory.runsettings` `9A57ECC2061F21A268C258405CAA9CFF` | `90046A55F3C8855E658543AA08068E99` | 1: the settings tripwire |
+
+A first pass ran T1 first and the other three against T1's still-built mutant, so each of them also failed the
+collection-and-trait tripwire; the pass above runs T1 last, and each mutant fails only the tripwire that pins it.
+
 ## Files changed
 
 Snapshot before repair: `3e43b35b` (the branch's base).
@@ -236,7 +323,14 @@ Snapshot before repair: `3e43b35b` (the branch's base).
   (`RemoteSession` and its three theories); `Modules/ModuleCatalog.cs` (DHCP Authorization 1.5.0).
 - (4) `ExchangeAdminWeb.Tests/ADDirectoryValidateExistsTests.cs`; `ExchangeAdminWeb.Tests/ADDirectorySearchServiceTests.cs`
   (`CreateService` internal; its remark).
-- (5) none - an owner call.
+- (5), on `fix/a29g-cdt58-psl10` from `84c729d8` (blob at the base, then the md5 after): `ExchangeAdminWeb.Tests/ADDirectoryLiveTests.cs`
+  (`b5b0707561b6`; `1B71C913B16849D738E353597832ED57`) and `ExchangeAdminWeb.Tests/AdDirectoryForestSearchLiveTests.cs`
+  (`2392b7cad915`; `C52CB65BA7FB81B724C3E4E1DE49D7E8`): the trait and the remarks; `ExchangeAdminWeb.Tests/LiveDirectoryCollection.cs`
+  (`d4860a76f1d7`; `608E68115201FBC7179B2C45DE8A2DFA`): the membership rule and the incantation;
+  `ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.csproj` (`0ed2398d6d42`; `BEAB3AAC1615337567E5FEC9B6A921CF`):
+  `RunSettingsFilePath`; new: `ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.runsettings`
+  (`5951A63A4E5BF05A6FF9395EFE04149E`), `ExchangeAdminWeb.Tests/LiveDirectory.runsettings` (`9A57ECC2061F21A268C258405CAA9CFF`),
+  `ExchangeAdminWeb.Tests/LiveDirectoryOptInTests.cs` (`7376D0D0DC05C343D3CED41C461E8096`). No product code; no version bump.
 - This record.
 
 **Operator-visible changes.** An error record a directory read leaves without throwing no longer fails the step after it:
@@ -267,9 +361,17 @@ variable apart from it. The redirection (`2>$null`) does what the approach meant
 - (4) `ADDirectoryValidateExistsTests`' own `CreateService()` is still the production probe's; its two users return before
   the probe. A future test there that reaches the directory must take the stand-in or move to `ADDirectoryLiveTests`
   (the class remarks say so).
-- (5) Not implemented - the owner's call (above). Until it is taken, the mandated gate run in full still probes the live
-  directory on a host with RSAT; this branch's runs excluded the two classes by filter and said so.
-- Source-level and stand-in driven: no directory, DHCP server, Exchange, Graph or network call was made.
+- (5) Not implemented on `fix/psl10-a2y` - then the owner's call. Done on `fix/a29g-cdt58-psl10` (above), with these gaps:
+  - The real-cmdlet property-name checks the live classes exist for now run only when someone runs the opt-in; CI never
+    does (no directory), and neither does the mandated gate. When they run is up to whoever runs the opt-in by hand.
+  - A run that names its own settings file (`-s` / `--settings`, a coverage settings file for instance) replaces the
+    project's, and its filter with it: such a run takes the live classes in again unless its file filters them too.
+  - The tripwire holds the shape - the collection's members carry the trait, both files carry their filters - not the
+    membership rule itself: a class that reads a live directory without joining `LiveDirectoryCollection` is not caught.
+  - The measurement of the double-dash run setting ran the eight live cases once outside the opt-in proof (as said
+    above).
+- Source-level and stand-in driven for (1)-(4): no directory, DHCP server, Exchange, Graph or network call was made. (5)'s
+  opt-in proof and that one measurement read the live directory; nothing else on its branch did.
 
 ## Closeout
 
@@ -278,6 +380,22 @@ this closeout in the commit that adds it (its SHA in the implementer's hand-back
 Disable 1.5.1 -> 1.6.0, DHCP Authorization 1.4.3 -> 1.5.0; Self-Service Groups' change lands under aud-a2y's 1.12.0 on the
 same branch. No shared code changed by this record (the test-only `ADDirectorySearchServiceTests` aside); no base app bump
 from it. Pending: the owner's call on item (5), the merge, and codex review.
+
+(5), 2026-10-27: fixed on branch `fix/a29g-cdt58-psl10` in one commit, the one that carries these (5) sections (its SHA in
+the implementer's hand-back); not merged, not pushed. Test project only; no product code, no version bump. Pending: the
+merge, codex review, and the branch's deletion.
+
+## Branch-tip gates - 2026-10-27, item (5) on `fix/a29g-cdt58-psl10`
+
+Each run alone, on the tree with the (5) change (the branch's cdt-58 commits change no C#):
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental`: 0 errors, 19 warnings (the baseline count).
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: 7,524 passed, 0 failed, 0 skipped - no live case.
+- The opt-in, `dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings`: 8 passed.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0.
+- `git diff --check HEAD`: clean. `tools/Test-AsciiOnly.ps1`: passed.
+- No `.ps1` or `.psm1` changed by (5): its PSScriptAnalyzer and Pester gates are cdt-58's, on the same branch (0 analyzer
+  errors; Pester 520 of 520).
 
 ## Branch-tip gates - 2026-10-23 (shared by aud-a2y, kd-5 and psl-10 on `fix/psl10-a2y`)
 

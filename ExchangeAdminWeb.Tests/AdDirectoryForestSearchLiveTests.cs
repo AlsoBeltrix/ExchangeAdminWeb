@@ -26,7 +26,15 @@ namespace ExchangeAdminWeb.Tests;
 /// probe was being cached permanently -- but once fixed, the residual nondeterminism is the
 /// environment, not the code. A test that fails one run in three trains people to re-run CI,
 /// which is worse than having no test.
+///
+/// OPT-IN (psl-10 (5)), as <see cref="ADDirectoryLiveTests"/>: the class carries
+/// <c>[Trait("Category", "LiveDirectory")]</c>, which the test project's run settings filter out of every run, so
+/// the default <c>dotnet test ExchangeAdminWeb.slnx</c> never reaches it. Run it by hand, on a domain-joined host with
+/// RSAT, from the repository root, with
+/// <code>dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings</code>
+/// which runs both live classes and nothing else.
 /// </remarks>
+[Trait("Category", "LiveDirectory")]
 [Collection(LiveDirectoryCollection.Name)]
 public class AdDirectoryForestSearchLiveTests
 {

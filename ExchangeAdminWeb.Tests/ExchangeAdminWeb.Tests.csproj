@@ -16,6 +16,13 @@
     <WarningsAsErrors>$(WarningsAsErrors);NU1902;NU1903;NU1904</WarningsAsErrors>
   </PropertyGroup>
 
+  <!-- psl-10 (5). The live-directory test classes (Category=LiveDirectory) are opt-in: these run settings filter them
+       out of every run, the default dotnet test and CI's included. The opt-in run names LiveDirectory.runsettings on
+       the command line, which replaces this file; LiveDirectoryOptInTests holds the shape. -->
+  <PropertyGroup>
+    <RunSettingsFilePath>$(MSBuildThisFileDirectory)ExchangeAdminWeb.Tests.runsettings</RunSettingsFilePath>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="10.0.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  psl-10 (5). The test classes that read a live directory carry [Trait("Category", "LiveDirectory")] and are opt-in.
+  ExchangeAdminWeb.Tests.csproj names this file (RunSettingsFilePath), so this filter applies to every run of the test
+  project - the default "dotnet test ExchangeAdminWeb.slnx" (the mandated gate) and CI's run included - and none of them
+  makes a live directory call. A filter option on the command line is joined to it with AND; run settings given after
+  the double dash, such as xUnit.MaxParallelThreads=4, are merged with it. Only a settings file named on the command
+  line replaces it: the opt-in run is LiveDirectory.runsettings, beside this file. LiveDirectoryOptInTests holds this
+  shape.
+-->
+<RunSettings>
+  <RunConfiguration>
+    <TestCaseFilter>Category!=LiveDirectory</TestCaseFilter>
+  </RunConfiguration>
+</RunSettings>

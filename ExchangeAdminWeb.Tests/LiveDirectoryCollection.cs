@@ -19,6 +19,13 @@ namespace ExchangeAdminWeb.Tests;
 ///
 /// Membership rule: any class that talks to a live directory belongs here. Pure-function tests
 /// must NOT join, or the suite serialises for no reason.
+///
+/// And every member is OPT-IN (psl-10 (5)): it also carries <c>[Trait("Category", "LiveDirectory")]</c>, which the
+/// test project's run settings (<c>ExchangeAdminWeb.Tests.runsettings</c>) filter out of every run, so the default
+/// <c>dotnet test ExchangeAdminWeb.slnx</c> - the mandated gate, and CI's run - makes no live directory call.
+/// LiveDirectoryOptInTests fails when a member lacks the trait or either settings file loses its filter. The opt-in
+/// run, by hand on a domain-joined host with RSAT, from the repository root:
+/// <code>dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings</code>
 /// </remarks>
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class LiveDirectoryCollection
