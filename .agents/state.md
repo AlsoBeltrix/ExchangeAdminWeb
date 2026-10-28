@@ -8,45 +8,47 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### Close-out of the fix-everything stream - 2026-10-27, REVIEWED; five review findings open before a deploy
+### Close-out of the fix-everything stream - 2026-10-27, DONE; master is deployable
 
 **Mandate** (`.agents/decisions.md`, top entries): find and fix bugs; remove or significantly change no intended
 functionality, judged by the operator's experience. One Opus 5.5 agent at a time, one compile at a time, one
 codex-commercial review at the end.
 
-**Master at the review (`b9c8f19b`), every gate green and re-run by the supervisor:** Release build 0 errors (19 known
-warnings); xUnit 7524 passed, 0 failed, 0 skipped (the 8 live-directory cases are opt-in by settings file, psl-10 (5));
-Pester 526 passed; PSScriptAnalyzer 0 errors; `dotnet format`, `git diff --check` and the ASCII lint clean. Base app
-version bumped 2.35.0 -> 2.36.0 in the closing commit (shared services changed: AuditService, PermissionResult,
-PermissionValidator, SelfGrantDirectory, PermissionChangeNotifier, EmailService). Every worktree and fix branch is gone;
-master holds everything.
+**Master `a5e0e20d` and after, every gate green, re-run by the supervisor on the final tree:** Release build 0 errors (19
+known warnings); xUnit 7538 passed, 0 failed, 0 skipped (the 8 live-directory cases are opt-in: `dotnet test
+ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings`); Pester 531 passed; PSScriptAnalyzer 0
+errors; `dotnet format`, `git diff --check` and the ASCII lint clean. Base app version 2.36.0 (shared services changed:
+AuditService, PermissionResult, PermissionValidator, SelfGrantDirectory, PermissionChangeNotifier, EmailService,
+BulkJobService/BulkJobRepository). No worktree or fix branch remains. Master is NOT pushed (push policy:
+`.agents/push-policy.md`).
 
 **Landed today, in order:** aud-a2ad (Conference Rooms: every weekend protected-principal check out, room-list creation
 back, aud-a2z kept); kd-39, kd-41; kd-44 reversed, aud-a70 (13), kd-57; kd-51 (kd-67 declined); kd-59 in four modules,
-kd-70, kd-71, kd-58 sized for a plan; kd-72 (the owner's production report - a run uses the value submitted; Delegation
-Report and twelve more pages); kd-73, kd-74; aud-a70 (6); aud-a29g's held calls closed on the owner's answers; cdt-58,
-psl-10 (5); cdt-59. The deploy-pipeline work (cdt-36..57) stands as fixes under the mandate after a wholesale revert was
-undone. kd-60 closed by sweep. Two plans drafted and the first approved: `docs/CloudPasswordResetEmployeeId-Plan.md`
-(Approved, queued) and `docs/RecipientLookupAccuracy-Plan.md` (Draft, awaiting the owner's go and extras by number).
+kd-70, kd-71; kd-72 (the owner's production report - a run uses the value submitted; Delegation Report and twelve more
+pages); kd-73, kd-74; aud-a70 (6); aud-a29g's held calls closed on the owner's answers; cdt-58, psl-10 (5); cdt-59; then
+the single review's findings kd-75, kd-76, kd-77, cdt-60, and kd-78. The deploy-pipeline work (cdt-36..57) stands as
+fixes under the mandate. kd-60 closed by sweep.
 
-**The single review** (`.agents/review/final-review-2026-10-27.result.md`; prompt beside it; codex-commercial,
-gpt-6-astra, max, read-only, range `162cb44d..b9c8f19b`): no defect in authorization, protected principals, bulk
-aggregation, the kd-72 pattern, merge interactions, PowerShell exit codes or encoding, or functionality preservation.
-Five findings, verdict DO NOT SHIP until fixed:
-- kd-75 MEDIUM - Conference Rooms can start Set-Place after a cancel that lands during the pool-connection wait.
-- kd-76 MEDIUM - Blocked Senders starts the unblock before it looks at an already-cancelled token.
-- kd-77 LOW - a finished bulk job removed twice says "it has not finished".
-- cdt-60 LOW - the cutover's sharing report hides nested applications it stops; `-PlanOnly` still runs the live jobs
-  query (pre-existing).
+**The single review** (`.agents/review/final-review-2026-10-27.result.md`; codex-commercial, gpt-6-astra, max,
+read-only, range `162cb44d..b9c8f19b`): no defect in authorization, protected principals, bulk aggregation, the kd-72
+pattern, merge interactions, PowerShell exit codes or encoding, or functionality preservation; five findings, all fixed
+and merged afterwards on guard proof (the one review dispatch is spent). Verdict at the time: DO NOT SHIP until fixed;
+they are fixed.
 
-**Open, by status:** the four review findings above (`[ ]`); kd-58 (`[!]`, needs a written plan - the cloud reads
-cannot be cancelled without touching the pool's retry loop and lifetime); aud-a67 (12) (`[~]`, needs a plan). Everything
-else in `.agents/review/index.md` is closed.
+**Open:**
+- kd-79 (`[ ]`, LOW, pre-existing): a jobs-store throw during a Conference Rooms job removal leaves no audit row -
+  found by the last agent after the review; one small commit when the owner says so.
+- kd-58 (`[!]`): cancelling the Exchange Online reads themselves reaches the pool's retry loop and lifetime - needs a
+  written plan (Constitution). aud-a67 (12) (`[~]`): cancellation through IConfigStore - needs a plan.
+- Plans: `docs/CloudPasswordResetEmployeeId-Plan.md` Approved 2026-10-27, not started;
+  `docs/RecipientLookupAccuracy-Plan.md` Draft, awaiting the owner's go and extras by number.
 
-**Next step:** the owner's word on fixing kd-75, kd-76, kd-77 and cdt-60 (the review used the one allowed dispatch, so
-their fixes close on guard proof alone), then a deploy of 2.36.0 through `tools/deploy-pipeline.ps1 -Dev`. Check Admin
-Settings > Protected principals has the Directory Read Credential configured on the instance before deploying: after
-aud-a70 (6), every Mailbox and Calendar Permissions grant is refused without it.
+**Operator-visible changes to know before deploying 2.36.0:** every Mailbox and Calendar Permissions grant is refused
+while the Directory Read Credential (Admin Settings > Protected principals) cannot be had - confirm it is configured on
+the instance; a plan-only promotion or cutover names the jobs database it would read instead of listing live jobs; the
+Delegation Report Check button enables as the operator types; cancels are shown and filed as "Cancelled by the operator".
+
+**Next step:** `tools/deploy-pipeline.ps1 -Dev` from an elevated shell, then prod, on the owner's word.
 ### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
