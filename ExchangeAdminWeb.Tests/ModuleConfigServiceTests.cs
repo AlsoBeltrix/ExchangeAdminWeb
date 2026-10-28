@@ -176,7 +176,7 @@ public class ModuleConfigServiceTests
         {
             "SaveModuleConfig" => Record.Exception(() => service.SaveModuleConfig("Migration", values)),
             "UpdateModuleValues" => Record.Exception(() => update = service.UpdateModuleValues("Migration", values)),
-            "SaveChangedValues" => Record.Exception(() => outcome = service.SaveChangedValues("Migration", new Dictionary<string, string>(), values)),
+            "SaveChangedValues" => Record.Exception(() => outcome = service.SaveChangedValues("Migration", new Dictionary<string, string>(), values, TestContext.Current.CancellationToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(writer), writer, null),
         };
 

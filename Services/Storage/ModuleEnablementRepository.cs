@@ -89,8 +89,9 @@ public sealed class ModuleEnablementRepository
     /// <paramref name="defaults"/> where it has none - is not written. Returns the modules written, each
     /// with the state it replaced. Nothing to write rolls the transaction back, change token included.
     /// </summary>
+    /// <param name="cancellationToken">kd-58 B2. The save's own token, handed to the store's write (B1): a cancel before the commit leaves nothing written. None, the default, writes as before.</param>
     public IReadOnlyList<EnablementChange> SetModules(
-        IReadOnlyDictionary<string, bool> changes, IReadOnlyDictionary<string, bool> defaults)
+        IReadOnlyDictionary<string, bool> changes, IReadOnlyDictionary<string, bool> defaults, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -120,7 +121,7 @@ public sealed class ModuleEnablementRepository
                 }
 
                 return written.Count > 0 ? written : throw new NothingWritten();
-            });
+            }, cancellationToken);
         }
         catch (NothingWritten)
         {

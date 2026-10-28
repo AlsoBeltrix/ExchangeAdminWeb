@@ -19,7 +19,9 @@ namespace ExchangeAdminWeb.Tests;
 /// while a save waited could apply the first module's diff, computed against the second module's baseline, to the
 /// second module. Each save now takes its module, baseline and edits before its first await; a route change waits for
 /// every save of the module shown, for at most the store's busy timeout plus 5 s (the folded-in item); a save that
-/// finds its page on another module writes nothing, and one that ends there changes nothing on it.
+/// finds its page on another module writes nothing, and one that ends there changes nothing on it. kd-58 B2: a route
+/// change that gives up on a save cancels the save's own token, so one already inside its store write writes nothing
+/// either, unless it had committed.
 /// </summary>
 /// <remarks>
 /// The compiled page through <see cref="SettingsPageHarness"/>. The directory is the harness's stand-in, which answers
@@ -310,8 +312,14 @@ public sealed class SettingsModuleMoveTests : IDisposable
         }
     }
 
+    /// <remarks>
+    /// kd-58 B2 (docs/CancellationDepth-Plan.md 4.2 to 4.6). Until B2 this write, held as it opened and released after the
+    /// route change had opened the next module, landed on its own module after the notice had said it would refuse. The
+    /// route change now cancels the save's own token as it gives up, and the store refuses the write before it opens a
+    /// connection (C1): nothing written, and the move's refusal recorded.
+    /// </remarks>
     [Fact]
-    public async Task AnAdminsWriteThatOutlastsTheWait_LandsOnItsOwnModule_AndLeavesTheNextOnesStateAlone()
+    public async Task AnAdminsWriteThatOutlastsTheWait_WritesNothing_AndLeavesTheNextOnesStateAlone()
     {
         var page = await AdminsWithAGroupAdded();
         Set(page, "saveWaitBound", Short);
@@ -331,14 +339,332 @@ public sealed class SettingsModuleMoveTests : IDisposable
 
         await saving.WaitAsync(Long, Cancel);
 
-        Assert.Equal(Sorted(Kept, Added), StoredAdmins(First));
+        Assert.Equal([Kept], StoredAdmins(First));
         Assert.Equal([OnSecond], StoredAdmins(Second));
         Assert.Equal([OnSecond], Field<List<string>>(page, "moduleAdminGroups"));
         Assert.Equal([OnSecond], Field<List<string>>(page, "moduleAdminGroupsBaseline"));
         var record = Assert.Single(_h.AuditEvents());
         Assert.Equal($"ModuleAdmins:{First}", Text(record, "section"));
+        Assert.Equal("PageMoved", Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal($"{DisplayName(First)}: {Text(record, "error")}", Status(page));
+    }
+
+    // ---- kd-58 B2: a save the route change gives up on -------------------------------------------
+
+    /// <summary>The four saves the page's own token reaches (docs/CancellationDepth-Plan.md 4.3); the allowlist's is B3's.</summary>
+    public static TheoryData<string> TheFourSaves => ["Module Status", "Section Access", "Configuration", "Module Admins"];
+
+    private const string PickedName = "Directory-Admins";
+
+    /// <summary>
+    /// A save on the first module with one edit made: the store its write goes through, the section its records file under,
+    /// what that store holds for it, and what it says once saved on a page that has moved on.
+    /// </summary>
+    private sealed record EditedSave(
+        ModuleConfigPage Page, AttributeEditorHarness.SwitchableStore Store, string Section, Func<string> Stored, string Saved);
+
+    private async Task<EditedSave> EditedOnTheFirstModule(string tab)
+    {
+        if (tab == "Module Admins")
+            return new(await AdminsWithAGroupAdded(), _h.AdminsStore, $"ModuleAdmins:{First}", () => string.Join(",", StoredAdmins(First)), "Module admins saved.");
+
+        var alias = _h.Catalog.GetById(First)!.MainPermission.PolicyAlias;
+        if (tab == "Section Access")
+        {
+            new SectionAccessRepository(TestConfigStore.Create(_h.Root))
+                .SaveAll(new Dictionary<string, string[]> { [alias] = [Kept], [SecondAlias] = [OnSecond] });
+        }
+
+        var page = _h.OpenModuleConfig(First);
+        Set(page, "tab", tab);
+        switch (tab)
+        {
+            case "Module Status":
+                await _h.RunAsync(page, "ToggleModuleEnabled", !Field<bool>(page, "moduleEnabled"));
+                return new(page, _h.EnablementStore, $"Module:{First}", _h.StoredEnablement, "Module status saved.");
+            case "Section Access":
+                // A group picked from the directory, so the save has a display name to store once its grants are written.
+                await _h.OnDispatcherAsync(() =>
+                {
+                    Field<Dictionary<string, string>>(page, "accessInputs")[alias] = Added;
+                    Field<Dictionary<string, string>>(page, "pickedDisplayNames")[Added] = PickedName;
+                });
+                await _h.RunAsync(page, "AddAccessGroup", alias);
+                _h.GroupDirectory.Answer = SettingsPageHarness.StandInDirectory.Group;
+                return new(page, _h.SectionStore, alias, _h.StoredSectionAccess, "Section access saved.");
+            default:
+                await _h.RunAsync(page, "SetConfigValue", "DelineaSecretId", "4242");
+                return new(page, _h.ModuleConfigStore, $"ModuleConfig:{First}", () => _h.StoredModuleConfig(First), "Configuration saved.");
+        }
+    }
+
+    private string SecondAlias => _h.Catalog.GetById(Second)!.MainPermission.PolicyAlias;
+
+    private Dictionary<string, string> StoredDisplayNames() =>
+        new SectionAccessRepository(TestConfigStore.Create(_h.Root)).GetDisplayNames();
+
+    /// <summary>Holds the hook <paramref name="arm"/> sets until the release is set; the first event says it was reached.</summary>
+    private static (ManualResetEventSlim Reached, ManualResetEventSlim Release) Hold(Action<Action> arm)
+    {
+        var reached = new ManualResetEventSlim();
+        var release = new ManualResetEventSlim();
+        arm(() =>
+        {
+            reached.Set();
+            release.Wait(TimeSpan.FromSeconds(60));
+        });
+        return (reached, release);
+    }
+
+    /// <summary>
+    /// Another writer's lock on the harness's database - the other instance, or another admin's save - from a connection of
+    /// its own, unpooled, until released (as <see cref="SettingsStoreBusyTests"/>).
+    /// </summary>
+    private Microsoft.Data.Sqlite.SqliteConnection HoldWriteLock()
+    {
+        var holder = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(_h.Root, "exchangeadmin.db"),
+            Pooling = false,
+        }.ToString());
+        holder.Open();
+        using var begin = holder.CreateCommand();
+        begin.CommandText = "BEGIN IMMEDIATE;";
+        begin.ExecuteNonQuery();
+        return holder;
+    }
+
+    private static void Release(Microsoft.Data.Sqlite.SqliteConnection holder)
+    {
+        using (var rollback = holder.CreateCommand())
+        {
+            rollback.CommandText = "ROLLBACK;";
+            rollback.ExecuteNonQuery();
+        }
+
+        holder.Dispose();
+    }
+
+    /// <summary>The second module's access, and its admins, as the page holds them: what a save on the first must not touch.</summary>
+    private void AssertTheSecondModulesStateIsItsOwn(ModuleConfigPage page, string tab)
+    {
+        if (tab == "Section Access")
+        {
+            Assert.Equal([OnSecond], Field<Dictionary<string, List<string>>>(page, "accessState")[SecondAlias]);
+            Assert.Equal([OnSecond], Field<Dictionary<string, List<string>>>(page, "accessBaseline")[SecondAlias]);
+        }
+        else if (tab == "Module Admins")
+        {
+            Assert.Equal([OnSecond], Field<List<string>>(page, "moduleAdminGroups"));
+            Assert.Equal([OnSecond], Field<List<string>>(page, "moduleAdminGroupsBaseline"));
+        }
+    }
+
+    /// <summary>
+    /// kd-58 B2 (docs/CancellationDepth-Plan.md 4.2 to 4.6; aud-a67 (12)). A save inside its store write - <c>BEGIN IMMEDIATE</c>
+    /// taken, its callback not yet run - when the route change runs out of its bound. The page opens the next module with its
+    /// notice and cancels the save's own token; the write goes on, and the store rolls it back whole before its commit.
+    /// Nothing is stored, no display name either; the save files the refusal aud-a66 files for the same move before the
+    /// write, and says so, named for its module. Until B2 the write committed after the notice had said it would refuse.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TheFourSaves))]
+    public async Task ASaveInsideItsWriteWhenTheRouteChangeGivesUp_WritesNothing_AndIsRefusedAsPageMoved(string tab)
+    {
+        var save = await EditedOnTheFirstModule(tab);
+        var stored = save.Stored();
+        var token = save.Store.GetChangeToken();
+        Set(save.Page, "saveWaitBound", Short);
+        var (writing, release) = Hold(hook => save.Store.InsideWrite = hook);
+        var saving = Save(save.Page);
+        try
+        {
+            Reached(writing, "the save never reached the inside of its write");
+            var loading = await Open(save.Page, Second);
+            await loading.WaitAsync(Long, Cancel);
+            Assert.Equal(Second, Shown(save.Page));
+            Assert.Contains($"A save on {DisplayName(First)} had not finished", Status(save.Page), StringComparison.Ordinal);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await saving.WaitAsync(Long, Cancel);
+
+        Assert.Equal(stored, save.Stored());
+        Assert.Equal(token, save.Store.GetChangeToken());
+        Assert.False(StoredDisplayNames().ContainsKey(Added), "a display name was stored for a save that wrote nothing");
+        AssertTheSecondModulesStateIsItsOwn(save.Page, tab);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(save.Section, Text(record, "section"));
+        Assert.Equal("PageMoved", Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.StartsWith("Not saved: the page moved to another module", Text(record, "error"), StringComparison.Ordinal);
+        Assert.Contains("nothing was written", Text(record, "error"), StringComparison.Ordinal);
+        Assert.Equal($"{DisplayName(First)}: {Text(record, "error")}", Status(save.Page));
+        Assert.True(Field<bool>(save.Page, "statusIsError"));
+    }
+
+    /// <summary>kd-58 B2, the control: the same write released inside the bound saves as it did before, and the route change then loads.</summary>
+    [Theory]
+    [MemberData(nameof(TheFourSaves))]
+    public async Task ASaveInsideItsWriteReleasedInsideTheBound_SavesAsBefore(string tab)
+    {
+        var save = await EditedOnTheFirstModule(tab);
+        var stored = save.Stored();
+        var (writing, release) = Hold(hook => save.Store.InsideWrite = hook);
+        var saving = Save(save.Page);
+        Task loading;
+        try
+        {
+            Reached(writing, "the save never reached the inside of its write");
+            loading = await Open(save.Page, Second);
+            await Task.Delay(Short, Cancel);
+            Assert.False(loading.IsCompleted, "the page loaded another module while a save on this one was inside its write");
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await saving.WaitAsync(Long, Cancel);
+        await loading.WaitAsync(Long, Cancel);
+
+        Assert.Equal(Second, Shown(save.Page));
+        Assert.NotEqual(stored, save.Stored());
+        if (tab == "Section Access")
+            Assert.Equal(PickedName, StoredDisplayNames()[Added]);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal(save.Section, Text(record, "section"));
         Assert.False(record.TryGetProperty("refusedAt", out _));
-        Assert.Equal($"{DisplayName(First)}: Module admins saved.", Status(page));
+    }
+
+    /// <summary>
+    /// kd-58 B2, the control (4.4): a save whose write committed before the route change gave up - held after its commit,
+    /// past the bound - is the success it is. The store looks at the token at nothing after its commit, so the late cancel
+    /// changes nothing: stored, reported saved, named for its module, with its success record and no refusal; the access
+    /// save stores its display name too, the step after its commit that takes no token; and the next module's state stays
+    /// its own (aud-a66).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TheFourSaves))]
+    public async Task ASaveCommittedBeforeTheRouteChangeGivesUp_IsReportedSaved_WithItsSuccessRecord(string tab)
+    {
+        var save = await EditedOnTheFirstModule(tab);
+        var stored = save.Stored();
+        Set(save.Page, "saveWaitBound", Short);
+        var (committed, release) = Hold(hook => save.Store.AfterWrite = hook);
+        var saving = Save(save.Page);
+        try
+        {
+            Reached(committed, "the save's write never committed");
+            var loading = await Open(save.Page, Second);
+            await loading.WaitAsync(Long, Cancel);
+            Assert.Equal(Second, Shown(save.Page));
+            Assert.Contains($"A save on {DisplayName(First)} had not finished", Status(save.Page), StringComparison.Ordinal);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await saving.WaitAsync(Long, Cancel);
+
+        Assert.NotEqual(stored, save.Stored());
+        if (tab == "Section Access")
+            Assert.Equal(PickedName, StoredDisplayNames()[Added]);
+        AssertTheSecondModulesStateIsItsOwn(save.Page, tab);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Success", Text(record, "result"));
+        Assert.Equal(save.Section, Text(record, "section"));
+        Assert.False(record.TryGetProperty("refusedAt", out _));
+        Assert.Equal($"{DisplayName(First)}: {save.Saved}", Status(save.Page));
+        Assert.False(Field<bool>(save.Page, "statusIsError"));
+    }
+
+    /// <summary>
+    /// kd-58 B2, the control (4.4, 4.5): a save waiting for a lock another writer holds when the route change gives up. The
+    /// busy wait takes no token; the lock is never freed, so the wait runs out and the save is the busy refusal it would
+    /// have been anyway (kd-59's rule: a failure of its own while the page happens to give up is that failure) - not a page
+    /// move. Waits the store's real busy wait by design (SqliteConnectionFactory.BusyTimeout).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TheFourSaves))]
+    public async Task ASaveWaitingForABusyStoreWhenTheRouteChangeGivesUp_IsTheBusyRefusal(string tab)
+    {
+        var save = await EditedOnTheFirstModule(tab);
+        var stored = save.Stored();
+        Set(save.Page, "saveWaitBound", Short);
+        using var writing = new ManualResetEventSlim();
+        save.Store.BeforeWrite = writing.Set;
+        var holder = HoldWriteLock();
+        try
+        {
+            var saving = Save(save.Page);
+            Reached(writing, "the save never reached its write");
+            // Into the busy wait, as B1's store case: the open and the look before BEGIN are long done in a second.
+            await Task.Delay(TimeSpan.FromSeconds(1), Cancel);
+            var loading = await Open(save.Page, Second);
+            await loading.WaitAsync(Long, Cancel);
+            Assert.Equal(Second, Shown(save.Page));
+            await saving.WaitAsync(Long, Cancel);
+        }
+        finally
+        {
+            Release(holder);
+        }
+
+        Assert.Equal(stored, save.Stored());
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("Failed", Text(record, "result"));
+        Assert.Equal(save.Section, Text(record, "section"));
+        Assert.Equal(SettingsSaveAudit.StoreBusy, Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal($"{DisplayName(First)}: {SettingsSaveAudit.StoreBusyMessage()}", Status(save.Page));
+    }
+
+    /// <summary>
+    /// kd-58 B2, what the token does not replace. A save started while the route change waits at its authorization read -
+    /// after its wait for this load's saves, so the route change neither waits for it nor gives up on it - keeps a live
+    /// token. The page moves to the next module while the save asks the directory, and aud-a66's check before the write is
+    /// what refuses it. Every other moved case here is one the route change gave up on, whose token refuses the same write
+    /// at the store, so without this one that check could go with nothing failing (aud-a66's E3, re-run on B2).
+    /// </summary>
+    [Theory]
+    [InlineData("Section Access")]
+    [InlineData("Module Admins")]
+    public async Task ASaveTheRouteChangeNeverWaitedFor_IsRefusedByTheMovedCheck_ItsTokenLive(string tab)
+    {
+        var save = await EditedOnTheFirstModule(tab);
+        var stored = save.Stored();
+        var routeAuthorized = new TaskCompletionSource<AuthorizationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _h.Authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
+            .Returns(routeAuthorized.Task, Task.FromResult(AuthorizationResult.Success()));
+
+        var loading = await Open(save.Page, Second);
+        await Task.Delay(Short, Cancel);
+        Assert.False(loading.IsCompleted, "the route change did not wait at its authorization - this fixture is stale");
+
+        var release = _h.GroupDirectory.HoldNext();
+        var saving = Save(save.Page);
+        Reached(_h.GroupDirectory.Entered, "the save never asked the directory");
+        routeAuthorized.SetResult(AuthorizationResult.Success());
+        await loading.WaitAsync(Long, Cancel);
+        Assert.Equal(Second, Shown(save.Page));
+
+        release.Set();
+        await saving.WaitAsync(Long, Cancel);
+
+        Assert.Equal(stored, save.Stored());
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal(save.Section, Text(record, "section"));
+        Assert.Equal("PageMoved", Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal($"{DisplayName(First)}: {Text(record, "error")}", Status(save.Page));
     }
 
     // ---- a save started while a load waits -----------------------------------------------------

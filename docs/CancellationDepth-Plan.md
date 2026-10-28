@@ -1,6 +1,6 @@
 # Cancellation Depth - Plan
 
-Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3, the page-aware leave prompt and the module slices A6-A10 are on `feat/cancellation-depth` (section 15); Part B (B1-B3) and C1 remain.**
+Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3, the page-aware leave prompt and the module slices A6-A10, B1 and B2 are on `feat/cancellation-depth` (section 15); B3 and C1 remain.**
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -854,8 +854,19 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   cancel through; the on-premises search and detail with E7 - the server's queue, the runspace, the connect and a look
   before each read, their catches letting it through. The search, a detail read and the detail download declare that they
   take the cancel (3.8a). Message Trace 1.8.6 -> 1.8.7; the base bump stays owed.
-- 2026-10-28, **B1, the store** - `feat/cancellation-depth`, the commit that adds this line (record: aud-a67's (12) section):
+- 2026-10-28, **B1, the store** - `feat/cancellation-depth` `f129e5c0` (record: aud-a67's (12) section):
   `IConfigStore` gains the two token writes as default members; `SqliteConfigStore` implements both, looking at C1-C4 and
   nothing after the commit; an internal after-commit seam for the tests. The overloads made xUnit1051 flag thirteen test
   calls on the concrete store (assumption 7, now counted); each passes the test's token. No caller in the app passes one yet.
   No module bump.
+- 2026-10-28, **B2, the four Module Configuration saves** - `feat/cancellation-depth`, the commit that adds this line
+  (record: aud-a67's (12) section): the page makes a token per save in `StartSaveAsync` and cancels it only when the route
+  change stops waiting (`WaitForThisLoadsSavesAsync`); the status, access, configuration and admins saves pass it through
+  their services and repositories to the store (B1), and each files a cancellation of it as the page's existing PageMoved
+  refusal, in its words. Nothing after a commit takes it. The catch tripwire learned the new catch, and that
+  `StartSaveAsync` catches nothing. The test stand-in store forwards the token, holds a write inside its transaction or
+  after its commit, and its token-less writes are its token writes with none. Sixteen test calls pass the test's token
+  (xUnit1051). Found and fixed in the tests: aud-a66's E3 mutant survived the first round - the token refuses every save
+  the route change gives up on, so the moved check before the write was tested only through it - and a case for a save the
+  route change never waited for pins that check again. No module bump - the page and the services are app-wide (2.36.0's,
+  not yet deployed).

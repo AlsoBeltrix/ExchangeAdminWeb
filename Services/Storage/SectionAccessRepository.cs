@@ -159,7 +159,8 @@ public sealed class SectionAccessRepository
     /// even the change token, is written. Aliases it does not return are not touched. Display names are
     /// carried across, and the presence marker is set.
     /// </summary>
-    public SectionAccessReplaceOutcome ReplaceAliases(Func<SectionAccessSnapshot, IReadOnlyDictionary<string, string[]>?> decide)
+    /// <param name="cancellationToken">kd-58 B2. The save's own token, handed to the store's write (B1): a cancel before the commit leaves nothing written. None, the default, writes as before.</param>
+    public SectionAccessReplaceOutcome ReplaceAliases(Func<SectionAccessSnapshot, IReadOnlyDictionary<string, string[]>?> decide, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(decide);
         try
@@ -188,7 +189,7 @@ public sealed class SectionAccessRepository
 
                 MarkPresent(connection, transaction);
                 return new SectionAccessReplaceOutcome(true, before);
-            });
+            }, cancellationToken);
         }
         catch (NothingWritten nothing)
         {

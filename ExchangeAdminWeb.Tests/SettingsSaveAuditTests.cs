@@ -707,6 +707,15 @@ public sealed class SettingsSaveAuditTests : IDisposable
     /// </summary>
     private const string PoolDrainCatch = "catch (Exception drainEx)";
 
+    /// <summary>
+    /// kd-58 B2 (docs/CancellationDepth-Plan.md 4.5, 4.6). The one cancellation a settings save may catch. These saves run
+    /// under no activity, so the operator has no cancel for them; the only token they take is the page's own, cancelled
+    /// when the route change stops waiting for the save, and a save that ends cancelled by it wrote nothing - its store
+    /// rolled it back. That is the page's PageMoved refusal, the record aud-a66 files for the same move before the write,
+    /// never a failure; and the filter keeps any other cancellation on the save's failure path.
+    /// </summary>
+    private const string PageGaveUpCatch = "catch (OperationCanceledException) when (pageGaveUp.IsCancellationRequested)";
+
     [Theory]
     [MemberData(nameof(SettingsSaves))]
     public void EveryRefusalAndCatchInASettingsSave_WritesItsRecord(string page, string signature)
@@ -772,6 +781,55 @@ public sealed class SettingsSaveAuditTests : IDisposable
 
             Assert.Contains("Audit.LogSettingsSaveException(", block, StringComparison.Ordinal);
             Assert.DoesNotContain("Audit.LogSettingsSaveFailed(", block, StringComparison.Ordinal);
+        }
+
+        // kd-58 B2: and every cancellation catch - the page's own token only, filed as the PageMoved refusal. A save that
+        // takes that token has one, or its cancellation would reach the catch above and be filed as a failure.
+        var cancels = CancelCatchBlocks(page, signature).ToList();
+        if (signature.Contains("CancellationToken pageGaveUp", StringComparison.Ordinal))
+            Assert.True(cancels.Count > 0, $"{signature} takes the page's token and has no catch for it");
+        foreach (var (block, written) in cancels)
+        {
+            Assert.StartsWith(PageGaveUpCatch, block, StringComparison.Ordinal);
+            Assert.Contains("Audit.LogSettingsSaveRefused(", block, StringComparison.Ordinal);
+            Assert.Contains("PageMovedRefusal", block, StringComparison.Ordinal);
+            Assert.Contains("\"PageMoved\"", written, StringComparison.Ordinal);
+            Assert.DoesNotContain("Audit.LogSettingsSaveException(", block, StringComparison.Ordinal);
+            Assert.DoesNotContain("Audit.LogSettingsSaveFailed(", block, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// kd-58 B2 (docs/CancellationDepth-Plan.md 8). The hand-off that starts a Module Configuration save, registers it for
+    /// the route change and makes its token decides nothing and records nothing: every outcome of a save, one the page gave
+    /// up on included, is the save's own record, written once. A catch here would be a second record or none.
+    /// </summary>
+    [Fact]
+    public void TheModuleConfigSaveHandOff_CatchesNothing()
+    {
+        var body = AuditCategoryFilingTests.MethodBody(PageCode("ModuleConfig.razor"), "internal async Task StartSaveAsync()");
+
+        Assert.Contains("savesInFlight.Add(entry);", body, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"\bcatch\b", body);
+    }
+
+    /// <summary>
+    /// kd-58 B2. Every cancellation catch in <paramref name="signature"/>'s body on <paramref name="page"/>, from its
+    /// <c>catch</c> to its closing brace: as the code view reads it, and as written, string literals and all - the code view
+    /// blanks them, and the refusal's <c>refusedAt</c> is one. The code view keeps every offset, so the two line up.
+    /// </summary>
+    private static IEnumerable<(string Block, string Written)> CancelCatchBlocks(string page, string signature)
+    {
+        var view = PageCode(page);
+        var written = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page));
+        Assert.Equal(written.Length, view.Length);
+        var at = view.IndexOf(signature, StringComparison.Ordinal);
+        var body = AuditCategoryFilingTests.MethodBody(view, signature);
+        foreach (System.Text.RegularExpressions.Match match in
+                 System.Text.RegularExpressions.Regex.Matches(body, @"catch \((?:OperationCanceled|TaskCanceled)Exception\b"))
+        {
+            var block = AuditCategoryFilingTests.MethodBody(body[match.Index..], match.Value);
+            yield return (block, written.Substring(at + match.Index, block.Length));
         }
     }
 

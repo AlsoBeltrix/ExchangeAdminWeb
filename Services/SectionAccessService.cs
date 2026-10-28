@@ -265,8 +265,9 @@ public class SectionAccessService
     /// admin's intent is already in place, so refusing it only told them to reload and re-apply what was
     /// there. Nothing is written for that alias, and the page records it as already applied.
     /// </remarks>
+    /// <param name="cancellationToken">kd-58 B2. The Module Configuration page's token for this save, cancelled only when the route change stops waiting for it: handed to the store's write, so a cancel before the commit leaves nothing written. None, the default, saves as before.</param>
     public SectionAccessSaveOutcome SaveEditedAliases(
-        IReadOnlyDictionary<string, string[]> loaded, IReadOnlyDictionary<string, string[]> edited)
+        IReadOnlyDictionary<string, string[]> loaded, IReadOnlyDictionary<string, string[]> edited, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(loaded);
         ArgumentNullException.ThrowIfNull(edited);
@@ -329,7 +330,7 @@ public class SectionAccessService
                 }
 
                 return replacement;
-            });
+            }, cancellationToken);
 
             if (outcome.Replaced)
                 _logger.LogInformation("SectionAccess saved for {Count} alias(es)", edited.Count);

@@ -156,14 +156,16 @@ public class ModuleAdminService
     /// against the module's rows under the write lock; groups not named are not touched. Throws when the
     /// write fails.
     /// </summary>
-    public ModuleAdminChangeOutcome ApplyAdminChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove)
+    /// <param name="cancellationToken">kd-58 B2. The Module Configuration page's token for this save, cancelled only when the route change stops waiting for it: handed to the store's write, so a cancel before the commit leaves nothing written. None, the default, saves as before.</param>
+    public ModuleAdminChangeOutcome ApplyAdminChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(add);
         ArgumentNullException.ThrowIfNull(remove);
 
         lock (_writeLock)
         {
-            var outcome = _repository.ApplyChanges(moduleId, add, remove);
+            var outcome = _repository.ApplyChanges(moduleId, add, remove, cancellationToken);
             if (outcome.Written)
                 _logger.LogInformation("Module admins for {Module} changed ({Before} -> {After} group(s))", moduleId, outcome.Before.Length, outcome.After.Length);
             return outcome;

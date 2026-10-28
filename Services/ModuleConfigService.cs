@@ -147,9 +147,11 @@ public class ModuleConfigService
     /// or guessed. The decision is made inside the write because the other instance shares the database and
     /// could land between a read and a later write.
     /// </remarks>
+    /// <param name="cancellationToken">kd-58 B2. The Module Configuration page's token for this save, cancelled only when the route change stops waiting for it: handed to the store's write, so a cancel before the commit leaves nothing written. None, the default, saves as before.</param>
     public ModuleConfigSaveOutcome SaveChangedValues(
-        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted) =>
-        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: true);
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted,
+        CancellationToken cancellationToken = default) =>
+        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: true, cancellationToken);
 
     /// <summary>
     /// The compare <see cref="SaveChangedValues"/> makes, under the same lock and by the same decision, writing nothing
@@ -164,11 +166,12 @@ public class ModuleConfigService
     /// </remarks>
     public ModuleConfigSaveOutcome CompareChangedValues(
         string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted) =>
-        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: false);
+        DecideChangedValues(moduleId, loaded, wanted, writeIfClear: false, CancellationToken.None);
 
     // One decision for the save and its compare (aud-a28r), so the two cannot drift apart.
     private ModuleConfigSaveOutcome DecideChangedValues(
-        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted, bool writeIfClear)
+        string moduleId, IReadOnlyDictionary<string, string> loaded, IReadOnlyDictionary<string, string> wanted, bool writeIfClear,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(loaded);
         ArgumentNullException.ThrowIfNull(wanted);
@@ -217,7 +220,7 @@ public class ModuleConfigService
 
                 // A compare that passed stores nothing either: null is UpdateModuleIf's rollback.
                 return writeIfClear ? write : null;
-            });
+            }, cancellationToken);
 
             if (update.Written)
                 ReportSafely(logger => logger.LogInformation("Module config for {Module} updated ({Count} key(s))", moduleId, wanted.Count - alreadyApplied.Count));

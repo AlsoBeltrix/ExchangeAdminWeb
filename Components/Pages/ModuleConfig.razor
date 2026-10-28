@@ -901,16 +901,20 @@
         // of the load it replaces, and its notice names the module of any save it stops waiting for.
         var started = load;
         var name = module?.DisplayName ?? ModuleId;
+        // kd-58 B2 (docs/CancellationDepth-Plan.md 4.2). The save's own token, cancelled at one moment only: when the route
+        // change stops waiting for it (WaitForThisLoadsSavesAsync). Not the operator's cancel - settings saves run under no
+        // activity - and not disposed: it owns no timer, so a cancel racing the save's end is harmless.
+        var giveUp = new CancellationTokenSource();
         var save = tab switch
         {
-            SecStatus => SaveModuleEnablementAsync(),
-            SecAccess => SaveSectionAccessAsync(),
-            SecConfig => SaveConfigAsync(),
+            SecStatus => SaveModuleEnablementAsync(giveUp.Token),
+            SecAccess => SaveSectionAccessAsync(giveUp.Token),
+            SecConfig => SaveConfigAsync(giveUp.Token),
             SecAttrs => SaveAllowlistAsync(),
-            SecAdmins => SaveModuleAdminsAsync(),
+            SecAdmins => SaveModuleAdminsAsync(giveUp.Token),
             _ => Task.CompletedTask,
         };
-        var entry = (Save: save, Load: started, Module: name);
+        var entry = (Save: save, Load: started, Module: name, GiveUp: giveUp);
         savesInFlight.Add(entry);
         try
         {
@@ -928,7 +932,8 @@
     // bookkeeping lands on the state of the module it saved and not on the next one's. A list, not one field: a double click
     // before the disabled Save renders, or a direct event, starts a second save before the first ends, and a field holding
     // only the latest let the route change load another module under the first, which then wrote to it (aud-a66).
-    private readonly List<(Task Save, int Load, string Module)> savesInFlight = new();
+    // kd-58 B2: and each save's own token, which the route change that stops waiting for the save cancels.
+    private readonly List<(Task Save, int Load, string Module, CancellationTokenSource GiveUp)> savesInFlight = new();
 
     // aud-a66 (codex settings-batch-6). The longest a route change waits for those saves: the store's one busy wait (aud-a41;
     // measured up to 5.97 s) with 5 s for the rest of a save. Unbounded, a store that never answered held every later move of
@@ -954,7 +959,8 @@
     private bool Holds(int started) => module is not null && load == started;
 
     // aud-a66. What a save says, and records, when its page moved to another module while it waited - for the directory, or
-    // for its authorization re-check - before it wrote anything.
+    // for its authorization re-check - before it wrote anything. kd-58 B2: and when the route change gave up on it inside its
+    // store write, which the store then rolled back whole.
     private const string PageMovedRefusal =
         "Not saved: the page moved to another module while this save waited, so nothing was written. Open the module again and save.";
 
@@ -965,7 +971,7 @@
 
     /// <summary>
     /// aud-a41, aud-a66. Waits for every unfinished save of the current load - looking again after each one ends, so a save
-    /// started meanwhile is waited for too - for at most <see cref="saveWaitBound"/> in all.
+    /// started meanwhile is waited for too - for at most <see cref="saveWaitBound"/> in all. kd-58 B2: and cancels the token of every save it gives up on.
     /// </summary>
     /// <returns>The names of the modules whose saves were still running when the bound ran out; null when none was.</returns>
     /// <remarks>
@@ -981,8 +987,12 @@
             var left = saveWaitBound - waited.Elapsed;
             if (left <= TimeSpan.Zero)
             {
-                return savesInFlight
-                    .Where(s => s.Load == load && !s.Save.IsCompleted)
+                var unfinished = savesInFlight.Where(s => s.Load == load && !s.Save.IsCompleted).ToList();
+                // kd-58 B2. The page gives up on these saves, and tells each: one not yet committed writes nothing - its store
+                // rolls it back - and says Not saved; one already committed stands, reported as the success it is.
+                foreach (var gaveUp in unfinished)
+                    gaveUp.GiveUp.Cancel();
+                return unfinished
                     .Select(s => s.Module)
                     .Distinct(StringComparer.Ordinal)
                     .ToList();
@@ -1409,7 +1419,7 @@
     private void SetBooleanConfigValue(string key, ChangeEventArgs e) =>
         SetConfigValue(key, (bool)(e.Value ?? false) ? "true" : "false");
 
-    private async Task SaveConfigAsync()
+    private async Task SaveConfigAsync(CancellationToken pageGaveUp = default)
     {
         if (module == null) return;
 
@@ -1481,7 +1491,7 @@
                 return;
             }
 
-            var outcome = await Task.Run(() => ModuleConfigSvc.SaveChangedValues(moduleId, loadedValues, wantedValues));
+            var outcome = await Task.Run(() => ModuleConfigSvc.SaveChangedValues(moduleId, loadedValues, wantedValues, pageGaveUp));
             if (outcome.Status == ModuleConfigSaveStatus.StoreCorrupt)
             {
                 if (Holds(started)) moduleConfigCorrupt = true;
@@ -1541,6 +1551,15 @@
                     : "Configuration saved.";
             statusIsError = false;
         }
+        catch (OperationCanceledException) when (pageGaveUp.IsCancellationRequested)
+        {
+            // kd-58 B2 (docs/CancellationDepth-Plan.md 4.5, 4.6). The route change stopped waiting for this save and cancelled
+            // it, and the store rolled it back whole before its commit (B1): nothing was written. Filed as the refusal the page
+            // files for the same move before the write (aud-a66), in its words.
+            statusMessage = PageMovedRefusal;
+            statusIsError = true;
+            Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage);
+        }
         catch (Exception ex)
         {
             statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}");
@@ -1554,7 +1573,7 @@
         }
     }
 
-    private async Task SaveModuleEnablementAsync()
+    private async Task SaveModuleEnablementAsync(CancellationToken pageGaveUp = default)
     {
         if (module == null) return;
 
@@ -1620,7 +1639,7 @@
             var changes = wanted == baseline
                 ? new Dictionary<string, bool>()
                 : new Dictionary<string, bool> { [moduleId] = wanted };
-            var outcome = await Task.Run(() => Enablement.SetModulesEnabled(changes));
+            var outcome = await Task.Run(() => Enablement.SetModulesEnabled(changes, pageGaveUp));
             if (outcome.StoreCorrupt)
             {
                 if (Holds(started)) enablementStoreCorrupt = true;
@@ -1667,6 +1686,15 @@
                 statusIsError = false;
             }
         }
+        catch (OperationCanceledException) when (pageGaveUp.IsCancellationRequested)
+        {
+            // kd-58 B2 (docs/CancellationDepth-Plan.md 4.5, 4.6). The route change stopped waiting for this save and cancelled
+            // it, and the store rolled it back whole before its commit (B1): nothing was written. Filed as the refusal the page
+            // files for the same move before the write (aud-a66), in its words.
+            statusMessage = PageMovedRefusal;
+            statusIsError = true;
+            Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage);
+        }
         catch (Exception ex)
         {
             statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save module status: {ex.Message}");
@@ -1680,7 +1708,7 @@
         }
     }
 
-    private async Task SaveSectionAccessAsync()
+    private async Task SaveSectionAccessAsync(CancellationToken pageGaveUp = default)
     {
         if (module == null) return;
 
@@ -1777,7 +1805,7 @@
 
             // aud-a41. Off the circuit, as every write on this page: it can wait up to the store's busy timeout for a lock held
             // elsewhere. The snapshot above is what it writes.
-            var outcome = await Task.Run(() => SectionAccess.SaveEditedAliases(loaded, edited));
+            var outcome = await Task.Run(() => SectionAccess.SaveEditedAliases(loaded, edited, pageGaveUp));
             if (outcome.Status == SectionAccessSaveStatus.StoreCorrupt)
             {
                 if (Holds(started)) sectionAccessCorrupt = true;
@@ -1848,6 +1876,15 @@
                     : "Section access is unchanged; there was nothing to save.";
             statusIsError = false;
         }
+        catch (OperationCanceledException) when (pageGaveUp.IsCancellationRequested)
+        {
+            // kd-58 B2 (docs/CancellationDepth-Plan.md 4.5, 4.6). The route change stopped waiting for this save and cancelled
+            // it, and the store rolled it back whole before its commit (B1): nothing was written. Filed as the refusal the page
+            // files for the same move before the write (aud-a66), in its words.
+            statusMessage = PageMovedRefusal;
+            statusIsError = true;
+            Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage, pending);
+        }
         catch (Exception ex)
         {
             statusMessage = Audit.LogSettingsSaveException(Logger, currentUser, ip, section, ex, $"Failed to save: {ex.Message}", pending);
@@ -1885,7 +1922,7 @@
         return string.Equals(label, alias, StringComparison.Ordinal) ? alias : $"{label} ({alias})";
     }
 
-    private async Task SaveModuleAdminsAsync()
+    private async Task SaveModuleAdminsAsync(CancellationToken pageGaveUp = default)
     {
         if (module == null) return;
 
@@ -1964,7 +2001,7 @@
             // snapshot dropped a group added elsewhere since the load and restored one removed elsewhere.
             var added = snapshot.Except(baseline, StringComparer.OrdinalIgnoreCase).ToArray();
             var removed = baseline.Except(snapshot, StringComparer.OrdinalIgnoreCase).ToArray();
-            var outcome = added.Length + removed.Length == 0 ? null : await Task.Run(() => ModuleAdmin.ApplyAdminChanges(moduleId, added, removed));
+            var outcome = added.Length + removed.Length == 0 ? null : await Task.Run(() => ModuleAdmin.ApplyAdminChanges(moduleId, added, removed, pageGaveUp));
             if (outcome is { Readable: false })
             {
                 if (Holds(started)) moduleAdminsUnreadable = true;
@@ -2000,6 +2037,15 @@
                 ? "Module admins are unchanged; there was nothing to save."
                 : "Module admins saved.";
             statusIsError = false;
+        }
+        catch (OperationCanceledException) when (pageGaveUp.IsCancellationRequested)
+        {
+            // kd-58 B2 (docs/CancellationDepth-Plan.md 4.5, 4.6). The route change stopped waiting for this save and cancelled
+            // it, and the store rolled it back whole before its commit (B1): nothing was written. Filed as the refusal the page
+            // files for the same move before the write (aud-a66), in its words.
+            statusMessage = PageMovedRefusal;
+            statusIsError = true;
+            Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "PageMoved", statusMessage);
         }
         catch (Exception ex)
         {

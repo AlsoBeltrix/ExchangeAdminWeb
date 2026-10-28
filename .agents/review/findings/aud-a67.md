@@ -518,3 +518,147 @@ ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; after `git add -
 
 **Versions**: none. The store is shared - the base app version, by the supervisor's ruling, is 2.36.0's, not yet deployed (the
 plan's section 7).
+
+### B2, the four Module Configuration saves (implementer, 2026-10-28; lines at this commit)
+
+Read first, at `f129e5c0`: a route change that ran out of `saveWaitBound` loaded the next module and showed
+`UnfinishedSaveNotice` ("if it had not written yet it refuses"), but a save already inside its store call ran on and committed
+whenever the store answered - nothing it held could be cancelled.
+
+- **The page's token** (`Components/Pages/ModuleConfig.razor`): `StartSaveAsync` makes one `CancellationTokenSource` per save
+  (907) and hands its token to the status, access, configuration and admins saves (910-914); `savesInFlight` carries it (936).
+  `WaitForThisLoadsSavesAsync` cancels the source of every save it gives up on, as the bound runs out and before it returns
+  their names (994) - the one moment it is cancelled. Not the operator's token: these saves run under no activity
+  (`ProgressRegistry` exempts them), and nothing files it as a cancel. Not disposed: it owns no timer.
+- **The path** (plan 4.3): each save passes it to its service (1494, 1642, 1808, 2004) -
+  `ModuleEnablementService.SetModulesEnabled` (250), `SectionAccessService.SaveEditedAliases` (270),
+  `ModuleConfigService.SaveChangedValues` (153, through `DecideChangedValues`; the rolled-back `CompareChangedValues` passes
+  none) and `ModuleAdminService.ApplyAdminChanges` (161) - and each service to its repository (274, 333, 223, 168), whose
+  write hands it to the store (B1): `ModuleEnablementRepository.SetModules` (124), `SectionAccessRepository.ReplaceAliases`
+  (192), `ModuleConfigRepository.UpdateModuleIf` (147), `ModuleAdminRepository.ApplyChanges` (126). Each takes an optional last
+  token; every other caller passes none and is unchanged. Nothing after a commit takes it - not the access save's display
+  names (`SaveGroupDisplayNames`), the success records or the re-baselines. A service waiting on its own write lock is not
+  interrupted there; it meets C1 once it holds the lock. The callbacks' bare catches wrap only reads that take no token, so no
+  cancellation is read as an unreadable store.
+- **The catch** (plan 4.5, 4.6): each of the four saves has `catch (OperationCanceledException) when
+  (pageGaveUp.IsCancellationRequested)` ahead of its general catch (1554, 1689, 1879, 2041). It files
+  `Audit.LogSettingsSaveRefused(..., "PageMoved", PageMovedRefusal)` - the record aud-a66 files for the same move before the
+  write: result Failed, `refusedAt` PageMoved, `mutationAttempted` false, true by construction since the store rolled back -
+  and the save's `finally` names its module over the message, as for every save that ends on another load. A cancellation of
+  any other token is not taken by it and stays the save's failure; a busy store the page gave up on during the wait is the
+  busy refusal, since the wait takes no token. No new words, record, field or value.
+- **Once given up, always refused** (plan 4.2's chosen consequence): a save the page gave up on refuses even if the page
+  shows its module again before the save reaches its write - the store looks at the token, not at the page.
+- **The tripwire** (`SettingsSaveAuditTests`, aud-a67 (8)): it learned the new catch - every cancellation catch in a settings
+  save must be exactly that filter and record through `Audit.LogSettingsSaveRefused(` with `"PageMoved"` and
+  `PageMovedRefusal`, read from the page as written since the code view blanks literals; a save that takes the page's token
+  must have one - and that `StartSaveAsync` catches nothing (`TheModuleConfigSaveHandOff_CatchesNothing`).
+- **The test stand-in** (`AttributeEditorHarness.SwitchableStore`): implements the token writes, forwarding the token to the
+  real store so its looks are the ones the saves get; holds the next write inside its transaction (`InsideWrite`, after
+  `BEGIN IMMEDIATE`, before the callback) or after its commit (`AfterWrite`); and its token-less writes are its token writes
+  with none, so every write meets those holds. `SettingsPageHarness.RunAsync` gives a trailing optional parameter its default,
+  so the tests that run a save directly run it as before, with no token. Three source scans name the saves' new signatures and
+  calls (`AdminPageDirtyStateTests`, `GroupGrantValidationTests`), and sixteen test calls to the four services now pass
+  `TestContext.Current.CancellationToken` (xUnit1051; no test cancels it).
+
+**What the operator sees**: after "A save on X had not finished after 10 seconds ..." - the notice, unchanged - a save that
+had not committed ends with "X: Not saved: the page moved to another module while this save waited, so nothing was written.
+Open the module again and save.", and nothing is stored. Before this, the same save committed and ended "X: Module admins
+saved." (or its tab's success) after the notice had said it would refuse. A save that had committed is reported saved, as
+before.
+
+#### Guard proof - B2
+
+In `ExchangeAdminWeb.Tests/SettingsModuleMoveTests.cs`, through `SettingsPageHarness`, each save with one edit on the first
+module (status toggled, a group added to its access and, picked from the directory with its name, a config value set, a group
+added to its admins), the route change moving to the second module with a 0.3 s bound:
+
+- **The main case** - `ASaveInsideItsWriteWhenTheRouteChangeGivesUp_WritesNothing_AndIsRefusedAsPageMoved` (4 saves): the
+  write held inside its transaction past the bound; the next module opens with the notice; released - nothing stored, the
+  change token unmoved, no display name stored, the next module's state its own, one record (Failed, `refusedAt` PageMoved,
+  `mutationAttempted` false) and the page showing "X: Not saved: ...".
+- **The converted case** - `AnAdminsWriteThatOutlastsTheWait_WritesNothing_AndLeavesTheNextOnesStateAlone`, until B2
+  `..._LandsOnItsOwnModule_...`: the admins write held as it opens, before the store (C1) - it used to land after the notice;
+  now nothing is written and the move's refusal is recorded.
+- **The controls** (4 saves each): `ASaveInsideItsWriteReleasedInsideTheBound_SavesAsBefore` - saved, one success record, the
+  route change loading after; `ASaveCommittedBeforeTheRouteChangeGivesUp_IsReportedSaved_WithItsSuccessRecord` - held after
+  its commit past the bound: stored, "X: <its success>", one success record, the access save's display name stored, the next
+  module's state its own; `ASaveWaitingForABusyStoreWhenTheRouteChangeGivesUp_IsTheBusyRefusal` - another connection holds
+  the lock, the page gives up a second into the busy wait, the wait runs out: the busy refusal (`refusedAt` StoreBusy), not a
+  page move, nothing stored. The busy cases wait the store's real five seconds, by design.
+- **What the token does not replace** - `ASaveTheRouteChangeNeverWaitedFor_IsRefusedByTheMovedCheck_ItsTokenLive` (access,
+  admins): a save started while the route change waits at its authorization read is never waited for or given up on, so its
+  token stays live; the page moves while it asks the directory, and aud-a66's check before the write refuses it. Added in
+  this slice because the first round's re-run of aud-a66's E3 survived (below).
+- `SettingsSaveAuditTests`: the tripwire's new rules, and `TheModuleConfigSaveHandOff_CatchesNothing`.
+
+**Reproduction**: with the page as committed before B2 (`Components/Pages/ModuleConfig.razor` at `f129e5c0`, MD5
+`50AF05492C3336456AEE927FD30DEE4E`) and everything else as here, `SettingsModuleMoveTests` failed 5 of 43 - the main case for
+all four saves and the converted case, each with the late write stored - and passed the controls; the page was restored
+byte-exact (`2B49AB173F0FC6B2BFB96862D0AE2F36`).
+
+kd-58's harness and method; the filter `FullyQualifiedName~Settings|...~GroupGrantValidationTests|...~AdminPageDirtyStateTests|
+...~SqliteConfigStoreCancellationTests|...~Allowlist|...~PageAuthorizationRecheckTests`, 427 tests (429 with the
+never-waited case), green on the fix before and after every mutant; every mutant compiled and every restore was byte-exact.
+Fixed-file MD5s: `Components/Pages/ModuleConfig.razor` `2B49AB173F0FC6B2BFB96862D0AE2F36`, `Services/ModuleEnablementService.cs`
+`C66030D30CE12ED4F6C54693C170A635`, `Services/SectionAccessService.cs` `8717DBC928E9CA6C1F9CAE2DFB7375CA`,
+`Services/ModuleConfigService.cs` `70CAC7F774DD2ECE01E5895A12A28091`, `Services/ModuleAdminService.cs`
+`73481DE043A97677166288CFFF45C6D7`, `Services/Storage/ModuleEnablementRepository.cs` `04C330EE4E1CB7C8C1444AEF717857A2`,
+`Services/Storage/SectionAccessRepository.cs` `D4114FFFF5A5F5AF322C8587A5DB67DE`, `Services/Storage/ModuleConfigRepository.cs`
+`F811D0AAC9FBF91BA6B179A52A5FB29C`, `Services/Storage/ModuleAdminRepository.cs` `1C23B3F56368503AE0C44354FE5700A6`,
+`Components/Pages/AdminSettings.razor` `F5A6704E45BBB2651BA473D23061D961`, `Components/Pages/ExchangeOnlineConfig.razor`
+`0279099DB992F685E5D313C17E5E5EEF`. In the table, "main", "converted", "committed", "busy" and "never waited" are the cases
+above, and "tripwire" is `EveryRefusalAndCatchInASettingsSave_WritesItsRecord` for the save named.
+
+| # | Mutation | Mutant MD5 | Failed (of 427) |
+|---|---|---|---|
+| B2a | the give-up cancel removed: the route change gives up on a save and cancels nothing | `4DDDCF45E865495F30DC4DAA96E3E61A` | 5: main (all four saves); converted - each late write stored |
+| B2b | the status save does not pass its token to the service | `F36C4CBD2B11A218000CFBE0F9DA4A83` | 1: main (Module Status) - the toggle stored |
+| B2c | the access save does not pass its token to the service | `BE027545FEE3FB3D6E89165B48E13D35` | 2: main (Section Access); `GroupGrantValidationTests.TheAccessSave_ConfirmsNewGrantsBeforeItPersists_AndPersistsTheSnapshot` (its call pin) |
+| B2d | the configuration save does not pass its token to the service | `4261BA9014110595E9B95A764EFA2C35` | 1: main (Configuration) - the value stored |
+| B2e | the admins save does not pass its token to the service | `3563E249BDDFE54FB00B1F53BADFC0D3` | 3: main (Module Admins); converted; `GroupGrantValidationTests.TheModuleAdminSave_ConfirmsNewGrantsBeforeItPersists_AndPersistsTheSnapshot` (its call pin) |
+| B2f | the status save's cancel catch removed | `B8B09BB8928D6C21A9883B6E0D0F5BCB` | 2: main (Module Status) - filed as a failure, no `refusedAt`; tripwire (status) - "takes the page's token and has no catch for it" |
+| B2g | the access save's cancel catch removed | `DF53BB2044371D64AEE36DA2FF62B2EE` | 2: main (Section Access), as B2f; tripwire (access) |
+| B2h | the configuration save's cancel catch removed | `D172C08A9F8603A91DF734F9D3D6A873` | 2: main (Configuration), as B2f; tripwire (configuration) |
+| B2i | the admins save's cancel catch removed | `0A7E8F0EF2133B641E38554066E3E31B` | 3: main (Module Admins), as B2f; converted; tripwire (admins) |
+| B2j | `StartSaveAsync` hands the status save no token | `62AFF38C0C09B4AC9020584B3731C6CF` | 1: main (Module Status) |
+| B2k | `StartSaveAsync` hands the access save no token | `B86D1FDBFFAA43DBAA618514A3BBAD44` | 1: main (Section Access) |
+| B2l | `StartSaveAsync` hands the configuration save no token | `2B3B9D232AB7B1B34A73B7F58C98466D` | 1: main (Configuration) |
+| B2m | `StartSaveAsync` hands the admins save no token | `EEBECF40468B308917DED315279B343B` | 2: main (Module Admins); converted |
+| B2n | the configuration save's cancel catch takes any cancellation (its filter dropped) | `5DAC444A26FF1822FDCA9F8F1609BE47` | 1: tripwire (configuration) - the filter is not the page token's. No behaviour case can tell: these saves take no other token |
+| B2o | the status save's cancel catch takes any exception once the page gave up | `7521B756070148DEAB6C3E8A6875C642` | 2: busy (Module Status) - `refusedAt` PageMoved where StoreBusy was expected; tripwire (status) |
+| B2p | the enablement service does not pass the token to its repository | `80D6FA5C0B109E3CAD0F356272190FC8` | 1: main (Module Status) |
+| B2q | the access service does not pass the token to its repository | `65172238850DD7642F84DCFFD1710FE7` | 1: main (Section Access) |
+| B2r | the config service does not pass the token to its repository | `AE09C4D06A954C85A3C3ED77F829D995` | 1: main (Configuration) |
+| B2s | the admin service does not pass the token to its repository | `7D2B114BD6BBE1C50ADECB74A255B1D4` | 2: main (Module Admins); converted |
+| B2t | the enablement repository does not pass the token to the store | `1441D65727152A2A7AC2A9AF81354190` | 1: main (Module Status) - the toggle stored |
+| B2u | the access repository does not pass the token to the store | `C0E505F87808E2442590CF5D4402A13E` | 1: main (Section Access) |
+| B2v | the config repository does not pass the token to the store | `13A66380FFD884FA8A5D70BE203B3394` | 1: main (Configuration) |
+| B2w | the admin repository does not pass the token to the store | `8511F3F1BB39095C92CB21CAADF607D0` | 2: main (Module Admins); converted |
+| E1 | aud-a66 E1 re-run: only the latest save kept (`savesInFlight.Clear()` before the add) | `08CD1B46DBA648FB43555E825695D183` | 1: `ASecondSaveThatFinishesFirst_DoesNotLetAnotherModuleLoadUnderTheFirst` - "the page loaded another module while the first of two saves still waited for the directory" |
+| E2 | aud-a66 E2 re-run: the route change's wait looks once (`if`, not `while`) | `68EA5AF3D2B4B390ECBEA9D2C43D2EB9` | 12: main and committed (all four saves); converted; `AnAdminsSaveWhoseLookupOutlastsTheWait_...`, `ASaveStartedWhileAnotherModuleWaitsToLoad_...`, `ASaveThatNeverFinishes_...` |
+| E3 | aud-a66 E3 re-run: the access save's moved refusal removed (`if (false)`) | `5158ABC055B4D883A683306DDC0A2007` | **0 - survived** (first round, below) |
+| E4 | aud-a66 E4 re-run: the admins save's baseline reset with no load check (`if (true)`) | `9A055E879AFB39B08BC8A08B6B803EEB` | 1: committed (Module Admins) - the second module's baseline became the first's snapshot. Until B2 the converted case caught it; that write no longer lands |
+| D1 | aud-a67 D1 re-run: `ModuleConfig.SaveCurrentTabAsync`'s guard removed (`if (false)`) | `E71A5F52E985127F93D07703C3B59A2D` | 1: `SettingsSaveOffCircuitTests.ASecondSavePressedWhileTheFirstRuns_IsRefused_AndTheStoreSeesOneWrite(Module Configuration)` |
+| D2 | aud-a67 D2 re-run: `AdminSettings.SaveCurrentTabAsync`'s guard removed (`if (false)`) | `23E21999D40E808FDD8447FB13C48E51` | 1: the same case (Admin Settings) |
+| D3 | aud-a67 D3 re-run: `ExchangeOnlineConfig.SaveExoConfig`'s guard removed (`if (false)`) | `76A0AC3511E2218C18ACE4E2640E471C` | 1: the same case (Exchange Online Config) |
+| E3r | E3 again, with the never-waited case | `5158ABC055B4D883A683306DDC0A2007` | 1 of 429: never waited (Section Access) - the first module's access stored after the page moved |
+| E3s | its twin: the admins save's moved refusal removed (`if (false)`) | `F2AC9E8E8D6D29B98D41CF97AA3C8B85` | 1 of 429: never waited (Module Admins) - the first module's admins stored after the page moved |
+
+**E3's first round.** It survived because every moved case in this file was one the route change had given up on: with the
+access save's moved check removed, the save went on to the store with its token already cancelled, met C1 and filed the same
+PageMoved refusal, so nothing changed. The token now covers every save the route change gives up on, but not one it never
+waited for - a save started while the route change waits at its authorization read, after its wait for this load's saves -
+and there the moved check is the only refusal. The never-waited case pins it, and E3 and its admins twin fail on it.
+
+#### Gates - B2
+
+On this commit's tree, each run alone (2026-10-28): `dotnet build ExchangeAdminWeb.slnx -c Release --no-incremental` exit 0,
+0 errors, 19 warnings - the baseline set, no xUnit1051 among them; `dotnet test ExchangeAdminWeb.slnx --
+xUnit.MaxParallelThreads=4` 8,176 passed / 0 failed / 0 skipped (B1's 8,157 and these 19); `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; after `git add -A`, `git diff --check HEAD` exit 0 and
+`pwsh -NoProfile -File tools/Test-AsciiOnly.ps1` passed. No PowerShell file changed; nothing deployed; no manual check run -
+no settings page was rendered in a browser.
+
+**Versions**: none. The Module Configuration page and the four settings services are app-wide; the base version is 2.36.0's,
+not yet deployed (the supervisor's ruling; the plan's section 7).

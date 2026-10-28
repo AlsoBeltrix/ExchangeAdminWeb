@@ -426,7 +426,7 @@ public sealed class ExchangeGroupMembersTests : IDisposable
     [Fact]
     public async Task TheResolver_OverAnExchangeOnlineThatIsNotConfigured_Throws_AndConnectsNothing()
     {
-        _h.Enablement.SetModulesEnabled(new Dictionary<string, bool> { [ExoConnectionPool.ConfigModuleKey] = false });
+        _h.Enablement.SetModulesEnabled(new Dictionary<string, bool> { [ExoConnectionPool.ConfigModuleKey] = false }, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => ResolverOver(_h.Pool).ReadGroupMembersAsync("team@contoso.test"));
 

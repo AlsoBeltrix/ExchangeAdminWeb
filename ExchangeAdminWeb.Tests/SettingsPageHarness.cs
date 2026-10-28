@@ -290,6 +290,11 @@ internal sealed class SettingsPageHarness : IDisposable
     {
         var info = typeof(TPage).GetMethod(method, PrivateInstance)
             ?? throw new InvalidOperationException($"{typeof(TPage).Name}.{method} not found - this harness is stale");
+        // kd-58 B2. A trailing optional parameter a test passes nothing for takes its default: a settings save's page token,
+        // for a save run directly rather than through StartSaveAsync, is none - the save as it ran before the token existed.
+        var parameters = info.GetParameters();
+        if (args.Length < parameters.Length && parameters.Skip(args.Length).All(p => p.IsOptional))
+            args = [.. args, .. parameters.Skip(args.Length).Select(p => p.DefaultValue)];
         return _renderer.Dispatcher.InvokeAsync(() => info.Invoke(page, args) as Task ?? Task.CompletedTask);
     }
 

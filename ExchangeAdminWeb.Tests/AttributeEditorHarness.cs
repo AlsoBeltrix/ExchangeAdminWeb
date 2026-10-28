@@ -384,23 +384,47 @@ internal sealed class AttributeEditorHarness : IDisposable
             return inner.Read(read);
         }
 
-        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write)
+        // kd-58 B2. The token-less writes are the token-taking ones with none, so every write meets the hooks below.
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => Write(write, CancellationToken.None);
+
+        public void Write(Action<SqliteConnection, SqliteTransaction> write) => Write(write, CancellationToken.None);
+
+        /// <summary>
+        /// kd-58 B2. Run once, inside the next write's transaction - <c>BEGIN IMMEDIATE</c> taken, before its callback: where a
+        /// test holds a write that has reached the store and holds its lock.
+        /// </summary>
+        public Action? InsideWrite { get; set; }
+
+        /// <summary>kd-58 B2. Run once, after the next write has returned - committed: where a test holds a save past its commit.</summary>
+        public Action? AfterWrite { get; set; }
+
+        // kd-58 B2. The token forwarded to the store, so its looks (B1) are the ones the saves get; the hooks above wrapped round
+        // the callback and the return.
+        public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
         {
             if (WritesFail)
                 throw new InvalidOperationException("config store unwritable");
 
             RunBeforeWrite();
-            return inner.Write(write);
+            var inside = InsideWrite;
+            InsideWrite = null;
+            var result = inner.Write((connection, transaction) =>
+            {
+                inside?.Invoke();
+                return write(connection, transaction);
+            }, cancellationToken);
+            var after = AfterWrite;
+            AfterWrite = null;
+            after?.Invoke();
+            return result;
         }
 
-        public void Write(Action<SqliteConnection, SqliteTransaction> write)
-        {
-            if (WritesFail)
-                throw new InvalidOperationException("config store unwritable");
-
-            RunBeforeWrite();
-            inner.Write(write);
-        }
+        public void Write(Action<SqliteConnection, SqliteTransaction> write, CancellationToken cancellationToken) =>
+            Write<object?>((connection, transaction) =>
+            {
+                write(connection, transaction);
+                return null;
+            }, cancellationToken);
 
         private void RunBeforeWrite()
         {

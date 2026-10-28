@@ -131,14 +131,14 @@ public class GroupGrantValidationTests
     [Fact]
     public void TheAccessSave_ConfirmsNewGrantsBeforeItPersists_AndPersistsTheSnapshot()
     {
-        var body = Body(PageCode(), "private async Task SaveSectionAccessAsync()", "private async Task SaveModuleAdminsAsync()");
+        var body = Body(PageCode(), "private async Task SaveSectionAccessAsync(CancellationToken pageGaveUp = default)", "private async Task SaveModuleAdminsAsync(CancellationToken pageGaveUp = default)");
 
         // aud-a67 item 11: the confirmation now takes the labels the save captured, so the anchor is the call, not its
         // whole argument list. Its intent is unchanged - the access save confirms the new grants before it writes.
         var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(newGrants,", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
         // aud-a28k: the save writes only the aliases it edited, decided under the write lock.
-        var iPersist = body.IndexOf("SectionAccess.SaveEditedAliases(loaded, edited)", StringComparison.Ordinal);
+        var iPersist = body.IndexOf("SectionAccess.SaveEditedAliases(loaded, edited, pageGaveUp)", StringComparison.Ordinal);
 
         Assert.True(iConfirm >= 0, "The access save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");
@@ -149,12 +149,12 @@ public class GroupGrantValidationTests
     [Fact]
     public void TheModuleAdminSave_ConfirmsNewGrantsBeforeItPersists_AndPersistsTheSnapshot()
     {
-        var body = Body(PageCode(), "private async Task SaveModuleAdminsAsync()", "private async Task<string?> ConfirmNewGroupGrantsAsync(");
+        var body = Body(PageCode(), "private async Task SaveModuleAdminsAsync(CancellationToken pageGaveUp = default)", "private async Task<string?> ConfirmNewGroupGrantsAsync(");
 
         var iConfirm = body.IndexOf("var refused = await ConfirmNewGroupGrantsAsync(", StringComparison.Ordinal);
         var iRefuse = body.IndexOf("if (refused is not null)", StringComparison.Ordinal);
         // aud-a28n: the save writes the confirmed snapshot's additions and removals, decided under the write lock.
-        var iPersist = body.IndexOf("ModuleAdmin.ApplyAdminChanges(moduleId, added, removed)", StringComparison.Ordinal);
+        var iPersist = body.IndexOf("ModuleAdmin.ApplyAdminChanges(moduleId, added, removed, pageGaveUp)", StringComparison.Ordinal);
 
         Assert.True(iConfirm >= 0, "The module-admin save no longer confirms new grants.");
         Assert.True(iRefuse > iConfirm && iPersist > iRefuse, "The confirmation must refuse BEFORE the store write.");
