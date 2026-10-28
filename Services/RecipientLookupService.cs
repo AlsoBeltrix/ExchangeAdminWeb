@@ -114,6 +114,14 @@ public class RecipientLookupService : ExchangeServiceBase
                     r.UseDatabaseQuotaDefaults = RecipientClassification.ReadFlag(mbx.Properties["UseDatabaseQuotaDefaults"]?.Value);
                     r.ArchiveQuota = Reported(mbx, "ArchiveQuota");
                     r.ArchiveWarningQuota = Reported(mbx, "ArchiveWarningQuota");
+                    // E3. The mailbox's settings from the same row. ASSUMPTION, unverified (no live call; the display section's
+                    // A17): Get-Mailbox returns them; one that does not come back reads "Not reported by Exchange". Holds are not
+                    // read: extra 3b was not taken.
+                    r.ForwardingKeepsCopy = RecipientClassification.ReadFlag(mbx.Properties["DeliverToMailboxAndForward"]?.Value);
+                    r.SendOnBehalf = ReportedList(mbx, "GrantSendOnBehalfTo");
+                    r.AccountDisabled = RecipientClassification.ReadFlag(mbx.Properties["AccountDisabled"]?.Value);
+                    r.ArchiveStatus = Reported(mbx, "ArchiveStatus");
+                    r.ArchiveState = Reported(mbx, "ArchiveState");
 
                     try
                     {
@@ -127,6 +135,8 @@ public class RecipientLookupService : ExchangeServiceBase
                             r.ItemCount = ParseLong(stat.Properties["ItemCount"]?.Value);
                             r.DeletedItemCount = ParseLong(stat.Properties["DeletedItemCount"]?.Value);
                             r.LastLogonTime = ReportedTime.Read(stat.Properties["LastLogonTime"]?.Value);
+                            // E3. The last action the user took, beside Last Logon, which background access also moves (A11).
+                            r.LastUserActionTime = ReportedTime.Read(stat.Properties["LastUserActionTime"]?.Value);
                             r.MailboxSizeGB = ParseSizeToGB(stat.Properties["TotalItemSize"]?.Value?.ToString());
                             r.DeletedItemSizeGB = ParseSizeToGB(stat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
@@ -349,6 +359,23 @@ public class RecipientLookupService : ExchangeServiceBase
     // E2. A property as Exchange reported it, trimmed; null when it is absent or blank.
     private static string? Reported(PSObject row, string name) =>
         row.Properties[name]?.Value?.ToString() is { } value && !string.IsNullOrWhiteSpace(value) ? value.Trim() : null;
+
+    // E3. A many-valued property's values; empty when Exchange reported it with none, null when it did not report it.
+    private static List<string>? ReportedList(PSObject row, string name)
+    {
+        var property = row.Properties[name];
+        if (property is null)
+            return null;
+        var value = property.Value is PSObject wrapped ? wrapped.BaseObject : property.Value;
+        IEnumerable<object?> values = value switch
+        {
+            null => [],
+            string text => [text],
+            System.Collections.IEnumerable many => many.Cast<object?>(),
+            _ => [value],
+        };
+        return [.. values.Select(item => item?.ToString()?.Trim()).Where(item => !string.IsNullOrEmpty(item)).Select(item => item!)];
+    }
 
     // Two rows are enough to tell one recipient from more than one (U2).
     private const string OnPremRecipientRead =

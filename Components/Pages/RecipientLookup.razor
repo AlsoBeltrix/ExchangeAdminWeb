@@ -82,6 +82,9 @@
                                    after it - so the row says so. *@
                                 <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)@CopyNote(result, result.WhenCreated)</td></tr>
                                 <tr><td class="fw-bold">Last Logon</td><td>@(Unread(result) ?? Statistic(result, ShowTime(result.LastLogonTime)))</td></tr>
+                                @* RecipientLookupAccuracy E3. The last action the user took: Exchange Online moves Last Logon for background
+                                   access too (the plan's A11). *@
+                                <tr><td class="fw-bold">Last User Activity</td><td>@(Unread(result) ?? Statistic(result, result.LastUserActionTime is null ? NotReported : ShowTime(result.LastUserActionTime)))</td></tr>
                                 @* RecipientLookupAccuracy E2. Directory facts from Exchange Online's own row: no read is added. A property it
                                    did not return reads "Not reported by Exchange", never a default. *@
                                 <tr><td class="fw-bold">Synced from On-Premises</td><td>@YesNo(result.IsDirSynced)</td></tr>
@@ -113,6 +116,8 @@
                                 <tr><td class="fw-bold">Deleted Items</td><td>@(Unread(result) ?? Statistic(result, Count(result.DeletedItemCount)))</td></tr>
                                 @* aud-a54. "Could not be read" when the read failed: "Disabled" and "None" are Exchange's answers, never a read it could not make. *@
                                 <tr><td class="fw-bold">Archive</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : result.ArchiveEnabled ? "Enabled" : "Disabled"))</td></tr>
+                                @* E3. Exchange's own words for the archive, from the mailbox row. *@
+                                <tr><td class="fw-bold">Archive Status</td><td>@(Unread(result) ?? ArchiveStatus(result))</td></tr>
                                 @if (result.ArchiveEnabled)
                                 {
                                     <tr><td class="fw-bold">Archive Size</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : Gigabytes(result.ArchiveSizeGB)))</td></tr>
@@ -121,7 +126,11 @@
                                     <tr><td class="fw-bold">Archive Deleted</td><td>@(Unread(result) ?? Gigabytes(result.ArchiveDeletedItemSizeGB))</td></tr>
                                     <tr><td class="fw-bold">Archive Items</td><td>@(Unread(result) ?? Count(result.ArchiveItemCount))</td></tr>
                                 }
-                                <tr><td class="fw-bold">Forwarding</td><td>@(Unread(result) ?? result.ForwardingAddress ?? "None")</td></tr>
+                                @* E3. Whether forwarding keeps a copy, who may send on the mailbox's behalf, and whether its account is
+                                   disabled, from the mailbox row. Holds are not shown: extra 3b was not taken. *@
+                                <tr><td class="fw-bold">Forwarding</td><td>@(Unread(result) ?? Forwarding(result))</td></tr>
+                                <tr><td class="fw-bold">Send on Behalf</td><td>@(Unread(result) ?? (result.SendOnBehalf is null ? NotReported : result.SendOnBehalf.Count == 0 ? "None" : string.Join("; ", result.SendOnBehalf)))</td></tr>
+                                <tr><td class="fw-bold">Account Disabled</td><td>@(Unread(result) ?? YesNo(result.AccountDisabled))</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -234,6 +243,23 @@
         true => "Yes",
         false => "No",
         null => NotReported,
+    };
+
+    // E3. The forwarding address, and whether the mailbox keeps a copy of what it forwards; "None" when Exchange said none.
+    private static string Forwarding(RecipientInfoResult r) => r.ForwardingAddress is not { } address ? "None" : address + r.ForwardingKeepsCopy switch
+    {
+        true => ", and keeps a copy",
+        false => ", forward only",
+        null => " (whether a copy is kept was not reported by Exchange)",
+    };
+
+    // E3. Exchange's ArchiveStatus, with its ArchiveState when reported.
+    private static string ArchiveStatus(RecipientInfoResult r) => (r.ArchiveStatus, r.ArchiveState) switch
+    {
+        (null, null) => NotReported,
+        ({ } status, null) => status,
+        (null, { } state) => $"{NotReported} (state: {state})",
+        ({ } status, { } state) => $"{status} (state: {state})",
     };
 
     // S3. What follows the primary address: what was typed, when it was anything else (compared without case); or, when

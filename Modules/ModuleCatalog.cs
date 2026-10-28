@@ -610,7 +610,10 @@ public sealed class ModuleCatalog
             // 1.5.0: a cloud mailbox's quotas beside its size - warning, prohibit send, prohibit send and receive, the share of
             // the send quota used - and its archive's beside the archive size, from the mailbox row already read (E1): the
             // description's promise of quotas, true at last.
-            Version = "1.5.0",
+            // 1.6.0: a cloud mailbox's settings from the rows already read - archive status, whether forwarding keeps a copy,
+            // send-on-behalf delegates, account disabled, and the last real user activity beside Last Logon (E3). Holds are not
+            // read or shown.
+            Version = "1.6.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

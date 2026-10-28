@@ -662,8 +662,10 @@ internal sealed class MigrationStubExchange : IDisposable
         ("New-MigrationBatch", "[string] $Name, [object] $CSVData, [object] $SourceEndpoint, [object] $TargetEndpoint, [object] $TargetDeliveryDomain, [object] $TargetDatabases, [object] $NotificationEmails, [object] $AutoStart, [object] $AutoComplete", ""),
         // aud-a23k. MailboxSize / ArchiveSize: the TotalItemSize reported instead (null: no row); NoArchive: the archive read
         // is Exchange's not-found; StatisticsCancelled: a cancellation, which neither read's own catch takes.
+        // RecipientLookupAccuracy E3: StatisticsRow, a row the mailbox read answers whole, for the properties beyond the size.
         ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", $$"""
             if ($Behaviour['StatisticsCancelled']) { throw [System.OperationCanceledException]::new('the size read was cancelled') }
+            if (-not $Archive -and $null -ne $Behaviour['StatisticsRow']) { return $Behaviour['StatisticsRow'] }
             if ($Archive -and $Behaviour['NoArchive']) { {{Lookup}}; return }
             $key = if ($Archive) { 'ArchiveSize' } else { 'MailboxSize' }
             if ($Behaviour.ContainsKey($key)) { if ($null -ne $Behaviour[$key]) { [pscustomobject]@{ TotalItemSize = $Behaviour[$key] } }; return }

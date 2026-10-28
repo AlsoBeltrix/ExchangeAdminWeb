@@ -224,4 +224,103 @@ public sealed class RecipientLookupExtrasTests : IDisposable
         foreach (var row in new[] { "Warning Quota", "Prohibit Send Quota", "Prohibit Send/Receive Quota", "Send Quota Used" })
             Assert.Equal((row, "Not applicable"), (row, list[row]));
     }
+
+    // ---- E3: mailbox settings ---------------------------------------------------------------------
+
+    private static readonly DateTime LogonUtc = new(2026, 10, 27, 7, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime ActionUtc = new(2026, 10, 26, 16, 45, 0, DateTimeKind.Utc);
+
+    [Theory]
+    [InlineData(true, "smtp:bob@fabrikam.test, and keeps a copy")]
+    [InlineData(false, "smtp:bob@fabrikam.test, forward only")]
+    [InlineData(null, "smtp:bob@fabrikam.test (whether a copy is kept was not reported by Exchange)")]
+    public async Task Forwarding_SaysWhetherTheMailboxKeepsACopy(bool? keeps, string shown)
+    {
+        ACloudMailboxWith(keeps is { } reported
+            ? [("ForwardingSmtpAddress", "smtp:bob@fabrikam.test"), ("DeliverToMailboxAndForward", reported)]
+            : [("ForwardingSmtpAddress", "smtp:bob@fabrikam.test")]);
+
+        Assert.Equal(shown, RowsOf(Rendered(await LookedUp()))["Forwarding"]);
+    }
+
+    [Fact]
+    public async Task ForwardingThatIsNotSet_IsStillNone()
+    {
+        ACloudMailboxWith(("DeliverToMailboxAndForward", false));
+
+        Assert.Equal("None", RowsOf(Rendered(await LookedUp()))["Forwarding"]);
+    }
+
+    [Theory]
+    [InlineData("two", "Bob; Carol")]
+    [InlineData("none", "None")]
+    [InlineData("not reported", NotReported)]
+    public async Task SendOnBehalf_ListsTheDelegates(string reported, string shown)
+    {
+        ACloudMailboxWith(reported switch
+        {
+            "two" => [("GrantSendOnBehalfTo", new[] { "Bob", "Carol" })],
+            "none" => [("GrantSendOnBehalfTo", Array.Empty<string>())],
+            _ => [],
+        });
+
+        Assert.Equal(shown, RowsOf(Rendered(await LookedUp()))["Send on Behalf"]);
+    }
+
+    [Fact]
+    public async Task AccountDisabledAndArchiveStatus_AreExchangesOwnWords()
+    {
+        ACloudMailboxWith(("AccountDisabled", true), ("ArchiveStatus", "Active"), ("ArchiveState", "HostedProvisioned"));
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        Assert.Equal(("Yes", "Active (state: HostedProvisioned)"), (rows["Account Disabled"], rows["Archive Status"]));
+    }
+
+    [Fact]
+    public async Task MailboxSettingsExchangeDidNotReturn_AreNotReported()
+    {
+        ACloudMailboxWith();
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        foreach (var row in new[] { "Account Disabled", "Archive Status", "Send on Behalf", "Last User Activity" })
+            Assert.Equal((row, NotReported), (row, rows[row]));
+    }
+
+    // Last Logon moves for background access too (the plan's A11): the last action the user took is its own row.
+    [Fact]
+    public async Task LastUserActivity_IsTheLastActionTheUserTook_BesideLastLogon()
+    {
+        ACloudMailboxWith();
+        _exchange.Behaviour["StatisticsRow"] = Row(("TotalItemSize", "1.5 GB (1,610,612,736 bytes)"), ("LastLogonTime", LogonUtc),
+            ("LastUserActionTime", ActionUtc));
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        Assert.Equal("2026-10-27 07:00 (UTC, UTC+00:00)", rows["Last Logon"]);
+        Assert.Equal("2026-10-26 16:45 (UTC, UTC+00:00)", rows["Last User Activity"]);
+    }
+
+    // Each setting follows its kind's words: an on-premises mailbox's are not read, a list has none, and a statistics read
+    // that failed leaves the last activity unread.
+    [Fact]
+    public async Task MailboxSettings_FollowTheKindsWords()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailUser"), ("IsDirSynced", true));
+        _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+        var onPrem = RowsOf(Rendered(await LookedUp()));
+        foreach (var row in new[] { "Last User Activity", "Archive Status", "Send on Behalf", "Account Disabled" })
+            Assert.Equal((row, "Not read for on-premises mailboxes"), (row, onPrem[row]));
+
+        _exchange.Recipients[Address] = Row(("DisplayName", "List"), ("RecipientTypeDetails", "MailUniversalDistributionGroup"));
+        var list = RowsOf(Rendered(await LookedUp()));
+        foreach (var row in new[] { "Last User Activity", "Archive Status", "Send on Behalf", "Account Disabled" })
+            Assert.Equal((row, "Not applicable"), (row, list[row]));
+
+        ACloudMailboxWith(("AccountDisabled", false));
+        _exchange.Failures[$"Get-MailboxStatistics {Address}"] = Refused("the mailbox database is offline");
+        var unread = RowsOf(Rendered(await LookedUp()));
+        Assert.Equal(("Could not be read", "No"), (unread["Last User Activity"], unread["Account Disabled"]));
+    }
 }

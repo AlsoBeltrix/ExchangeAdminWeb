@@ -454,3 +454,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, RecipientLookupAccuracy E2** (directory facts from the recipient row already read; Recipient Lookup 1.4.0). Same agent and session as S1, whose line explains why its share is not separable.
 
 **2026-10-28, RecipientLookupAccuracy E1** (quotas beside the size and the archive size, from the mailbox row already read; Recipient Lookup 1.5.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy E3** (mailbox settings from rows already read, no holds; Recipient Lookup 1.6.0). Same agent and session as S1, whose line explains why its share is not separable.

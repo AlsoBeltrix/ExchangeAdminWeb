@@ -1237,3 +1237,17 @@ he leaves them; and the extras he accepted and declined, by number.
   | ME1b "Unlimited" not recognised | `0604bbaa52dd18d6ab9cf2fdcc0becc1` | 2 | the quotas test, the unlimited send quota |
   | ME1c the share of the send quota inverted | `4b4cf10186f0b4e4490eb7c03687eacc` | 1 | the quotas test |
   | ME1d a quota row without its kind's words | `630c0987e9a9df656f7242e80387d037` | 1 | the on-premises and list test |
+- 2026-10-28, **E3 landed** (mailbox settings, without 3b): Last User Activity beside Last Logon (N3
+  `LastUserActionTime`); Archive Status (`ArchiveStatus`, with `ArchiveState`); Forwarding's ", and keeps a copy" /
+  ", forward only" (`DeliverToMailboxAndForward`); Send on Behalf (`GrantSendOnBehalfTo`); Account Disabled - from rows
+  already read; holds neither read nor shown; Recipient Lookup 1.6.0. The stand-in's Exchange Online statistics read can
+  answer a whole row (`Behaviour["StatisticsRow"]`, opt-in). T13's absence check now reads row values, since a row is now
+  labelled "Account Disabled". Nine tests. Mutations (restored byte-exact; originals: page
+  `5e53996c9c7089c6fe68aeaa51a4f249`, service `3afe06edddc8d9e90bbefbfa48491efa`; counts of 276):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME3a the copy words swapped | `6aaf220edefadc33c64d37ad4a2b9aef` | 2 | both forwarding cases |
+  | ME3b an unreported delegate list shown as "None" | `a7a1e4842c704134ff58a588099ba359` | 2 | the not-reported cases |
+  | ME3c Last User Activity read from LastLogonTime | `9be77163cf7af8d310d8e22cc8befd26` | 1 | the last-activity test |
+  | ME3d a setting row without its kind's words | `54780e60198a11a6ac1e0524fdc6db48` | 1 | the kinds' words test |

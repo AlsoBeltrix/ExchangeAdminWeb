@@ -191,6 +191,16 @@ public class RecipientInfoResult
     public bool? UseDatabaseQuotaDefaults { get; set; }
     public string? ArchiveQuota { get; set; }
     public string? ArchiveWarningQuota { get; set; }
+
+    // RecipientLookupAccuracy E3. The mailbox's settings, from the rows Exchange Online's Get-Mailbox and Get-MailboxStatistics
+    // already return; null when not reported. Holds are not read (extra 3b was not taken). SendOnBehalf is empty when Exchange
+    // reported none, null when it did not report the property.
+    public bool? ForwardingKeepsCopy { get; set; }
+    public List<string>? SendOnBehalf { get; set; }
+    public bool? AccountDisabled { get; set; }
+    public string? ArchiveStatus { get; set; }
+    public string? ArchiveState { get; set; }
+    public ReportedTime? LastUserActionTime { get; set; }
     public bool ArchiveEnabled { get; set; }
     // aud-a54. Why the Exchange Online mailbox, and its archive, could not be read; null when read, or when Exchange said
     // there is none. The page shows "Could not be read" for either, where it showed the absence ("None", "Disabled").

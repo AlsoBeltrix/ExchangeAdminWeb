@@ -514,7 +514,11 @@ public sealed class RecipientLookupClassificationTests : IDisposable
         foreach (var row in MailboxRows)
             Assert.Equal((row, "Not applicable"), (row, rows[row]));
         Assert.False(rows.ContainsKey("Archive Size"));
-        foreach (var stated in new[] { "Unknown", "Disabled", "None", "N/A GB" })
+        // No row's value states an absence, and no size carries a unit after a missing number (E3: by value, now that a row
+        // is labelled "Account Disabled").
+        foreach (var value in rows.Values)
+            Assert.DoesNotContain(value, new[] { "Unknown", "Disabled", "None" });
+        foreach (var stated in new[] { "Unknown", "N/A GB" })
             Assert.DoesNotContain(stated, page, StringComparison.Ordinal);
     }
 
