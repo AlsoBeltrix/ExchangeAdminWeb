@@ -106,6 +106,14 @@ public class RecipientLookupService : ExchangeServiceBase
                     ownType = mbx.Properties["RecipientTypeDetails"]?.Value?.ToString();
                     r.ForwardingAddress = mbx.Properties["ForwardingSmtpAddress"]?.Value?.ToString()
                         ?? mbx.Properties["ForwardingAddress"]?.Value?.ToString();
+                    // E1. The quotas from the same row: no read is added, and the database is not read for a mailbox on its
+                    // defaults. ASSUMPTION, unverified (no live call; the plan's A10): Get-Mailbox returns them.
+                    r.IssueWarningQuota = Reported(mbx, "IssueWarningQuota");
+                    r.ProhibitSendQuota = Reported(mbx, "ProhibitSendQuota");
+                    r.ProhibitSendReceiveQuota = Reported(mbx, "ProhibitSendReceiveQuota");
+                    r.UseDatabaseQuotaDefaults = RecipientClassification.ReadFlag(mbx.Properties["UseDatabaseQuotaDefaults"]?.Value);
+                    r.ArchiveQuota = Reported(mbx, "ArchiveQuota");
+                    r.ArchiveWarningQuota = Reported(mbx, "ArchiveWarningQuota");
 
                     try
                     {

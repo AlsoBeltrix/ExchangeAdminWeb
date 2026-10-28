@@ -119,4 +119,109 @@ public sealed class RecipientLookupExtrasTests : IDisposable
 
         Assert.Equal([$"Get-Recipient {Address}"], _exchange.CallList());
     }
+
+    // ---- E1: quotas -------------------------------------------------------------------------------
+
+    // A cloud mailbox: Exchange Online's recipient row, and its mailbox row with the quotas given (the rest as reported).
+    private void ACloudMailboxWith(params (string Name, object? Value)[] mailbox)
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "UserMailbox"),
+            ("PrimarySmtpAddress", Address), ("IsDirSynced", false));
+        _exchange.Mailboxes[Address] = Row([("PrimarySmtpAddress", Address), ("RecipientTypeDetails", "UserMailbox"), .. mailbox]);
+    }
+
+    private static readonly (string, object?)[] Quotas =
+    [
+        ("IssueWarningQuota", "49 GB (52,613,349,376 bytes)"),
+        ("ProhibitSendQuota", "50 GB (53,687,091,200 bytes)"),
+        ("ProhibitSendReceiveQuota", "Unlimited"),
+        ("UseDatabaseQuotaDefaults", false),
+        ("ArchiveQuota", "100 GB (107,374,182,400 bytes)"),
+        ("ArchiveWarningQuota", "90 GB (96,636,764,160 bytes)"),
+    ];
+
+    // The quotas the description has always promised, beside the size, and the share of the send quota the size uses
+    // (the stand-in's 1.5 GB of 50 GB); the archive's beside the archive size.
+    [Fact]
+    public async Task ACloudMailboxsQuotas_AreShownBesideItsSize()
+    {
+        ACloudMailboxWith(Quotas);
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        Assert.Equal("1.50 GB", rows["Mailbox Size"]);
+        Assert.Equal("49.00 GB", rows["Warning Quota"]);
+        Assert.Equal("50.00 GB", rows["Prohibit Send Quota"]);
+        Assert.Equal("Unlimited", rows["Prohibit Send/Receive Quota"]);
+        Assert.Equal("3.0% of the send quota", rows["Send Quota Used"]);
+        Assert.Equal("100.00 GB", rows["Archive Quota"]);
+        Assert.Equal("90.00 GB", rows["Archive Warning Quota"]);
+    }
+
+    // A mailbox on its database's defaults: its own three quotas are not the ones that apply, and the database is not read.
+    [Fact]
+    public async Task AMailboxOnItsDatabasesDefaults_SaysSo_WithoutReadingTheDatabase()
+    {
+        ACloudMailboxWith([.. Quotas.Where(quota => quota.Item1 != "UseDatabaseQuotaDefaults"), ("UseDatabaseQuotaDefaults", true)]);
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        foreach (var row in new[] { "Warning Quota", "Prohibit Send Quota", "Prohibit Send/Receive Quota" })
+            Assert.Equal((row, "The database default (not read)"), (row, rows[row]));
+        Assert.Equal("Not read (the database default applies)", rows["Send Quota Used"]);
+        Assert.Equal("100.00 GB", rows["Archive Quota"]);
+        Assert.DoesNotContain(_exchange.CallList(), call => call.Contains("Database", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task QuotasExchangeDidNotReturn_AreNotReported()
+    {
+        ACloudMailboxWith();
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        foreach (var row in new[] { "Warning Quota", "Prohibit Send Quota", "Prohibit Send/Receive Quota", "Send Quota Used", "Archive Quota", "Archive Warning Quota" })
+            Assert.Equal((row, NotReported), (row, rows[row]));
+    }
+
+    [Theory]
+    [InlineData("Unlimited", "Unlimited", "Not applicable (no send quota)")]
+    [InlineData("a lot", "a lot (not a size this app can read)", "Could not be read")]
+    public async Task ASendQuotaThatIsNotASize_IsShownAsReported_AndItsShareIsNot(string quota, string shown, string used)
+    {
+        ACloudMailboxWith(("ProhibitSendQuota", quota));
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        Assert.Equal((shown, used), (rows["Prohibit Send Quota"], rows["Send Quota Used"]));
+    }
+
+    // The share needs the size: a statistics read that failed leaves it unread too.
+    [Fact]
+    public async Task ASendQuotaShare_CouldNotBeRead_WhenTheSizeCouldNotBe()
+    {
+        ACloudMailboxWith(Quotas);
+        _exchange.Failures[$"Get-MailboxStatistics {Address}"] = Refused("the mailbox database is offline");
+
+        var rows = RowsOf(Rendered(await LookedUp()));
+
+        Assert.Equal(("50.00 GB", "Could not be read"), (rows["Prohibit Send Quota"], rows["Send Quota Used"]));
+    }
+
+    // An on-premises mailbox's quotas are on-premises Exchange's, and this module does not ask for them (extra 4 was not
+    // taken); a list has none.
+    [Fact]
+    public async Task AnOnPremisesMailboxsQuotas_AreNotRead_AndAListHasNone()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailUser"), ("IsDirSynced", true));
+        _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+        var onPrem = RowsOf(Rendered(await LookedUp()));
+        foreach (var row in new[] { "Warning Quota", "Prohibit Send Quota", "Prohibit Send/Receive Quota", "Send Quota Used", "Archive Quota", "Archive Warning Quota" })
+            Assert.Equal((row, "Not read for on-premises mailboxes"), (row, onPrem[row]));
+
+        _exchange.Recipients[Address] = Row(("DisplayName", "List"), ("RecipientTypeDetails", "MailUniversalDistributionGroup"));
+        var list = RowsOf(Rendered(await LookedUp()));
+        foreach (var row in new[] { "Warning Quota", "Prohibit Send Quota", "Prohibit Send/Receive Quota", "Send Quota Used" })
+            Assert.Equal((row, "Not applicable"), (row, list[row]));
+    }
 }

@@ -607,7 +607,10 @@ public sealed class ModuleCatalog
             // date is that of Exchange Online's copy, not of the account (S4). The description's quotas stay; E1 shows them.
             // 1.4.0: directory facts from the recipient row already read - synced from on-premises or not, the Entra object ID,
             // alias, hidden from the address book, where a mail user's, contact's or guest's mail goes, last changed (E2).
-            Version = "1.4.0",
+            // 1.5.0: a cloud mailbox's quotas beside its size - warning, prohibit send, prohibit send and receive, the share of
+            // the send quota used - and its archive's beside the archive size, from the mailbox row already read (E1): the
+            // description's promise of quotas, true at last.
+            Version = "1.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

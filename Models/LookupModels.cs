@@ -182,6 +182,15 @@ public class RecipientInfoResult
 
     public string? MailboxLocation { get; set; }
     public string? ForwardingAddress { get; set; }
+
+    // RecipientLookupAccuracy E1. The quotas, as Exchange Online's Get-Mailbox row reports them ("49.5 GB (... bytes)",
+    // "Unlimited"); null when not reported. UseDatabaseQuotaDefaults: the mailbox's own three are not the ones that apply.
+    public string? IssueWarningQuota { get; set; }
+    public string? ProhibitSendQuota { get; set; }
+    public string? ProhibitSendReceiveQuota { get; set; }
+    public bool? UseDatabaseQuotaDefaults { get; set; }
+    public string? ArchiveQuota { get; set; }
+    public string? ArchiveWarningQuota { get; set; }
     public bool ArchiveEnabled { get; set; }
     // aud-a54. Why the Exchange Online mailbox, and its archive, could not be read; null when read, or when Exchange said
     // there is none. The page shows "Could not be read" for either, where it showed the absence ("None", "Disabled").

@@ -160,15 +160,15 @@ User Activity, and the whole right table.
 | Last Logon | the time; "N/A" when none was reported | N3 `LastLogonTime` |
 | Last User Activity | the time; "Not reported by Exchange" | N3 `LastUserActionTime` |
 | Mailbox Size | "1.50 GB"; "N/A" | N3 `TotalItemSize` |
-| Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota | "49.50 GB"; "Unlimited"; "The database default (not read)" when the mailbox uses its database's defaults; "Not reported by Exchange" | N2 `IssueWarningQuota`, `ProhibitSendQuota`, `ProhibitSendReceiveQuota`, `UseDatabaseQuotaDefaults` |
-| Send Quota Used | "3.0% of the send quota"; "Not applicable (no send quota)" when it is Unlimited; "Not read (the database default applies)"; "Not reported by Exchange" when the quota was not returned; "N/A" when the size was not | Mailbox Size over Prohibit Send Quota |
+| Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota | "49.50 GB"; "Unlimited"; "The database default (not read)" when the mailbox uses its database's defaults; "Not reported by Exchange"; a value this app cannot read as a size, as reported, then "(not a size this app can read)" | N2 `IssueWarningQuota`, `ProhibitSendQuota`, `ProhibitSendReceiveQuota`, `UseDatabaseQuotaDefaults` |
+| Send Quota Used | "3.0% of the send quota"; "Not applicable (no send quota)" when it is Unlimited; "Not read (the database default applies)"; "Not reported by Exchange" when the quota was not returned; "Could not be read" when the statistics read failed or the quota is not a size this app can read; "N/A" when the size was not reported | Mailbox Size over Prohibit Send Quota |
 | Deleted Item Size | "0.20 GB"; "N/A" | N3 `TotalDeletedItemSize` |
 | Total Size | the sum, only when both sizes were read; otherwise "N/A" | the two sizes |
 | Item Count, Deleted Items | the number; "N/A" | N3 `ItemCount`, `DeletedItemCount` |
 | Archive | "Enabled", "Disabled", "Could not be read" | N3 `-Archive` |
 | Archive Status | Exchange's words: `ArchiveStatus`, then `(state: {ArchiveState})` when reported; "Not reported by Exchange" | N2 |
 | Archive Size, Archive Deleted (archive found) | GB; "N/A" | N3 `-Archive` |
-| Archive Quota, Archive Warning Quota (archive found) | as the quotas above | N2 `ArchiveQuota`, `ArchiveWarningQuota` |
+| Archive Quota, Archive Warning Quota (archive found) | as the quotas above, except that a mailbox on its database's defaults still shows its own archive quotas (A10: the database default is taken to govern the three mailbox quotas only) | N2 `ArchiveQuota`, `ArchiveWarningQuota` |
 | Archive Items (archive found) | the number; "N/A" | N3 `-Archive` `ItemCount` |
 | Forwarding | the address, then ", and keeps a copy" or ", forward only" - or " (whether a copy is kept was not reported by Exchange)"; "None" | N2 `ForwardingSmtpAddress`, else `ForwardingAddress`; `DeliverToMailboxAndForward` |
 | Send on Behalf | the delegates, separated by "; "; "None"; "Not reported by Exchange" | N2 `GrantSendOnBehalfTo` |
@@ -1224,3 +1224,16 @@ he leaves them; and the extras he accepted and declined, by number.
   | ME2b an external address shown for every kind | `92294670ac7bf086f8d80347f790cb22` | 4 | every "Not applicable" case |
   | ME2c a fact Exchange did not return shown as "No" | `49d947ca53eab9a22bc0f21bacb62256` | 1 | the not-reported test |
   | ME2d Last Changed not read | `f487d8c08e07393419dffa6951f6ceb9` | 3 | both Last Changed cases |
+- 2026-10-28, **E1 landed** (quotas): Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota and Send Quota Used
+  beside the size, Archive Quota and Archive Warning Quota beside the archive size, from N2's row (no read added); "The
+  database default (not read)" for a mailbox on its database's defaults; an on-premises mailbox's "Not read for
+  on-premises mailboxes"; Recipient Lookup 1.5.0. The display section's cloud-mailbox table gained two details it had left
+  open: an unreadable quota value, and the archive quotas outside the database default (A10). Seven tests. Mutations
+  (restored byte-exact; original page `46246e9f683012f0127af70ee2471388`; counts of 265):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME1a the database default read from a missing flag, not a true one | `54b1441e2feceec9550146231795d8ad` | 4 | the database-default and not-reported tests |
+  | ME1b "Unlimited" not recognised | `0604bbaa52dd18d6ab9cf2fdcc0becc1` | 2 | the quotas test, the unlimited send quota |
+  | ME1c the share of the send quota inverted | `4b4cf10186f0b4e4490eb7c03687eacc` | 1 | the quotas test |
+  | ME1d a quota row without its kind's words | `630c0987e9a9df656f7242e80387d037` | 1 | the on-premises and list test |

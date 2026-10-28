@@ -101,6 +101,12 @@
                                    read" - and "Could not be read" when its read was made and failed; otherwise its value, "N/A" with no
                                    unit when Exchange's answer carried none. *@
                                 <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(Unread(result, readOnPremises: true) ?? Statistic(result, Gigabytes(result.MailboxSizeGB)))</td></tr>
+                                @* RecipientLookupAccuracy E1. The quotas the module's description has always promised, from the mailbox row
+                                   Get-Mailbox already returns; an on-premises mailbox's are not read (extra 4 was not taken). *@
+                                <tr><td class="fw-bold">Warning Quota</td><td>@(Unread(result) ?? Quota(result, result.IssueWarningQuota))</td></tr>
+                                <tr><td class="fw-bold">Prohibit Send Quota</td><td>@(Unread(result) ?? Quota(result, result.ProhibitSendQuota))</td></tr>
+                                <tr><td class="fw-bold">Prohibit Send/Receive Quota</td><td>@(Unread(result) ?? Quota(result, result.ProhibitSendReceiveQuota))</td></tr>
+                                <tr><td class="fw-bold">Send Quota Used</td><td>@(Unread(result) ?? SendQuotaUsed(result))</td></tr>
                                 <tr><td class="fw-bold">Deleted Item Size</td><td>@(Unread(result) ?? Statistic(result, Gigabytes(result.DeletedItemSizeGB)))</td></tr>
                                 <tr><td class="fw-bold">Total Size</td><td>@(Unread(result) ?? Statistic(result, Gigabytes(result.TotalSizeGB)))</td></tr>
                                 <tr><td class="fw-bold">Item Count</td><td>@(Unread(result) ?? Statistic(result, Count(result.ItemCount)))</td></tr>
@@ -110,6 +116,8 @@
                                 @if (result.ArchiveEnabled)
                                 {
                                     <tr><td class="fw-bold">Archive Size</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : Gigabytes(result.ArchiveSizeGB)))</td></tr>
+                                    <tr><td class="fw-bold">Archive Quota</td><td>@(Unread(result) ?? Quota(result, result.ArchiveQuota, databaseDefaultApplies: false))</td></tr>
+                                    <tr><td class="fw-bold">Archive Warning Quota</td><td>@(Unread(result) ?? Quota(result, result.ArchiveWarningQuota, databaseDefaultApplies: false))</td></tr>
                                     <tr><td class="fw-bold">Archive Deleted</td><td>@(Unread(result) ?? Gigabytes(result.ArchiveDeletedItemSizeGB))</td></tr>
                                     <tr><td class="fw-bold">Archive Items</td><td>@(Unread(result) ?? Count(result.ArchiveItemCount))</td></tr>
                                 }
@@ -259,6 +267,32 @@
 
     // S2. A size, or "N/A" with no unit after it.
     private static string Gigabytes(double? gb) => gb is { } value ? value.ToString("F2") + " GB" : "N/A";
+
+    // E1. A quota as Exchange reports it: a size, "Unlimited", or - for the mailbox's own three, when it uses its database's
+    // defaults - that, the database unread. A value this app cannot read as a size is shown as reported, saying so.
+    // ASSUMPTION, unverified (A10): the archive quotas are the mailbox's own, whatever UseDatabaseQuotaDefaults says.
+    private static string Quota(RecipientInfoResult r, string? reported, bool databaseDefaultApplies = true) =>
+        databaseDefaultApplies && r.UseDatabaseQuotaDefaults == true ? "The database default (not read)"
+        : reported is null ? NotReported
+        : IsUnlimited(reported) ? "Unlimited"
+        : ExchangeServiceBase.ParseSizeToGB(reported) is { } gb ? Gigabytes(gb)
+        : $"{reported} (not a size this app can read)";
+
+    // E1. The share of the send quota the mailbox's size uses, when both were read and the quota is a size.
+    private static string SendQuotaUsed(RecipientInfoResult r)
+    {
+        if (r.UseDatabaseQuotaDefaults == true)
+            return "Not read (the database default applies)";
+        if (r.ProhibitSendQuota is not { } quota)
+            return NotReported;
+        if (IsUnlimited(quota))
+            return "Not applicable (no send quota)";
+        if (r.StatisticsUnreadable is not null || ExchangeServiceBase.ParseSizeToGB(quota) is not { } quotaGb)
+            return CouldNotBeRead;
+        return r.MailboxSizeGB is { } size && quotaGb > 0 ? $"{size / quotaGb * 100:0.0}% of the send quota" : "N/A";
+    }
+
+    private static bool IsUnlimited(string reported) => string.Equals(reported.Trim(), "Unlimited", StringComparison.OrdinalIgnoreCase);
 
     private static string Count(long? count) => count?.ToString("N0") ?? "N/A";
 
