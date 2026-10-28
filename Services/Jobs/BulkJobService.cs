@@ -497,17 +497,39 @@ public sealed class BulkJobService
     /// Runs one job to a terminal state. TOTAL by contract: it always drives the job to a terminal
     /// transition and fires the completion notification exactly once, and never throws - so the pump
     /// loop cannot die and a job can never be left stuck Running. Every terminal path (normal
-    /// completion, cancel, unregistered processor, payload failure, unexpected fault) routes through
-    /// the single finish-and-notify tail.
+    /// completion, cancel, unregistered processor, a processor that cannot be built, payload failure,
+    /// unexpected fault) routes through the single finish-and-notify tail.
     /// </summary>
+    /// <remarks>
+    /// kd-83. The job's processor is resolved inside the try. It was resolved above it, so a processor that could not be
+    /// built - a scoped dependency whose construction throws - escaped to the pump loop's outer catch and stopped the runner
+    /// with the job still Queued; being the oldest, that job was the first the next submit's runner read, so it stopped that
+    /// one too, and every job behind it waited for a restart to mark them all Interrupted. Such a job is now Interrupted
+    /// with the reason, as a job no processor is registered for is, through the same tail, and the runner goes on to the
+    /// next job.
+    /// </remarks>
     private async Task RunJobAsync(BulkJob job, CancellationToken shutdown)
     {
         using var scope = _scopeFactory.CreateScope();
-        var processor = ResolveProcessor(scope, job.ModuleId);
         bool startedThisJob = false;
 
         try
         {
+            IBulkJobProcessor? processor;
+            try
+            {
+                processor = ResolveProcessor(scope, job.ModuleId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "The bulk job processor for module {Module} could not be built; marking job {Job} Interrupted",
+                    job.ModuleId, job.Id);
+                FinishAndNotify(scope, job.Id, BulkJobStatus.Interrupted,
+                    $"The processor for module '{job.ModuleId}' could not be built: {ex.Message}",
+                    BulkJobStatus.Queued, BulkJobStatus.Running);
+                return;
+            }
+
             if (processor is null)
             {
                 _logger.LogError("No bulk job processor registered for module {Module}; marking job {Job} Interrupted",
@@ -669,11 +691,15 @@ public sealed class BulkJobService
 
     private void NotifyCompletedInScope(IServiceScope scope, BulkJob job)
     {
-        var processor = ResolveProcessor(scope, job.ModuleId);
-        if (processor is null)
-            return;
         try
         {
+            // kd-83. The completion hook is the processor's, so the processor is built for it inside the try: for a job whose
+            // processor could not be built it fails again here, and that is a notification failure - logged, never a throw
+            // out of the runner's terminal tail.
+            var processor = ResolveProcessor(scope, job.ModuleId);
+            if (processor is null)
+                return;
+
             // Fail-safe: a notification failure must never change the (already-persisted) job result.
             processor.OnJobCompletedAsync(job).GetAwaiter().GetResult();
         }

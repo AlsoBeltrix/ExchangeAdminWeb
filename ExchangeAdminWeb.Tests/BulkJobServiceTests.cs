@@ -109,10 +109,16 @@ public class BulkJobServiceTests
                 lock (CreatedProcessors) CreatedProcessors.Add(p);
                 return p;
             });
+            // kd-83: a processor that cannot be built, served under a module of its own, so only a job of that module meets it.
+            services.AddScoped<UnbuildableDependency>(_ => throw new InvalidOperationException(UnbuildableDependency.Failure));
+            services.AddScoped<UnbuildableProcessor>();
             Provider = services.BuildServiceProvider();
 
-            var registry = new BulkJobProcessorRegistry(
-                new[] { new KeyValuePair<string, Type>("Test", typeof(FakeProcessor)) });
+            var registry = new BulkJobProcessorRegistry(new[]
+            {
+                new KeyValuePair<string, Type>("Test", typeof(FakeProcessor)),
+                new KeyValuePair<string, Type>(UnbuildableProcessor.Module, typeof(UnbuildableProcessor)),
+            });
             var config = new ConfigurationBuilder()
                 .AddInMemoryCollection(settings.ToDictionary(s => s.Key, s => (string?)s.Value))
                 .Build();
@@ -761,6 +767,78 @@ public class BulkJobServiceTests
             if (logLevel >= LogLevel.Error)
                 _firstError.TrySetResult();
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // kd-83: a job whose processor cannot be built stops the runner no more
+    // -------------------------------------------------------------------------
+    // RunJobAsync resolved the job's processor above its try, so a processor that could not be built - a scoped dependency
+    // whose construction throws - escaped to the loop's outer catch and stopped the runner with the job still Queued; being
+    // the oldest, it stopped the next submit's runner the same way, and every job behind it waited for a restart. Such a
+    // job is now Interrupted with the reason, and the runner goes on to the next job.
+
+    [Fact]
+    public async Task AJobWhoseProcessorCannotBeBuilt_IsInterruptedWithTheReason_AndTheJobBehindItRuns()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        h.Repository.Insert(WithSubmitted(h.NewJob("unbuildable", "SS", moduleId: UnbuildableProcessor.Module),
+            new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("good", "SS"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+
+        // One drive of the runner, as a submit starts it.
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        // The job behind it ran, in the same drive, and its completion hook fired once.
+        var good = h.Repository.Get("good")!;
+        Assert.Equal(BulkJobStatus.Completed, good.Status);
+        Assert.Equal(2, good.SuccessCount);
+        Assert.Equal(1, Assert.Single(h.CreatedProcessors).CompletionCalls);
+        // The job whose processor could not be built is finished, with the reason, and ran nothing.
+        var unbuildable = h.Repository.Get("unbuildable")!;
+        Assert.Equal(BulkJobStatus.Interrupted, unbuildable.Status);
+        Assert.Equal($"The processor for module '{UnbuildableProcessor.Module}' could not be built: {UnbuildableDependency.Failure}",
+            unbuildable.Message);
+        Assert.Equal(0, unbuildable.ProcessedRows);
+        Assert.Empty(h.Repository.GetRows("unbuildable"));
+        // Said: the processor could not be built; and its completion hook - the processor's own - could not be run either,
+        // which is a notification failure, not the end of the runner.
+        Assert.Collection(log.Entries,
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal(
+                    $"The bulk job processor for module {UnbuildableProcessor.Module} could not be built; marking job unbuildable Interrupted",
+                    said.Message);
+                Assert.Equal(UnbuildableDependency.Failure, Assert.IsType<InvalidOperationException>(said.Exception).Message);
+            },
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal("Completion notification for bulk job unbuildable failed (non-fatal)", said.Message);
+                Assert.Equal(UnbuildableDependency.Failure, Assert.IsType<InvalidOperationException>(said.Exception).Message);
+            });
+    }
+
+    // kd-83's stand-in for a processor that cannot be built: its one dependency throws as it is constructed, as a scoped
+    // service that cannot be built does, so the container throws for the processor itself.
+    private sealed class UnbuildableDependency
+    {
+        public const string Failure = "The processor's dependency could not be built.";
+    }
+
+    private sealed class UnbuildableProcessor : IBulkJobProcessor
+    {
+        public const string Module = "Unbuildable";
+
+        public UnbuildableProcessor(UnbuildableDependency dependency) => ArgumentNullException.ThrowIfNull(dependency);
+
+        public string ModuleId => Module;
+
+        public int CountRows(BulkJob job) => throw new InvalidOperationException("The processor was built after all.");
+
+        public Task<BulkJobRowOutcome> ProcessRowAsync(BulkJob job, int rowIndex, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The processor was built after all.");
     }
 
     private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 5000)
