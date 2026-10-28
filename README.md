@@ -911,7 +911,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 
 ## Architecture
 
-- **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled.
+- **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled. A call whose caller has cancelled - the operator leaving the page - stops waiting for a free connection (up to two minutes) or for its turn to connect (up to ninety seconds) at once, and gives back a connection it has not used yet. No command already sent to Exchange is ever stopped: it runs to its end. A connection whose command was ever stopped is discarded, never lent to the next caller.
 - **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
 - **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff).
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.

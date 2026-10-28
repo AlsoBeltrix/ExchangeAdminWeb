@@ -1,6 +1,6 @@
 # Cancellation Depth - Plan
 
-Status: **Approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). Not started; follows the Cloud Password Reset slices.**
+Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3 are on `feat/cancellation-depth` (section 15).**
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -750,7 +750,17 @@ owner's (`.agents/decisions.md` 2026-10-26).
 
 ## 15. Status and pending steps
 
-Draft. Nothing is implemented. Pending: the owner's go on the exec summary. Before A4, the supervisor admits section
-14's item 1 as a row. On approval the supervisor sets the arrangement (`.agents/repo-guidance.md`, Token Budget) and
-logs each slice in `.agents/token-log.md`. The plan closes at C1, with every slice's record, the base bump and the full
-gate on the final tree.
+Approved 2026-10-28. Section 14's item 1 was admitted as kd-81, which did A4 and A5's work before A1-A3 existed: the location
+read's token and the look inside the change before its first write - not the change's own wait for a pool connection, which
+needs A1 and A2's token on `RunPooledQueryAsync` and `RunAsync`. The supervisor sets each slice's arrangement and logs it in
+`.agents/token-log.md`. The plan closes at C1, with every slice's record, the base bump and the full gate on the final tree.
+
+Status log (each slice's record is its section in `.agents/review/findings/kd-58.md`):
+
+- 2026-10-28, **A1, the pool** - `feat/cancellation-depth`, the commit that adds this line: E1, E2, E6, the core's cancel
+  handling (3.5), the traces (3.6) and the no-stop tripwire, as section 8 says. Beyond the letter, and recorded there: E6
+  reads a stop the pipeline ever reported, not only its state now, and the core routes a stopped pipeline to Return in every
+  shape so it is never retried. A probe settled assumptions 2 and 3: a stopped synchronous Invoke throws nothing, so only the
+  pipeline's state tells a stop. The plan's "nothing in the app stops a pipeline" holds for Exchange pipelines; one
+  directory runner stops its own AD read, named as the tripwire's one exemption. No module behaviour changes in this slice;
+  the base bump is owed (C1).

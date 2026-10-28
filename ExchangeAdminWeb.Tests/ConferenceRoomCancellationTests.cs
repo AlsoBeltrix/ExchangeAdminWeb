@@ -459,7 +459,7 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
                     continue;
                 }
 
-                if (stage == "ExoPoolSlotRequested" && result == "Failed")
+                if (stage == "ExoPoolSlotRequested" && result is "Failed" or "Cancelled") // kd-58: a cancelled wait ends too
                     refused++;
                 else if (stage == "ExoPoolSlotRequested")
                     asked++;

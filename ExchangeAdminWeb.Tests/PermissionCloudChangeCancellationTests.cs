@@ -613,14 +613,15 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
     /// <summary>How many borrows asked the pools for a slot - granted, refused or still waiting.</summary>
     private int PoolSlotRequests() => Requests(PoolTrace());
 
+    // kd-58: a slot wait ends refused (Failed, the pool busy) or cancelled (Cancelled, the caller's token); neither is a request.
     private static int Requests(List<(string? Stage, string? Result)> trace) =>
-        trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result != "Failed");
+        trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result is not ("Failed" or "Cancelled"));
 
     /// <summary>How many borrows are waiting for a free connection: a slot asked for that was neither granted nor refused.</summary>
     private int BorrowsWaitingForAPoolConnection()
     {
         var trace = PoolTrace();
-        var refused = trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result == "Failed");
+        var refused = trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result is "Failed" or "Cancelled");
         var granted = trace.Count(s => s.Stage == "ExoPoolSlotAcquired");
         return Requests(trace) - granted - refused;
     }

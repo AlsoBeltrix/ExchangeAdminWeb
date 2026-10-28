@@ -28,6 +28,9 @@ public sealed class PooledRunspace
     /// </remarks>
     public string? ConnectionId { get; }
 
+    // kd-58 E6: 1 once the pipeline has reported Stopping or Stopped, at any point of this connection's life.
+    private int _stopSeen;
+
     public PooledRunspace(Runspace runspace, PowerShell ps, long configGeneration = 0, string? connectionId = null)
     {
         Runspace = runspace;
@@ -35,7 +38,23 @@ public sealed class PooledRunspace
         LastUsed = DateTime.UtcNow;
         ConfigGeneration = configGeneration;
         ConnectionId = connectionId;
+        ps.InvocationStateChanged += (_, e) =>
+        {
+            if (IsStopState(e.InvocationStateInfo.State))
+                Volatile.Write(ref _stopSeen, 1);
+        };
     }
+
+    /// <summary>
+    /// kd-58 E6. Whether this connection's pipeline was ever stopped: its state reads Stopping or Stopped now, or it reported
+    /// either at any point since it was made. Read from the pipeline itself, never from what a delegate made of the stop - a
+    /// delegate may rethrow it, turn it into a result, or run another command after it, which leaves the state Completed.
+    /// A connection stopped mid-command is never lent again (<see cref="ExoConnectionPool.Return"/>): what the interrupted
+    /// call left in its session cannot be known here.
+    /// </summary>
+    internal bool WasStopped => Volatile.Read(ref _stopSeen) == 1 || IsStopState(PowerShell.InvocationStateInfo.State);
+
+    private static bool IsStopState(PSInvocationState state) => state is PSInvocationState.Stopping or PSInvocationState.Stopped;
 }
 
 /// <summary>
@@ -177,6 +196,12 @@ public sealed class ExoConnectionPool : IDisposable
     internal long FailedDisconnects => Interlocked.Read(ref _failedDisconnects);
 
     /// <summary>
+    /// Test seam: how many of the five slots are free right now. kd-58: every borrow that took one gives back exactly one, a
+    /// cancelled borrow included, so with nothing borrowed this reads five.
+    /// </summary>
+    internal int FreeSlots => _slots.CurrentCount;
+
+    /// <summary>
     /// Whether Exchange Online is enabled and has an AppId and an Organization, for a caller that can show no more than
     /// that: false as well when the enablement or the rows cannot be read, and never a throw (aud-a28x). A caller that can
     /// say which asks <see cref="TryGetIsConfigured"/>.
@@ -291,7 +316,20 @@ public sealed class ExoConnectionPool : IDisposable
             throw new InvalidOperationException("Exchange Online is not configured. Set AppId and Organization on the Exchange Online config page.");
 
         _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = org });
-        if (!await _slots.WaitAsync(waitTimeout, ct))
+        bool admitted;
+        try
+        {
+            admitted = await _slots.WaitAsync(waitTimeout, ct);
+        }
+        catch (OperationCanceledException ex) when (IsCancellationOf(ex, ct))
+        {
+            // kd-58 (3.6). The caller's cancel while waiting for a slot: no slot was taken, so none is given back, and it is
+            // not the pool failing - traced Cancelled, never Failed, and logged at no level.
+            _operationTrace.Step("ExoPoolSlotRequested", "Cancelled", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["reason"] = "Cancelled by the caller" });
+            throw;
+        }
+
+        if (!admitted)
         {
             _operationTrace.Step("ExoPoolSlotRequested", "Failed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["reason"] = "Pool busy" });
             throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
@@ -371,6 +409,15 @@ public sealed class ExoConnectionPool : IDisposable
 
             return connected;
         }
+        catch (OperationCanceledException ex) when (IsCancellationOf(ex, ct))
+        {
+            // kd-58 E1 (3.6). The caller's cancel once a slot was held - at the connect gate, or before the connect started: the
+            // slot goes back, as for any throw here, and it is traced Cancelled, never Failed. A connect already past the gate
+            // is not interrupted: it ends with a healthy connection, which the borrow hands back and the retry core pools (E2).
+            _operationTrace.Step("ExoConnectionBorrowed", "Cancelled", backend: "ExchangeOnline");
+            _slots.Release();
+            throw;
+        }
         catch (Exception ex)
         {
             _operationTrace.Step("ExoConnectionBorrowed", "Failed", backend: "ExchangeOnline", exception: ex);
@@ -379,8 +426,29 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
+    /// <summary>
+    /// kd-58 E8. Whether <paramref name="ex"/> is a cancellation of <paramref name="token"/> - the token the caller passed, now
+    /// cancelled, and the one the throw names. Every other <see cref="OperationCanceledException"/> or
+    /// <see cref="TaskCanceledException"/> - a cmdlet's own timeout, a token nobody here was given - is sorted as before.
+    /// </summary>
+    internal static bool IsCancellationOf(OperationCanceledException ex, CancellationToken token) =>
+        token.IsCancellationRequested && ex.CancellationToken == token;
+
     public void Return(PooledRunspace runspace)
     {
+        // kd-58 E6 (3.4). A pipeline ever stopped is discarded, beside the generation test: not returned, because nothing can
+        // show it clean - the Exchange Online module keeps per-connection state this app cannot see, and the next borrower
+        // would inherit whatever the interrupted call left there; not recycled, because a probe shows only that the session
+        // answers now. Decided from the pipeline's own state, whatever its delegate made of the stop. The app stops none (E5);
+        // this is the guard for one stopped anyway. Every route back goes through here: the retry core and a direct borrow.
+        if (runspace.WasStopped)
+        {
+            DestroyRunspace(runspace);
+            _operationTrace.Step("ExoConnectionDiscardedStopped", backend: "ExchangeOnline");
+            _slots.Release();
+            return;
+        }
+
         if (runspace.ConfigGeneration != Interlocked.Read(ref _configGeneration))
         {
             DestroyRunspace(runspace);
@@ -448,12 +516,20 @@ public sealed class ExoConnectionPool : IDisposable
     /// it (double-grant, duplicate batch, etc.), so multi-write delegates pass false. The
     /// default at every layer is false (no retry) - the safe default.</para>
     /// </summary>
+    /// <param name="cancellationToken">
+    /// kd-58 E1, E2. The caller's cancel, honoured only before its delegate runs: by the borrow - the wait for a slot, up to two
+    /// minutes, and the wait at the connect gate, up to ninety seconds - before every attempt, and as the borrow returns, when
+    /// the connection, unused, goes back to the pool. Nothing here interrupts the delegate or stops its pipeline (E5): a read
+    /// stops between its commands only when its helper puts the token on its tracker (E3), and a write's own look before its
+    /// first command is its own (E4). None, the default, changes nothing.
+    /// </param>
     internal Task<T> RunWithRetryAsync<T>(
         Func<PooledRunspace, Task<PooledOutcome<T>>> run,
         bool allowRetry,
-        PoolFailurePolicy nonConnectionFailurePolicy)
-        => RunWithRetryCoreAsync(() => BorrowAsync(), Return, Discard, run,
-            IsConnectionError, IsRetriablePrecheckError, allowRetry, nonConnectionFailurePolicy);
+        PoolFailurePolicy nonConnectionFailurePolicy,
+        CancellationToken cancellationToken = default)
+        => RunWithRetryCoreAsync(() => BorrowAsync(cancellationToken), Return, Discard, run,
+            IsConnectionError, IsRetriablePrecheckError, allowRetry, nonConnectionFailurePolicy, cancellationToken);
 
     /// <summary>
     /// Broad classifier for "the pooled EXO session is dead/suspect" - gates DISCARD. Any of
@@ -489,6 +565,14 @@ public sealed class ExoConnectionPool : IDisposable
     /// (pool-backed services cannot be unit-hosted). Invariant: every borrow is paired with
     /// exactly one return-or-discard, so the pool's slot semaphore is conserved across retries.
     /// </summary>
+    /// <remarks>
+    /// kd-58 (3.5). With <paramref name="cancellationToken"/>, a cancel is not a failure: it is looked at before every
+    /// attempt's borrow - so a retry never borrows after it - and as the borrow returns, when the unused connection goes back
+    /// through <paramref name="ret"/>; a cancellation of that token thrown by the delegate is caught ahead of the connection
+    /// filter, never read as a dead session and never retried. A pipeline found stopped (E6) goes to <paramref name="ret"/>,
+    /// whose Return destroys it, and is never retried. Nothing after the delegate has run looks at the token: a write that
+    /// was sent keeps its own result. With no token - every caller before kd-58 - only E6 can change anything.
+    /// </remarks>
     internal static async Task<T> RunWithRetryCoreAsync<T>(
         Func<Task<PooledRunspace>> borrow,
         Action<PooledRunspace> ret,
@@ -497,19 +581,48 @@ public sealed class ExoConnectionPool : IDisposable
         Func<Exception, bool> isConnectionError,
         Func<Exception, bool> isRetriablePrecheckError,
         bool allowRetry,
-        PoolFailurePolicy nonConnectionFailurePolicy)
+        PoolFailurePolicy nonConnectionFailurePolicy,
+        CancellationToken cancellationToken = default)
     {
         var attempt = 0;
         while (true)
         {
+            // kd-58 E2. Before every attempt's borrow, the first's and a retry's: no slot asked for, nothing to give back.
+            cancellationToken.ThrowIfCancellationRequested();
             attempt++;
             var canRetry = allowRetry && attempt < 2;
             var pooled = await borrow();
+
+            // kd-58 E2. And as the borrow returns: a connection held but not yet used goes straight back. Nothing has run on
+            // it, so it is exactly as clean as any pooled connection - a freshly connected one included.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                ret(pooled);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
             PooledOutcome<T> outcome;
             try
             {
                 outcome = await run(pooled);
+            }
+            catch (Exception) when (pooled.WasStopped)
+            {
+                // kd-58 E6. A pipeline stopped mid-command, whatever was thrown: to ret, whose Return destroys it - never
+                // discarded as a dead session and retried, never returned to be lent again. The throw goes out as it is.
+                ret(pooled);
+                throw;
+            }
+            catch (OperationCanceledException ex) when (IsCancellationOf(ex, cancellationToken))
+            {
+                // kd-58 (3.5). The caller's cancel, thrown between a read's commands (E3) or by the caller's own look before
+                // its first write (E4): the session is not dead and nothing failed. Given back under the caller's policy -
+                // Return for the base helpers, Discard for a caller that cannot vouch for its pipeline - never retried, and
+                // rethrown unchanged. Ahead of the connection filter, which sorts a throw by its words: a cancellation whose
+                // words name a session is still the caller's cancel.
+                if (nonConnectionFailurePolicy == PoolFailurePolicy.Discard) discard(pooled);
+                else ret(pooled);
+                throw;
             }
             catch (Exception ex) when (isConnectionError(ex))
             {
@@ -527,6 +640,15 @@ public sealed class ExoConnectionPool : IDisposable
                 if (nonConnectionFailurePolicy == PoolFailurePolicy.Discard) discard(pooled);
                 else ret(pooled);
                 throw;
+            }
+
+            if (pooled.WasStopped)
+            {
+                // kd-58 E6. The same for a stop the delegate turned into a result: destroyed by Return, never retried, and
+                // what the delegate gave back goes out as it is.
+                ret(pooled);
+                outcome.Failure?.Throw();
+                return outcome.Result;
             }
 
             if (outcome.ConnectionFailure)
@@ -780,6 +902,9 @@ public sealed class ExoConnectionPool : IDisposable
             // A6B: the connect and the two reads around it are one critical section. The id is
             // only identifiable as "the one that appeared", so nothing else may connect in
             // between.
+            //
+            // kd-58 E1: the caller's cancel ends the wait for the gate at once. Past it nothing looks at the token: the connect
+            // and its two snapshots run to their end, and the connection they make is healthy, so it is pooled, not destroyed.
             string? connectionId;
             if (!_connectGate.Wait(ConnectGateTimeout, cancellationToken))
                 throw new InvalidOperationException(
@@ -828,7 +953,10 @@ public sealed class ExoConnectionPool : IDisposable
         }
         catch (Exception ex)
         {
-            _operationTrace.Step("ExoConnectionCreated", "Failed", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", exception: ex);
+            // kd-58 (3.6): a borrow cancelled at the connect gate - before Connect-ExchangeOnline was sent - is traced Cancelled,
+            // never Failed. Nothing was connected; the runspace goes as for any throw here.
+            var cancelled = ex is OperationCanceledException oce && IsCancellationOf(oce, cancellationToken);
+            _operationTrace.Step("ExoConnectionCreated", cancelled ? "Cancelled" : "Failed", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", exception: ex);
             ps.Dispose();
             runspace.Dispose();
             throw;
