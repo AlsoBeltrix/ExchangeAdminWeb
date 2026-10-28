@@ -116,6 +116,13 @@ public sealed class BulkJobService
     /// Interrupted. There is no resume; an interrupted job is a truthful record an operator can
     /// inspect and re-submit, never something that silently resumes or sits stuck "Running".
     /// </summary>
+    /// <remarks>
+    /// kd-85. The jobs it flips are then read back one by one, off the start-up path, for their modules' completion hooks, and
+    /// that read was outside any try: the first read the store failed ended the loop, so the jobs after it got no completion
+    /// mail, and the task's exception was never observed - nothing was logged. Each job's read and hook now have a try of
+    /// their own, as the runner's tail has it (kd-84): a read the store fails is that job's failed completion notification,
+    /// logged as one, no hook runs for it, and the sweep goes on to the next job.
+    /// </remarks>
     public void InitializeAsync()
     {
         new JobStoreMigrator(new Storage.SqliteConnectionFactory(_repository.DatabasePath)).Migrate();
@@ -144,9 +151,18 @@ public sealed class BulkJobService
             {
                 foreach (var job in interrupted)
                 {
-                    var reloaded = _repository.Get(job.Id);
-                    if (reloaded is not null)
-                        NotifyCompleted(reloaded);
+                    // kd-85. Each job's read in one try with its hook: a read the store fails is that job's failed
+                    // notification, logged as one, and the sweep goes on to the next job (the remarks).
+                    try
+                    {
+                        var reloaded = _repository.Get(job.Id);
+                        if (reloaded is not null)
+                            NotifyCompleted(reloaded);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Completion notification for bulk job {Job} failed (non-fatal)", job.Id);
+                    }
                 }
             });
         }

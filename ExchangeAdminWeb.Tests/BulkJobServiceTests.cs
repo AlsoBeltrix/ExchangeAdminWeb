@@ -19,6 +19,10 @@ public class BulkJobServiceTests
         public string ModuleId => "Test";
         public int RowsProcessed;
         public int CompletionCalls;
+
+        /// <summary>kd-85. The job each completion hook was given - its id and its status - in the order given.</summary>
+        public readonly List<(string Id, BulkJobStatus Status)> CompletedJobs = new();
+
         public readonly List<string> ScopeIds = new();
         public readonly Guid ScopeMarker;
 
@@ -66,6 +70,8 @@ public class BulkJobServiceTests
         public Task OnJobCompletedAsync(BulkJob job)
         {
             Interlocked.Increment(ref CompletionCalls);
+            lock (CompletedJobs)
+                CompletedJobs.Add((job.Id, job.Status));
             return Task.CompletedTask;
         }
     }
@@ -1180,6 +1186,97 @@ public class BulkJobServiceTests
         // The hook was skipped, the job it is given not having been read: no processor was built for it.
         lock (h.CreatedProcessors)
             Assert.Empty(h.CreatedProcessors);
+    }
+
+    // -------------------------------------------------------------------------
+    // kd-85 (2): the start-up sweep's notifications go on past a read that fails
+    // -------------------------------------------------------------------------
+    // InitializeAsync marks every unfinished job Interrupted and then, off the start-up path, reads each back for its
+    // module's completion hook. The read was outside any try, so the first one the store failed ended the loop: the jobs
+    // after it got no completion mail, and the task's exception was never observed - nothing was logged. Each job's read and
+    // hook now have a try of their own: a read that fails is logged once, as a failed completion notification, and the sweep
+    // goes on to the next job.
+
+    [Fact]
+    public async Task AStartUpSweepReadThatFails_IsANotificationFailure_AndTheNextInterruptedJobIsStillNotified()
+    {
+        var log = new CapturingLogger();
+        using var h = new Harness(log);
+        // Two jobs a restart finds unfinished; j1 is the older, so the sweep reads it back first.
+        h.Repository.Insert(WithSubmitted(h.NewJob("j1", "SS", "Running"), new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc)));
+        h.Repository.Insert(WithSubmitted(h.NewJob("j2", "S"), new DateTime(2026, 1, 1, 10, 1, 0, DateTimeKind.Utc)));
+        // The store takes the sweep's Interrupted write, and fails its read of j1 right after it, once.
+        FailTheSweepsFirstReadOnce(h, log);
+
+        h.Service.InitializeAsync();
+
+        // The notifications run off the start-up path, with no handle to await: wait up to 30 s for a hook to run - j2's, the
+        // only one the sweep can run - and then look.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (HookedJobs(h).Length == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+
+        // j2 was notified, given the job as the sweep read it back: Interrupted. j1 was not, its read having failed, and no
+        // processor was built for it.
+        Assert.Equal(new[] { ("j2", BulkJobStatus.Interrupted) }, HookedJobs(h));
+        lock (h.CreatedProcessors)
+            Assert.Single(h.CreatedProcessors);
+        // Said: the sweep's own line, then the failed read, once, as a notification failure with its own exception.
+        Assert.Collection(log.Entries,
+            said =>
+            {
+                Assert.Equal(LogLevel.Warning, said.Level);
+                Assert.Equal("Reconciled 2 orphaned bulk job(s) to Interrupted on startup", said.Message);
+            },
+            said =>
+            {
+                Assert.Equal(LogLevel.Error, said.Level);
+                Assert.Equal("Completion notification for bulk job j1 failed (non-fatal)", said.Message);
+                Assert.Contains("no such table: bulk_job", Assert.IsType<SqliteException>(said.Exception).Message);
+            });
+        // Both marked Interrupted, as the sweep always has: the failed read changed nothing in the store.
+        Assert.All(new[] { "j1", "j2" }, id =>
+        {
+            var job = h.Repository.Get(id)!;
+            Assert.Equal(BulkJobStatus.Interrupted, job.Status);
+            Assert.Equal("Interrupted by application restart.", job.Message);
+        });
+    }
+
+    // kd-85's stand-in for a store that fails the start-up sweep's first read back: kd-84's, engaged at the sweep's own line
+    // rather than at JobChanged, which the sweep does not raise - it says how many jobs it marked Interrupted once it has,
+    // and before it reads any back. The jobs table is renamed away at that line and renamed back at the next, whatever it
+    // says: so the first read back meets "no such table", and every read after it is made as before.
+    private static void FailTheSweepsFirstReadOnce(Harness h, CapturingLogger log)
+    {
+        var engaged = false;
+        var away = false;
+        log.AfterEachLine = () =>
+        {
+            if (away)
+            {
+                RenameJobsTable(h, "bulk_job_held", "bulk_job");
+                away = false;
+            }
+            else if (!engaged && log.Entries.Last().Message.StartsWith("Reconciled ", StringComparison.Ordinal))
+            {
+                RenameJobsTable(h, "bulk_job", "bulk_job_held");
+                engaged = away = true;
+            }
+        };
+    }
+
+    // The job each completion hook was given, across every processor the harness built, in the order they were built.
+    private static (string Id, BulkJobStatus Status)[] HookedJobs(Harness h)
+    {
+        lock (h.CreatedProcessors)
+        {
+            return h.CreatedProcessors.SelectMany(p =>
+            {
+                lock (p.CompletedJobs)
+                    return p.CompletedJobs.ToArray();
+            }).ToArray();
+        }
     }
 
     private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 5000)
