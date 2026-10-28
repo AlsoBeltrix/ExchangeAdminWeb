@@ -166,16 +166,48 @@ public abstract class ExchangeServiceBase
         }), allowRetry, PoolFailurePolicy.Return, cancellationToken);
     }
 
-    protected static async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null)
+    // kd-58 E7. The caller's cancel ends the wait for one of the throttle's slots - the on-premises server's two, up to two
+    // minutes - at once: no slot taken, nothing to give back. Once admitted, the operation runs and its own steps look at the
+    // token. None, the default - every caller before kd-58 - waits as before.
+    protected static async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null, CancellationToken cancellationToken = default)
     {
         if (throttle != null)
         {
-            if (!await throttle.WaitAsync(TimeSpan.FromMinutes(2)))
+            if (!await throttle.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken))
                 throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
             try { return await operation(); }
             finally { throttle.Release(); }
         }
         return await operation();
+    }
+
+    // kd-58 E7. The runspace an on-premises read opens its session in, opened, with the caller's token looked at before the
+    // open and again once it has opened: a cancel at either point opens no session. The open itself - a local runspace -
+    // runs to its end.
+    protected Runspace OpenOnPremRunspace(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var runspace = CreateOnPremRunspace();
+        try
+        {
+            runspace.Open();
+            cancellationToken.ThrowIfCancellationRequested();
+            return runspace;
+        }
+        catch
+        {
+            runspace.Dispose();
+            throw;
+        }
+    }
+
+    // kd-58 E7. Test seam: the runspace an on-premises read's session is opened in - the default runspace with the Bypass
+    // policy, not yet opened (the shape of the pool's ConnectRunspace, psl-9). No behaviour change.
+    internal virtual Runspace CreateOnPremRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
     }
 
     // -------------------------------------------------------------------------
@@ -567,7 +599,10 @@ public abstract class ExchangeServiceBase
 
     // virtual: a test seam so the on-prem writes can be driven against an in-process runspace
     // (aud-a2d) - the override defines the remote session and the cmdlets locally. No behaviour change.
-    protected virtual void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+    // kd-58 E7: the caller's token is looked at before each attempt, and the pause between attempts waits on it - a cancel
+    // lands between attempts, never inside one: New-PSSession, once sent, runs to its end (its open timeout, ten seconds).
+    // None, the default, connects as before.
+    protected virtual void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
             ? username
@@ -582,6 +617,7 @@ public abstract class ExchangeServiceBase
 
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: before each attempt
             try
             {
                 ps.Commands.Clear();
@@ -613,7 +649,10 @@ public abstract class ExchangeServiceBase
             {
                 _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying", attempt, maxRetries);
                 _operationTrace?.Step("OnPremConnectionRetry", "Warning", backend: "OnPremExchange", details: new Dictionary<string, object?> { ["attempt"] = attempt, ["maxRetries"] = maxRetries });
-                Thread.Sleep(2000 * attempt);
+                // kd-58 E7: the pause waits on the caller's token, so a cancel ends it at once; Thread.Sleep held it to its end.
+                // With no token the handle is never set and the pause is the same two seconds per attempt.
+                if (cancellationToken.WaitHandle.WaitOne(2000 * attempt))
+                    cancellationToken.ThrowIfCancellationRequested();
             }
         }
 
@@ -689,7 +728,9 @@ public abstract class ExchangeServiceBase
     // takes a cancellation. ASSUMPTION, unverified (no live call): on-premises Exchange reports a mailbox with no archive,
     // through remoting, in a shape IsNotFound reads; if not, the check of such a mailbox is Undetermined - visible, never a
     // guess, and one dev check of that error record settles it.
-    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress, CancellationToken cancellationToken = default) // kd-37: the token for its credential read
+    // kd-37: the token for its credential read. kd-58 E7: and for the server's queue, the session's runspace, each connect
+    // attempt and the gaps between the reads; a read already sent finishes, and the session is still removed, with no token.
+    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
         {
@@ -708,17 +749,15 @@ public abstract class ExchangeServiceBase
 
         return await ThrottledAsync(() => Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 E7
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: connected, before the first read
 
                 double mailboxGB = 0;
                 string? mailboxUnreadable;
@@ -733,6 +772,7 @@ public abstract class ExchangeServiceBase
                 }
 
                 _logger.LogInformation("On-prem mailbox size for {Email}: {Size}", emailAddress, mailboxUnreadable ?? $"{mailboxGB} GB");
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: between the reads
 
                 double archiveGB = 0;
                 string? archiveUnreadable = null;
@@ -775,7 +815,7 @@ public abstract class ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle, cancellationToken);
     }
 
     // aud-a23o. One read in the on-premises session: -ErrorAction Stop on the remote command and on Invoke-Command, so a
@@ -791,7 +831,7 @@ public abstract class ExchangeServiceBase
     // aud-a23o. Where a mailbox is, or why that could not be told: a cloud read that fails is reported as such, not as "no
     // cloud mailbox" - under Ignore it was, and on-premises was then asked about a mailbox Exchange Online had not answered
     // for. "Unknown" means both sides answered that they hold no such mailbox.
-    public async Task<string> GetMailboxLocationAsync(string identity, CancellationToken cancellationToken = default) // kd-37: the token for the on-premises read's credential fetch; kd-58 A2: and for the Exchange Online read
+    public async Task<string> GetMailboxLocationAsync(string identity, CancellationToken cancellationToken = default) // kd-37: the token for the on-premises read's credential fetch; kd-58: and for the Exchange Online read (A2) and the rest of the on-premises read (A3)
     {
         bool inTheCloud;
         try
@@ -822,8 +862,9 @@ public abstract class ExchangeServiceBase
     /// </summary>
     /// <param name="cancellationToken">
     /// kd-81. The caller's token, handed to the string form, which gives it to the Exchange Online read - its wait for a pool
-    /// connection, and before its one command (kd-58 A2) - and to the on-premises read's credential fetch (kd-37's seam); the
-    /// throttle and the on-premises session take none. A caller that passes none reads as before.
+    /// connection, and before its one command (kd-58 A2) - and to the on-premises read: its credential fetch (kd-37's seam), its
+    /// wait for the server, its session's runspace, each connect attempt and the gap between its reads (kd-58 A3). A command
+    /// already sent finishes first. A caller that passes none reads as before.
     /// </param>
     public Task<string> GetMailboxLocationAsync(ValidatedMailbox? mailbox, CancellationToken cancellationToken = default) =>
         mailbox is null ? Task.FromResult("Unknown") : GetMailboxLocationAsync(mailbox.Identity, cancellationToken);
@@ -863,23 +904,24 @@ public abstract class ExchangeServiceBase
             throw new InvalidOperationException($"on-premises Exchange could not be asked: {OnPremCredentialsUnavailable}");
         }
 
+        // kd-58 E7: the token for the server's queue, the session's runspace, each connect attempt and the gaps between the
+        // reads; a read already sent finishes, and the session is still removed, with no token.
         return await ThrottledAsync(() => Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken);
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: connected, before the first read
                 if (OnPremRecipientExists(ps, session, "Get-Mailbox", identity))
                     return "OnPrem";
 
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: between the reads
                 if (OnPremRecipientExists(ps, session, "Get-RemoteMailbox", identity))
                     return "Cloud";
 
@@ -894,7 +936,7 @@ public abstract class ExchangeServiceBase
             {
                 RemoveOnPremSession(ps);
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle, cancellationToken);
     }
 
     // aud-a23o. Stop, not SilentlyContinue, which made a read that failed "no such recipient": Exchange's not-found, by

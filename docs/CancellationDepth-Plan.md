@@ -709,14 +709,20 @@ owner's (`.agents/decisions.md` 2026-10-26).
 2. That PowerShell reports `Stopped` (or `Stopping`) in `InvocationStateInfo` after a stop, and `Completed` or `Failed`
    after every normal end, on this host's SDK: documented behaviour, to be confirmed by A1's tests. No pooled call uses
    a local `Select-Object -First` (none was found), which ends a pipeline early without stopping it.
+   **Settled at A1** (a probe on this host's PowerShell 7.6 SDK, recorded in kd-58's A1 section): after a stop the state
+   reads Stopped, its reason a PipelineStoppedException, Stopping reported at once on the stopping thread; a normal end
+   reads Completed. And a synchronous Invoke stopped so throws nothing - no rows, HadErrors set, no error record - so only
+   the pipeline's state tells a stop. The `Select-Object -First` point was not re-checked.
 3. That a stub pipeline blocked inside a .NET call stops at its next statement once `BeginStop` has been called and the
-   call returns - the A1 test technique.
+   call returns - the A1 test technique. **Settled at A1, with a correction**: `BeginStop` queues the stop, so the pipeline
+   stops at a later statement, not necessarily the next; the stand-in read waits, bounded, at statements a stop can land at.
 4. How the Exchange Online module's cmdlets behave under a stop: unknown, and deliberately not relied on.
 5. That a command in flight normally finishes in seconds; one that hangs holds its slot as it does today.
 6. That neither SQLite's busy wait nor a call blocked in the file system can be cut short by any cancellation
    (SQLite's native interrupt is believed not to shorten the busy handler's wait). Not relied on: no interrupt is used.
 7. That xUnit1051 flags every test call to a method that gained an optional token or a token overload; how many such
-   calls exist was not counted.
+   calls exist was not counted. Not exercised by A1-A3: the methods they gave tokens are called from test helpers, not
+   test methods, and none was raised.
 8. That the Room Finder bulk processor needs a narrow way to ask whether a job's cancel was the operator's (the
    persisted cancel flag) - it has none today. The rule is fixed here; the mechanism is the implementer's.
 9. That a late save's message appears on the next module's page when its handler completes - aud-a66's existing
@@ -764,7 +770,7 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   pipeline's state tells a stop. The plan's "nothing in the app stops a pipeline" holds for Exchange pipelines; one
   directory runner stops its own AD read, named as the tripwire's one exemption. No module behaviour changes in this slice;
   the base bump is owed (C1).
-- 2026-10-28, **A2, the base's cloud side** - `feat/cancellation-depth`, the commit that adds this line: E3
+- 2026-10-28, **A2, the base's cloud side** - `feat/cancellation-depth` `d3cfcfa2`: E3
   (`RunPooledReadAsync`, the tracker's token, the four helpers' look), E4 (`RunAsync`, `RunPooledQueryAsync`: the borrow
   only), the read-only tripwire, the tokens on `HasCloudMailboxAsync` and both `GetMailboxLocationAsync` forms, Recipient
   Lookup's Exchange Online read, and 3.8a's shared leave-prompt wording, pinned per page. Recipient Lookup no longer calls
@@ -773,3 +779,13 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   Permissions take patch bumps here, beside Recipient Lookup's. One prompt wording serves every page, so on a page whose
   work takes no token its first case still over-promises, as the old prompt did (the record says where). The base bump
   stays owed (C1).
+- 2026-10-28, **A3, the base's on-premises steps** - `feat/cancellation-depth`, the commit that adds this line: E7 for the
+  three on-premises reads the shared surface carries - the base's size read, the base's location read (the permission
+  pages') and Recipient Lookup's own recipient read (the accuracy plan's S1 replaced the base location read there): the
+  throttle's wait, a look before and after the runspace opens (`OpenOnPremRunspace`, over a new runspace seam),
+  `ConnectOnPrem`'s look before each attempt and its pause waited on the token, and a look before each read; the ten test
+  overrides take the parameter. Recipient Lookup, Mailbox and Calendar Permissions take patch bumps, as in A2. The
+  permission services' and Message Trace's own on-premises calls pass nothing until A6, A7 and A10. Assumptions 2, 3 and 7
+  are annotated in section 13. Left for the supervisor (kd-58's record): the permission changes' own wait for a pool
+  connection, part of A4/A5 that kd-81 could not reach, can now take the token through E4 - unassigned. The base bump stays
+  owed (C1).

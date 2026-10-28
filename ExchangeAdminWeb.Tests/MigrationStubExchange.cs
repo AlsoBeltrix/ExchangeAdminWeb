@@ -326,7 +326,7 @@ internal sealed class MigrationStubExchange : IDisposable
         internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
 
         // aud-a23o. The on-premises seams: no Delinea, no remote session.
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default) =>
             exchange.DefineOnPremSession(ps);
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
@@ -345,7 +345,7 @@ internal sealed class MigrationStubExchange : IDisposable
     internal sealed class StubRecipientLookupService(MigrationStubExchange exchange, bool connects, ModuleCredentialService? credentials)
         : RecipientLookupService(exchange.Pool(connects), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), credentials!, exchange._trace)
     {
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default) =>
             exchange.DefineOnPremSession(ps);
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
@@ -385,7 +385,8 @@ internal sealed class MigrationStubExchange : IDisposable
     /// that runs the remote script locally, a Remove-PSSession, and the on-premises Get-MailboxStatistics, Get-Mailbox,
     /// Get-RemoteMailbox and (RecipientLookupAccuracy S1) Get-Recipient (<see cref="OnPremStubs"/>), logged as "OnPrem
     /// &lt;cmdlet&gt;" and failing as Failures["OnPrem &lt;cmdlet&gt;[ -Archive]"] says; then a marker session.
-    /// Failures["OnPrem Connect"] throws instead, as a session that cannot be opened.
+    /// Failures["OnPrem Connect"] throws instead, as a session that cannot be opened. kd-58: Behaviour["Cancel OnPrem Connect"],
+    /// a CancellationTokenSource, is cancelled once the session is open - the operator's cancel arriving as the connect ends.
     /// </summary>
     internal void DefineOnPremSession(PowerShell ps)
     {
@@ -418,6 +419,8 @@ internal sealed class MigrationStubExchange : IDisposable
         if (init.HadErrors)
             throw new InvalidOperationException("the on-premises stand-ins could not be defined: " + string.Join(" | ", init.Streams.Error.Select(e => e.ToString())));
         proxy.SetVariable("onpremSession", "stand-in-session");
+        if (Behaviour["Cancel OnPrem Connect"] is CancellationTokenSource cancel)
+            cancel.Cancel();
     }
 
     // aud-a23o. On-premises Exchange. Get-MailboxStatistics reports Behaviour["OnPremMailboxSize"] / ["OnPremArchiveSize"] as

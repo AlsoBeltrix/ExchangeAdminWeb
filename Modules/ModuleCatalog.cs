@@ -194,7 +194,10 @@ public sealed class ModuleCatalog
             // through the shared read): a cancel while it waits for a free Exchange Online connection, or before its read is
             // sent, ends the change at once - "Cancelled by the operator before the change was sent. Nothing was written." -
             // where it waited for a connection and read first. The leave prompt states what a cancel does and does not stop.
-            Version = "1.6.6",
+            // 1.6.7: and the location read's on-premises half (kd-58, CancellationDepth A3, through the shared read): a cancel
+            // while it waits for the on-premises server, as its session opens, between connect attempts or between its two
+            // reads ends the change there, nothing written. The on-premises change itself is unchanged until its own slice.
+            Version = "1.6.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -255,7 +258,10 @@ public sealed class ModuleCatalog
             // 1.4.6: as Mailbox Permissions 1.6.6 - the location read's Exchange Online half takes the operator's cancel too
             // (kd-58, CancellationDepth A2): a cancel while it waits for a connection, or before its read is sent, ends the
             // change at once, nothing written. The leave prompt states what a cancel does and does not stop.
-            Version = "1.4.6",
+            // 1.4.7: as Mailbox Permissions 1.6.7 - and the location read's on-premises half (kd-58, CancellationDepth A3): a
+            // cancel while it waits for the on-premises server, as its session opens, between connect attempts or between its
+            // reads ends the change there, nothing written. The on-premises change itself is unchanged until its own slice.
+            Version = "1.4.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -628,7 +634,11 @@ public sealed class ModuleCatalog
             // for a free Exchange Online connection, or between its reads, ends the lookup there - "Cancelled by the operator"
             // - where it ran every read first; a read already sent finishes first. The leave prompt states what a cancel does
             // and does not stop.
-            Version = "1.8.1",
+            // 1.8.2: the on-premises reads take the operator's cancel too (kd-58, CancellationDepth A3): a cancel while a read
+            // waits for the on-premises server (up to two minutes), as its session opens, between connect attempts or between
+            // its reads ends the lookup there - "Cancelled by the operator" - where it waited and connected first; a read
+            // already sent finishes first.
+            Version = "1.8.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

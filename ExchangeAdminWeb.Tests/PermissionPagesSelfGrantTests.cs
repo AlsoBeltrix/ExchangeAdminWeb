@@ -274,7 +274,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
         {
             if (connectFailure is not null)
                 throw connectFailure;
@@ -291,7 +291,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
             Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
         {
             if (connectFailure is not null)
                 throw connectFailure;

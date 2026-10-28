@@ -84,8 +84,9 @@ internal static class PermissionChangeFailure
 
     /// <summary>
     /// kd-81. <see cref="CancelledBeforeItWasSent(Exception, CancellationToken)"/> for a single change thrown at
-    /// <paramref name="step"/>: also a cancellation at <see cref="BeforeTheWrite"/> - the location read's, whose on-premises
-    /// half takes the activity's token (kd-37's seam) - with that token cancelled. Nothing can have been written at that step,
+    /// <paramref name="step"/>: also a cancellation at <see cref="BeforeTheWrite"/> - the location read's, which takes the
+    /// activity's token at its on-premises credential fetch (kd-37's seam) and, since kd-58 A2 and A3, at its Exchange Online
+    /// read and the rest of its on-premises read - with that token cancelled. Nothing can have been written at that step,
     /// so it is the operator's cancel before anything was sent. Any other throw is a failure in its own words.
     /// </summary>
     internal static bool CancelledBeforeItWasSent(Exception ex, string step, CancellationToken activity) =>

@@ -132,7 +132,8 @@ retention holds are left out.
 - **Audit:** each lookup writes a `Lookup` row: `target` is what was typed, and `resolvedAddress` the primary address it
   found. A cancelled lookup is filed `Cancelled`, in the words "Cancelled by the operator".
 - **Leaving the page** during a lookup cancels it at its next step: while it waits for a free Exchange Online connection,
-  or between its Exchange Online reads. A read already sent to Exchange is never interrupted; it finishes first.
+  or between its Exchange Online reads; on-premises, while it waits for the server, as its session opens, between connect
+  attempts, or between its reads. A read already sent to Exchange is never interrupted; it finishes first.
 - **Requires:** the Exchange Online connection; for on-premises mailboxes, `OnPremExchange:ServerUri` and the module's
   own on-premises Exchange credential (`DelineaSecretId`). Without them an on-premises mailbox reads "Could not be
   determined", saying why.
@@ -915,7 +916,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 
 - **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled. A call whose caller has cancelled - the operator leaving the page - stops waiting for a free connection (up to two minutes) or for its turn to connect (up to ninety seconds) at once, and gives back a connection it has not used yet. No command already sent to Exchange is ever stopped: it runs to its end. A connection whose command was ever stopped is discarded, never lent to the next caller.
 - **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
-- **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff).
+- **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff). The on-premises reads that take the operator's cancel - Recipient Lookup's, and the permission pages' mailbox location read - stop waiting for one of the two (up to two minutes) at once, and look at the cancel again as the session opens, before each connect attempt, during the pause between attempts and between their reads; a connect attempt or a command already sent runs to its end, and the session is still removed.
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.
 - **Leaving a page while work runs:** the app asks first, and OK cancels the work. The prompt says what that does: work still waiting its turn is cancelled; a command already sent to Exchange or the directory finishes and is recorded, and anything already changed stays changed; a bulk job is not affected, because it never depended on the page.
 - **Audit + Operation Trace:** Append-only JSONL files rotated daily/weekly/monthly; every audit transaction includes a correlated `operationId` plus structured `operation.*` records for SIEM ingestion.
