@@ -3445,13 +3445,15 @@ public static class ClickGateRegistry
     /// <b>TWO SCOPES, ONE PREDICATE - and the one predicate is the finding, not a shortfall.</b>
     /// Revision 1 falsification 4 named this page as one of the two where a single page-wide
     /// predicate is provably wrong, and that half is confirmed against the file: the Bulk Jobs panel
-    /// is driven by BulkJobService.JobChanged, whose handler OnJobChanged calls RefreshJobs off the
-    /// runner's thread and replaces activeJobs, recentJobs, finderJob, typeJob, finderRows and
+    /// is driven by BulkJobService.JobChanged, whose handler OnJobChanged calls LoadJobsFromStore off
+    /// the runner's thread and replaces activeJobs, recentJobs, finderJob, typeJob, finderRows and
     /// typeRows at moments no click produced and while IsBusy is false. The form predicate has no
     /// authority there. What the file ALSO shows, and what the plan did not predict, is that the
     /// second scope has nothing to build a predicate OUT of: its three handlers - ToggleJobDetails,
-    /// CancelJob and RemoveJob - are synchronous, await nothing and raise no flag, so there is no
-    /// in-flight state for a predicate to read. A predicate cannot gate work a server-side callback
+    /// CancelJob and RemoveJob - raise no flag. Synchronous at the conversion, all three are async
+    /// Task now (ToggleJobDetails' yield, kd-27's access re-check, RemoveJob's reload), and none of
+    /// them sets anything a predicate could read, so there is no in-flight state for a predicate to
+    /// read. A predicate cannot gate work a server-side callback
     /// initiates, because OnJobChanged is not a click. Registering a second PredicateScope would
     /// mean inventing a member that is always false: it would need a flag with no setter (failing
     /// <see cref="ClickGateTests.EveryRegisteredFlagIsLoweredInAFinally"/>) or no flags at all, and
@@ -3483,10 +3485,12 @@ public static class ClickGateRegistry
     /// papering over.</b> <see cref="PageGateEntry.PostAwaitLiveReads"/> is the field for "a value
     /// another control can change while this handler is suspended", and
     /// <see cref="ClickGateTests.NoHandlerReadsARegisteredFieldLiveAfterItsFirstAwait"/> asserts it
-    /// by requiring a first await and scanning below it. RemoveJob has no await at all - it cannot,
-    /// the whole point is that the staleness is between render and click rather than across a
-    /// suspension - so registering the obligation there fails the assertion's own "no longer awaits
-    /// anything" check instead of protecting anything. The paragraph above is therefore prose, and
+    /// by requiring a first await and scanning below it. RemoveJob had none at the conversion. It
+    /// awaits now - kd-27's access re-check first, the reload last - but the staleness is still
+    /// between render and click, not across one of its suspensions, and neither of the obligation's
+    /// two shapes (a local captured from the field at entry, or one published from an await) fits a
+    /// handler that takes the rendered row as its parameter, so registering it there fails on the
+    /// correct page instead of protecting anything. The paragraph above is therefore prose, and
     /// prose is unenforced: a future edit reverting RemoveJob to take an id and re-look-up the row
     /// would pass this whole suite. The page's own comment on the method carries the same warning,
     /// which is two unenforced copies rather than one enforced one.
@@ -3541,7 +3545,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1808,
+        ExpectedLineCount = 1844,
 
         Predicates =
         [

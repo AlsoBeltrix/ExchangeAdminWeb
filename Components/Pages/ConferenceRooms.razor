@@ -644,10 +644,11 @@
     // tab, the Room Type tab, and every control on them.
     //
     // It deliberately does NOT speak for the Bulk Jobs panel. That panel's collections are replaced
-    // by RefreshJobs from BulkJobService.JobChanged (OnJobChanged), off the runner's thread, at
-    // moments no click produced and while this predicate is false; and its three handlers
-    // (ToggleJobDetails, CancelJob, RemoveJob) are synchronous and raise nothing, so there is no
-    // in-flight state there for a predicate to read. A predicate cannot gate work a server-side
+    // by LoadJobsFromStore from BulkJobService.JobChanged (OnJobChanged), off the runner's thread,
+    // at moments no click produced and while this predicate is false; and its three handlers
+    // (ToggleJobDetails, CancelJob, RemoveJob) raise nothing - async now (a yield, kd-27's access
+    // re-check, the reload), they still set no flag - so there is no in-flight state there for a
+    // predicate to read. A predicate cannot gate work a server-side
     // callback initiates. The panel's controls are registered exempt in ClickGateRegistry with the
     // refusal each one actually needs, and the hazard there is row identity, not busyness: a
     // control must act on the row that was rendered, never on a lookup into a collection the
@@ -1302,7 +1303,8 @@
         // kd-74. Completed from a LOCAL, never from `result`, as SetupSingleRoom is: the banner's dismiss is wired
         // straight at () => result = null and stays clickable while this handler is suspended, and the success path
         // awaits RefreshJobs after publishing its result - so a dismiss there ended the bar as not succeeded for a
-        // job that had been submitted. Every assignment to `result` below writes the local in the same statement.
+        // job that had been submitted. Every assignment to `result` below writes the local in the same statement, but
+        // one: kd-80's note that the job list could not be refreshed is the banner's alone, as the bar is the submit's.
         RoomOperationResult? completed = null;
 
         try
@@ -1350,7 +1352,25 @@
                 Success = true,
                 Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
             };
-            await RefreshJobs();
+
+            // kd-80. The job is queued and nothing below undoes that, so nothing below may show or file the submit as
+            // failed. The reload sat bare in the try that covers the queue, whose catch puts the exception in the banner
+            // and files a Failed "(bulk)" row: a jobs store failing this read just after the write had the operator told
+            // the submit failed while the job ran, and one who submitted the file again queued it twice. A reload failure
+            // is logged and said beside the success, and the bar still ends on the submit's own outcome, `completed`.
+            try
+            {
+                await RefreshJobs();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Bulk job {JobId} was queued; the job list could not be refreshed", jobId);
+                result = new RoomOperationResult
+                {
+                    Success = true,
+                    Message = $"{completed.Message} The job was queued; the job list could not be refreshed."
+                };
+            }
         }
         catch (Exception ex)
         {
@@ -1623,7 +1643,8 @@
 
         // kd-74. Completed from a LOCAL, never from `result`, as ApplyFinderCsv is and for the same reason: a dismiss
         // while RefreshJobs is awaited, after the success is published, ended the bar as not succeeded for a job
-        // that had been submitted. Every assignment to `result` below writes the local in the same statement.
+        // that had been submitted. Every assignment to `result` below writes the local in the same statement, but
+        // kd-80's note, as in ApplyFinderCsv.
         RoomOperationResult? completed = null;
 
         try
@@ -1654,7 +1675,7 @@
                 return;
             }
 
-            EnqueueConferenceRoomJob(
+            var jobId = EnqueueConferenceRoomJob(
                 ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.TypeJobType,
                 new ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload
                 {
@@ -1670,7 +1691,22 @@
                 Success = true,
                 Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
             };
-            await RefreshJobs();
+
+            // kd-80, as in ApplyFinderCsv: the job is queued, so a reload failure is logged and said beside the success,
+            // never shown or filed as a failed submit, and the bar still ends on the submit's own outcome, `completed`.
+            try
+            {
+                await RefreshJobs();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Bulk job {JobId} was queued; the job list could not be refreshed", jobId);
+                result = new RoomOperationResult
+                {
+                    Success = true,
+                    Message = $"{completed.Message} The job was queued; the job list could not be refreshed."
+                };
+            }
         }
         catch (Exception ex)
         {
