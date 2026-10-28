@@ -8,7 +8,7 @@ about 151 calls `Get-ActiveBulkJobs` (which runs the app's `db active-jobs` tool
 so a plan-only cutover or promotion opens the real jobs databases (read-only, but a real read - Invariant 4).
 **Status**: Fixed on branch, verified; closes on guard proof - the single review dispatch is spent
 **Branch**: `fix/review-findings` (worktree `D:\source\ExchangeAdminWeb-wt\review-findings`, from master `ec5a19f7`)
-**Commit**: one per sub-item - each is the commit that adds its section below (`git log -- .agents/review/findings/cdt-60.md`)
+**Commit**: one per sub-item - (1) `4e4afef6`, (2) `42f8e959`; the branch-tip gates below in a record-only commit after them
 **Reviewer**: codex-commercial / gpt-6-astra / max / read-only; session 01a18016-55c8-7262-bdc3-d3d86c927988; 2026-10-27
 
 ## Evidence
@@ -123,3 +123,30 @@ installer's suites among them - 531 passed, 0 failed, 0 skipped (526 at the base
 PowerShell 5.1.20348.5756 and pwsh 7.6.9 (scratch `bin/rf-scratch/probe-cdt60b-51.ps1`): the module imports, a plan over a real
 folder and over a drive the host lacks returns 0 with no throw; the module and its tests parse with 0 errors. CRLF, ASCII.
 No version bump: ops scripts.
+
+## Branch-tip gates (fix/review-findings)
+
+For kd-75, kd-76, kd-77 and cdt-60. On the branch's final code, `42f8e959` (cdt-60 (2), the last code commit; the commit after
+it changes records only), each gate run alone, nothing edited during the run (2026-10-27):
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release`: exit 0, 0 errors, 19 warnings - the baseline set (AccountLockoutRemediationService
+  526, Comms10kApprovedSetTests 397/398, GroupManagement x8, HeaderAnalysisService 696/708/720, MessageTrace 617 CS0414,
+  MigrationReportExportProcessor 104, RiskyUsers 476 CS0649, SelfServiceGroups 708/949), none on a line this branch wrote.
+- `dotnet test ExchangeAdminWeb.slnx -- xUnit.MaxParallelThreads=4`: exit 0, 7,533 passed / 0 failed / 0 skipped - the 7,524
+  of the reviewed master and this branch's 9 (kd-75 2, kd-76 5, kd-77 2).
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`: exit 0. `git diff --check HEAD`: clean.
+  `pwsh -NoProfile -File tools/Test-AsciiOnly.ps1`: passed.
+- `Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error` (1.25.0): 0.
+- `Invoke-Pester tests/ps` (6.2.0, pwsh 7.6.9): 531 passed, 0 failed, 0 skipped - the 526 of the reviewed master and 5 (cdt-60
+  (1) 3, (2) 2); deploy.ps1's, the promotion's, the cutover's and the installer's suites among them.
+- The six PowerShell files changed parse under Windows PowerShell 5.1.20348.5756 with 0 errors.
+
+Mutants: 12 across the five commits (kd-75 3, kd-76 3, kd-77 2, cdt-60 (1) 3, (2) 1), each caught by a test written for it,
+every restore byte-exact; the committed files' MD5s match the fixed-file MD5s in each section.
+
+Versions moved: Conference Rooms 2.19.4 -> 2.19.5 (kd-75), Blocked Senders 1.5.2 -> 1.5.3 (kd-76), Admin Bulk Jobs 1.2.0 ->
+1.2.1 (kd-77). A base bump is owed for kd-77 - the bulk job store and service are shared infrastructure - and is the
+supervisor's, as for kd-57 and kd-62. cdt-60 changes ops scripts only.
+
+Not run: nothing against Exchange, a vault, a directory or IIS; no deploy, cutover or promotion; no browser (every handler was
+driven through its compiled code). Scratch harnesses in `bin/rf-scratch/` (git-ignored).
