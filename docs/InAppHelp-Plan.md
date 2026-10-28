@@ -1,6 +1,6 @@
 # In-app help: hover help on controls, a Help panel on every page, help for every setting
 
-Status: **Draft, 2026-10-28 - not approved; nothing below is authorised.** Sequenced by the owner
+Status: **Approved 2026-10-28, to start after 2026-10-31 (owner: "approved to start after 10/31"). The standing rule that a functionality change carries its help change is in the Constitution (Code Change Discipline) and Known Failure Class 5.**
 after the current changes are in production ("that's next after the current changes are in prod").
 Owner: Michael
 Requested: 2026-10-28 (verbatim in section 1).

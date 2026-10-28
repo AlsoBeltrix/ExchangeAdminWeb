@@ -129,6 +129,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 - When deleting dead code, verify there are no real runtime references.
 - Use structured parsers/APIs for structured data.
 - Avoid string-built shell commands for filesystem operations.
+- **A change to what a page or setting does changes its help in the same slice** (owner ruling 2026-10-28, `.agents/decisions.md`): the hover tips, page notes and examples the in-app help system (`docs/InAppHelp-Plan.md`) shows for that page or setting, and the README text that points at them. Help text is part of the behaviour, not documentation written afterwards. No test fails a module for lacking help; the reviewer checks the help moved with the behaviour.
 
 ## Review Packet Requirement
 

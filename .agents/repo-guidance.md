@@ -181,6 +181,10 @@ only the new module's own version is set (Constitution "Deployment And Versionin
      the room mailbox it writes stays.
 4. **Stale references** — never trust remembered file contents or doc claims. Re-read
    files before editing; verify doc statements against current code.
+5. **Help left behind** — a change to what a page or setting does must change its in-app
+   help (hover tips, page notes, examples) and the README pointer in the same slice
+   (Constitution, Code Change Discipline; owner ruling 2026-10-28). Not a tripwire: the
+   reviewer checks every diff that touches a page or a setting for the help that goes with it.
 
 ## Earned Practices
 
