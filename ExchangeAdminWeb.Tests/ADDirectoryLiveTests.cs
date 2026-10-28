@@ -21,6 +21,18 @@ namespace ExchangeAdminWeb.Tests;
 /// 2. Never let a conditional live test be the only coverage of a rule. On CI it does not run at
 ///    all. These complement the pure tests; they never replace them.
 /// </summary>
+/// <remarks>
+/// OPT-IN (psl-10 (5)). Every test here reads the live directory wherever the ActiveDirectory module loads, so the
+/// class carries <c>[Trait("Category", "LiveDirectory")]</c>, and the test project's run settings
+/// (<c>ExchangeAdminWeb.Tests.runsettings</c>) filter that trait out of every run: the default
+/// <c>dotnet test ExchangeAdminWeb.slnx</c>, the mandated gate and CI's run never reach it. Run it by hand, on a
+/// domain-joined host with RSAT, from the repository root, with
+/// <code>dotnet test ExchangeAdminWeb.slnx -s ExchangeAdminWeb.Tests/LiveDirectory.runsettings</code>
+/// which runs this class and <see cref="AdDirectoryForestSearchLiveTests"/>, and nothing else: a settings file named on
+/// the command line replaces the project's. A <c>--filter</c> cannot do it, because the run joins it to the project's
+/// filter with AND, which then matches no test.
+/// </remarks>
+[Trait("Category", "LiveDirectory")]
 [Collection(LiveDirectoryCollection.Name)]
 public class ADDirectoryLiveTests
 {

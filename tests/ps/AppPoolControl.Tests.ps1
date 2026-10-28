@@ -411,7 +411,7 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
         # The script runs its promotion at the top level, so it cannot be dot-sourced. Its stop
         # step, and the helpers that step calls, are lifted out of the file unchanged and
         # defined here, so the tests below drive the code that ships.
-        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Stop-AppPoolChecked') {
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Fail', 'Write-AppPoolSharingReport', 'Stop-AppPoolChecked') {
             . ([scriptblock]::Create((Get-PromoteFunction $name).Extent.Text))
         }
 
@@ -439,7 +439,7 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
         # probe was the one consulted.
         function New-PoolProbe {
             [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
-                Justification = 'Exists, State and Serving are used inside GetNewClosure blocks; the analyzer cannot see into them')]
+                Justification = 'Exists, State, Serving and Others are used inside GetNewClosure blocks; the analyzer cannot see into them')]
             param(
                 [scriptblock]$Exists,
                 [scriptblock]$State,
@@ -448,10 +448,18 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
                 [scriptblock]$Serving = {
                     $script:promoteEvents.Add('applications probe')
                     [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
+                },
+                # cdt-58: what IIS reports to the sharing report before the stop. By default prod alone,
+                # which is at the folder and so no OTHER application. Its own event name: the tests
+                # above take IndexOf('applications probe') and it must keep meaning the folder check.
+                [scriptblock]$Others = {
+                    $script:promoteEvents.Add('other-applications probe')
+                    [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
                 }
             )
             @{
                 'Assert-AppPoolServesPath:ApplicationsProbe' = { $Serving }.GetNewClosure()
+                'Get-AppPoolOtherApplication:ApplicationsProbe' = { $Others }.GetNewClosure()
                 'Stop-AppPoolVerified:ExistsProbe'    = { $Exists }.GetNewClosure()
                 'Stop-AppPoolVerified:StopAction'     = { { param($PoolName) $script:promoteEvents.Add("verified stop: $PoolName") } }
                 'Stop-AppPoolVerified:StateProbe'     = { $State }.GetNewClosure()
@@ -524,6 +532,131 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
             $script:promoteEvents | Should -Contain 'jobs: X:\prod\config X:\dev PlanOnly=True'
             @($script:promoteEvents | Where-Object { $_ -like 'plan: Stop-AppPoolVerified -Name aud-a38b-prod*' }).Count | Should -Be 1
+        }
+    }
+
+    Context 'cdt-58: what else the pool serves is named, and its jobs read, before the stop' {
+
+        # The checks before the stop looked only at prod: its jobs, and the IIS nodes at or inside the
+        # prod folder. An application the same pool serves from elsewhere went down with it unannounced,
+        # and its bulk jobs were never read.
+
+        BeforeAll {
+            # A drive letter this host does not have, so that an application IIS still names on it can be
+            # listed. Join-Path throws on such a drive (checked in the test that uses it).
+            $inUse = @([System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() })
+            $inUse += @(Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name.ToUpperInvariant() })
+            $script:Cdt58MissingDrive = @('Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y', 'Z', 'J', 'K', 'L', 'M', 'N', 'O', 'P' | Where-Object { $inUse -notcontains $_ })[0]
+        }
+
+        BeforeEach {
+            # Every line the lifted functions print, in order with the stand-ins' events. Defined in the
+            # test's own scope, so it goes with the test.
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:promoteEvents.Add("said: $Object") }
+        }
+
+        It 'names every other application the pool serves, reads the jobs of each whose folder is on disk, and only then stops' {
+            $reports = Join-Path $TestDrive 'reports'
+            New-Item -ItemType Directory -Path $reports -Force | Out-Null
+            $gone = Join-Path $TestDrive 'gone'
+            $script:Cdt58MissingDrive | Should -Not -BeNullOrEmpty -Because 'the test needs a drive letter this host does not have'
+            $lost = "$($script:Cdt58MissingDrive):\lost"
+            { Join-Path $lost 'config' -ErrorAction Stop } | Should -Throw -Because "the drive '$($script:Cdt58MissingDrive):' does not exist here, which is the case the on-disk guard is for"
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' } -Others {
+                $script:promoteEvents.Add('other-applications probe')
+                [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
+                [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'AUD-A38B-PROD'; PhysicalPath = $reports }
+                [pscustomobject]@{ Location = 'Other/'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = '' }
+                [pscustomobject]@{ Location = 'Other/gone'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = $gone }
+                [pscustomobject]@{ Location = 'Other/lost'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = $lost }
+                [pscustomobject]@{ Location = 'Web/elsewhere'; ApplicationPool = 'OtherPool'; PhysicalPath = $reports }
+            }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
+
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *  !  *' }) |
+                Should -Be @("said:   !  App pool 'aud-a38b-prod' also serves 4 other IIS application(s), which stop with it: Web/reports with its files at '$reports'; Other/ with its files at ''; Other/gone with its files at '$gone'; Other/lost with its files at '$lost'.") -Because 'prod is at the folder, and the other pool''s application stops with its own pool'
+            @($script:promoteEvents | Where-Object { $_ -like 'jobs: *' }) |
+                Should -Be @("jobs: $reports\config X:\dev PlanOnly=False", 'jobs: X:\prod\config X:\dev PlanOnly=False') -Because 'the other application with a folder on disk is read from its own config folder with the build being promoted, before prod; one with no folder, a folder that is gone or a drive that is not there holds no jobs database'
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *Active bulk jobs of IIS application*' }) |
+                Should -Be @("said:        Active bulk jobs of IIS application Web/reports, with its files at '$reports', which stops with the pool:")
+            $report = $script:promoteEvents.IndexOf('other-applications probe')
+            $report | Should -BeGreaterOrEqual 0 -Because "the test's probe is the one the report consulted"
+            $script:promoteEvents.IndexOf("jobs: $reports\config X:\dev PlanOnly=False") | Should -BeGreaterThan $report
+            $script:promoteEvents.IndexOf('applications probe') | Should -BeGreaterThan $script:promoteEvents.IndexOf('jobs: X:\prod\config X:\dev PlanOnly=False')
+            $script:promoteEvents.IndexOf('verified stop: aud-a38b-prod') | Should -BeGreaterThan $script:promoteEvents.IndexOf('applications probe') -Because 'the operator is told what the stop takes down before it is stopped'
+        }
+
+        It 'says so when the pool serves nothing else, and reads only prod''s jobs' {
+            Set-Variable -Name Apply -Value $true
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
+
+            $script:promoteEvents | Should -Contain 'other-applications probe'
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *serves*' }) |
+                Should -Be @("said:        App pool 'aud-a38b-prod' serves no IIS application other than prod at 'X:\prod': stopping it stops nothing else.")
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *  !  *' }) | Should -BeNullOrEmpty -Because 'nothing else stops, so there is nothing to warn about'
+            @($script:promoteEvents | Where-Object { $_ -like 'jobs: *' }) | Should -Be @('jobs: X:\prod\config X:\dev PlanOnly=False')
+            $script:promoteEvents | Should -Contain 'verified stop: aud-a38b-prod'
+        }
+
+        It 'warns, and never refuses, when the listing cannot be read; the folder check reading the same listing refuses before the stop' {
+            Set-Variable -Name Apply -Value $true
+            $expected = "said:   !  Stopping app pool 'aud-a38b-prod' may stop other IIS applications too, and their active bulk jobs are not read: Cannot read the IIS sites and applications, so the applications app pool 'aud-a38b-prod' serves besides the one at 'X:\prod' cannot be listed: Access is denied"
+
+            # The report's read alone failing: a warning, and the promotion goes on to the stop.
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' } -Others { $script:promoteEvents.Add('other-applications probe'); throw 'Access is denied' }
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod' } | Should -Not -Throw
+            $script:promoteEvents | Should -Contain 'other-applications probe'
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *may stop other IIS applications too*' }) | Should -Be @($expected)
+            $script:promoteEvents | Should -Contain 'verified stop: aud-a38b-prod'
+
+            # IIS unreadable, so the folder check cannot read it either: that check refuses, and nothing is stopped.
+            $script:promoteEvents.Clear()
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' } `
+                -Serving { $script:promoteEvents.Add('applications probe'); throw 'Access is denied' } `
+                -Others { $script:promoteEvents.Add('other-applications probe'); throw 'Access is denied' }
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod' } |
+                Should -Throw -ExpectedMessage "Cannot read the IIS sites and applications, so it cannot be confirmed that app pool 'aud-a38b-prod' is what serves 'X:\prod': Access is denied"
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *may stop other IIS applications too*' }) | Should -Be @($expected)
+            $script:promoteEvents | Should -Contain 'applications probe'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
+        }
+
+        It 'in a dry run prints the plan line first and reads nothing from IIS' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
+
+            $script:promoteEvents | Should -Not -Contain 'other-applications probe' -Because "this script's dry run reads nothing from IIS"
+            @($script:promoteEvents | Where-Object { $_ -like 'said: *' }) | Should -BeNullOrEmpty
+            $plans = @($script:promoteEvents | Where-Object { $_ -like 'plan: *' })
+            $plans[0] | Should -BeExactly 'plan: Get-AppPoolOtherApplication -Name aud-a38b-prod -PhysicalPath X:\prod (name the IIS applications this pool serves besides prod, which stop with it, and read their active bulk jobs)'
+            $plans[1] | Should -BeLike 'plan: Assert-AppPoolServesPath -Name aud-a38b-prod *'
+        }
+
+        It 'reports once, straight after the step line of the apply path, before the jobs, the folder check and the stop (AST)' {
+            $stop = Get-PromoteFunction 'Stop-AppPoolChecked'
+            $reports = @(Get-PromoteCommand 'Write-AppPoolSharingReport')
+            $reports.Count | Should -Be 1 -Because 'the promotion reports once, in its one stop step'
+            $reports[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath'
+            $statements = @($stop.Body.EndBlock.Statements)
+            $at = [array]::IndexOf($statements, $reports[0].Parent)
+            $at | Should -BeGreaterThan 0 -Because 'the call is a statement of the stop step itself, not of a branch or a block'
+            $statements[$at - 1].Extent.Text | Should -BeExactly 'Write-Step "Stopping prod app pool: $Name"'
+            $after = @($statements | Select-Object -Skip ($at + 1) | ForEach-Object { $_.Extent.Text }) -join "`n"
+            foreach ($later in 'Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null', '$null = Assert-AppPoolServesPath -Name $Name', '$poolState = Stop-AppPoolVerified -Name $Name') {
+                $after | Should -Match ([regex]::Escape($later)) -Because 'the report comes before it'
+            }
+            $helper = @(Get-PromoteCommand 'Get-AppPoolOtherApplication')
+            $helper.Count | Should -Be 1 -Because 'the report is the only caller, and it asks the shared module'
+            $sharing = Get-PromoteFunction 'Write-AppPoolSharingReport'
+            $helper[0].Extent.StartOffset | Should -BeGreaterThan $sharing.Extent.StartOffset
+            $helper[0].Extent.EndOffset | Should -BeLessThan $sharing.Extent.EndOffset
         }
     }
 
