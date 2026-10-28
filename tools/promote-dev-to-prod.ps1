@@ -215,6 +215,45 @@ function Set-AppsettingsPathBase {
     }
 }
 
+function Write-AppPoolSharingReport {
+    # cdt-58, the cdt-54 report for the promotion. Stopping a pool stops every application it serves,
+    # and the checks before the stop below look only at prod: its jobs, and the IIS nodes at or inside
+    # the prod folder. Another application under the same pool went down with it unannounced, and its
+    # bulk jobs were never read. So name every other application the pool serves, and read the bulk
+    # jobs of each. A warning, never a refusal: tools\JobStateWarning.psm1 records the owner's policy
+    # for what a recycle interrupts - warn, do not hard-block - and nothing of theirs is replaced, since
+    # a node inside the prod folder is refused before the stop whatever its pool (aud-a38i). An
+    # unreadable IIS listing is a warning here: the folder check after this reads the same listing,
+    # and refuses it, before the stop.
+    # A folder that is not on disk is not read: it holds no jobs database, and Join-Path throws on a
+    # drive that does not exist, which would turn this warning into a refusal.
+    param(
+        [string]$Name,
+        [string]$PublishPath,
+        [string]$AppPath
+    )
+
+    try {
+        $others = @(Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath)
+    } catch {
+        Write-Warn "Stopping app pool '$Name' may stop other IIS applications too, and their active bulk jobs are not read: $($_.Exception.Message)"
+        return
+    }
+    if ($others.Count -eq 0) {
+        Write-Host "       App pool '$Name' serves no IIS application other than prod at '$PublishPath': stopping it stops nothing else." -ForegroundColor DarkGray
+        return
+    }
+    $named = @($others | ForEach-Object { "$($_.Location) with its files at '$($_.PhysicalPath)'" }) -join '; '
+    Write-Warn "App pool '$Name' also serves $($others.Count) other IIS application(s), which stop with it: $named."
+    foreach ($other in $others) {
+        $otherFolder = ConvertTo-ComparablePhysicalPath $other.PhysicalPath
+        if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
+        $otherConfigDir = Join-Path $otherFolder 'config'
+        Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath | Out-Null
+    }
+}
+
 function Stop-AppPoolChecked {
     param(
         [string]$Name,
@@ -224,6 +263,8 @@ function Stop-AppPoolChecked {
     )
 
     if (-not $Apply) {
+        # cdt-58: a plan line only; the dry run reads nothing from IIS.
+        Write-Plan "Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath (name the IIS applications this pool serves besides prod, which stop with it, and read their active bulk jobs)"
         Write-Plan "Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)"
         Write-Plan "Stop-AppPoolVerified -Name $Name (refuse to promote unless IIS confirms it Stopped)"
         if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
@@ -231,6 +272,9 @@ function Stop-AppPoolChecked {
     }
 
     Write-Step "Stopping prod app pool: $Name"
+    # cdt-58: the stop takes down every application the pool serves, not only prod. Name the others
+    # and read their active bulk jobs first - a warning, as for prod's own next.
+    Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath
     # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath | Out-Null }
     # aud-a38c: before stopping anything, ask IIS which pools serve the folder about to be
