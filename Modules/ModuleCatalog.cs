@@ -190,7 +190,11 @@ public sealed class ModuleCatalog
             // written, filed Cancelled, no one notified - where the change was made once a connection freed and filed and
             // notified as made. The location read before it takes the cancel at its on-premises credential fetch. A change
             // already sent runs to its end; the CSV run is unchanged.
-            Version = "1.6.5",
+            // 1.6.6: the location read's Exchange Online half takes the operator's cancel too (kd-58, CancellationDepth A2,
+            // through the shared read): a cancel while it waits for a free Exchange Online connection, or before its read is
+            // sent, ends the change at once - "Cancelled by the operator before the change was sent. Nothing was written." -
+            // where it waited for a connection and read first. The leave prompt states what a cancel does and does not stop.
+            Version = "1.6.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -248,7 +252,10 @@ public sealed class ModuleCatalog
             // removed once a connection freed and filed and notified as made. The location read before it takes the cancel at
             // its on-premises credential fetch. A change already sent runs to its end, the Set's fallback Add included; the CSV
             // run is unchanged.
-            Version = "1.4.5",
+            // 1.4.6: as Mailbox Permissions 1.6.6 - the location read's Exchange Online half takes the operator's cancel too
+            // (kd-58, CancellationDepth A2): a cancel while it waits for a connection, or before its read is sent, ends the
+            // change at once, nothing written. The leave prompt states what a cancel does and does not stop.
+            Version = "1.4.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -617,7 +624,11 @@ public sealed class ModuleCatalog
             // that address finds lookups typed by alias or by another address; target stays what was typed (E8).
             // 1.8.0: a "Show all details" switch, off by default: every email address rather than the first 20, and every
             // property each read returned, holds left out (E7).
-            Version = "1.8.0",
+            // 1.8.1: the Exchange Online read takes the operator's cancel (kd-58, CancellationDepth A2): a cancel while it waits
+            // for a free Exchange Online connection, or between its reads, ends the lookup there - "Cancelled by the operator"
+            // - where it ran every read first; a read already sent finishes first. The leave prompt states what a cancel does
+            // and does not stop.
+            Version = "1.8.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -131,6 +131,8 @@ retention holds are left out.
 
 - **Audit:** each lookup writes a `Lookup` row: `target` is what was typed, and `resolvedAddress` the primary address it
   found. A cancelled lookup is filed `Cancelled`, in the words "Cancelled by the operator".
+- **Leaving the page** during a lookup cancels it at its next step: while it waits for a free Exchange Online connection,
+  or between its Exchange Online reads. A read already sent to Exchange is never interrupted; it finishes first.
 - **Requires:** the Exchange Online connection; for on-premises mailboxes, `OnPremExchange:ServerUri` and the module's
   own on-premises Exchange credential (`DelineaSecretId`). Without them an on-premises mailbox reads "Could not be
   determined", saying why.
@@ -915,6 +917,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 - **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
 - **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff).
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.
+- **Leaving a page while work runs:** the app asks first, and OK cancels the work. The prompt says what that does: work still waiting its turn is cancelled; a command already sent to Exchange or the directory finishes and is recorded, and anything already changed stays changed; a bulk job is not affected, because it never depended on the page.
 - **Audit + Operation Trace:** Append-only JSONL files rotated daily/weekly/monthly; every audit transaction includes a correlated `operationId` plus structured `operation.*` records for SIEM ingestion.
 - **Extended Logging:** Separate JSONL diagnostic log with runtime-configurable level (Admin Settings). Viewable from Event Log page.
 - **Credential Management:** Delinea Secret Server SDK auth via Windows PasswordVault. Per-module secrets isolated in Secret Server.

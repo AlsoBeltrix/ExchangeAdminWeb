@@ -1,4 +1,8 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Components.Shared;
+using ExchangeAdminWeb.Services.Jobs;
+using ExchangeAdminWeb.Services.Progress;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -143,6 +147,72 @@ public class InFlightWorkGuardTests
             + "navigate-away warning says the operation will be cancelled, so at least one "
             + "module must actually honour it or the warning is a lie everywhere.");
     }
+
+    /// <summary>
+    /// kd-58, docs/CancellationDepth-Plan.md 3.8a (owner, 2026-10-28): the leave prompt states the three cases in plain words -
+    /// work still waiting its turn is cancelled; a command already sent to Exchange or the directory finishes and is recorded;
+    /// a bulk job is not affected, because it never depended on the page. The old prompt said only that leaving would cancel
+    /// the work and that what it had changed would stay changed.
+    /// </summary>
+    internal const string LeavePromptsThreeCases =
+        "Leaving this page will CANCEL it:\n"
+        + "- Work still waiting its turn is cancelled.\n"
+        + "- A command already sent to Exchange or the directory finishes and is recorded. Anything already changed stays changed.\n"
+        + "- A bulk job is not affected, because it never depended on this page.\n\n"
+        + "OK to leave and cancel, or Cancel to stay.";
+
+    // 3.8a: one wording for every page, pinned per page as each page's work comes to take the operator's cancel: the page runs
+    // that work as a foreground activity the guard prompts for, hands the activity's token on, and shows no prompt of its own
+    // - so the prompt it shows is the guard's, which states the three cases for that page's activity. The mutation: the old
+    // sentence restored.
+    [Theory]
+    [InlineData("RecipientLookup.razor", "Looking up alice@contoso.test")]
+    [InlineData("MailboxPermissions.razor", "Updating permissions on shared@contoso.test")]
+    [InlineData("CalendarPermissions.razor", "Updating calendar permissions on shared@contoso.test")]
+    public void ThePagesLeavePrompt_StatesWhatTheCancelDoesAndDoesNotStop(string page, string activity)
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
+        Assert.Contains("Progress.Begin(", source, StringComparison.Ordinal);
+        Assert.Contains("activity.CancellationToken", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NavigationLock", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"confirm\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("@layout", source, StringComparison.Ordinal);
+
+        var prompt = ForegroundPrompt(Activity(activity), []);
+        Assert.Equal($"{activity} is still running.\n\n" + LeavePromptsThreeCases, prompt);
+
+        // With background jobs as well, they are named on their own, after the three cases.
+        var withJobs = ForegroundPrompt(Activity(activity), [Job()]);
+        Assert.StartsWith($"{activity} is still running.\n\n" + LeavePromptsThreeCases, withJobs, StringComparison.Ordinal);
+        Assert.EndsWith("(1 background job(s) will keep running and are not affected - see Bulk Jobs for those.)", withJobs, StringComparison.Ordinal);
+    }
+
+    private static ProgressActivity Activity(string label) => new()
+    {
+        Id = "activity-1",
+        ModuleId = "a module",
+        Label = label,
+        Shape = ActivityShape.Indeterminate,
+        Total = 0,
+        Done = 0,
+        StartedUtc = DateTime.UtcNow,
+        CancellationRequested = false,
+    };
+
+    private static BulkJob Job() => new()
+    {
+        Id = "job-1",
+        ModuleId = "a module",
+        JobType = "A_Job",
+        SubmittedBy = @"CONTOSO\operator",
+        SubmittedIp = "127.0.0.1",
+        PayloadJson = "{}",
+        SubmittedAtUtc = DateTime.UtcNow,
+    };
+
+    private static string ForegroundPrompt(ProgressActivity activity, IReadOnlyList<BulkJob> background) =>
+        (string)typeof(InFlightWorkGuard).GetMethod("ForegroundMessage", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [new List<ProgressActivity> { activity }, background])!;
 
     private static string ReadRepoFile(string relativePath) =>
         File.ReadAllText(Path.Combine(RepoRoot(), relativePath));

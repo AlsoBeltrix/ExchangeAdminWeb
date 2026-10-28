@@ -11,7 +11,9 @@ public class RecipientLookupService : ExchangeServiceBase
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "RecipientLookup", operationTrace) { }
 
     // kd-37. The page's activity token, for the two on-premises reads' credentials: a cancel during either leaves the lookup as a
-    // cancellation (neither catch takes one), where it finished with a warning. The Exchange Online reads take none.
+    // cancellation (neither catch takes one), where it finished with a warning. kd-58 A2: and for the Exchange Online read - its
+    // wait for a pool connection, and the gaps between its commands - which leaves the same way; a command already sent
+    // finishes first (docs/CancellationDepth-Plan.md E3, E5).
     // RecipientLookupAccuracy S1. What the recipient is, and where its mailbox is, from Exchange's own answers on the side that
     // holds it (RecipientClassification, docs/RecipientLookupAccuracy-Plan.md 3.1-3.4). Exchange Online's Get-Mailbox is asked
     // only for a type it can return or one the tables do not hold; on-premises Exchange only about a mail user, or an unnamed
@@ -21,7 +23,8 @@ public class RecipientLookupService : ExchangeServiceBase
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress, CancellationToken cancellationToken = default)
     {
         // Read-only: safe to retry on a dead pooled session. Each attempt starts from nothing, so a retry's answers are its own.
-        var (result, mailboxAnswer, mailboxType) = await RunPooledQueryAsync((ps, tracker) =>
+        // kd-58 A2: the read helper, so the page's cancel ends it between its Get- commands, its connection idle and clean.
+        var (result, mailboxAnswer, mailboxType) = await RunPooledReadAsync((ps, tracker) =>
         {
             var r = new RecipientInfoResult { EmailAddress = emailAddress };
             var answer = CloudMailboxAnswer.NotAsked;
@@ -200,18 +203,19 @@ public class RecipientLookupService : ExchangeServiceBase
                         r.Warnings.Add($"The Exchange Online archive could not be read: {archiveUnreadable}.");
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsCancellation(ex))
             {
                 // aud-a68. Exchange's own "no such recipient", read from the error's structure, is the lookup's own words, which
                 // only an empty answer reached; anything else is the cmdlet's own words (aud-a23i's helper), not PowerShell's
                 // "The running command stopped because ..." prefix. Every later read here takes its own not-found, so the one
-                // that gets this far is Get-Recipient's.
+                // that gets this far is Get-Recipient's. kd-58 A2: a cancellation is not a lookup that failed (aud-a23g's rule):
+                // it leaves the read - the page's cancel between commands among them - and the page files it.
                 r.Error = IsNotFound(ex) ? $"Recipient '{emailAddress}' not found." : ResolveFailure(ex).primary;
                 _logger.LogError(ex, "Error getting recipient info for {Email}", emailAddress);
             }
 
             return (r, answer, ownType);
-        }, allowRetry: true);
+        }, cancellationToken, allowRetry: true);
 
         if (result.Error != null)
             return result;

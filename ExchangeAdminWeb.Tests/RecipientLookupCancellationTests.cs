@@ -186,6 +186,141 @@ public sealed class RecipientLookupCancellationTests : IDisposable
             + "the module's on-premises Exchange credentials could not be retrieved", result.Warnings);
     }
 
+    // ---- kd-58 A2: the Exchange Online read -----------------------------------------------------------------------------
+
+    /// <summary>"At once": far inside the pool's two-minute wait for a connection.</summary>
+    private static readonly TimeSpan Promptly = TimeSpan.FromSeconds(10);
+
+    // The finding, kd-58: the Exchange Online read took no token, so a lookup cancelled while every pool connection was busy
+    // waited up to two minutes, ran every read, and was filed Cancelled only at the next hop that looked. Now the read's wait for
+    // a connection ends at once: filed Cancelled in kd-57's words, nothing asked of Exchange.
+    [Fact]
+    public async Task ACancelWhileTheExchangeOnlineReadWaitsForAPoolConnection_EndsTheLookupAsCancelled_AtOnce()
+    {
+        var service = _exchange.RecipientLookup();
+        var pool = PoolOf(service);
+        var held = new List<PooledRunspace>();
+        for (var i = 0; i < 5; i++)
+            held.Add(await pool.BorrowAsync(Promptly, TestContext.Current.CancellationToken));
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var page = LookupPage(service, progress);
+        Task? run = null;
+        try
+        {
+            run = RunLookup(page);
+            await WaitUntil(() => BorrowsWaitingForASlot() == 1, "the lookup's read waits for a pool connection");
+            await cancel.CancelAsync();
+
+            await run.WaitAsync(Promptly, TestContext.Current.CancellationToken); // with every connection still held
+        }
+        finally
+        {
+            foreach (var runspace in held)
+                pool.Return(runspace);
+            if (run is not null)
+                await Record.ExceptionAsync(() => run.WaitAsync(Bound, TestContext.Current.CancellationToken));
+        }
+
+        AssertFiledCancelled(page, progress);
+        Assert.Empty(_exchange.CallList()); // nothing asked of Exchange
+    }
+
+    // The read is cancelled while a command is in flight - Get-Recipient, the first: it runs to its end (never stopped), and
+    // the read ends before its next command, Get-Mailbox. Filed Cancelled; the connection back in the pool for the next caller.
+    [Fact]
+    public async Task ACancelBetweenTheExchangeOnlineReadsCommands_EndsTheLookupBeforeTheNext_AndIsFiledCancelled()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "UserMailbox"), ("PrimarySmtpAddress", Address));
+        _exchange.Mailboxes[Address] = CloudMailbox(Address);
+        using var cancel = new CancellationTokenSource();
+        _exchange.Behaviour["Cancel Get-Recipient"] = cancel;
+        var service = _exchange.RecipientLookup();
+        var progress = new RecordingProgress(cancel.Token);
+        var page = LookupPage(service, progress);
+
+        await RunLookup(page).WaitAsync(Bound, TestContext.Current.CancellationToken);
+
+        AssertFiledCancelled(page, progress);
+        Assert.Equal([$"Get-Recipient {Address}"], _exchange.CallList()); // Get-Recipient ran to its end; nothing after it was sent
+        Assert.Equal(1, PoolOf(service).AvailableCount);
+    }
+
+    // kd-57's control for the Exchange Online read: a cancellation thrown by one of its commands while the operator has not
+    // cancelled - the activity's token live - leaves the read now (aud-a23g's rule) and is still a lookup that failed, in its
+    // own words, filed Failed. Never the operator's cancel.
+    [Fact]
+    public async Task ACancellationTheOperatorDidNotAskFor_InTheExchangeOnlineRead_IsStillALookupThatFailed()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "UserMailbox"), ("PrimarySmtpAddress", Address));
+        _exchange.Mailboxes[Address] = CloudMailbox(Address);
+        _exchange.Behaviour["StatisticsCancelled"] = true;
+        var progress = new RecordingProgress();
+        var page = LookupPage(_exchange.RecipientLookup(), progress);
+
+        await RunLookup(page).WaitAsync(Bound, TestContext.Current.CancellationToken);
+
+        var shown = Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
+        Assert.Contains("the size read was cancelled", shown.Error, StringComparison.Ordinal);
+        Assert.Equal((false, shown.Error), Assert.Single(progress.Handles).Outcome);
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal(shown.Error, row.GetProperty("error").GetString());
+    }
+
+    private Page LookupPage(RecipientLookupService service, RecordingProgress progress)
+    {
+        var page = new Page();
+        Inject(page, "LookupService", service);
+        Inject(page, "Audit", _exchange.Audit);
+        Inject(page, "Logger", NullLogger<Page>.Instance);
+        Inject(page, "Progress", progress);
+        PageField("emailAddress").SetValue(page, Address);
+        PageField("currentUser").SetValue(page, "CONTOSO\\operator");
+        return page;
+    }
+
+    private static Task RunLookup(Page page) =>
+        (Task)typeof(Page).GetMethod("RunLookup", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [])!;
+
+    // kd-57's filing of the operator's cancel: shown in the app's phrase, the activity ended with it, the row Cancelled.
+    private void AssertFiledCancelled(Page page, RecordingProgress progress)
+    {
+        var shown = Assert.IsType<RecipientInfoResult>(PageField("result").GetValue(page));
+        Assert.Equal("Cancelled by the operator", shown.Error);
+        Assert.Empty(shown.Warnings);
+        Assert.Equal((false, shown.Error), Assert.Single(progress.Handles).Outcome);
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.Equal("Cancelled", row.GetProperty("result").GetString());
+        Assert.Equal(shown.Error, row.GetProperty("error").GetString());
+    }
+
+    /// <summary>The service's own pool: the stand-in builds one per service.</summary>
+    private static ExoConnectionPool PoolOf(ExchangeServiceBase service) =>
+        (ExoConnectionPool)typeof(ExchangeServiceBase).GetField("_exoPool", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+
+    /// <summary>How many borrows wait for a slot, from the pool's trace: asked for, neither granted nor ended.</summary>
+    private int BorrowsWaitingForASlot()
+    {
+        var steps = _exchange.TraceEvents()
+            .Select(e => (Stage: e.TryGetProperty("stage", out var s) ? s.GetString() : null, Result: e.TryGetProperty("result", out var r) ? r.GetString() : null))
+            .ToList();
+        var asked = steps.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result == "Success");
+        var ended = steps.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result is "Failed" or "Cancelled");
+        var granted = steps.Count(s => s.Stage == "ExoPoolSlotAcquired");
+        return asked - granted - ended;
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + Bound;
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting until {what}.");
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+    }
+
     private static void Inject(Page page, string property, object value) =>
         typeof(Page).GetProperty(property, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!.SetValue(page, value);
 

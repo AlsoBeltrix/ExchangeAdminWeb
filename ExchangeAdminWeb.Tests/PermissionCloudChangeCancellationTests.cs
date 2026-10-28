@@ -52,6 +52,9 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
     private static readonly Guid TargetMailbox = Guid.Parse("0f0f0f0f-3333-4444-8555-777777777777");
     private static readonly TimeSpan Bound = CancellableVaultCredentials.Bound;
 
+    /// <summary>kd-58: "at once" - far inside the pool's two-minute wait for a connection.</summary>
+    private static readonly TimeSpan Promptly = TimeSpan.FromSeconds(10);
+
     private readonly ExchangeWriteHarness _h = new();
     private readonly ClaimsPrincipal _jdoe;
     private CancellableVaultCredentials? _credentials;
@@ -257,8 +260,9 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
     }
 
     // kd-76's shape at the page: the operator cancels during the page's checks before the change - here its access re-check.
-    // The location read still runs - its Exchange Online half takes no token (CancellationDepth plan A2) - and finds the
-    // mailbox in the cloud; the change then starts nothing: no connection asked for, nothing read or sent. Filed Cancelled.
+    // kd-58 A2: the location read's Exchange Online half takes the token now, so it starts nothing either - it used to run,
+    // find the mailbox in the cloud, and only then hand over to the change's look as it starts. No connection asked for,
+    // nothing read or sent. Filed Cancelled.
     [Theory]
     [MemberData(nameof(Changes))]
     public async Task ACancelDuringTheChecksBeforeTheChange_StartsNothing_AndIsFiledCancelled(string page, bool grant)
@@ -277,10 +281,43 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
         await SubmitSingle(component).WaitAsync(Bound, TestContext.Current.CancellationToken);
 
         Assert.Empty(_h.Writes); // first, as above
-        Assert.Equal(1, PoolSlotRequests()); // the location read's borrow, and no other
-        Assert.Single(_h.CallsTo("Get-Mailbox")); // the location read's: the change's own read never ran
+        Assert.Equal(0, PoolSlotRequests()); // kd-58 A2: not even the location read's borrow
+        Assert.Empty(_h.CallsTo("Get-Mailbox"));
         Assert.Empty(_h.CallsTo("Get-Recipient"));
         AssertFiledCancelled(page, grant, component, progress);
+    }
+
+    // kd-58 A2, at the page: the location read's Exchange Online half takes the activity's token, so a cancel while that read
+    // waits for a pool connection - every connection the pool admits held elsewhere - ends the change at once, with nothing
+    // asked of Exchange: filed Cancelled, nothing written, no one told. Before, the read waited until a connection freed, ran
+    // Get-Mailbox, and only then did the change's look as it starts see the cancel.
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACancelWhileTheLocationReadWaitsForAPoolConnection_IsFiledCancelled_AtOnce_NothingAsked(string page)
+    {
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var held = await HoldEveryPoolConnection(_h.Pool);
+        var component = SubmitPage(page, grant: true, progress, CloudService(page, _h.Pool));
+        Task? run = null;
+        try
+        {
+            run = SubmitSingle(component);
+            await WaitUntil(() => BorrowsWaitingForAPoolConnection() == 1, "the location read waits for a pool connection");
+            await cancel.CancelAsync();
+
+            await run.WaitAsync(Promptly, TestContext.Current.CancellationToken); // with every connection still held
+        }
+        finally
+        {
+            ReturnAll(_h.Pool, held);
+            if (run is not null)
+                await Record.ExceptionAsync(() => run.WaitAsync(Bound, TestContext.Current.CancellationToken));
+        }
+
+        Assert.Empty(_h.Writes);
+        Assert.Empty(_h.Calls); // nothing asked of Exchange at all: the five held ran nothing either
+        AssertFiledCancelled(page, grant: true, component, progress);
     }
 
     // The location read takes the token where the seam exists: on a mailbox Exchange Online does not hold, it asks

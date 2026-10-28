@@ -690,13 +690,16 @@ internal sealed class MigrationStubExchange : IDisposable
     ];
 
     // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers. aud-a23o: the
-    // step is logged under its label when it has one ("OnPrem Get-Mailbox").
+    // step is logged under its label when it has one ("OnPrem Get-Mailbox"). kd-58: Behaviour["Cancel <step>"], a
+    // CancellationTokenSource, is cancelled as the step runs - the operator's cancel arriving while that command is in flight,
+    // which then runs to its end.
     private static string Stub(string name, string parameters, string answer, string? label = null) => $$"""
         [CmdletBinding()]
         param({{parameters}})
         $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{label ?? name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
+        if ($null -ne $Behaviour -and $null -ne $Behaviour["Cancel $step"]) { $Behaviour["Cancel $step"].Cancel() }
         $failure = $Failures["$step $Identity"]
         if ($null -eq $failure) { $failure = $Failures[$step] }
         if ($null -ne $failure) {

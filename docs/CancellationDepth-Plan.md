@@ -757,10 +757,19 @@ needs A1 and A2's token on `RunPooledQueryAsync` and `RunAsync`. The supervisor 
 
 Status log (each slice's record is its section in `.agents/review/findings/kd-58.md`):
 
-- 2026-10-28, **A1, the pool** - `feat/cancellation-depth`, the commit that adds this line: E1, E2, E6, the core's cancel
+- 2026-10-28, **A1, the pool** - `feat/cancellation-depth` `58fdfc0d`: E1, E2, E6, the core's cancel
   handling (3.5), the traces (3.6) and the no-stop tripwire, as section 8 says. Beyond the letter, and recorded there: E6
   reads a stop the pipeline ever reported, not only its state now, and the core routes a stopped pipeline to Return in every
   shape so it is never retried. A probe settled assumptions 2 and 3: a stopped synchronous Invoke throws nothing, so only the
   pipeline's state tells a stop. The plan's "nothing in the app stops a pipeline" holds for Exchange pipelines; one
   directory runner stops its own AD read, named as the tripwire's one exemption. No module behaviour changes in this slice;
   the base bump is owed (C1).
+- 2026-10-28, **A2, the base's cloud side** - `feat/cancellation-depth`, the commit that adds this line: E3
+  (`RunPooledReadAsync`, the tracker's token, the four helpers' look), E4 (`RunAsync`, `RunPooledQueryAsync`: the borrow
+  only), the read-only tripwire, the tokens on `HasCloudMailboxAsync` and both `GetMailboxLocationAsync` forms, Recipient
+  Lookup's Exchange Online read, and 3.8a's shared leave-prompt wording, pinned per page. Recipient Lookup no longer calls
+  the shared location read (the Recipient Lookup accuracy plan's S1 gave it reads of its own), so the callers whose
+  behaviour the location read's token changes are the two permission pages, through kd-81's token: Mailbox and Calendar
+  Permissions take patch bumps here, beside Recipient Lookup's. One prompt wording serves every page, so on a page whose
+  work takes no token its first case still over-promises, as the old prompt did (the record says where). The base bump
+  stays owed (C1).
