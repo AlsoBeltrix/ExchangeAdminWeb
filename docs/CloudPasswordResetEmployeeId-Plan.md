@@ -1,6 +1,6 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **Approved, 2026-10-27 (owner: "go"). Not started; queued behind the fix-everything close-out in `.agents/state.md`.**
+Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 dispatched.**
 Owner: Michael
 Module: `CloudPasswordReset` (`Modules/ModuleCatalog.cs:877`, version `1.1.0`)
 Extends: `docs/CloudPasswordReset-Plan.md` (Implemented 2026-09-23, unproven against the live
