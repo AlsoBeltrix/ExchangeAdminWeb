@@ -695,16 +695,22 @@ function Write-AppPoolSharingReport {
     # stop whatever its pool (aud-a38i) - and an unreadable IIS listing is refused by that folder
     # check, which reads the same listing. The helper is tools\AppPoolControl.psm1's, which the
     # installer imports below, before this runs, as it does for cdt-48's comparison (Architectural
-    # Invariant 1). This installer reads no bulk jobs, its own included, so it reads none of theirs.
+    # Invariant 1).
+    # cdt-59: then read the active bulk jobs of each, which the stop interrupts, with the db tool of the
+    # build at -AppPath, through tools\JobStateWarning.psm1, which the installer imports below too: its
+    # policy for what a recycle interrupts is the owner's - warn, do not hard-block. A folder that is not
+    # on disk is not read: it holds no jobs database, and Join-Path throws on a drive that does not
+    # exist, which would turn this warning into a refusal.
     param(
         [string]$Name,
-        [string]$PublishPath
+        [string]$PublishPath,
+        [string]$AppPath
     )
 
     try {
         $others = @(Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath)
     } catch {
-        Write-Warn "Stopping app pool '$Name' may stop other IIS applications too, and they cannot be named: $($_.Exception.Message)"
+        Write-Warn "Stopping app pool '$Name' may stop other IIS applications too, and their active bulk jobs are not read: $($_.Exception.Message)"
         return
     }
     if ($others.Count -eq 0) {
@@ -713,6 +719,13 @@ function Write-AppPoolSharingReport {
     }
     $named = @($others | ForEach-Object { "$($_.Location) with its files at '$($_.PhysicalPath)'" }) -join '; '
     Write-Warn "App pool '$Name' also serves $($others.Count) other IIS application(s), which stop with it: $named."
+    foreach ($other in $others) {
+        $otherFolder = ConvertTo-ComparablePhysicalPath $other.PhysicalPath
+        if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
+        $otherConfigDir = Join-Path $otherFolder 'config'
+        Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath | Out-Null
+    }
 }
 
 function Assert-ExistingApplicationConfigKnown {
@@ -844,6 +857,12 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 # environment-specific deploy tooling (Architectural Invariant 1). Imported outside the
 # PlanOnly guard because the identity decision below is reported during a dry run too.
 Import-Module (Join-Path $PSScriptRoot 'AppPoolControl.psm1') -Force
+
+# cdt-59. The shared warning about active bulk jobs before a pool stops, which the promotion and the
+# cutover use too. It ships beside this script and names no host, domain or configuration, so
+# importing it keeps this installer standalone and environment-neutral, as the two imports above do
+# (Architectural Invariant 1). It only reads, through the app's own db mode, and only when called.
+Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
 
 if ($PlanOnly) {
     Write-Plan "Import WebAdministration and verify IIS site '$ParentSite'"
@@ -1141,8 +1160,14 @@ try {
     # one, and the folder check next asks only about $PublishPath. Name the others first, in a step of
     # its own so a plan prints it. It refuses nothing, and it comes before the folder check, so that
     # check stays the statement right before the stop (cdt-32) and refuses an unreadable listing.
-    Invoke-PlanOrAction "Name the IIS applications app pool $AppPoolName serves besides $PublishPath, which stop with it" {
-        Write-AppPoolSharingReport -Name $AppPoolName -PublishPath $PublishPath
+    # cdt-59: the stop also interrupts the active bulk jobs of every instance it takes down, and this
+    # installer read none, its own included. So the step warns about those too: each other
+    # application's whose folder is on disk, then this instance's own, read with the build just
+    # published to staging, whose db tool cdt-2's check above confirmed. A warning, never a refusal
+    # (tools\JobStateWarning.psm1, the owner's policy). A plan prints the step and reads nothing.
+    Invoke-PlanOrAction "Name the IIS applications app pool $AppPoolName serves besides $PublishPath, which stop with it, and warn about the active bulk jobs the stop interrupts, theirs and this instance's" {
+        Write-AppPoolSharingReport -Name $AppPoolName -PublishPath $PublishPath -AppPath $stagingPath
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $configDir -AppPath $stagingPath | Out-Null
     }
 
     # cdt-32: the stop below proves that -AppPoolName stopped, not that nothing else serves the folder

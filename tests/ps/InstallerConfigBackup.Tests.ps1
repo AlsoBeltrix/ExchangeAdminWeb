@@ -1353,9 +1353,11 @@ Describe 'cdt-23: a failed run removes its staging publish' {
         }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath; if (-not $PlanOnly -and $script:cdt23Case -eq 'ToolMissing') { throw 'The config DB tool is missing: ExchangeAdminWeb.dll not found.' }; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
-        # Since cdt-58 the region names the pool's other applications before the folder check; that
-        # report has its own tests (the cdt-58 Describe), so here it says and records nothing.
-        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath) $null = $Name, $PublishPath }
+        # Since cdt-58 the region names the pool's other applications before the folder check, and since
+        # cdt-59 the same step reads their active bulk jobs and this instance's; that step has its own
+        # tests (the cdt-58 and cdt-59 Describes), so here it says and records nothing.
+        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath, $AppPath) $null = $Name, $PublishPath, $AppPath }
+        ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $null = $ConfigDir, $AppPath; 0 }
         # Since cdt-32 the region asks IIS what serves the folder before the stop; that check has its
         # own tests (the cdt-32 Describe), so here it passes and records nothing.
         ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
@@ -1372,6 +1374,7 @@ Describe 'cdt-23: a failed run removes its staging publish' {
             New-Item -ItemType Directory -Path $publish -Force | Out-Null
             # Read only by the lifted region.
             Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name configDir -Value (Join-Path $publish 'config')
             Set-Variable -Name stagingPath -Value "$publish.staging.x"
             Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
             Set-Variable -Name repoRoot -Value $root
@@ -1457,8 +1460,11 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
         # cdt-58: the report of the pool's other applications, recorded so its place in the region is
-        # pinned here by running it; what it says has its own tests (the cdt-58 Describe).
-        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath) $null = $PublishPath; $script:cdt32Calls.Add("report($Name)") }
+        # pinned here by running it; what it says has its own tests (the cdt-58 and cdt-59 Describes).
+        # cdt-59: this instance's own active bulk jobs, read in the same step, recorded the same way. The
+        # run's random root is recorded as <root>.
+        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath, $AppPath) $null = $PublishPath; $script:cdt32Calls.Add("report($Name|$AppPath)".Replace($script:cdt32Root, '<root>')) }
+        ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $script:cdt32Calls.Add("jobs($ConfigDir|$AppPath)".Replace($script:cdt32Root, '<root>')); 0 }
         ${function:Assert-AppPoolServesPath} = {
             param($Name, $PhysicalPath, $NestedNodes)
             $script:cdt32Calls.Add("serves($NestedNodes)")
@@ -1475,10 +1481,12 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
             $script:cdt32Calls = New-Object System.Collections.Generic.List[string]
             $script:cdt32ServedElsewhere = $ServedElsewhere
             $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cdt32_' + [guid]::NewGuid().ToString('N'))
+            $script:cdt32Root = $root
             $publish = Join-Path $root 'publish'
             New-Item -ItemType Directory -Path $publish -Force | Out-Null
             # Read only by the lifted region.
             Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name configDir -Value (Join-Path $publish 'config')
             Set-Variable -Name stagingPath -Value "$publish.staging.x"
             Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
             Set-Variable -Name repoRoot -Value $root
@@ -1499,17 +1507,17 @@ Describe 'cdt-32: the installer asks IIS what serves the folder before it stops 
 
         $script:cdt32Thrown = $null
         $elsewhere = & $run $true $false
-        $elsewhere.Calls | Should -BeExactly 'report(ExamplePool),serves(Refuse)' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored; the report (cdt-58) comes first and refuses nothing'
+        $elsewhere.Calls | Should -BeExactly 'report(ExamplePool|<root>\publish.staging.x),jobs(<root>\publish\config|<root>\publish.staging.x),serves(Refuse)' -Because 'a folder another pool also serves must stop the run before the pool is stopped or anything mirrored; the report (cdt-58) and this instance''s jobs (cdt-59) come first, read with the staged build, and refuse nothing'
         $elsewhere.Thrown | Should -BeLike "*served by an app pool other than 'ExamplePool'*" -Because 'the refusal is the module''s own'
         $elsewhere.StagingLeft | Should -BeFalse -Because 'the refusal happens inside the try that removes staging'
 
         $alone = & $run $false $false
         $alone.Thrown | Should -BeNullOrEmpty
-        $alone.Calls | Should -BeExactly 'report(ExamplePool),serves(Refuse),stop,mirror,start,manifest' -Because 'the report names what else stops, then the check comes right before the stop'
+        $alone.Calls | Should -BeExactly 'report(ExamplePool|<root>\publish.staging.x),jobs(<root>\publish\config|<root>\publish.staging.x),serves(Refuse),stop,mirror,start,manifest' -Because 'the report names what else stops and this instance''s jobs are read, then the check comes right before the stop'
 
         $planned = & $run $true $true
         $planned.Thrown | Should -BeNullOrEmpty
-        $planned.Calls | Should -Not -Match 'serves|report' -Because 'a plan prints the report and the check and runs neither'
+        $planned.Calls | Should -Not -Match 'serves|report|jobs' -Because 'a plan prints the report step and the check and runs neither: it reads no jobs (cdt-59)'
         $planned.Said | Should -Match ([regex]::Escape('PLAN Confirm that IIS serves ')) -Because 'the plan shows the check'
         $planned.Said.IndexOf('PLAN Name the IIS applications app pool ExamplePool serves besides ') | Should -BeGreaterOrEqual 0 -Because 'the plan shows the report (cdt-58)'
         $planned.Said.IndexOf('PLAN Name the IIS applications app pool ExamplePool serves besides ') | Should -BeLessThan $planned.Said.IndexOf('PLAN Confirm that IIS serves ')
@@ -1556,8 +1564,10 @@ Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
         ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
         ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
         ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
-        # cdt-58's report and cdt-32's check have their own tests; here they pass and record nothing.
-        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath) $null = $Name, $PublishPath }
+        # cdt-58's report, cdt-59's jobs read and cdt-32's check have their own tests; here they pass and
+        # record nothing.
+        ${function:Write-AppPoolSharingReport} = { param($Name, $PublishPath, $AppPath) $null = $Name, $PublishPath, $AppPath }
+        ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $null = $ConfigDir, $AppPath; 0 }
         ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes }
         ${function:Stop-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt33Calls.Add('stop'); $script:cdt33StopResult }
         ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt33Calls.Add('mirror') }
@@ -1573,6 +1583,7 @@ Describe 'cdt-33: only a confirmed stop reaches the installer''s mirror' {
             New-Item -ItemType Directory -Path $publish -Force | Out-Null
             # Read only by the lifted region.
             Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name configDir -Value (Join-Path $publish 'config')
             Set-Variable -Name stagingPath -Value "$publish.staging.x"
             Set-Variable -Name LogRoot -Value (Join-Path $root 'logs')
             Set-Variable -Name repoRoot -Value $root
@@ -1629,6 +1640,9 @@ Describe 'cdt-58: the installer names the IIS applications that stop with its po
             $script:cdt58Said = New-Object System.Collections.Generic.List[string]
             $script:cdt58Probed = 0
             ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt58Said.Add("$Object") }
+            # Since cdt-59 the report reads the jobs of each other application whose folder is on disk;
+            # that has its own tests (the cdt-59 Describe), so here it records nothing.
+            ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $null = $ConfigDir, $AppPath; 0 }
             $PSDefaultParameterValues = @{ 'Get-AppPoolOtherApplication:ApplicationsProbe' = $ProbeDefault }
             $thrown = $null
             try { Write-AppPoolSharingReport -Name 'ExamplePool' -PublishPath 'D:\example\publish' } catch { $thrown = $_.Exception.Message }
@@ -1662,7 +1676,7 @@ Describe 'cdt-58: the installer names the IIS applications that stop with its po
         $unreadable = & $report { { $script:cdt58Probed++; throw 'Access is denied' } }
         $unreadable.Probed | Should -Be 1
         $unreadable.Thrown | Should -BeNullOrEmpty -Because 'the folder check after it reads the same listing and refuses it before the stop'
-        $unreadable.Said | Should -Be @("  !  Stopping app pool 'ExamplePool' may stop other IIS applications too, and they cannot be named: Cannot read the IIS sites and applications, so the applications app pool 'ExamplePool' serves besides the one at 'D:\example\publish' cannot be listed: Access is denied")
+        $unreadable.Said | Should -Be @("  !  Stopping app pool 'ExamplePool' may stop other IIS applications too, and their active bulk jobs are not read: Cannot read the IIS sites and applications, so the applications app pool 'ExamplePool' serves besides the one at 'D:\example\publish' cannot be listed: Access is denied")
     }
 
     It 'is a step of its own right before the folder check, and the one caller of the shared helper (AST)' {
@@ -1673,10 +1687,9 @@ Describe 'cdt-58: the installer names the IIS applications that stop with its po
         $checkAt | Should -BeGreaterThan 0
         $step = $statements[$checkAt - 1].PipelineElements[0]
         $step.GetCommandName() | Should -BeExactly 'Invoke-PlanOrAction' -Because 'the report is a step, so a plan prints it and runs nothing (Invariant 4)'
-        $step.CommandElements[1].Extent.Text | Should -BeExactly '"Name the IIS applications app pool $AppPoolName serves besides $PublishPath, which stop with it"'
+        $step.CommandElements[1].Extent.Text | Should -BeExactly '"Name the IIS applications app pool $AppPoolName serves besides $PublishPath, which stop with it, and warn about the active bulk jobs the stop interrupts, theirs and this instance''s"'
         $body = @($step.CommandElements[2].ScriptBlock.EndBlock.Statements)
-        $body.Count | Should -Be 1 -Because 'the step is the report and nothing else'
-        $body[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $AppPoolName -PublishPath $PublishPath'
+        $body[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $AppPoolName -PublishPath $PublishPath -AppPath $stagingPath' -Because 'the report opens the step; since cdt-59 it reads the others'' jobs with the staged build, and this instance''s own follow (the cdt-59 Describe)'
         @($script:Cdt58Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true)).Count |
             Should -Be 1 -Because 'the installer stops one pool, once'
         $helper = @($script:Cdt58Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Get-AppPoolOtherApplication' }, $true))
@@ -1684,6 +1697,197 @@ Describe 'cdt-58: the installer names the IIS applications that stop with its po
         $sharing = $script:Cdt58Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-AppPoolSharingReport' }, $true)
         $helper[0].Extent.StartOffset | Should -BeGreaterThan $sharing.Extent.StartOffset
         $helper[0].Extent.EndOffset | Should -BeLessThan $sharing.Extent.EndOffset
+    }
+}
+
+Describe 'cdt-59: the installer warns about the active bulk jobs its stop interrupts, its own instance''s and the other applications''' {
+    # The installer read no bulk jobs before it stopped the pool - neither its own instance's nor those of
+    # the other applications the pool serves - so the stop interrupted them without a word.
+
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $script:Cdt59Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $script:InstallerPath).Path, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction', 'Write-AppPoolSharingReport') {
+            $fn = $script:Cdt59Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            if ($null -eq $fn) { throw "the installer defines no function $name" }
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        # The installer's own import, so the report asks the real helper; IIS only through the probe.
+        Import-Module (Join-Path $PSScriptRoot '..\..\tools\AppPoolControl.psm1') -Force
+        # A drive letter this host does not have, so that an application IIS still names on it can be
+        # listed. Join-Path throws on such a drive (checked in the test that uses it).
+        $inUse = @([System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() })
+        $inUse += @(Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name.ToUpperInvariant() })
+        $script:Cdt59MissingDrive = @('Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y', 'Z', 'J', 'K', 'L', 'M', 'N', 'O', 'P' | Where-Object { $inUse -notcontains $_ })[0]
+
+        # Every line said and every call made, in one list, in order. The jobs check is a stand-in: what
+        # it reads and prints is JobStateWarning.Tests.ps1's.
+        $script:cdt59Events = New-Object System.Collections.Generic.List[string]
+        ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt59Events.Add("said: $Object") }
+        ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $script:cdt59Events.Add("jobs($ConfigDir|$AppPath)"); 0 }
+
+        # The real region from the publish to the restart check, as cdt-32's test runs it, with the real
+        # report and module; the build, the folder check, the stop, the mirror and the restart stubbed.
+        $outer = $script:Cdt59Ast.Find({
+                param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                @($n.Body.Statements | Where-Object { $_.Extent.Text -like 'Invoke-PlanOrAction "dotnet publish to staging*' }).Count -gt 0
+            }, $true)
+        if ($null -eq $outer) { throw 'the installer has no try around its publish' }
+        $script:Cdt59Region = $outer.Extent.Text
+        ${function:dotnet} = { New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null; $global:LASTEXITCODE = 0 }
+        ${function:Resolve-ConfigDbTool} = { param($AppPath, [switch]$PlanOnly) $null = $AppPath, $PlanOnly; @{ Summary = 'tool' } }
+        ${function:Test-IsSqliteConfigDbPresent} = { param($DbPath) $null = $DbPath; $false }
+        ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes; $script:cdt59Events.Add('serves') }
+        ${function:Stop-AppPoolVerified} = { param($Name) $script:cdt59Events.Add("stop($Name)"); 'Stopped' }
+        ${function:Invoke-RobocopyChecked} = { param($Arguments, $Description) $null = $Arguments, $Description; $script:cdt59Events.Add('mirror') }
+        ${function:Start-AppPoolVerified} = { param($Name) $null = $Name; $script:cdt59Events.Add('start'); 'Started' }
+        ${function:Write-DeploymentManifest} = { $script:cdt59Events.Add('manifest') }
+
+        function Invoke-Cdt59Region {
+            param([bool]$Plan, [string]$Root)
+            $publish = Join-Path $Root 'publish'
+            New-Item -ItemType Directory -Path $publish -Force | Out-Null
+            # Read only by the lifted region.
+            Set-Variable -Name PublishPath -Value $publish
+            Set-Variable -Name stagingPath -Value "$publish.staging.x"
+            Set-Variable -Name configDir -Value (Join-Path $publish 'config')
+            Set-Variable -Name LogRoot -Value (Join-Path $Root 'logs')
+            Set-Variable -Name repoRoot -Value $Root
+            Set-Variable -Name AppPoolName -Value 'ExamplePool'
+            Set-Variable -Name PlanOnly -Value $Plan
+            Set-Variable -Name SkipConfigBackup -Value $false
+            Set-Variable -Name configStorePlan -Value ([pscustomobject]@{ Path = $null; DbPath = (Join-Path $publish 'config\exchangeadmin.db'); Source = 'None' })
+            $ErrorActionPreference = 'Stop'
+            $thrown = $null
+            try { . ([scriptblock]::Create($script:Cdt59Region)) } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Thrown = $thrown; Publish = $publish }
+        }
+    }
+
+    AfterAll {
+        Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+    }
+
+    BeforeEach {
+        $script:cdt59Events.Clear()
+    }
+
+    It 'reads the active bulk jobs of each other application whose folder is on disk, from its own config folder with the staged build' {
+        $reports = Join-Path $TestDrive 'reports'
+        $archive = Join-Path $TestDrive 'archive'
+        New-Item -ItemType Directory -Path $reports, $archive -Force | Out-Null
+        # A script block value in $PSDefaultParameterValues is evaluated to produce the default, so the
+        # probe is handed over wrapped in a block that returns it, and it records that it was consulted.
+        $PSDefaultParameterValues = @{
+            'Get-AppPoolOtherApplication:ApplicationsProbe' = {
+                {
+                    $script:cdt59Events.Add('probe')
+                    [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = 'D:\example\publish' }
+                    [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'ExamplePool'; PhysicalPath = $reports }
+                    [pscustomobject]@{ Location = 'Web/archive'; ApplicationPool = 'examplepool'; PhysicalPath = $archive }
+                    [pscustomobject]@{ Location = 'Elsewhere/'; ApplicationPool = 'OtherPool'; PhysicalPath = $reports }
+                }
+            }
+        }
+
+        { Write-AppPoolSharingReport -Name 'ExamplePool' -PublishPath 'D:\example\publish' -AppPath 'D:\example\publish.staging.x' } | Should -Not -Throw
+        @($script:cdt59Events | Where-Object { $_ -eq 'probe' }).Count | Should -Be 1 -Because "the test's probe is the one the report consulted"
+        @($script:cdt59Events | Where-Object { $_ -like 'said: *  !  *' }) |
+            Should -Be @("said:   !  App pool 'ExamplePool' also serves 2 other IIS application(s), which stop with it: Web/reports with its files at '$reports'; Web/archive with its files at '$archive'.") -Because 'the instance and the other pool''s application are not other applications of this pool'
+        @($script:cdt59Events | Where-Object { $_ -like 'jobs(*' }) |
+            Should -Be @("jobs($reports\config|D:\example\publish.staging.x)", "jobs($archive\config|D:\example\publish.staging.x)") -Because 'each one on disk is read from its own config folder, with the build this run publishes, and nothing else is read'
+        $script:cdt59Events.IndexOf("said:        Active bulk jobs of IIS application Web/reports, with its files at '$reports', which stops with the pool:") |
+            Should -BeLessThan $script:cdt59Events.IndexOf("jobs($reports\config|D:\example\publish.staging.x)") -Because 'each read is introduced by the application it is for'
+    }
+
+    It 'names an application with no folder, a folder that is gone and one on a drive this host lacks, reads none of their jobs, and does not throw' {
+        $script:Cdt59MissingDrive | Should -Not -BeNullOrEmpty -Because 'the test needs a drive letter this host does not have'
+        $lost = "$($script:Cdt59MissingDrive):\lost"
+        { Join-Path $lost 'config' -ErrorAction Stop } | Should -Throw -Because "the drive '$($script:Cdt59MissingDrive):' does not exist here, which is the case the on-disk guard is for"
+        $gone = Join-Path $TestDrive 'gone'
+        $PSDefaultParameterValues = @{
+            'Get-AppPoolOtherApplication:ApplicationsProbe' = {
+                {
+                    $script:cdt59Events.Add('probe')
+                    [pscustomobject]@{ Location = 'Other/'; ApplicationPool = 'ExamplePool'; PhysicalPath = '' }
+                    [pscustomobject]@{ Location = 'Other/gone'; ApplicationPool = 'ExamplePool'; PhysicalPath = $gone }
+                    [pscustomobject]@{ Location = 'Other/lost'; ApplicationPool = 'ExamplePool'; PhysicalPath = $lost }
+                }
+            }
+        }
+        # As the installer runs.
+        $ErrorActionPreference = 'Stop'
+
+        { Write-AppPoolSharingReport -Name 'ExamplePool' -PublishPath 'D:\example\publish' -AppPath 'D:\example\publish.staging.x' } |
+            Should -Not -Throw -Because 'a folder that is not there is named and skipped; it must not turn the warning into a refusal'
+        $script:cdt59Events | Should -Contain 'probe'
+        @($script:cdt59Events | Where-Object { $_ -like 'said: *  !  *' }) |
+            Should -Be @("said:   !  App pool 'ExamplePool' also serves 3 other IIS application(s), which stop with it: Other/ with its files at ''; Other/gone with its files at '$gone'; Other/lost with its files at '$lost'.") -Because 'each is named, its folder on disk or not'
+        @($script:cdt59Events | Where-Object { $_ -like 'jobs(*' -or $_ -like 'said: *Active bulk jobs*' }) | Should -BeNullOrEmpty -Because 'none of them holds a jobs database to read'
+    }
+
+    It 'reads this instance''s own active bulk jobs in the same step, after the others'' and before the folder check and the stop, with the staged build, and refuses nothing (behavioural)' {
+        $root = Join-Path $TestDrive 'own'
+        $reports = Join-Path $TestDrive 'own-reports'
+        New-Item -ItemType Directory -Path $reports -Force | Out-Null
+        $lost = "$($script:Cdt59MissingDrive):\lost"
+        $PSDefaultParameterValues = @{
+            'Get-AppPoolOtherApplication:ApplicationsProbe' = {
+                {
+                    $script:cdt59Events.Add('probe')
+                    [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = (Join-Path $root 'publish') }
+                    [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'ExamplePool'; PhysicalPath = $reports }
+                    [pscustomobject]@{ Location = 'Other/lost'; ApplicationPool = 'ExamplePool'; PhysicalPath = $lost }
+                }
+            }
+        }
+
+        $result = Invoke-Cdt59Region -Plan $false -Root $root
+        $result.Thrown | Should -BeNullOrEmpty -Because 'active bulk jobs, and an application on a drive this host lacks, are warnings, never a refusal'
+        $publish = $result.Publish
+        @($script:cdt59Events | Where-Object { $_ -notlike 'said: *' }) |
+            Should -Be @('probe', "jobs($reports\config|$publish.staging.x)", "jobs($publish\config|$publish.staging.x)", 'serves', 'stop(ExamplePool)', 'mirror', 'start', 'manifest') -Because 'the others'' jobs, then this instance''s own from its config folder, are read with the build this run published, before the folder check and the stop'
+        @($script:cdt59Events | Where-Object { $_ -like 'said: *  !  *' }) |
+            Should -Be @("said:   !  App pool 'ExamplePool' also serves 2 other IIS application(s), which stop with it: Web/reports with its files at '$reports'; Other/lost with its files at '$lost'.")
+    }
+
+    It 'in a plan prints the step''s one line and reads nothing: no IIS listing, and no jobs, its own or theirs' {
+        $PSDefaultParameterValues = @{ 'Get-AppPoolOtherApplication:ApplicationsProbe' = { { $script:cdt59Events.Add('probe') } } }
+
+        $result = Invoke-Cdt59Region -Plan $true -Root (Join-Path $TestDrive 'plan')
+        $result.Thrown | Should -BeNullOrEmpty
+        @($script:cdt59Events | Where-Object { $_ -eq 'probe' -or $_ -like 'jobs(*' -or $_ -eq 'serves' -or $_ -like 'stop(*' }) | Should -BeNullOrEmpty -Because 'a plan reads nothing (Invariant 4)'
+        @($script:cdt59Events | Where-Object { $_ -like 'said: PLAN Name the IIS applications*' }) |
+            Should -Be @("said: PLAN Name the IIS applications app pool ExamplePool serves besides $($result.Publish), which stop with it, and warn about the active bulk jobs the stop interrupts, theirs and this instance's") -Because 'the plan shows the step, once'
+    }
+
+    It 'imports the module beside it, as it imports AppPoolControl.psm1, and reads its own jobs as the last statement of the report step (AST)' {
+        $imports = @($script:Cdt59Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Import-Module' -and $n.Extent.Text -like '*JobStateWarning.psm1*' }, $true))
+        $imports.Count | Should -Be 1
+        $imports[0].Extent.Text | Should -BeExactly 'Import-Module (Join-Path $PSScriptRoot ''JobStateWarning.psm1'') -Force' -Because 'a sibling in tools\, imported as AppPoolControl.psm1 is (cdt-48; Architectural Invariant 1)'
+        @($script:Cdt59Ast.EndBlock.Statements) | Should -Contain $imports[0].Parent -Because 'imported at script level, unconditionally'
+        $appPool = @($script:Cdt59Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Import-Module' -and $n.Extent.Text -like '*AppPoolControl.psm1*' }, $true))
+        $appPool.Count | Should -Be 1
+        $imports[0].Extent.StartOffset | Should -BeGreaterThan $appPool[0].Extent.StartOffset
+
+        $check = $script:Cdt59Ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.Extent.Text -like 'Invoke-PlanOrAction "Confirm that IIS serves *' }, $true)
+        $check | Should -Not -BeNullOrEmpty
+        $statements = @($check.Parent.Parent.Statements)
+        $step = $statements[[array]::IndexOf($statements, $check.Parent) - 1].PipelineElements[0]
+        $step.GetCommandName() | Should -BeExactly 'Invoke-PlanOrAction' -Because 'the jobs are read in a step, so a plan prints it and reads nothing (Invariant 4)'
+        $body = @($step.CommandElements[2].ScriptBlock.EndBlock.Statements)
+        $body.Count | Should -Be 2 -Because 'the step is the report and this instance''s own jobs, and nothing else'
+        $body[1].Extent.Text | Should -BeExactly 'Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $configDir -AppPath $stagingPath | Out-Null' -Because 'this instance''s jobs are in its publish folder''s config, read with the staged build, and only warned about'
+        $imports[0].Extent.StartOffset | Should -BeLessThan $step.Extent.StartOffset
+
+        $jobs = @($script:Cdt59Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-NoActiveBulkJobsBeforeRecycle' }, $true))
+        $jobs.Count | Should -Be 2 -Because 'one in the report, for each other application on disk, and one for this instance'
+        $sharing = $script:Cdt59Ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Write-AppPoolSharingReport' }, $true)
+        @($jobs | Where-Object { $_.Extent.StartOffset -gt $sharing.Extent.StartOffset -and $_.Extent.EndOffset -lt $sharing.Extent.EndOffset }).Count | Should -Be 1
+        @($jobs | Where-Object { $_.Extent.Text -match '-PlanOnly' }).Count | Should -Be 0 -Because 'a plan reads no jobs'
     }
 }
 
