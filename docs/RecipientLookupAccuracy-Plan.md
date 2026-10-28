@@ -1,6 +1,6 @@
 # Recipient Lookup: say what a recipient is, and where its mailbox is - Plan
 
-Status: **Draft - awaiting owner go.** Nothing below is authorised yet.
+Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. Not started; follows the Cloud Password Reset slices.**
 Owner: Michael
 Module: `RecipientLookup` (`Modules/ModuleCatalog.cs:550-572`, version `1.2.1`)
 Last verified against code: local master `9241fa0d`, 2026-10-27. `origin` and `github` master are at `f09893c4`, an

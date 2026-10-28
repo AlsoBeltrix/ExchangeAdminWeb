@@ -5,6 +5,18 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-28 - Recipient Lookup accuracy plan approved with every free extra; the display is to be spelled out
+
+Owner, 2026-10-28, on `docs/RecipientLookupAccuracy-Plan.md`: "add everything free and clarify what's displayed". Approved:
+the accuracy core (what a recipient is, in plain words; "Not applicable" where a field does not apply; "Not read" / "Could not
+be determined" where nothing was read or the sources disagree; nothing shown today removed) plus the extras the plan marks
+free - 1 (quotas beside the size), 2 (directory facts: synced or cloud-only, Entra object ID, alias, hidden from the address
+book, where a mail user's or contact's mail goes), 3 without 3b (archive status, forwarding keeps a copy, send-on-behalf,
+last real user activity; NOT legal holds), 7 (a "show all details" switch), 8 (the audit row also keeps the resolved primary
+address). Not taken: 3b, 4, 5, 6 (each costs reads), 9 and 10 (recommended no). Added requirement: the plan's implementing
+agent writes, before code, the exact field list and order the page shows per recipient kind, in the record and the README,
+so what is displayed is clear to the owner and the operator. Runs after the Cloud Password Reset slices and before the
+cancellation plan.
 ### 2026-10-28 - Cancellation depth plan approved ("do it the right way"); the leave prompt must tell the truth
 
 Owner, 2026-10-28, on `docs/CancellationDepth-Plan.md` and the question why leaving a page can let work finish: "be clear
