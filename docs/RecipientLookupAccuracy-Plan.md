@@ -1,12 +1,14 @@
 # Recipient Lookup: say what a recipient is, and where its mailbox is - Plan
 
-Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. In progress 2026-10-28 on `feat/recipient-lookup-accuracy`: the display is spelled out in "Displayed fields per recipient kind", below the Exec summary, before any code.**
+Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. In progress 2026-10-28 on `feat/recipient-lookup-accuracy`: the display is spelled out in "Displayed fields per recipient kind", below the Exec summary, before any code. Every slice has landed on the branch - S1-S4, E2, E1, E3, E8, E7 and S5's records (status log, section 14) - and the branch awaits the supervisor's merge; "Implemented" at the merge. The manual checks of section 12 are the owner's and not done.**
 Owner: Michael
 Module: `RecipientLookup` (`Modules/ModuleCatalog.cs:550-572`, version `1.2.1`)
 Last verified against code: local master `9241fa0d`, 2026-10-27. `origin` and `github` master are at `f09893c4`, an
 ancestor of it. Every file and line cited was read there; lines move, so re-read before editing (Known Failure Class 4).
 Versions (proposed): module `1.2.1` -> `1.3.0` in S1, then one patch per later slice; base app `2.35.0` unchanged
-(section 6).
+(section 6). As landed: `1.3.0` S1, `1.3.1` S2, `1.3.2` S3, `1.3.3` S4, then one minor per extra - `1.4.0` E2, `1.5.0` E1,
+`1.6.0` E3, `1.7.0` E8, `1.8.0` E7; base app `2.36.0` unchanged (no shared service, model of another module, or csproj
+changed).
 Authority: subordinate to `docs/ProjectConstitution.md` and `AGENTS.md`. A written plan is required twice over: the owner
 asked for one, and the Constitution's Planning Rules name an Exchange service change and a trace change (the new
 on-premises read's trace steps; extra E8 is an audit change).
@@ -1046,6 +1048,22 @@ everything pass. Confirm each mutation applied before trusting its result. Recor
 - **AC9.** No shared file is changed; the base version is unchanged.
 - **AC10.** No source file names this deployment's domains, hosts or forests.
 
+**As landed** (2026-10-28, branch `feat/recipient-lookup-accuracy`; test names are in `RecipientLookupClassificationTests`,
+`RecipientClassificationTests` and `RecipientLookupExtrasTests` unless named otherwise; the mutations are the status log's):
+
+| AC | Shown by |
+| --- | --- |
+| AC1 | T5 over each on-premises mailbox type and both sync states, and the owner's case on the stand-in's older table; M1 |
+| AC2 | T13, T2, T12 (`AListLookup_NeverReadsAMailbox_AndOpensNoOnPremisesSession`); M6, M10, M11 |
+| AC3 | T10's cross product (a mailbox label only from the holding side's mailbox type); M1-M4 |
+| AC4 | T7, T8, T13, T15; "Unknown" appears nowhere a page shows; M2-M4, M10 |
+| AC5 | T13-T15 and the failed-read tests (statistics, Get-Mailbox, on-premises size); M11, M12 |
+| AC6 | every row of 2.2 still rendered, in the display section's order; Exchange's raw type in the small print (T1, T5) |
+| AC7 | T12, T2, `DirectoryFacts_AddNoRead`; no extra adds a read; M6, M7 |
+| AC8 | the kd-37, kd-57, kd-61, kd-14, aud-a23o, aud-a54 and aud-a68 tests green, changed only as 8.3 names (and kd-57's cancel test asserting no resolved address); M8 |
+| AC9 | `ExchangeServiceBase`, `ExchangeIdentityResolver`, `AuditService` and the csproj unchanged (`git diff 01bf455e..HEAD`); base `2.36.0` |
+| AC10 | fixtures use `contoso.test` and `fabrikam.test` only; the tables hold Exchange's vocabulary; the server is `OnPremExchange:ServerUri` |
+
 ## 10. Risks, biggest first
 
 1. **A wrong classification.** An operator told "Mailbox" about a mail user, or "On-Premises" about a mailbox that has
@@ -1107,6 +1125,8 @@ everything pass. Confirm each mutation applied before trusting its result. Recor
   neither today), and `Get-UnifiedGroup` returns member and guest counts.
 - **A15.** On-premises `Get-Recipient` returns mail-enabled recipients only, so a synced object that is not mail-enabled
   on-premises is not found there. That is D3, undetermined: the honest outcome either way.
+- **A16, A17** (hold property names; E3's property names) are in "Displayed fields per recipient kind", its last
+  subsection. Both unverified, like the rest.
 
 **Not established, and why:** every live property shape (a draft makes no live call, and Active Directory is not probed
 without a direct go, `.agents/state.md`, Standing owner instructions); A7; the module account's Exchange role; how the
@@ -1276,3 +1296,12 @@ he leaves them; and the extras he accepted and declined, by number.
   | ME7c a long value not cut | `c3c5aff9453e6a3b61d4e64639238aa6` | 1 | the long-value test |
   | ME7d the switch still shows 20 addresses | `9bad0afae17be238a44d2c79a0d72693` | 1 | the switch-on test |
   | ME7e the switch on by default | `01177228bfa574b2d888ee7dcfb8d434` | 1 | the off-by-default test |
+- 2026-10-28, **S5, the records**: README's Recipient Lookup section checked against the landed page (one wording fix: a
+  Microsoft 365 group reads "Cloud", not among the kinds with no mailbox), this plan's status, versions as landed, the
+  acceptance table (section 9) and the A16/A17 pointer (section 11). Commits on `feat/recipient-lookup-accuracy`, from
+  `01bf455e`: display section and README `74fa022c`; S1 `6d70c144`; S2 `ae18e3a4`; S3 `07f3a5a7`; S4 `2e3e2eb2`; E2
+  `cf1c9919`; E1 `aff38531`; E3 `97fcb602`; E8 `125e8840`; E7 `500f2624`; S5 the commit carrying this line. Every slice's
+  gate ran on its own tree: Release build 0 errors (19 known warnings), the full suite green (7914, 7933, 7939, 7943,
+  7957, 7964, 7975, 7978, 7983 passed, 0 failed, from a baseline of 7799), format, `git diff --check` and the ASCII lint
+  clean. Not done here, and why: `.agents/state.md` (the supervisor's, by the brief); the decisions entry was recorded at
+  approval; the manual checks of section 12 (production use, the owner's); the merge (the supervisor's).

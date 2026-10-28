@@ -460,3 +460,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, RecipientLookupAccuracy E8** (the audit row also keeps resolvedAddress; Recipient Lookup 1.7.0). Same agent and session as S1, whose line explains why its share is not separable.
 
 **2026-10-28, RecipientLookupAccuracy E7** (a "Show all details" switch: every address and every property each read returned, holds left out; Recipient Lookup 1.8.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy S5** (the records: README checked against the landed page, the plan's status, versions, acceptance table and status log with every commit). Same agent and session as S1, whose line explains why its share is not separable.

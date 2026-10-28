@@ -76,7 +76,8 @@ The exact field list per recipient kind, with each value's source, is in `docs/R
   in small print beneath. A type is named only when Exchange reports it from the side that holds the object: an
   on-premises mailbox, which Exchange Online sees as a mail user, is named from on-premises Exchange's own answer.
 - **Where its mailbox is.** Mailbox Location reads "Cloud", "On-Premises", "Not applicable" (it has no mailbox: lists,
-  groups, contacts, guests and mail users; a note beneath says so) or "Could not be determined".
+  mail-enabled security groups, room lists, contacts, guests and mail users; a note beneath says so) or "Could not be
+  determined". A Microsoft 365 group reads "Cloud": Exchange Online holds its mailbox, which this module does not read.
 - **"Could not be determined"** means Exchange Online and on-premises Exchange disagree about the recipient, or a side
   that had to be asked could not be: on-premises Exchange is not set up for this module, its credentials could not be
   retrieved, its session or read failed, or the account comes from a directory that server does not serve. The warning
