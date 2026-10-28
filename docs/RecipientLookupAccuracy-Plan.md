@@ -1,6 +1,6 @@
 # Recipient Lookup: say what a recipient is, and where its mailbox is - Plan
 
-Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. Not started; follows the Cloud Password Reset slices.**
+Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. In progress 2026-10-28 on `feat/recipient-lookup-accuracy`: the display is spelled out in "Displayed fields per recipient kind", below the Exec summary, before any code.**
 Owner: Michael
 Module: `RecipientLookup` (`Modules/ModuleCatalog.cs:550-572`, version `1.2.1`)
 Last verified against code: local master `9241fa0d`, 2026-10-27. `origin` and `github` master are at `f09893c4`, an
@@ -78,6 +78,264 @@ that server does not serve), an on-premises mailbox reads "Could not be determin
 
 **What approving authorises.** The accuracy fix as described, with its version bumps and documentation, and only the
 extras you name by number. Deploying stays with you.
+
+## Displayed fields per recipient kind
+
+*Written by the implementing agent before any code, as the owner asked on 2026-10-28 ("clarify what's displayed"). It is
+for the owner and the operator as much as the builder: it states what the page shows once the core (S1-S4) and the
+accepted extras (E1, E2, E3 without 3b, E7, E8) have landed. Where it settles something sections 3 and 4 leave open, the
+last subsection says so. `README.md`, Recipient Lookup, says the same in operator terms. Code re-read at `01bf455e`.*
+
+Abbreviations used in this section only: **N1** Exchange Online `Get-Recipient`; **N2** Exchange Online `Get-Mailbox`;
+**N3** Exchange Online `Get-MailboxStatistics` and its `-Archive`; **N4** on-premises `Get-Recipient`; **N5** the shared
+on-premises size read (`Get-MailboxStatistics` and `-Archive`, `TotalItemSize` only). Section 3.2 describes each.
+
+### The page, top to bottom
+
+1. **The error box**, instead of everything below, when the lookup itself failed: "Recipient '...' not found.", the
+   reason Exchange Online could not be asked, or "Cancelled by the operator" (kd-57). Unchanged.
+2. **The warning box**: one line per read that failed and per answer that could not be settled. Every "Could not be
+   read" and every "Could not be determined" on the page has its reason here.
+3. **The left table**, the same rows for every kind, in this order: Display Name, Primary Email, Recipient Type, Mailbox
+   Location, Created, Last Logon, Last User Activity (E3), Synced from On-Premises (E2), Entra Object ID (E2), Alias
+   (E2), Hidden from Address Book (E2), External Address (E2), Last Changed (E2).
+4. **The right table**, the same rows for every kind, in this order: Mailbox Size, Warning Quota (E1), Prohibit Send
+   Quota (E1), Prohibit Send/Receive Quota (E1), Send Quota Used (E1), Deleted Item Size, Total Size, Item Count, Deleted
+   Items, Archive, Archive Status (E3); then, only when an archive was found, Archive Size, Archive Quota (E1), Archive
+   Warning Quota (E1), Archive Deleted, Archive Items; then Forwarding, Send on Behalf (E3), Account Disabled (E3).
+5. **The "Show all details" switch** (E7), off by default.
+6. **Email Addresses**: the first 20 and "...and N more", as today; with the switch on, every one.
+7. **All details** (E7), only with the switch on: every property each read returned, by read.
+
+Every row is shown for every kind; a row that does not apply says so rather than disappearing (R5). The archive rows
+under Archive are hidden when no archive was found, as today.
+
+### The words
+
+| Word | Where | Means |
+| --- | --- | --- |
+| "Not applicable" | mailbox rows, Mailbox Location, External Address | The recipient has no mailbox (or, for External Address, is not a mail user, contact or guest), so the row can have no value. |
+| "Not read for on-premises mailboxes" | an on-premises mailbox's rows | On-premises Exchange holds the value and this module does not ask for it (extra 4 was not taken). Not an absence. |
+| "Not read for this recipient type" | a Microsoft 365 group's mailbox rows, and the other Exchange-held types | Exchange Online holds a mailbox of a kind this module does not read. Not an absence. |
+| "Not read" | the mailbox rows of a recipient that could not be determined | What the recipient is was not settled, so nothing about a mailbox was asked. |
+| "Could not be read" | any row whose read was made | The read failed or answered nothing; the warning box says why (aud-a54, aud-a68). |
+| "Could not be determined" | Recipient Type, Mailbox Location | The two sides disagree, or a side that has to be asked could not be. The warning box says why; the small print gives each side's words. |
+| "Not reported by Exchange" | the rows the extras add | The read was made and Exchange's answer did not carry the property. Never a default. |
+| "N/A" | the rows shown before this plan | Exchange's answer did not carry the value (aud-a23d). Never with a unit after it. |
+| "None" | Forwarding, Send on Behalf | Exchange's own answer that there is none. |
+
+### Rows that read the same for every kind
+
+| Row | Shows | From |
+| --- | --- | --- |
+| Display Name | as Exchange reports it | N1 `DisplayName` |
+| Primary Email | the primary address, then "(looked up as {what was typed})" when the operator typed anything else (compared without case); when Exchange reports none, what was typed, then "(as typed; Exchange reported no primary address)" | N1 `PrimarySmtpAddress` |
+| Recipient Type | the plain label (per kind, below), and beneath it, in small print, Exchange's raw words: `Exchange Online: {N1's RecipientTypeDetails}`, then `; Get-Mailbox: {...}` when N2 decided, then `; on-premises: {...}` when N4 was asked | N1, N2, N4 `RecipientTypeDetails` |
+| Mailbox Location | a badge: "Cloud" (blue), "On-Premises" (grey), "Not applicable" (neutral, with a one-line note), "Could not be determined" (the warning colour) | per kind, below |
+| Created | the time in the browser's zone (aud-a23e), then " (Exchange Online's copy)" when Exchange reports the recipient as synced from on-premises; "N/A" when none was reported | N1 `WhenCreated`, `IsDirSynced` |
+| Synced from On-Premises | "Yes", "No", or "Not reported by Exchange" | N1 `IsDirSynced` |
+| Entra Object ID | the ID, or "Not reported by Exchange" | N1 `ExternalDirectoryObjectId` |
+| Alias | the alias, or "Not reported by Exchange" | N1 `Alias` |
+| Hidden from Address Book | "Yes", "No", or "Not reported by Exchange" | N1 `HiddenFromAddressListsEnabled` |
+| External Address | for an object Exchange Online holds as `MailUser`, `GuestMailUser`, `MailContact` or `MailForestContact` - an on-premises mailbox included, whose cloud object is a mail user - the address its mail goes to, or "Not reported by Exchange"; for every other kind, "Not applicable" | N1 `ExternalEmailAddress` |
+| Last Changed | the time, with " (Exchange Online's copy)" as for Created; "Not reported by Exchange" | N1 `WhenChanged` |
+| Email Addresses | as today | N1 `EmailAddresses` |
+
+### Per kind
+
+Each kind names the reads made, what Recipient Type and Mailbox Location show, and every mailbox row: Last Logon, Last
+User Activity, and the whole right table.
+
+#### Cloud mailbox: user, shared, room, equipment
+
+- **Is:** N1 type `UserMailbox`, `SharedMailbox`, `RoomMailbox` or `EquipmentMailbox` - and the same for
+  `SchedulingMailbox`, `LinkedMailbox` and `DiscoveryMailbox` - and N2 found the mailbox.
+- **Recipient Type:** "Mailbox", "Shared mailbox", "Room mailbox", "Equipment mailbox" ("Scheduling mailbox", "Linked
+  mailbox", "Discovery mailbox"). Small print `Exchange Online: UserMailbox`.
+- **Mailbox Location:** "Cloud".
+- **Reads:** N1, N2, N3. No on-premises session.
+
+| Row | Shows | From |
+| --- | --- | --- |
+| Last Logon | the time; "N/A" when none was reported | N3 `LastLogonTime` |
+| Last User Activity | the time; "Not reported by Exchange" | N3 `LastUserActionTime` |
+| Mailbox Size | "1.50 GB"; "N/A" | N3 `TotalItemSize` |
+| Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota | "49.50 GB"; "Unlimited"; "The database default (not read)" when the mailbox uses its database's defaults; "Not reported by Exchange" | N2 `IssueWarningQuota`, `ProhibitSendQuota`, `ProhibitSendReceiveQuota`, `UseDatabaseQuotaDefaults` |
+| Send Quota Used | "3.0% of the send quota"; "Not applicable (no send quota)" when it is Unlimited; "Not read (the database default applies)"; "Not reported by Exchange" when the quota was not returned; "N/A" when the size was not | Mailbox Size over Prohibit Send Quota |
+| Deleted Item Size | "0.20 GB"; "N/A" | N3 `TotalDeletedItemSize` |
+| Total Size | the sum, only when both sizes were read; otherwise "N/A" | the two sizes |
+| Item Count, Deleted Items | the number; "N/A" | N3 `ItemCount`, `DeletedItemCount` |
+| Archive | "Enabled", "Disabled", "Could not be read" | N3 `-Archive` |
+| Archive Status | Exchange's words: `ArchiveStatus`, then `(state: {ArchiveState})` when reported; "Not reported by Exchange" | N2 |
+| Archive Size, Archive Deleted (archive found) | GB; "N/A" | N3 `-Archive` |
+| Archive Quota, Archive Warning Quota (archive found) | as the quotas above | N2 `ArchiveQuota`, `ArchiveWarningQuota` |
+| Archive Items (archive found) | the number; "N/A" | N3 `-Archive` `ItemCount` |
+| Forwarding | the address, then ", and keeps a copy" or ", forward only" - or " (whether a copy is kept was not reported by Exchange)"; "None" | N2 `ForwardingSmtpAddress`, else `ForwardingAddress`; `DeliverToMailboxAndForward` |
+| Send on Behalf | the delegates, separated by "; "; "None"; "Not reported by Exchange" | N2 `GrantSendOnBehalfTo` |
+| Account Disabled | "Yes", "No", "Not reported by Exchange" | N2 `AccountDisabled` |
+
+When a read fails or says no:
+
+- **N2 fails:** the type and "Cloud" stand - Exchange Online typed it as a mailbox of its own - and every row of the
+  table above reads "Could not be read" (3.8, change 1). Warning: "The Exchange Online mailbox could not be read: ...".
+- **N2 answers that there is no mailbox (D4):** Recipient Type and Mailbox Location "Could not be determined", small
+  print `Exchange Online: UserMailbox; Get-Mailbox: no mailbox`, every row of the table above "Not read". Warning:
+  "Exchange Online reports {address} as UserMailbox but returned no mailbox for it."
+- **The statistics read fails or answers no row:** Last Logon, Last User Activity, Mailbox Size, Send Quota Used,
+  Deleted Item Size, Total Size, Item Count and Deleted Items read "Could not be read"; the warning as today.
+- **The archive read fails or answers no row:** Archive reads "Could not be read" and its rows stay hidden, as today.
+
+#### On-premises mailbox
+
+- **Is:** N1 type `MailUser`, not reported as cloud-only, and N4 holds it as `UserMailbox`, `SharedMailbox`,
+  `RoomMailbox`, `EquipmentMailbox`, `LinkedMailbox`, `LinkedRoomMailbox` or `DiscoveryMailbox`.
+- **Recipient Type:** "Mailbox", "Shared mailbox", "Room mailbox", "Equipment mailbox", "Linked mailbox", "Linked room
+  mailbox", "Discovery mailbox". Small print `Exchange Online: MailUser; on-premises: UserMailbox`.
+- **Mailbox Location:** "On-Premises".
+- **Reads:** N1; N4 in one on-premises session; N5 in its own session, as today. N2 and N3 are not asked.
+
+| Row | Shows | From |
+| --- | --- | --- |
+| Last Logon, Last User Activity | "Not read for on-premises mailboxes" | - |
+| Mailbox Size | GB; "Could not be read" | N5 |
+| the three quotas, Send Quota Used | "Not read for on-premises mailboxes" | - |
+| Deleted Item Size, Total Size, Item Count, Deleted Items | "Not read for on-premises mailboxes" | - |
+| Archive | "Enabled", "Disabled", "Could not be read" (aud-a68) | N5 `-Archive` |
+| Archive Status | "Not read for on-premises mailboxes" | - |
+| Archive Size (archive found) | GB; "Could not be read" | N5 `-Archive` |
+| Archive Quota, Archive Warning Quota, Archive Deleted, Archive Items (archive found) | "Not read for on-premises mailboxes" | - |
+| Forwarding, Send on Behalf, Account Disabled | "Not read for on-premises mailboxes" | - |
+
+External Address shows N1's: where Exchange Online sends this mailbox's mail.
+
+#### Mail user, and the remote mailboxes on-premises reports
+
+- **Is:** N1 type `MailUser`. Whether Exchange Online reports it as synced, and what N4 answers, decide the rest.
+- **Reads:** N1; N4 unless Exchange Online reports it as cloud-only. N2, N3 and N5 are not asked.
+
+| `IsDirSynced` | N4 answers | Recipient Type | Small print | Mailbox Location | Warning |
+| --- | --- | --- | --- | --- | --- |
+| false | not asked | Mail user | `Exchange Online: MailUser` | Not applicable: "A mail user has no mailbox. Its mail goes to another address." | none |
+| true or not reported | `MailUser` | Mail user | `Exchange Online: MailUser; on-premises: MailUser` | Not applicable, the same note | none |
+| true or not reported | `RemoteUserMailbox`, `RemoteSharedMailbox`, `RemoteRoomMailbox`, `RemoteEquipmentMailbox`, `RemoteTeamMailbox` | Could not be determined | `Exchange Online: MailUser; on-premises: RemoteUserMailbox` | Could not be determined | D1 (3.5) |
+| true or not reported | any other type, or none | Could not be determined | `Exchange Online: MailUser; on-premises: {type, or "no type"}` | Could not be determined | D2 |
+| true or not reported | no such recipient | Could not be determined | `Exchange Online: MailUser; on-premises: no such recipient` | Could not be determined | D3 |
+| true or not reported | could not be asked | Could not be determined | `Exchange Online: MailUser; on-premises: not read` | Could not be determined | U1: "Could not determine mailbox location: ...", today's words |
+| true or not reported | more than one recipient | Could not be determined | `Exchange Online: MailUser; on-premises: more than one recipient` | Could not be determined | U2 |
+
+Mailbox rows: "Not applicable" for a mail user, "Not read" when it could not be determined. External Address: N1's.
+
+#### Distribution list
+
+- **Is:** N1 type `MailUniversalDistributionGroup` ("Distribution list"), or `MailNonUniversalGroup` ("Distribution
+  group (non-universal)").
+- **Small print:** `Exchange Online: MailUniversalDistributionGroup`.
+- **Mailbox Location:** "Not applicable", not in the warning colour: "A distribution list has no mailbox."
+- **Every mailbox row:** "Not applicable"; the archive rows hidden. External Address: "Not applicable".
+- **Reads:** N1 only. No N2, no on-premises session.
+
+#### Mail-enabled security group
+
+As a distribution list, for N1 type `MailUniversalSecurityGroup`: "Mail-enabled security group", "A mail-enabled
+security group has no mailbox."
+
+#### Dynamic distribution list
+
+As a distribution list, for `DynamicDistributionGroup`: "Dynamic distribution list", "A dynamic distribution list has no
+mailbox."
+
+#### Room list
+
+As a distribution list, for `RoomList`: "Room list", "A room list has no mailbox."
+
+#### Microsoft 365 group
+
+- **Is:** N1 type `GroupMailbox`: "Microsoft 365 group", small print `Exchange Online: GroupMailbox`.
+- **Mailbox Location:** "Cloud": Exchange Online holds its mailbox.
+- **Every mailbox row:** "Not read for this recipient type" (`Get-Mailbox` does not return a group's mailbox, A5); the
+  archive rows hidden. External Address: "Not applicable".
+- **Reads:** N1 only.
+- The same for the other types Exchange Online holds a mailbox for and this module does not read: `TeamMailbox` "Site
+  mailbox", `PublicFolderMailbox` "Public folder mailbox", and `ArbitrationMailbox`, `AuditLogMailbox`,
+  `AuxAuditLogMailbox`, `MonitoringMailbox`, `SupervisoryReviewPolicyMailbox` "System mailbox ({Exchange's word})".
+
+#### Contact
+
+As a distribution list, for `MailContact` ("Contact", "A contact has no mailbox.") or `MailForestContact` ("Contact
+(another forest)", "A contact (another forest) has no mailbox."), except that External Address shows where its mail
+goes (N1), or "Not reported by Exchange".
+
+#### Guest
+
+As a contact, for `GuestMailUser`: "Guest", "A guest has no mailbox."; External Address N1's.
+
+#### Mail-enabled public folder
+
+As a distribution list, for `PublicFolder`: "Mail-enabled public folder", "A mail-enabled public folder has no mailbox."
+
+#### A type this app does not name, or none
+
+- **Recipient Type:** "Not a type this app names: {Exchange's word}", or "Exchange reported no type". Never mapped to the
+  nearest label.
+- **Reads:** N1 and N2; then:
+
+| N2 answers | `IsDirSynced` | Recipient Type | Small print | Mailbox Location | Mailbox rows |
+| --- | --- | --- | --- | --- | --- |
+| found, its own type a cloud mailbox type above | any | that type's label | `Exchange Online: {word}; Get-Mailbox: UserMailbox` | Cloud | as a cloud mailbox (N3 read) |
+| found, any other type | any | unchanged | `Exchange Online: {word}; Get-Mailbox: {type or "no type"}` | Cloud | as a cloud mailbox |
+| no mailbox | false | unchanged | `Exchange Online: {word}; Get-Mailbox: no mailbox` | Not applicable: "Exchange Online holds no mailbox for it and reports it as cloud-only." | Not applicable |
+| no mailbox | true or not reported | N4's on-premises mailbox type names it; any other N4 answer, Could not be determined | `...; Get-Mailbox: no mailbox; on-premises: {N4's answer}` | On-Premises (rows as an on-premises mailbox); otherwise Could not be determined, with a warning naming both sides' words, or D3, U1 or U2 | as an on-premises mailbox; otherwise "Not read" |
+| fails | any | Could not be determined | `Exchange Online: {word}; Get-Mailbox: not read` | Could not be determined | "Could not be read", with N2's warning and one saying why the type is not settled |
+
+#### Could not be determined, in general
+
+Recipient Type and Mailbox Location read "Could not be determined", the location in the warning colour. The small print
+gives each side's words; the warning box gives the reason in a sentence (3.5). Every mailbox row reads "Not read", except
+where a read was made and failed, which reads "Could not be read". The rows that read the same for every kind still show.
+
+### Show all details (E7)
+
+A switch above Email Addresses, off by default. On, it lists every email address, and under "All details" every property
+each read returned - N1, N2, N3, N3's `-Archive`, N4, in that order, each by name and value in the order Exchange gave
+them; a value longer than 500 characters is cut there and says so. Hold properties are left out, because extra 3b was not
+taken: every property whose name contains "Hold" (litigation, retention, in-place, compliance-tag and delay holds), and
+`RetentionComment` and `RetentionUrl` (A16). N5's values are on the page already; the shared size read returns sizes, not
+rows, so it is not listed (widening it would change a shared file, section 6).
+
+### Audit (E8)
+
+The lookup's audit row is unchanged - `target` is what was typed - and gains `resolvedAddress`, the primary address N1
+returned, when the lookup found a recipient that has one. A cancelled lookup is filed Cancelled, as today (kd-57).
+
+### What this section settles that sections 3 and 4 leave open
+
+1. **"Could not be read" for a cloud mailbox's statistics rows, and an on-premises mailbox's size, when their read failed
+   or answered no row**, and for every mailbox row when N2 failed. 3.6 says "as today" for them, which was "N/A"; AC5
+   ("no row states an absence the module did not read") decides it. The reads and warnings are unchanged.
+2. **An on-premises archive's Deleted and Items read "Not read for on-premises mailboxes"**, not "N/A": 3.6 says "as
+   today", but N5 never asks for them (2.5 d, AC5). Its Archive Size stays as today.
+3. **The unknown and missing types' small print and warnings** (3.3 gives their outcomes, not their words): as the table
+   above. Where N4 answered with a type that does not settle it, the warning is "Exchange Online reports {address} as
+   {word}, a type this app does not name, and holds no mailbox for it; on-premises Exchange holds it as {type}." (or
+   "Exchange Online reported no type for {address} and holds no mailbox for it; ..."); where N2 failed, "Exchange Online
+   reports {address} as {word}, a type this app does not name, and its mailbox could not be read."
+4. **External Address for an on-premises mailbox** shows N1's address: its cloud object is a mail user, and the address
+   is where Exchange Online sends its mail.
+5. **The " (Exchange Online's copy)" note** follows Created and Last Changed only when Exchange reports the recipient as
+   synced (`IsDirSynced` true); when the sync state is not reported, neither carries it, and Synced from On-Premises
+   says "Not reported by Exchange".
+6. **"Show all details" leaves out hold properties by name** (A16), and does not list N5.
+
+New assumptions, labelled as section 11's are, and not resolved by this section:
+
+- **A16.** Exchange's hold properties are named with "Hold" (`LitigationHoldEnabled`, `LitigationHoldDate`,
+  `LitigationHoldOwner`, `LitigationHoldDuration`, `InPlaceHolds`, `ComplianceTagHoldApplied`, `DelayHoldApplied`,
+  `DelayReleaseHoldApplied`, `RetentionHoldEnabled`, `StartDateForRetentionHold`, `EndDateForRetentionHold`), with
+  `RetentionComment` and `RetentionUrl` beside them. From knowledge; no live call. A property this filter misses would
+  show on the switch's list.
+- **A17.** Exchange Online's `Get-Mailbox` returns `ArchiveStatus`, `ArchiveState`, `DeliverToMailboxAndForward`,
+  `GrantSendOnBehalfTo` and `AccountDisabled`, and `Get-MailboxStatistics` returns `LastUserActionTime`. From knowledge;
+  a property that does not come back reads "Not reported by Exchange".
 
 ## 1. The request and how this plan reads it
 
@@ -891,3 +1149,7 @@ he leaves them; and the extras he accepted and declined, by number.
 **Status log:**
 
 - 2026-10-27: drafted from the owner's request, against local master `9241fa0d`. Not approved.
+- 2026-10-28: approved (`.agents/decisions.md` 2026-10-28): the core and extras 1, 2, 3 without 3b, 7, 8. Implementation
+  started on branch `feat/recipient-lookup-accuracy` (worktree `rla`, from `01bf455e`) by one Opus 5.5 agent. Before any
+  code, "Displayed fields per recipient kind" was written below the Exec summary, and README.md gained the Recipient
+  Lookup section saying the same for operators.

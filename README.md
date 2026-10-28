@@ -62,6 +62,79 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
 - Exports are kept for 30 days. The app deletes expired ones itself at startup, in the same pass that prunes old job records — there is nothing to install and no scheduled task. A row whose export could not be saved shows as Failed, distinct from an expired one
 - Section access key: `MessageTrace`
+
+### Recipient Lookup (`/recipient-lookup`)
+
+Look up any recipient - by its address, another of its addresses, its alias or its name - and see what it is, where its
+mailbox is, and that mailbox's size, quotas, archive and settings. Read-only; every lookup is written to the audit log.
+The exact field list per recipient kind, with each value's source, is in `docs/RecipientLookupAccuracy-Plan.md`,
+"Displayed fields per recipient kind".
+
+- **What it is.** Recipient Type names the recipient in plain words - "Mailbox", "Shared mailbox", "Room mailbox",
+  "Equipment mailbox", "Distribution list", "Mail-enabled security group", "Dynamic distribution list", "Room list",
+  "Microsoft 365 group", "Contact", "Guest", "Mail user", "Mail-enabled public folder" - with Exchange's own type words
+  in small print beneath. A type is named only when Exchange reports it from the side that holds the object: an
+  on-premises mailbox, which Exchange Online sees as a mail user, is named from on-premises Exchange's own answer.
+- **Where its mailbox is.** Mailbox Location reads "Cloud", "On-Premises", "Not applicable" (it has no mailbox: lists,
+  groups, contacts, guests and mail users; a note beneath says so) or "Could not be determined".
+- **"Could not be determined"** means Exchange Online and on-premises Exchange disagree about the recipient, or a side
+  that had to be asked could not be: on-premises Exchange is not set up for this module, its credentials could not be
+  retrieved, its session or read failed, or the account comes from a directory that server does not serve. The warning
+  box at the top says which, and the small print gives each side's words. The page never guesses a type.
+- **Primary Email** is the recipient's real primary address; when you typed anything else it adds "(looked up as ...)".
+  Every figure on the page is about that recipient.
+- **On-premises Exchange is asked only when it has to be**: for a mail user Exchange Online does not report as
+  cloud-only, and for a type the app does not name when Exchange Online holds no mailbox for it. Cloud mailboxes, lists,
+  groups, contacts, guests and cloud-only objects open no on-premises session.
+
+**The page, top to bottom.** The error box (the lookup failed) or the warning box first. Then two tables, the same rows
+for every kind:
+
+- *Left:* Display Name, Primary Email, Recipient Type, Mailbox Location, Created, Last Logon, Last User Activity, Synced
+  from On-Premises, Entra Object ID, Alias, Hidden from Address Book, External Address, Last Changed.
+- *Right:* Mailbox Size, Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota, Send Quota Used, Deleted Item
+  Size, Total Size, Item Count, Deleted Items, Archive, Archive Status; when an archive was found, Archive Size, Archive
+  Quota, Archive Warning Quota, Archive Deleted, Archive Items; then Forwarding, Send on Behalf, Account Disabled.
+
+Then the **Show all details** switch and Email Addresses (the first 20; every one with the switch on).
+
+**What each kind shows** ("shown": the value Exchange returned):
+
+| Row | Cloud mailbox | On-premises mailbox | No mailbox: mail user, list, security group, dynamic list, room list, contact, guest, public folder | Microsoft 365 group | Could not be determined |
+| --- | --- | --- | --- | --- | --- |
+| Mailbox Location | Cloud | On-Premises | Not applicable, with a note | Cloud | Could not be determined |
+| Display Name, Primary Email, Created, Synced from On-Premises, Entra Object ID, Alias, Hidden from Address Book, Last Changed, Email Addresses | shown | shown | shown | shown | shown |
+| External Address | Not applicable | shown: where Exchange Online sends its mail | shown for a mail user, contact or guest; Not applicable otherwise | Not applicable | shown when Exchange Online holds it as a mail user; otherwise Not applicable |
+| Last Logon, Last User Activity | shown | Not read for on-premises mailboxes | Not applicable | Not read for this recipient type | Not read |
+| Mailbox Size | shown | shown (read on-premises) | Not applicable | Not read for this recipient type | Not read |
+| Quotas, Send Quota Used | shown | Not read for on-premises mailboxes | Not applicable | Not read for this recipient type | Not read |
+| Deleted Item Size, Total Size, Item Count, Deleted Items | shown | Not read for on-premises mailboxes | Not applicable | Not read for this recipient type | Not read |
+| Archive | Enabled / Disabled | Enabled / Disabled (read on-premises) | Not applicable | Not read for this recipient type | Not read |
+| Archive Status | shown | Not read for on-premises mailboxes | Not applicable | Not read for this recipient type | Not read |
+| Archive Size (archive found) | shown | shown (read on-premises) | hidden | hidden | hidden |
+| Archive Quota, Archive Warning Quota, Archive Deleted, Archive Items (archive found) | shown | Not read for on-premises mailboxes | hidden | hidden | hidden |
+| Forwarding, Send on Behalf, Account Disabled | shown | Not read for on-premises mailboxes | Not applicable | Not read for this recipient type | Not read |
+
+Site, public folder and system mailboxes read as a Microsoft 365 group does. A type the app does not name reads "Not a
+type this app names: ..." and is placed by what Exchange's own mailbox reads say.
+
+**The words.** "Not applicable": it has no mailbox, so the row can have no value. "Not read for on-premises mailboxes"
+and "Not read for this recipient type": the value exists, and this module does not ask for it. "Not read": what the
+recipient is could not be settled, so its mailbox was not asked about. "Could not be read": the read was made and
+failed; the warning box says why. "Not reported by Exchange": Exchange's answer did not include it. "N/A": Exchange's
+answer carried no value for it. "None": Exchange said there is none. Created and Last Changed add "(Exchange Online's
+copy)" for a recipient synced from on-premises: the date is that of Exchange Online's copy, not of the account.
+
+**Show all details** (off by default) lists every property each read returned and every email address. Legal and
+retention holds are left out.
+
+- **Audit:** each lookup writes a `Lookup` row: `target` is what was typed, and `resolvedAddress` the primary address it
+  found. A cancelled lookup is filed `Cancelled`, in the words "Cancelled by the operator".
+- **Requires:** the Exchange Online connection; for on-premises mailboxes, `OnPremExchange:ServerUri` and the module's
+  own on-premises Exchange credential (`DelineaSecretId`). Without them an on-premises mailbox reads "Could not be
+  determined", saying why.
+- Section access key: `RecipientLookup`
+
 ### On-Premises Permission Operations
 
 When a target mailbox is detected as on-premises:
