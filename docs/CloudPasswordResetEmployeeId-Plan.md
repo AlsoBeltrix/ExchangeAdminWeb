@@ -1,7 +1,7 @@
 # Cloud Password Reset: fill in a missing employee ID from the account's name, then reset
 
-Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 committed on
-`feat/cpr-employee-id`, not merged; base bump owed (status log).**
+Status: **In progress, 2026-10-28 (owner: "go" 2026-10-27; "now" 2026-10-28). S1 and S2 committed
+on `feat/cpr-employee-id`, not merged; base bump owed (status log). S3 next.**
 Owner: Michael
 Module: `CloudPasswordReset` (`Modules/ModuleCatalog.cs:877`, version `1.1.0`)
 Extends: `docs/CloudPasswordReset-Plan.md` (Implemented 2026-09-23, unproven against the live
@@ -1099,3 +1099,49 @@ should carry:
   from what master holds") the owed bump is `2.36.0` -> `2.37.0` in `<VersionPrefix>`,
   `AssemblyVersion` and `FileVersion`. `2.36.0` is not yet deployed; whether it absorbs this change
   instead is the owner's call.
+- 2026-10-28: **S2 committed on `feat/cpr-employee-id`, not merged.** In
+  `CloudPasswordResetService`: the setting (`FillMissingEmployeeIdKey`, `OwnerNameEndingsKey`; read
+  at each operation through one `TryGetModuleConfig` call, the same test `IsModuleCorrupt` makes),
+  the name rule (`DeriveOwnerLogonName`), the classifier (`ClassifyEmployeeIdFill`, the 4.2 table
+  in order, rows 6-8 and 10-11 through the untouched `ClassifyDestination`), the lookup inside
+  `DeriveDestination` (`FillMissingEmployeeId`), and `SetEmployeeIdAsync` with its stub-testable
+  core `SendEmployeeIdAsync`. The fill-in outcome rides the destination record as an optional
+  `Fill` (`EmployeeIdFill`: outcome, number, source GUID, logon name, display name), and the closed
+  list of 4.8 is the enum `EmployeeIdFillOutcome`, whose zero value is `NotAttempted`.
+  `DeriveDestination`'s comment is updated as section 8 asks. Behaviour is unchanged: nothing can
+  switch the fill-in on until S3 declares the fields. **What S2 does not do, by section 8:** the
+  audit action `CloudPasswordReset_EmployeeIdSet`, the three fields on every event, and the alerts
+  are written by the page's single builders, so S3 wires them; S2 supplies the values they carry.
+  **Implementation choices S3 and a reviewer should know:**
+  - The name rule reads only a UPN Entra returned on the read. `CloudPasswordTarget` gains an
+    optional `UserPrincipalNameFromEntra` (default false), set by `ResolveTargetAsync`, which keeps
+    falling back to the typed text exactly as before when Graph omits the property. A name not
+    from Entra is `OwnerNotFound`, and no query runs (4.2 step 1, "never the operator's typed
+    text").
+  - A blank switch reads as off, as `ValidateTickets` reads one; only a non-blank non-boolean is
+    `SettingUnreadable`.
+  - A directory answer of Found with no user in it is `OwnerLookupFailed`: no answer to act on.
+  - GUIDs are compared in canonical form, and an empty GUID counts as missing.
+  - A Graph client that cannot be built is `WriteRejected`, since nothing was sent. Any throw from
+    the PATCH itself is `WriteIndeterminate`, because a throw cannot be placed before or after the
+    send (the `ResetPasswordAsync` precedent). The result message carries the status and never a
+    response body; the sanitized Graph error goes to the log alone.
+  - No length check on the number before the save: assumption A2 stays an assumption, and an
+    over-long value comes back from Entra as `WriteRejected`.
+  Tests: T6 `CloudPasswordResetOwnerNameTests`, T7 `CloudPasswordResetFillClassifierTests`, T8
+  `CloudPasswordResetFillSettingTests`, T9 and T10 with the fill-in end to end in
+  `CloudPasswordResetFillDerivationTests` (the real service over a real config store and the S1
+  stand-in forest, `ExchangeAdminWeb.Tests/CloudPasswordResetHarness.cs`), T11
+  `CloudPasswordResetEmployeeIdSaveTests` over a recording handler behind `GraphTokenClient`, T12
+  `CloudPasswordResetNeutralityTests`, and `CloudPasswordResetFillVocabularyTests` pinning the
+  closed list, the keys and the absence of any owner or address parameter. All in
+  `ExchangeAdminWeb.Tests/CloudPasswordResetEmployeeIdFillTests.cs`, 136 cases. Mutations, each
+  restored byte-exact: M4 case-sensitive endings failed 4 T6 cases and shortest-first failed 2; M5
+  failed 3 T7 cases; M6 failed 8 (T7 and the GUID-less end-to-end case); M7 failed 10 (T8 and
+  T10); M8 failed the 3 T9 cases; M9 failed 2 T11 cases; M10 failed 3. Beyond the table: a
+  deployment ending written into the service failed T12; a save inserted into the derive path
+  failed its source guard; an owner-address parameter on `DeriveDestination` failed the parameter
+  guard. Every one of those rows ran against the final `CloudPasswordResetService.cs` and was
+  restored to it byte-exact, MD5 `81c565b171fb4c53d4b93b84d56ec3f7` before and after each. A
+  deployment domain written into the shared search service's code failed T12's code-only guard,
+  restored to `d520887ab3fedd37a7e698546055c51c`. No version bump, per section 7.

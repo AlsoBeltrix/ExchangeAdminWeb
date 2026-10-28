@@ -435,3 +435,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, close.** kd-86: ~277K agent tokens, 102 tool uses, 24 min. Final master b8c1457a: 7585 xUnit, 531 Pester, all gates green. Stream closed; nothing open but the two plan-gated items and the three plans.
 
 **2026-10-28, CloudPasswordResetEmployeeId S1** (shared logon-name lookup; one Opus 5.5 agent in worktree `cpr-s1`, branch `feat/cpr-employee-id`, dispatched by the supervising session). The agent cannot see its own share: `tools/Get-TokenUsage.ps1 -GroupBy Session` folds it into the supervising session (252ce28d, 2,376 requests for the day at S1, est $583 at opus-5 list rates, supervisor and every agent together). The agent-token, tool-use and time figures are the supervisor's hand-back notification's.
+
+**2026-10-28, CloudPasswordResetEmployeeId S2** (the service: setting, name rule, classifier, lookup inside DeriveDestination, SetEmployeeIdAsync; same agent and session as S1). Not separable from the S1 line for the same reason; the supervisor's hand-back figures cover S1 and S2 together.
