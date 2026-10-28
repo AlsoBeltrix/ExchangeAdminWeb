@@ -128,6 +128,19 @@ internal sealed class MigrationStubExchange : IDisposable
     /// <summary>aud-a23o. On-premises Get-RemoteMailbox answers these; any other identity is <see cref="NotFound"/>'s record.</summary>
     public Hashtable OnPremRemoteMailboxes { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// RecipientLookupAccuracy S1. On-premises Get-Recipient answers these - a row, or a list of rows for more than one - else
+    /// an identity <see cref="OnPremMailboxes"/> holds as a <c>UserMailbox</c>, one <see cref="OnPremRemoteMailboxes"/> holds as
+    /// a <c>RemoteUserMailbox</c>, and any other with <see cref="NotFound"/>'s record. So every fixture written for the shared
+    /// location read keeps its meaning.
+    /// </summary>
+    public Hashtable OnPremRecipients { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    private int _onPremSessions;
+
+    /// <summary>RecipientLookupAccuracy S1. How many on-premises sessions the services' ConnectOnPrem seam has opened.</summary>
+    public int OnPremSessions => Volatile.Read(ref _onPremSessions);
+
     /// <summary>aud-a23o. Exchange Online's Get-Recipient answers these (Recipient Lookup's first read).</summary>
     public Hashtable Recipients { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
@@ -369,13 +382,14 @@ internal sealed class MigrationStubExchange : IDisposable
 
     /// <summary>
     /// aud-a23o. What the services' ConnectOnPrem seam does here: in the service's own on-premises runspace, an Invoke-Command
-    /// that runs the remote script locally, a Remove-PSSession, and the on-premises Get-MailboxStatistics, Get-Mailbox and
-    /// Get-RemoteMailbox (<see cref="OnPremStubs"/>), logged as "OnPrem &lt;cmdlet&gt;" and failing as Failures["OnPrem
-    /// &lt;cmdlet&gt;[ -Archive]"] says; then a marker session. Failures["OnPrem Connect"] throws instead, as a session that
-    /// cannot be opened.
+    /// that runs the remote script locally, a Remove-PSSession, and the on-premises Get-MailboxStatistics, Get-Mailbox,
+    /// Get-RemoteMailbox and (RecipientLookupAccuracy S1) Get-Recipient (<see cref="OnPremStubs"/>), logged as "OnPrem
+    /// &lt;cmdlet&gt;" and failing as Failures["OnPrem &lt;cmdlet&gt;[ -Archive]"] says; then a marker session.
+    /// Failures["OnPrem Connect"] throws instead, as a session that cannot be opened.
     /// </summary>
     internal void DefineOnPremSession(PowerShell ps)
     {
+        Interlocked.Increment(ref _onPremSessions);
         if (Failures["OnPrem Connect"] is string refused)
             throw new InvalidOperationException(refused);
 
@@ -386,6 +400,7 @@ internal sealed class MigrationStubExchange : IDisposable
         proxy.SetVariable("NotFound", NotFound);
         proxy.SetVariable("OnPremMailboxes", OnPremMailboxes);
         proxy.SetVariable("OnPremRemoteMailboxes", OnPremRemoteMailboxes);
+        proxy.SetVariable("OnPremRecipients", OnPremRecipients);
 
         var definitions = new System.Text.StringBuilder();
         definitions.AppendLine("function global:Invoke-Command { [CmdletBinding()] param($Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList) & $ScriptBlock @ArgumentList }");
@@ -424,6 +439,13 @@ internal sealed class MigrationStubExchange : IDisposable
             """),
         ("Get-RemoteMailbox", "[string] $Identity", $$"""
             if ($OnPremRemoteMailboxes.ContainsKey($Identity)) { return $OnPremRemoteMailboxes[$Identity] }
+            {{Lookup}}
+            """),
+        // RecipientLookupAccuracy S1: Recipient Lookup's own on-premises read (OnPremRecipients).
+        ("Get-Recipient", "[string] $Identity", $$"""
+            if ($OnPremRecipients.ContainsKey($Identity)) { return $OnPremRecipients[$Identity] }
+            if ($OnPremMailboxes.ContainsKey($Identity)) { return [pscustomobject]@{ RecipientType = 'UserMailbox'; RecipientTypeDetails = 'UserMailbox' } }
+            if ($OnPremRemoteMailboxes.ContainsKey($Identity)) { return [pscustomobject]@{ RecipientType = 'MailUser'; RecipientTypeDetails = 'RemoteUserMailbox' } }
             {{Lookup}}
             """),
     ];
@@ -640,8 +662,10 @@ internal sealed class MigrationStubExchange : IDisposable
         ("New-MigrationBatch", "[string] $Name, [object] $CSVData, [object] $SourceEndpoint, [object] $TargetEndpoint, [object] $TargetDeliveryDomain, [object] $TargetDatabases, [object] $NotificationEmails, [object] $AutoStart, [object] $AutoComplete", ""),
         // aud-a23k. MailboxSize / ArchiveSize: the TotalItemSize reported instead (null: no row); NoArchive: the archive read
         // is Exchange's not-found; StatisticsCancelled: a cancellation, which neither read's own catch takes.
+        // RecipientLookupAccuracy E3: StatisticsRow, a row the mailbox read answers whole, for the properties beyond the size.
         ("Get-MailboxStatistics", "[string] $Identity, [switch] $Archive", $$"""
             if ($Behaviour['StatisticsCancelled']) { throw [System.OperationCanceledException]::new('the size read was cancelled') }
+            if (-not $Archive -and $null -ne $Behaviour['StatisticsRow']) { return $Behaviour['StatisticsRow'] }
             if ($Archive -and $Behaviour['NoArchive']) { {{Lookup}}; return }
             $key = if ($Archive) { 'ArchiveSize' } else { 'MailboxSize' }
             if ($Behaviour.ContainsKey($key)) { if ($null -ne $Behaviour[$key]) { [pscustomobject]@{ TotalItemSize = $Behaviour[$key] } }; return }

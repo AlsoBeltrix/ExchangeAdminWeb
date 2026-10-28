@@ -1,12 +1,14 @@
 # Recipient Lookup: say what a recipient is, and where its mailbox is - Plan
 
-Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. Not started; follows the Cloud Password Reset slices.**
+Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. In progress 2026-10-28 on `feat/recipient-lookup-accuracy`: the display is spelled out in "Displayed fields per recipient kind", below the Exec summary, before any code. Every slice has landed on the branch - S1-S4, E2, E1, E3, E8, E7 and S5's records (status log, section 14) - and the branch awaits the supervisor's merge; "Implemented" at the merge. The manual checks of section 12 are the owner's and not done.**
 Owner: Michael
 Module: `RecipientLookup` (`Modules/ModuleCatalog.cs:550-572`, version `1.2.1`)
 Last verified against code: local master `9241fa0d`, 2026-10-27. `origin` and `github` master are at `f09893c4`, an
 ancestor of it. Every file and line cited was read there; lines move, so re-read before editing (Known Failure Class 4).
 Versions (proposed): module `1.2.1` -> `1.3.0` in S1, then one patch per later slice; base app `2.35.0` unchanged
-(section 6).
+(section 6). As landed: `1.3.0` S1, `1.3.1` S2, `1.3.2` S3, `1.3.3` S4, then one minor per extra - `1.4.0` E2, `1.5.0` E1,
+`1.6.0` E3, `1.7.0` E8, `1.8.0` E7; base app `2.36.0` unchanged (no shared service, model of another module, or csproj
+changed).
 Authority: subordinate to `docs/ProjectConstitution.md` and `AGENTS.md`. A written plan is required twice over: the owner
 asked for one, and the Constitution's Planning Rules name an Exchange service change and a trace change (the new
 on-premises read's trace steps; extra E8 is an audit change).
@@ -78,6 +80,264 @@ that server does not serve), an on-premises mailbox reads "Could not be determin
 
 **What approving authorises.** The accuracy fix as described, with its version bumps and documentation, and only the
 extras you name by number. Deploying stays with you.
+
+## Displayed fields per recipient kind
+
+*Written by the implementing agent before any code, as the owner asked on 2026-10-28 ("clarify what's displayed"). It is
+for the owner and the operator as much as the builder: it states what the page shows once the core (S1-S4) and the
+accepted extras (E1, E2, E3 without 3b, E7, E8) have landed. Where it settles something sections 3 and 4 leave open, the
+last subsection says so. `README.md`, Recipient Lookup, says the same in operator terms. Code re-read at `01bf455e`.*
+
+Abbreviations used in this section only: **N1** Exchange Online `Get-Recipient`; **N2** Exchange Online `Get-Mailbox`;
+**N3** Exchange Online `Get-MailboxStatistics` and its `-Archive`; **N4** on-premises `Get-Recipient`; **N5** the shared
+on-premises size read (`Get-MailboxStatistics` and `-Archive`, `TotalItemSize` only). Section 3.2 describes each.
+
+### The page, top to bottom
+
+1. **The error box**, instead of everything below, when the lookup itself failed: "Recipient '...' not found.", the
+   reason Exchange Online could not be asked, or "Cancelled by the operator" (kd-57). Unchanged.
+2. **The warning box**: one line per read that failed and per answer that could not be settled. Every "Could not be
+   read" and every "Could not be determined" on the page has its reason here.
+3. **The left table**, the same rows for every kind, in this order: Display Name, Primary Email, Recipient Type, Mailbox
+   Location, Created, Last Logon, Last User Activity (E3), Synced from On-Premises (E2), Entra Object ID (E2), Alias
+   (E2), Hidden from Address Book (E2), External Address (E2), Last Changed (E2).
+4. **The right table**, the same rows for every kind, in this order: Mailbox Size, Warning Quota (E1), Prohibit Send
+   Quota (E1), Prohibit Send/Receive Quota (E1), Send Quota Used (E1), Deleted Item Size, Total Size, Item Count, Deleted
+   Items, Archive, Archive Status (E3); then, only when an archive was found, Archive Size, Archive Quota (E1), Archive
+   Warning Quota (E1), Archive Deleted, Archive Items; then Forwarding, Send on Behalf (E3), Account Disabled (E3).
+5. **The "Show all details" switch** (E7), off by default.
+6. **Email Addresses**: the first 20 and "...and N more", as today; with the switch on, every one.
+7. **All details** (E7), only with the switch on: every property each read returned, by read.
+
+Every row is shown for every kind; a row that does not apply says so rather than disappearing (R5). The archive rows
+under Archive are hidden when no archive was found, as today.
+
+### The words
+
+| Word | Where | Means |
+| --- | --- | --- |
+| "Not applicable" | mailbox rows, Mailbox Location, External Address | The recipient has no mailbox (or, for External Address, is not a mail user, contact or guest), so the row can have no value. |
+| "Not read for on-premises mailboxes" | an on-premises mailbox's rows | On-premises Exchange holds the value and this module does not ask for it (extra 4 was not taken). Not an absence. |
+| "Not read for this recipient type" | a Microsoft 365 group's mailbox rows, and the other Exchange-held types | Exchange Online holds a mailbox of a kind this module does not read. Not an absence. |
+| "Not read" | the mailbox rows of a recipient that could not be determined | What the recipient is was not settled, so nothing about a mailbox was asked. |
+| "Could not be read" | any row whose read was made | The read failed or answered nothing; the warning box says why (aud-a54, aud-a68). |
+| "Could not be determined" | Recipient Type, Mailbox Location | The two sides disagree, or a side that has to be asked could not be. The warning box says why; the small print gives each side's words. |
+| "Not reported by Exchange" | the rows the extras add | The read was made and Exchange's answer did not carry the property. Never a default. |
+| "N/A" | the rows shown before this plan | Exchange's answer did not carry the value (aud-a23d). Never with a unit after it. |
+| "None" | Forwarding, Send on Behalf | Exchange's own answer that there is none. |
+
+### Rows that read the same for every kind
+
+| Row | Shows | From |
+| --- | --- | --- |
+| Display Name | as Exchange reports it | N1 `DisplayName` |
+| Primary Email | the primary address, then "(looked up as {what was typed})" when the operator typed anything else (compared without case); when Exchange reports none, what was typed, then "(as typed; Exchange reported no primary address)" | N1 `PrimarySmtpAddress` |
+| Recipient Type | the plain label (per kind, below), and beneath it, in small print, Exchange's raw words: `Exchange Online: {N1's RecipientTypeDetails}`, then `; Get-Mailbox: {...}` when N2 decided, then `; on-premises: {...}` when N4 was asked | N1, N2, N4 `RecipientTypeDetails` |
+| Mailbox Location | a badge: "Cloud" (blue), "On-Premises" (grey), "Not applicable" (neutral, with a one-line note), "Could not be determined" (the warning colour) | per kind, below |
+| Created | the time in the browser's zone (aud-a23e), then " (Exchange Online's copy)" when Exchange reports the recipient as synced from on-premises; "N/A" when none was reported | N1 `WhenCreated`, `IsDirSynced` |
+| Synced from On-Premises | "Yes", "No", or "Not reported by Exchange" | N1 `IsDirSynced` |
+| Entra Object ID | the ID, or "Not reported by Exchange" | N1 `ExternalDirectoryObjectId` |
+| Alias | the alias, or "Not reported by Exchange" | N1 `Alias` |
+| Hidden from Address Book | "Yes", "No", or "Not reported by Exchange" | N1 `HiddenFromAddressListsEnabled` |
+| External Address | for an object Exchange Online holds as `MailUser`, `GuestMailUser`, `MailContact` or `MailForestContact` - an on-premises mailbox included, whose cloud object is a mail user - the address its mail goes to, or "Not reported by Exchange"; for every other kind, "Not applicable" | N1 `ExternalEmailAddress` |
+| Last Changed | the time, with " (Exchange Online's copy)" as for Created; "Not reported by Exchange" | N1 `WhenChanged` |
+| Email Addresses | as today | N1 `EmailAddresses` |
+
+### Per kind
+
+Each kind names the reads made, what Recipient Type and Mailbox Location show, and every mailbox row: Last Logon, Last
+User Activity, and the whole right table.
+
+#### Cloud mailbox: user, shared, room, equipment
+
+- **Is:** N1 type `UserMailbox`, `SharedMailbox`, `RoomMailbox` or `EquipmentMailbox` - and the same for
+  `SchedulingMailbox`, `LinkedMailbox` and `DiscoveryMailbox` - and N2 found the mailbox.
+- **Recipient Type:** "Mailbox", "Shared mailbox", "Room mailbox", "Equipment mailbox" ("Scheduling mailbox", "Linked
+  mailbox", "Discovery mailbox"). Small print `Exchange Online: UserMailbox`.
+- **Mailbox Location:** "Cloud".
+- **Reads:** N1, N2, N3. No on-premises session.
+
+| Row | Shows | From |
+| --- | --- | --- |
+| Last Logon | the time; "N/A" when none was reported | N3 `LastLogonTime` |
+| Last User Activity | the time; "Not reported by Exchange" | N3 `LastUserActionTime` |
+| Mailbox Size | "1.50 GB"; "N/A" | N3 `TotalItemSize` |
+| Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota | "49.50 GB"; "Unlimited"; "The database default (not read)" when the mailbox uses its database's defaults; "Not reported by Exchange"; a value this app cannot read as a size, as reported, then "(not a size this app can read)" | N2 `IssueWarningQuota`, `ProhibitSendQuota`, `ProhibitSendReceiveQuota`, `UseDatabaseQuotaDefaults` |
+| Send Quota Used | "3.0% of the send quota"; "Not applicable (no send quota)" when it is Unlimited; "Not read (the database default applies)"; "Not reported by Exchange" when the quota was not returned; "Could not be read" when the statistics read failed or the quota is not a size this app can read; "N/A" when the size was not reported | Mailbox Size over Prohibit Send Quota |
+| Deleted Item Size | "0.20 GB"; "N/A" | N3 `TotalDeletedItemSize` |
+| Total Size | the sum, only when both sizes were read; otherwise "N/A" | the two sizes |
+| Item Count, Deleted Items | the number; "N/A" | N3 `ItemCount`, `DeletedItemCount` |
+| Archive | "Enabled", "Disabled", "Could not be read" | N3 `-Archive` |
+| Archive Status | Exchange's words: `ArchiveStatus`, then `(state: {ArchiveState})` when reported; "Not reported by Exchange" | N2 |
+| Archive Size, Archive Deleted (archive found) | GB; "N/A" | N3 `-Archive` |
+| Archive Quota, Archive Warning Quota (archive found) | as the quotas above, except that a mailbox on its database's defaults still shows its own archive quotas (A10: the database default is taken to govern the three mailbox quotas only) | N2 `ArchiveQuota`, `ArchiveWarningQuota` |
+| Archive Items (archive found) | the number; "N/A" | N3 `-Archive` `ItemCount` |
+| Forwarding | the address, then ", and keeps a copy" or ", forward only" - or " (whether a copy is kept was not reported by Exchange)"; "None" | N2 `ForwardingSmtpAddress`, else `ForwardingAddress`; `DeliverToMailboxAndForward` |
+| Send on Behalf | the delegates, separated by "; "; "None"; "Not reported by Exchange" | N2 `GrantSendOnBehalfTo` |
+| Account Disabled | "Yes", "No", "Not reported by Exchange" | N2 `AccountDisabled` |
+
+When a read fails or says no:
+
+- **N2 fails:** the type and "Cloud" stand - Exchange Online typed it as a mailbox of its own - and every row of the
+  table above reads "Could not be read" (3.8, change 1). Warning: "The Exchange Online mailbox could not be read: ...".
+- **N2 answers that there is no mailbox (D4):** Recipient Type and Mailbox Location "Could not be determined", small
+  print `Exchange Online: UserMailbox; Get-Mailbox: no mailbox`, every row of the table above "Not read". Warning:
+  "Exchange Online reports {address} as UserMailbox but returned no mailbox for it."
+- **The statistics read fails or answers no row:** Last Logon, Last User Activity, Mailbox Size, Send Quota Used,
+  Deleted Item Size, Total Size, Item Count and Deleted Items read "Could not be read"; the warning as today.
+- **The archive read fails or answers no row:** Archive reads "Could not be read" and its rows stay hidden, as today.
+
+#### On-premises mailbox
+
+- **Is:** N1 type `MailUser`, not reported as cloud-only, and N4 holds it as `UserMailbox`, `SharedMailbox`,
+  `RoomMailbox`, `EquipmentMailbox`, `LinkedMailbox`, `LinkedRoomMailbox` or `DiscoveryMailbox`.
+- **Recipient Type:** "Mailbox", "Shared mailbox", "Room mailbox", "Equipment mailbox", "Linked mailbox", "Linked room
+  mailbox", "Discovery mailbox". Small print `Exchange Online: MailUser; on-premises: UserMailbox`.
+- **Mailbox Location:** "On-Premises".
+- **Reads:** N1; N4 in one on-premises session; N5 in its own session, as today. N2 and N3 are not asked.
+
+| Row | Shows | From |
+| --- | --- | --- |
+| Last Logon, Last User Activity | "Not read for on-premises mailboxes" | - |
+| Mailbox Size | GB; "Could not be read" | N5 |
+| the three quotas, Send Quota Used | "Not read for on-premises mailboxes" | - |
+| Deleted Item Size, Total Size, Item Count, Deleted Items | "Not read for on-premises mailboxes" | - |
+| Archive | "Enabled", "Disabled", "Could not be read" (aud-a68) | N5 `-Archive` |
+| Archive Status | "Not read for on-premises mailboxes" | - |
+| Archive Size (archive found) | GB; "Could not be read" | N5 `-Archive` |
+| Archive Quota, Archive Warning Quota, Archive Deleted, Archive Items (archive found) | "Not read for on-premises mailboxes" | - |
+| Forwarding, Send on Behalf, Account Disabled | "Not read for on-premises mailboxes" | - |
+
+External Address shows N1's: where Exchange Online sends this mailbox's mail.
+
+#### Mail user, and the remote mailboxes on-premises reports
+
+- **Is:** N1 type `MailUser`. Whether Exchange Online reports it as synced, and what N4 answers, decide the rest.
+- **Reads:** N1; N4 unless Exchange Online reports it as cloud-only. N2, N3 and N5 are not asked.
+
+| `IsDirSynced` | N4 answers | Recipient Type | Small print | Mailbox Location | Warning |
+| --- | --- | --- | --- | --- | --- |
+| false | not asked | Mail user | `Exchange Online: MailUser` | Not applicable: "A mail user has no mailbox. Its mail goes to another address." | none |
+| true or not reported | `MailUser` | Mail user | `Exchange Online: MailUser; on-premises: MailUser` | Not applicable, the same note | none |
+| true or not reported | `RemoteUserMailbox`, `RemoteSharedMailbox`, `RemoteRoomMailbox`, `RemoteEquipmentMailbox`, `RemoteTeamMailbox` | Could not be determined | `Exchange Online: MailUser; on-premises: RemoteUserMailbox` | Could not be determined | D1 (3.5) |
+| true or not reported | any other type, or none | Could not be determined | `Exchange Online: MailUser; on-premises: {type, or "no type"}` | Could not be determined | D2 |
+| true or not reported | no such recipient | Could not be determined | `Exchange Online: MailUser; on-premises: no such recipient` | Could not be determined | D3 |
+| true or not reported | could not be asked | Could not be determined | `Exchange Online: MailUser; on-premises: not read` | Could not be determined | U1: "Could not determine mailbox location: ...", today's words |
+| true or not reported | more than one recipient | Could not be determined | `Exchange Online: MailUser; on-premises: more than one recipient` | Could not be determined | U2 |
+
+Mailbox rows: "Not applicable" for a mail user, "Not read" when it could not be determined. External Address: N1's.
+
+#### Distribution list
+
+- **Is:** N1 type `MailUniversalDistributionGroup` ("Distribution list"), or `MailNonUniversalGroup` ("Distribution
+  group (non-universal)").
+- **Small print:** `Exchange Online: MailUniversalDistributionGroup`.
+- **Mailbox Location:** "Not applicable", not in the warning colour: "A distribution list has no mailbox."
+- **Every mailbox row:** "Not applicable"; the archive rows hidden. External Address: "Not applicable".
+- **Reads:** N1 only. No N2, no on-premises session.
+
+#### Mail-enabled security group
+
+As a distribution list, for N1 type `MailUniversalSecurityGroup`: "Mail-enabled security group", "A mail-enabled
+security group has no mailbox."
+
+#### Dynamic distribution list
+
+As a distribution list, for `DynamicDistributionGroup`: "Dynamic distribution list", "A dynamic distribution list has no
+mailbox."
+
+#### Room list
+
+As a distribution list, for `RoomList`: "Room list", "A room list has no mailbox."
+
+#### Microsoft 365 group
+
+- **Is:** N1 type `GroupMailbox`: "Microsoft 365 group", small print `Exchange Online: GroupMailbox`.
+- **Mailbox Location:** "Cloud": Exchange Online holds its mailbox.
+- **Every mailbox row:** "Not read for this recipient type" (`Get-Mailbox` does not return a group's mailbox, A5); the
+  archive rows hidden. External Address: "Not applicable".
+- **Reads:** N1 only.
+- The same for the other types Exchange Online holds a mailbox for and this module does not read: `TeamMailbox` "Site
+  mailbox", `PublicFolderMailbox` "Public folder mailbox", and `ArbitrationMailbox`, `AuditLogMailbox`,
+  `AuxAuditLogMailbox`, `MonitoringMailbox`, `SupervisoryReviewPolicyMailbox` "System mailbox ({Exchange's word})".
+
+#### Contact
+
+As a distribution list, for `MailContact` ("Contact", "A contact has no mailbox.") or `MailForestContact` ("Contact
+(another forest)", "A contact (another forest) has no mailbox."), except that External Address shows where its mail
+goes (N1), or "Not reported by Exchange".
+
+#### Guest
+
+As a contact, for `GuestMailUser`: "Guest", "A guest has no mailbox."; External Address N1's.
+
+#### Mail-enabled public folder
+
+As a distribution list, for `PublicFolder`: "Mail-enabled public folder", "A mail-enabled public folder has no mailbox."
+
+#### A type this app does not name, or none
+
+- **Recipient Type:** "Not a type this app names: {Exchange's word}", or "Exchange reported no type". Never mapped to the
+  nearest label.
+- **Reads:** N1 and N2; then:
+
+| N2 answers | `IsDirSynced` | Recipient Type | Small print | Mailbox Location | Mailbox rows |
+| --- | --- | --- | --- | --- | --- |
+| found, its own type a cloud mailbox type above | any | that type's label | `Exchange Online: {word}; Get-Mailbox: UserMailbox` | Cloud | as a cloud mailbox (N3 read) |
+| found, any other type | any | unchanged | `Exchange Online: {word}; Get-Mailbox: {type or "no type"}` | Cloud | as a cloud mailbox |
+| no mailbox | false | unchanged | `Exchange Online: {word}; Get-Mailbox: no mailbox` | Not applicable: "Exchange Online holds no mailbox for it and reports it as cloud-only." | Not applicable |
+| no mailbox | true or not reported | N4's on-premises mailbox type names it; any other N4 answer, Could not be determined | `...; Get-Mailbox: no mailbox; on-premises: {N4's answer}` | On-Premises (rows as an on-premises mailbox); otherwise Could not be determined, with a warning naming both sides' words, or D3, U1 or U2 | as an on-premises mailbox; otherwise "Not read" |
+| fails | any | Could not be determined | `Exchange Online: {word}; Get-Mailbox: not read` | Could not be determined | "Could not be read", with N2's warning and one saying why the type is not settled |
+
+#### Could not be determined, in general
+
+Recipient Type and Mailbox Location read "Could not be determined", the location in the warning colour. The small print
+gives each side's words; the warning box gives the reason in a sentence (3.5). Every mailbox row reads "Not read", except
+where a read was made and failed, which reads "Could not be read". The rows that read the same for every kind still show.
+
+### Show all details (E7)
+
+A switch above Email Addresses, off by default. On, it lists every email address, and under "All details" every property
+each read returned - N1, N2, N3, N3's `-Archive`, N4, in that order, each by name and value in the order Exchange gave
+them; a value longer than 500 characters is cut there and says so. Hold properties are left out, because extra 3b was not
+taken: every property whose name contains "Hold" (litigation, retention, in-place, compliance-tag and delay holds), and
+`RetentionComment` and `RetentionUrl` (A16). N5's values are on the page already; the shared size read returns sizes, not
+rows, so it is not listed (widening it would change a shared file, section 6).
+
+### Audit (E8)
+
+The lookup's audit row is unchanged - `target` is what was typed - and gains `resolvedAddress`, the primary address N1
+returned, when the lookup found a recipient that has one. A cancelled lookup is filed Cancelled, as today (kd-57).
+
+### What this section settles that sections 3 and 4 leave open
+
+1. **"Could not be read" for a cloud mailbox's statistics rows, and an on-premises mailbox's size, when their read failed
+   or answered no row**, and for every mailbox row when N2 failed. 3.6 says "as today" for them, which was "N/A"; AC5
+   ("no row states an absence the module did not read") decides it. The reads and warnings are unchanged.
+2. **An on-premises archive's Deleted and Items read "Not read for on-premises mailboxes"**, not "N/A": 3.6 says "as
+   today", but N5 never asks for them (2.5 d, AC5). Its Archive Size stays as today.
+3. **The unknown and missing types' small print and warnings** (3.3 gives their outcomes, not their words): as the table
+   above. Where N4 answered with a type that does not settle it, the warning is "Exchange Online reports {address} as
+   {word}, a type this app does not name, and holds no mailbox for it; on-premises Exchange holds it as {type}." (or
+   "Exchange Online reported no type for {address} and holds no mailbox for it; ..."); where N2 failed, "Exchange Online
+   reports {address} as {word}, a type this app does not name, and its mailbox could not be read."
+4. **External Address for an on-premises mailbox** shows N1's address: its cloud object is a mail user, and the address
+   is where Exchange Online sends its mail.
+5. **The " (Exchange Online's copy)" note** follows Created and Last Changed only when Exchange reports the recipient as
+   synced (`IsDirSynced` true); when the sync state is not reported, neither carries it, and Synced from On-Premises
+   says "Not reported by Exchange".
+6. **"Show all details" leaves out hold properties by name** (A16), and does not list N5.
+
+New assumptions, labelled as section 11's are, and not resolved by this section:
+
+- **A16.** Exchange's hold properties are named with "Hold" (`LitigationHoldEnabled`, `LitigationHoldDate`,
+  `LitigationHoldOwner`, `LitigationHoldDuration`, `InPlaceHolds`, `ComplianceTagHoldApplied`, `DelayHoldApplied`,
+  `DelayReleaseHoldApplied`, `RetentionHoldEnabled`, `StartDateForRetentionHold`, `EndDateForRetentionHold`), with
+  `RetentionComment` and `RetentionUrl` beside them. From knowledge; no live call. A property this filter misses would
+  show on the switch's list.
+- **A17.** Exchange Online's `Get-Mailbox` returns `ArchiveStatus`, `ArchiveState`, `DeliverToMailboxAndForward`,
+  `GrantSendOnBehalfTo` and `AccountDisabled`, and `Get-MailboxStatistics` returns `LastUserActionTime`. From knowledge;
+  a property that does not come back reads "Not reported by Exchange".
 
 ## 1. The request and how this plan reads it
 
@@ -788,6 +1048,22 @@ everything pass. Confirm each mutation applied before trusting its result. Recor
 - **AC9.** No shared file is changed; the base version is unchanged.
 - **AC10.** No source file names this deployment's domains, hosts or forests.
 
+**As landed** (2026-10-28, branch `feat/recipient-lookup-accuracy`; test names are in `RecipientLookupClassificationTests`,
+`RecipientClassificationTests` and `RecipientLookupExtrasTests` unless named otherwise; the mutations are the status log's):
+
+| AC | Shown by |
+| --- | --- |
+| AC1 | T5 over each on-premises mailbox type and both sync states, and the owner's case on the stand-in's older table; M1 |
+| AC2 | T13, T2, T12 (`AListLookup_NeverReadsAMailbox_AndOpensNoOnPremisesSession`); M6, M10, M11 |
+| AC3 | T10's cross product (a mailbox label only from the holding side's mailbox type); M1-M4 |
+| AC4 | T7, T8, T13, T15; "Unknown" appears nowhere a page shows; M2-M4, M10 |
+| AC5 | T13-T15 and the failed-read tests (statistics, Get-Mailbox, on-premises size); M11, M12 |
+| AC6 | every row of 2.2 still rendered, in the display section's order; Exchange's raw type in the small print (T1, T5) |
+| AC7 | T12, T2, `DirectoryFacts_AddNoRead`; no extra adds a read; M6, M7 |
+| AC8 | the kd-37, kd-57, kd-61, kd-14, aud-a23o, aud-a54 and aud-a68 tests green, changed only as 8.3 names (and kd-57's cancel test asserting no resolved address); M8 |
+| AC9 | `ExchangeServiceBase`, `ExchangeIdentityResolver`, `AuditService` and the csproj unchanged (`git diff 01bf455e..HEAD`); base `2.36.0` |
+| AC10 | fixtures use `contoso.test` and `fabrikam.test` only; the tables hold Exchange's vocabulary; the server is `OnPremExchange:ServerUri` |
+
 ## 10. Risks, biggest first
 
 1. **A wrong classification.** An operator told "Mailbox" about a mail user, or "On-Premises" about a mailbox that has
@@ -849,6 +1125,8 @@ everything pass. Confirm each mutation applied before trusting its result. Recor
   neither today), and `Get-UnifiedGroup` returns member and guest counts.
 - **A15.** On-premises `Get-Recipient` returns mail-enabled recipients only, so a synced object that is not mail-enabled
   on-premises is not found there. That is D3, undetermined: the honest outcome either way.
+- **A16, A17** (hold property names; E3's property names) are in "Displayed fields per recipient kind", its last
+  subsection. Both unverified, like the rest.
 
 **Not established, and why:** every live property shape (a draft makes no live call, and Active Directory is not probed
 without a direct go, `.agents/state.md`, Standing owner instructions); A7; the module account's Exchange role; how the
@@ -891,3 +1169,139 @@ he leaves them; and the extras he accepted and declined, by number.
 **Status log:**
 
 - 2026-10-27: drafted from the owner's request, against local master `9241fa0d`. Not approved.
+- 2026-10-28: approved (`.agents/decisions.md` 2026-10-28): the core and extras 1, 2, 3 without 3b, 7, 8. Implementation
+  started on branch `feat/recipient-lookup-accuracy` (worktree `rla`, from `01bf455e`) by one Opus 5.5 agent. Before any
+  code, "Displayed fields per recipient kind" was written below the Exec summary, and README.md gained the Recipient
+  Lookup section saying the same for operators.
+- 2026-10-28, **S1 landed** (what it is): `Services/RecipientClassification.cs` (3.3, 3.4, 3.5's words); Exchange Online's
+  `Get-Mailbox` only where its answer is open; the module's own on-premises `Get-Recipient` (N4) in place of the shared
+  location read, its address an `-ArgumentList` value; the type row with Exchange's raw words beneath; Recipient Lookup
+  1.3.0. Stand-in: on-premises `Get-Recipient` over `OnPremRecipients`, then `OnPremMailboxes` as `UserMailbox` and
+  `OnPremRemoteMailboxes` as `RemoteUserMailbox`; a session counter. 8.3's two S1 rewrites made. Gate: Release build 0
+  errors (19 known warnings); 7914 tests passed, 0 failed; format, `git diff --check`, ASCII lint clean. Mutations, each
+  confirmed applied by its MD5, its tests failing, then restored byte-exact with a fresh mtime (MD5 equal to the original:
+  page `596682828911129e9e99609bd3b9f1f0`, classifier `fb33400476648a8221d790808bc7f608`, service
+  `367c06f5c5010446139262fac01c7e99`); counts are of the 215 Recipient Lookup tests run:
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M1 type row shows N1's `RecipientTypeDetails` | `8b13950ca856d9feb892564973149d03` | 43 | every T5 case |
+  | M2 on-premises not-found is "Mail user" | `c75b98ede1af9f4530744bec7e957b0a` | 4 | T7 (D3), both sync states |
+  | M3 on-premises remote mailbox is "Cloud" | `41aed1cf3991392fc359292d1c142060` | 4 | T7 (D1) |
+  | M4 a side that could not be asked is "Mail user" | `68380745de53b5a5d0df6061cd473d05` | 7 | every T8 (U1) case |
+  | M5 `IsDirSynced` false ignored | `39c517cee71d9af7ca2ab02406a48ef1` | 10 | T4 |
+  | M6 `Get-Mailbox` asked for every type | `84c5f6066074b107d12aacb82c103d48` | 32 | T2, T12 |
+  | M7 the shared location read called as well | `767165d29ae996bfb89775fe4316beb4` | 48 | T12 |
+  | M8 N4's credential read without the token | `18612efd63ecaa25dd611d7b5f39a0a9` | 3 | kd-37's `ACancelDuringACredentialRead_SurfacesAsACancel("the location read", 1)` |
+  | M9 the address spliced into the remote script | `4110feef0dd3c61cf57856b79f7c9aab` | 1 | T11 |
+- 2026-10-28, **S2 landed** ("Not applicable", "Could not be determined", and the rows): "Unknown" retired; the location
+  badge per 3.5 with the "Not applicable" note; every mailbox row per 3.6 and the display section's settlements 1 and 2
+  ("Could not be read" for a statistics read or on-premises size that failed, `StatisticsUnreadable`; an on-premises
+  archive's Deleted and Items "Not read for on-premises mailboxes"); Total Size a sum only when both sizes were read; "N/A"
+  with no unit; Recipient Lookup 1.3.1. 8.3's S2 expectation changes made (`NoMailbox_IsNoMailbox`'s page rows,
+  `AVaultRequestThatTimesOutUnasked_IsStillAWarning`'s word). Tests T13-T18 and four more (each kind's note; an
+  on-premises size that could not be read; a cloud mailbox whose statistics, and one whose mailbox read, failed). Mutations
+  (restored byte-exact; originals: classifier `a5d9ef47fb4e4f4c0dbbe3037db14859`, page `92f4631b80b8d3d304b04395ecb6d20e`,
+  model `2c7c9d424e8f129c09f2fe5a02a4ac4a`; counts of 234):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M10 the NotApplicable class shown as "Unknown" | `d53fc9f66fb4fa206c2e3e62ecc42a3e` | 10 | T13, T18 |
+  | M11 a recipient with no mailbox shows today's mailbox rows | `3190e7cd516ccee78c07693a8e97929d` | 4 | T13 |
+  | M12 an on-premises mailbox's unread rows shown as "None" and "N/A" | `87b231dfede711ac3d7a8ded7252c9cf` | 1 | T14 |
+  | M13 Total Size sums a missing part as 0 | `8537284d4ede51aa9320464319a9c244` | 2 | T16, both missing-part cases |
+- 2026-10-28, **S3 landed** (Primary Email): the row shows Exchange's primary address, then "(looked up as ...)" when the
+  typed text was anything else, or the typed text "(as typed; Exchange reported no primary address)"; N2, both N3 reads
+  and N5 ask about the primary address; Recipient Lookup 1.3.2. Tests T19-T21 and the case-only control. Mutations
+  (restored byte-exact; originals: page `b3c3684ceead807eb837f711ddcd967d`, service `85d0cb35e1e0fa39d3ecb44c9ed83453`;
+  counts of 240):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M14 Primary Email shows the typed text | `78c63ae3fa12cb461bd7ce7ad598f204` | 3 | T19 |
+  | M15 the Exchange Online statistics read made with the typed text | `cfc8bcd988ffb854acbeee813d79e7e3` | 1 | T20, in the cloud |
+  | M15, second form: the on-premises size read made with the typed text | `cf7bd66d5ad44f11ac6635594a5c2888` | 1 | T20, on-premises |
+- 2026-10-28, **S4 landed** (Created): " (Exchange Online's copy)" after Created for a recipient Exchange reports as synced
+  (`IsDirSynced` true); a cloud-only one's, and one whose sync state was not reported, read as before, and
+  `RecipientLookupReportedTimeTests` is unchanged and green. Extra 1 was taken, so the description and the permission text
+  keep "quotas" (E1 makes them true) and T23 does not apply. Recipient Lookup 1.3.3. Tests T22 and the no-time control.
+  Mutations (restored byte-exact; original page `fdeaee9e481572fc315bd9cc64983784`; counts of 244):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M16 the note for a cloud-only recipient, not for a synced one | `d19812384d88509f247a2812fa10c76b` | 2 | T22, synced and cloud-only |
+  | M16, second form: the note when the sync state was not reported | `4a84bbec9505142b83ba8c18bd159525` | 1 | T22, not reported |
+- 2026-10-28, **E2 landed** (directory facts): Synced from On-Premises, Entra Object ID, Alias, Hidden from Address Book,
+  External Address (a mail user's, contact's or guest's - an on-premises mailbox's cloud mail user included - else "Not
+  applicable"), Last Changed (with the copy note when synced), each "Not reported by Exchange" when absent; from N1's row,
+  no read added; Recipient Lookup 1.4.0. New file `RecipientLookupExtrasTests` (14 tests). Mutations (restored
+  byte-exact; originals: classifier `aac26e744e19a476ebf2a50f5ec376d5`, page `c4c7e233315536cc8c99c368f4bdeeca`, service
+  `4b647c04bf0b083f1b71c6a3113f10f6`; counts of 258):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME2a a mail user's external address withheld | `d59432536f90f694977b3142b5714be2` | 3 | the on-premises mailbox's, the mail user's |
+  | ME2b an external address shown for every kind | `92294670ac7bf086f8d80347f790cb22` | 4 | every "Not applicable" case |
+  | ME2c a fact Exchange did not return shown as "No" | `49d947ca53eab9a22bc0f21bacb62256` | 1 | the not-reported test |
+  | ME2d Last Changed not read | `f487d8c08e07393419dffa6951f6ceb9` | 3 | both Last Changed cases |
+- 2026-10-28, **E1 landed** (quotas): Warning Quota, Prohibit Send Quota, Prohibit Send/Receive Quota and Send Quota Used
+  beside the size, Archive Quota and Archive Warning Quota beside the archive size, from N2's row (no read added); "The
+  database default (not read)" for a mailbox on its database's defaults; an on-premises mailbox's "Not read for
+  on-premises mailboxes"; Recipient Lookup 1.5.0. The display section's cloud-mailbox table gained two details it had left
+  open: an unreadable quota value, and the archive quotas outside the database default (A10). Seven tests. Mutations
+  (restored byte-exact; original page `46246e9f683012f0127af70ee2471388`; counts of 265):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME1a the database default read from a missing flag, not a true one | `54b1441e2feceec9550146231795d8ad` | 4 | the database-default and not-reported tests |
+  | ME1b "Unlimited" not recognised | `0604bbaa52dd18d6ab9cf2fdcc0becc1` | 2 | the quotas test, the unlimited send quota |
+  | ME1c the share of the send quota inverted | `4b4cf10186f0b4e4490eb7c03687eacc` | 1 | the quotas test |
+  | ME1d a quota row without its kind's words | `630c0987e9a9df656f7242e80387d037` | 1 | the on-premises and list test |
+- 2026-10-28, **E3 landed** (mailbox settings, without 3b): Last User Activity beside Last Logon (N3
+  `LastUserActionTime`); Archive Status (`ArchiveStatus`, with `ArchiveState`); Forwarding's ", and keeps a copy" /
+  ", forward only" (`DeliverToMailboxAndForward`); Send on Behalf (`GrantSendOnBehalfTo`); Account Disabled - from rows
+  already read; holds neither read nor shown; Recipient Lookup 1.6.0. The stand-in's Exchange Online statistics read can
+  answer a whole row (`Behaviour["StatisticsRow"]`, opt-in). T13's absence check now reads row values, since a row is now
+  labelled "Account Disabled". Nine tests. Mutations (restored byte-exact; originals: page
+  `5e53996c9c7089c6fe68aeaa51a4f249`, service `3afe06edddc8d9e90bbefbfa48491efa`; counts of 276):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME3a the copy words swapped | `6aaf220edefadc33c64d37ad4a2b9aef` | 2 | both forwarding cases |
+  | ME3b an unreported delegate list shown as "None" | `a7a1e4842c704134ff58a588099ba359` | 2 | the not-reported cases |
+  | ME3c Last User Activity read from LastLogonTime | `9be77163cf7af8d310d8e22cc8befd26` | 1 | the last-activity test |
+  | ME3d a setting row without its kind's words | `54780e60198a11a6ac1e0524fdc6db48` | 1 | the kinds' words test |
+- 2026-10-28, **E8 landed** (the audit row keeps the resolved address): the page's lookup row gains `resolvedAddress`, the
+  primary address N1 returned, when the lookup found a recipient that has one; `target` stays the typed text; a cancelled
+  lookup is filed as before (kd-57), with no resolved address; `AuditService` unchanged (the page passes `extra`).
+  README's audit field list says so. Recipient Lookup 1.7.0. Three tests and one assertion added to kd-57's cancel test.
+  Mutations (restored byte-exact; original page `680a0d898781e9a7e2933c2e418559cd`; counts of 279):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME8a no resolved address written | `7107ddf2c377a1fbfb7f1dab83e6a15d` | 1 | the found-by-alias test |
+  | ME8b the typed text written as the resolved address | `210e878df075b8dca851e75d2d24ba3e` | 1 | the found-by-alias test |
+  | ME8c a resolved address written though nothing was resolved | `344e30df0e9f2dfa6553c18852318442` | 3 | not found, no primary, kd-57's cancel |
+- 2026-10-28, **E7 landed** (show all details): a switch above Email Addresses, off by default, a bound checkbox (page
+  state only; no handler, so no `ProgressRegistry` entry; the page has no line-keyed `ClickGateRegistry` entries, so
+  nothing is re-anchored - both suites green); on, every email address and, under "All details", every property N1, N2,
+  N3, N3's `-Archive` and N4 returned (`RecipientInfoResult.Details`), holds left out by name (A16), a value over 500
+  characters cut and said to be; Recipient Lookup 1.8.0. Five tests. Mutations (restored byte-exact; originals: service
+  `2a9d1eeeb3c75e45ae7dc75c3053e4a7`, page `5443973981a6d6da3a0ffdf7ad15f26d`; counts of 284):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | ME7a the hold filter removed | `6a8bcf0cfca723c958739dabb5d155ba` | 1 | the holds test |
+  | ME7b the retention notes let through | `71fd3e9f1078a678b6ba95e59cfad670` | 1 | the holds test |
+  | ME7c a long value not cut | `c3c5aff9453e6a3b61d4e64639238aa6` | 1 | the long-value test |
+  | ME7d the switch still shows 20 addresses | `9bad0afae17be238a44d2c79a0d72693` | 1 | the switch-on test |
+  | ME7e the switch on by default | `01177228bfa574b2d888ee7dcfb8d434` | 1 | the off-by-default test |
+- 2026-10-28, **S5, the records**: README's Recipient Lookup section checked against the landed page (one wording fix: a
+  Microsoft 365 group reads "Cloud", not among the kinds with no mailbox), this plan's status, versions as landed, the
+  acceptance table (section 9) and the A16/A17 pointer (section 11). Commits on `feat/recipient-lookup-accuracy`, from
+  `01bf455e`: display section and README `74fa022c`; S1 `6d70c144`; S2 `ae18e3a4`; S3 `07f3a5a7`; S4 `2e3e2eb2`; E2
+  `cf1c9919`; E1 `aff38531`; E3 `97fcb602`; E8 `125e8840`; E7 `500f2624`; S5 the commit carrying this line. Every slice's
+  gate ran on its own tree: Release build 0 errors (19 known warnings), the full suite green (7914, 7933, 7939, 7943,
+  7957, 7964, 7975, 7978, 7983 passed, 0 failed, from a baseline of 7799), format, `git diff --check` and the ASCII lint
+  clean. Not done here, and why: `.agents/state.md` (the supervisor's, by the brief); the decisions entry was recorded at
+  approval; the manual checks of section 12 (production use, the owner's); the merge (the supervisor's).

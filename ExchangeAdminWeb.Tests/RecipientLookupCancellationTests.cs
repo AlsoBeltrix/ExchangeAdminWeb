@@ -113,6 +113,7 @@ public sealed class RecipientLookupCancellationTests : IDisposable
         var row = Assert.Single(_exchange.AuditEvents());
         Assert.Equal("Cancelled", row.GetProperty("result").GetString());
         Assert.Equal(shown.Error, row.GetProperty("error").GetString());
+        Assert.False(row.TryGetProperty("resolvedAddress", out _)); // RecipientLookupAccuracy E8: a cancelled lookup resolved nothing
     }
 
     // Finding kd-61. The credential paths that answer before the vault is reached - no secret ID set here - looked at no
@@ -180,7 +181,7 @@ public sealed class RecipientLookupCancellationTests : IDisposable
         var result = await _service.GetRecipientInfoAsync(Address, cancel.Token);
 
         Assert.Null(result.Error);
-        Assert.Equal("Unknown", result.MailboxLocation);
+        Assert.Equal("Could not be determined", result.MailboxLocation); // RecipientLookupAccuracy S2: was "Unknown"
         Assert.Contains("Could not determine mailbox location: on-premises Exchange could not be asked: "
             + "the module's on-premises Exchange credentials could not be retrieved", result.Warnings);
     }

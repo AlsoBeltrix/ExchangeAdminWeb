@@ -62,59 +62,118 @@
                         <table class="table table-sm">
                             <tbody>
                                 <tr><td class="fw-bold" style="width:180px">Display Name</td><td>@result.DisplayName</td></tr>
-                                <tr><td class="fw-bold">Primary Email</td><td>@result.EmailAddress</td></tr>
-                                <tr><td class="fw-bold">Recipient Type</td><td>@result.RecipientType</td></tr>
-                                <tr>
-                                    <td class="fw-bold">Mailbox Location</td>
-                                    <td>
-                                        <span class="badge bg-@(result.MailboxLocation == "Cloud" ? "primary" : result.MailboxLocation == "On-Premises" ? "secondary" : "warning")">
-                                            @result.MailboxLocation
-                                        </span>
-                                    </td>
-                                </tr>
+                                @* RecipientLookupAccuracy S3. Exchange's primary address, where this row showed whatever was typed; what was
+                                   typed beside it when it was anything else, so the operator sees what the lookup resolved to. *@
+                                <tr><td class="fw-bold">Primary Email</td><td>@(result.PrimarySmtpAddress ?? result.EmailAddress)<small class="text-muted">@PrimaryEmailNote(result)</small></td></tr>
+                                @* RecipientLookupAccuracy S1. What the recipient is, named from Exchange's own answers on the side that
+                                   holds it (RecipientClassification); beneath it, in small print, Exchange's raw words - what this row
+                                   showed before. *@
+                                <tr><td class="fw-bold">Recipient Type</td><td>@result.RecipientTypeLabel<br /><small class="text-muted">@result.RecipientTypeSmallPrint</small></td></tr>
+                                @* RecipientLookupAccuracy S2. Four words: "Cloud", "On-Premises", "Not applicable" (neutral, saying why there
+                                   is no mailbox) and "Could not be determined" (the warning colour; why is in the warning box). "Unknown"
+                                   meant both "no mailbox anywhere" and "could not be asked", and is retired. *@
+                                <tr><td class="fw-bold">Mailbox Location</td><td><span class="badge @LocationBadge(result.LocationClass)">@result.MailboxLocation</span>@if (result.LocationNote is { } note)
+                                    {<br /><small class="text-muted">@note</small>}</td></tr>
                                 @* aud-a23d. "N/A" only when Exchange reported nothing; a time it reported in a form
                                    this app cannot read is shown as the marker naming it, not as "N/A".
                                    aud-a23e. A readable one is shown with its zone named - see ShowTime. *@
-                                <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)</td></tr>
-                                <tr><td class="fw-bold">Last Logon</td><td>@ShowTime(result.LastLogonTime)</td></tr>
+                                @* RecipientLookupAccuracy S4. For a recipient Exchange reports as synced from on-premises, Exchange Online's
+                                   WhenCreated is when its copy was made, not the account (the plan's A6) - for an on-premises mailbox, years
+                                   after it - so the row says so. *@
+                                <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)@CopyNote(result, result.WhenCreated)</td></tr>
+                                <tr><td class="fw-bold">Last Logon</td><td>@(Unread(result) ?? Statistic(result, ShowTime(result.LastLogonTime)))</td></tr>
+                                @* RecipientLookupAccuracy E3. The last action the user took: Exchange Online moves Last Logon for background
+                                   access too (the plan's A11). *@
+                                <tr><td class="fw-bold">Last User Activity</td><td>@(Unread(result) ?? Statistic(result, result.LastUserActionTime is null ? NotReported : ShowTime(result.LastUserActionTime)))</td></tr>
+                                @* RecipientLookupAccuracy E2. Directory facts from Exchange Online's own row: no read is added. A property it
+                                   did not return reads "Not reported by Exchange", never a default. *@
+                                <tr><td class="fw-bold">Synced from On-Premises</td><td>@YesNo(result.IsDirSynced)</td></tr>
+                                <tr><td class="fw-bold">Entra Object ID</td><td>@(result.EntraObjectId ?? NotReported)</td></tr>
+                                <tr><td class="fw-bold">Alias</td><td>@(result.Alias ?? NotReported)</td></tr>
+                                <tr><td class="fw-bold">Hidden from Address Book</td><td>@YesNo(result.HiddenFromAddressLists)</td></tr>
+                                <tr><td class="fw-bold">External Address</td><td>@(RecipientClassification.HasExternalAddress(result.RecipientType) ? result.ExternalEmailAddress ?? NotReported : "Not applicable")</td></tr>
+                                <tr><td class="fw-bold">Last Changed</td><td>@(result.WhenChanged is null ? NotReported : ShowTime(result.WhenChanged) + CopyNote(result, result.WhenChanged))</td></tr>
                             </tbody>
                         </table>
                     </div>
                     <div class="col-md-6">
                         <table class="table table-sm">
                             <tbody>
-                                <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(result.MailboxSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                <tr><td class="fw-bold">Deleted Item Size</td><td>@(result.DeletedItemSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                <tr><td class="fw-bold">Total Size</td><td>@(result.TotalSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                <tr><td class="fw-bold">Item Count</td><td>@(result.ItemCount?.ToString("N0") ?? "N/A")</td></tr>
-                                <tr><td class="fw-bold">Deleted Items</td><td>@(result.DeletedItemCount?.ToString("N0") ?? "N/A")</td></tr>
+                                @* RecipientLookupAccuracy S2 (the plan's 3.6). Each row says what it is when it was not read or does not
+                                   apply - "Not applicable", "Not read for on-premises mailboxes", "Not read for this recipient type", "Not
+                                   read" - and "Could not be read" when its read was made and failed; otherwise its value, "N/A" with no
+                                   unit when Exchange's answer carried none. *@
+                                <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(Unread(result, readOnPremises: true) ?? Statistic(result, Gigabytes(result.MailboxSizeGB)))</td></tr>
+                                @* RecipientLookupAccuracy E1. The quotas the module's description has always promised, from the mailbox row
+                                   Get-Mailbox already returns; an on-premises mailbox's are not read (extra 4 was not taken). *@
+                                <tr><td class="fw-bold">Warning Quota</td><td>@(Unread(result) ?? Quota(result, result.IssueWarningQuota))</td></tr>
+                                <tr><td class="fw-bold">Prohibit Send Quota</td><td>@(Unread(result) ?? Quota(result, result.ProhibitSendQuota))</td></tr>
+                                <tr><td class="fw-bold">Prohibit Send/Receive Quota</td><td>@(Unread(result) ?? Quota(result, result.ProhibitSendReceiveQuota))</td></tr>
+                                <tr><td class="fw-bold">Send Quota Used</td><td>@(Unread(result) ?? SendQuotaUsed(result))</td></tr>
+                                <tr><td class="fw-bold">Deleted Item Size</td><td>@(Unread(result) ?? Statistic(result, Gigabytes(result.DeletedItemSizeGB)))</td></tr>
+                                <tr><td class="fw-bold">Total Size</td><td>@(Unread(result) ?? Statistic(result, Gigabytes(result.TotalSizeGB)))</td></tr>
+                                <tr><td class="fw-bold">Item Count</td><td>@(Unread(result) ?? Statistic(result, Count(result.ItemCount)))</td></tr>
+                                <tr><td class="fw-bold">Deleted Items</td><td>@(Unread(result) ?? Statistic(result, Count(result.DeletedItemCount)))</td></tr>
                                 @* aud-a54. "Could not be read" when the read failed: "Disabled" and "None" are Exchange's answers, never a read it could not make. *@
-                                <tr><td class="fw-bold">Archive</td><td>@(result.ArchiveUnreadable is not null ? "Could not be read" : result.ArchiveEnabled ? "Enabled" : "Disabled")</td></tr>
+                                <tr><td class="fw-bold">Archive</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : result.ArchiveEnabled ? "Enabled" : "Disabled"))</td></tr>
+                                @* E3. Exchange's own words for the archive, from the mailbox row. *@
+                                <tr><td class="fw-bold">Archive Status</td><td>@(Unread(result) ?? ArchiveStatus(result))</td></tr>
                                 @if (result.ArchiveEnabled)
                                 {
-                                    <tr><td class="fw-bold">Archive Size</td><td>@(result.ArchiveSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                    <tr><td class="fw-bold">Archive Deleted</td><td>@(result.ArchiveDeletedItemSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                    <tr><td class="fw-bold">Archive Items</td><td>@(result.ArchiveItemCount?.ToString("N0") ?? "N/A")</td></tr>
+                                    <tr><td class="fw-bold">Archive Size</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : Gigabytes(result.ArchiveSizeGB)))</td></tr>
+                                    <tr><td class="fw-bold">Archive Quota</td><td>@(Unread(result) ?? Quota(result, result.ArchiveQuota, databaseDefaultApplies: false))</td></tr>
+                                    <tr><td class="fw-bold">Archive Warning Quota</td><td>@(Unread(result) ?? Quota(result, result.ArchiveWarningQuota, databaseDefaultApplies: false))</td></tr>
+                                    <tr><td class="fw-bold">Archive Deleted</td><td>@(Unread(result) ?? Gigabytes(result.ArchiveDeletedItemSizeGB))</td></tr>
+                                    <tr><td class="fw-bold">Archive Items</td><td>@(Unread(result) ?? Count(result.ArchiveItemCount))</td></tr>
                                 }
-                                <tr><td class="fw-bold">Forwarding</td><td>@(result.MailboxUnreadable is not null ? "Could not be read" : result.ForwardingAddress ?? "None")</td></tr>
+                                @* E3. Whether forwarding keeps a copy, who may send on the mailbox's behalf, and whether its account is
+                                   disabled, from the mailbox row. Holds are not shown: extra 3b was not taken. *@
+                                <tr><td class="fw-bold">Forwarding</td><td>@(Unread(result) ?? Forwarding(result))</td></tr>
+                                <tr><td class="fw-bold">Send on Behalf</td><td>@(Unread(result) ?? (result.SendOnBehalf is null ? NotReported : result.SendOnBehalf.Count == 0 ? "None" : string.Join("; ", result.SendOnBehalf)))</td></tr>
+                                <tr><td class="fw-bold">Account Disabled</td><td>@(Unread(result) ?? YesNo(result.AccountDisabled))</td></tr>
                             </tbody>
                         </table>
                     </div>
+                </div>
+
+                @* RecipientLookupAccuracy E7. Off by default: every address, and every property each read returned - the
+                   page hid all but 20 addresses with no way to see the rest. Page state only; nothing more is read. *@
+                <div class="form-check form-switch mt-3">
+                    <input class="form-check-input" type="checkbox" id="recipient-lookup-all-details" @bind="showAllDetails" />
+                    <label class="form-check-label" for="recipient-lookup-all-details">Show all details</label>
                 </div>
 
                 @if (result.EmailAddresses.Any())
                 {
                     <h6 class="mt-3">Email Addresses</h6>
                     <ul class="list-group list-group-flush">
-                        @foreach (var addr in result.EmailAddresses.Take(20))
+                        @foreach (var addr in showAllDetails ? result.EmailAddresses : result.EmailAddresses.Take(20))
                         {
                             <li class="list-group-item py-1 small">@addr</li>
                         }
-                        @if (result.EmailAddresses.Count > 20)
+                        @if (!showAllDetails && result.EmailAddresses.Count > 20)
                         {
                             <li class="list-group-item py-1 small text-muted">...and @(result.EmailAddresses.Count - 20) more</li>
                         }
                     </ul>
+                }
+
+                @if (showAllDetails)
+                {
+                    <h6 class="mt-3">All details</h6>
+                    <p class="small text-muted mb-1">Every property each read returned, as Exchange gave it. Holds are left out.</p>
+                    @foreach (var read in result.Details)
+                    {
+                        <div class="small fw-semibold mt-2">@read.Read</div>
+                        <table class="table table-sm small mb-1">
+                            <tbody>
+                                @foreach (var (name, value) in read.Properties)
+                                {
+                                    <tr><td style="width:280px">@name</td><td class="text-break">@value</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
                 }
             }
         </div>
@@ -125,6 +184,9 @@
     private string emailAddress = "";
     private bool isLoading = false;
     private RecipientInfoResult? result;
+
+    // E7. The "Show all details" switch: off by default, kept across lookups, page state only.
+    private bool showAllDetails;
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
 
@@ -199,6 +261,104 @@
     private string ShowTime(ReportedTime? reported) =>
         reported is null ? "N/A" : OutOfOfficeRequest.ShowReported(reported, browserZone ?? TimeZoneInfo.Utc);
 
+    private const string CouldNotBeRead = "Could not be read";
+
+    // E2. What a row the extras add says when Exchange's answer did not carry its property.
+    private const string NotReported = "Not reported by Exchange";
+
+    private static string YesNo(bool? reported) => reported switch
+    {
+        true => "Yes",
+        false => "No",
+        null => NotReported,
+    };
+
+    // E3. The forwarding address, and whether the mailbox keeps a copy of what it forwards; "None" when Exchange said none.
+    private static string Forwarding(RecipientInfoResult r) => r.ForwardingAddress is not { } address ? "None" : address + r.ForwardingKeepsCopy switch
+    {
+        true => ", and keeps a copy",
+        false => ", forward only",
+        null => " (whether a copy is kept was not reported by Exchange)",
+    };
+
+    // E3. Exchange's ArchiveStatus, with its ArchiveState when reported.
+    private static string ArchiveStatus(RecipientInfoResult r) => (r.ArchiveStatus, r.ArchiveState) switch
+    {
+        (null, null) => NotReported,
+        ({ } status, null) => status,
+        (null, { } state) => $"{NotReported} (state: {state})",
+        ({ } status, { } state) => $"{status} (state: {state})",
+    };
+
+    // S3. What follows the primary address: what was typed, when it was anything else (compared without case); or, when
+    // Exchange reported no primary address, that the address shown is the typed text.
+    private static string PrimaryEmailNote(RecipientInfoResult r) =>
+        r.PrimarySmtpAddress is null ? " (as typed; Exchange reported no primary address)"
+        : string.Equals(r.PrimarySmtpAddress, r.EmailAddress, StringComparison.OrdinalIgnoreCase) ? ""
+        : $" (looked up as {r.EmailAddress})";
+
+    // RecipientLookupAccuracy S2 (the plan's 3.6). What a mailbox row says when this recipient's kind means its value was not
+    // read, or does not apply - or when the Exchange Online mailbox read itself failed (aud-a54); null when the row shows its
+    // value. readOnPremises: the on-premises size read gives this row a value for an on-premises mailbox.
+    private static string? Unread(RecipientInfoResult r, bool readOnPremises = false) => r.LocationClass switch
+    {
+        _ when r.MailboxUnreadable is not null => CouldNotBeRead,
+        RecipientLocationClass.NotApplicable => "Not applicable",
+        RecipientLocationClass.ExchangeHeldNotRead => "Not read for this recipient type",
+        RecipientLocationClass.Undetermined => "Not read",
+        RecipientLocationClass.OnPremises when !readOnPremises => "Not read for on-premises mailboxes",
+        _ => null,
+    };
+
+    // S4. After a time Exchange Online reports for a recipient it reports as synced: the time is its copy's. Not when the sync
+    // state was not reported - that is not known - nor after "N/A".
+    private static string CopyNote(RecipientInfoResult r, ReportedTime? time) =>
+        r.IsDirSynced == true && time is not null ? " (Exchange Online's copy)" : "";
+
+    // S2. A figure from the statistics read (an on-premises mailbox's: its size), or "Could not be read" when that read failed
+    // or answered no row - "N/A" said Exchange had reported nothing.
+    private static string Statistic(RecipientInfoResult r, string value) => r.StatisticsUnreadable is not null ? CouldNotBeRead : value;
+
+    // S2. A size, or "N/A" with no unit after it.
+    private static string Gigabytes(double? gb) => gb is { } value ? value.ToString("F2") + " GB" : "N/A";
+
+    // E1. A quota as Exchange reports it: a size, "Unlimited", or - for the mailbox's own three, when it uses its database's
+    // defaults - that, the database unread. A value this app cannot read as a size is shown as reported, saying so.
+    // ASSUMPTION, unverified (A10): the archive quotas are the mailbox's own, whatever UseDatabaseQuotaDefaults says.
+    private static string Quota(RecipientInfoResult r, string? reported, bool databaseDefaultApplies = true) =>
+        databaseDefaultApplies && r.UseDatabaseQuotaDefaults == true ? "The database default (not read)"
+        : reported is null ? NotReported
+        : IsUnlimited(reported) ? "Unlimited"
+        : ExchangeServiceBase.ParseSizeToGB(reported) is { } gb ? Gigabytes(gb)
+        : $"{reported} (not a size this app can read)";
+
+    // E1. The share of the send quota the mailbox's size uses, when both were read and the quota is a size.
+    private static string SendQuotaUsed(RecipientInfoResult r)
+    {
+        if (r.UseDatabaseQuotaDefaults == true)
+            return "Not read (the database default applies)";
+        if (r.ProhibitSendQuota is not { } quota)
+            return NotReported;
+        if (IsUnlimited(quota))
+            return "Not applicable (no send quota)";
+        if (r.StatisticsUnreadable is not null || ExchangeServiceBase.ParseSizeToGB(quota) is not { } quotaGb)
+            return CouldNotBeRead;
+        return r.MailboxSizeGB is { } size && quotaGb > 0 ? $"{size / quotaGb * 100:0.0}% of the send quota" : "N/A";
+    }
+
+    private static bool IsUnlimited(string reported) => string.Equals(reported.Trim(), "Unlimited", StringComparison.OrdinalIgnoreCase);
+
+    private static string Count(long? count) => count?.ToString("N0") ?? "N/A";
+
+    // S2 (3.5). "Not applicable" is not a warning: it is the answer. "Could not be determined" keeps the warning colour.
+    private static string LocationBadge(RecipientLocationClass location) => location switch
+    {
+        RecipientLocationClass.Cloud or RecipientLocationClass.ExchangeHeldNotRead => "bg-primary",
+        RecipientLocationClass.OnPremises => "bg-secondary",
+        RecipientLocationClass.NotApplicable => "bg-light text-dark border",
+        _ => "bg-warning",
+    };
+
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(emailAddress))
@@ -245,10 +405,16 @@
             activity.Complete(lookup.Error == null, lookup.Error);
 
             // An audit write that throws is logged, and never shown as the lookup's failure: the lookup was made.
+            // RecipientLookupAccuracy E8. target stays what was typed; a lookup that found a recipient also keeps the primary
+            // address Exchange Online returned, so a search of the log by that address finds lookups typed by alias or another
+            // address. Taken from the lookup's own result, not read again. A cancelled lookup found nothing: filed as before (kd-57).
+            var resolved = lookup.Error == null && lookup.PrimarySmtpAddress is { } primary
+                ? new Dictionary<string, object?> { ["resolvedAddress"] = primary }
+                : null;
             try
             {
                 Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", target, lookup.Error == null, lookup.Error,
-                    extra: cancelled ? AuditService.FiledCancelled() : null);
+                    extra: cancelled ? AuditService.FiledCancelled(resolved) : resolved);
             }
             catch (Exception ex)
             {

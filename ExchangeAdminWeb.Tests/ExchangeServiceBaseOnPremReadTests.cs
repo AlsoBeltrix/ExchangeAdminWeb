@@ -363,17 +363,40 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         Assert.DoesNotContain(result.Warnings, warning => warning.Contains("size", StringComparison.OrdinalIgnoreCase));
     }
 
-    // Its location read already catches a throw as "Unknown" with a warning naming it: a failed read now reaches it.
+    // RecipientLookupAccuracy S1 (the plan's 3.8, change 1). The lookup read the location through the shared read, whose
+    // Exchange Online half repeated Get-Mailbox, so a mailbox whose Get-Mailbox failed was "Unknown". Exchange Online typed it
+    // as a mailbox of its own: it stays "Cloud", its mailbox rows "Could not be read", and nothing on-premises is asked.
     [Fact]
-    public async Task RecipientLookup_ACloudLocationReadThatFails_IsUnknown_SayingWhy()
+    public async Task RecipientLookup_ACloudMailboxWhoseMailboxReadFails_IsStillCloud_SayingWhy()
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "UserMailbox"));
+        _exchange.Failures[$"Get-Mailbox {Address}"] = Refused("the directory is busy");
+
+        var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Cloud", result.MailboxLocation);
+        Assert.Equal("Mailbox", result.RecipientTypeLabel);
+        Assert.Equal("Get-Mailbox failed: the directory is busy", result.MailboxUnreadable);
+        Assert.Equal(["The Exchange Online mailbox could not be read: Get-Mailbox failed: the directory is busy."], result.Warnings);
+        Assert.Single(_exchange.CallList(), call => call.StartsWith("Get-Mailbox ", StringComparison.Ordinal));
+        Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("OnPrem", StringComparison.Ordinal));
+    }
+
+    // S1. A mail user's Exchange Online mailbox was asked about too, and a failure there was the location's. Its type says it
+    // has none there, so it is not asked, and on-premises decides.
+    [Fact]
+    public async Task RecipientLookup_AMailUser_IsDecidedOnPremises_ItsCloudMailboxNotAsked()
     {
         OnPremRecipient();
         _exchange.Failures[$"Get-Mailbox {Address}"] = Refused("the directory is busy");
 
         var result = await _exchange.RecipientLookup().GetRecipientInfoAsync(Address, TestContext.Current.CancellationToken);
 
-        Assert.Equal("Unknown", result.MailboxLocation);
-        Assert.Contains("Could not determine mailbox location: Exchange Online could not be asked: the directory is busy", result.Warnings);
+        Assert.Equal("On-Premises", result.MailboxLocation);
+        Assert.Equal("Mailbox", result.RecipientTypeLabel);
+        Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("Get-Mailbox ", StringComparison.Ordinal));
+        Assert.Contains($"OnPrem Get-Recipient {Address}", _exchange.CallList());
+        Assert.DoesNotContain(result.Warnings, warning => warning.Contains("location", StringComparison.OrdinalIgnoreCase));
     }
 
     private void OnPremRecipient()

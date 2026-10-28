@@ -442,3 +442,23 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 
 **2026-10-28, CloudPasswordResetEmployeeId S4** (records: the module doc, the module plan's pointers, this plan's version note, acceptance table and status, findings cpe-1 to cpe-4; same agent and continuation as S3, whose line covers it).
 **2026-10-28, Cloud Password Reset employee ID (S1-S4).** One Opus 5.5 agent across two dispatches: ~785K agent tokens, 397 tool uses, 2 h 3 min; 7799 tests on the branch; merged `683a8ce7`. In-app help plan draft in progress.
+
+**2026-10-28, RecipientLookupAccuracy S1** (the classifier; Exchange Online's `Get-Mailbox` only where its answer is open; the module's own on-premises `Get-Recipient` in place of the shared location read; the type row with Exchange's raw words; Recipient Lookup 1.3.0). One Opus 5.5 agent in worktree `rla`, branch `feat/recipient-lookup-accuracy`, dispatched by the supervising session. The agent cannot see its own share: `tools/Get-TokenUsage.ps1 -GroupBy Session` folds it into the supervising session; the agent-token, tool-use and time figures are the supervisor's hand-back notification's.
+
+**2026-10-28, RecipientLookupAccuracy S2** ("Unknown" retired: "Not applicable" with its note, "Could not be determined"; every mailbox row per 3.6; Total Size only when both sizes were read; Recipient Lookup 1.3.1). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy S3** (Primary Email is the primary address, with what was typed beside it; every later read asks about that address; Recipient Lookup 1.3.2). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy S4** (Created says "(Exchange Online's copy)" for a synced recipient; the quotas promise kept for E1; Recipient Lookup 1.3.3). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy E2** (directory facts from the recipient row already read; Recipient Lookup 1.4.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy E1** (quotas beside the size and the archive size, from the mailbox row already read; Recipient Lookup 1.5.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy E3** (mailbox settings from rows already read, no holds; Recipient Lookup 1.6.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy E8** (the audit row also keeps resolvedAddress; Recipient Lookup 1.7.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy E7** (a "Show all details" switch: every address and every property each read returned, holds left out; Recipient Lookup 1.8.0). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, RecipientLookupAccuracy S5** (the records: README checked against the landed page, the plan's status, versions, acceptance table and status log with every commit). Same agent and session as S1, whose line explains why its share is not separable.

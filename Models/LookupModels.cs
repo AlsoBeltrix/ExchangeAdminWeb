@@ -115,19 +115,105 @@ public class MessageTraceResponse
     public static readonly int MaxResults = 1000;
 }
 
+/// <summary>
+/// RecipientLookupAccuracy S1. Where a looked-up recipient's mailbox is, as far as Exchange's own answers settle it
+/// (<c>Services/RecipientClassification.cs</c>). Recipient Lookup's own, as <see cref="RecipientInfoResult"/> is.
+/// </summary>
+public enum RecipientLocationClass
+{
+    /// <summary>Exchange Online holds its mailbox, and this module reads it.</summary>
+    Cloud,
+
+    /// <summary>On-premises Exchange holds its mailbox.</summary>
+    OnPremises,
+
+    /// <summary>It has no mailbox: a list, group, contact, guest, mail user or mail-enabled public folder.</summary>
+    NotApplicable,
+
+    /// <summary>Exchange Online holds a mailbox of a kind this module does not read: a Microsoft 365 group's, a system mailbox.</summary>
+    ExchangeHeldNotRead,
+
+    /// <summary>The two sides disagree, or a side that had to be asked could not be.</summary>
+    Undetermined,
+}
+
 public class RecipientInfoResult
 {
+    /// <summary>What the operator typed, trimmed. Every read asked about it before RecipientLookupAccuracy S3.</summary>
     public required string EmailAddress { get; set; }
     public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Exchange Online's <c>RecipientTypeDetails</c>, as reported: what the type row showed before RecipientLookupAccuracy
+    /// S1, and now the first part of its small print. The row shows <see cref="RecipientTypeLabel"/>.
+    /// </summary>
     public string? RecipientType { get; set; }
+
+    /// <summary>S1. Exchange Online's coarser <c>RecipientType</c>, as reported.</summary>
+    public string? RecipientTypeCategory { get; set; }
+
+    /// <summary>S1. Exchange Online's <c>PrimarySmtpAddress</c>; null when it reported none.</summary>
+    public string? PrimarySmtpAddress { get; set; }
+
+    /// <summary>S1. Exchange Online's <c>IsDirSynced</c>; null when it was not reported.</summary>
+    public bool? IsDirSynced { get; set; }
+
+    // RecipientLookupAccuracy E2. Directory facts from Exchange Online's Get-Recipient row; null when not reported.
+    public string? EntraObjectId { get; set; }
+    public string? Alias { get; set; }
+    public bool? HiddenFromAddressLists { get; set; }
+    public string? ExternalEmailAddress { get; set; }
+    public ReportedTime? WhenChanged { get; set; }
+
+    /// <summary>S1. On-premises Exchange's <c>RecipientTypeDetails</c>, when it was asked and found one.</summary>
+    public string? OnPremRecipientType { get; set; }
+
+    /// <summary>S1. What the recipient is, in plain words, or "Could not be determined".</summary>
+    public string? RecipientTypeLabel { get; set; }
+
+    /// <summary>S1. Exchange's own type words from each side that answered, shown under the label.</summary>
+    public string? RecipientTypeSmallPrint { get; set; }
+
+    /// <summary>S1. Where its mailbox is; <see cref="MailboxLocation"/> is the word the page shows for it.</summary>
+    public RecipientLocationClass LocationClass { get; set; } = RecipientLocationClass.Undetermined;
+
+    /// <summary>S2. Why there is no mailbox, shown under "Not applicable"; null for every other location.</summary>
+    public string? LocationNote { get; set; }
+
     public string? MailboxLocation { get; set; }
     public string? ForwardingAddress { get; set; }
+
+    // RecipientLookupAccuracy E1. The quotas, as Exchange Online's Get-Mailbox row reports them ("49.5 GB (... bytes)",
+    // "Unlimited"); null when not reported. UseDatabaseQuotaDefaults: the mailbox's own three are not the ones that apply.
+    public string? IssueWarningQuota { get; set; }
+    public string? ProhibitSendQuota { get; set; }
+    public string? ProhibitSendReceiveQuota { get; set; }
+    public bool? UseDatabaseQuotaDefaults { get; set; }
+    public string? ArchiveQuota { get; set; }
+    public string? ArchiveWarningQuota { get; set; }
+
+    // RecipientLookupAccuracy E3. The mailbox's settings, from the rows Exchange Online's Get-Mailbox and Get-MailboxStatistics
+    // already return; null when not reported. Holds are not read (extra 3b was not taken). SendOnBehalf is empty when Exchange
+    // reported none, null when it did not report the property.
+    public bool? ForwardingKeepsCopy { get; set; }
+    public List<string>? SendOnBehalf { get; set; }
+    public bool? AccountDisabled { get; set; }
+    public string? ArchiveStatus { get; set; }
+    public string? ArchiveState { get; set; }
+    public ReportedTime? LastUserActionTime { get; set; }
     public bool ArchiveEnabled { get; set; }
     // aud-a54. Why the Exchange Online mailbox, and its archive, could not be read; null when read, or when Exchange said
     // there is none. The page shows "Could not be read" for either, where it showed the absence ("None", "Disabled").
     // aud-a68: for an on-premises mailbox the archive's is the on-premises read's, as ArchiveEnabled is.
     public string? MailboxUnreadable { get; set; }
     public string? ArchiveUnreadable { get; set; }
+
+    /// <summary>
+    /// RecipientLookupAccuracy S2. Why the mailbox statistics could not be read - the read failed, or answered no row - or, for
+    /// an on-premises mailbox, why its size could not be; null when read. Each figure it gives then reads "Could not be
+    /// read", where it read "N/A", which says Exchange reported nothing (the plan's AC5).
+    /// </summary>
+    public string? StatisticsUnreadable { get; set; }
     public double? MailboxSizeGB { get; set; }
     public double? DeletedItemSizeGB { get; set; }
     public double? ArchiveSizeGB { get; set; }
@@ -142,8 +228,23 @@ public class RecipientInfoResult
     public List<string> Warnings { get; set; } = new();
     public string? Error { get; set; }
 
-    public double? TotalSizeGB => MailboxSizeGB.HasValue || DeletedItemSizeGB.HasValue
-        ? (MailboxSizeGB ?? 0) + (DeletedItemSizeGB ?? 0) : null;
+    /// <summary>
+    /// RecipientLookupAccuracy E7. Every property each read returned, by read, for the page's "Show all details" switch:
+    /// hold properties left out (extra 3b was not taken), each value cut at <see cref="RecipientReadDetails.ValueLimit"/>.
+    /// </summary>
+    public List<RecipientReadDetails> Details { get; } = new();
+
+    // RecipientLookupAccuracy S2. The sum only when both sizes were read: a missing part counted as 0 made an on-premises
+    // mailbox's size alone read as its total.
+    public double? TotalSizeGB => MailboxSizeGB.HasValue && DeletedItemSizeGB.HasValue
+        ? MailboxSizeGB.Value + DeletedItemSizeGB.Value : null;
+}
+
+/// <summary>RecipientLookupAccuracy E7. One read's properties, by name and value, in the order Exchange returned them.</summary>
+public sealed record RecipientReadDetails(string Read, IReadOnlyList<KeyValuePair<string, string>> Properties)
+{
+    /// <summary>The longest value shown in full; a longer one is cut there and says so.</summary>
+    public const int ValueLimit = 500;
 }
 
 public class OutOfOfficeResult

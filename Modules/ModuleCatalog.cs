@@ -593,7 +593,31 @@ public sealed class ModuleCatalog
             // 1.2.0: kd-37 - an operator cancel during the lookup stops it.
             // 1.2.1: kd-57 - that cancel is shown and filed as one: "Cancelled by the operator", result
             // Cancelled; it was a failed lookup in the framework's words, "The operation was canceled.".
-            Version = "1.2.1",
+            // 1.3.0: the type row names what the recipient is from Exchange's own answers on the side that holds it - an
+            // on-premises mailbox reads "Mailbox", from on-premises Exchange's Get-Recipient - with Exchange's raw words in
+            // small print beneath; Exchange Online's mailbox is read once, and on-premises is asked only about a mail user
+            // not reported as cloud-only (docs/RecipientLookupAccuracy-Plan.md S1).
+            // 1.3.1: "Unknown" is retired - a recipient with no mailbox (a list, contact, group, mail user) reads "Not
+            // applicable", saying why, and one the two sides do not settle "Could not be determined"; every mailbox row says
+            // "Not applicable", "Not read ..." or "Could not be read" where it stated an absence it never read, and Total Size
+            // is a sum only when both sizes were read (S2).
+            // 1.3.2: Primary Email is the recipient's primary address, with what was typed beside it when it was anything else,
+            // and every later read asks about that address, not the typed text (S3).
+            // 1.3.3: Created says "(Exchange Online's copy)" for a recipient Exchange reports as synced from on-premises: the
+            // date is that of Exchange Online's copy, not of the account (S4). The description's quotas stay; E1 shows them.
+            // 1.4.0: directory facts from the recipient row already read - synced from on-premises or not, the Entra object ID,
+            // alias, hidden from the address book, where a mail user's, contact's or guest's mail goes, last changed (E2).
+            // 1.5.0: a cloud mailbox's quotas beside its size - warning, prohibit send, prohibit send and receive, the share of
+            // the send quota used - and its archive's beside the archive size, from the mailbox row already read (E1): the
+            // description's promise of quotas, true at last.
+            // 1.6.0: a cloud mailbox's settings from the rows already read - archive status, whether forwarding keeps a copy,
+            // send-on-behalf delegates, account disabled, and the last real user activity beside Last Logon (E3). Holds are not
+            // read or shown.
+            // 1.7.0: the lookup's audit row also keeps resolvedAddress, the primary address it found, so a search of the log by
+            // that address finds lookups typed by alias or by another address; target stays what was typed (E8).
+            // 1.8.0: a "Show all details" switch, off by default: every email address rather than the first 20, and every
+            // property each read returned, holds left out (E7).
+            Version = "1.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
