@@ -5,6 +5,16 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-28 - Cancellation depth plan approved ("do it the right way"); the leave prompt must tell the truth
+
+Owner, 2026-10-28, on `docs/CancellationDepth-Plan.md` and the question why leaving a page can let work finish: "be clear
+about what will happen in the message. if something might complete anyway, tell the user. ... what's the RIGHT way to do
+this?" then "1 do it the right way". The plan is approved as drafted with one added requirement: the "leaving will cancel"
+prompt states the three cases - work still waiting is cancelled; a command already sent to Exchange finishes and is
+recorded; a bulk job is unaffected - and the code honours the first case everywhere without ever interrupting a command
+already sent. Moving single operations into the job system was offered and not taken. Slices A1-A3, A6-A10, B1-B3, C1
+(A4/A5 landed as kd-81). The single review is spent; these close on guard proof. Also 2026-10-28: the Cloud Password Reset
+employee-ID plan starts "now"; deploy of 2.36.0 "not yet".
 ### 2026-10-27 - Cloud Password Reset fills a missing employee ID (plan approved); the mandate's condition is about the user's experience
 
 1. **`docs/CloudPasswordResetEmployeeId-Plan.md` - owner: "go".** When a cloud admin account carries no employee ID,

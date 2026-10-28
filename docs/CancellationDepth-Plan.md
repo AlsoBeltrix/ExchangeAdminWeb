@@ -1,6 +1,6 @@
 # Cancellation Depth - Plan
 
-Status: **DRAFT - awaiting owner go.** Nothing below is authorised yet.
+Status: **Approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). Not started; follows the Cloud Password Reset slices.**
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -291,6 +291,12 @@ resolver, `PermissionValidator`, the recipient autocomplete, and the Room Type b
 - **What does not change:** a command already sent runs to its end and the cancel lands when it returns; anything
   already changed stays changed, as the guard's message says.
 
+### 3.8a The leave prompt tells the truth (owner requirement, 2026-10-28)
+
+The "leaving this page will cancel the operation" prompt, wherever a page shows it, states the three cases in plain words:
+work still waiting its turn is cancelled; a command already sent to Exchange (or the directory) finishes and is recorded;
+a bulk job is not affected because it never depended on the page. Slice A2 carries the shared wording; each module slice
+that adopts the token checks its page uses it. A test pins the wording per page; mutation: the old sentence restored.
 ### 3.9 Audit rows
 
 No new action, category or field. Each module files a cancel through its existing row and kd-57's `FiledCancelled`, in
