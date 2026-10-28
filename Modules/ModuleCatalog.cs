@@ -597,7 +597,11 @@ public sealed class ModuleCatalog
             // on-premises mailbox reads "Mailbox", from on-premises Exchange's Get-Recipient - with Exchange's raw words in
             // small print beneath; Exchange Online's mailbox is read once, and on-premises is asked only about a mail user
             // not reported as cloud-only (docs/RecipientLookupAccuracy-Plan.md S1).
-            Version = "1.3.0",
+            // 1.3.1: "Unknown" is retired - a recipient with no mailbox (a list, contact, group, mail user) reads "Not
+            // applicable", saying why, and one the two sides do not settle "Could not be determined"; every mailbox row says
+            // "Not applicable", "Not read ..." or "Could not be read" where it stated an absence it never read, and Total Size
+            // is a sum only when both sizes were read (S2).
+            Version = "1.3.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

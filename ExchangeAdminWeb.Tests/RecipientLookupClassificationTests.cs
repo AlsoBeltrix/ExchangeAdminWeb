@@ -63,8 +63,18 @@ public sealed class RecipientLookupClassificationTests : IDisposable
     private bool OnPremSizeWasRead() =>
         _exchange.CallList().Any(call => call.StartsWith("OnPrem Get-MailboxStatistics", StringComparison.Ordinal));
 
+    internal static string Rendered(RecipientInfoResult result) => Rendered(result, withClasses: false);
+
+    /// <summary>S2, T18. The render text with each class attribute in brackets before the content it styles.</summary>
+    internal static string RenderedWithClasses(RecipientInfoResult result) => Rendered(result, withClasses: true);
+
+    /// <summary>S2. Each table row's label and the text of its value, up to the value's first element.</summary>
+    internal static Dictionary<string, string> RowsOf(string page) =>
+        System.Text.RegularExpressions.Regex.Matches(page, "<td class=\"fw-bold\"[^>]*>(?<label>[^<]+)</td>(?<value>[^<]*)")
+            .ToDictionary(match => match.Groups["label"].Value, match => match.Groups["value"].Value.Trim(), StringComparer.Ordinal);
+
 #pragma warning disable BL0006 // the page's compiled render tree is read directly; no renderer is involved
-    internal static string Rendered(RecipientInfoResult result)
+    private static string Rendered(RecipientInfoResult result, bool withClasses)
     {
         var page = new Page();
         typeof(Page).GetField("result", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, result);
@@ -79,6 +89,7 @@ public sealed class RecipientLookupClassificationTests : IDisposable
             {
                 RenderTreeFrameType.Text => frame.TextContent,
                 RenderTreeFrameType.Markup => frame.MarkupContent,
+                RenderTreeFrameType.Attribute when withClasses && frame.AttributeName == "class" => $"[class={frame.AttributeValue}]",
                 _ => "",
             }));
         }
@@ -478,5 +489,176 @@ public sealed class RecipientLookupClassificationTests : IDisposable
         Assert.Equal(0, CloudMailboxReads());
         Assert.Empty(OnPremCalls());
         Assert.Equal(0, _exchange.OnPremSessions);
+    }
+
+    // ---- S2: "Not applicable", "Could not be determined", and the rows ---------------------------
+
+    // Every row that comes from the mailbox, in the page's order, that every kind shows.
+    private static readonly string[] MailboxRows =
+        ["Last Logon", "Mailbox Size", "Deleted Item Size", "Total Size", "Item Count", "Deleted Items", "Archive", "Forwarding"];
+
+    // T13, the owner's second case: "a DL shows Mailbox Location Unknown". A list has no mailbox: "Not applicable", saying
+    // so, and every mailbox row the same - never "Unknown", "Disabled", "None", or a unit after a missing number.
+    [Fact]
+    public async Task ADistributionList_IsNotApplicable_AndSoIsEveryMailboxRow()
+    {
+        Recipient("MailUniversalDistributionGroup", synced: true);
+
+        var result = await LookedUp();
+
+        Assert.Equal(("Not applicable", "A distribution list has no mailbox."), (result.MailboxLocation, result.LocationNote));
+        var page = Rendered(result);
+        var rows = RowsOf(page);
+        Assert.Equal("Not applicable", rows["Mailbox Location"]);
+        Assert.Contains("A distribution list has no mailbox.", page, StringComparison.Ordinal);
+        foreach (var row in MailboxRows)
+            Assert.Equal((row, "Not applicable"), (row, rows[row]));
+        Assert.False(rows.ContainsKey("Archive Size"));
+        foreach (var stated in new[] { "Unknown", "Disabled", "None", "N/A GB" })
+            Assert.DoesNotContain(stated, page, StringComparison.Ordinal);
+    }
+
+    // The note says what kind of recipient has no mailbox; a mail user's says where its mail goes instead.
+    [Theory]
+    [InlineData("MailUniversalSecurityGroup", "synced", "A mail-enabled security group has no mailbox.")]
+    [InlineData("DynamicDistributionGroup", "cloud-only", "A dynamic distribution list has no mailbox.")]
+    [InlineData("RoomList", "synced", "A room list has no mailbox.")]
+    [InlineData("MailContact", "cloud-only", "A contact has no mailbox.")]
+    [InlineData("MailForestContact", "synced", "A contact (another forest) has no mailbox.")]
+    [InlineData("GuestMailUser", "cloud-only", "A guest has no mailbox.")]
+    [InlineData("PublicFolder", "synced", "A mail-enabled public folder has no mailbox.")]
+    [InlineData("MailUser", "cloud-only", "A mail user has no mailbox. Its mail goes to another address.")]
+    public async Task EachKindWithNoMailbox_SaysSo(string type, string state, string note)
+    {
+        Recipient(type, Synced(state));
+
+        var result = await LookedUp();
+
+        Assert.Equal(("Not applicable", note), (result.MailboxLocation, result.LocationNote));
+        Assert.Contains(note, Rendered(result), StringComparison.Ordinal);
+    }
+
+    // T14. Only the size and the archive are read on-premises; every other row says so, where it read "None" and "N/A".
+    [Fact]
+    public async Task AnOnPremisesMailbox_SaysWhatItDoesNotRead_AndShowsWhatItDoes()
+    {
+        Recipient("MailUser", synced: true);
+        _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+
+        var result = await LookedUp();
+
+        var page = Rendered(result);
+        var rows = RowsOf(page);
+        foreach (var row in new[] { "Last Logon", "Deleted Item Size", "Total Size", "Item Count", "Deleted Items", "Forwarding", "Archive Deleted", "Archive Items" })
+            Assert.Equal((row, "Not read for on-premises mailboxes"), (row, rows[row]));
+        Assert.Equal(("2.50 GB", "Enabled", "0.50 GB"), (rows["Mailbox Size"], rows["Archive"], rows["Archive Size"]));
+        Assert.DoesNotContain("N/A", page[page.IndexOf("Mailbox Size</td>", StringComparison.Ordinal)..], StringComparison.Ordinal);
+        Assert.DoesNotContain("Forwarding</td>None", page, StringComparison.Ordinal);
+    }
+
+    // S2. A size the on-premises read could not read is "Could not be read", beside its warning - not "N/A".
+    [Fact]
+    public async Task AnOnPremisesSizeThatCouldNotBeRead_CouldNotBeRead()
+    {
+        Recipient("MailUser", synced: true);
+        _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+        _exchange.Behaviour["OnPremMailboxSize"] = "Unlimited";
+
+        var result = await LookedUp();
+
+        Assert.Equal("Could not be read", RowsOf(Rendered(result))["Mailbox Size"]);
+        Assert.Contains(result.Warnings, warning => warning.StartsWith("The on-premises mailbox size could not be read", StringComparison.Ordinal));
+    }
+
+    // T15. The two sides did not settle it: both rows say so, and nothing about a mailbox was asked.
+    [Fact]
+    public async Task AnUndeterminedRecipient_CouldNotBeDetermined_AndItsMailboxRowsWereNotRead()
+    {
+        Recipient("MailUser", synced: true);
+
+        var result = await LookedUp();
+
+        var rows = RowsOf(Rendered(result));
+        Assert.Equal(("Could not be determined", "Could not be determined"), (rows["Recipient Type"], rows["Mailbox Location"]));
+        foreach (var row in MailboxRows)
+            Assert.Equal((row, "Not read"), (row, rows[row]));
+    }
+
+    // T16. A missing part counted as 0 made an on-premises mailbox's size alone read as its total.
+    [Theory]
+    [InlineData(1.5, 0.25, "1.75 GB")]
+    [InlineData(1.5, null, "N/A")]
+    [InlineData(null, 0.25, "N/A")]
+    public void TotalSize_IsTheSumOnlyWhenBothSizesWereRead(double? mailbox, double? deleted, string shown)
+    {
+        var result = new RecipientInfoResult
+        {
+            EmailAddress = Address,
+            LocationClass = RecipientLocationClass.Cloud,
+            MailboxLocation = "Cloud",
+            MailboxSizeGB = mailbox,
+            DeletedItemSizeGB = deleted,
+        };
+
+        Assert.Equal(shown, RowsOf(Rendered(result))["Total Size"]);
+    }
+
+    // S2 (AC5). A cloud mailbox whose statistics read failed: its figures were not read, so they are not "N/A".
+    [Fact]
+    public async Task ACloudMailboxWhoseStatisticsCouldNotBeRead_SaysSo()
+    {
+        Recipient("UserMailbox", synced: false);
+        _exchange.Mailboxes[Address] = CloudMailbox(Address);
+        _exchange.Failures[$"Get-MailboxStatistics {Address}"] = Refused("the mailbox database is offline");
+
+        var result = await LookedUp();
+
+        var rows = RowsOf(Rendered(result));
+        foreach (var row in new[] { "Last Logon", "Mailbox Size", "Deleted Item Size", "Total Size", "Item Count", "Deleted Items" })
+            Assert.Equal((row, "Could not be read"), (row, rows[row]));
+        Assert.Equal("None", rows["Forwarding"]);
+    }
+
+    // S2 (3.8, change 1). A cloud mailbox whose Get-Mailbox failed: every mailbox row could not be read.
+    [Fact]
+    public async Task ACloudMailboxWhoseMailboxReadFailed_CouldNotBeReadInEveryMailboxRow()
+    {
+        Recipient("UserMailbox", synced: false);
+        _exchange.Failures[$"Get-Mailbox {Address}"] = Refused("the directory is busy");
+
+        var result = await LookedUp();
+
+        var rows = RowsOf(Rendered(result));
+        Assert.Equal("Cloud", rows["Mailbox Location"]);
+        foreach (var row in MailboxRows)
+            Assert.Equal((row, "Could not be read"), (row, rows[row]));
+    }
+
+    // T17. Exchange Online holds a Microsoft 365 group's mailbox, and this module does not read it.
+    [Fact]
+    public async Task AMicrosoft365Group_IsInTheCloud_ItsMailboxNotReadForItsType()
+    {
+        Recipient("GroupMailbox", synced: false);
+
+        var result = await LookedUp();
+
+        var rows = RowsOf(Rendered(result));
+        Assert.Equal(("Microsoft 365 group", "Cloud"), (rows["Recipient Type"], rows["Mailbox Location"]));
+        foreach (var row in MailboxRows)
+            Assert.Equal((row, "Not read for this recipient type"), (row, rows[row]));
+    }
+
+    // T18. "Not applicable" is the answer, not a warning; "Could not be determined" keeps the warning colour.
+    [Fact]
+    public async Task NotApplicable_IsNotInTheWarningColour_ButCouldNotBeDetermined_Is()
+    {
+        Recipient("MailUniversalDistributionGroup", synced: true);
+        var list = RenderedWithClasses(await LookedUp());
+        Assert.Contains("[class=badge bg-light text-dark border]Not applicable", list, StringComparison.Ordinal);
+        Assert.DoesNotContain("bg-warning", list, StringComparison.Ordinal);
+
+        Recipient("MailUser", synced: true);
+        var unsettled = RenderedWithClasses(await LookedUp());
+        Assert.Contains("[class=badge bg-warning]Could not be determined", unsettled, StringComparison.Ordinal);
     }
 }

@@ -49,11 +49,13 @@ internal sealed record RecipientFacts(
 /// Why it could not be determined, for the warning box; null when it was, and for a side that could not be asked, whose
 /// read's catch already gives today's words ("Could not determine mailbox location: ...").
 /// </param>
+/// <param name="LocationNote">S2. Why there is no mailbox, under "Not applicable"; null for every other location.</param>
 internal sealed record RecipientClassificationResult(
     string Label,
     RecipientLocationClass Location,
     string SmallPrint,
-    string? Warning);
+    string? Warning,
+    string? LocationNote = null);
 
 /// <summary>
 /// RecipientLookupAccuracy S1. What a looked-up recipient is, and where its mailbox is, from Exchange's own answers:
@@ -79,6 +81,12 @@ internal static class RecipientClassification
     internal const string UnnamedTypePrefix = "Not a type this app names: ";
 
     internal const string MailUserLabel = "Mail user";
+
+    /// <summary>S2 (3.5): a mail user's "Not applicable" note.</summary>
+    internal const string MailUserNote = "A mail user has no mailbox. Its mail goes to another address.";
+
+    /// <summary>S2: the note for a type the tables do not hold that Exchange Online reports as cloud-only, with no mailbox.</summary>
+    internal const string CloudOnlyNoMailboxNote = "Exchange Online holds no mailbox for it and reports it as cloud-only.";
 
     private const string MailUser = "MailUser";
 
@@ -182,7 +190,7 @@ internal static class RecipientClassification
             return new(held, RecipientLocationClass.ExchangeHeldNotRead, cloudPrint, null);
 
         if (cloud is not null && NoMailbox.TryGetValue(cloud, out var none))
-            return new(none, RecipientLocationClass.NotApplicable, cloudPrint, null);
+            return new(none, RecipientLocationClass.NotApplicable, cloudPrint, null, $"A {char.ToLowerInvariant(none[0])}{none[1..]} has no mailbox.");
 
         if (cloud == MailUser)
             return MailUserReconciled(facts, cloudPrint);
@@ -191,14 +199,16 @@ internal static class RecipientClassification
     }
 
     /// <summary>
-    /// The location word the page shows. S1 keeps today's three: a recipient with no mailbox and one that could not be
-    /// determined both still read "Unknown", so S2's wording change is its own commit.
+    /// The location word the page shows (3.5). S2: "Unknown" is retired - it meant both "no mailbox anywhere" and "could not
+    /// be asked". A recipient with no mailbox reads "Not applicable"; a disagreement or a side that could not be asked, "Could
+    /// not be determined".
     /// </summary>
     internal static string LocationWord(RecipientLocationClass location) => location switch
     {
         RecipientLocationClass.Cloud or RecipientLocationClass.ExchangeHeldNotRead => "Cloud",
         RecipientLocationClass.OnPremises => "On-Premises",
-        _ => "Unknown",
+        RecipientLocationClass.NotApplicable => "Not applicable",
+        _ => Undetermined,
     };
 
     /// <summary>
@@ -219,7 +229,7 @@ internal static class RecipientClassification
     private static RecipientClassificationResult MailUserReconciled(RecipientFacts facts, string cloudPrint)
     {
         if (facts.IsDirSynced == false)
-            return new(MailUserLabel, RecipientLocationClass.NotApplicable, cloudPrint, null);
+            return new(MailUserLabel, RecipientLocationClass.NotApplicable, cloudPrint, null, MailUserNote);
 
         var print = $"{cloudPrint}; on-premises: {OnPremWords(facts)}";
         switch (facts.OnPrem)
@@ -229,7 +239,7 @@ internal static class RecipientClassification
                 if (onPrem is not null && OnPremMailboxes.TryGetValue(onPrem, out var label))
                     return new(label, RecipientLocationClass.OnPremises, print, null);
                 if (onPrem == MailUser)
-                    return new(MailUserLabel, RecipientLocationClass.NotApplicable, print, null);
+                    return new(MailUserLabel, RecipientLocationClass.NotApplicable, print, null, MailUserNote);
                 if (onPrem is not null && OnPremRemoteMailboxes.Contains(onPrem))
                 {
                     return Unsettled(print, $"Exchange Online and on-premises Exchange disagree about {facts.Address}: on-premises "
@@ -271,7 +281,7 @@ internal static class RecipientClassification
 
             case CloudMailboxAnswer.NotFound:
                 if (facts.IsDirSynced == false)
-                    return new(label, RecipientLocationClass.NotApplicable, $"{cloudPrint}; Get-Mailbox: no mailbox", null);
+                    return new(label, RecipientLocationClass.NotApplicable, $"{cloudPrint}; Get-Mailbox: no mailbox", null, CloudOnlyNoMailboxNote);
 
                 var print = $"{cloudPrint}; Get-Mailbox: no mailbox; on-premises: {OnPremWords(facts)}";
                 switch (facts.OnPrem)

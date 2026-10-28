@@ -170,6 +170,9 @@ public class RecipientInfoResult
     /// <summary>S1. Where its mailbox is; <see cref="MailboxLocation"/> is the word the page shows for it.</summary>
     public RecipientLocationClass LocationClass { get; set; } = RecipientLocationClass.Undetermined;
 
+    /// <summary>S2. Why there is no mailbox, shown under "Not applicable"; null for every other location.</summary>
+    public string? LocationNote { get; set; }
+
     public string? MailboxLocation { get; set; }
     public string? ForwardingAddress { get; set; }
     public bool ArchiveEnabled { get; set; }
@@ -178,6 +181,13 @@ public class RecipientInfoResult
     // aud-a68: for an on-premises mailbox the archive's is the on-premises read's, as ArchiveEnabled is.
     public string? MailboxUnreadable { get; set; }
     public string? ArchiveUnreadable { get; set; }
+
+    /// <summary>
+    /// RecipientLookupAccuracy S2. Why the mailbox statistics could not be read - the read failed, or answered no row - or, for
+    /// an on-premises mailbox, why its size could not be; null when read. Each figure it gives then reads "Could not be
+    /// read", where it read "N/A", which says Exchange reported nothing (the plan's AC5).
+    /// </summary>
+    public string? StatisticsUnreadable { get; set; }
     public double? MailboxSizeGB { get; set; }
     public double? DeletedItemSizeGB { get; set; }
     public double? ArchiveSizeGB { get; set; }
@@ -192,8 +202,10 @@ public class RecipientInfoResult
     public List<string> Warnings { get; set; } = new();
     public string? Error { get; set; }
 
-    public double? TotalSizeGB => MailboxSizeGB.HasValue || DeletedItemSizeGB.HasValue
-        ? (MailboxSizeGB ?? 0) + (DeletedItemSizeGB ?? 0) : null;
+    // RecipientLookupAccuracy S2. The sum only when both sizes were read: a missing part counted as 0 made an on-premises
+    // mailbox's size alone read as its total.
+    public double? TotalSizeGB => MailboxSizeGB.HasValue && DeletedItemSizeGB.HasValue
+        ? MailboxSizeGB.Value + DeletedItemSizeGB.Value : null;
 }
 
 public class OutOfOfficeResult

@@ -309,6 +309,7 @@ public sealed class RecipientClassificationTests
 
                                 Assert.True(Vocabulary.Contains(named.Label) || named.Label == "Not a type this app names: " + cloud, because);
                                 Assert.Equal(named.Label == RecipientClassification.Undetermined, named.Location == RecipientLocationClass.Undetermined);
+                                Assert.Equal(named.Location == RecipientLocationClass.NotApplicable, named.LocationNote is not null); // S2
                                 Assert.StartsWith($"Exchange Online: {cloud ?? "no type"}", named.SmallPrint, StringComparison.Ordinal);
 
                                 if (MailboxLabels.Contains(named.Label))

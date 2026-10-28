@@ -1174,3 +1174,19 @@ he leaves them; and the extras he accepted and declined, by number.
   | M7 the shared location read called as well | `767165d29ae996bfb89775fe4316beb4` | 48 | T12 |
   | M8 N4's credential read without the token | `18612efd63ecaa25dd611d7b5f39a0a9` | 3 | kd-37's `ACancelDuringACredentialRead_SurfacesAsACancel("the location read", 1)` |
   | M9 the address spliced into the remote script | `4110feef0dd3c61cf57856b79f7c9aab` | 1 | T11 |
+- 2026-10-28, **S2 landed** ("Not applicable", "Could not be determined", and the rows): "Unknown" retired; the location
+  badge per 3.5 with the "Not applicable" note; every mailbox row per 3.6 and the display section's settlements 1 and 2
+  ("Could not be read" for a statistics read or on-premises size that failed, `StatisticsUnreadable`; an on-premises
+  archive's Deleted and Items "Not read for on-premises mailboxes"); Total Size a sum only when both sizes were read; "N/A"
+  with no unit; Recipient Lookup 1.3.1. 8.3's S2 expectation changes made (`NoMailbox_IsNoMailbox`'s page rows,
+  `AVaultRequestThatTimesOutUnasked_IsStillAWarning`'s word). Tests T13-T18 and four more (each kind's note; an
+  on-premises size that could not be read; a cloud mailbox whose statistics, and one whose mailbox read, failed). Mutations
+  (restored byte-exact; originals: classifier `a5d9ef47fb4e4f4c0dbbe3037db14859`, page `92f4631b80b8d3d304b04395ecb6d20e`,
+  model `2c7c9d424e8f129c09f2fe5a02a4ac4a`; counts of 234):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M10 the NotApplicable class shown as "Unknown" | `d53fc9f66fb4fa206c2e3e62ecc42a3e` | 10 | T13, T18 |
+  | M11 a recipient with no mailbox shows today's mailbox rows | `3190e7cd516ccee78c07693a8e97929d` | 4 | T13 |
+  | M12 an on-premises mailbox's unread rows shown as "None" and "N/A" | `87b231dfede711ac3d7a8ded7252c9cf` | 1 | T14 |
+  | M13 Total Size sums a missing part as 0 | `8537284d4ede51aa9320464319a9c244` | 2 | T16, both missing-part cases |

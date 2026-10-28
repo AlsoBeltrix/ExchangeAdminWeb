@@ -67,39 +67,40 @@
                                    holds it (RecipientClassification); beneath it, in small print, Exchange's raw words - what this row
                                    showed before. *@
                                 <tr><td class="fw-bold">Recipient Type</td><td>@result.RecipientTypeLabel<br /><small class="text-muted">@result.RecipientTypeSmallPrint</small></td></tr>
-                                <tr>
-                                    <td class="fw-bold">Mailbox Location</td>
-                                    <td>
-                                        <span class="badge bg-@(result.MailboxLocation == "Cloud" ? "primary" : result.MailboxLocation == "On-Premises" ? "secondary" : "warning")">
-                                            @result.MailboxLocation
-                                        </span>
-                                    </td>
-                                </tr>
+                                @* RecipientLookupAccuracy S2. Four words: "Cloud", "On-Premises", "Not applicable" (neutral, saying why there
+                                   is no mailbox) and "Could not be determined" (the warning colour; why is in the warning box). "Unknown"
+                                   meant both "no mailbox anywhere" and "could not be asked", and is retired. *@
+                                <tr><td class="fw-bold">Mailbox Location</td><td><span class="badge @LocationBadge(result.LocationClass)">@result.MailboxLocation</span>@if (result.LocationNote is { } note)
+                                    {<br /><small class="text-muted">@note</small>}</td></tr>
                                 @* aud-a23d. "N/A" only when Exchange reported nothing; a time it reported in a form
                                    this app cannot read is shown as the marker naming it, not as "N/A".
                                    aud-a23e. A readable one is shown with its zone named - see ShowTime. *@
                                 <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)</td></tr>
-                                <tr><td class="fw-bold">Last Logon</td><td>@ShowTime(result.LastLogonTime)</td></tr>
+                                <tr><td class="fw-bold">Last Logon</td><td>@(Unread(result) ?? Statistic(result, ShowTime(result.LastLogonTime)))</td></tr>
                             </tbody>
                         </table>
                     </div>
                     <div class="col-md-6">
                         <table class="table table-sm">
                             <tbody>
-                                <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(result.MailboxSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                <tr><td class="fw-bold">Deleted Item Size</td><td>@(result.DeletedItemSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                <tr><td class="fw-bold">Total Size</td><td>@(result.TotalSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                <tr><td class="fw-bold">Item Count</td><td>@(result.ItemCount?.ToString("N0") ?? "N/A")</td></tr>
-                                <tr><td class="fw-bold">Deleted Items</td><td>@(result.DeletedItemCount?.ToString("N0") ?? "N/A")</td></tr>
+                                @* RecipientLookupAccuracy S2 (the plan's 3.6). Each row says what it is when it was not read or does not
+                                   apply - "Not applicable", "Not read for on-premises mailboxes", "Not read for this recipient type", "Not
+                                   read" - and "Could not be read" when its read was made and failed; otherwise its value, "N/A" with no
+                                   unit when Exchange's answer carried none. *@
+                                <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(Unread(result, readOnPremises: true) ?? Statistic(result, Gigabytes(result.MailboxSizeGB)))</td></tr>
+                                <tr><td class="fw-bold">Deleted Item Size</td><td>@(Unread(result) ?? Statistic(result, Gigabytes(result.DeletedItemSizeGB)))</td></tr>
+                                <tr><td class="fw-bold">Total Size</td><td>@(Unread(result) ?? Statistic(result, Gigabytes(result.TotalSizeGB)))</td></tr>
+                                <tr><td class="fw-bold">Item Count</td><td>@(Unread(result) ?? Statistic(result, Count(result.ItemCount)))</td></tr>
+                                <tr><td class="fw-bold">Deleted Items</td><td>@(Unread(result) ?? Statistic(result, Count(result.DeletedItemCount)))</td></tr>
                                 @* aud-a54. "Could not be read" when the read failed: "Disabled" and "None" are Exchange's answers, never a read it could not make. *@
-                                <tr><td class="fw-bold">Archive</td><td>@(result.ArchiveUnreadable is not null ? "Could not be read" : result.ArchiveEnabled ? "Enabled" : "Disabled")</td></tr>
+                                <tr><td class="fw-bold">Archive</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : result.ArchiveEnabled ? "Enabled" : "Disabled"))</td></tr>
                                 @if (result.ArchiveEnabled)
                                 {
-                                    <tr><td class="fw-bold">Archive Size</td><td>@(result.ArchiveSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                    <tr><td class="fw-bold">Archive Deleted</td><td>@(result.ArchiveDeletedItemSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
-                                    <tr><td class="fw-bold">Archive Items</td><td>@(result.ArchiveItemCount?.ToString("N0") ?? "N/A")</td></tr>
+                                    <tr><td class="fw-bold">Archive Size</td><td>@(Unread(result, readOnPremises: true) ?? (result.ArchiveUnreadable is not null ? CouldNotBeRead : Gigabytes(result.ArchiveSizeGB)))</td></tr>
+                                    <tr><td class="fw-bold">Archive Deleted</td><td>@(Unread(result) ?? Gigabytes(result.ArchiveDeletedItemSizeGB))</td></tr>
+                                    <tr><td class="fw-bold">Archive Items</td><td>@(Unread(result) ?? Count(result.ArchiveItemCount))</td></tr>
                                 }
-                                <tr><td class="fw-bold">Forwarding</td><td>@(result.MailboxUnreadable is not null ? "Could not be read" : result.ForwardingAddress ?? "None")</td></tr>
+                                <tr><td class="fw-bold">Forwarding</td><td>@(Unread(result) ?? result.ForwardingAddress ?? "None")</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -201,6 +202,39 @@
     // known; a time of Kind Unspecified as reported, said to name no zone. "N/A" when nothing was reported.
     private string ShowTime(ReportedTime? reported) =>
         reported is null ? "N/A" : OutOfOfficeRequest.ShowReported(reported, browserZone ?? TimeZoneInfo.Utc);
+
+    private const string CouldNotBeRead = "Could not be read";
+
+    // RecipientLookupAccuracy S2 (the plan's 3.6). What a mailbox row says when this recipient's kind means its value was not
+    // read, or does not apply - or when the Exchange Online mailbox read itself failed (aud-a54); null when the row shows its
+    // value. readOnPremises: the on-premises size read gives this row a value for an on-premises mailbox.
+    private static string? Unread(RecipientInfoResult r, bool readOnPremises = false) => r.LocationClass switch
+    {
+        _ when r.MailboxUnreadable is not null => CouldNotBeRead,
+        RecipientLocationClass.NotApplicable => "Not applicable",
+        RecipientLocationClass.ExchangeHeldNotRead => "Not read for this recipient type",
+        RecipientLocationClass.Undetermined => "Not read",
+        RecipientLocationClass.OnPremises when !readOnPremises => "Not read for on-premises mailboxes",
+        _ => null,
+    };
+
+    // S2. A figure from the statistics read (an on-premises mailbox's: its size), or "Could not be read" when that read failed
+    // or answered no row - "N/A" said Exchange had reported nothing.
+    private static string Statistic(RecipientInfoResult r, string value) => r.StatisticsUnreadable is not null ? CouldNotBeRead : value;
+
+    // S2. A size, or "N/A" with no unit after it.
+    private static string Gigabytes(double? gb) => gb is { } value ? value.ToString("F2") + " GB" : "N/A";
+
+    private static string Count(long? count) => count?.ToString("N0") ?? "N/A";
+
+    // S2 (3.5). "Not applicable" is not a warning: it is the answer. "Could not be determined" keeps the warning colour.
+    private static string LocationBadge(RecipientLocationClass location) => location switch
+    {
+        RecipientLocationClass.Cloud or RecipientLocationClass.ExchangeHeldNotRead => "bg-primary",
+        RecipientLocationClass.OnPremises => "bg-secondary",
+        RecipientLocationClass.NotApplicable => "bg-light text-dark border",
+        _ => "bg-warning",
+    };
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {

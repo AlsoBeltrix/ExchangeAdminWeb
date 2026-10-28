@@ -116,9 +116,10 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
         Assert.Equal(RecipientLocationClass.NotApplicable, result.LocationClass);
         Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("OnPrem", StringComparison.Ordinal));
 
+        // S2: it has no mailbox, so its rows do not apply - "None" and "Disabled" stated absences nothing read.
         var page = Rendered(result);
-        Assert.Contains("Forwarding</td>None", page, StringComparison.Ordinal);
-        Assert.Contains("Archive</td>Disabled", page, StringComparison.Ordinal);
+        Assert.Contains("Forwarding</td>Not applicable", page, StringComparison.Ordinal);
+        Assert.Contains("Archive</td>Not applicable", page, StringComparison.Ordinal);
     }
 
     // ---- the archive statistics read -----------------------------------------------------------
