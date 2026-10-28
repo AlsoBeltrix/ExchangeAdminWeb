@@ -928,7 +928,24 @@
         // fields - the job's state refused it, nothing was changed - in Admin Bulk Jobs' words (kd-54). The reason is the
         // store's own answer, decided in the one transaction that would have deleted the job (kd-77); the row was Failed with
         // no reason and the banner said nothing. A removal that happens is audited as before and leaves the banner as it was.
-        var removed = BulkJobs.DeleteJob(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id, out var outcome);
+        // kd-79. The store call sat outside any try, so a throw from the jobs store - a locked or unreadable database - left
+        // before the row and the banner and reached the circuit. It is wrapped as CancelJob's is (kd-5): the throw is audited
+        // Failed with the exception's class and message and no refusal fields (the store may have been reached), and the banner
+        // says the removal could not be completed. Unlike CancelJob's, it goes no further than the log, and the list is not
+        // reloaded from the store that has just failed - the throw skipped that reload before, too.
+        bool removed;
+        ExchangeAdminWeb.Services.Jobs.BulkJobRemoval outcome;
+        try
+        {
+            removed = BulkJobs.DeleteJob(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, job.Id, out outcome);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Bulk job {JobId} could not be removed", job.Id);
+            AuditJobControl("ConferenceRooms_RemoveBulkJob", job, success: false, $"The removal could not be completed: {ex.GetType().Name}: {ex.Message}");
+            result = new RoomOperationResult { Success = false, Message = $"The removal of the {JobKindLabel(job)} job could not be completed." };
+            return;
+        }
         var because = removed ? null : outcome switch
         {
             ExchangeAdminWeb.Services.Jobs.BulkJobRemoval.NotFound => "it no longer exists.",

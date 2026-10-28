@@ -1075,7 +1075,10 @@ public sealed class ModuleCatalog
             // 2.19.6: removing a bulk job that is not removed - another administrator removed it first, or it was pruned - says
             // why, in the banner and the audit row, in Admin Bulk Jobs' words ("it no longer exists.", "it has not finished."),
             // and the row is a refusal by the job's state that changed nothing, where it was Failed with no reason (kd-78).
-            Version = "2.19.6",
+            // 2.19.7: a removal the jobs store fails is audited Failed with the exception's class and message, the banner says
+            // the removal could not be completed, and the exception no longer reaches the circuit; before, the throw left no
+            // row and no banner (kd-79).
+            Version = "2.19.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
