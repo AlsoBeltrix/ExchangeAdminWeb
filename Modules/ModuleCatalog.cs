@@ -1691,7 +1691,10 @@ public sealed class ModuleCatalog
             // removal that did not happen says why - the job has not finished, or is gone (kd-54).
             // 1.2.1: the removal and its reason are decided in one step in the job store, so a job another
             // administrator removed a moment earlier is told - and audited - as gone, not as not finished (kd-77).
-            Version = "1.2.1",
+            // 1.2.2: a cancel or a removal whose job list cannot be reloaded afterwards - the jobs database failing that
+            // read - keeps its banner, with "The job list could not be refreshed." after it, keeps its audit row and goes
+            // no further; before, the reload's error reached the circuit (kd-86).
+            Version = "1.2.2",
             // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy

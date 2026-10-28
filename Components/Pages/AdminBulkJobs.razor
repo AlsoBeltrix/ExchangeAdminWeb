@@ -351,10 +351,27 @@
             WriteAudit("AdminBulkJobs_CancelJob", job, cancelled, error, refusedAt);
         }
 
-        actionMessage = cancelled
+        var message = cancelled
             ? $"Cancellation requested for {job.ModuleId} job {job.JobType}."
             : $"{job.ModuleId} job {job.JobType} was not cancelled - it had already finished, or it no longer exists.";
-        await RefreshJobs();
+        actionMessage = message;
+
+        // kd-86. The reload sat outside any try, so a jobs store that failed this read - after a cancel that happened
+        // and was filed above - threw out of the handler to the circuit. It has its own try, as Conference Rooms'
+        // removal has its reload (kd-82): the throw is logged, the banner keeps what the cancel did and says the list
+        // could not be refreshed, and nothing escapes. Nothing more is filed: the row above is the cancel's record, and
+        // it stands. Unlike a throw from the store call above, which is filed Failed and thrown on, this one goes no
+        // further than the log; the list stays as it was shown until the next read that works. The banner is built from
+        // this cancel's own words, not read back from the field across the reload's await.
+        try
+        {
+            await RefreshJobs();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "The job list could not be refreshed after the cancel of bulk job {JobId}", job.Id);
+            actionMessage = $"{message} The job list could not be refreshed.";
+        }
     }
 
     private async Task RemoveJob(BulkJob job)
@@ -398,9 +415,10 @@
             WriteAudit("AdminBulkJobs_RemoveJob", job, removed, error, because is null ? null : "JobState");
         }
 
-        actionMessage = removed
+        var message = removed
             ? $"Removed {job.ModuleId} job {job.JobType}."
             : $"Could not remove {job.ModuleId} job {job.JobType} - {because}";
+        actionMessage = message;
 
         if (detailsJobId == job.Id)
         {
@@ -408,7 +426,18 @@
             detailsRows = Array.Empty<BulkJobRow>();
         }
 
-        await RefreshJobs();
+        // kd-86. The reload has its own try, as CancelJob's has (the comment there): a store that fails this read after
+        // the removal was filed is logged, the banner keeps what the removal did and says the list could not be
+        // refreshed, nothing escapes, and the row above stands with nothing more filed.
+        try
+        {
+            await RefreshJobs();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "The job list could not be refreshed after the removal of bulk job {JobId}", job.Id);
+            actionMessage = $"{message} The job list could not be refreshed.";
+        }
     }
 
     // Audit failure must never make a completed action look failed (Constitution, Auditing And

@@ -7,7 +7,9 @@ using ExchangeAdminWeb.Services.Progress;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Page = ExchangeAdminWeb.Components.Pages.AdminBulkJobs;
@@ -18,7 +20,8 @@ namespace ExchangeAdminWeb.Tests;
 /// kd-26: Admin Bulk Jobs audits a cancel with what the cancel did - cancelled, not cancelled because the job had already
 /// finished or gone, refused, or failed - where it recorded Success after any cancel. kd-53: under the category of the
 /// module whose job it is. kd-54: and a removal that did not happen says why. kd-77: decided with the removal, so a job
-/// another administrator removed first is told as gone.
+/// another administrator removed first is told as gone. kd-86: a cancel or a removal whose job list cannot be reloaded
+/// afterwards says what it did and goes no further.
 /// </summary>
 /// <remarks>
 /// The real page, its injected services set through reflection (<see cref="ConferenceRoomPageTests"/>' idiom), its
@@ -248,6 +251,165 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
         Assert.False(row.TryGetProperty("mutationAttempted", out _));
     }
 
+    // ---- kd-86: a cancel or a removal whose list reload fails says what it did, keeps its row, and goes no further ----
+    // CancelJob and RemoveJob reloaded the job list once the row was filed, outside any try, so a jobs store that failed
+    // that read - after a cancel or a removal that happened - threw out of the handler to the circuit. The throw is now
+    // logged, the banner keeps what the action did and says the list could not be refreshed, nothing escapes, and the
+    // action's own row stands, with nothing more filed.
+
+    private const string NotRefreshed = " The job list could not be refreshed.";
+
+    [Theory]
+    [InlineData("queued")]
+    [InlineData("running")]
+    [InlineData("finished")]
+    public async Task ACancelWhoseListReloadFails_SaysWhatItDid_KeepsItsRow_AndThrowsNothing(string state)
+    {
+        // "queued" and "running" are the finding: the store takes the cancel - the queued job finished Cancelled, the
+        // running job's cancellation requested - and fails every read after it, the page's reload among them (and, for the
+        // queued job, the cancel's own read of the job, which kd-85 answers as the write landed). "finished" is the cancel
+        // that took no effect, the job having finished by the click: nothing is written, and the store fails the reload.
+        var (jobs, store) = JobService();
+        var job = Job(state == "queued" ? BulkJobStatus.Queued : BulkJobStatus.Running);
+        store.Insert(state == "finished" ? Job(BulkJobStatus.Completed) : job);
+        var log = new PageLog();
+        var page = BuildPage(jobs, logger: log);
+        var unreadable = state == "finished" ? FailTheReloadOnly(store) : FailEveryReadAfterTheWrite(jobs, store);
+
+        var escaped = await Record.ExceptionAsync(() => Cancel(page, job));
+
+        Assert.Null(escaped);
+        AssertTheReloadFailedAndWasLogged(jobs, unreadable, log,
+            "The job list could not be refreshed after the cancel of bulk job job-1");
+        // The cancel's own row, as without the failure, and no other row at all.
+        Assert.Single(_h.AuditRows());
+        if (state == "finished")
+        {
+            var row = TheRow(job, success: false, error: NotCancelled);
+            Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+            Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+            Assert.Equal($"{Module} job T was not cancelled - it had already finished, or it no longer exists.{NotRefreshed}",
+                GetField(page, "actionMessage"));
+        }
+        else
+        {
+            var row = TheRow(job, success: true, error: null);
+            Assert.False(row.TryGetProperty("refusedAt", out _));
+            Assert.False(row.TryGetProperty("mutationAttempted", out _));
+            Assert.Equal($"Cancellation requested for {Module} job T.{NotRefreshed}", GetField(page, "actionMessage"));
+        }
+
+        // What the store holds, read once it can be read again: the cancel as its write left it, or nothing changed.
+        Readable(store);
+        var held = store.Get(job.Id)!;
+        if (state == "queued")
+            Assert.Equal(BulkJobStatus.Cancelled, held.Status);
+        else if (state == "running")
+            Assert.True(held.CancelRequested);
+        else
+            Assert.Equal(BulkJobStatus.Completed, held.Status);
+    }
+
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("gone")]
+    public async Task ARemovalWhoseListReloadFails_SaysWhatItDid_KeepsItsRow_AndThrowsNothing(string state)
+    {
+        // "removed" is the finding: the store deletes the finished job and fails every read after it, the page's reload
+        // among them. "gone" is the removal that did not happen - another administrator removed the job first (kd-77) -
+        // with the store failing the reload: nothing is written, so no change event marks the moment, and the stand-in
+        // engages as the reload begins.
+        var (jobs, store) = JobService();
+        var job = Job(BulkJobStatus.Completed);
+        if (state == "removed")
+            store.Insert(job);
+        var log = new PageLog();
+        var page = BuildPage(jobs, logger: log);
+        var unreadable = state == "removed" ? FailEveryReadAfterTheWrite(jobs, store) : FailTheReloadOnly(store);
+
+        var escaped = await Record.ExceptionAsync(() => Remove(page, job));
+
+        Assert.Null(escaped);
+        AssertTheReloadFailedAndWasLogged(jobs, unreadable, log,
+            "The job list could not be refreshed after the removal of bulk job job-1");
+        // The removal's own row, as without the failure, and no other row at all.
+        Assert.Single(_h.AuditRows());
+        if (state == "removed")
+        {
+            var row = TheRow(job, success: true, error: null, action: RemoveAction);
+            Assert.False(row.TryGetProperty("refusedAt", out _));
+            Assert.False(row.TryGetProperty("mutationAttempted", out _));
+            Assert.Equal($"Removed {Module} job T.{NotRefreshed}", GetField(page, "actionMessage"));
+        }
+        else
+        {
+            var row = TheRow(job, success: false, error: "The job was not removed: it no longer exists.", action: RemoveAction);
+            Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+            Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+            Assert.Equal($"Could not remove {Module} job T - it no longer exists.{NotRefreshed}", GetField(page, "actionMessage"));
+        }
+
+        Readable(store);
+        Assert.Null(store.Get(job.Id));
+    }
+
+    // The reload failed and the page said so: the stand-in engaged and the store fails a read of the list, the reload's
+    // activity is over, and the page logged one error naming the job, with the store's own exception.
+    private void AssertTheReloadFailedAndWasLogged(BulkJobService jobs, Func<bool> unreadable, PageLog log, string line)
+    {
+        Assert.True(unreadable(), "the jobs store was not made unreadable");
+        Assert.ThrowsAny<SqliteException>(() => jobs.GetActiveJobs());
+        Assert.Empty(_progress.Active);
+        var said = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Error, said.Level);
+        Assert.Equal(line, said.Message);
+        Assert.Contains("no such table: bulk_job", Assert.IsType<SqliteException>(said.Exception).Message);
+    }
+
+    // kd-84's and kd-85's stand-in, at the page: a jobs store that takes the action's write and fails every read after it.
+    // The jobs table is renamed away (kd-82's device) when JobChanged announces the write - the service raises it once the
+    // cancel or the removal has landed, before the page reloads - so the reload's first read meets "no such table".
+    // Returns whether it ran.
+    private static Func<bool> FailEveryReadAfterTheWrite(BulkJobService jobs, BulkJobRepository store)
+    {
+        var renamed = false;
+        jobs.JobChanged += _ =>
+        {
+            if (renamed)
+                return;
+            RenameJobsTable(store, "bulk_job", "bulk_job_held");
+            renamed = true;
+        };
+        return () => renamed;
+    }
+
+    // kd-82's stand-in, for an action that wrote nothing and so raised no JobChanged: a jobs store that fails the reload
+    // and nothing before it. RefreshJobs begins its "Loading the bulk job list" activity before it reads, so the jobs
+    // table is renamed away the moment that activity begins. Returns whether it ran.
+    private Func<bool> FailTheReloadOnly(BulkJobRepository store)
+    {
+        var renamed = false;
+        _progress.Changed += () =>
+        {
+            if (renamed || !_progress.Active.Any(activity => activity.Label == "Loading the bulk job list"))
+                return;
+            RenameJobsTable(store, "bulk_job", "bulk_job_held");
+            renamed = true;
+        };
+        return () => renamed;
+    }
+
+    // The jobs table renamed back, so the test can read what the store holds.
+    private static void Readable(BulkJobRepository store) => RenameJobsTable(store, "bulk_job_held", "bulk_job");
+
+    private static void RenameJobsTable(BulkJobRepository store, string from, string to)
+    {
+        using var connection = new SqliteConnectionFactory(store.DatabasePath).Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE {from} RENAME TO {to};";
+        command.ExecuteNonQuery();
+    }
+
     // ---- the row -------------------------------------------------------------------------------
 
     // The one cancel row, as the page always wrote it - operator, IP, module/job, ticket, the job as rendered - with the
@@ -310,14 +472,14 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
         return (new BulkJobService(scopes, store, new BulkJobProcessorRegistry([]), _h.Config, NullLogger<BulkJobService>.Instance), store);
     }
 
-    private Page BuildPage(BulkJobService jobs, bool authorized = true)
+    private Page BuildPage(BulkJobService jobs, bool authorized = true, ILogger<Page>? logger = null)
     {
         var page = new Page();
         SetProperty(page, "BulkJobs", jobs);
         SetProperty(page, "Audit", _h.Audit);
         SetProperty(page, "AuthStateProvider", Authentication());
         SetProperty(page, "AuthorizationService", Authorization(authorized));
-        SetProperty(page, "Logger", NullLogger<Page>.Instance);
+        SetProperty(page, "Logger", logger ?? NullLogger<Page>.Instance);
         SetProperty(page, "Progress", _progress);
         SetField(page, "currentUser", Operator);
         SetField(page, "clientIpAddress", OperatorIp);
@@ -351,4 +513,30 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
 
     private static object? GetField(Page page, string name) =>
         typeof(Page).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page);
+
+    // kd-86. The page's log, kept: each line's level, its rendered message and its exception.
+    private sealed class PageLog : ILogger<Page>
+    {
+        private readonly List<(LogLevel Level, string Message, Exception? Exception)> _entries = [];
+
+        public IReadOnlyList<(LogLevel Level, string Message, Exception? Exception)> Entries
+        {
+            get
+            {
+                lock (_entries)
+                    return _entries.ToList();
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries)
+                _entries.Add((logLevel, formatter(state, exception), exception));
+        }
+    }
 }
