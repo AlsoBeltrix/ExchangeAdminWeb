@@ -723,6 +723,37 @@ public sealed class RecipientLookupClassificationTests : IDisposable
         Assert.Equal(RecipientLocationClass.Cloud, result.LocationClass);
     }
 
+    // ---- S4: Created ----------------------------------------------------------------------------
+
+    // T22. A synced recipient's Exchange Online WhenCreated is its copy's, and says so; a cloud-only one's, and one whose sync
+    // state was not reported, read as before (RecipientLookupReportedTimeTests pins the time itself, unchanged).
+    [Theory]
+    [InlineData("synced", "2026-10-01 20:15 (UTC, UTC+00:00) (Exchange Online's copy)")]
+    [InlineData("cloud-only", "2026-10-01 20:15 (UTC, UTC+00:00)")]
+    [InlineData("not reported", "2026-10-01 20:15 (UTC, UTC+00:00)")]
+    public async Task Created_SaysWhenItIsExchangeOnlinesCopy(string state, string shown)
+    {
+        _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("RecipientTypeDetails", "MailUniversalDistributionGroup"),
+            ("PrimarySmtpAddress", Address), ("WhenCreated", new DateTime(2026, 10, 1, 20, 15, 0, DateTimeKind.Utc)));
+        if (Synced(state) is { } synced)
+            ((System.Management.Automation.PSObject)_exchange.Recipients[Address]!).Properties.Add(new System.Management.Automation.PSNoteProperty("IsDirSynced", synced));
+
+        var result = await LookedUp();
+
+        Assert.Equal(shown, RowsOf(Rendered(result))["Created"]);
+    }
+
+    // Nothing reported is "N/A", with no note after it.
+    [Fact]
+    public async Task ASyncedRecipientWithNoCreationTime_IsNA_WithNoNote()
+    {
+        Recipient("MailUniversalDistributionGroup", synced: true);
+
+        var result = await LookedUp();
+
+        Assert.Equal("N/A", RowsOf(Rendered(result))["Created"]);
+    }
+
     // T18. "Not applicable" is the answer, not a warning; "Could not be determined" keeps the warning colour.
     [Fact]
     public async Task NotApplicable_IsNotInTheWarningColour_ButCouldNotBeDetermined_Is()

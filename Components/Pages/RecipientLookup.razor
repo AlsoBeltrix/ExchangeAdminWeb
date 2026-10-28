@@ -77,7 +77,10 @@
                                 @* aud-a23d. "N/A" only when Exchange reported nothing; a time it reported in a form
                                    this app cannot read is shown as the marker naming it, not as "N/A".
                                    aud-a23e. A readable one is shown with its zone named - see ShowTime. *@
-                                <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)</td></tr>
+                                @* RecipientLookupAccuracy S4. For a recipient Exchange reports as synced from on-premises, Exchange Online's
+                                   WhenCreated is when its copy was made, not the account (the plan's A6) - for an on-premises mailbox, years
+                                   after it - so the row says so. *@
+                                <tr><td class="fw-bold">Created</td><td>@ShowTime(result.WhenCreated)@CopyNote(result, result.WhenCreated)</td></tr>
                                 <tr><td class="fw-bold">Last Logon</td><td>@(Unread(result) ?? Statistic(result, ShowTime(result.LastLogonTime)))</td></tr>
                             </tbody>
                         </table>
@@ -226,6 +229,11 @@
         RecipientLocationClass.OnPremises when !readOnPremises => "Not read for on-premises mailboxes",
         _ => null,
     };
+
+    // S4. After a time Exchange Online reports for a recipient it reports as synced: the time is its copy's. Not when the sync
+    // state was not reported - that is not known - nor after "N/A".
+    private static string CopyNote(RecipientInfoResult r, ReportedTime? time) =>
+        r.IsDirSynced == true && time is not null ? " (Exchange Online's copy)" : "";
 
     // S2. A figure from the statistics read (an on-premises mailbox's: its size), or "Could not be read" when that read failed
     // or answered no row - "N/A" said Exchange had reported nothing.

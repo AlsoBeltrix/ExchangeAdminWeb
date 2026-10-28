@@ -1201,3 +1201,13 @@ he leaves them; and the extras he accepted and declined, by number.
   | M14 Primary Email shows the typed text | `78c63ae3fa12cb461bd7ce7ad598f204` | 3 | T19 |
   | M15 the Exchange Online statistics read made with the typed text | `cfc8bcd988ffb854acbeee813d79e7e3` | 1 | T20, in the cloud |
   | M15, second form: the on-premises size read made with the typed text | `cf7bd66d5ad44f11ac6635594a5c2888` | 1 | T20, on-premises |
+- 2026-10-28, **S4 landed** (Created): " (Exchange Online's copy)" after Created for a recipient Exchange reports as synced
+  (`IsDirSynced` true); a cloud-only one's, and one whose sync state was not reported, read as before, and
+  `RecipientLookupReportedTimeTests` is unchanged and green. Extra 1 was taken, so the description and the permission text
+  keep "quotas" (E1 makes them true) and T23 does not apply. Recipient Lookup 1.3.3. Tests T22 and the no-time control.
+  Mutations (restored byte-exact; original page `fdeaee9e481572fc315bd9cc64983784`; counts of 244):
+
+  | Mutation | Mutated MD5 | Failed | Including |
+  | --- | --- | --- | --- |
+  | M16 the note for a cloud-only recipient, not for a synced one | `d19812384d88509f247a2812fa10c76b` | 2 | T22, synced and cloud-only |
+  | M16, second form: the note when the sync state was not reported | `4a84bbec9505142b83ba8c18bd159525` | 1 | T22, not reported |

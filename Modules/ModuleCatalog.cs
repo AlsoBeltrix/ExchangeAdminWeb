@@ -603,7 +603,9 @@ public sealed class ModuleCatalog
             // is a sum only when both sizes were read (S2).
             // 1.3.2: Primary Email is the recipient's primary address, with what was typed beside it when it was anything else,
             // and every later read asks about that address, not the typed text (S3).
-            Version = "1.3.2",
+            // 1.3.3: Created says "(Exchange Online's copy)" for a recipient Exchange reports as synced from on-premises: the
+            // date is that of Exchange Online's copy, not of the account (S4). The description's quotas stay; E1 shows them.
+            Version = "1.3.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
