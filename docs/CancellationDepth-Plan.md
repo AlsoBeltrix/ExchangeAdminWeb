@@ -728,7 +728,7 @@ owner's (`.agents/decisions.md` 2026-10-26).
    borrow and the throttle take none; kd-59's record says the same of the on-premises half - not reproduced. A4 and A5
    reproduce it before fixing it. **Reproduced at A6 for Mailbox Permissions' on-premises change**: A6's tests run against
    the service as it was (kd-58's A6 section) - a change cancelled while it waited for the server, or once its session had
-   opened, was sent, both rights, after the cancel.
+   opened, was sent, both rights, after the cancel. **And at A7 for Calendar Permissions' on-premises change**, the same way.
 2. That PowerShell reports `Stopped` (or `Stopping`) in `InvocationStateInfo` after a stop, and `Completed` or `Failed`
    after every normal end, on this host's SDK: documented behaviour, to be confirmed by A1's tests. No pooled call uses
    a local `Select-Object -First` (none was found), which ends a pipeline early without stopping it.
@@ -820,9 +820,16 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   page, over every page that begins an activity. The supervisor also assigned kd-81's remainder to A6 and A7: the
   permission changes' own wait for a pool connection takes the token, cloud and on-premises alike. No module bump - the
   guard is shared; the base bump stays owed (C1).
-- 2026-10-28, **A6, Mailbox Permissions** - `feat/cancellation-depth`, the commit that adds this line: the on-premises change
+- 2026-10-28, **A6, Mailbox Permissions** - `feat/cancellation-depth` `01a2c36e`: the on-premises change
   takes the cancel at every step before its first command (E7) - the server's queue, a look before and after its runspace
   opens, the connect, a last look before the mark - and the single cloud change's own wait for a pool connection takes it
   (E4, kd-81's remainder); kd-81's look before the first write stays. The page's on-premises activity declares that it
   takes the cancel (3.8a). Found and fixed in the tests: the two test classes that hold the on-premises server's two
   slots now share a collection, so they never run at once. Mailbox Permissions 1.6.7 -> 1.6.8; the base bump stays owed.
+- 2026-10-28, **A7, Calendar Permissions** - `feat/cancellation-depth`, the commit that adds this line: as A6 - the
+  on-premises set and removal take the cancel at every step before their command (E7), the single cloud change's own wait
+  for a pool connection takes it (E4), and the page's on-premises activity declares it (3.8a). Beyond the letter, recorded
+  in kd-58's A7 section: the cloud removal, which the pool runs again after Exchange's pre-flight answer, hands its borrow
+  a token that stops at the removal's claim of its send - settled with the cancel under one lock - so a retry of a removal
+  already sent is never stopped (kd-59's rule; the existing test of that retry pins it). Calendar Permissions 1.4.7 ->
+  1.4.8; the base bump stays owed.

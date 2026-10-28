@@ -267,7 +267,13 @@ public sealed class ModuleCatalog
             // 1.4.7: as Mailbox Permissions 1.6.7 - and the location read's on-premises half (kd-58, CancellationDepth A3): a
             // cancel while it waits for the on-premises server, as its session opens, between connect attempts or between its
             // reads ends the change there, nothing written. The on-premises change itself is unchanged until its own slice.
-            Version = "1.4.7",
+            // 1.4.8: as Mailbox Permissions 1.6.8 (kd-58, CancellationDepth A7) - the on-premises change takes the operator's
+            // cancel at every step before its command: a cancel while it waits for the on-premises server, as its session opens,
+            // between connect attempts or after the connect ends it there, nothing written, filed Cancelled, no one notified. And
+            // the single Exchange Online change's own wait for a free connection takes it: a cancel there ends the change at
+            // once, nothing read or sent - the removal's only until it claims its send, so a removal the pool runs again after
+            // Exchange's pre-flight answer still runs. A command already sent runs to its end.
+            Version = "1.4.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

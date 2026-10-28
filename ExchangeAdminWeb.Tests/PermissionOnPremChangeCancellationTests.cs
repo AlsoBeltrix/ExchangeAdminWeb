@@ -41,6 +41,7 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
 {
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
     private const string MailboxPage = "Mailbox Permissions";
+    private const string CalendarPage = "Calendar Permissions";
     private const string Logon = @"CONTOSO\jdoe";
     private const string Upn = "jdoe@contoso.test";
     private const string Target = "shared@contoso.test";
@@ -67,13 +68,16 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
 
     public void Dispose() => _h.Dispose();
 
-    /// <summary>The on-premises changes that take the cancel: Mailbox Permissions' grant and removal (A6).</summary>
+    /// <summary>
+    /// The on-premises changes that take the cancel: Mailbox Permissions' grant and removal (A6), Calendar Permissions' set
+    /// and removal (A7).
+    /// </summary>
     public static TheoryData<string, bool> Changes => new()
     {
-        { MailboxPage, true }, { MailboxPage, false },
+        { MailboxPage, true }, { MailboxPage, false }, { CalendarPage, true }, { CalendarPage, false },
     };
 
-    public static TheoryData<string> Pages => [MailboxPage];
+    public static TheoryData<string> Pages => [MailboxPage, CalendarPage];
 
     // ---- the server's queue --------------------------------------------------------------------------------------------
 
@@ -240,10 +244,11 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
         Assert.True(PermissionChangeFailure.CancelledBeforeItWasSent(notSent, token)); // what the page files Cancelled
     }
 
-    /// <summary>The commands a change sends through its session: Mailbox Permissions' one per right, Full Access and Send As.</summary>
-    private static int CommandsSent(string page) => page == MailboxPage
-        ? 2
-        : throw new ArgumentOutOfRangeException(nameof(page), page, "not a page these tests drive");
+    /// <summary>
+    /// The commands a change sends through its session: Mailbox Permissions' one per right, Full Access and Send As; Calendar
+    /// Permissions' one, its folder permission.
+    /// </summary>
+    private static int CommandsSent(string page) => page == MailboxPage ? 2 : 1;
 
     /// <summary><paramref name="page"/>'s on-premises change of <see cref="Other"/>'s access to <see cref="Target"/>, under <paramref name="cancellationToken"/>.</summary>
     private Task<PermissionResult> Change(string page, bool grant, Seams seams, CancellationToken cancellationToken)
@@ -256,13 +261,17 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
                 Target, validated, Other, fullAccess: true, sendAs: true, cancellationToken),
             (MailboxPage, false) => ((MailboxPermissionService)service).RemoveMailboxPermissionsOnPremAsync(
                 Target, validated, Other, fullAccess: true, sendAs: true, cancellationToken),
+            (CalendarPage, true) => ((CalendarPermissionService)service).SetCalendarPermissionOnPremAsync(
+                Target, validated, Other, "Reviewer", cancellationToken),
+            (CalendarPage, false) => ((CalendarPermissionService)service).RemoveCalendarPermissionOnPremAsync(
+                Target, validated, Other, cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(page), page, "not a page these tests drive"),
         };
     }
 
     private ExchangeServiceBase Service(string page, Seams seams) => page == MailboxPage
         ? new OnPremMailbox(_h, seams)
-        : throw new ArgumentOutOfRangeException(nameof(page), page, "not a page these tests drive");
+        : new OnPremCalendar(_h, seams);
 
     /// <summary>
     /// A service's on-premises seams, watched: the runspace the change opens (counted, <see cref="AsTheRunspaceIsMade"/> run as
@@ -344,6 +353,24 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
             seams.Credentials();
     }
 
+    /// <summary>The on-premises Calendar Permissions change over <see cref="Seams"/>.</summary>
+    private sealed class OnPremCalendar(ExchangeWriteHarness h, Seams seams)
+        : CalendarPermissionService(h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, h.Config, null!, h.Trace)
+    {
+        internal override Runspace CreateOnPremRunspace()
+        {
+            var runspace = base.CreateOnPremRunspace();
+            seams.RunspaceMade();
+            return runspace;
+        }
+
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default) =>
+            seams.Connect(ps, cancellationToken);
+
+        protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
+            seams.Credentials();
+    }
+
     /// <summary>The harness's call list: every call added there as before, then shown to <paramref name="observe"/>.</summary>
     private sealed class ObservedCalls(IList calls, Action<Hashtable> observe) : ArrayList
     {
@@ -369,25 +396,32 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
 
     // ---- the page harness ----------------------------------------------------------------------------------------------
 
-    /// <summary>The row a page files for its on-premises change: Mailbox Permissions' a Full Access grant.</summary>
-    private static string OnPremAction(string page) => page == MailboxPage
-        ? "OnPrem_AddFullAccess"
-        : throw new ArgumentOutOfRangeException(nameof(page), page, "not a page these tests drive");
+    /// <summary>The row a page files for its on-premises change: Mailbox Permissions' a Full Access grant, Calendar's a set.</summary>
+    private static string OnPremAction(string page) => page == MailboxPage ? "OnPrem_AddFullAccess" : "OnPrem_SetCalendar";
 
     /// <summary>
-    /// <paramref name="page"/> ready for <c>ExecuteOnPrem</c>: the operator jdoe granting <see cref="Other"/> Full Access on
-    /// <see cref="Target"/> through <paramref name="service"/>, nothing protected, the access re-check allowed, the activity
-    /// <paramref name="progress"/>'s.
+    /// <paramref name="page"/> ready for <c>ExecuteOnPrem</c>: the operator jdoe granting <see cref="Other"/> Full Access - or
+    /// Reviewer - on <see cref="Target"/> through <paramref name="service"/>, nothing protected, the access re-check allowed,
+    /// the activity <paramref name="progress"/>'s.
     /// </summary>
     private ComponentBase PageFor(string page, RecordingProgress progress, ExchangeServiceBase service)
     {
-        if (page != MailboxPage)
-            throw new ArgumentOutOfRangeException(nameof(page), page, "not a page these tests drive");
-        ComponentBase component = new MailboxPermissions();
-        Set(component, "MailboxService", service);
-        Set(component, "Logger", NullLogger<MailboxPermissions>.Instance);
-        SetField(component, "onPremFullAccess", true);
-        SetField(component, "onPremSendAs", false);
+        ComponentBase component;
+        if (page == MailboxPage)
+        {
+            component = new MailboxPermissions();
+            Set(component, "MailboxService", service);
+            Set(component, "Logger", NullLogger<MailboxPermissions>.Instance);
+            SetField(component, "onPremFullAccess", true);
+            SetField(component, "onPremSendAs", false);
+        }
+        else
+        {
+            component = new CalendarPermissions();
+            Set(component, "CalendarService", service);
+            Set(component, "Logger", NullLogger<CalendarPermissions>.Instance);
+            SetField(component, "onPremAccessRight", CalendarAccessRight.Reviewer);
+        }
 
         var auth = Substitute.For<AuthenticationStateProvider>();
         auth.GetAuthenticationStateAsync().Returns(new AuthenticationState(_jdoe));

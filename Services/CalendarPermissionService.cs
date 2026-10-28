@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using System.Security.Claims;
 using System.Text;
 using CsvHelper;
@@ -28,13 +27,14 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// </param>
     /// <param name="cancellationToken">
     /// kd-81. The page's activity token, the one the navigation guard cancels - looked at as Mailbox Permissions' change looks
-    /// at its own, both times before anything is sent: as the change starts - a token already cancelled asks the pool for
-    /// nothing (kd-76's shape) - and inside the pooled call, once its connection is held, immediately before the Set is built,
-    /// because the pool's wait for a free connection takes no token. <c>RunAsync</c> takes a throw in its call for a failed
-    /// write, so there the look marks the cancel and the call returns before its command; the cancel is thrown once
-    /// <c>RunAsync</c> has returned, inside the mark (kd-75's shape): a <see cref="PermissionWriteNotSubmittedException"/>,
-    /// nothing sent, which the page files Cancelled (kd-57, kd-59). Nothing after the Set looks at it - the Add it falls back
-    /// to included. The CSV loop passes none, so its rows run as before.
+    /// at its own, only before anything is sent: as the change starts - a token already cancelled asks the pool for nothing
+    /// (kd-76's shape); by the pool's wait for a free connection and as that wait returns (kd-58 A7, E4) - a cancel during the
+    /// wait ends the change at once, no connection used; and inside the pooled call, the connection held and the reads done,
+    /// immediately before the Set is built. <c>RunAsync</c> takes a throw in its call for a failed write, so there the look
+    /// marks the cancel and the call returns before its command; the cancel is thrown once <c>RunAsync</c> has returned,
+    /// inside the mark (kd-75's shape): a <see cref="PermissionWriteNotSubmittedException"/>, nothing sent, which the page
+    /// files Cancelled (kd-57, kd-59). Nothing after the Set looks at it - the Add it falls back to included. The CSV loop
+    /// passes none, so its rows run as before.
     /// </param>
     public async Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, CalendarAccessRight accessRight,
         CancellationToken cancellationToken = default)
@@ -68,9 +68,10 @@ public class CalendarPermissionService : ExchangeServiceBase
                 calendarPath = GetCalendarFolderName(ps, mailbox.Identity);
                 var level = accessRight.ToString();
 
-                // kd-81. The pool's wait for this connection took no token, so a cancel made during it is looked at here, the
-                // connection held and the reads done, before the Set is built. Marked rather than thrown: RunAsync takes a
-                // throw in its call for a failed Set. The Set is not retried, so no earlier attempt can have sent anything.
+                // kd-81. A cancel made since the pool's wait returned - during the reads above - is looked at here, the
+                // connection held and the reads done, before the Set is built (kd-58 A7: one made during the wait ended the
+                // change there). Marked rather than thrown: RunAsync takes a throw in its call for a failed Set. The Set is
+                // not retried, so no earlier attempt can have sent anything.
                 if (cancellationToken.IsCancellationRequested)
                 {
                     cancelledBeforeTheSet = true;
@@ -117,7 +118,8 @@ public class CalendarPermissionService : ExchangeServiceBase
                     // taken, and an Add sent there met the pre-flight error, which read as "nothing ran" (kd-43).
                     Carry(set, tracker);
                 }
-            }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null));
+            }, () => ($"{user} granted {accessRight} permission on the calendar of {resolvedMailbox} ({calendarPath})", null),
+                cancellationToken: cancellationToken); // kd-58 A7 (E4): the wait for a connection takes the token, the call does not
 
             // kd-81. Thrown here, once the pool has the connection back, inside the mark: nothing was sent, so it leaves as not
             // sent - not as the failed Set RunAsync would have made of a throw in its call.
@@ -133,6 +135,7 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// kd-81. As on <see cref="SetCalendarPermissionAsync"/>, and the look inside the call only while nothing has been sent: the
     /// pool runs this removal again when its session answers with the pre-flight error, and a run after one that reached its
     /// command comes after the first write command, which nothing looks past (kd-59; the mark is never cleared, aud-a76).
+    /// kd-58 A7: the pool's wait for a connection takes it on the same terms - until the removal claims its send.
     /// </param>
     public async Task<PermissionResult> RemoveCalendarPermissionAsync(string targetMailbox, ValidatedMailbox? mailbox, string user,
         CancellationToken cancellationToken = default)
@@ -144,6 +147,24 @@ public class CalendarPermissionService : ExchangeServiceBase
         string? resolvedMailbox = null;
         ConnectionErrorTracker? attempt = null;
         var cancelledBeforeTheRemoval = false; // kd-81: as the Set's
+
+        // kd-58 A7 (E4). The token the removal's borrow takes: the caller's, until the removal claims its send - then none. The
+        // pool runs this removal again when its session answers with the pre-flight error, and that retry's borrow comes after
+        // the first write command, which nothing looks past (kd-59). So the claim and the cancel are settled once, under one
+        // lock: a cancel before the claim ends the wait for a connection - at once - and one after it reaches nothing, so a
+        // retry still runs.
+        var claim = new object();
+        var claimed = false;
+        using var beforeTheClaim = new CancellationTokenSource();
+        using var endsTheWait = cancellationToken.Register(() =>
+        {
+            lock (claim)
+            {
+                if (claimed)
+                    return;
+            }
+            beforeTheClaim.Cancel();
+        });
 
         // Single-write (Remove-MailboxFolderPermission): safe to retry on a dead pooled session.
         // The preceding Get-* validations are reads. SetCalendarPermissionAsync is deliberately
@@ -165,10 +186,18 @@ public class CalendarPermissionService : ExchangeServiceBase
 
                 // kd-81. As the Set's look, and only while nothing has been sent: an attempt after one that reached its
                 // command - the pool's retry on the pre-flight error - comes after the first write command (see the parameter).
-                if (!submission.Submitted && cancellationToken.IsCancellationRequested)
+                // kd-58 A7: settled with the cancel under the claim's lock, so the borrow's token stops where this look stops.
+                lock (claim)
                 {
-                    cancelledBeforeTheRemoval = true;
-                    return;
+                    if (!claimed)
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            cancelledBeforeTheRemoval = true;
+                            return;
+                        }
+                        claimed = true;
+                    }
                 }
 
                 ps.AddCommand("Remove-MailboxFolderPermission")
@@ -177,7 +206,8 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("Confirm", false);
                 submission.Submitting(); // aud-a76: the write command is invoked next
                 Invoke(ps, tracker);
-            }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true);
+            }, () => ($"Calendar permission removed for {user} on the calendar of {resolvedMailbox} ({calendarPath})", null), allowRetry: true,
+                cancellationToken: beforeTheClaim.Token); // kd-58 A7 (E4): the wait for a connection takes the token until the claim
 
             if (cancelledBeforeTheRemoval)
                 throw new OperationCanceledException(cancellationToken); // kd-81: as the Set's, inside the mark: nothing was sent
@@ -457,9 +487,12 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// credential is requested.
     /// </summary>
     /// <param name="cancellationToken">
-    /// kd-59. The page's activity token, for the credential fetch (kd-37's seam): a cancel during it leaves, as every throw
-    /// before the mark does, as a <see cref="PermissionWriteNotSubmittedException"/> - nothing was sent - with the
-    /// cancellation as its cause. Nothing after the fetch takes it: once the credential is in hand the write runs as before.
+    /// kd-59. The page's activity token, for every step before the first command is sent: the credential fetch (kd-37's seam)
+    /// and, since kd-58 A7 (E7), the wait for one of the on-premises server's two slots, a look before the session's runspace
+    /// opens and once it has, each connect attempt and the pause between attempts, and a last look immediately before the
+    /// mark. A cancel at any of them leaves, as every throw before the mark does, as a
+    /// <see cref="PermissionWriteNotSubmittedException"/> - nothing was sent - with the cancellation as its cause; a session
+    /// already opened is still removed. Nothing after the mark takes it: once the command is sent the write runs on.
     /// </param>
     public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user, string accessRight,
         CancellationToken cancellationToken = default)
@@ -469,7 +502,8 @@ public class CalendarPermissionService : ExchangeServiceBase
 
         // aud-a76: the credentials, the throttle, the runspace, the connect and the session read come before the mark, so a
         // throw from any of them leaves as a PermissionWriteNotSubmittedException: nothing was sent. A throw from the
-        // Invoke-Command itself, once sent, goes out as it is - a write whose outcome is unknown.
+        // Invoke-Command itself, once sent, goes out as it is - a write whose outcome is unknown. kd-58 A7 (E7): and each of
+        // the steps before the mark takes the operator's cancel.
         var submission = new PermissionWriteSubmission();
         var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation", cancellationToken)); // kd-59
         if (creds is null)
@@ -477,16 +511,13 @@ public class CalendarPermissionService : ExchangeServiceBase
 
         return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 E7: a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 E7: before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
                 var script = ScriptBlock.Create(@"
@@ -500,6 +531,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("Session", session)
                   .AddParameter("ScriptBlock", script)
                   .AddParameter("ArgumentList", new object[] { mailbox.Identity, user, accessRight });
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: the last look, immediately before the mark
                 submission.Submitting(); // aud-a76: the Invoke-Command is sent next
                 var sent = new ConnectionErrorTracker();
                 try
@@ -530,17 +562,17 @@ public class CalendarPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle));
+        }), _onPremThrottle, cancellationToken)); // kd-58 E7: the wait for one of the server's two slots takes the token
     }
 
-    /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>, its token too (kd-59).</summary>
+    /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>, its token too (kd-59, kd-58 A7).</summary>
     public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, ValidatedMailbox? mailbox, string user,
         CancellationToken cancellationToken = default)
     {
         if (mailbox is null)
             return PermissionResult.Fail(ValidatedMailbox.Refusal(targetMailbox));
 
-        // aud-a76: marked as SetCalendarPermissionOnPremAsync is.
+        // aud-a76: marked as SetCalendarPermissionOnPremAsync is; kd-58 A7 (E7): and takes the cancel as it does.
         var submission = new PermissionWriteSubmission();
         var creds = await submission.TrackAsync(() => GetModuleCredentialsAsync("on-prem calendar permission operation", cancellationToken)); // kd-59
         if (creds is null)
@@ -548,16 +580,13 @@ public class CalendarPermissionService : ExchangeServiceBase
 
         return await submission.TrackAsync(() => ThrottledAsync(async () => await Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 E7: a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 E7: before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
                 var script = ScriptBlock.Create(@"
@@ -567,6 +596,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("Session", session)
                   .AddParameter("ScriptBlock", script)
                   .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: the last look, immediately before the mark
                 submission.Submitting(); // aud-a76: the Invoke-Command is sent next
                 var sent = new ConnectionErrorTracker();
                 try
@@ -595,6 +625,6 @@ public class CalendarPermissionService : ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle));
+        }), _onPremThrottle, cancellationToken)); // kd-58 E7: the wait for one of the server's two slots takes the token
     }
 }
