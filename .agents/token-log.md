@@ -462,3 +462,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, RecipientLookupAccuracy E7** (a "Show all details" switch: every address and every property each read returned, holds left out; Recipient Lookup 1.8.0). Same agent and session as S1, whose line explains why its share is not separable.
 
 **2026-10-28, RecipientLookupAccuracy S5** (the records: README checked against the landed page, the plan's status, versions, acceptance table and status log with every commit). Same agent and session as S1, whose line explains why its share is not separable.
+
+**2026-10-28, Recipient Lookup accuracy (S1-S5, E1, E2, E3, E7, E8).** ~621K agent tokens, 245 tool uses, 2 h 8 min; 7983 tests on the branch; merged `af86f699`. In-app help plan draft: ~482K, 153 tool uses, 46 min.

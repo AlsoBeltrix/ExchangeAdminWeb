@@ -1,6 +1,6 @@
 # Recipient Lookup: say what a recipient is, and where its mailbox is - Plan
 
-Status: **Approved 2026-10-28 (owner: "add everything free and clarify what's displayed") - the accuracy core plus extras 1, 2, 3 (not 3b), 7, 8; the implementing agent spells out the displayed fields per recipient kind before code. In progress 2026-10-28 on `feat/recipient-lookup-accuracy`: the display is spelled out in "Displayed fields per recipient kind", below the Exec summary, before any code. Every slice has landed on the branch - S1-S4, E2, E1, E3, E8, E7 and S5's records (status log, section 14) - and the branch awaits the supervisor's merge; "Implemented" at the merge. The manual checks of section 12 are the owner's and not done.**
+Status: **Implemented 2026-10-28 (merged at `af86f699`): the accuracy core and extras E1, E2, E3 without holds, E7, E8; the manual production checks in section 12 are the owner's to run.**
 Owner: Michael
 Module: `RecipientLookup` (`Modules/ModuleCatalog.cs:550-572`, version `1.2.1`)
 Last verified against code: local master `9241fa0d`, 2026-10-27. `origin` and `github` master are at `f09893c4`, an
