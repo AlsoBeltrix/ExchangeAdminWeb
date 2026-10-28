@@ -266,6 +266,9 @@ function Assert-ApplicationTargetUnchanged {
 # -PublishPath is refused before the stop whatever its pool (aud-a38i). Read-only; it says what it
 # found either way, as this script has no plan mode. An unreadable IIS listing is a warning here: the
 # check that the pool serves -PublishPath reads the same listing, and refuses it, before the stop.
+# cdt-59: a folder that is not on disk is not read for jobs; the warning still names it. It holds no
+# jobs database, and Join-Path throws on a drive that does not exist, which under this script's "Stop"
+# turned this warning into a refusal of the deploy before the stop.
 function Write-AppPoolSharingReport {
     param(
         [string]$AppPoolName,
@@ -287,7 +290,7 @@ function Write-AppPoolSharingReport {
     Write-Warn "App pool '$AppPoolName' also serves $($others.Count) other IIS application(s), which stop with it: $named."
     foreach ($other in $others) {
         $otherFolder = ConvertTo-ComparablePhysicalPath $other.PhysicalPath
-        if (-not $otherFolder) { continue }
+        if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
         $otherConfigDir = Join-Path $otherFolder 'config'
         Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
         Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $StagingPath | Out-Null
