@@ -379,7 +379,7 @@
         // what BlockedSenders.ConfirmUnblock settled on for the same preamble. ProcessBulk below
         // and ExecuteOnPrem both already opened above their own try; this handler was the odd one.
         using var activity = Progress.Begin(
-            "Mailbox Permissions", $"Updating permissions on {target}", ActivitySize.Unknown);
+            "Mailbox Permissions", $"Updating permissions on {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the single change takes the cancel (kd-81)
 
         // The try opens here, below the raise and the activity, rather than below the preflight.
         // An await between a raise and its try has no finally behind it: a throw or an unbounded

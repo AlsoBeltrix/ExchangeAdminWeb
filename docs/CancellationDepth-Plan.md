@@ -297,6 +297,21 @@ The "leaving this page will cancel the operation" prompt, wherever a page shows 
 work still waiting its turn is cancelled; a command already sent to Exchange (or the directory) finishes and is recorded;
 a bulk job is not affected because it never depended on the page. Slice A2 carries the shared wording; each module slice
 that adopts the token checks its page uses it. A test pins the wording per page; mutation: the old sentence restored.
+
+**Page-aware (the supervisor's ruling, 2026-10-28).** The prompt must be true on every page, so it is not one wording. Each
+activity declares at `Progress.Begin` whether its work takes the operator's cancel (`ActivitySize.TakingTheCancel()`), and
+the guard words the prompt from that: an activity whose work takes it gets the three cases above; one whose work does not
+gets "Leaving will not stop the operation in progress; it will complete and be recorded."; with both kinds running, each is
+named with what leaving does to it. **No page's activity declares it until its slice adopts the token**: Recipient Lookup's
+lookup (A2, A3) and the permission pages' single change (kd-81, A2) declare it from the start; the permission pages'
+on-premises change at A6 and A7; Conference Rooms' single-room setup at A8; Message Trace's reads at A10. Blocked Senders'
+unblock declares it too, although this plan puts no token on its borrow (3.7): its work has taken the activity's token since
+kd-6 and kd-76 - an unblock not yet sent is never sent, one already sent runs on and is recorded - so "will not stop" would
+be false there. Until A8 and A10, Conference Rooms' setup and Message Trace's reads, which already honour the cancel in
+places (kd-59, kd-70, kd-73, kd-75), are told "will not stop": an under-promise while the branch is in progress, which their
+slices close. `InFlightWorkGuardTests` pins, per page, exactly which activities declare it, and the prompt for each kind;
+mutations: a declaration added or removed, the guard's choice ignored, the declaration lost on its way to the guard.
+
 ### 3.9 Audit rows
 
 No new action, category or field. Each module files a cancel through its existing row and kd-57's `FiledCancelled`, in
@@ -779,7 +794,7 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   Permissions take patch bumps here, beside Recipient Lookup's. One prompt wording serves every page, so on a page whose
   work takes no token its first case still over-promises, as the old prompt did (the record says where). The base bump
   stays owed (C1).
-- 2026-10-28, **A3, the base's on-premises steps** - `feat/cancellation-depth`, the commit that adds this line: E7 for the
+- 2026-10-28, **A3, the base's on-premises steps** - `feat/cancellation-depth` `b95ee705`: E7 for the
   three on-premises reads the shared surface carries - the base's size read, the base's location read (the permission
   pages') and Recipient Lookup's own recipient read (the accuracy plan's S1 replaced the base location read there): the
   throttle's wait, a look before and after the runspace opens (`OpenOnPremRunspace`, over a new runspace seam),
@@ -789,3 +804,11 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   are annotated in section 13. Left for the supervisor (kd-58's record): the permission changes' own wait for a pool
   connection, part of A4/A5 that kd-81 could not reach, can now take the token through E4 - unassigned. The base bump stays
   owed (C1).
+- 2026-10-28, **The leave prompt, page-aware** (the supervisor's ruling on A2's note; 3.8a) - `feat/cancellation-depth`, the
+  commit that adds this line: each activity declares at `Progress.Begin` whether its work takes the operator's cancel, and
+  the guard tells the three cases only to work that takes it - "Leaving will not stop the operation in progress; it will
+  complete and be recorded." to work that does not. Declared now: Recipient Lookup's lookup, the permission pages' single
+  change and Blocked Senders' unblock (kd-6, kd-76); each module slice declares its own as it adopts the token. Pinned per
+  page, over every page that begins an activity. The supervisor also assigned kd-81's remainder to A6 and A7: the
+  permission changes' own wait for a pool connection takes the token, cloud and on-premises alike. No module bump - the
+  guard is shared; the base bump stays owed (C1).

@@ -16,9 +16,10 @@
 
    Two messages, because the two cases have opposite advice and conflating them would be the
    worst outcome of all - telling an operator their background job will die, or telling them a
-   foreground operation is safe to leave. The foreground one says what the cancel does and does
-   not stop (docs/CancellationDepth-Plan.md 3.8a): work still waiting is cancelled, a command
-   already sent finishes and is recorded, a bulk job is not affected.
+   foreground operation is safe to leave. The foreground one says, for each activity, what leaving
+   does to it (docs/CancellationDepth-Plan.md 3.8a): for work that takes the cancel, work still
+   waiting is cancelled, a command already sent finishes and is recorded, a bulk job is not
+   affected; for work that does not, that leaving will not stop it.
 
    Rendered once by MainLayout rather than per page. A per-page guard would have to be added to
    36 pages and would miss any module that forgot, which is the same shape as the per-module
@@ -93,24 +94,45 @@
         await Confirm(BackgroundMessage(background));
     }
 
+    // docs/CancellationDepth-Plan.md 3.8a (owner, 2026-10-28: "be clear about what will happen in the message. if something
+    // might complete anyway, tell the user"). The prompt says, for each activity, what leaving does to it - from what the
+    // activity declared at Begin (ActivitySize.TakesTheCancel), never one wording for every page. Work that takes the
+    // operator's cancel gets the three cases: work still waiting its turn is cancelled; a command already sent is never
+    // stopped - it finishes and is recorded (the plan's E5); a bulk job never depended on the page. Work that does not take
+    // it is told plainly that leaving will not stop it. Which pages' work takes it is pinned per page (InFlightWorkGuardTests).
+    internal const string CancelsWaitingWork =
+        "- Work still waiting its turn is cancelled.\n"
+        + "- A command already sent to Exchange or the directory finishes and is recorded. Anything already changed "
+        + "stays changed.\n"
+        + "- A bulk job is not affected, because it never depended on this page.";
+
+    internal const string WillNotStop = "Leaving will not stop the operation in progress; it will complete and be recorded.";
+
     private static string ForegroundMessage(IReadOnlyList<ProgressActivity> foreground, IReadOnlyList<BulkJob> background)
     {
         var what = foreground.Count == 1
-            ? foreground[0].Label
-            : $"{foreground.Count} operations";
+            ? $"{foreground[0].Label} is"
+            : $"{foreground.Count} operations are";
+        var cancelled = foreground.Where(activity => activity.TakesTheCancel).ToList();
+        var notStopped = foreground.Where(activity => !activity.TakesTheCancel).ToList();
 
-        // The three cases, in plain words (owner, 2026-10-28: "be clear about what will happen in the message. if something
-        // might complete anyway, tell the user"; docs/CancellationDepth-Plan.md 3.8a): work still waiting its turn is
-        // cancelled; a command already sent is never stopped - it finishes and is recorded (the plan's E5); a bulk job never
-        // depended on the page. One wording for every page; each page whose work takes the cancel is pinned to it
-        // (InFlightWorkGuardTests).
-        var message =
-            $"{what} is still running.\n\nLeaving this page will CANCEL it:\n"
-            + "- Work still waiting its turn is cancelled.\n"
-            + "- A command already sent to Exchange or the directory finishes and is recorded. Anything already changed "
-            + "stays changed.\n"
-            + "- A bulk job is not affected, because it never depended on this page.\n\n"
-            + "OK to leave and cancel, or Cancel to stay.";
+        string message;
+        if (notStopped.Count == 0)
+        {
+            message = $"{what} still running.\n\nLeaving this page will CANCEL it:\n" + CancelsWaitingWork
+                + "\n\nOK to leave and cancel, or Cancel to stay.";
+        }
+        else if (cancelled.Count == 0)
+        {
+            message = $"{what} still running.\n\n" + WillNotStop + "\n\nOK to leave, or Cancel to stay.";
+        }
+        else
+        {
+            message = $"{what} still running.\n\n"
+                + $"For {Labels(cancelled)}, leaving this page will CANCEL the work:\n" + CancelsWaitingWork + "\n\n"
+                + $"For {Labels(notStopped)}: " + WillNotStop + "\n\n"
+                + "OK to leave, or Cancel to stay.";
+        }
 
         if (background.Count > 0)
         {
@@ -121,6 +143,9 @@
 
         return message;
     }
+
+    private static string Labels(IEnumerable<ProgressActivity> activities) =>
+        string.Join("; ", activities.Select(activity => activity.Label));
 
     private static string BackgroundMessage(IReadOnlyList<BulkJob> background)
     {

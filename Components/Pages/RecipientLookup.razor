@@ -376,7 +376,7 @@
         try
         {
             using var activity = Progress.Begin(
-                "Recipient Lookup", $"Looking up {target}", ActivitySize.Unknown);
+                "Recipient Lookup", $"Looking up {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the lookup takes the cancel
 
             // aud-a68. Only the lookup is caught here. One that throws - the connection could not be opened, the pool could not
             // lend a session - is a lookup that failed: shown in the cmdlet's own words (aud-a23i's helper, not PowerShell's "The

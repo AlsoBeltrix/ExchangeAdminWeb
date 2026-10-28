@@ -364,7 +364,7 @@
         // what BlockedSenders.ConfirmUnblock settled on for the same preamble. ProcessBulk below
         // and ExecuteOnPrem both already opened above their own try; this handler was the odd one.
         using var activity = Progress.Begin(
-            "Calendar Permissions", $"Updating calendar permissions on {target}", ActivitySize.Unknown);
+            "Calendar Permissions", $"Updating calendar permissions on {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the single change takes the cancel (kd-81)
 
         try
         {
