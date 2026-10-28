@@ -1522,7 +1522,11 @@ Describe 'deploy.ps1' {
             $alone.Printed | Should -BeExactly "DarkGray|       App pool 'ExamplePool' serves no IIS application other than this instance at 'D:\example\publish': stopping it stops nothing else." -Because 'a pool that serves only this instance says so, and nothing is read'
             $alone.Jobs | Should -BeExactly ''
 
-            $env:CDT54_ROOT = 'D:\example'
+            # cdt-59: only a folder on disk is read for jobs, so this one is real, and still named through
+            # %CDT54_ROOT% so the expansion stays pinned.
+            $cdt54Root = Join-Path $TestDrive 'cdt54'
+            New-Item -ItemType Directory -Path (Join-Path $cdt54Root 'other') -Force | Out-Null
+            $env:CDT54_ROOT = $cdt54Root
             try {
                 $shared = & $report {
                     {
@@ -1541,7 +1545,7 @@ Describe 'deploy.ps1' {
             $shared.Printed | Should -BeLike "*Yellow|  !  App pool 'ExamplePool' also serves 2 other IIS application(s), which stop with it: Other Site/ with its files at '%CDT54_ROOT%\other'; Example Site/Static with its files at ''.*"
             $shared.Printed | Should -BeLike "*DarkGray|       Active bulk jobs of IIS application Other Site/, with its files at '%CDT54_ROOT%\other', which stops with the pool:*"
             $shared.Printed | Should -Not -BeLike '*Active bulk jobs of IIS application Example Site/Static*' -Because 'an application with no folder has no jobs database to read'
-            $shared.Jobs | Should -BeExactly 'jobs(D:\example\other\config|D:\example\staging)' -Because 'each other application''s jobs are read from its own config folder, its environment variables expanded, with the staged build''s tool'
+            $shared.Jobs | Should -BeExactly "jobs($cdt54Root\other\config|D:\example\staging)" -Because 'each other application''s jobs are read from its own config folder, its environment variables expanded, with the staged build''s tool'
 
             $unreadable = & $report { { $script:cdt54Probed++; throw 'Access is denied' } }
             $unreadable.Probed | Should -Be 1
@@ -1571,6 +1575,90 @@ Describe 'deploy.ps1' {
         $calls = @($s.Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true))
         $calls.Count | Should -Be 2 -Because 'one call per stop, and no other'
     }
+
+    It 'names another application whose folder is not on disk and reads none of its jobs, so a drive this host lacks is a warning and each branch goes on to the stop (cdt-59)' {
+        # cdt-54's report joined every other application's folder with Join-Path, which throws on a drive
+        # the host does not have, and under this script's "Stop" the throw ended the deploy before the
+        # stop: a refusal where a warning was meant. Each branch's real stop step, from its Write-Step to
+        # the confirmed stop, with the real report and module and IIS answered through the module's
+        # probe; the jobs check, the binding read, the folder check and the stop stubbed, each recorded
+        # in order with what is said.
+        $inUse = @([System.IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() })
+        $inUse += @(Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Name.ToUpperInvariant() })
+        $missingDrive = @('Q', 'R', 'S', 'T', 'U', 'V', 'W', 'Y', 'Z', 'J', 'K', 'L', 'M', 'N', 'O', 'P' | Where-Object { $inUse -notcontains $_ })[0]
+        $missingDrive | Should -Not -BeNullOrEmpty -Because 'the test needs a drive letter this host does not have'
+        $lost = "$($missingDrive):\lost"
+        { Join-Path $lost 'config' -ErrorAction Stop } | Should -Throw -Because "the drive '$($missingDrive):' does not exist here, which is the case the on-disk guard is for"
+        $reports = Join-Path $TestDrive 'cdt59-reports'
+        New-Item -ItemType Directory -Path $reports -Force | Out-Null
+        $gone = Join-Path $TestDrive 'cdt59-gone'
+        $publish = Join-Path $TestDrive 'cdt59-publish'
+        $warning = "said:   !  App pool 'ExamplePool' also serves 3 other IIS application(s), which stop with it: Web/reports with its files at '$reports'; Other/gone with its files at '$gone'; Other/lost with its files at '$lost'."
+
+        foreach ($name in 'Write-Step', 'Write-Success', 'Write-Warn', 'Write-Fail', 'Write-AppPoolSharingReport') {
+            . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+        }
+        $modeIf = (Get-FreshInstallBranch $s).Parent
+        Import-Module (Join-Path $RepoRoot 'tools/AppPoolControl.psm1') -Force
+        try {
+            ${function:Write-Host} = { param([Parameter(Position = 0)]$Object, $ForegroundColor) $null = $ForegroundColor; $script:cdt59Events.Add("said: $Object") }
+            ${function:Assert-NoActiveBulkJobsBeforeRecycle} = { param($ConfigDir, $AppPath) $script:cdt59Events.Add("jobs($ConfigDir|$AppPath)"); 0 }
+            ${function:Get-WebApplication} = { param($Name, $Site, $ErrorAction) $null = $Name, $Site, $ErrorAction; $script:cdt59Events.Add('binding'); [pscustomobject]@{ applicationPool = 'ExamplePool' } }
+            ${function:Assert-AppPoolServesPath} = { param($Name, $PhysicalPath, $NestedNodes) $null = $Name, $PhysicalPath, $NestedNodes; $script:cdt59Events.Add('serves') }
+            ${function:Stop-AppPoolVerified} = { param($Name) $script:cdt59Events.Add("stop($Name)"); 'Stopped' }
+
+            $run = {
+                param([string]$Region)
+                $script:cdt59Events = New-Object System.Collections.Generic.List[string]
+                # A script block value here is evaluated to produce the default, so the probe is handed
+                # over wrapped in a block that returns it, and it records that it was consulted.
+                $PSDefaultParameterValues = @{
+                    'Get-AppPoolOtherApplication:ApplicationsProbe' = {
+                        {
+                            $script:cdt59Events.Add('probe')
+                            [pscustomobject]@{ Location = 'Example Site/ExampleApp'; ApplicationPool = 'ExamplePool'; PhysicalPath = $publish }
+                            [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'ExamplePool'; PhysicalPath = $reports }
+                            [pscustomobject]@{ Location = 'Other/gone'; ApplicationPool = 'ExamplePool'; PhysicalPath = $gone }
+                            [pscustomobject]@{ Location = 'Other/lost'; ApplicationPool = 'ExamplePool'; PhysicalPath = $lost }
+                        }
+                    }
+                }
+                # Read only by the lifted statements: what the script level set before the branch.
+                Set-Variable -Name AppPoolName -Value 'ExamplePool'
+                Set-Variable -Name PublishPath -Value $publish
+                Set-Variable -Name StagingPath -Value 'D:\example\staging'
+                Set-Variable -Name runtimeConfigDir -Value (Join-Path $publish 'config')
+                Set-Variable -Name movesApplication -Value $false
+                Set-Variable -Name ParentSite -Value 'Example Site'
+                Set-Variable -Name AppAlias -Value 'ExampleApp'
+                $ErrorActionPreference = 'Stop'
+                $thrown = $null
+                try { . ([scriptblock]::Create($Region)) } catch { $thrown = $_.Exception.Message }
+                [pscustomobject]@{ Thrown = $thrown; Events = @($script:cdt59Events) }
+            }
+
+            foreach ($entry in @(@('upgrade', $modeIf.Clauses[0].Item2, 'Stopping app pool'), @('-Force', $modeIf.ElseClause, 'Stopping app pool for file deployment'))) {
+                $statements = @($entry[1].Statements)
+                $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq "Write-Step `"$($entry[2])`"") { $i } })
+                $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq 'Write-Success "App pool $AppPoolName confirmed stopped"') { $i } })
+                $from.Count | Should -Be 1 -Because "the $($entry[0]) branch has one stop step"
+                $to.Count | Should -Be 1
+                $result = & $run (($statements[$from[0]..$to[0]] | ForEach-Object { $_.Extent.Text }) -join "`n")
+
+                $result.Thrown | Should -BeNullOrEmpty -Because "an application on a drive this host lacks is named in a warning, and must not refuse the $($entry[0]) deploy before the stop"
+                $events = @($result.Events)
+                @($events | Where-Object { $_ -like 'said: *  !  *' }) | Should -Be @($warning) -Because 'every other application is named, its folder on disk or not'
+                @($events | Where-Object { $_ -like 'said: *Active bulk jobs of IIS application*' }) |
+                    Should -Be @("said:        Active bulk jobs of IIS application Web/reports, with its files at '$reports', which stops with the pool:") -Because 'only a folder on disk holds a jobs database to read'
+                @($events | Where-Object { $_ -notlike 'said: *' }) |
+                    Should -Be @('probe', "jobs($reports\config|D:\example\staging)", "jobs($publish\config|D:\example\staging)", 'binding', 'serves', 'stop(ExamplePool)') -Because "the $($entry[0]) run reads the jobs of the one on disk, then its own, and goes on to the binding read, the folder check and the stop"
+                $events.IndexOf($warning) | Should -BeLessThan $events.IndexOf('stop(ExamplePool)') -Because 'the warning comes before the stop'
+            }
+        } finally {
+            Remove-Module AppPoolControl -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'refuses a -AllowRepoint move off a folder whose appsettings.json is gone but whose own config database remains (cdt-51, real files)' {
         # The stranded-database guard asked only when the old folder still had an appsettings.json, so a
         # folder that had lost it moved without a word, leaving its config\exchangeadmin.db behind
