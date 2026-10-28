@@ -1072,7 +1072,10 @@ public sealed class ModuleCatalog
             // submitted (kd-74).
             // 2.19.5: and a last time inside Set-Place's call, once it holds a pool connection, so a cancel made while every
             // connection was busy ends the row with nothing written, filed Cancelled, instead of Set-Place running (kd-75).
-            Version = "2.19.5",
+            // 2.19.6: removing a bulk job that is not removed - another administrator removed it first, or it was pruned - says
+            // why, in the banner and the audit row, in Admin Bulk Jobs' words ("it no longer exists.", "it has not finished."),
+            // and the row is a refusal by the job's state that changed nothing, where it was Failed with no reason (kd-78).
+            Version = "2.19.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

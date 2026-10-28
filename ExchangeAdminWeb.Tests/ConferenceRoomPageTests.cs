@@ -119,10 +119,10 @@ public sealed class ConferenceRoomPageTests : IDisposable
 
     private static readonly DateTime Submitted = new(2026, 10, 23, 9, 30, 0, DateTimeKind.Utc);
 
-    private static BulkJob Job(string id, BulkJobStatus status) => new()
+    private static BulkJob Job(string id, BulkJobStatus status, string module = ConferenceRoomBulkProcessor.ModuleName) => new()
     {
         Id = id,
-        ModuleId = ConferenceRoomBulkProcessor.ModuleName,
+        ModuleId = module,
         JobType = ConferenceRoomJobPayload.TypeJobType,
         Status = status,
         SubmittedBy = "jdoe",
@@ -314,6 +314,71 @@ public sealed class ConferenceRoomPageTests : IDisposable
         AssertTheRow(row, job, success: true, error: null);
         Assert.False(row.TryGetProperty("refusedAt", out _));
         Assert.False(row.TryGetProperty("mutationAttempted", out _));
+    }
+
+    // ---- kd-78: a removal that did not happen says why ----------------------------------------------
+    // RemoveJob filed a removal the store did not make as Failed with no reason and no refusal fields, and the banner said
+    // nothing - the gap kd-54 closed on Admin Bulk Jobs. It now words the store's answer (kd-77) as that page does, in the
+    // banner and the row, and files it as a refusal by the job's state that changed nothing. A removal that happens is audited
+    // as before and leaves the banner as it was.
+
+    private static Task Remove(Page page, BulkJob job) => (Task)Method("RemoveJob").Invoke(page, [job])!;
+
+    private List<JsonElement> RemoveRows() =>
+        _h.AuditRows().Where(r => r.GetProperty("action").GetString() == RemoveAction).ToList();
+
+    [Fact]
+    public async Task ARemovalThatHappens_IsAuditedAsDone_AndLeavesTheBannerAsItWas()
+    {
+        var (jobs, store) = JobService();
+        var job = Job("job-6", BulkJobStatus.Completed);
+        store.Insert(job);
+        var page = BuildPage(jobs);
+        var earlier = new RoomOperationResult { Success = true, Message = "An earlier operation's result." };
+        SetField(page, "result", earlier);
+
+        await Remove(page, job);
+
+        Assert.Null(store.Get(job.Id));
+        var row = Assert.Single(RemoveRows());
+        AssertTheRow(row, job, success: true, error: null);
+        Assert.False(row.TryGetProperty("refusedAt", out _));
+        Assert.False(row.TryGetProperty("mutationAttempted", out _));
+        Assert.Same(earlier, GetField(page, "result"));
+    }
+
+    [Theory]
+    [InlineData("gone", "it no longer exists.")]
+    [InlineData("running", "it has not finished.")]
+    [InlineData("queued", "it has not finished.")]
+    [InlineData("another module", "it belongs to another module.")]
+    public async Task ARemovalThatDoesNotHappen_SaysWhy_AndIsAuditedAsARefusalThatChangedNothing(string state, string because)
+    {
+        // "gone" is the one this page meets: the row was rendered finished and by the click another administrator had removed
+        // the job, or it had been pruned. The page lists only its own finished jobs and a finished job never runs again, so the
+        // other three are driven directly - the store's other answers, each worded rather than read as one another.
+        var (jobs, store) = JobService();
+        var job = Job("job-7", state switch { "running" => BulkJobStatus.Running, "queued" => BulkJobStatus.Queued, _ => BulkJobStatus.Completed });
+        if (state is "running" or "queued")
+            store.Insert(job);
+        else if (state == "another module")
+            store.Insert(Job(job.Id, BulkJobStatus.Completed, module: "Comms10k"));
+        var page = BuildPage(jobs);
+
+        await Remove(page, job);
+
+        var row = Assert.Single(RemoveRows());
+        AssertTheRow(row, job, success: false, error: $"The job was not removed: {because}");
+        Assert.Equal("JobState", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        var banner = Assert.IsType<RoomOperationResult>(GetField(page, "result"));
+        Assert.False(banner.Success);
+        Assert.Equal($"Could not remove the Room Type (bulk) job - {because}", banner.Message);
+        // Nothing was changed: the job is still there as it was, or still absent.
+        if (state == "gone")
+            Assert.Null(store.Get(job.Id));
+        else
+            Assert.Equal(job.Status, store.Get(job.Id)!.Status);
     }
 
     // ---- the page ------------------------------------------------------------------------------
