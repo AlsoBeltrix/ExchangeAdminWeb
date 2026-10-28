@@ -1078,7 +1078,11 @@ public sealed class ModuleCatalog
             // 2.19.7: a removal the jobs store fails is audited Failed with the exception's class and message, the banner says
             // the removal could not be completed, and the exception no longer reaches the circuit; before, the throw left no
             // row and no banner (kd-79).
-            Version = "2.19.7",
+            // 2.19.8: a CSV apply whose job list cannot be reloaded once its job is queued keeps its success banner, with
+            // "The job was queued; the job list could not be refreshed.", and files nothing; before, the banner showed the
+            // reload's error and a Failed "(bulk)" row was filed for a job that ran, so the operator might queue the file
+            // twice (kd-80).
+            Version = "2.19.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

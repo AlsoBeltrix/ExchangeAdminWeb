@@ -5,6 +5,7 @@ using ExchangeAdminWeb.Services.Jobs;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -19,7 +20,8 @@ namespace ExchangeAdminWeb.Tests;
 /// from <c>result</c>, the result banner's field, in their finally. The success path publishes its result and then
 /// awaits RefreshJobs, and the banner's dismiss - wired straight at <c>() =&gt; result = null</c> - stays clickable
 /// meanwhile, so a dismiss there ended the bar as not succeeded, with no message, for a job that had been submitted:
-/// prog-7's shape. Both now complete from their own local, as SetupSingleRoom does.
+/// prog-7's shape. Both now complete from their own local, as SetupSingleRoom does. kd-80, the same two handlers: a job
+/// list reload that fails once the job is queued no longer turns the submit into a failed one, banner and audit both.
 /// </summary>
 /// <remarks>
 /// The compiled handlers run by reflection with a real job store, a dormant ServiceNow (every ticket passes) and an
@@ -35,14 +37,15 @@ public sealed class ConferenceRoomCsvApplyCompletionTests : IDisposable
 
     private readonly ExchangeWriteHarness _h = new();
     private readonly RecordingProgress _progress = new();
+    private readonly SqliteConnectionFactory _store;
     private readonly BulkJobService _jobs;
 
     public ConferenceRoomCsvApplyCompletionTests()
     {
-        var factory = new SqliteConnectionFactory(Path.Combine(_h.Dir, $"jobs-{Guid.NewGuid():N}.db"));
-        new JobStoreMigrator(factory).Migrate();
+        _store = new SqliteConnectionFactory(Path.Combine(_h.Dir, $"jobs-{Guid.NewGuid():N}.db"));
+        new JobStoreMigrator(_store).Migrate();
         var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-        _jobs = new BulkJobService(scopes, new BulkJobRepository(factory), new BulkJobProcessorRegistry([]), _h.Config,
+        _jobs = new BulkJobService(scopes, new BulkJobRepository(_store), new BulkJobProcessorRegistry([]), _h.Config,
             NullLogger<BulkJobService>.Instance);
     }
 
@@ -98,6 +101,80 @@ public sealed class ConferenceRoomCsvApplyCompletionTests : IDisposable
         Assert.Equal((false, "Authorization denied."), bar.Outcome);
         Assert.Equal("Authorization denied.", Field<RoomOperationResult>(page, "result")?.Message);
         Assert.Null(Field<BulkJob>(page, apply == "ApplyFinderCsv" ? "finderJob" : "typeJob"));
+    }
+
+    // ---- kd-80: a job list reload that fails once the job is queued --------------------------------------------------
+    // The reload sat bare in the try that covers the queue, so a jobs store that failed the read just after the write
+    // reached that try's catch: the banner was replaced by the store's error and a Failed "(bulk)" row was filed for a job
+    // that had been queued and would run, the page's only record of the submit - and an operator told it failed may
+    // submit the file again. Once the job is queued the success stands, with a plain note, and nothing is filed.
+
+    [Theory]
+    [InlineData("ApplyFinderCsv", ConferenceRoomJobPayload.FinderJobType)]
+    [InlineData("ApplyTypeCsv", ConferenceRoomJobPayload.TypeJobType)]
+    public async Task ACsvApplyWhoseJobListReloadFailsOnceTheJobIsQueued_KeepsItsSuccess_AndFilesNothing(string apply, string jobType)
+    {
+        var page = PageFor(apply);
+        var unreadable = FailEveryReadOnceAJobIsWritten();
+
+        var escaped = await Record.ExceptionAsync(() => Call(page, apply));
+
+        Assert.Null(escaped);
+        // The stand-in engaged: the job was written, and the store now fails the read the reload makes.
+        Assert.True(unreadable(), "the jobs store was not made unreadable after the write");
+        Assert.ThrowsAny<SqliteException>(() => _jobs.GetActiveJobsByModule(ConferenceRoomBulkProcessor.ModuleName));
+
+        // The success banner stands, the note beside it.
+        var banner = Assert.IsType<RoomOperationResult>(Field<RoomOperationResult>(page, "result"));
+        Assert.True(banner.Success, $"the banner read: {banner.Message}");
+        Assert.StartsWith(Submitted, banner.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" The job was queued; the job list could not be refreshed.", banner.Message, StringComparison.Ordinal);
+
+        // The queued job stands in the store as it was submitted. The submit files no audit row of its own - this job row is
+        // its record - so no row is filed for it at all, Failed or otherwise, as when the reload works.
+        Assert.Equal((ConferenceRoomBulkProcessor.ModuleName, jobType, "Queued", "INC100", @"CONTOSO\operator"), TheQueuedJob());
+        Assert.Empty(_h.AuditRows());
+
+        // kd-74 (4): the bar ends on the submit's own outcome; the reload's own bar is the one that did not finish.
+        var bar = Assert.Single(_progress.Handles, handle => handle.Label == "Applying the room CSV");
+        Assert.True(bar.Outcome?.Success, $"the bar ended {bar.Outcome}");
+        Assert.StartsWith(Submitted, bar.Outcome?.Message, StringComparison.Ordinal);
+        var reload = Assert.Single(_progress.Handles, handle => handle.Label == "Loading the bulk job list");
+        Assert.False(reload.Outcome?.Success, $"the reload's bar ended {reload.Outcome}");
+        Assert.False(Field<bool>(page, "isLoading"));
+        Assert.False(Field<bool>(page, "isCsvProcessing"));
+    }
+
+    // kd-80's stand-in: a jobs store that takes the write and then fails every read. Enqueue raises JobChanged once its
+    // insert has committed and before anything reads, so the first event renames the jobs table away: every read after it,
+    // the page's reload and the runner's own, meets "no such table", and the queued row is kept where the runner cannot
+    // reach it, for the test to read back. Returns whether the rename ran.
+    private Func<bool> FailEveryReadOnceAJobIsWritten()
+    {
+        var renamed = false;
+        _jobs.JobChanged += _ =>
+        {
+            if (renamed)
+                return;
+            using var connection = _store.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE bulk_job RENAME TO bulk_job_held;";
+            command.ExecuteNonQuery();
+            renamed = true;
+        };
+        return () => renamed;
+    }
+
+    private (string Module, string Type, string Status, string Ticket, string SubmittedBy) TheQueuedJob()
+    {
+        using var connection = _store.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT module_id, job_type, status, ticket, submitted_by FROM bulk_job_held;";
+        using var reader = command.ExecuteReader();
+        Assert.True(reader.Read(), "no job was queued");
+        var job = (reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4));
+        Assert.False(reader.Read(), "more than one job was queued");
+        return job;
     }
 
     private Page PageFor(string apply, bool granted = true)
