@@ -8,44 +8,43 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### Close-out of the fix-everything stream - DONE 2026-10-28; master is deployable
+### Master is deployable - 2026-10-29; three plans implemented after the fix stream closed
 
-**Mandate** (`.agents/decisions.md`, top entries): find and fix bugs; remove or significantly change no intended
-functionality, judged by the operator's experience. One Opus 5.5 agent at a time, one compile at a time, one
-codex-commercial review (spent 2026-10-27; everything after it closes on guard proof).
-
-**Final master `b8c1457a`, every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit
-7585 passed, 0 failed, 0 skipped (live-directory cases opt-in: `dotnet test ExchangeAdminWeb.slnx -s
+**Final master `5b05bba9`, every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit
+8181 passed, 0 failed, 0 skipped (live-directory cases opt-in: `dotnet test ExchangeAdminWeb.slnx -s
 ExchangeAdminWeb.Tests/LiveDirectory.runsettings`); Pester 531; PSScriptAnalyzer 0 errors; `dotnet format`, `git diff
---check`, ASCII lint clean. Base app version 2.36.0 (shared services changed: AuditService, PermissionResult,
-PermissionValidator, SelfGrantDirectory, PermissionChangeNotifier, EmailService, ExchangeServiceBase, BulkJobService and
-BulkJobRepository). No worktree or fix branch remains. Master is NOT pushed (`.agents/push-policy.md`).
+--check`, ASCII lint clean. Base app version 2.36.0, which is NOT deployed and absorbs every shared change since 2.35.0.
+No worktree or fix branch remains. Master is NOT pushed (`.agents/push-policy.md`).
 
-**Landed 2026-10-27/28, in order:** aud-a2ad; kd-39, kd-41; kd-44 reversed, aud-a70 (13), kd-57; kd-51 (kd-67 declined);
-kd-59 x4, kd-70, kd-71; kd-72 (the owner's production report, thirteen pages); kd-73, kd-74; aud-a70 (6); aud-a29g closed;
-cdt-58, psl-10 (5); cdt-59; the single review's kd-75, kd-76, kd-77, cdt-60; then kd-78 .. kd-86 (Conference Rooms job
-handlers; the kd-81 cloud half in both permission modules; the bulk job runner surviving failed reads, unbuildable
-processors and failed final writes; the three job pages' reloads guarded). The deploy work cdt-36..57 stands. kd-60 and
-kd-67 closed without code.
-
-**The single review** (`.agents/review/final-review-2026-10-27.result.md`): no defect in authorization, protected
-principals, bulk aggregation, the kd-72 pattern, merge interactions, PowerShell exit codes or encoding, or functionality
-preservation; its five findings are fixed and merged.
-
-**Open:** nothing marked `[ ]`. Two items need a written plan under the Constitution and have one drafted:
-`docs/CancellationDepth-Plan.md` (Draft) covers kd-58 (`[!]`: cancelling the Exchange Online reads reaches the pool's
-retry loop and lifetime) and aud-a67 (12) (`[~]`: a settings save the page gave up on; cancellation through IConfigStore),
-plus kd-81's on-premises half. Plans awaiting the owner: that one (Draft) and `docs/RecipientLookupAccuracy-Plan.md`
-(Draft, extras by number). `docs/CloudPasswordResetEmployeeId-Plan.md` is Approved and not started - a feature, not a bug;
-it would land unreviewed now that the one review is spent, so it waits for the owner's word to start.
+**Landed since the fix stream closed (2026-10-28/29), each under its approved plan, each on guard proof (the single
+codex-commercial review was spent on 2026-10-27):**
+- `docs/CloudPasswordResetEmployeeId-Plan.md` - Implemented (`683a8ce7`). A cloud admin account with no employee ID gets
+  it from the owner's directory record (the account name minus the configured endings, as a logon name), then the reset
+  mails the owner. Off until the switch and the endings are set in Module Configuration > Cloud Password Reset. The Graph
+  grant to write employeeId (assumption A1) is unconfirmed; without it resets still go out and no number is saved.
+- `docs/RecipientLookupAccuracy-Plan.md` - Implemented (`af86f699`). The page says what a recipient is; "Not applicable",
+  "Not read", "Could not be determined" where they are true; quotas, directory facts, mailbox settings without holds, a
+  show-all switch, the resolved address in the audit row. Displayed fields per kind are in the plan and the README.
+- `docs/CancellationDepth-Plan.md` - Implemented (`5b05bba9`). A cancel ends work waiting for an Exchange Online connection
+  or the on-premises server and between a read's commands; a command already sent is never interrupted; a connection ever
+  found stopped is discarded; a Module Configuration save the page gave up on writes nothing and is filed PageMoved; the
+  leave prompt is page-aware and truthful. kd-58, aud-a67 (12) and kd-81's on-premises half are closed by it.
+- `docs/InAppHelp-Plan.md` - Approved to start after 2026-10-31. The rule that a functionality change carries its help
+  change is in the Constitution (Code Change Discipline) and Known Failure Class 5.
 
 **Operator-visible changes to know before deploying 2.36.0:** every Mailbox and Calendar Permissions grant is refused
-while the Directory Read Credential (Admin Settings > Protected principals) cannot be had - confirm it is configured on the
-instance; a plan-only promotion or cutover names the jobs database it would read instead of listing live jobs; the
-Delegation Report Check button enables as the operator types; cancels are shown and filed as "Cancelled by the operator";
+while the Directory Read Credential (Admin Settings > Protected principals) cannot be had - confirm it is configured;
+a plan-only promotion or cutover names the jobs database it would read instead of listing live jobs; the Delegation
+Report Check button enables as the operator types; cancels are shown and filed as "Cancelled by the operator"; the leave
+prompt now states what a cancel does on that page; Recipient Lookup's rows read differently (see its README section);
 a job whose processor cannot be built is marked Interrupted with the reason instead of stopping the runner.
 
-**Next step:** `tools/deploy-pipeline.ps1 -Dev` from an elevated shell, then prod, on the owner's word.
+**Open:** nothing marked `[ ]` in `.agents/review/index.md`. Manual production checks not yet run: Cloud Password Reset
+(plan section 13, once switched on), Recipient Lookup (plan section 12, one lookup of each kind). Next round's token
+rule (owner, 2026-10-28): briefs point agents at sections and line ranges, not whole plans and record sets; the model
+stays Opus 5.5.
+
+**Next step:** the owner's "yes" to `tools/deploy-pipeline.ps1 -Dev` from an elevated shell, then prod.
 ### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any

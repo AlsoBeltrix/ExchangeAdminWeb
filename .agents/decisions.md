@@ -5,6 +5,16 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-28 - In-app help plan approved to start after 2026-10-31; a functionality change carries its help change
+
+Owner, 2026-10-28, on `docs/InAppHelp-Plan.md`: "approved to start after 10/31. docs, governance, or something durable needs
+to note that updates to functionality mean help needs to be updated as well." Approved: the three starting pieces (the
+shared help parts, the settings pages, the Cloud Password Reset page) and the short module-guide note; the module-by-module
+list in the plan's section 5 is taken as recommended unless the owner names otherwise. Not before 2026-11-01. Standing rule,
+effective now and written into the Constitution and Known Failure Class 4's neighbourhood in `.agents/repo-guidance.md`: a
+change to what a page or setting does changes its help (hover tips, page notes, examples) in the same slice; a reviewer
+checks it as part of every diff. No test fails a module for lacking help (the owner's earlier ruling stands); the check is
+the reviewer's and the slice's, not a tripwire.
 ### 2026-10-28 - Recipient Lookup accuracy plan approved with every free extra; the display is to be spelled out
 
 Owner, 2026-10-28, on `docs/RecipientLookupAccuracy-Plan.md`: "add everything free and clarify what's displayed". Approved:

@@ -464,3 +464,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-28, RecipientLookupAccuracy S5** (the records: README checked against the landed page, the plan's status, versions, acceptance table and status log with every commit). Same agent and session as S1, whose line explains why its share is not separable.
 
 **2026-10-28, Recipient Lookup accuracy (S1-S5, E1, E2, E3, E7, E8).** ~621K agent tokens, 245 tool uses, 2 h 8 min; 7983 tests on the branch; merged `af86f699`. In-app help plan draft: ~482K, 153 tool uses, 46 min.
+
+**2026-10-28/29, CancellationDepth (A1-A3, P, A6-A10, B1-B3, C1).** One Opus 5.5 agent across four dispatches: ~3.2M agent tokens in total (923K + 829K + 334K + 471K by notification), 1271 tool uses, about 24 h wall clock including waits; 8181 tests on the branch; merged `5b05bba9`. Supervisor note for the next round (owner 2026-10-28): briefs name sections and line ranges, not whole plans and record sets; model unchanged (Opus 5.5).
