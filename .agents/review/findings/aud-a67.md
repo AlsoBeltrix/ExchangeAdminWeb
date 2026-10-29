@@ -12,9 +12,10 @@ under their locks). (5) `SettingsSaveAuditTests` 444-445 says `SetLevel` "swallo
 rethrown since aud-a28k. (6) `ADAttributeEditorService.SaveAllowlistAndAudit` (464-472) still reports a busy
 store as "Failed to save: SQLite Error 5" (the aud-a40 class inside the service; the exact change is in
 aud-a40.md's follow-up section).
-**Status**: Verified on branch; awaiting merge and codex review (item 12 not fixed - see the section at the end)
-**Branch**: `fix/a64-a67` (from `eb017102`)
-**Commit**: `2c52053f` (1), `5d89d3a3` (2), `0fc3dad5` (3), `b1661786` (4) and (13) with `51b2f7fa`, `44d99f3e` (5), `41d3320f` (6), `3cb50d2c` (7), `492725b5` (8), `16392c2a` (9), `ba77f21f` (10), `0a10b484` (11), `7af08914` (14)
+**Status**: Items (1)-(11), (13) and (14) merged `fe67668d`. (12) closed on guard proof under `docs/CancellationDepth-Plan.md`
+Part B - B1 to B3 on `feat/cancellation-depth`, verified, awaiting merge (the (12) sections at the end)
+**Branch**: `fix/a64-a67` (from `eb017102`); (12) on `feat/cancellation-depth` (from master `401ec828`)
+**Commit**: `2c52053f` (1), `5d89d3a3` (2), `0fc3dad5` (3), `b1661786` (4) and (13) with `51b2f7fa`, `44d99f3e` (5), `41d3320f` (6), `3cb50d2c` (7), `492725b5` (8), `16392c2a` (9), `ba77f21f` (10), `0a10b484` (11), `7af08914` (14); (12): B1 `f129e5c0`, B2 `d2ef22bf`, B3 `d5120466` on `feat/cancellation-depth`
 **Reviewer**: implementer (surfaced by the aud-a41/a40/a42 agent, 2026-10-23, candidates 2-6 and its follow-up)
 
 ## Evidence
@@ -378,6 +379,11 @@ Filter as above, 508 tests. `ModuleConfig.razor` MD5 `e125bacb33213c64e443bbe7b2
 
 ### (12) is not fixed, and why - for the owner
 
+Superseded 2026-10-29: `docs/CancellationDepth-Plan.md` Part B took the item on, and it is closed - the (12) sections at the
+end. What follows is the record as it stood before the plan. (One fact in it did not survive the plan's reading:
+`SqliteCommand.Cancel()` does nothing in this provider - the plan's 4.4 - so the plan cancels at the store's own looks, not by
+interrupting a statement.)
+
 The item is a statement of fact rather than a defect with a fix inside this record's scope: a save that outlasts the
 bound keeps its worker thread and its store connection until the store answers, because the stores take no
 cancellation. Closing it means threading cancellation through `IConfigStore` and every repository on it, and cancelling
@@ -395,8 +401,10 @@ Named for the owner as the one thing in this record left undone.
 
 ## Known gaps
 
-- **(12) is not fixed.** Its own section above says why and what is true instead. It is the one item in this record
-  left for the owner.
+- **(12) is closed as far as a token reaches** (the (12) sections at the end): a save the page gave up on writes nothing
+  unless it had committed, and says and records the page's refusal. What no token reaches stays as the plan's 4.7 says: a
+  save stuck in a hung store keeps its worker thread and its connection until the store answers - one per load from the
+  button and one more per route change past the bound, as this record's section on (12) described.
 - (2)'s measurement is of `db check` as a process, against a database another process holds exclusively, on this host.
   The remaining wait - about 8 s rather than the 5 s `docs/ConfigDbToolInApp-Plan.md` names - is structural: the open
   and the statement each get one wait, because `busy_timeout` is a PRAGMA and cannot be set until the connection is
@@ -731,3 +739,14 @@ ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; after `git add -
 
 **Versions**: AD Attribute Editor 1.7.4 -> 1.7.5 (`Modules/ModuleCatalog.cs` 1683). No base bump: 2.36.0, not yet deployed,
 absorbs the shared text in `SettingsSaveAudit` and the Module Configuration page's part (the plan's section 7).
+
+### (12), closed (C1, 2026-10-29)
+
+B1 gave the store its token, B2 the four Module Configuration saves, B3 the allowlist save. A save the route change gives
+up on is cancelled at that moment and no other, by the page's own token - never filed as the operator's cancel; if it had
+not committed, the store rolls it back whole and the save says and records the page's existing refusal (`refusedAt`
+PageMoved, `mutationAttempted` false); if it had, it stands as the success it is. The notice's "if it had not written yet
+it refuses" is now true inside the store as well. What a token cannot reach - the busy wait, a call blocked inside the
+database file - is unchanged and bounded as before (the plan's 4.7; the first bullet of Known gaps). Versions: none for
+Module Configuration - the page and the settings services are app-wide, and 2.36.0, not yet deployed, absorbs them (the
+plan's section 7); AD Attribute Editor took its patch bump in B3.

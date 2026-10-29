@@ -1,6 +1,7 @@
 # Cancellation Depth - Plan
 
-Status: **In progress - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). A4 and A5's work landed as kd-81; the shared slices A1-A3, the page-aware leave prompt, the module slices A6-A10 and Part B (B1-B3) are on `feat/cancellation-depth` (section 15); C1 remains.**
+Status: **Implemented - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). Every slice is on `feat/cancellation-depth` (section 15) - A4 and A5's work landed first as kd-81 - and C1 made no base bump: 2.36.0 is not deployed and absorbs the change (section 7). Two things the owner should know. Blocked Senders' unblock declares that it takes the operator's cancel, though section 3.7 lists Blocked Senders as not adopted: its work has taken the activity's token since kd-6 and kd-76, so "will not stop" would have been false there. And the leave prompt's "it will complete and be recorded", said of every activity that does not declare, is not true of a lookup that writes no audit row - Message Analysis' lookup of the operator's own address as the page loads, for one; the sentence is the supervisor's ruling, so it stands as worded until a per-activity sentence is ruled.**
+
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -487,6 +488,10 @@ one save per load from the button, one more per route change past the bound, eac
   Conference Rooms (A8, A9), Message Trace (A10), AD Attribute Editor (B3). A change touching both layers gets both
   bumps.
 
+**At C1 (2026-10-29; the supervisor's ruling of 2026-10-28): no base bump.** 2.36.0 - the version master carries - is
+not yet deployed, and it absorbs this plan's shared changes (A1-A3, the page-aware leave prompt, B1, B2 and B3's shared
+refusal text) rather than a 2.36.1 being cut for them. The module bumps were made in their slices, as listed above.
+
 ## 8. Slices
 
 One finding per commit; each slice is one commit with its record section, its tests and its mutation proof. Order:
@@ -870,10 +875,15 @@ Status log (each slice's record is its section in `.agents/review/findings/kd-58
   the route change gives up on, so the moved check before the write was tested only through it - and a case for a save the
   route change never waited for pins that check again. No module bump - the page and the services are app-wide (2.36.0's,
   not yet deployed).
-- 2026-10-28, **B3, the attribute allowlist save** - `feat/cancellation-depth`, the commit that adds this line (record:
-  aud-a67's (12) section): the page hands the allowlist save its token, and the save passes it to
+- 2026-10-28, **B3, the attribute allowlist save** - `feat/cancellation-depth` `d5120466` (record: aud-a67's (12)
+  section): the page hands the allowlist save its token, and the save passes it to
   `SaveAllowlistAndAudit`, which passes it to `ReplaceAllowlist` and the store; a cancellation of it is the service's own
   PageMoved refusal, recorded by the service and returned, in the page's words - now `SettingsSaveAudit.PageMovedRefusal`,
   which the page's constant points to - and the page writes nothing for it. The catch tripwire holds that the page catches
   none; a source pin holds the service's catch to its own token. Twelve test calls pass the test's token (xUnit1051). AD
   Attribute Editor 1.7.4 -> 1.7.5.
+- 2026-10-29, **C1, the records** - `feat/cancellation-depth`, the commit that adds this line: no base bump - 2.36.0 is
+  not deployed and absorbs the change (section 7's note, the supervisor's ruling); this plan's Status to Implemented, with
+  the two things the owner should know; kd-58 closed, aud-a67 (12) closed, kd-81's on-premises half closed, and their
+  rows in `.agents/review/index.md`; the full gate on the final tree (kd-58's record). `.agents/state.md` and
+  `.agents/token-log.md` are the supervisor's, not edited here.
