@@ -11,11 +11,21 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>Get-ADUser -Identity &lt;SID&gt; -Properties tokenGroups</c>, through the same
-/// <see cref="ISectionAccessDirectoryCommands"/> seam and PowerShell runspace the section-access
-/// lookup uses - no second directory client. Bound by SID, never by name. <c>tokenGroups</c> is the
-/// directory's own transitive expansion (nesting, universal groups, the primary group), computed by
-/// a domain controller of the account's domain.
+/// Two reads of the account, through the same <see cref="ISectionAccessDirectoryCommands"/> seam and
+/// PowerShell runspace the section-access lookup uses - no second directory client. First
+/// <c>Get-ADUser -Identity &lt;SID&gt;</c>, asking for nothing beyond the cmdlet's defaults, for the
+/// account's distinguished name. Then <c>Get-ADUser -SearchBase &lt;that name&gt; -SearchScope Base
+/// -LDAPFilter (objectSid=&lt;SID&gt;) -Properties tokenGroups,Enabled</c>, from the same server.
+/// </para>
+/// <para>
+/// Two, because <c>tokenGroups</c> is a constructed attribute Active Directory computes only in a
+/// base-scope search, and an identity given as a SID is found by a subtree search: a single read by
+/// SID that asks for <c>tokenGroups</c> is refused with "The requested search operation is only
+/// supported for base searches" (kd-87). The second read's scope is stated in the command, not inferred from how the cmdlet
+/// resolves an identity. Bound by SID, never by name: the filter makes an object at that name that
+/// is not this account match nothing, which fails like any other empty answer. <c>tokenGroups</c> is
+/// the directory's own transitive expansion (nesting, universal groups, the primary group), computed
+/// by a domain controller of the account's domain.
 /// </para>
 /// <para>
 /// Routing: the account's NetBIOS domain is mapped to a DNS root through the forest's
@@ -25,14 +35,16 @@ namespace ExchangeAdminWeb.Services;
 /// wrong entry costs one failed check, never a stuck one.
 /// </para>
 /// <para>
-/// A fresh runspace per read, at most <see cref="MaxConcurrentLookups"/> at once, and the caller's
-/// cancellation stops the running command: the <see cref="AdSiteDirectory"/> shape. A cancelled
-/// native worker keeps its slot until it really ends, so abandoned reads cannot pile up.
+/// A fresh runspace per lookup, both reads in it, at most <see cref="MaxConcurrentLookups"/> lookups
+/// at once, and the caller's cancellation stops the running command and starts no further one: the
+/// <see cref="AdSiteDirectory"/> shape. A cancelled native worker keeps its slot until it really
+/// ends, so abandoned reads cannot pile up.
 /// </para>
 /// <para>
-/// Strict about what counts as an answer: exactly one account, no cmdlet error beside it, an
-/// <c>Enabled</c> that reads as a bool and at least one group. Anything else throws, because the
-/// caller would otherwise read an empty membership as "removed from everything".
+/// Strict about what counts as an answer: exactly one account from each read and no cmdlet error
+/// beside it, a distinguished name from the first, an <c>Enabled</c> that reads as a bool and at
+/// least one group from the second. Anything else throws, because the caller would otherwise read
+/// an empty membership as "removed from everything".
 /// </para>
 /// <para>
 /// Runs under the app pool identity, like the other read-only directory lookups (decisions
@@ -157,33 +169,36 @@ public sealed class OperatorMembershipDirectory : IOperatorMembershipDirectory
     {
         try
         {
-            var parameters = new Dictionary<string, object?>
+            var server = netBiosDomain is null ? null : ResolveServer(commands, netBiosDomain);
+
+            // The account, found by its SID, for its distinguished name only. Nothing constructed is
+            // asked for here: an identity given as a SID is found by a subtree search, and Active
+            // Directory refuses tokenGroups in any search that is not base-scope (kd-87).
+            var lookup = new Dictionary<string, object?>
             {
                 ["Identity"] = userSid,
-                ["Properties"] = new[] { "tokenGroups" },
                 ["ErrorAction"] = "Stop",
             };
+            var located = ReadExactlyOne(commands, WithServer(lookup, server), "The account lookup", cancellationToken);
 
-            if (netBiosDomain is not null)
-                parameters["Server"] = ResolveServer(commands, netBiosDomain);
+            var distinguishedName = located.Text("DistinguishedName");
+            if (string.IsNullOrWhiteSpace(distinguishedName))
+                throw new DirectoryUnavailableException("The account lookup returned no distinguished name for the account.");
 
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = commands is ICancellableDirectoryCommands cancellable
-                ? cancellable.Invoke("Get-ADUser", parameters, cancellationToken)
-                : commands.Invoke("Get-ADUser", parameters);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (result.Error is not null)
-                throw new DirectoryUnavailableException($"Reading the signed-in account failed: {result.Error}");
-
-            var accounts = result.Rows.Where(row => row is not null).ToList();
-            if (accounts.Count != 1)
+            // Its groups and enabled state, by a base-scope search at that name - the one search AD
+            // computes tokenGroups in - from the same server. The filter keeps the read bound by SID: an
+            // object at that name that is not this account matches nothing and fails below.
+            var groupRead = new Dictionary<string, object?>
             {
-                throw new DirectoryUnavailableException(
-                    $"The account lookup returned {accounts.Count} objects; exactly one was expected.");
-            }
+                ["SearchBase"] = distinguishedName,
+                ["SearchScope"] = "Base",
+                ["LDAPFilter"] = $"(objectSid={ProtectedPrincipalService.EscapeLdapFilter(userSid)})",
+                ["Properties"] = new[] { "tokenGroups", "Enabled" },
+                ["ErrorAction"] = "Stop",
+            };
+            var account = ReadExactlyOne(commands, WithServer(groupRead, server), "The account's group read", cancellationToken);
 
-            return FromAccount(accounts[0]!);
+            return FromAccount(account);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -200,6 +215,40 @@ public sealed class OperatorMembershipDirectory : IOperatorMembershipDirectory
             throw new DirectoryUnavailableException(
                 $"The directory lookup for the signed-in account failed: {ex.Message}", ex);
         }
+    }
+
+    // One Get-ADUser read, under the caller's token through the cancellable overload where the session
+    // has one; a cancel before or during it ends the lookup, so none starts after one. Exactly one
+    // object and no error beside it, or it throws.
+    private static DirectoryObject ReadExactlyOne(
+        ISectionAccessDirectoryCommands commands, Dictionary<string, object?> parameters, string read,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = commands is ICancellableDirectoryCommands cancellable
+            ? cancellable.Invoke("Get-ADUser", parameters, cancellationToken)
+            : commands.Invoke("Get-ADUser", parameters);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (result.Error is not null)
+            throw new DirectoryUnavailableException($"{read} failed: {result.Error}");
+
+        var accounts = result.Rows.Where(row => row is not null).ToList();
+        if (accounts.Count != 1)
+        {
+            throw new DirectoryUnavailableException(
+                $"{read} returned {accounts.Count} objects; exactly one was expected.");
+        }
+
+        return accounts[0]!;
+    }
+
+    private static Dictionary<string, object?> WithServer(Dictionary<string, object?> parameters, string? server)
+    {
+        if (server is not null)
+            parameters["Server"] = server;
+
+        return parameters;
     }
 
     private string ResolveServer(ISectionAccessDirectoryCommands commands, string netBiosDomain)
