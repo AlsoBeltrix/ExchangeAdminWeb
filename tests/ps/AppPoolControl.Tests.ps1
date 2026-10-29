@@ -1156,49 +1156,105 @@ Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -Applicat
     Context 'aud-a38f: the default probe reads virtual directories too' {
 
         # The default reads Get-Website and Get-WebApplication as before and, for every application
-        # (a site's root one included), Get-WebConfiguration under the application's ItemXPath plus
-        # /virtualDirectory - the form WebAdministration's own type data uses for an application's
-        # PhysicalPath. These stand-ins answer the way that type data describes: they pin what the
-        # probe does with the answer, not that real IIS gives it.
+        # (a site's root one included), Get-WebConfiguration under the application's XPath plus
+        # /virtualDirectory. cdt-61: that XPath is built from the site's name and the application's
+        # path. The stand-ins have the shapes WebAdministration gives under Windows PowerShell 5.1,
+        # as its IL on the deploy host builds them (cdt-61's record): a Get-Website object carries no
+        # ItemXPath; a Get-WebApplication object does, being what Get-WebConfiguration returns. They
+        # pin what the probe asks and what it does with the answer, not that real IIS gives it.
 
         BeforeAll {
             # Defined in the module's own scope, where the default probe resolves commands first,
             # and removed again after this block.
             InModuleScope AppPoolControl {
                 function script:Get-Website {
-                    [pscustomobject]@{ name = 'Web'; applicationPool = 'SitePool'; physicalPath = 'D:\sites'; ItemXPath = "/system.applicationHost/sites/site[@name='Web' and @id='1']" }
+                    # cdt-61: no ItemXPath, as Windows PowerShell 5.1 gives a site.
+                    [pscustomobject]@{ name = $script:AudA38fSiteName; applicationPool = 'SitePool'; physicalPath = 'D:\sites' }
                 }
                 function script:Get-WebApplication {
                     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
                         Justification = 'The probe passes -Site; the stand-in knows one site')]
                     param([string]$Site)
-                    [pscustomobject]@{ path = '/App'; applicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App'; ItemXPath = "/system.applicationHost/sites/site[@name='Web' and @id='1']/application[@path='/App']" }
+                    [pscustomobject]@{ path = '/App'; applicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App'; ItemXPath = "/system.applicationHost/sites/site[@name='$script:AudA38fSiteName' and @id='1']/application[@path='/App']" }
                 }
                 function script:Get-WebConfiguration {
+                    [CmdletBinding()]
                     param([string]$PSPath, [string]$Filter)
                     if ($PSPath -ne 'MACHINE/WEBROOT/APPHOST') { throw "unexpected -PSPath '$PSPath'" }
+                    $script:AudA38fFilters.Add($Filter)
+                    # cdt-61: a read that reports an error as well as answering; only -ErrorAction Stop
+                    # makes the error a throw.
+                    if ($script:AudA38fErrors.ContainsKey($Filter)) { Write-Error $script:AudA38fErrors[$Filter] }
                     # A filter that matches nothing writes nothing, as the cmdlet does - not a $null.
                     if ($script:AudA38fDirectories.ContainsKey($Filter)) { $script:AudA38fDirectories[$Filter] }
                 }
             }
 
             function Initialize-IisDirectory {
-                param([hashtable]$Map)
-                InModuleScope AppPoolControl -Parameters @{ Map = $Map } {
-                    param($Map)
+                param([hashtable]$Map, [string]$SiteName = 'Web', [hashtable]$Errors = @{})
+                InModuleScope AppPoolControl -Parameters @{ Map = $Map; SiteName = $SiteName; Errors = $Errors } {
+                    param($Map, $SiteName, $Errors)
                     $script:AudA38fDirectories = $Map
+                    $script:AudA38fSiteName = $SiteName
+                    $script:AudA38fErrors = $Errors
+                    $script:AudA38fFilters = [System.Collections.Generic.List[string]]::new()
                 }
             }
 
-            $script:RootDirectories = "/system.applicationHost/sites/site[@name='Web' and @id='1']/application[@path='/']/virtualDirectory"
-            $script:AppDirectories = "/system.applicationHost/sites/site[@name='Web' and @id='1']/application[@path='/App']/virtualDirectory"
+            function Get-IisFilterAsked {
+                InModuleScope AppPoolControl { $script:AudA38fFilters.ToArray() }
+            }
+
+            $script:RootDirectories = "/system.applicationHost/sites/site[@name='Web']/application[@path='/']/virtualDirectory"
+            $script:AppDirectories = "/system.applicationHost/sites/site[@name='Web']/application[@path='/App']/virtualDirectory"
         }
 
         AfterAll {
             InModuleScope AppPoolControl {
                 Remove-Item -Path 'function:Get-Website', 'function:Get-WebApplication', 'function:Get-WebConfiguration' -ErrorAction SilentlyContinue
-                Remove-Variable -Name AudA38fDirectories -Scope Script -ErrorAction SilentlyContinue
+                Remove-Variable -Name AudA38fDirectories, AudA38fSiteName, AudA38fErrors, AudA38fFilters -Scope Script -ErrorAction SilentlyContinue
             }
+        }
+
+        It 'cdt-61: reads each application''s virtual directories by a filter built from the site''s name and the application''s path, for a site with no ItemXPath' {
+            # THE FINDING. Windows PowerShell 5.1's Get-Website objects carry no ItemXPath. The probe
+            # read the site's, strict mode threw, and every deploy refused before its stop.
+            Initialize-IisDirectory @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+                $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' })
+            }
+            (InModuleScope AppPoolControl { $null -eq @(Get-Website)[0].PSObject.Properties['ItemXPath'] }) |
+                Should -BeTrue -Because 'the stand-in site has the shape Windows PowerShell 5.1 gives'
+
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse)
+
+            ($result | ForEach-Object { "$($_.Location)|$($_.ApplicationPool)|$($_.PhysicalPath)" }) -join ',' |
+                Should -BeExactly 'Web/App|ProdPool|D:\sites\App'
+            (Get-IisFilterAsked) -join ' ; ' | Should -BeExactly "$script:RootDirectories ; $script:AppDirectories" -Because 'the site root''s application and then each application, each named as IIS reported it'
+        }
+
+        It 'cdt-61: writes a name holding a single quote in double quotes, and refuses one holding both quote characters' {
+            Initialize-IisDirectory -SiteName "Bob's Web" -Map @{
+                "/system.applicationHost/sites/site[@name=`"Bob's Web`"]/application[@path='/']/virtualDirectory"    = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+                "/system.applicationHost/sites/site[@name=`"Bob's Web`"]/application[@path='/App']/virtualDirectory" = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' })
+            }
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse)
+            ($result | ForEach-Object Location) -join ',' | Should -BeExactly "Bob's Web/App"
+
+            Initialize-IisDirectory -SiteName "Bob's `"Web`"" -Map @{}
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
+                Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*holds both quote characters*'
+            @(Get-IisFilterAsked).Count | Should -Be 0 -Because 'no filter that cannot name the site is sent'
+        }
+
+        It 'cdt-61: refuses when the virtual-directory read reports an error, though it also listed a root virtual directory' {
+            Initialize-IisDirectory -Map @{
+                $script:RootDirectories = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites' })
+                $script:AppDirectories  = @([pscustomobject]@{ path = '/'; physicalPath = 'D:\sites\App' })
+            } -Errors @{ $script:AppDirectories = 'The configuration section cannot be read' }
+
+            { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
+                Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*The configuration section cannot be read*'
         }
 
         It 'finds a virtual directory of the site root pointing inside the folder, and refuses its pool' {
