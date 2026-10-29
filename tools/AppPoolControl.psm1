@@ -376,6 +376,18 @@ function Test-PhysicalPathInside {
     return $false
 }
 
+function ConvertTo-IisXPathLiteral {
+    # cdt-61. A name IIS reported - a site's name, an application's path - as an XPath string literal
+    # for a Get-WebConfiguration filter: in single quotes, or in double quotes when it holds a single
+    # quote. XPath 1.0 has no escape inside a literal, so a name holding both cannot be written as one:
+    # that throws, and Assert-AppPoolServesPath refuses, as for any read it cannot make. Not exported.
+    param([string]$Value)
+
+    if (-not $Value.Contains("'")) { return "'$Value'" }
+    if (-not $Value.Contains('"')) { return '"' + $Value + '"' }
+    throw "The IIS name [$Value] holds both quote characters, so no XPath filter can name it."
+}
+
 function Assert-AppPoolServesPath {
     <#
     .SYNOPSIS
@@ -442,21 +454,29 @@ function Assert-AppPoolServesPath {
         # PhysicalPath is the script property WebAdministration's own type data defines (the root
         # virtual directory's physicalPath); Get-Website exposes the root's physicalPath and
         # applicationPool. aud-a38f: every other virtual directory is read with
-        # Get-WebConfiguration under its application's ItemXPath plus /virtualDirectory - the
-        # form that same type data uses - and is served by the pool of the application that owns
-        # it. Every application has a root virtual directory, so a listing without one is a read
-        # that missed and is thrown, not taken for "nothing else". Under this module's strict
-        # mode a missing property throws too, and either throw is a refusal below, not a pass.
+        # Get-WebConfiguration under its application's XPath plus /virtualDirectory, and is served
+        # by the pool of the application that owns it. cdt-61: that XPath is built from the site's
+        # name and the application's path, never read from an ItemXPath property. Windows
+        # PowerShell 5.1's Get-Website objects carry none - WebAdministration adds ItemXPath only to
+        # what Get-WebConfiguration returns - so reading the site's threw on the first site and
+        # every deploy refused before its stop. Get-WebVirtualDirectory is no substitute: it never
+        # lists a root virtual directory, so its empty answer cannot be told from a missed read.
+        # Every application has a root virtual directory, so a listing without one is a read that
+        # missed and is thrown, not taken for "nothing else"; a read that reports an error throws
+        # too (-ErrorAction Stop). Under this module's strict mode a missing property throws as
+        # well, and every such throw is a refusal below, not a pass.
         [scriptblock]$ApplicationsProbe = {
             foreach ($site in @(Get-Website)) {
                 [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
-                $owners = @([pscustomobject]@{ Path = '/'; ApplicationPool = $site.applicationPool; ItemXPath = "$($site.ItemXPath)/application[@path='/']" })
+                $owners = @([pscustomobject]@{ Path = '/'; ApplicationPool = $site.applicationPool })
                 foreach ($app in @(Get-WebApplication -Site $site.name)) {
                     [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
-                    $owners += [pscustomobject]@{ Path = $app.path; ApplicationPool = $app.applicationPool; ItemXPath = $app.ItemXPath }
+                    $owners += [pscustomobject]@{ Path = $app.path; ApplicationPool = $app.applicationPool }
                 }
+                $siteXPath = "/system.applicationHost/sites/site[@name=$(ConvertTo-IisXPathLiteral $site.name)]"
                 foreach ($owner in $owners) {
-                    $directories = @(Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter "$($owner.ItemXPath)/virtualDirectory")
+                    $filter = "$siteXPath/application[@path=$(ConvertTo-IisXPathLiteral $owner.Path)]/virtualDirectory"
+                    $directories = @(Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filter -ErrorAction Stop)
                     if (@($directories | Where-Object { $_.path -eq '/' }).Count -eq 0) {
                         throw "IIS listed no root virtual directory for $($site.name)$($owner.Path), so its other virtual directories cannot be shown to have been read."
                     }
