@@ -10,7 +10,7 @@ the latest sweep is Archived 2026-10-23).
 
 ### Master is deployable - 2026-10-29; three plans implemented after the fix stream closed
 
-**Final master `5b05bba9`, every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit
+**Final master `11a14e83` (cdt-61, the 5.1 deploy refusal, fixed after the first dev deploy attempt), every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit
 8181 passed, 0 failed, 0 skipped (live-directory cases opt-in: `dotnet test ExchangeAdminWeb.slnx -s
 ExchangeAdminWeb.Tests/LiveDirectory.runsettings`); Pester 531; PSScriptAnalyzer 0 errors; `dotnet format`, `git diff
 --check`, ASCII lint clean. Base app version 2.36.0, which is NOT deployed and absorbs every shared change since 2.35.0.
@@ -44,7 +44,7 @@ a job whose processor cannot be built is marked Interrupted with the reason inst
 rule (owner, 2026-10-28): briefs point agents at sections and line ranges, not whole plans and record sets; the model
 stays Opus 5.5.
 
-**Next step:** the owner's "yes" to `tools/deploy-pipeline.ps1 -Dev` from an elevated shell, then prod.
+**Next step:** the owner re-runs `tools/deploy-pipeline.ps1 -Dev` from an elevated shell - the first live run of the fixed check - then prod.
 ### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any
