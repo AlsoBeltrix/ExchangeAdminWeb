@@ -46,7 +46,13 @@ public abstract class ExchangeServiceBase
     /// on a fresh connection. MUST be false for multi-write operations: re-running after an
     /// earlier write committed would repeat it. Defaults to false (the safe default).
     /// </param>
-    protected Task<PermissionResult> RunAsync(Action<PowerShell, ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null, bool allowRetry = false)
+    /// <param name="cancellationToken">
+    /// kd-58 E4. The caller's cancel reaches the pool's borrow only - the wait for a connection, and the moment the borrow
+    /// returns (E1, E2) - and never <paramref name="operation"/>: its tracker carries no token, so no helper looks at it
+    /// there. An operation that writes looks at its own token immediately before its first write command (kd-73, kd-75), and
+    /// nothing after that point does. None, the default - every caller before kd-58 - changes nothing.
+    /// </param>
+    protected Task<PermissionResult> RunAsync(Action<PowerShell, ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null, bool allowRetry = false, CancellationToken cancellationToken = default)
     {
         return _exoPool.RunWithRetryAsync(pooled => Task.Run(() =>
         {
@@ -103,18 +109,44 @@ public abstract class ExchangeServiceBase
             // pool can discard and (if eligible) retry. The base helper already cleared the
             // pipeline in Invoke, so a non-connection failure leaves the connection returnable.
             return new PooledOutcome<PermissionResult>(result, tracker.HasConnectionError, tracker.HasRetriablePrecheckError);
-        }), allowRetry, PoolFailurePolicy.Return);
+        }), allowRetry, PoolFailurePolicy.Return, cancellationToken);
     }
 
     /// <param name="allowRetry">
     /// True only for read-only or single-write queries. See <see cref="RunAsync"/>. Defaults to
     /// false (the safe default).
     /// </param>
-    protected Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> query, bool allowRetry = false)
+    /// <param name="cancellationToken">
+    /// kd-58 E4, as <see cref="RunAsync"/>'s: the borrow only, never <paramref name="query"/>, which may write. A query that
+    /// writes nothing and may end between its commands is <see cref="RunPooledReadAsync{T}"/>.
+    /// </param>
+    protected Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> query, bool allowRetry = false, CancellationToken cancellationToken = default) =>
+        RunPooledAsync(query, allowRetry, cancellationToken, endsBetweenCommands: false);
+
+    /// <summary>
+    /// kd-58 E3. A pooled call that writes nothing, and that the caller's cancel may end between its commands: the token reaches
+    /// the borrow (E1, E2) and the call's tracker, and the base's command helpers - <see cref="Invoke(PowerShell, ConnectionErrorTracker)"/>,
+    /// <see cref="InvokeBestEffort"/>, <see cref="InvokeOptional(PowerShell, ConnectionErrorTracker)"/> and <see cref="ReadUnlessNotFound"/>
+    /// - look at it before each command they send. Cancelled, the helper clears the pipeline and throws the cancellation: the
+    /// read ends between commands, its connection idle and clean, and the pool takes it back (3.5). The command in flight is
+    /// never stopped (E5); a cancel waits for it, normally a few seconds.
+    /// </summary>
+    /// <remarks>
+    /// For reads only: a delegate given here adds Get- commands alone, through those helpers - no script, no raw Invoke - and
+    /// a tripwire holds every call site to it (ExchangeServiceBaseReadCancellationTests). A call that may write is
+    /// <see cref="RunAsync"/> or <see cref="RunPooledQueryAsync{T}"/>, whose token reaches the borrow only (E4).
+    /// </remarks>
+    /// <param name="allowRetry">As <see cref="RunPooledQueryAsync{T}"/>'s.</param>
+    protected Task<T> RunPooledReadAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> read, CancellationToken cancellationToken, bool allowRetry = false) =>
+        RunPooledAsync(read, allowRetry, cancellationToken, endsBetweenCommands: true);
+
+    // The pooled query and the pooled read: the same call, but for the tracker. Only a read's carries the caller's token
+    // (kd-58 E3), so only a read's helpers look at it; both hand the token to the pool's borrow (E1, E2).
+    private Task<T> RunPooledAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> query, bool allowRetry, CancellationToken cancellationToken, bool endsBetweenCommands)
     {
         return _exoPool.RunWithRetryAsync(pooled => Task.Run(() =>
         {
-            var tracker = new ConnectionErrorTracker();
+            var tracker = endsBetweenCommands ? new ConnectionErrorTracker(cancellationToken) : new ConnectionErrorTracker();
             try
             {
                 var result = query(pooled.PowerShell, tracker);
@@ -131,19 +163,51 @@ public abstract class ExchangeServiceBase
                 return PooledOutcome<T>.ConnectionFault(ExceptionDispatchInfo.Capture(ex),
                     tracker.HasRetriablePrecheckError || ExoConnectionPool.IsRetriablePrecheckError(ex));
             }
-        }), allowRetry, PoolFailurePolicy.Return);
+        }), allowRetry, PoolFailurePolicy.Return, cancellationToken);
     }
 
-    protected static async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null)
+    // kd-58 E7. The caller's cancel ends the wait for one of the throttle's slots - the on-premises server's two, up to two
+    // minutes - at once: no slot taken, nothing to give back. Once admitted, the operation runs and its own steps look at the
+    // token. None, the default - every caller before kd-58 - waits as before.
+    protected static async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null, CancellationToken cancellationToken = default)
     {
         if (throttle != null)
         {
-            if (!await throttle.WaitAsync(TimeSpan.FromMinutes(2)))
+            if (!await throttle.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken))
                 throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
             try { return await operation(); }
             finally { throttle.Release(); }
         }
         return await operation();
+    }
+
+    // kd-58 E7. The runspace an on-premises read opens its session in, opened, with the caller's token looked at before the
+    // open and again once it has opened: a cancel at either point opens no session. The open itself - a local runspace -
+    // runs to its end.
+    protected Runspace OpenOnPremRunspace(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var runspace = CreateOnPremRunspace();
+        try
+        {
+            runspace.Open();
+            cancellationToken.ThrowIfCancellationRequested();
+            return runspace;
+        }
+        catch
+        {
+            runspace.Dispose();
+            throw;
+        }
+    }
+
+    // kd-58 E7. Test seam: the runspace an on-premises read's session is opened in - the default runspace with the Bypass
+    // policy, not yet opened (the shape of the pool's ConnectRunspace, psl-9). No behaviour change.
+    internal virtual Runspace CreateOnPremRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
     }
 
     // -------------------------------------------------------------------------
@@ -152,6 +216,13 @@ public abstract class ExchangeServiceBase
 
     protected internal sealed class ConnectionErrorTracker
     {
+        public ConnectionErrorTracker()
+        {
+        }
+
+        // kd-58 E3: made by RunPooledReadAsync alone, for a read its caller may end between commands.
+        internal ConnectionErrorTracker(CancellationToken readCancellation) => ReadCancellation = readCancellation;
+
         /// <summary>Any dead/suspect-session error was seen - gates DISCARD.</summary>
         public bool HasConnectionError { get; set; }
 
@@ -161,6 +232,12 @@ public abstract class ExchangeServiceBase
         /// <see cref="ExoConnectionPool.IsRetriablePrecheckError"/>.
         /// </summary>
         public bool HasRetriablePrecheckError { get; set; }
+
+        /// <summary>
+        /// kd-58 E3. The caller's token, on a read's tracker only: the command helpers look at it before each command they send.
+        /// None on every other tracker - a write's, a query's, one made by hand - so it changes nothing there.
+        /// </summary>
+        internal CancellationToken ReadCancellation { get; }
     }
 
     // -------------------------------------------------------------------------
@@ -245,8 +322,25 @@ public abstract class ExchangeServiceBase
         return (stopped, captured is { Length: > 0 } ? string.Join(" | ", captured) : null);
     }
 
+    /// <summary>
+    /// kd-58 E3. Before a command is sent on a read's pipeline: the caller's cancel ends the read here, between its commands.
+    /// The pipeline is cleared first - its commands, the one just added among them, and every stream - so the connection is
+    /// exactly as an idle one, and the cancellation is thrown for the read's caller. A tracker that carries no token (every
+    /// tracker but a read's) never throws here.
+    /// </summary>
+    private static void ThrowIfReadCancelled(PowerShell ps, ConnectionErrorTracker tracker)
+    {
+        if (!tracker.ReadCancellation.IsCancellationRequested)
+            return;
+
+        ps.Commands.Clear();
+        ps.Streams.ClearStreams();
+        tracker.ReadCancellation.ThrowIfCancellationRequested();
+    }
+
     protected static Collection<PSObject> Invoke(PowerShell ps, ConnectionErrorTracker tracker)
     {
+        ThrowIfReadCancelled(ps, tracker); // kd-58 E3
         Collection<PSObject> result;
         try
         {
@@ -291,6 +385,7 @@ public abstract class ExchangeServiceBase
     /// </summary>
     protected static Collection<PSObject> InvokeBestEffort(PowerShell ps, ConnectionErrorTracker tracker, out IReadOnlyList<string> errors)
     {
+        ThrowIfReadCancelled(ps, tracker); // kd-58 E3: a read's cancel is not a command's error, so not best-effort
         Collection<PSObject> result;
         try
         {
@@ -325,6 +420,7 @@ public abstract class ExchangeServiceBase
 
     protected static Collection<PSObject> InvokeOptional(PowerShell ps, ConnectionErrorTracker tracker)
     {
+        ThrowIfReadCancelled(ps, tracker); // kd-58 E3, and so ReadUnlessNotFound's
         try
         {
             var result = ps.Invoke();
@@ -503,7 +599,10 @@ public abstract class ExchangeServiceBase
 
     // virtual: a test seam so the on-prem writes can be driven against an in-process runspace
     // (aud-a2d) - the override defines the remote session and the cmdlets locally. No behaviour change.
-    protected virtual void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+    // kd-58 E7: the caller's token is looked at before each attempt, and the pause between attempts waits on it - a cancel
+    // lands between attempts, never inside one: New-PSSession, once sent, runs to its end (its open timeout, ten seconds).
+    // None, the default, connects as before.
+    protected virtual void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
             ? username
@@ -518,6 +617,7 @@ public abstract class ExchangeServiceBase
 
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: before each attempt
             try
             {
                 ps.Commands.Clear();
@@ -549,7 +649,10 @@ public abstract class ExchangeServiceBase
             {
                 _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying", attempt, maxRetries);
                 _operationTrace?.Step("OnPremConnectionRetry", "Warning", backend: "OnPremExchange", details: new Dictionary<string, object?> { ["attempt"] = attempt, ["maxRetries"] = maxRetries });
-                Thread.Sleep(2000 * attempt);
+                // kd-58 E7: the pause waits on the caller's token, so a cancel ends it at once; Thread.Sleep held it to its end.
+                // With no token the handle is never set and the pause is the same two seconds per attempt.
+                if (cancellationToken.WaitHandle.WaitOne(2000 * attempt))
+                    cancellationToken.ThrowIfCancellationRequested();
             }
         }
 
@@ -625,7 +728,9 @@ public abstract class ExchangeServiceBase
     // takes a cancellation. ASSUMPTION, unverified (no live call): on-premises Exchange reports a mailbox with no archive,
     // through remoting, in a shape IsNotFound reads; if not, the check of such a mailbox is Undetermined - visible, never a
     // guess, and one dev check of that error record settles it.
-    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress, CancellationToken cancellationToken = default) // kd-37: the token for its credential read
+    // kd-37: the token for its credential read. kd-58 E7: and for the server's queue, the session's runspace, each connect
+    // attempt and the gaps between the reads; a read already sent finishes, and the session is still removed, with no token.
+    protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
         {
@@ -644,17 +749,15 @@ public abstract class ExchangeServiceBase
 
         return await ThrottledAsync(() => Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 E7
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: connected, before the first read
 
                 double mailboxGB = 0;
                 string? mailboxUnreadable;
@@ -669,6 +772,7 @@ public abstract class ExchangeServiceBase
                 }
 
                 _logger.LogInformation("On-prem mailbox size for {Email}: {Size}", emailAddress, mailboxUnreadable ?? $"{mailboxGB} GB");
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: between the reads
 
                 double archiveGB = 0;
                 string? archiveUnreadable = null;
@@ -711,7 +815,7 @@ public abstract class ExchangeServiceBase
                 }
                 catch { }
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle, cancellationToken);
     }
 
     // aud-a23o. One read in the on-premises session: -ErrorAction Stop on the remote command and on Invoke-Command, so a
@@ -727,12 +831,12 @@ public abstract class ExchangeServiceBase
     // aud-a23o. Where a mailbox is, or why that could not be told: a cloud read that fails is reported as such, not as "no
     // cloud mailbox" - under Ignore it was, and on-premises was then asked about a mailbox Exchange Online had not answered
     // for. "Unknown" means both sides answered that they hold no such mailbox.
-    public async Task<string> GetMailboxLocationAsync(string identity, CancellationToken cancellationToken = default) // kd-37: the same, for the on-premises read's
+    public async Task<string> GetMailboxLocationAsync(string identity, CancellationToken cancellationToken = default) // kd-37: the token for the on-premises read's credential fetch; kd-58: and for the Exchange Online read (A2) and the rest of the on-premises read (A3)
     {
         bool inTheCloud;
         try
         {
-            inTheCloud = await HasCloudMailboxAsync(identity);
+            inTheCloud = await HasCloudMailboxAsync(identity, cancellationToken);
         }
         catch (Exception ex) when (!IsCancellation(ex))
         {
@@ -757,17 +861,20 @@ public abstract class ExchangeServiceBase
     /// No mailbox is "Unknown", which every caller refuses.
     /// </summary>
     /// <param name="cancellationToken">
-    /// kd-81. The caller's token, handed to the string form, which gives it to the on-premises read's credential fetch only
-    /// (kd-37's seam): the Exchange Online read, the throttle and the on-premises session take none. A caller that passes
-    /// none reads as before.
+    /// kd-81. The caller's token, handed to the string form, which gives it to the Exchange Online read - its wait for a pool
+    /// connection, and before its one command (kd-58 A2) - and to the on-premises read: its credential fetch (kd-37's seam), its
+    /// wait for the server, its session's runspace, each connect attempt and the gap between its reads (kd-58 A3). A command
+    /// already sent finishes first. A caller that passes none reads as before.
     /// </param>
     public Task<string> GetMailboxLocationAsync(ValidatedMailbox? mailbox, CancellationToken cancellationToken = default) =>
         mailbox is null ? Task.FromResult("Unknown") : GetMailboxLocationAsync(mailbox.Identity, cancellationToken);
 
-    protected async Task<bool> HasCloudMailboxAsync(string identity)
+    // kd-58 A2. The caller's cancel ends the read while it waits for a pool connection, or before Get-Mailbox is sent - never
+    // during it (E3, E5) - and leaves as a cancellation. None, the default, reads as before.
+    protected async Task<bool> HasCloudMailboxAsync(string identity, CancellationToken cancellationToken = default)
     {
         // Read-only: safe to retry on a dead pooled session.
-        return await RunPooledQueryAsync((ps, tracker) =>
+        return await RunPooledReadAsync((ps, tracker) =>
         {
             // aud-a23o. Stop, not Ignore: under Ignore a read that failed - an error the cmdlet wrote, even a throw - was no
             // rows, "no cloud mailbox". ReadUnlessNotFound keeps Exchange's own "no such object" an answer and rethrows every
@@ -776,7 +883,7 @@ public abstract class ExchangeServiceBase
               .AddParameter("Identity", identity)
               .AddParameter("ErrorAction", "Stop");
             return ReadUnlessNotFound(ps, tracker).Count > 0;
-        }, allowRetry: true);
+        }, cancellationToken, allowRetry: true);
     }
 
     // aud-a23o. A side that could not be asked - no server, no credentials, a session or a read that fails - throws, naming
@@ -797,23 +904,24 @@ public abstract class ExchangeServiceBase
             throw new InvalidOperationException($"on-premises Exchange could not be asked: {OnPremCredentialsUnavailable}");
         }
 
+        // kd-58 E7: the token for the server's queue, the session's runspace, each connect attempt and the gaps between the
+        // reads; a read already sent finishes, and the session is still removed, with no token.
         return await ThrottledAsync(() => Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken);
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: connected, before the first read
                 if (OnPremRecipientExists(ps, session, "Get-Mailbox", identity))
                     return "OnPrem";
 
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: between the reads
                 if (OnPremRecipientExists(ps, session, "Get-RemoteMailbox", identity))
                     return "Cloud";
 
@@ -828,7 +936,7 @@ public abstract class ExchangeServiceBase
             {
                 RemoveOnPremSession(ps);
             }
-        }), _onPremThrottle);
+        }), _onPremThrottle, cancellationToken);
     }
 
     // aud-a23o. Stop, not SilentlyContinue, which made a read that failed "no such recipient": Exchange's not-found, by

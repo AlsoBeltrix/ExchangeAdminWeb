@@ -266,7 +266,7 @@ public sealed class SettingsPerRowSaveTests : IDisposable
     {
         SeedAdmins(GroupA);
         var page = _h.OpenModuleConfig(Module);
-        _h.CreateOtherModuleAdmins().ApplyAdminChanges(Module, [GroupB], []);
+        _h.CreateOtherModuleAdmins().ApplyAdminChanges(Module, [GroupB], [], TestContext.Current.CancellationToken);
         Assert.True(AdminList(page).Remove(GroupA));
 
         await _h.RunAsync(page, "SaveModuleAdminsAsync");
@@ -283,7 +283,7 @@ public sealed class SettingsPerRowSaveTests : IDisposable
     {
         SeedAdmins(GroupA, GroupB);
         var page = _h.OpenModuleConfig(Module);
-        _h.CreateOtherModuleAdmins().ApplyAdminChanges(Module, [], [GroupB]);
+        _h.CreateOtherModuleAdmins().ApplyAdminChanges(Module, [], [GroupB], TestContext.Current.CancellationToken);
         Assert.True(AdminList(page).Remove(GroupA));
 
         await _h.RunAsync(page, "SaveModuleAdminsAsync");
@@ -298,7 +298,7 @@ public sealed class SettingsPerRowSaveTests : IDisposable
     {
         SeedAdmins(GroupA, GroupB);
         var page = _h.OpenModuleConfig(Module);
-        _h.CreateOtherModuleAdmins().ApplyAdminChanges(Module, [], [GroupB]);
+        _h.CreateOtherModuleAdmins().ApplyAdminChanges(Module, [], [GroupB], TestContext.Current.CancellationToken);
         Assert.True(AdminList(page).Remove(GroupB));
         var token = _h.AdminsStore.GetChangeToken();
 

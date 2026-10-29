@@ -79,18 +79,19 @@ public sealed class RecipientLookupFailureTests : IDisposable
         Assert.Null(result.MailboxSizeGB);
     }
 
-    // A cancellation is not a read that failed (aud-a23g's rule): it reaches the lookup's own catch and fails the lookup,
-    // and is not also filed as a statistics warning, as it was.
+    // A cancellation is not a read that failed (aud-a23g's rule), and is not filed as a statistics warning, as it was. kd-58
+    // A2: nor is it a lookup that failed in the Exchange Online read's own catch - it leaves the lookup, as the on-premises
+    // reads' cancellations do (ACancelledRead_LeavesTheLookup_AndIsNoWarning, below), and the page shows it as the lookup's
+    // error (aud-a68 (4)), or files it Cancelled when it is the operator's (kd-57).
     [Fact]
-    public async Task ACancelledStatisticsRead_IsNotAStatisticsWarning()
+    public async Task ACancelledStatisticsRead_IsNotAStatisticsWarning_AndLeavesTheLookup()
     {
         ACloudMailbox();
         _exchange.Behaviour["StatisticsCancelled"] = true;
 
-        var result = await LookedUp();
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(LookedUp);
 
-        Assert.NotNull(result.Error);
-        Assert.DoesNotContain(result.Warnings, warning => warning.StartsWith("Could not retrieve mailbox statistics", StringComparison.Ordinal));
+        Assert.True(IsACancellation(thrown), thrown.ToString());
     }
 
     // The control: statistics that read give their figures and no warning.

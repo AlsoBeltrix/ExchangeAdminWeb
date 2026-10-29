@@ -21,6 +21,7 @@ public enum ActivityShape
 /// The size an activity declares at <see cref="IActivityProgress.Begin"/>. A struct-like value
 /// with private construction so the only way to get one is through the three factories: a module
 /// cannot invent a shape, and cannot declare Steps or Items without supplying a real total.
+/// kd-58: it also carries the activity's other honesty declaration, <see cref="TakesTheCancel"/>.
 /// </summary>
 public sealed record ActivitySize
 {
@@ -34,6 +35,18 @@ public sealed record ActivitySize
 
     /// <summary>Zero for <see cref="ActivityShape.Indeterminate"/>; otherwise at least one.</summary>
     public int Total { get; }
+
+    /// <summary>
+    /// kd-58 (docs/CancellationDepth-Plan.md 3.8a). Whether the activity's work takes the operator's cancel - work still
+    /// waiting its turn is cancelled, a command already sent finishes - so that the navigation guard's prompt can say so.
+    /// False, the default, is work that leaving does not stop: the prompt says it will complete and be recorded. A page
+    /// declares it (<see cref="TakingTheCancel"/>) only once that work honours its activity's token that far; a test pins
+    /// which do (InFlightWorkGuardTests).
+    /// </summary>
+    public bool TakesTheCancel { get; private init; }
+
+    /// <summary>kd-58 3.8a. This size, declared for work that takes the operator's cancel.</summary>
+    public ActivitySize TakingTheCancel() => this with { TakesTheCancel = true };
 
     /// <summary>For work whose size cannot be known in advance. The honest default.</summary>
     public static ActivitySize Unknown { get; } = new(ActivityShape.Indeterminate, 0);
@@ -73,6 +86,9 @@ public sealed record ProgressActivity
     public string? Detail { get; init; }
     public required DateTime StartedUtc { get; init; }
     public required bool CancellationRequested { get; init; }
+
+    /// <summary>kd-58 3.8a. What the activity declared at Begin: whether its work takes the operator's cancel.</summary>
+    public bool TakesTheCancel { get; init; }
 
     /// <summary>True only when a real total is known, so a determinate bar is honest.</summary>
     public bool IsDeterminate => Shape != ActivityShape.Indeterminate && Total > 0;
@@ -446,6 +462,7 @@ public sealed class ActivityProgressService : IActivityProgress, IDisposable
                     Detail = _detail,
                     StartedUtc = StartedUtc,
                     CancellationRequested = _cts.IsCancellationRequested,
+                    TakesTheCancel = _size.TakesTheCancel,
                 };
             }
         }

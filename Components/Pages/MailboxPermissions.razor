@@ -379,7 +379,7 @@
         // what BlockedSenders.ConfirmUnblock settled on for the same preamble. ProcessBulk below
         // and ExecuteOnPrem both already opened above their own try; this handler was the odd one.
         using var activity = Progress.Begin(
-            "Mailbox Permissions", $"Updating permissions on {target}", ActivitySize.Unknown);
+            "Mailbox Permissions", $"Updating permissions on {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the single change takes the cancel (kd-81)
 
         // The try opens here, below the raise and the activity, rather than below the preflight.
         // An await between a raise and its try has no finally behind it: a throw or an unbounded
@@ -656,7 +656,7 @@
         // The on-prem write is its own operation and its own wait - SubmitSingle has already
         // returned by the time the operator confirms, so its activity is long gone.
         using var onPremActivity = Progress.Begin(
-            "Mailbox Permissions", $"Updating on-premises permissions on {onPremTarget}", ActivitySize.Unknown);
+            "Mailbox Permissions", $"Updating on-premises permissions on {onPremTarget}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the on-premises change takes the cancel (kd-59, kd-58 A6)
 
         var target = onPremTarget!;
         var user = onPremUser!;
@@ -715,7 +715,7 @@
             if (isAdd && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogMailboxPermission(currentUser, clientIpAddress, $"Add{permType}_SelfGrantAttemptAtWrite", target, user, permType, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox);
             step = PermissionChangeFailure.TheWrite;
-            var opResult = isAdd // kd-59: the activity's token, the one the navigation guard cancels, to the write's credential fetch
+            var opResult = isAdd // kd-59, kd-58 A6: the activity's token, the one the navigation guard cancels, to every step before the write's first command - its credential fetch, the server's queue, the session's open and the connect
                 ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs, onPremActivity.CancellationToken)
                 : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, onPremValidation.Mailbox, user, fullAccess, sendAs, onPremActivity.CancellationToken);
             step = PermissionChangeFailure.AfterTheWrite;
@@ -752,9 +752,9 @@
         }
         catch (Exception ex) when (PermissionChangeFailure.CancelledBeforeItWasSent(ex, onPremActivity.CancellationToken))
         {
-            // kd-59. The operator's cancel stopped the write's credential fetch, before its command was sent: not a change that
-            // failed - filed Cancelled, in the app's phrase for a cancel (kd-57), with nothing written; and, as for any write
-            // never sent, no notification. Every other throw, a cancellation the operator did not ask for included, is below.
+            // kd-59, kd-58 A6. The operator's cancel stopped the write before its command was sent - at its credential fetch, the
+            // server's queue, the session's open or the connect: not a change that failed - filed Cancelled (kd-57), with nothing
+            // written; and, as for any write never sent, no notification. Every other throw, an unasked-for cancel too, is below.
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(PermissionChangeFailure.CancelledBeforeTheWrite, () => Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType, false, ticket, errorDetail: PermissionChangeFailure.CancelledBeforeTheWrite,
                 extra: AuditService.FiledCancelled(onPremExtra)), Logger, target, PermissionChangeFailure.CancelledChangeRecord));

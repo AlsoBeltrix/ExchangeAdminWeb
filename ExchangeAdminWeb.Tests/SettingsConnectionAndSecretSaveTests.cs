@@ -440,7 +440,7 @@ public sealed class SettingsConnectionAndSecretSaveTests : IDisposable
         var other = _h.CreateOtherSectionAccess();
         Assert.Equal(SectionAccessSaveStatus.Saved, other.SaveEditedAliases(
             new Dictionary<string, string[]> { [Module] = [GroupA, GroupB] },
-            new Dictionary<string, string[]> { [Module] = [GroupA] }).Status);
+            new Dictionary<string, string[]> { [Module] = [GroupA] }, TestContext.Current.CancellationToken).Status);
         other.SaveGroupDisplayNames(new Dictionary<string, string> { [GroupA] = "EXAMPLE\\New-A" });
         Assert.True(AccessList(page, Module).Remove(GroupB));
         var token = _h.SectionStore.GetChangeToken();

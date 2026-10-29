@@ -381,7 +381,7 @@ public class AdminPageDirtyStateTests
     /// </summary>
     [Theory]
     [InlineData("ModuleConfig.razor", "private async Task ReloadAsync()", "dirty.Clear();")]
-    [InlineData("ModuleConfig.razor", "private async Task SaveModuleEnablementAsync()", "dirty.SetCount(SecStatus, moduleEnabled == moduleEnabledBaseline ? 0 : 1);")]
+    [InlineData("ModuleConfig.razor", "private async Task SaveModuleEnablementAsync(CancellationToken pageGaveUp = default)", "dirty.SetCount(SecStatus, moduleEnabled == moduleEnabledBaseline ? 0 : 1);")]
     [InlineData("AdminSettings.razor", "private async Task DiscardChanges()", "dirty.Clear();")]
     [InlineData("AdminSettings.razor", "private async Task SaveEnablement()", "RecountModules();")]
     public void ClearingDirtyStateIsRenderedBeforeAForcedReload(string page, string signature, string clear)

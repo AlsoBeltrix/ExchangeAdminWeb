@@ -119,8 +119,9 @@ public sealed class ModuleConfigRepository
     /// returns the keys to upsert, or null to store nothing, in which case the transaction is rolled back
     /// and nothing, not even the change token, is written. Keys it does not return are not touched.
     /// </summary>
+    /// <param name="cancellationToken">kd-58 B2. The save's own token, handed to the store's write (B1): a cancel before the commit leaves nothing written. None, the default, writes as before.</param>
     public ModuleConfigConditionalUpdate UpdateModuleIf(
-        string moduleId, Func<Dictionary<string, string>?, IReadOnlyDictionary<string, string>?> decide)
+        string moduleId, Func<Dictionary<string, string>?, IReadOnlyDictionary<string, string>?> decide, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(decide);
         try
@@ -143,7 +144,7 @@ public sealed class ModuleConfigRepository
                 MarkPresent(connection, transaction, moduleId);
                 InsertValues(connection, transaction, moduleId, values);
                 return new ModuleConfigConditionalUpdate(true, before, ReadModule(connection, moduleId, transaction));
-            });
+            }, cancellationToken);
         }
         catch (NothingWritten nothing)
         {

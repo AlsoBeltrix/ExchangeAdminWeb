@@ -169,7 +169,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["OutOfOffice"] = true
         };
 
-        service.SetModulesEnabled(enablement);
+        service.SetModulesEnabled(enablement, TestContext.Current.CancellationToken);
 
         // Read back through a new instance, so nothing is answered from the one that wrote.
         var readBack = CreateService();
@@ -186,14 +186,14 @@ public class ModuleEnablementServiceTests : IDisposable
         {
             ["MailboxPermissions"] = true,
             ["CalendarPermissions"] = true
-        });
+        }, TestContext.Current.CancellationToken);
         Assert.True(CreateService().IsModuleRawEnabled("MailboxPermissions"));
 
         service.SetModulesEnabled(new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = false,
             ["CalendarPermissions"] = false
-        });
+        }, TestContext.Current.CancellationToken);
 
         Assert.True(_repository.TryGetAll(out var readBack));
         Assert.False(readBack["MailboxPermissions"]);
@@ -235,7 +235,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["RecipientLookup"] = true,
             ["OutOfOffice"] = true
         };
-        service.SetModulesEnabled(enablement);
+        service.SetModulesEnabled(enablement, TestContext.Current.CancellationToken);
 
         // Create a new service instance to read from file (no caching)
         var service2 = CreateService();

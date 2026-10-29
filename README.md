@@ -61,6 +61,10 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
 - Exports are kept for 30 days. The app deletes expired ones itself at startup, in the same pass that prunes old job records — there is nothing to install and no scheduled task. A row whose export could not be saved shows as Failed, distinct from an expired one
+- **Leaving the page** during a search, a delivery detail or a detail download cancels it at its next step: while it waits
+  for a free Exchange Online connection or for the on-premises server, between a wide search's windows, as its on-premises
+  session opens, between connect attempts, or between its on-premises reads. It is filed `Cancelled`, "Cancelled by the
+  operator". A read already sent to Exchange finishes first.
 - Section access key: `MessageTrace`
 
 ### Recipient Lookup (`/recipient-lookup`)
@@ -131,6 +135,9 @@ retention holds are left out.
 
 - **Audit:** each lookup writes a `Lookup` row: `target` is what was typed, and `resolvedAddress` the primary address it
   found. A cancelled lookup is filed `Cancelled`, in the words "Cancelled by the operator".
+- **Leaving the page** during a lookup cancels it at its next step: while it waits for a free Exchange Online connection,
+  or between its Exchange Online reads; on-premises, while it waits for the server, as its session opens, between connect
+  attempts, or between its reads. A read already sent to Exchange is never interrupted; it finishes first.
 - **Requires:** the Exchange Online connection; for on-premises mailboxes, `OnPremExchange:ServerUri` and the module's
   own on-premises Exchange credential (`DelineaSecretId`). Without them an on-premises mailbox reads "Could not be
   determined", saying why.
@@ -372,6 +379,14 @@ Room mailbox metadata configuration and booking policy management.
   - **Executive** — Exec VP/admin groups, 1080-day window
 - CSV bulk upload for multi-room setup
 - Room list management (add/remove rooms from room lists)
+- **Leaving the page** during a single-room setup cancels it at its next step before Set-Place - the room read, the room
+  list's resolution, a preflight's Active Directory step, or the wait for a free Exchange Online connection: nothing is
+  written, and it is filed `Cancelled`, "Cancelled by the operator. Nothing was written.". Once Set-Place is sent the setup
+  runs to its end, so the room is never left half-configured.
+- **Cancelling a Room Finder job** on the Bulk Jobs page stops the row in hand at the same steps: nothing is written for it,
+  its audit entry is `Cancelled`, "Cancelled by the operator. Nothing was written.", under the submitter's name and ticket,
+  and it is not listed among the job's row outcomes. A row already past Set-Place finishes and is recorded. A row stopped by
+  the service shutting down is filed `Failed`, "The service stopped before this row was written. Nothing was written.".
 - Section access key: `ConferenceRooms`
 
 ### Emergency Disable (`/emergency-disable`)
@@ -911,10 +926,11 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 
 ## Architecture
 
-- **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled.
+- **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled. A call whose caller has cancelled - the operator leaving the page - stops waiting for a free connection (up to two minutes) or for its turn to connect (up to ninety seconds) at once, and gives back a connection it has not used yet. No command already sent to Exchange is ever stopped: it runs to its end. A connection whose command was ever stopped is discarded, never lent to the next caller.
 - **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
-- **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff).
+- **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff). The on-premises work that takes the operator's cancel - Recipient Lookup's reads, the permission pages' mailbox location read, both permission pages' on-premises changes and Message Analysis' on-premises search and detail - stops waiting for one of the two (up to two minutes) at once, and looks at the cancel again as the session opens, before each connect attempt, during the pause between attempts, between its reads and, for a change, immediately before its first command is sent; a connect attempt or a command already sent runs to its end, and the session is still removed.
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.
+- **Leaving a page while work runs:** the app asks first, and the prompt says what leaving does to each operation still running. Work that takes the cancel - today Recipient Lookup's lookup, a single Mailbox or Calendar Permissions change, an on-premises Mailbox or Calendar Permissions change, a Conference Rooms single-room setup, a Message Analysis search, delivery detail or detail download, and a Blocked Senders unblock - is cancelled on OK, and the prompt says what that does: work still waiting its turn is cancelled; a command already sent to Exchange or the directory finishes and is recorded, and anything already changed stays changed; a bulk job is not affected, because it never depended on the page. For any other work it says "Leaving will not stop the operation in progress; it will complete and be recorded."
 - **Audit + Operation Trace:** Append-only JSONL files rotated daily/weekly/monthly; every audit transaction includes a correlated `operationId` plus structured `operation.*` records for SIEM ingestion.
 - **Extended Logging:** Separate JSONL diagnostic log with runtime-configurable level (Admin Settings). Viewable from Event Log page.
 - **Credential Management:** Delinea Secret Server SDK auth via Windows PasswordVault. Per-module secrets isolated in Secret Server.

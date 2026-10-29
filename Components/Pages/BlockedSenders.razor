@@ -349,7 +349,7 @@
         // and protection checks, the Exchange Online write, the notification. A refusal ends at
         // the step it reached, which is what happened, not a lie about size.
         using var activity = Progress.Begin(
-            "Blocked Senders", $"Unblocking {address}", ActivitySize.Steps(3));
+            "Blocked Senders", $"Unblocking {address}", ActivitySize.Steps(3).TakingTheCancel()); // kd-58 3.8a: the unblock takes the cancel (kd-6, kd-76)
 
         // Everything from here to the opening of the operation scope runs inside one catch. The
         // authorization round trip, the protection gate and BeginOperation can all throw, and an

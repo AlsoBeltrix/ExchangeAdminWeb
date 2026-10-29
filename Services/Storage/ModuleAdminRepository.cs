@@ -79,7 +79,8 @@ public sealed class ModuleAdminRepository
     /// other - unchanged, and written, or already as wanted, and reported (aud-a28k's enablement reasoning, and
     /// the aud-a26k rule).
     /// </remarks>
-    public ModuleAdminChangeOutcome ApplyChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove)
+    /// <param name="cancellationToken">kd-58 B2. The save's own token, handed to the store's write (B1): a cancel before the commit leaves nothing written. None, the default, writes as before.</param>
+    public ModuleAdminChangeOutcome ApplyChanges(string moduleId, IReadOnlyCollection<string> add, IReadOnlyCollection<string> remove, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(add);
         ArgumentNullException.ThrowIfNull(remove);
@@ -122,7 +123,7 @@ public sealed class ModuleAdminRepository
                 InsertGroups(connection, transaction, moduleId, inserts.ToArray());
                 return new ModuleAdminChangeOutcome(
                     true, true, before, ReadModuleGroups(connection, transaction, moduleId), alreadyApplied);
-            });
+            }, cancellationToken);
         }
         catch (NothingWritten nothing)
         {

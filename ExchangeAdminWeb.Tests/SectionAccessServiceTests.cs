@@ -224,7 +224,7 @@ public class SectionAccessServiceTests : IDisposable
             ["CalendarPermissions"] = new[] { "GroupC" }
         };
 
-        var outcome = service.SaveEditedAliases(Loaded(service, "MailboxPermissions", "CalendarPermissions"), data);
+        var outcome = service.SaveEditedAliases(Loaded(service, "MailboxPermissions", "CalendarPermissions"), data, TestContext.Current.CancellationToken);
         var result = service.GetSectionAccess();
 
         Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
@@ -238,11 +238,11 @@ public class SectionAccessServiceTests : IDisposable
         var service = CreateService();
         service.SaveEditedAliases(
             Loaded(service, "MailboxPermissions", "CalendarPermissions"),
-            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "A" }, ["CalendarPermissions"] = new[] { "B" } });
+            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "A" }, ["CalendarPermissions"] = new[] { "B" } }, TestContext.Current.CancellationToken);
 
         var outcome = service.SaveEditedAliases(
             new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "A" } },
-            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "C" } });
+            new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "C" } }, TestContext.Current.CancellationToken);
 
         var result = service.GetSectionAccess();
         Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
@@ -348,7 +348,7 @@ public class SectionAccessServiceTests : IDisposable
             cmd.Transaction = tx;
             cmd.CommandText = "DROP TABLE section_access_present;";
             cmd.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         var service = CreateService();
 

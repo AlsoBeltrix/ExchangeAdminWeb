@@ -1,6 +1,7 @@
 # Cancellation Depth - Plan
 
-Status: **Approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). Not started; follows the Cloud Password Reset slices.**
+Status: **Implemented - approved 2026-10-28 (owner: "do it the right way"), with the truthful leave prompt added (section 3.8a). Every slice is on `feat/cancellation-depth` (section 15) - A4 and A5's work landed first as kd-81 - and C1 made no base bump: 2.36.0 is not deployed and absorbs the change (section 7). Two things the owner should know. Blocked Senders' unblock declares that it takes the operator's cancel, though section 3.7 lists Blocked Senders as not adopted: its work has taken the activity's token since kd-6 and kd-76, so "will not stop" would have been false there. And the leave prompt's "it will complete and be recorded", said of every activity that does not declare, is not true of a lookup that writes no audit row - Message Analysis' lookup of the operator's own address as the page loads, for one; the sentence is the supervisor's ruling, so it stands as worded until a per-activity sentence is ruled.**
+
 
 Two findings the Constitution's Planning Rules hold behind a written plan - `kd-58` ("Exchange service or shared
 infrastructure refactors") and item (12) of `aud-a67` ("persistence/storage changes") - and one new finding this
@@ -297,6 +298,21 @@ The "leaving this page will cancel the operation" prompt, wherever a page shows 
 work still waiting its turn is cancelled; a command already sent to Exchange (or the directory) finishes and is recorded;
 a bulk job is not affected because it never depended on the page. Slice A2 carries the shared wording; each module slice
 that adopts the token checks its page uses it. A test pins the wording per page; mutation: the old sentence restored.
+
+**Page-aware (the supervisor's ruling, 2026-10-28).** The prompt must be true on every page, so it is not one wording. Each
+activity declares at `Progress.Begin` whether its work takes the operator's cancel (`ActivitySize.TakingTheCancel()`), and
+the guard words the prompt from that: an activity whose work takes it gets the three cases above; one whose work does not
+gets "Leaving will not stop the operation in progress; it will complete and be recorded."; with both kinds running, each is
+named with what leaving does to it. **No page's activity declares it until its slice adopts the token**: Recipient Lookup's
+lookup (A2, A3) and the permission pages' single change (kd-81, A2) declare it from the start; the permission pages'
+on-premises change at A6 and A7; Conference Rooms' single-room setup at A8; Message Trace's reads at A10. Blocked Senders'
+unblock declares it too, although this plan puts no token on its borrow (3.7): its work has taken the activity's token since
+kd-6 and kd-76 - an unblock not yet sent is never sent, one already sent runs on and is recorded - so "will not stop" would
+be false there. Until A8 and A10, Conference Rooms' setup and Message Trace's reads, which already honour the cancel in
+places (kd-59, kd-70, kd-73, kd-75), are told "will not stop": an under-promise while the branch is in progress, which their
+slices close. `InFlightWorkGuardTests` pins, per page, exactly which activities declare it, and the prompt for each kind;
+mutations: a declaration added or removed, the guard's choice ignored, the declaration lost on its way to the guard.
+
 ### 3.9 Audit rows
 
 No new action, category or field. Each module files a cancel through its existing row and kd-57's `FiledCancelled`, in
@@ -472,6 +488,10 @@ one save per load from the button, one more per route change past the bound, eac
   Conference Rooms (A8, A9), Message Trace (A10), AD Attribute Editor (B3). A change touching both layers gets both
   bumps.
 
+**At C1 (2026-10-29; the supervisor's ruling of 2026-10-28): no base bump.** 2.36.0 - the version master carries - is
+not yet deployed, and it absorbs this plan's shared changes (A1-A3, the page-aware leave prompt, B1, B2 and B3's shared
+refusal text) rather than a 2.36.1 being cut for them. The module bumps were made in their slices, as listed above.
+
 ## 8. Slices
 
 One finding per commit; each slice is one commit with its record section, its tests and its mutation proof. Order:
@@ -485,8 +505,8 @@ at a time (`.agents/decisions.md` 2026-10-26). C1 is last.
 | A3 | kd-58 | The base, on-premises: E7 (`ThrottledAsync`, the runspace open, `ConnectOnPrem`); the base's two on-premises reads, which Recipient Lookup uses | `Services/ExchangeServiceBase.cs` |
 | A4 | new (14.1) | Mailbox Permissions, the single cloud change: location read, pool wait, a check before `Submitting()`, the page's cancel catch | `Services/MailboxPermissionService.cs`, `Components/Pages/MailboxPermissions.razor` |
 | A5 | new (14.1) | Calendar Permissions, the same | `Services/CalendarPermissionService.cs`, `Components/Pages/CalendarPermissions.razor` |
-| A6 | kd-58 | Mailbox Permissions, the on-premises change: E7 before `Submitting()` | `Services/MailboxPermissionService.cs` |
-| A7 | kd-58 | Calendar Permissions, the same | `Services/CalendarPermissionService.cs` |
+| A6 | kd-58 | Mailbox Permissions, the on-premises change: E7 before `Submitting()`; and the single cloud change's own wait for a pool connection (E4; the supervisor's ruling, 2026-10-28) | `Services/MailboxPermissionService.cs`, `Components/Pages/MailboxPermissions.razor` (3.8a's declaration) |
+| A7 | kd-58 | Calendar Permissions, the same | `Services/CalendarPermissionService.cs`, `Components/Pages/CalendarPermissions.razor` (3.8a's declaration) |
 | A8 | kd-58 | Conference Rooms, single-room setup: the reads before Set-Place, the preflights' directory steps, Set-Place's pool wait | `Services/ConferenceRoomService.cs` |
 | A9 | kd-58 | Conference Rooms, Room Finder bulk rows: the job's token; the stopped row's record | `Services/ConferenceRoomService.cs`, `Services/Jobs/IConferenceRoomBulkOperations.cs`, `Services/Jobs/ConferenceRoomBulkProcessor.cs` |
 | A10 | kd-58 | Message Trace: cloud window and detail reads, their catches; the on-premises search and detail (E7) | `Services/MessageTraceService.cs` |
@@ -522,7 +542,11 @@ Per-slice notes:
   pages are line-keyed in `ClickGateRegistry`: re-anchor with `.agents/playbooks/clickgate-reanchor.md` if the line
   count moves. Reproduce the fault first (section 9).
 - **A6, A7.** `MailboxPermissionService.cs` 466 and 539, `CalendarPermissionService.cs` 407 and 480 pass their existing
-  token to `ThrottledAsync`, `ConnectOnPrem` and the E7 checks; kd-59's page catch already files the result.
+  token to `ThrottledAsync`, `ConnectOnPrem` and the E7 checks; kd-59's page catch already files the result. **Added by
+  the supervisor's ruling (2026-10-28) - kd-81's remainder:** the single cloud change hands its token to its own borrow
+  (E4) - Mailbox's `RunPooledQueryAsync`, Calendar's `RunAsync` - so a cancel while it waits for a pool connection ends it
+  at once, still before anything is sent; kd-81's look before the first write command stays, for a cancel made during the
+  reads. The page's on-premises activity declares that it takes the cancel (3.8a).
 - **A8.** Every catch on the way out lets the operator's cancel pass: the room read's (`ConferenceRoomService.cs`
   562-566 logs a warning and rethrows - no warning for a cancel) and the room-list resolution's (608-616 turns any throw
   into a refusal - filter it). Set-Place's `RunAsync` takes the token for its borrow; kd-75's in-call check stays.
@@ -601,7 +625,9 @@ own words; a cancel after the mark lets the change finish with its own result. M
 the in-call check removed; the page's cancel catch removed.
 
 **A6, A7.** As A4's, at the throttle, the runspace open and the connect, all before the mark; kd-59's
-`PermissionPagesCancellationTests` stay green.
+`PermissionPagesCancellationTests` stay green. And the cloud change's own wait (the supervisor's ruling): a cancel during
+it ends the change at once, every connection still held, nothing asked of Exchange; kd-81's look stays covered by a
+cancel during the change's reads. Mutations: each token dropped, each look removed, the page's declaration removed.
 
 **A8.** Cancelled during the room read, the room-list resolution, a preflight's directory step and Set-Place's pool wait
 (kd-75's two tests stay): each ends before Set-Place, filed Cancelled, "Nothing was written."; kd-59's
@@ -705,20 +731,32 @@ owner's (`.agents/decisions.md` 2026-10-26).
 1. That Mailbox and Calendar Permissions' single cloud change, and their on-premises change after the credential
    returns, can be made after the operator's cancel. Read from the code - the activity's token is not passed, and the
    borrow and the throttle take none; kd-59's record says the same of the on-premises half - not reproduced. A4 and A5
-   reproduce it before fixing it.
+   reproduce it before fixing it. **Reproduced at A6 for Mailbox Permissions' on-premises change**: A6's tests run against
+   the service as it was (kd-58's A6 section) - a change cancelled while it waited for the server, or once its session had
+   opened, was sent, both rights, after the cancel. **And at A7 for Calendar Permissions' on-premises change**, the same way.
 2. That PowerShell reports `Stopped` (or `Stopping`) in `InvocationStateInfo` after a stop, and `Completed` or `Failed`
    after every normal end, on this host's SDK: documented behaviour, to be confirmed by A1's tests. No pooled call uses
    a local `Select-Object -First` (none was found), which ends a pipeline early without stopping it.
+   **Settled at A1** (a probe on this host's PowerShell 7.6 SDK, recorded in kd-58's A1 section): after a stop the state
+   reads Stopped, its reason a PipelineStoppedException, Stopping reported at once on the stopping thread; a normal end
+   reads Completed. And a synchronous Invoke stopped so throws nothing - no rows, HadErrors set, no error record - so only
+   the pipeline's state tells a stop. The `Select-Object -First` point was not re-checked.
 3. That a stub pipeline blocked inside a .NET call stops at its next statement once `BeginStop` has been called and the
-   call returns - the A1 test technique.
+   call returns - the A1 test technique. **Settled at A1, with a correction**: `BeginStop` queues the stop, so the pipeline
+   stops at a later statement, not necessarily the next; the stand-in read waits, bounded, at statements a stop can land at.
 4. How the Exchange Online module's cmdlets behave under a stop: unknown, and deliberately not relied on.
 5. That a command in flight normally finishes in seconds; one that hangs holds its slot as it does today.
 6. That neither SQLite's busy wait nor a call blocked in the file system can be cut short by any cancellation
    (SQLite's native interrupt is believed not to shorten the busy handler's wait). Not relied on: no interrupt is used.
 7. That xUnit1051 flags every test call to a method that gained an optional token or a token overload; how many such
-   calls exist was not counted.
+   calls exist was not counted. Not exercised by A1-A3: the methods they gave tokens are called from test helpers, not
+   test methods, and none was raised. **Counted at B1**: the store's token overloads made it flag thirteen test calls on the
+   concrete store, in five test files; each now passes `TestContext.Current.CancellationToken` (aud-a67's B1 section).
 8. That the Room Finder bulk processor needs a narrow way to ask whether a job's cancel was the operator's (the
-   persisted cancel flag) - it has none today. The rule is fixed here; the mechanism is the implementer's.
+   persisted cancel flag) - it has none today. The rule is fixed here; the mechanism is the implementer's. **Settled at A9**:
+   a narrow seam, `IBulkJobCancelRequests.IsCancelRequested(jobId)`, implemented by `BulkJobRepository` (the flag's store)
+   and registered as that singleton; the operator's request sets the flag before it signals the job's token, the host's
+   shutdown never sets it (kd-58's A9 section).
 9. That a late save's message appears on the next module's page when its handler completes - aud-a66's existing
    mechanism, not seen in a browser.
 10. That the `ProgressRegistry` exemption for settings saves (159-162) is a settled engineering choice: it is recorded
@@ -750,7 +788,102 @@ owner's (`.agents/decisions.md` 2026-10-26).
 
 ## 15. Status and pending steps
 
-Draft. Nothing is implemented. Pending: the owner's go on the exec summary. Before A4, the supervisor admits section
-14's item 1 as a row. On approval the supervisor sets the arrangement (`.agents/repo-guidance.md`, Token Budget) and
-logs each slice in `.agents/token-log.md`. The plan closes at C1, with every slice's record, the base bump and the full
-gate on the final tree.
+Approved 2026-10-28. Section 14's item 1 was admitted as kd-81, which did A4 and A5's work before A1-A3 existed: the location
+read's token and the look inside the change before its first write - not the change's own wait for a pool connection, which
+needs A1 and A2's token on `RunPooledQueryAsync` and `RunAsync`. The supervisor sets each slice's arrangement and logs it in
+`.agents/token-log.md`. The plan closes at C1, with every slice's record, the base bump and the full gate on the final tree.
+
+Status log (each slice's record is its section in `.agents/review/findings/kd-58.md`):
+
+- 2026-10-28, **A1, the pool** - `feat/cancellation-depth` `58fdfc0d`: E1, E2, E6, the core's cancel
+  handling (3.5), the traces (3.6) and the no-stop tripwire, as section 8 says. Beyond the letter, and recorded there: E6
+  reads a stop the pipeline ever reported, not only its state now, and the core routes a stopped pipeline to Return in every
+  shape so it is never retried. A probe settled assumptions 2 and 3: a stopped synchronous Invoke throws nothing, so only the
+  pipeline's state tells a stop. The plan's "nothing in the app stops a pipeline" holds for Exchange pipelines; one
+  directory runner stops its own AD read, named as the tripwire's one exemption. No module behaviour changes in this slice;
+  the base bump is owed (C1).
+- 2026-10-28, **A2, the base's cloud side** - `feat/cancellation-depth` `d3cfcfa2`: E3
+  (`RunPooledReadAsync`, the tracker's token, the four helpers' look), E4 (`RunAsync`, `RunPooledQueryAsync`: the borrow
+  only), the read-only tripwire, the tokens on `HasCloudMailboxAsync` and both `GetMailboxLocationAsync` forms, Recipient
+  Lookup's Exchange Online read, and 3.8a's shared leave-prompt wording, pinned per page. Recipient Lookup no longer calls
+  the shared location read (the Recipient Lookup accuracy plan's S1 gave it reads of its own), so the callers whose
+  behaviour the location read's token changes are the two permission pages, through kd-81's token: Mailbox and Calendar
+  Permissions take patch bumps here, beside Recipient Lookup's. One prompt wording serves every page, so on a page whose
+  work takes no token its first case still over-promises, as the old prompt did (the record says where). The base bump
+  stays owed (C1).
+- 2026-10-28, **A3, the base's on-premises steps** - `feat/cancellation-depth` `b95ee705`: E7 for the
+  three on-premises reads the shared surface carries - the base's size read, the base's location read (the permission
+  pages') and Recipient Lookup's own recipient read (the accuracy plan's S1 replaced the base location read there): the
+  throttle's wait, a look before and after the runspace opens (`OpenOnPremRunspace`, over a new runspace seam),
+  `ConnectOnPrem`'s look before each attempt and its pause waited on the token, and a look before each read; the ten test
+  overrides take the parameter. Recipient Lookup, Mailbox and Calendar Permissions take patch bumps, as in A2. The
+  permission services' and Message Trace's own on-premises calls pass nothing until A6, A7 and A10. Assumptions 2, 3 and 7
+  are annotated in section 13. Left for the supervisor (kd-58's record): the permission changes' own wait for a pool
+  connection, part of A4/A5 that kd-81 could not reach, can now take the token through E4 - unassigned. The base bump stays
+  owed (C1).
+- 2026-10-28, **The leave prompt, page-aware** (the supervisor's ruling on A2's note; 3.8a) - `feat/cancellation-depth`
+  `dc2a0db9`: each activity declares at `Progress.Begin` whether its work takes the operator's cancel, and
+  the guard tells the three cases only to work that takes it - "Leaving will not stop the operation in progress; it will
+  complete and be recorded." to work that does not. Declared now: Recipient Lookup's lookup, the permission pages' single
+  change and Blocked Senders' unblock (kd-6, kd-76); each module slice declares its own as it adopts the token. Pinned per
+  page, over every page that begins an activity. The supervisor also assigned kd-81's remainder to A6 and A7: the
+  permission changes' own wait for a pool connection takes the token, cloud and on-premises alike. No module bump - the
+  guard is shared; the base bump stays owed (C1).
+- 2026-10-28, **A6, Mailbox Permissions** - `feat/cancellation-depth` `01a2c36e`: the on-premises change
+  takes the cancel at every step before its first command (E7) - the server's queue, a look before and after its runspace
+  opens, the connect, a last look before the mark - and the single cloud change's own wait for a pool connection takes it
+  (E4, kd-81's remainder); kd-81's look before the first write stays. The page's on-premises activity declares that it
+  takes the cancel (3.8a). Found and fixed in the tests: the two test classes that hold the on-premises server's two
+  slots now share a collection, so they never run at once. Mailbox Permissions 1.6.7 -> 1.6.8; the base bump stays owed.
+- 2026-10-28, **A7, Calendar Permissions** - `feat/cancellation-depth` `1a16e761`: as A6 - the
+  on-premises set and removal take the cancel at every step before their command (E7), the single cloud change's own wait
+  for a pool connection takes it (E4), and the page's on-premises activity declares it (3.8a). Beyond the letter, recorded
+  in kd-58's A7 section: the cloud removal, which the pool runs again after Exchange's pre-flight answer, hands its borrow
+  a token that stops at the removal's claim of its send - settled with the cancel under one lock - so a retry of a removal
+  already sent is never stopped (kd-59's rule; the existing test of that retry pins it). Calendar Permissions 1.4.7 ->
+  1.4.8; the base bump stays owed.
+- 2026-10-28, **A8, Conference Rooms' single-room setup** - `feat/cancellation-depth` `b9f7ed78`: the
+  room read, the room list's resolution and the room-list membership read take the cancel at their waits and between their
+  commands (E3, the read helper), each preflight's directory steps look at it before they start (E7), Set-Place's wait for
+  a connection takes it (E4), and every catch on the way lets it through - no warning, refusal or error for a cancel.
+  kd-75's look inside Set-Place's call stays. The page's setup declares that it takes the cancel (3.8a). The bulk row still
+  passes none until A9. Conference Rooms 2.19.9 -> 2.19.10; the base bump stays owed.
+- 2026-10-28, **A9, the Room Finder bulk rows** - `feat/cancellation-depth` `eb09473d`: the seam takes the
+  job's token and the service's explicit implementation passes it on, so a row's steps before Set-Place take the job's
+  cancel as the page's setup takes its activity's (A8); the processor files a row the token stopped - the operator's cancel
+  request Cancelled under the job's captured actor, address and ticket, the host stopping Failed in its own words - and lets
+  the cancel go on to the runner, which stops the batch without recording the row. Assumption 8 settled with a narrow seam,
+  `IBulkJobCancelRequests` (the job store's persisted flag). Conference Rooms 2.19.10 -> 2.19.11; the base bump stays owed.
+- 2026-10-28, **A10, Message Trace** - `feat/cancellation-depth` `da9e0a0b`: the cloud search's windows
+  and the cloud detail read on the read helper with the search's or the detail's token (E3), their catches letting the
+  cancel through; the on-premises search and detail with E7 - the server's queue, the runspace, the connect and a look
+  before each read, their catches letting it through. The search, a detail read and the detail download declare that they
+  take the cancel (3.8a). Message Trace 1.8.6 -> 1.8.7; the base bump stays owed.
+- 2026-10-28, **B1, the store** - `feat/cancellation-depth` `f129e5c0` (record: aud-a67's (12) section):
+  `IConfigStore` gains the two token writes as default members; `SqliteConfigStore` implements both, looking at C1-C4 and
+  nothing after the commit; an internal after-commit seam for the tests. The overloads made xUnit1051 flag thirteen test
+  calls on the concrete store (assumption 7, now counted); each passes the test's token. No caller in the app passes one yet.
+  No module bump.
+- 2026-10-28, **B2, the four Module Configuration saves** - `feat/cancellation-depth` `d2ef22bf`
+  (record: aud-a67's (12) section): the page makes a token per save in `StartSaveAsync` and cancels it only when the route
+  change stops waiting (`WaitForThisLoadsSavesAsync`); the status, access, configuration and admins saves pass it through
+  their services and repositories to the store (B1), and each files a cancellation of it as the page's existing PageMoved
+  refusal, in its words. Nothing after a commit takes it. The catch tripwire learned the new catch, and that
+  `StartSaveAsync` catches nothing. The test stand-in store forwards the token, holds a write inside its transaction or
+  after its commit, and its token-less writes are its token writes with none. Sixteen test calls pass the test's token
+  (xUnit1051). Found and fixed in the tests: aud-a66's E3 mutant survived the first round - the token refuses every save
+  the route change gives up on, so the moved check before the write was tested only through it - and a case for a save the
+  route change never waited for pins that check again. No module bump - the page and the services are app-wide (2.36.0's,
+  not yet deployed).
+- 2026-10-28, **B3, the attribute allowlist save** - `feat/cancellation-depth` `d5120466` (record: aud-a67's (12)
+  section): the page hands the allowlist save its token, and the save passes it to
+  `SaveAllowlistAndAudit`, which passes it to `ReplaceAllowlist` and the store; a cancellation of it is the service's own
+  PageMoved refusal, recorded by the service and returned, in the page's words - now `SettingsSaveAudit.PageMovedRefusal`,
+  which the page's constant points to - and the page writes nothing for it. The catch tripwire holds that the page catches
+  none; a source pin holds the service's catch to its own token. Twelve test calls pass the test's token (xUnit1051). AD
+  Attribute Editor 1.7.4 -> 1.7.5.
+- 2026-10-29, **C1, the records** - `feat/cancellation-depth`, the commit that adds this line: no base bump - 2.36.0 is
+  not deployed and absorbs the change (section 7's note, the supervisor's ruling); this plan's Status to Implemented, with
+  the two things the owner should know; kd-58 closed, aud-a67 (12) closed, kd-81's on-premises half closed, and their
+  rows in `.agents/review/index.md`; the full gate on the final tree (kd-58's record). `.agents/state.md` and
+  `.agents/token-log.md` are the supervisor's, not edited here.

@@ -56,7 +56,7 @@ public sealed class SqliteBusyWaitTests
         Execute(holder, "BEGIN IMMEDIATE;");
 
         var watch = Stopwatch.StartNew();
-        var busy = Assert.Throws<SqliteException>(() => store.Write((_, _) => { }));
+        var busy = Assert.Throws<SqliteException>(() => store.Write((_, _) => { }, TestContext.Current.CancellationToken));
         watch.Stop();
         Execute(holder, "ROLLBACK;");
 
@@ -120,7 +120,7 @@ public sealed class SqliteBusyWaitTests
             command.Transaction = transaction;
             command.CommandText = "INSERT INTO app_setting (key, value) VALUES ('busy-wait', 'written');";
             command.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
         watch.Stop();
         await release;
 

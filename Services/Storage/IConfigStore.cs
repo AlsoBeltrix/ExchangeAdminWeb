@@ -44,4 +44,24 @@ public interface IConfigStore
 
     /// <summary>Write overload for operations with no return value.</summary>
     void Write(Action<SqliteConnection, SqliteTransaction> write);
+
+    /// <summary>
+    /// kd-58 B1 (docs/CancellationDepth-Plan.md 4.3, 4.4; aud-a67 (12)). The write, with a token the store looks at before it
+    /// commits and never after: a cancel before the commit leaves nothing written - the transaction, its change-token bump
+    /// included, rolls back whole - and a cancel during or after the commit is not honoured, the write returning its result.
+    /// This default looks once and then writes, for the stand-ins that implement only the token-less form;
+    /// <see cref="SqliteConfigStore"/> looks at each of its four points itself.
+    /// </summary>
+    T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Write(write);
+    }
+
+    /// <summary>kd-58 B1. The no-result write with a token, as the overload above.</summary>
+    void Write(Action<SqliteConnection, SqliteTransaction> write, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Write(write);
+    }
 }

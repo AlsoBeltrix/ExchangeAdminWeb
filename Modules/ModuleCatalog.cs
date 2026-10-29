@@ -190,7 +190,20 @@ public sealed class ModuleCatalog
             // written, filed Cancelled, no one notified - where the change was made once a connection freed and filed and
             // notified as made. The location read before it takes the cancel at its on-premises credential fetch. A change
             // already sent runs to its end; the CSV run is unchanged.
-            Version = "1.6.5",
+            // 1.6.6: the location read's Exchange Online half takes the operator's cancel too (kd-58, CancellationDepth A2,
+            // through the shared read): a cancel while it waits for a free Exchange Online connection, or before its read is
+            // sent, ends the change at once - "Cancelled by the operator before the change was sent. Nothing was written." -
+            // where it waited for a connection and read first. The leave prompt states what a cancel does and does not stop.
+            // 1.6.7: and the location read's on-premises half (kd-58, CancellationDepth A3, through the shared read): a cancel
+            // while it waits for the on-premises server, as its session opens, between connect attempts or between its two
+            // reads ends the change there, nothing written. The on-premises change itself is unchanged until its own slice.
+            // 1.6.8: the on-premises change takes the operator's cancel at every step before its first command (kd-58,
+            // CancellationDepth A6): a cancel while it waits for the on-premises server, as its session opens, between connect
+            // attempts or after the connect ends it there - "Cancelled by the operator before the change was sent. Nothing was
+            // written.", filed Cancelled, no one notified - where it waited its turn, connected and was sent. And the single
+            // Exchange Online change's own wait for a free connection takes it: a cancel there ends the change at once, nothing
+            // read or sent. A command already sent runs to its end. The leave prompt says so for the on-premises change too.
+            Version = "1.6.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -248,7 +261,19 @@ public sealed class ModuleCatalog
             // removed once a connection freed and filed and notified as made. The location read before it takes the cancel at
             // its on-premises credential fetch. A change already sent runs to its end, the Set's fallback Add included; the CSV
             // run is unchanged.
-            Version = "1.4.5",
+            // 1.4.6: as Mailbox Permissions 1.6.6 - the location read's Exchange Online half takes the operator's cancel too
+            // (kd-58, CancellationDepth A2): a cancel while it waits for a connection, or before its read is sent, ends the
+            // change at once, nothing written. The leave prompt states what a cancel does and does not stop.
+            // 1.4.7: as Mailbox Permissions 1.6.7 - and the location read's on-premises half (kd-58, CancellationDepth A3): a
+            // cancel while it waits for the on-premises server, as its session opens, between connect attempts or between its
+            // reads ends the change there, nothing written. The on-premises change itself is unchanged until its own slice.
+            // 1.4.8: as Mailbox Permissions 1.6.8 (kd-58, CancellationDepth A7) - the on-premises change takes the operator's
+            // cancel at every step before its command: a cancel while it waits for the on-premises server, as its session opens,
+            // between connect attempts or after the connect ends it there, nothing written, filed Cancelled, no one notified. And
+            // the single Exchange Online change's own wait for a free connection takes it: a cancel there ends the change at
+            // once, nothing read or sent - the removal's only until it claims its send, so a removal the pool runs again after
+            // Exchange's pre-flight answer still runs. A command already sent runs to its end.
+            Version = "1.4.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -562,7 +587,11 @@ public sealed class ModuleCatalog
             // before the next window instead of after the last, filed Cancelled (kd-73).
             // 1.8.6: on the Downloadable Reports sub-page a second Download click during a download is ignored, so a
             // double click no longer reads, pushes and audits the export twice (kd-74).
-            Version = "1.8.6",
+            // 1.8.7: a search, a delivery detail and a detail download take the operator's cancel while they wait for a free
+            // Exchange Online connection or for the on-premises server, as the on-premises session opens, at its connect and
+            // between its reads (kd-58, CancellationDepth A10) - "Cancelled by the operator", filed Cancelled - where each
+            // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
+            Version = "1.8.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -617,7 +646,15 @@ public sealed class ModuleCatalog
             // that address finds lookups typed by alias or by another address; target stays what was typed (E8).
             // 1.8.0: a "Show all details" switch, off by default: every email address rather than the first 20, and every
             // property each read returned, holds left out (E7).
-            Version = "1.8.0",
+            // 1.8.1: the Exchange Online read takes the operator's cancel (kd-58, CancellationDepth A2): a cancel while it waits
+            // for a free Exchange Online connection, or between its reads, ends the lookup there - "Cancelled by the operator"
+            // - where it ran every read first; a read already sent finishes first. The leave prompt states what a cancel does
+            // and does not stop.
+            // 1.8.2: the on-premises reads take the operator's cancel too (kd-58, CancellationDepth A3): a cancel while a read
+            // waits for the on-premises server (up to two minutes), as its session opens, between connect attempts or between
+            // its reads ends the lookup there - "Cancelled by the operator" - where it waited and connected first; a read
+            // already sent finishes first.
+            Version = "1.8.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1135,7 +1172,18 @@ public sealed class ModuleCatalog
             // what it did, "The Room Type (bulk) job was removed; the job list could not be refreshed." (or why it was not
             // removed, with the same note), keeps its audit row and goes no further; before, the reload's error reached the
             // circuit (kd-82).
-            Version = "2.19.9",
+            // 2.19.10: a single-room setup takes the operator's cancel at every step before Set-Place (kd-58,
+            // CancellationDepth A8): the room read, the room list's resolution, its membership read, each preflight's Active
+            // Directory step and Set-Place's wait for a free Exchange Online connection - "Cancelled by the operator. Nothing
+            // was written.", filed Cancelled, the administrators told - where each ran to its end, and a cancel at a
+            // preflight's directory step read "City/State/Country could not be validated before writing ..." and was filed
+            // Failed. Once Set-Place is sent the setup runs on. The leave prompt says so.
+            // 2.19.11: a Room Finder job's row takes the job's cancel at the same steps (kd-58, CancellationDepth A9): cancelled
+            // on the Bulk Jobs page while a row is before Set-Place, the row ends there - nothing written, its audit entry
+            // Cancelled, "Cancelled by the operator. Nothing was written.", under the submitter and ticket, no row outcome -
+            // and the job stops; before, the row ran to its end first. A row the service's shutdown stops is filed Failed,
+            // "The service stopped before this row was written. Nothing was written."
+            Version = "2.19.11",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1630,7 +1678,9 @@ public sealed class ModuleCatalog
             // a refusal, where it showed the provider's error code (aud-a67).
             // 1.7.4: a lookup runs on the identity submitted and a save records the ticket submitted - both read
             // above their yield - and a second submit during either is ignored (kd-72).
-            Version = "1.7.4",
+            // 1.7.5: an allowlist save the Module Configuration page stops waiting for - it moved to another module - writes
+            // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
+            Version = "1.7.5",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

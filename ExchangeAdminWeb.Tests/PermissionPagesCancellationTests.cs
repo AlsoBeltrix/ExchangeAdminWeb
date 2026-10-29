@@ -97,7 +97,7 @@ public sealed class PermissionPagesCancellationTests : IDisposable
                 ? Task.FromException<(string username, string password, string domain)?>(failure)
                 : base.GetModuleCredentialsAsync(purpose, cancellationToken);
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
         {
             Connect?.Invoke();
             _h.DefineOnPremSession(ps);
@@ -121,7 +121,7 @@ public sealed class PermissionPagesCancellationTests : IDisposable
                 ? Task.FromException<(string username, string password, string domain)?>(failure)
                 : base.GetModuleCredentialsAsync(purpose, cancellationToken);
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
         {
             Connect?.Invoke();
             _h.DefineOnPremSession(ps);

@@ -448,7 +448,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             new("department", "Department", "Choice", new[] { "IT", "HR" }, true, false, null, null),
             new("title", "Job Title", "String", null, false, true, 100, null)
         };
-        var saved = service.SaveAllowlistAndAudit(newAttrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        var saved = service.SaveAllowlistAndAudit(newAttrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
         Assert.True(saved.Success, saved.Error);
 
         // Subsequent get should reflect the new data
@@ -567,7 +567,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Contains("Job Title", service.LegacyAllowlistImportRefusal, StringComparison.Ordinal);
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("department", "Department", "String", null, false, true, null, null)],
-            service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+            service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
         Assert.Contains("config/ad-editable-attributes.json", result.Error, StringComparison.Ordinal);
@@ -638,7 +638,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             mark.Transaction = tx;
             mark.CommandText = "INSERT INTO editable_attribute_present (marker) VALUES (1) ON CONFLICT(marker) DO NOTHING;";
             mark.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
         service.InvalidateAllowlistCache();
 
         Assert.Null(service.GetAllowlist());
@@ -686,7 +686,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             cmd.Transaction = tx;
             cmd.CommandText = "DROP TABLE editable_attribute;";
             cmd.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
 
         // Inside the throttle the cache still hands back the stale-but-valid list...
         var stillCached = service.GetAllowlist();
@@ -732,12 +732,12 @@ public class ADAttributeEditorServiceTests : IDisposable
                 "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) " +
                 "VALUES ('department', 'Department', 'Choice', '{not valid json', 0, 0, 1);";
             insert.ExecuteNonQuery();
-        });
+        }, TestContext.Current.CancellationToken);
         Assert.Same(cached, service.GetAllowlist());
 
         var result = service.SaveAllowlistAndAudit(
             [new EditableAttribute("title", "Title", "String", null, false, true, null, null)],
-            loaded.Version, "EXAMPLE\\admin", "10.0.0.9");
+            loaded.Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
 
         Assert.False(result.Success);
         Assert.True(result.StoreCorrupt);
@@ -804,7 +804,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             new("department", "Department", "Choice", new[] { "IT", "HR" }, true, false, null, null)
         };
 
-        var saved = service.SaveAllowlistAndAudit(attrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9");
+        var saved = service.SaveAllowlistAndAudit(attrs, service.LoadAllowlistForEditing().Version, "EXAMPLE\\admin", "10.0.0.9", TestContext.Current.CancellationToken);
         Assert.True(saved.Success, saved.Error);
         service.InvalidateAllowlistCache();
 

@@ -364,7 +364,7 @@
         // what BlockedSenders.ConfirmUnblock settled on for the same preamble. ProcessBulk below
         // and ExecuteOnPrem both already opened above their own try; this handler was the odd one.
         using var activity = Progress.Begin(
-            "Calendar Permissions", $"Updating calendar permissions on {target}", ActivitySize.Unknown);
+            "Calendar Permissions", $"Updating calendar permissions on {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the single change takes the cancel (kd-81)
 
         try
         {
@@ -609,7 +609,7 @@
         // Its own operation and its own wait: SubmitSingle returned long before the operator
         // confirmed, so its activity is gone.
         using var onPremActivity = Progress.Begin(
-            "Calendar Permissions", $"Updating on-premises calendar permissions on {onPremTarget}", ActivitySize.Unknown);
+            "Calendar Permissions", $"Updating on-premises calendar permissions on {onPremTarget}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the on-premises change takes the cancel (kd-59, kd-58 A7)
 
         var target = onPremTarget!;
         var user = onPremUser!;
@@ -668,7 +668,7 @@
             }
             if (isSet && await Validator.ValidateSelfGrantAsync(onPremAuthState.User, user) is { } selfGrantError) { result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(SelfGrantRefusalRecord.AtWrite(selfGrantError), () => Audit.LogCalendarPermission(currentUser, clientIpAddress, "SetCalendar_SelfGrantAttemptAtWrite", target, user, level, false, ticket, errorDetail: selfGrantError), Logger, target)); return; }
             onPremExtra = ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote), onPremValidation.Mailbox); step = PermissionChangeFailure.TheWrite; PermissionResult opResult;
-            if (isSet) // kd-59: the activity's token, the one the navigation guard cancels, to the write's credential fetch
+            if (isSet) // kd-59, kd-58 A7: the activity's token, the one the navigation guard cancels, to every step before the write's command - its credential fetch, the server's queue, the session's open and the connect
                 opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, access.ToString(), onPremActivity.CancellationToken);
             else
                 opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, onPremValidation.Mailbox, user, onPremActivity.CancellationToken);
@@ -695,9 +695,9 @@
         }
         catch (Exception ex) when (PermissionChangeFailure.CancelledBeforeItWasSent(ex, onPremActivity.CancellationToken))
         {
-            // kd-59. As Mailbox Permissions' handler: the operator's cancel stopped the write's credential fetch, before its
-            // command was sent - filed Cancelled, in the app's phrase for a cancel (kd-57), with nothing written; and, as for any
-            // write never sent, no notification. Every other throw, a cancellation the operator did not ask for included, is below.
+            // kd-59, kd-58 A7. As Mailbox Permissions' handler: the operator's cancel stopped the write before its command was
+            // sent - at its credential fetch, the server's queue, the session's open or the connect - filed Cancelled (kd-57), with
+            // nothing written; and, as for any write never sent, no notification. Every other throw, an unasked-for cancel too, is below.
             result = outcome = PermissionResult.Fail(SelfGrantRefusalRecord.Banner(PermissionChangeFailure.CancelledBeforeTheWrite, () => Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level, false, ticket, errorDetail: PermissionChangeFailure.CancelledBeforeTheWrite,
                 extra: AuditService.FiledCancelled(onPremExtra)), Logger, target, PermissionChangeFailure.CancelledChangeRecord));

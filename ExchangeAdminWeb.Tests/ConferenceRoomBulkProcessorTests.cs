@@ -37,11 +37,16 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         public Func<string, RoomOperationResult> Result = email =>
             new RoomOperationResult { Email = email, Success = true, Message = "ok" };
 
+        // kd-58 A9. The token each Room Finder row was handed.
+        public readonly List<CancellationToken> FinderTokens = new();
+
         public Task<RoomOperationResult> SetRoomMetadataAndListAsync(string roomEmail, ValidatedMailbox? room, string city, string building, int capacity,
-            string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone)
+            string floor, string floorLabel, string displayDevice, string videoDevice, string countryOrRegion, string state, string timezone,
+            CancellationToken cancellationToken)
         {
             FinderCalls.Add(roomEmail);
             Rooms.Add(room);
+            FinderTokens.Add(cancellationToken);
             return Task.FromResult(Result(roomEmail));
         }
 
@@ -161,7 +166,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         });
 
         var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, enablement, trace, audit, email,
-            NullLogger<ConferenceRoomBulkProcessor>.Instance);
+            NullLogger<ConferenceRoomBulkProcessor>.Instance, CancelRequests);
 
         return new Fixture { Rooms = rooms, Pp = pp, Audit = audit, Email = email, SectionAccess = sectionAccess, Enablement = enablement, Processor = processor };
     }
@@ -197,6 +202,40 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             PayloadJson = JsonSerializer.Serialize(payload),
             SubmittedAtUtc = DateTime.UtcNow
         };
+    }
+
+    /// <summary>kd-58 A9. The job store's cancel flag, as the processor reads it: no cancel requested unless a test says so.</summary>
+    private IBulkJobCancelRequests CancelRequests { get; } = Substitute.For<IBulkJobCancelRequests>();
+
+    // kd-58 A9. A Room Finder row hands the job's token to the room service - its steps before Set-Place take it.
+    [Fact]
+    public async Task AFinderRow_HandsTheJobsTokenToTheRoomService()
+    {
+        var f = CreateFixture();
+        using var job = new CancellationTokenSource();
+
+        await f.Processor.ProcessRowAsync(FinderJob("AllUsers", "room1@x"), 0, job.Token);
+
+        Assert.Equal(job.Token, Assert.Single(f.Rooms.FinderTokens));
+    }
+
+    // kd-58 A9, kd-57's rule at the processor: a cancellation the job did not ask for - the room service ends a row so while the
+    // job's token is live - is a row that failed, in its own words, as before; only a cancel of the job's own token goes on
+    // to the runner as one.
+    [Fact]
+    public async Task AFinderRowsCancellation_TheJobDidNotAskFor_IsARowThatFailed()
+    {
+        var f = CreateFixture();
+        f.Rooms.Result = _ => throw new OperationCanceledException("the sign-in was abandoned");
+        using var job = new CancellationTokenSource();
+
+        var outcome = await f.Processor.ProcessRowAsync(FinderJob("AllUsers", "room1@x"), 0, job.Token);
+
+        Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
+        Assert.Equal("the sign-in was abandoned", outcome.Message);
+        f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
+            "room1@x", false, "INC1", errorDetail: "the sign-in was abandoned", oldValues: Arg.Any<Dictionary<string, object?>?>(),
+            newValues: Arg.Any<Dictionary<string, object?>?>(), extra: Arg.Is<Dictionary<string, object?>?>(x => x == null || !x.ContainsKey("result")));
     }
 
     [Fact]

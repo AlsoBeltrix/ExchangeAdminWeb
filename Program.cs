@@ -88,6 +88,9 @@ try
     var jobsDbPath = Path.Combine(builder.Environment.ContentRootPath, "config", "exchangeadmin-jobs.db");
     builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Jobs.BulkJobRepository(
         new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(jobsDbPath)));
+    // kd-58 A9: the persisted cancel flag, for a processor to tell the operator's cancel from the host stopping.
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.IBulkJobCancelRequests>(sp =>
+        sp.GetRequiredService<ExchangeAdminWeb.Services.Jobs.BulkJobRepository>());
 
     // Anonymous usage telemetry (docs/UsageTelemetry-Plan.md, AC1). A THIRD operational SQLite
     // database in the same deploy-excluded config/ directory, separate from both the shared

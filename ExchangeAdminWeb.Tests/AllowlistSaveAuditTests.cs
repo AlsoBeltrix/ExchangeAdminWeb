@@ -301,6 +301,34 @@ public sealed class AllowlistSaveAuditTests : IDisposable
             Assert.Equal(Text(records[1], property), Text(records[0], property));
     }
 
+    // ---- kd-58 B3: a save the Module Configuration page gave up on -----------------------------
+
+    /// <summary>
+    /// kd-58 B3 (docs/CancellationDepth-Plan.md 4.6). The save hands the page's token to the store's write, and a
+    /// cancellation of that token - the page's route change stopped waiting, and the store rolled the write back - is this
+    /// service's own PageMoved refusal, in the page's words: caught for its own token only, ahead of the catch that records a
+    /// failure. SettingsModuleMoveTests drives it through the page; this holds its shape, since no case can tell a catch
+    /// filtered on that token from one that takes any cancellation.
+    /// </summary>
+    [Fact]
+    public void ASaveThePageGaveUpOn_IsTheServicesOwnPageMovedRefusal_ForItsOwnTokenOnly()
+    {
+        var service = RazorSyntax.CommentsBlanked(File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Services", "ADAttributeEditorService.cs")));
+        var save = AuditCategoryFilingTests.MethodBody(service, "public AllowlistSaveResult SaveAllowlistAndAudit(");
+
+        Assert.Contains("}, cancellationToken);", save, StringComparison.Ordinal);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(save, @"catch \((?:OperationCanceled|TaskCanceled)Exception\b"));
+        var cancel = save.IndexOf("catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)", StringComparison.Ordinal);
+        Assert.True(cancel >= 0, "the save no longer takes a cancellation of its own token as its refusal");
+        Assert.True(save.IndexOf("catch (Exception ex)", StringComparison.Ordinal) > cancel,
+            "the cancellation's catch must come ahead of the catch that records a failure");
+        var block = AuditCategoryFilingTests.MethodBody(save[cancel..], "catch (OperationCanceledException)");
+        Assert.Contains("LogAllowlistSaveRefused(performedBy, ip, \"PageMoved\", SettingsSaveAudit.PageMovedRefusal);", block, StringComparison.Ordinal);
+        Assert.Contains("return new(false, SettingsSaveAudit.PageMovedRefusal);", block, StringComparison.Ordinal);
+        Assert.DoesNotContain("LogAllowlistSaveFailed(", block, StringComparison.Ordinal);
+    }
+
     // ---- The two records the page writes itself ------------------------------------------------
 
     [Fact]
@@ -323,7 +351,7 @@ public sealed class AllowlistSaveAuditTests : IDisposable
         AuditCategoryFilingTests.MethodBody(
             ProgressScan.CodeView(File.ReadAllText(
                 AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "ModuleConfig.razor"))),
-            "private async Task SaveAllowlistAsync()");
+            "private async Task SaveAllowlistAsync(CancellationToken pageGaveUp = default)");
 
     [Fact]
     public void ThePageSave_WritesThroughTheAuditedSave_AndWritesNoRecordOfItsOwn()

@@ -26,7 +26,9 @@ namespace ExchangeAdminWeb.Tests;
 /// command (kd-75's shape), so a cancel during the wait ends the change with nothing sent - shown and filed Cancelled in
 /// kd-57's words, no one notified (kd-59's filing). The location read takes it where the seam exists: its on-premises
 /// credential fetch (kd-37). Nothing after the first write command looks at it, and only the activity's own token is the
-/// operator's cancel.
+/// operator's cancel. kd-58 A6 and A7 (the supervisor's ruling, 2026-10-28): the change's own wait for a pool connection takes
+/// the token too, so a cancel during it ends the change at once, nothing asked of Exchange; kd-81's look stays, for a cancel
+/// made during the change's reads.
 /// </summary>
 /// <remarks>
 /// The real services over <see cref="ExchangeWriteHarness"/>'s stand-in cmdlets on real pools; the pages' <c>SubmitSingle</c>
@@ -51,6 +53,9 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
 
     private static readonly Guid TargetMailbox = Guid.Parse("0f0f0f0f-3333-4444-8555-777777777777");
     private static readonly TimeSpan Bound = CancellableVaultCredentials.Bound;
+
+    /// <summary>kd-58: "at once" - far inside the pool's two-minute wait for a connection.</summary>
+    private static readonly TimeSpan Promptly = TimeSpan.FromSeconds(10);
 
     private readonly ExchangeWriteHarness _h = new();
     private readonly ClaimsPrincipal _jdoe;
@@ -128,36 +133,62 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
         _ => ("Remove-MailboxFolderPermission", "Remove-MailboxFolderPermission", "You must call Connect-ExchangeOnline before calling any other cmdlet."),
     };
 
-    // kd-81, the finding at the service: every connection the pool admits is held elsewhere, the change waits for one, and the
-    // operator cancels during that wait. Before, nothing looked at the token again, and once a connection freed the change was
-    // sent. The look inside the pooled call ends it there: its reads ran, its write command did not, and it leaves as a
-    // cancellation never sent - what the page files Cancelled.
+    // kd-81, the finding at the service, as kd-58 A6 and A7 leave it: every connection the pool admits is held elsewhere, the
+    // change waits for one, and the operator cancels during that wait. Before kd-81 nothing looked at the token again and the
+    // change was sent once a connection freed; kd-81's look inside the call ended it there, its reads run. Now the wait takes
+    // the token (E4): the change ends at once - every connection still held - with nothing asked of Exchange, no read and no
+    // write, and leaves as a cancellation never sent.
     [Theory]
     [MemberData(nameof(Changes))]
-    public async Task ACancelWhileTheChangeWaitsForAPoolConnection_SendsNothing_AndLeavesAsACancelNeverSent(string page, bool grant)
+    public async Task ACancelWhileTheChangeWaitsForAPoolConnection_EndsItAtOnce_NothingAsked(string page, bool grant)
     {
         using var cancel = new CancellationTokenSource();
         var held = await HoldEveryPoolConnection(_h.Pool);
+        var change = Task.FromResult(PermissionResult.Fail("not started"));
         Exception? outcome;
         try
         {
-            var change = Change(page, grant, _h.Pool, cancel.Token);
+            change = Change(page, grant, _h.Pool, cancel.Token);
             await WaitUntil(() => BorrowsWaitingForAPoolConnection() == 1, "the change waits for a pool connection");
             Assert.False(change.IsCompleted);
             await cancel.CancelAsync();
-            ReturnOne(_h.Pool, held);
-            outcome = await Record.ExceptionAsync(() => change.WaitAsync(Bound, TestContext.Current.CancellationToken));
+
+            outcome = await Record.ExceptionAsync(() => change.WaitAsync(Promptly, TestContext.Current.CancellationToken)); // every connection still held
         }
         finally
         {
             ReturnAll(_h.Pool, held);
+            await Record.ExceptionAsync(() => change.WaitAsync(Bound, TestContext.Current.CancellationToken));
         }
 
         Assert.Empty(_h.Writes); // first: a change sent after the cancel fails here, naming what it sent
-        Assert.NotEmpty(_h.CallsTo("Get-Recipient")); // the call ran once a connection freed: its look ended it, not the wait
+        Assert.Empty(_h.Calls); // nothing asked of Exchange: the change never had a connection
         var notSent = Assert.IsType<PermissionWriteNotSubmittedException>(outcome);
         Assert.IsAssignableFrom<OperationCanceledException>(notSent.InnerException);
         Assert.True(PermissionChangeFailure.CancelledBeforeItWasSent(notSent, cancel.Token)); // what the page files Cancelled
+    }
+
+    // kd-81's look inside the call, kept: a cancel made once the change has its connection - here as it reads the recipient -
+    // is seen immediately before the first write command. Its reads ran, nothing was written, and it leaves as a cancellation
+    // never sent.
+    [Theory]
+    [MemberData(nameof(Changes))]
+    public async Task ACancelDuringTheChangesReads_SendsNothing_AndLeavesAsACancelNeverSent(string page, bool grant)
+    {
+        using var cancel = new CancellationTokenSource();
+        using var pool = Pool(observe: (_, call) =>
+        {
+            if ((string)call["__Command"]! == "Get-Recipient")
+                cancel.Cancel();
+        });
+
+        var outcome = await Record.ExceptionAsync(() => Change(page, grant, pool, cancel.Token).WaitAsync(Bound, TestContext.Current.CancellationToken));
+
+        Assert.Empty(_h.Writes); // first: a change sent after the cancel fails here, naming what it sent
+        Assert.NotEmpty(_h.CallsTo("Get-Recipient")); // its reads ran: the look before the first write ended it
+        var notSent = Assert.IsType<PermissionWriteNotSubmittedException>(outcome);
+        Assert.IsAssignableFrom<OperationCanceledException>(notSent.InnerException);
+        Assert.True(PermissionChangeFailure.CancelledBeforeItWasSent(notSent, cancel.Token));
     }
 
     // kd-76's shape: a token already cancelled - the operator cancelled during the page's checks before the change - starts
@@ -208,13 +239,14 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
 
     // ---- the pages ---------------------------------------------------------------------------------------------------
 
-    // kd-81, the finding at the page: the activity's token cancelled while the change waits for a pool connection - every
-    // connection the pool admits held elsewhere once the location read has given its own back. Before, the change was made once
-    // a connection freed, and filed and notified as made. Now it ends there, nothing written: shown and filed Cancelled in
-    // kd-57's words, and no one told - not the administrators, the user or the mailbox owner.
+    // kd-81, the finding at the page, as kd-58 A6 and A7 leave it: the activity's token cancelled while the change waits for a
+    // pool connection - every connection the pool admits held elsewhere once the location read has given its own back. Before
+    // kd-81 the change was made once a connection freed, and filed and notified as made; kd-81 ended it there, its reads run.
+    // Now it ends at once, every connection still held: the change's call never runs, nothing is written, and it is filed
+    // Cancelled in kd-57's words with no one told - not the administrators, the user or the mailbox owner.
     [Theory]
     [MemberData(nameof(Changes))]
-    public async Task ACancelOfTheChangesActivity_WhileTheChangeWaitsForAPoolConnection_IsFiledCancelled_NothingWritten_NoOneTold(
+    public async Task ACancelOfTheChangesActivity_WhileTheChangeWaitsForAPoolConnection_IsFiledCancelled_AtOnce_NothingAsked(
         string page, bool grant)
     {
         using var cancel = new CancellationTokenSource();
@@ -242,23 +274,24 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
             await WaitUntil(() => BorrowsWaitingForAPoolConnection() == 1, "the change waits for a pool connection");
             Assert.False(run.IsCompleted);
             await cancel.CancelAsync();
-            ReturnOne(pool, held);
 
-            await run.WaitAsync(Bound, testToken);
+            await run.WaitAsync(Promptly, testToken); // every connection still held
         }
         finally
         {
             ReturnAll(pool, held);
+            await Record.ExceptionAsync(() => run.WaitAsync(Bound, testToken));
         }
 
         Assert.Empty(_h.Writes); // first: a change made after the cancel fails here, naming what it sent
-        Assert.NotEmpty(_h.CallsTo("Get-Recipient")); // the change's call ran once a connection freed: its look ended it
+        Assert.Empty(_h.CallsTo("Get-Recipient")); // the change's call never ran: its wait ended it
         AssertFiledCancelled(page, grant, component, progress);
     }
 
     // kd-76's shape at the page: the operator cancels during the page's checks before the change - here its access re-check.
-    // The location read still runs - its Exchange Online half takes no token (CancellationDepth plan A2) - and finds the
-    // mailbox in the cloud; the change then starts nothing: no connection asked for, nothing read or sent. Filed Cancelled.
+    // kd-58 A2: the location read's Exchange Online half takes the token now, so it starts nothing either - it used to run,
+    // find the mailbox in the cloud, and only then hand over to the change's look as it starts. No connection asked for,
+    // nothing read or sent. Filed Cancelled.
     [Theory]
     [MemberData(nameof(Changes))]
     public async Task ACancelDuringTheChecksBeforeTheChange_StartsNothing_AndIsFiledCancelled(string page, bool grant)
@@ -277,10 +310,43 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
         await SubmitSingle(component).WaitAsync(Bound, TestContext.Current.CancellationToken);
 
         Assert.Empty(_h.Writes); // first, as above
-        Assert.Equal(1, PoolSlotRequests()); // the location read's borrow, and no other
-        Assert.Single(_h.CallsTo("Get-Mailbox")); // the location read's: the change's own read never ran
+        Assert.Equal(0, PoolSlotRequests()); // kd-58 A2: not even the location read's borrow
+        Assert.Empty(_h.CallsTo("Get-Mailbox"));
         Assert.Empty(_h.CallsTo("Get-Recipient"));
         AssertFiledCancelled(page, grant, component, progress);
+    }
+
+    // kd-58 A2, at the page: the location read's Exchange Online half takes the activity's token, so a cancel while that read
+    // waits for a pool connection - every connection the pool admits held elsewhere - ends the change at once, with nothing
+    // asked of Exchange: filed Cancelled, nothing written, no one told. Before, the read waited until a connection freed, ran
+    // Get-Mailbox, and only then did the change's look as it starts see the cancel.
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ACancelWhileTheLocationReadWaitsForAPoolConnection_IsFiledCancelled_AtOnce_NothingAsked(string page)
+    {
+        using var cancel = new CancellationTokenSource();
+        var progress = new RecordingProgress(cancel.Token);
+        var held = await HoldEveryPoolConnection(_h.Pool);
+        var component = SubmitPage(page, grant: true, progress, CloudService(page, _h.Pool));
+        Task? run = null;
+        try
+        {
+            run = SubmitSingle(component);
+            await WaitUntil(() => BorrowsWaitingForAPoolConnection() == 1, "the location read waits for a pool connection");
+            await cancel.CancelAsync();
+
+            await run.WaitAsync(Promptly, TestContext.Current.CancellationToken); // with every connection still held
+        }
+        finally
+        {
+            ReturnAll(_h.Pool, held);
+            if (run is not null)
+                await Record.ExceptionAsync(() => run.WaitAsync(Bound, TestContext.Current.CancellationToken));
+        }
+
+        Assert.Empty(_h.Writes);
+        Assert.Empty(_h.Calls); // nothing asked of Exchange at all: the five held ran nothing either
+        AssertFiledCancelled(page, grant: true, component, progress);
     }
 
     // The location read takes the token where the seam exists: on a mailbox Exchange Online does not hold, it asks
@@ -613,14 +679,15 @@ public sealed class PermissionCloudChangeCancellationTests : IDisposable
     /// <summary>How many borrows asked the pools for a slot - granted, refused or still waiting.</summary>
     private int PoolSlotRequests() => Requests(PoolTrace());
 
+    // kd-58: a slot wait ends refused (Failed, the pool busy) or cancelled (Cancelled, the caller's token); neither is a request.
     private static int Requests(List<(string? Stage, string? Result)> trace) =>
-        trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result != "Failed");
+        trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result is not ("Failed" or "Cancelled"));
 
     /// <summary>How many borrows are waiting for a free connection: a slot asked for that was neither granted nor refused.</summary>
     private int BorrowsWaitingForAPoolConnection()
     {
         var trace = PoolTrace();
-        var refused = trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result == "Failed");
+        var refused = trace.Count(s => s.Stage == "ExoPoolSlotRequested" && s.Result is "Failed" or "Cancelled");
         var granted = trace.Count(s => s.Stage == "ExoPoolSlotAcquired");
         return Requests(trace) - granted - refused;
     }

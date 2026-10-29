@@ -420,6 +420,7 @@ public class ADAttributeEditorService
     /// record however it ends (aud-a28f).
     /// </summary>
     /// <param name="loadedVersion">The version the page's load returned (<see cref="LoadAllowlistForEditing"/>).</param>
+    /// <param name="cancellationToken">kd-58 B3. The Module Configuration page's token for this save, cancelled only when the route change stops waiting for it: handed to the store's write, so a cancel before the commit leaves nothing written and is this method's PageMoved refusal. None, the default, saves as before.</param>
     /// <remarks>
     /// The save used to run in the page. Its refusals and its catch wrote no record, and its one
     /// record - on success - passed an empty list as the previous allowlist, so every save read as
@@ -444,7 +445,8 @@ public class ADAttributeEditorService
     /// holds the line, here and at the repository.
     /// </remarks>
     public AllowlistSaveResult SaveAllowlistAndAudit(
-        List<EditableAttribute> attributes, string loadedVersion, string performedBy, string ip)
+        List<EditableAttribute> attributes, string loadedVersion, string performedBy, string ip,
+        CancellationToken cancellationToken = default)
     {
         AllowlistRefusal? refusal = null;
         List<AttributeRow> written = [];
@@ -463,7 +465,16 @@ public class ADAttributeEditorService
                 written = RowsAsWritten(attributes);
                 changed = DescribeChangedRows(stored.Rows.ToList(), written);
                 return attributes.Select(ToAllowlistRow).ToList();
-            });
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // kd-58 B3 (docs/CancellationDepth-Plan.md 4.6). The Module Configuration page gave up on this save - its route
+            // change stopped waiting and cancelled the page's token - and the store rolled the write back whole before its
+            // commit (B1): nothing was written. The refusal the page records for the same move before the write (aud-a66), in
+            // its words; recorded here, as every outcome of this save is (aud-a28l), so the page writes nothing for it.
+            LogAllowlistSaveRefused(performedBy, ip, "PageMoved", SettingsSaveAudit.PageMovedRefusal);
+            return new(false, SettingsSaveAudit.PageMovedRefusal);
         }
         catch (Exception ex)
         {

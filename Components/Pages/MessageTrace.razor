@@ -818,7 +818,7 @@
         // The service splits a wide range into windows, so a 90-day trace is many round trips.
         // Indeterminate: the window count is the service's business and is not surfaced here.
         using var activity = Progress.Begin(
-            "Message Trace", "Searching message trace", ActivitySize.Unknown);
+            "Message Trace", "Searching message trace", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the search takes the cancel (kd-59, kd-73, kd-58 A10)
 
         try
         {
@@ -1100,7 +1100,7 @@
         var ticket = ticketNumber.Trim();
 
         using var detailActivity = Progress.Begin(
-            "Message Trace", $"Loading delivery detail for {target}", ActivitySize.Unknown);
+            "Message Trace", $"Loading delivery detail for {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the detail read takes the cancel (kd-59, kd-58 A10)
 
         try
         {
@@ -1228,7 +1228,7 @@
         // above the try so the catch can tell that cancel - this activity's token - from any
         // other cancellation, a browser call that timed out included.
         using var activity = Progress.Begin(
-            "Message Trace", "Downloading delivery detail", ActivitySize.Items(messages.Count));
+            "Message Trace", "Downloading delivery detail", ActivitySize.Items(messages.Count).TakingTheCancel()); // kd-58 3.8a: each detail read and the loop take the cancel (kd-70, kd-58 A10)
         try
         {
             // Fetch each selected message's detail (one cloud call each; on-prem free), then build the

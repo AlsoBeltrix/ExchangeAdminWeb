@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using System.Text;
 using ExchangeAdminWeb.Models;
 
@@ -110,7 +109,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             () => ClassifyDetailBackend(message.Backend) switch
             {
                 DetailBackend.OnPrem => GetOnPremMessageDetailAsync(message, ct),
-                DetailBackend.Cloud => GetCloudMessageDetailAsync(message),
+                DetailBackend.Cloud => GetCloudMessageDetailAsync(message, ct), // kd-58 A10: the cloud read takes the caller's token too
                 _ => Task.FromResult(UnknownBackendDetail(message))
             },
             ex => _logger.LogError(ex, "Message delivery detail failed before returning a result for {MessageId}", message.MessageId),
@@ -161,10 +160,12 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         Error = $"Cannot fetch delivery detail: unrecognized backend '{message.Backend}'."
     };
 
-    private async Task<MessageTraceDetail> GetCloudMessageDetailAsync(MessageTraceResult message)
+    // kd-58 A10 (E3). The caller's cancel ends the read at its wait for a connection or before its one command; its catches
+    // let that cancel through, and RunDetailBackendAsync files the detail Cancelled (kd-59).
+    private async Task<MessageTraceDetail> GetCloudMessageDetailAsync(MessageTraceResult message, CancellationToken cancellationToken)
     {
         // Read-only single query: safe to retry on a dead pooled session.
-        return await RunPooledQueryAsync((ps, tracker) =>
+        return await RunPooledReadAsync((ps, tracker) =>
         {
             try
             {
@@ -185,7 +186,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                     Error = "Get-MessageTraceDetailV2 requires ExchangeOnlineManagement 3.7.0 or later. Please update the module."
                 };
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && tracker.ReadCancellation.IsCancellationRequested)) // kd-58 A10: the caller's cancel is no failed read
             {
                 _logger.LogError(ex, "Error fetching Exchange Online message trace detail for {MessageTraceId}", message.MessageTraceId);
                 return new MessageTraceDetail
@@ -194,7 +195,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                     Error = $"Exchange Online trace detail failed: {ex.Message}"
                 };
             }
-        }, allowRetry: true);
+        }, cancellationToken, allowRetry: true);
     }
 
     private async Task<MessageTraceDetail> GetOnPremMessageDetailAsync(MessageTraceResult message, CancellationToken ct)
@@ -208,22 +209,20 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
 
         return await ThrottledAsync(() => Task.Run(() =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(ct); // kd-58 A10 (E7): a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: ct); // kd-58 A10 (E7): before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
                 var server = string.IsNullOrWhiteSpace(message.Server) ? null : message.Server;
+                ct.ThrowIfCancellationRequested(); // kd-58 A10 (E7): a look before the read
                 var tracking = InvokeOnPremMessageDetailQuery(ps, session, server, message);
                 return BuildOnPremDetail(message, tracking);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested)) // kd-58 A10: the caller's cancel is no failed read
             {
                 _logger.LogError(ex, "Error fetching on-prem message tracking detail for {MessageId}", message.MessageId);
                 return new MessageTraceDetail { Summary = message, Error = $"On-prem delivery detail failed: {ex.Message}" };
@@ -232,7 +231,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             {
                 RemoveOnPremSession(ps);
             }
-        }, ct), _onPremThrottle);
+        }, ct), _onPremThrottle, ct); // kd-58 A10 (E7): the wait for one of the server's two slots takes the token
     }
 
     // Detail query: scoped to the one message, with the reason fields Select-Object drops for the
@@ -385,7 +384,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         // The overwhelmingly common case - a range inside one window - must behave exactly as it
         // did before, with no extra allocation or merging.
         if (windows.Count == 1)
-            return await GetCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId);
+            return await GetCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId, cancellationToken);
 
         var merged = new MessageTraceResponse();
 
@@ -395,7 +394,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                 cancellationToken.ThrowIfCancellationRequested(); // kd-73: between windows, so none starts after a cancel
 
             var window = windows[i];
-            var partial = await GetCloudMessageTraceAsync(sender, recipient, window.Start, window.End, subjectFilter, messageId);
+            var partial = await GetCloudMessageTraceAsync(sender, recipient, window.Start, window.End, subjectFilter, messageId, cancellationToken); // kd-58 A10: and each window's wait and command
 
             if (!string.IsNullOrWhiteSpace(partial.Error))
             {
@@ -448,10 +447,13 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         }
     }
 
-    private async Task<MessageTraceResponse> GetCloudMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)
+    // kd-58 A10 (E3). The search's cancel ends a window at its wait for a connection or before its command; the window's catch
+    // lets that cancel through, and RunMessageTraceBackendAsync lets it out as the operator's cancel (kd-59).
+    private async Task<MessageTraceResponse> GetCloudMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId,
+        CancellationToken cancellationToken)
     {
         // Read-only: safe to retry on a dead pooled session.
-        return await RunPooledQueryAsync((ps, tracker) =>
+        return await RunPooledReadAsync((ps, tracker) =>
         {
             var response = new MessageTraceResponse();
 
@@ -522,14 +524,14 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                 response.Error = "Get-MessageTraceV2 requires ExchangeOnlineManagement 3.7.0 or later. Please update the module.";
                 _logger.LogError(ex, "Get-MessageTraceV2 not available - ExchangeOnlineManagement module may be outdated");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && tracker.ReadCancellation.IsCancellationRequested)) // kd-58 A10: the search's cancel is no failed window
             {
                 response.Error = $"Exchange Online trace failed: {ex.Message}";
                 _logger.LogError(ex, "Error running Exchange Online message trace");
             }
 
             return response;
-        }, allowRetry: true);
+        }, cancellationToken, allowRetry: true);
     }
 
     private async Task<MessageTraceResponse> GetOnPremMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId, CancellationToken cancellationToken)
@@ -551,22 +553,20 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         return await ThrottledAsync(() => Task.Run(() =>
         {
             var result = new MessageTraceResponse();
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
+            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 A10 (E7): a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 A10 (E7): before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
                 var normalizedMessageId = NormalizeMessageId(messageId);
                 var messageIdValues = MessageIdFilterValues(messageId);
                 if (messageIdValues.Length == 0)
                     messageIdValues = [string.Empty];
 
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A10 (E7): a look before each read
                 var servers = GetOnPremTransportServers(ps, session);
                 if (servers.Length == 0)
                     servers = [string.Empty];
@@ -578,6 +578,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                 {
                     foreach (var messageIdValue in messageIdValues)
                     {
+                        cancellationToken.ThrowIfCancellationRequested(); // kd-58 A10 (E7): a look before each read, outside its catch
                         try
                         {
                             tracking.AddRange(InvokeOnPremMessageTrackingQuery(
@@ -650,7 +651,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                     result.Warnings.Add($"Some on-prem message tracking queries failed ({queryFailures.Count}): {sample}");
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // kd-58 A10: the search's cancel is no failed search
             {
                 result.Error = $"On-prem message tracking failed: {ex.Message}";
                 _logger.LogError(ex, "Error running on-prem message tracking log search");
@@ -661,7 +662,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             }
 
             return result;
-        }), _onPremThrottle);
+        }), _onPremThrottle, cancellationToken); // kd-58 A10 (E7): the wait for one of the server's two slots takes the token
     }
 
     private static string[] GetOnPremTransportServers(PowerShell ps, object? session)

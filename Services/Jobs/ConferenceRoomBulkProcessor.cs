@@ -31,6 +31,13 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     private readonly AuditService _audit;
     private readonly EmailService _email;
     private readonly ILogger<ConferenceRoomBulkProcessor> _logger;
+    private readonly IBulkJobCancelRequests _cancelRequests;
+
+    /// <summary>kd-58 A9 (docs/CancellationDepth-Plan.md 3.9). A Room Finder row the operator's cancel stopped before its first write.</summary>
+    internal const string CancelledRow = AuditService.CancelledByTheOperator + ". Nothing was written.";
+
+    /// <summary>kd-58 A9 (3.9). A Room Finder row the host stopping stopped there: not the operator's cancel, so Failed.</summary>
+    internal const string HostStoppedRow = "The service stopped before this row was written. Nothing was written.";
 
     public const string ModuleName = "ConferenceRooms";
     private const string Section = "ConferenceRooms";
@@ -45,7 +52,8 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         OperationTraceService trace,
         AuditService audit,
         EmailService email,
-        ILogger<ConferenceRoomBulkProcessor> logger)
+        ILogger<ConferenceRoomBulkProcessor> logger,
+        IBulkJobCancelRequests cancelRequests)
     {
         _rooms = rooms;
         _protectionGate = protectionGate;
@@ -55,6 +63,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         _audit = audit;
         _email = email;
         _logger = logger;
+        _cancelRequests = cancelRequests;
     }
 
     public int CountRows(BulkJob job)
@@ -149,7 +158,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                 try
                 {
                     RoomOperationResult r = isFinder
-                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex], room)
+                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex], room, cancellationToken) // kd-58 A9: the job's token, as the page's
                         : await ApplyTypeRowAsync(payload.TypeRows![rowIndex], room);
 
                     op.Complete(r.Success, r.Message);
@@ -173,6 +182,20 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
                         // Set-ADUser reported an error are told the same way, first - the order the steps ran in.
                         Message = string.Join(" ", new[] { r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed }.OfType<string>())
                     };
+                }
+                catch (OperationCanceledException ex) when (isFinder && cancellationToken.IsCancellationRequested)
+                {
+                    // kd-58 A9 (3.9). The job's token stopped the row before its first write - it reaches only the service's
+                    // steps before Set-Place (SetRoomMetadataAndListAsync) - so nothing was written, and it is not a row that
+                    // failed. The operator's cancel request (the persisted flag, set before the token is signalled) is filed
+                    // Cancelled in the app's phrase, under the job's captured actor, address and ticket; the host stopping is
+                    // filed Failed in its own words. Either way the cancel goes on to the runner, which stops the batch without
+                    // recording the row - as it does for a row the cancel stopped before it started.
+                    var byTheOperator = _cancelRequests.IsCancelRequested(job.Id);
+                    var said = byTheOperator ? CancelledRow : HostStoppedRow;
+                    op.Complete(false, said, ex);
+                    Audit(job, actionAudit, target, success: false, ticket, said, room: room, cancelled: byTheOperator);
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -214,11 +237,11 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     // Per-row application - delegates to the unchanged ConferenceRoomService methods.
     // -------------------------------------------------------------------------
 
-    private async Task<RoomOperationResult> ApplyFinderRowAsync(FinderCsvRow row, ValidatedMailbox room) =>
+    private async Task<RoomOperationResult> ApplyFinderRowAsync(FinderCsvRow row, ValidatedMailbox room, CancellationToken cancellationToken) =>
         await _rooms.SetRoomMetadataAndListAsync(
             row.Email, room, row.City, row.Building, row.Capacity,
             row.Floor, row.FloorLabel, row.DisplayDeviceName, row.VideoDeviceName,
-            row.CountryOrRegion, row.State, row.TimeZone);
+            row.CountryOrRegion, row.State, row.TimeZone, cancellationToken);
 
     private async Task<RoomOperationResult> ApplyTypeRowAsync(TypeCsvRow row, ValidatedMailbox room)
     {
@@ -239,7 +262,8 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
         string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,
-        string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null)
+        string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null,
+        bool cancelled = false)
     {
         try
         {
@@ -251,15 +275,19 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             // confirmed in place after a write error, likewise (aud-a2q).
             _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, action, target, success, ticket,
                 errorDetail: error, newValues: newValues,
-                extra: ConferenceRoomService.WithAttributesConfirmed(
+                extra: Filed(ConferenceRoomService.WithAttributesConfirmed(
                     ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject), membershipConfirmed),
-                    attributesConfirmed));
+                    attributesConfirmed), cancelled));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Audit failed for bulk job {Job} target {Target}", job.Id, target);
         }
     }
+
+    // kd-58 A9. A row's extra, filed Cancelled when the operator's cancel stopped it (kd-57's FiledCancelled).
+    private static Dictionary<string, object?>? Filed(Dictionary<string, object?>? extra, bool cancelled) =>
+        cancelled ? AuditService.FiledCancelled(extra) : extra;
 
     private static BulkJobRowOutcome Failed(string target, string message) =>
         new() { Target = target, Status = BulkJobRowStatus.Failed, Message = message };

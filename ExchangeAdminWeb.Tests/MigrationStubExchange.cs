@@ -326,7 +326,7 @@ internal sealed class MigrationStubExchange : IDisposable
         internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
 
         // aud-a23o. The on-premises seams: no Delinea, no remote session.
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default) =>
             exchange.DefineOnPremSession(ps);
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
@@ -345,7 +345,7 @@ internal sealed class MigrationStubExchange : IDisposable
     internal sealed class StubRecipientLookupService(MigrationStubExchange exchange, bool connects, ModuleCredentialService? credentials)
         : RecipientLookupService(exchange.Pool(connects), null!, NullLogger<RecipientLookupService>.Instance, exchange.ServiceConfig(), credentials!, exchange._trace)
     {
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3) =>
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default) =>
             exchange.DefineOnPremSession(ps);
 
         protected override Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose, CancellationToken cancellationToken) =>
@@ -385,7 +385,8 @@ internal sealed class MigrationStubExchange : IDisposable
     /// that runs the remote script locally, a Remove-PSSession, and the on-premises Get-MailboxStatistics, Get-Mailbox,
     /// Get-RemoteMailbox and (RecipientLookupAccuracy S1) Get-Recipient (<see cref="OnPremStubs"/>), logged as "OnPrem
     /// &lt;cmdlet&gt;" and failing as Failures["OnPrem &lt;cmdlet&gt;[ -Archive]"] says; then a marker session.
-    /// Failures["OnPrem Connect"] throws instead, as a session that cannot be opened.
+    /// Failures["OnPrem Connect"] throws instead, as a session that cannot be opened. kd-58: Behaviour["Cancel OnPrem Connect"],
+    /// a CancellationTokenSource, is cancelled once the session is open - the operator's cancel arriving as the connect ends.
     /// </summary>
     internal void DefineOnPremSession(PowerShell ps)
     {
@@ -418,6 +419,8 @@ internal sealed class MigrationStubExchange : IDisposable
         if (init.HadErrors)
             throw new InvalidOperationException("the on-premises stand-ins could not be defined: " + string.Join(" | ", init.Streams.Error.Select(e => e.ToString())));
         proxy.SetVariable("onpremSession", "stand-in-session");
+        if (Behaviour["Cancel OnPrem Connect"] is CancellationTokenSource cancel)
+            cancel.Cancel();
     }
 
     // aud-a23o. On-premises Exchange. Get-MailboxStatistics reports Behaviour["OnPremMailboxSize"] / ["OnPremArchiveSize"] as
@@ -690,13 +693,16 @@ internal sealed class MigrationStubExchange : IDisposable
     ];
 
     // Logs the step, then fails as the table says - a string thrown, a factory's record written - or answers. aud-a23o: the
-    // step is logged under its label when it has one ("OnPrem Get-Mailbox").
+    // step is logged under its label when it has one ("OnPrem Get-Mailbox"). kd-58: Behaviour["Cancel <step>"], a
+    // CancellationTokenSource, is cancelled as the step runs - the operator's cancel arriving while that command is in flight,
+    // which then runs to its end.
     private static string Stub(string name, string parameters, string answer, string? label = null) => $$"""
         [CmdletBinding()]
         param({{parameters}})
         $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{label ?? name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
+        if ($null -ne $Behaviour -and $null -ne $Behaviour["Cancel $step"]) { $Behaviour["Cancel $step"].Cancel() }
         $failure = $Failures["$step $Identity"]
         if ($null -eq $failure) { $failure = $Failures[$step] }
         if ($null -ne $failure) {

@@ -1,4 +1,8 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Components.Shared;
+using ExchangeAdminWeb.Services.Jobs;
+using ExchangeAdminWeb.Services.Progress;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -143,6 +147,219 @@ public class InFlightWorkGuardTests
             + "navigate-away warning says the operation will be cancelled, so at least one "
             + "module must actually honour it or the warning is a lie everywhere.");
     }
+
+    /// <summary>
+    /// kd-58, docs/CancellationDepth-Plan.md 3.8a (owner, 2026-10-28): for work that takes the operator's cancel, the leave
+    /// prompt states the three cases in plain words - work still waiting its turn is cancelled; a command already sent to
+    /// Exchange or the directory finishes and is recorded; a bulk job is not affected, because it never depended on the page.
+    /// The old prompt said, on every page, only that leaving would cancel the work and that what it had changed would stay
+    /// changed.
+    /// </summary>
+    internal const string LeavePromptsThreeCases =
+        "Leaving this page will CANCEL it:\n"
+        + "- Work still waiting its turn is cancelled.\n"
+        + "- A command already sent to Exchange or the directory finishes and is recorded. Anything already changed stays changed.\n"
+        + "- A bulk job is not affected, because it never depended on this page.\n\n"
+        + "OK to leave and cancel, or Cancel to stay.";
+
+    /// <summary>kd-58 3.8a (the supervisor's ruling, 2026-10-28): the prompt for work that does not take the cancel.</summary>
+    internal const string LeavePromptsNoStop =
+        "Leaving will not stop the operation in progress; it will complete and be recorded.\n\n"
+        + "OK to leave, or Cancel to stay.";
+
+    /// <summary>
+    /// kd-58 3.8a. The activities whose work takes the operator's cancel, by page: the label each page's Progress.Begin call
+    /// passes, as written, where that call declares it (<c>ActivitySize.TakingTheCancel()</c>). No page's activity is here
+    /// until its work honours the activity's token that far - work still waiting its turn cancelled, a command already sent
+    /// finishing - and every other activity's prompt says leaving will not stop it, which is true of work that takes no token.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string[]> TakesTheCancel = new Dictionary<string, string[]>
+    {
+        // kd-37, kd-58 A2 and A3: the lookup's Exchange Online read and its on-premises reads.
+        ["RecipientLookup.razor"] = ["$\"Looking up {target}\""],
+        // kd-81, kd-58 A2, A3 and A6/A7: the single change - its location read, its wait for a pool connection and its look before
+        // its first write command; kd-59, kd-58 A6/A7: the on-premises change - every step before its first command is sent.
+        ["MailboxPermissions.razor"] = ["$\"Updating permissions on {target}\"", "$\"Updating on-premises permissions on {onPremTarget}\""],
+        ["CalendarPermissions.razor"] = ["$\"Updating calendar permissions on {target}\"", "$\"Updating on-premises calendar permissions on {onPremTarget}\""],
+        // kd-6, kd-76: an unblock is never sent once the operator has cancelled; one already sent runs on and is recorded.
+        ["BlockedSenders.razor"] = ["$\"Unblocking {address}\""],
+        // kd-59, kd-73, kd-75, kd-58 A8: the single-room setup - every step before Set-Place; once it is sent the row runs on.
+        ["ConferenceRooms.razor"] = ["$\"Updating {email}\""],
+        // kd-59, kd-70, kd-73, kd-58 A10: the search, a detail read and the detail download - their waits, the gaps between
+        // their reads and windows, and the download's loop.
+        ["MessageTrace.razor"] = ["\"Searching message trace\"", "$\"Loading delivery detail for {target}\"", "\"Downloading delivery detail\""],
+    };
+
+    public static TheoryData<string> PagesWithActivities => [.. PagesThatBeginActivities()];
+
+    // kd-58 3.8a, per page: exactly the pinned activities declare that their work takes the operator's cancel - none, on a page
+    // whose work does not take it - and a page that declares one hands its activity's token on. The mutations: a page's
+    // declaration added or removed.
+    [Theory]
+    [MemberData(nameof(PagesWithActivities))]
+    public void EachPagesActivities_DeclareWhetherTheirWorkTakesTheCancel_AsPinned(string page)
+    {
+        var source = StripComments(ReadRepoFile(Path.Combine("Components", "Pages", page)));
+        var calls = BeginCalls(source);
+        Assert.NotEmpty(calls);
+        Assert.All(calls, arguments => Assert.Equal(3, arguments.Count)); // every call read whole: module, label, size
+        var declared = calls
+            .Where(arguments => arguments[2].Contains(".TakingTheCancel()", StringComparison.Ordinal))
+            .Select(arguments => arguments[1])
+            .ToArray();
+
+        Assert.Equal(TakesTheCancel.GetValueOrDefault(page, []), declared);
+        if (declared.Length > 0)
+            Assert.Contains("ctivity.CancellationToken", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NavigationLock", source, StringComparison.Ordinal); // the guard's prompt is the only one
+        Assert.DoesNotContain("@layout", source, StringComparison.Ordinal);
+    }
+
+    // 3.8a: an activity whose work takes the cancel is told the three cases - with background jobs named after them.
+    [Theory]
+    [InlineData("Looking up alice@contoso.test")]
+    [InlineData("Unblocking spam@fabrikam.test")]
+    public void ThePrompt_ForWorkThatTakesTheCancel_StatesTheThreeCases(string label)
+    {
+        Assert.Equal($"{label} is still running.\n\n" + LeavePromptsThreeCases, ForegroundPrompt([Activity(label, takesTheCancel: true)], []));
+
+        var withJobs = ForegroundPrompt([Activity(label, takesTheCancel: true)], [Job()]);
+        Assert.StartsWith($"{label} is still running.\n\n" + LeavePromptsThreeCases, withJobs, StringComparison.Ordinal);
+        Assert.EndsWith("(1 background job(s) will keep running and are not affected - see Bulk Jobs for those.)", withJobs, StringComparison.Ordinal);
+    }
+
+    // 3.8a: an activity whose work does not take the cancel is told plainly that leaving will not stop it - never the three
+    // cases, which would promise a cancel its work does not honour.
+    [Theory]
+    [InlineData("Processing the permissions CSV")]
+    [InlineData("Searching message trace")]
+    public void ThePrompt_ForWorkThatDoesNotTakeTheCancel_SaysLeavingWillNotStopIt(string label)
+    {
+        var prompt = ForegroundPrompt([Activity(label, takesTheCancel: false)], []);
+
+        Assert.Equal($"{label} is still running.\n\n" + LeavePromptsNoStop, prompt);
+        Assert.DoesNotContain("CANCEL", prompt, StringComparison.Ordinal);
+    }
+
+    // 3.8a: both kinds at once - each named with what leaving does to it.
+    [Fact]
+    public void ThePrompt_ForBothKindsAtOnce_SaysWhichIsWhich()
+    {
+        var prompt = ForegroundPrompt(
+            [Activity("Looking up alice@contoso.test", takesTheCancel: true), Activity("Loading blocked senders", takesTheCancel: false)], []);
+
+        Assert.Equal(
+            "2 operations are still running.\n\n"
+            + "For Looking up alice@contoso.test, leaving this page will CANCEL the work:\n"
+            + InFlightWorkGuard.CancelsWaitingWork + "\n\n"
+            + "For Loading blocked senders: " + InFlightWorkGuard.WillNotStop + "\n\n"
+            + "OK to leave, or Cancel to stay.",
+            prompt);
+    }
+
+    // 3.8a: the declaration reaches the guard - the progress service hands it on in the activity the guard reads, the size the
+    // activity declared kept beside it.
+    [Fact]
+    public void TheProgressService_HandsTheDeclarationToTheGuard()
+    {
+        using var progress = new ActivityProgressService();
+        using var takes = progress.Begin("Recipient Lookup", "Looking up alice@contoso.test", ActivitySize.Unknown.TakingTheCancel());
+        using var doesNot = progress.Begin("Migration", "Loading batches", ActivitySize.Steps(2));
+
+        Assert.Equal([true, false], progress.Active.Select(activity => activity.TakesTheCancel));
+        Assert.Equal([ActivityShape.Indeterminate, ActivityShape.Steps], progress.Active.Select(activity => activity.Shape));
+        Assert.False(ActivitySize.Unknown.TakesTheCancel); // the shared default is never changed by a declaration
+    }
+
+    private static ProgressActivity Activity(string label, bool takesTheCancel) => new()
+    {
+        Id = "activity-" + label,
+        ModuleId = "a module",
+        Label = label,
+        Shape = ActivityShape.Indeterminate,
+        Total = 0,
+        Done = 0,
+        StartedUtc = DateTime.UtcNow,
+        CancellationRequested = false,
+        TakesTheCancel = takesTheCancel,
+    };
+
+    private static IEnumerable<string> PagesThatBeginActivities() =>
+        Directory.GetFiles(Path.Combine(RepoRoot(), "Components", "Pages"), "*.razor")
+            .Where(file => File.ReadAllText(file).Contains("Progress.Begin(", StringComparison.Ordinal))
+            .Select(file => Path.GetFileName(file))
+            .Order(StringComparer.Ordinal);
+
+    // Every Progress.Begin call's arguments, split at the commas between them: string literals skipped whole, brackets of
+    // every kind balanced, each argument trimmed.
+    private static List<List<string>> BeginCalls(string source)
+    {
+        var calls = new List<List<string>>();
+        for (var at = source.IndexOf("Progress.Begin(", StringComparison.Ordinal); at >= 0;
+             at = source.IndexOf("Progress.Begin(", at + 1, StringComparison.Ordinal))
+        {
+            var arguments = new List<string>();
+            var start = at + "Progress.Begin(".Length;
+            var depth = 0;
+            for (var i = start; i < source.Length; i++)
+            {
+                var c = source[i];
+                if (c == '"')
+                {
+                    var verbatim = source[i - 1] == '@' || (source[i - 1] == '$' && source[i - 2] == '@');
+                    for (i++; i < source.Length && source[i] != '"'; i++)
+                    {
+                        if (!verbatim && source[i] == '\\')
+                            i++;
+                    }
+                    continue;
+                }
+                if (c == '\'')
+                {
+                    for (i++; i < source.Length && source[i] != '\''; i++)
+                    {
+                        if (source[i] == '\\')
+                            i++;
+                    }
+                    continue;
+                }
+                if (c is '(' or '[' or '{')
+                {
+                    depth++;
+                }
+                else if (c is ')' or ']' or '}')
+                {
+                    if (depth-- == 0)
+                    {
+                        arguments.Add(source[start..i].Trim());
+                        break;
+                    }
+                }
+                else if (c == ',' && depth == 0)
+                {
+                    arguments.Add(source[start..i].Trim());
+                    start = i + 1;
+                }
+            }
+            calls.Add(arguments);
+        }
+        return calls;
+    }
+
+    private static BulkJob Job() => new()
+    {
+        Id = "job-1",
+        ModuleId = "a module",
+        JobType = "A_Job",
+        SubmittedBy = @"CONTOSO\operator",
+        SubmittedIp = "127.0.0.1",
+        PayloadJson = "{}",
+        SubmittedAtUtc = DateTime.UtcNow,
+    };
+
+    private static string ForegroundPrompt(IReadOnlyList<ProgressActivity> foreground, IReadOnlyList<BulkJob> background) =>
+        (string)typeof(InFlightWorkGuard).GetMethod("ForegroundMessage", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, [foreground, background])!;
 
     private static string ReadRepoFile(string relativePath) =>
         File.ReadAllText(Path.Combine(RepoRoot(), relativePath));

@@ -112,7 +112,7 @@ public sealed class MailboxPermissionWriteIdentityTests : IDisposable
             return Task.FromResult<(string username, string password, string domain)?>(("svc", "secret", "CONTOSO"));
         }
 
-        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
+        protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default)
             => _h.DefineOnPremSession(ps);
     }
 

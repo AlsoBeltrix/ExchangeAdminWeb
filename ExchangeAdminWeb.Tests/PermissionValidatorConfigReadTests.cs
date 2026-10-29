@@ -186,7 +186,7 @@ public sealed class PermissionValidatorConfigReadTests : IDisposable
         }
         else
         {
-            _h.Enablement.SetModulesEnabled(new Dictionary<string, bool> { [ExoConnectionPool.ConfigModuleKey] = false });
+            _h.Enablement.SetModulesEnabled(new Dictionary<string, bool> { [ExoConnectionPool.ConfigModuleKey] = false }, TestContext.Current.CancellationToken);
         }
 
         var validator = ValidatorOver(TestConfigStore.Create(_h.Dir));

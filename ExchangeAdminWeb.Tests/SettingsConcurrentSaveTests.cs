@@ -127,7 +127,7 @@ public sealed class SettingsConcurrentSaveTests : IDisposable
         // elsewhere since it loaded.
         SeedToggles();
         var page = _h.OpenExchangeOnlineConfig();
-        _h.CreateOtherEnablement().SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = false });
+        _h.CreateOtherEnablement().SetModulesEnabled(new Dictionary<string, bool> { ["ExchangeOnline"] = false }, TestContext.Current.CancellationToken);
 
         await _h.RunAsync(page, "SaveModuleStatus");
 
@@ -245,7 +245,7 @@ public sealed class SettingsConcurrentSaveTests : IDisposable
 
         var outcome = service.SaveEditedAliases(
             new Dictionary<string, string[]> { [Module] = [] },
-            new Dictionary<string, string[]> { [Module] = [GroupA] });
+            new Dictionary<string, string[]> { [Module] = [GroupA] }, TestContext.Current.CancellationToken);
 
         Assert.Equal(SectionAccessSaveStatus.Saved, outcome.Status);
         Assert.True(service.IsSectionAccessConfigured());

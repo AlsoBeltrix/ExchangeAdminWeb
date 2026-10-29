@@ -105,7 +105,8 @@ public sealed class AttributeEditorRepository
     /// aud-a33b's ConvertToSids). The rows are read back before the commit so the caller knows exactly
     /// what it left.
     /// </remarks>
-    public AllowlistReplaceOutcome ReplaceAllowlist(Func<AllowlistSnapshot, IReadOnlyList<AttributeRow>?> decide)
+    /// <param name="cancellationToken">kd-58 B3. The save's own token, handed to the store's write (B1): a cancel before the commit leaves nothing written. None, the default, writes as before.</param>
+    public AllowlistReplaceOutcome ReplaceAllowlist(Func<AllowlistSnapshot, IReadOnlyList<AttributeRow>?> decide, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(decide);
         try
@@ -125,7 +126,7 @@ public sealed class AttributeEditorRepository
                 InsertAllowlist(connection, transaction, replacement);
                 MarkAllowlistPresent(connection, transaction);
                 return new AllowlistReplaceOutcome(true, before, ReadSnapshot(connection, transaction));
-            });
+            }, cancellationToken);
         }
         catch (NothingWritten nothing)
         {

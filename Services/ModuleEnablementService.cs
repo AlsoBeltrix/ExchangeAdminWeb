@@ -246,7 +246,8 @@ public class ModuleEnablementService
     /// against its row under the write lock. A boolean cannot conflict: a row that already holds the target
     /// was switched the same way elsewhere, is skipped, and is recorded by the save that switched it.
     /// </remarks>
-    public EnablementSaveOutcome SetModulesEnabled(IReadOnlyDictionary<string, bool> changes)
+    /// <param name="cancellationToken">kd-58 B2. The Module Configuration page's token for this save, cancelled only when the route change stops waiting for it: handed to the store's write, so a cancel before the commit leaves nothing written. None, the default, saves as before.</param>
+    public EnablementSaveOutcome SetModulesEnabled(IReadOnlyDictionary<string, bool> changes, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(changes);
 
@@ -270,7 +271,7 @@ public class ModuleEnablementService
 
         lock (_writeLock)
         {
-            var written = _repository.SetModules(settable, defaults);
+            var written = _repository.SetModules(settable, defaults, cancellationToken);
             _logger.LogInformation("Module enablement set for {Count} module(s)", written.Count);
             return new EnablementSaveOutcome(false, written);
         }
