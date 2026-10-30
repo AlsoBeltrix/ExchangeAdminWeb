@@ -61,6 +61,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S12 Intune Devices: the device's primary user - resolved and checked, or checked unresolved.
         { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction action)",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
+        // S13 MFA Reset: the user's resolution and its check, or the unresolved check.
+        { "Components/Pages/MfaReset.razor", "private async Task ExecuteReset()",
+            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
         { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },

@@ -371,7 +371,7 @@
                 // which left protection close to inert here: a protected user row naming a
                 // cloud-only mailbox was never compared against the target.
                 // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
-                var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn);
+                using var directoryCheck = ProtectedPrincipalService.BeginCheck(upn); var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn); // kd-88: one check - one credential fetch, one timing line - for the resolution and the rules
                 if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                 {
                     var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
