@@ -37,6 +37,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S6 Cloud Password Reset: the admin account's resolution and its check.
         { "Components/Pages/CloudPasswordReset.razor", "CheckProtectionAsync(System.Security.Claims.ClaimsPrincipal user, string upn, string entraObjectId)",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
+        // S7 Conference Rooms: the room mailbox's resolution and its check, single and bulk.
+        { "Services/ConferenceRoomProtectionGate.cs", "private async Task<ProtectionOutcome> EvaluateAsync(string identity,",
+            "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveExchangeTargetAsync(identity)" },
     };
 
     [Theory]

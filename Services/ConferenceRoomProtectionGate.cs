@@ -159,6 +159,9 @@ public sealed class ConferenceRoomProtectionGate
             // aud-a2b hole 2. The room writes hand this identity to Exchange, so the object checked
             // must be the one Exchange resolves it to, with AD required to agree - an AD match
             // alone can be an unrelated account that merely shares the string.
+            // kd-88: one protected-principal check for the room's resolution and the read of its rules - one credential fetch,
+            // one timing line - where each fetched the directory-read credential for itself.
+            using var directoryCheck = _protectedPrincipals.BeginCheck(identity);
             var (resolved, status) = await _protectedPrincipals.ResolveExchangeTargetAsync(identity);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
