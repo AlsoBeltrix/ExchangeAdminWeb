@@ -931,29 +931,25 @@ public class ProtectedPrincipalService
     private IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
         Guid mailboxGuid, string username, string password, string domain)
     {
-        using var runspace = DirectoryRunspace();
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-        ps.Streams.Error.Clear();
+        // kd-88: a warm session, lent for the mailbox proof and given back - no runspace or module import of its own.
+        using var session = DirectorySessions.Lease(SessionWait);
+        var ps = session.PowerShell;
 
         ps.AddCommand("Get-ADObject")
           .AddParameter("LDAPFilter", BuildMailboxGuidFilter(mailboxGuid))
           .AddParameter("Properties", new[] { "DistinguishedName", "ObjectGUID", "msExchMailboxGuid" })
           .AddParameter("Credential", CreateCredential(username, password, domain))
           .AddParameter("ErrorAction", "Stop");
-        DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
-        var objects = ps.Invoke();
+        var objects = InvokeIn(session);
         ps.Commands.Clear();
 
         // Completeness matters here, not just success: a search that dropped a second holder would
-        // read as a unique one. Any error recorded alongside the results fails the lookup.
+        // read as a unique one. Any error recorded alongside the results fails the lookup - and the session.
         if (ps.Streams.Error.Count > 0)
+        {
+            session.Fail();
             throw new InvalidOperationException($"The mailbox GUID lookup reported {ps.Streams.Error.Count} error(s).");
+        }
 
         return objects
             .Where(o => o != null)

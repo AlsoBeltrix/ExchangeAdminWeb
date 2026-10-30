@@ -101,6 +101,29 @@ public sealed class WarmDirectorySessionTests : IDisposable
     }
 
     [Fact]
+    public async Task TwoMailboxProofs_BorrowOneWarmSession()
+    {
+        // The sweep, S2: the proof that the directory object holds the mailbox Exchange names built a session of its own.
+        var mailbox = Guid.Parse("0f0f0f0f-6666-4777-8888-aaaaaaaaaaaa");
+        _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
+        {
+            Dn = $"CN=room,OU=Staff,{SelfGrantDirectoryStandIn.DomainDn}",
+            Class = "user",
+            Sam = "room",
+            Sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3996",
+            MailboxGuid = mailbox,
+        });
+        var (service, search) = Service();
+
+        Assert.Single((await service.FindMailboxGuidHoldersAsync(mailbox)).holders);
+        Assert.Single((await service.FindMailboxGuidHoldersAsync(mailbox)).holders);
+
+        Assert.Equal(1, _h.Forest.RunspacesHandedOut);
+        Assert.Equal(1, ModuleImports);
+        Assert.Equal(1, search.CheckSessions.Opened);
+    }
+
+    [Fact]
     public void AFullPool_RefusesAfterItsWait_ItNeverLendsOneSessionTwice()
     {
         using var pool = new DirectorySessionPool(_h.Forest.Open, size: 1);
