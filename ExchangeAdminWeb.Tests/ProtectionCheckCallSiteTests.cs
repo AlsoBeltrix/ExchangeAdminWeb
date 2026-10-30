@@ -58,6 +58,9 @@ public sealed class ProtectionCheckCallSiteTests
             "_protectedPrincipals.BeginCheck(user)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(user)" },
         { "Services/AccountLockoutRemediationService.cs", "private async Task<AccountLogoffResult> RunLogoffAsync(",
             "DirectoryReadOperation.Begin()", "await GuardTargetUsersAsync(" },
+        // S12 Intune Devices: the device's primary user - resolved and checked, or checked unresolved.
+        { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction action)",
+            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
         { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
