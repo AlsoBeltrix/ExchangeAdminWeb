@@ -64,6 +64,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S13 MFA Reset: the user's resolution and its check, or the unresolved check.
         { "Components/Pages/MfaReset.razor", "private async Task ExecuteReset()",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
+        // S14 Risky Users: the user's resolution and its check, or the unresolved check.
+        { "Components/Pages/RiskyUsers.razor", "private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction action)",
+            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
         { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
