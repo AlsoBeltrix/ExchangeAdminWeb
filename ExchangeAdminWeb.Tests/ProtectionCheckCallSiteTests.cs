@@ -70,6 +70,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S15 Licensing Updates: a batch's rows, one operation.
         { "Services/LicensingUpdatesService.cs", "servicedNotesByUpn)> EvaluateProtectionAsync(",
             "DirectoryReadOperation.Begin()", "_protectedPrincipalService.CheckAsync(row.Principal!)" },
+        // S16 Self-Service Groups: the write's DACL re-check (its resource-domain Deny reads are the evaluator's, item 1).
+        { "Services/SelfServiceGroups/SelfServiceGroupService.cs", "private async Task<MembershipChangeResult> ApplyMembershipChangeAsync(",
+            "DirectoryReadOperation.BeginCheck(_logger, ", "CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids, denyOnlySids)" },
         // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
         { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
