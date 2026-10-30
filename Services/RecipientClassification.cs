@@ -9,7 +9,7 @@ internal enum CloudMailboxAnswer
     /// <summary>Not asked: the recipient's Exchange Online type already says whether it has a mailbox there.</summary>
     NotAsked,
     Found,
-    /// <summary>Exchange's own not-found, read by structure: no Exchange Online mailbox.</summary>
+    /// <summary>Exchange's own not-found, read by structure or by its sentence (kd-89): no Exchange Online mailbox.</summary>
     NotFound,
     /// <summary>Any other failure: the mailbox could not be read.</summary>
     Failed,
@@ -20,7 +20,7 @@ internal enum OnPremRecipientAnswer
 {
     NotAsked,
     Found,
-    /// <summary>Exchange's own not-found, read by structure: no such recipient on-premises.</summary>
+    /// <summary>Exchange's own not-found, read by structure or by its sentence (kd-89): no such recipient on-premises.</summary>
     NotFound,
     MoreThanOne,
     /// <summary>Not configured, no credentials, or a session or read that failed.</summary>

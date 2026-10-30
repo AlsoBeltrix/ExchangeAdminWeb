@@ -410,10 +410,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     /// <summary>
     /// aud-a2ac. The one object Exchange Online holds under <paramref name="name"/>, or nothing when it affirmatively says
-    /// there is no such object - the only failure that is an answer, decided from the error record's structure by the base's
-    /// <c>IsNotFound</c> (aud-a23h), never from its text. Every other outcome throws: a lookup that could not be made says
-    /// nothing about whether the list exists, and more than one answer is not a list - Exchange refuses an ambiguous
-    /// <c>-Identity</c> with an error rather than answering twice, so the count is the defensive half of the same rule.
+    /// there is no such object - the only failure that is an answer, decided by the base's <c>IsNotFound</c> from the error
+    /// record's structure (aud-a23h) or Exchange's sentence naming this list (kd-89). Every other outcome throws: a lookup
+    /// that could not be made says nothing about whether the list exists, and more than one answer is not a list - Exchange
+    /// refuses an ambiguous <c>-Identity</c> with an error rather than answering twice, so the count is the defensive half
+    /// of the same rule.
     /// </summary>
     private static System.Collections.ObjectModel.Collection<PSObject> ReadRoomList(PowerShell ps, ConnectionErrorTracker tracker, string name)
     {

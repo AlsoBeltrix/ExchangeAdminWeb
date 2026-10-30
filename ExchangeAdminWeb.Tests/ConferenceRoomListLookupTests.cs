@@ -171,6 +171,35 @@ public sealed class ConferenceRoomListLookupTests : IDisposable
         Assert.Contains(result.Steps, s => s.Stage == $"Add to '{List}'" && s.Success);
     }
 
+    // kd-89. Both names not found in the form this tenant's Exchange Online module throws - the sentence as bare text, no
+    // category, rethrown - is a building with no room list, as the structural form is: the list is created and the room
+    // added. That throw read as a lookup that could not be made, and every such row was refused.
+    [Fact]
+    public async Task BothNamesNotFound_AsTheModulesBareText_IsABuildingWithNoRoomList()
+    {
+        _h.MissingListsInBareText[List] = List;
+        _h.MissingListsInBareText[Legacy] = Legacy;
+
+        var result = await Apply(new Service(_h));
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(List, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("New-DistributionGroup")), "Name"));
+        Assert.Single(_h.CallsTo("Add-DistributionGroupMember"));
+    }
+
+    // kd-89, the other direction. The same sentence naming another object says nothing about the building's list: the
+    // row is refused before any write, never read as a building with no list.
+    [Fact]
+    public async Task ANotFoundNamingAnotherObject_IsNotAMissingList_AndTheRowIsRefused()
+    {
+        _h.MissingListsInBareText[List] = "someone.else@contoso.test";
+
+        var result = await Apply(new Service(_h));
+
+        AssertRefusedBeforeAnyWrite(result);
+        Assert.Contains("'someone.else@contoso.test' couldn't be found", result.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheHarness_ReportsAMissingListAsExchangeDoes_AndRefusesAnAmbiguousOne()
     {

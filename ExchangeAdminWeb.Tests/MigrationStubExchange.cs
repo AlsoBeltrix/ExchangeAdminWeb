@@ -33,7 +33,8 @@ namespace ExchangeAdminWeb.Tests;
 /// The stubs are advanced functions, so -ErrorAction binds as a common parameter and Stop and Ignore do to them what
 /// they do to a cmdlet. Each logs the step it was asked to run ("Set-MigrationBatch -CompleteAfter
 /// alice@contoso.test"), then fails as <see cref="Failures"/> says - a string is thrown, a factory's ErrorRecord is
-/// written - or answers. A lookup for an identity it does not hold writes <see cref="NotFound"/>'s record.
+/// written - or answers. A lookup for an identity it does not hold writes <see cref="NotFound"/>'s record (kd-89: and
+/// rethrows one marked <see cref="Rethrown"/>, as this tenant's module does).
 /// </remarks>
 internal sealed class MigrationStubExchange : IDisposable
 {
@@ -197,6 +198,35 @@ internal sealed class MigrationStubExchange : IDisposable
             "[Server=AB1PR01MB0001,RequestId=00000000-0000-0000-0000-000000000000,TimeStamp=10/22/2026 12:00:00 PM] "
             + "[FailureCategory=Cmdlet-ManagementObjectNotFoundException] 2B5E15D7,Microsoft.Exchange.Management.RecipientTasks.GetMailbox",
             ErrorCategory.NotSpecified, identity);
+
+    /// <summary>
+    /// kd-89. The form this tenant's Exchange Online module throws, as its logs record it (prod app-20261012.log 12:08:23,
+    /// dev app-20261023.log 04:35:13): Exchange's sentence as bare text over a plain System.Exception, no category, the
+    /// reason "Exception", an error id of the server and request that names no exception type. The module's proxy writes
+    /// that record and rethrows it (`throw $_`), so a lookup given this record does the same: what reaches the caller is a
+    /// RuntimeException a throw statement raised - the shape none of the structural tests reads.
+    /// </summary>
+    public static ErrorRecord NotFoundAsBareText(string identity) =>
+        BareText($"||The operation couldn't be performed because object '{identity}' couldn't be found on 'AB1PR01MB0001.PROD.OUTLOOK.COM'.");
+
+    /// <summary>
+    /// kd-89. The same form, its sentence naming <paramref name="other"/> whatever was asked - the shape of the dev line,
+    /// where a grant's TRUSTEE could not be found.
+    /// </summary>
+    public static Func<string, ErrorRecord> NotFoundNaming(string other) => _ =>
+        BareText($"||The operation couldn't be performed because object '{other}' couldn't be found on 'AB1PR01MB0001.PROD.OUTLOOK.COM'.");
+
+    /// <summary>kd-89. The mark on a record the stand-in's lookups rethrow, as the module's proxy does, after writing it.</summary>
+    public const string Rethrown = "kd-89 rethrown";
+
+    private static ErrorRecord BareText(string message)
+    {
+        var exception = new Exception(message);
+        exception.Data[Rethrown] = true;
+        return new ErrorRecord(exception,
+            "[Server=AB1PR01MB0001,RequestId=00000000-0000-0000-0000-000000000000,TimeStamp=Fri, 30 Oct 2026 12:00:00 GMT]",
+            ErrorCategory.NotSpecified, null);
+    }
 
     /// <summary>Named like Exchange's: a record whose reason is this type is Exchange saying there is no such object.</summary>
     public sealed class ManagementObjectNotFoundException(string message) : Exception(message);
@@ -406,6 +436,7 @@ internal sealed class MigrationStubExchange : IDisposable
         var definitions = new System.Text.StringBuilder();
         definitions.AppendLine("function global:Invoke-Command { [CmdletBinding()] param($Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList) & $ScriptBlock @ArgumentList }");
         definitions.AppendLine("function global:Remove-PSSession { param($Session) }");
+        definitions.AppendLine($"function global:Write-StandInRecord {{ {WriteStandInRecord} }}");
         foreach (var (name, parameters, answer) in OnPremStubs)
         {
             if (!Missing.Contains("OnPrem " + name))
@@ -606,6 +637,7 @@ internal sealed class MigrationStubExchange : IDisposable
         state.Variables.Add(new SessionStateVariableEntry("NotFound", NotFound, null));
         state.Commands.Add(new SessionStateFunctionEntry("Disconnect-ExchangeOnline",
             "[CmdletBinding()] param($ConnectionId, [switch] $Confirm)"));
+        state.Commands.Add(new SessionStateFunctionEntry("Write-StandInRecord", WriteStandInRecord));
 
         foreach (var (name, parameters, answer) in Stubs)
         {
@@ -620,7 +652,15 @@ internal sealed class MigrationStubExchange : IDisposable
         return new PooledRunspace(runspace, powershell, generation);
     }
 
-    private const string Lookup = "$PSCmdlet.WriteError($NotFound.Invoke([string]$Identity))";
+    // kd-89: a record marked Rethrown (NotFoundAsBareText) is written by a nested function and rethrown by the stub's catch,
+    // as the Exchange Online module's proxy does (Write-ErrorMessage writes, its caller's catch runs `throw $_`); under Stop
+    // the caller gets the throw statement's RuntimeException, under Ignore nothing. A function's catch never sees its own
+    // WriteError's stop, hence the nested writer.
+    private const string Lookup = "$record = $NotFound.Invoke([string]$Identity); if ($record.Exception.Data.Contains('" + Rethrown
+        + "')) { try { Write-StandInRecord -Record $record } catch { throw $_ } } else { $PSCmdlet.WriteError($record) }";
+
+    // kd-89. The nested writer Lookup rethrows from.
+    private const string WriteStandInRecord = "[CmdletBinding()] param($Record) $PSCmdlet.WriteError($Record)";
 
     private static readonly (string Name, string Parameters, string Answer)[] Stubs =
     [

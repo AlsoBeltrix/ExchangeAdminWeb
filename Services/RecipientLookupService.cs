@@ -189,7 +189,7 @@ public class RecipientLookupService : ExchangeServiceBase
                             r.ArchiveDeletedItemSizeGB = ParseSizeToGB(archiveStat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
                     }
-                    catch (Exception ex) when (IsNotFound(ex))
+                    catch (Exception ex) when (IsNotFound(ex, identity)) // kd-89: or its sentence, about this mailbox
                     {
                         _logger.LogInformation("No archive mailbox found for {Email}", identity);
                     }
@@ -208,8 +208,9 @@ public class RecipientLookupService : ExchangeServiceBase
                 // only an empty answer reached; anything else is the cmdlet's own words (aud-a23i's helper), not PowerShell's
                 // "The running command stopped because ..." prefix. Every later read here takes its own not-found, so the one
                 // that gets this far is Get-Recipient's. kd-58 A2: a cancellation is not a lookup that failed (aud-a23g's rule):
-                // it leaves the read - the page's cancel between commands among them - and the page files it.
-                r.Error = IsNotFound(ex) ? $"Recipient '{emailAddress}' not found." : ResolveFailure(ex).primary;
+                // it leaves the read - the page's cancel between commands among them - and the page files it. kd-89: or its
+                // sentence naming the typed address, the form this tenant's module throws; one naming another object is not.
+                r.Error = IsNotFound(ex, emailAddress) ? $"Recipient '{emailAddress}' not found." : ResolveFailure(ex).primary;
                 _logger.LogError(ex, "Error getting recipient info for {Email}", emailAddress);
             }
 

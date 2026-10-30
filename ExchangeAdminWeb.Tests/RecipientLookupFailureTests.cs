@@ -45,6 +45,7 @@ public sealed class RecipientLookupFailureTests : IDisposable
     {
         "category" => NotFoundByCategory,
         "type" => NotFoundByType,
+        "bare text" => NotFoundAsBareText, // kd-89: this tenant's module's form
         _ => NotFoundByIdentifier,
     };
 
@@ -122,11 +123,13 @@ public sealed class RecipientLookupFailureTests : IDisposable
     }
 
     // Exchange's own "no such object", in each shape it is read from: the lookup's own words, which before only an empty
-    // answer reached, and nothing more is read.
+    // answer reached, and nothing more is read. kd-89: the bare text this tenant's module throws among them (prod
+    // app-20261012.log 12:08:23 is this read), which the page showed as "Could not be read" in the module's words.
     [Theory]
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task ARecipientThatDoesNotExist_IsNotFound(string shape)
     {
         _exchange.NotFound = NotFoundIn(shape);
@@ -135,6 +138,18 @@ public sealed class RecipientLookupFailureTests : IDisposable
 
         Assert.Equal($"Recipient '{Address}' not found.", result.Error);
         Assert.Equal([$"Get-Recipient {Address}"], _exchange.CallList());
+    }
+
+    // kd-89. The sentence naming another object is not this recipient's absence: the lookup failed, in Exchange's words.
+    [Fact]
+    public async Task ANotFoundNamingAnotherObject_IsAFailedLookup_NotRecipientNotFound()
+    {
+        _exchange.NotFound = NotFoundNaming("someone.else@contoso.test");
+
+        var result = await LookedUp();
+
+        Assert.NotEqual($"Recipient '{Address}' not found.", result.Error);
+        Assert.Contains("'someone.else@contoso.test' couldn't be found", result.Error, StringComparison.Ordinal);
     }
 
     // ---- part 4: the page's own lookup -----------------------------------------------------------
