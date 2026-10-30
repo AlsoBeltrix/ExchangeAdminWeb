@@ -112,10 +112,22 @@ internal sealed class SelfGrantDirectoryStandIn
     /// <summary>Opening the runspace throws this, when set.</summary>
     public string? RunspaceFailure { get; set; }
 
-    /// <summary>Every search a stub was asked to run, either cmdlet.</summary>
+    /// <summary>
+    /// kd-88. The domain a search sent with no <c>-Server</c> reaches - the session's own, as the module binds one - or null,
+    /// when such a search cannot reach anything (the default: every self-grant read names its server).
+    /// </summary>
+    public string? DefaultDomainDn { get; set; }
+
+    /// <summary>kd-88. How many runspaces <see cref="Open"/> has handed out: each a session someone opened.</summary>
+    public int RunspacesHandedOut => Volatile.Read(ref _runspacesHandedOut);
+
+    private int _runspacesHandedOut;
+
+    /// <summary>Every search a stub was asked to run, by any of the search cmdlets.</summary>
     public IReadOnlyList<string> Searches =>
         Calls.Cast<string>().Where(call => call.StartsWith("Get-ADObject ", StringComparison.Ordinal)
-            || call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)).ToList();
+            || call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)
+            || call.StartsWith("Get-ADUser ", StringComparison.Ordinal)).ToList();
 
     public sealed class Entry
     {
@@ -128,6 +140,9 @@ internal sealed class SelfGrantDirectoryStandIn
         public string? Nickname { get; init; }
         public string? Sid { get; init; }
         public int? PrimaryGroupId { get; init; }
+
+        /// <summary>kd-88. The mailbox GUID the object carries in msExchMailboxGuid, when it holds one.</summary>
+        public Guid? MailboxGuid { get; init; }
         public List<string> Proxies { get; init; } = [];
         public List<string> Members { get; init; } = [];
 
@@ -265,7 +280,17 @@ internal sealed class SelfGrantDirectoryStandIn
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $false, [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, '', [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
+            """),
+        // kd-88: the protected-principal resolution's lookup - user objects only, as the real cmdlet answers.
+        ("Get-ADUser", """
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential, [string] $SearchBase, [string] $SearchScope)
+            $asked = $SelfGrantAsked.Invoke($Properties)
+            [void]$SelfGrantCalls.Add("Get-ADUser $Server $LDAPFilter$asked")
+            [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
+            $problem = $SelfGrantProblem.Invoke('Get-ADUser', $Server, "$LDAPFilter$asked")
+            if ($problem) { Write-Error $problem; return }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, 'user', [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
             """),
         ("Get-ADGroup", """
             [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential, [string] $SearchBase, [string] $SearchScope)
@@ -274,7 +299,7 @@ internal sealed class SelfGrantDirectoryStandIn
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADGroup', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $true, [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, 'group', [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
             """),
     ];
 
@@ -286,6 +311,7 @@ internal sealed class SelfGrantDirectoryStandIn
     {
         if (RunspaceFailure is { } failure)
             throw new InvalidOperationException(failure);
+        Interlocked.Increment(ref _runspacesHandedOut);
 
         var state = InitialSessionState.CreateDefault2();
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCalls", Calls, null));
@@ -293,7 +319,7 @@ internal sealed class SelfGrantDirectoryStandIn
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantProblem", (Func<string, string, string, string?>)Problem, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCatalogs", (Func<string[]>)(() => GlobalCatalogs), null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch",
-            (Func<string, string, bool, bool, string?, string?, string[]?, object[]>)Search, null));
+            (Func<string, string, string, bool, string?, string?, string[]?, object[]>)Search, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantAsked", (Func<string[]?, string>)Asked, null));
         foreach (var (name, body) in Stubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, body));
@@ -304,7 +330,7 @@ internal sealed class SelfGrantDirectoryStandIn
     {
         if (Failures[command] is string all)
             return all;
-        if (command is not ("Get-ADObject" or "Get-ADGroup"))
+        if (command is not ("Get-ADObject" or "Get-ADGroup" or "Get-ADUser"))
             return null;
         if (Failures[$"{command} {server}"] is string here)
             return here;
@@ -323,9 +349,14 @@ internal sealed class SelfGrantDirectoryStandIn
         return Reach(server) is null ? UnreachableServer : null;
     }
 
-    /// <summary>"forest" for the catalog endpoint, a domain's DN for its DNS name, null for anything else.</summary>
+    /// <summary>
+    /// "forest" for the catalog endpoint, a domain's DN for its DNS name, <see cref="DefaultDomainDn"/> for no server at all,
+    /// null for anything else.
+    /// </summary>
     private string? Reach(string server)
     {
+        if (string.IsNullOrEmpty(server))
+            return DefaultDomainDn;
         if (GlobalCatalogs.Any(host => string.Equals(server, $"{host}:3268", StringComparison.OrdinalIgnoreCase)))
             return "forest";
         foreach (var domain in new[] { DomainDn, OtherDomainDn })
@@ -342,7 +373,7 @@ internal sealed class SelfGrantDirectoryStandIn
         : properties?.Contains(MemberOf, StringComparer.OrdinalIgnoreCase) == true ? " " + MemberOf
         : "";
 
-    private object[] Search(string filter, string server, bool groupsOnly, bool credentialed, string? searchBase, string? searchScope,
+    private object[] Search(string filter, string server, string onlyClass, bool credentialed, string? searchBase, string? searchScope,
         string[]? properties)
     {
         try
@@ -359,7 +390,7 @@ internal sealed class SelfGrantDirectoryStandIn
 
             var match = LdapFilter.Parse(filter);
             return _objects
-                .Where(entry => !groupsOnly || string.Equals(entry.Class, "group", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => string.IsNullOrEmpty(onlyClass) || string.Equals(entry.Class, onlyClass, StringComparison.OrdinalIgnoreCase))
                 .Where(entry => credentialed || !entry.HiddenFromSession)
                 .Where(entry => Holds(reach, entry))
                 .Where(entry => string.IsNullOrEmpty(searchBase)
@@ -400,6 +431,7 @@ internal sealed class SelfGrantDirectoryStandIn
         "name" or "cn" => One(entry.Name),
         "distinguishedname" => One(entry.Dn),
         "objectclass" => One(entry.Class),
+        "msexchmailboxguid" => entry.MailboxGuid is Guid guid ? [new string(guid.ToByteArray().Select(b => (char)b).ToArray())] : [],
         "member" => LinksSeen(reach, entry, credentialed) ? entry.Members : [],
         MemberChain => LinksSeen(reach, entry, credentialed) ? Chain(entry, reach, credentialed) : [],
         "grouptype" => entry.GroupType is int type ? [type.ToString(CultureInfo.InvariantCulture)] : [],
@@ -500,6 +532,9 @@ internal sealed class SelfGrantDirectoryStandIn
         row.Properties.Add(new PSNoteProperty("proxyAddresses", entry.Proxies.ToArray()));
         row.Properties.Add(new PSNoteProperty("objectSid", entry.Sid is null ? null : new SecurityIdentifier(entry.Sid)));
         row.Properties.Add(new PSNoteProperty("primaryGroupID", entry.PrimaryGroupId));
+        row.Properties.Add(new PSNoteProperty("SamAccountName", entry.Sam));
+        if (entry.MailboxGuid is Guid mailboxGuid)
+            row.Properties.Add(new PSNoteProperty("msExchMailboxGuid", mailboxGuid.ToByteArray()));
         if (entry.GroupType is not null)
         {
             row.Properties.Add(new PSNoteProperty("GroupScope", entry.Scope));

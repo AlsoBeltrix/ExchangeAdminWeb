@@ -571,6 +571,30 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// service reads that setting from (a store that cannot be read, for one).
     /// </remarks>
     public PermissionValidator NothingProtectedValidator(IIdentityResolver resolver, ModuleConfigService? protectedPrincipalsConfig = null)
+        => Validator(resolver, protectedPrincipalsConfig, protection: null);
+
+    /// <summary>
+    /// kd-88. A real <see cref="PermissionValidator"/> with <paramref name="protection"/> configured, so the protected-principal
+    /// check runs end to end: Exchange through <paramref name="resolver"/>, every directory read - the resolution's, the mailbox
+    /// proof's, the group check's - in a session of <see cref="Forest"/> (searches with no server reach its own domain), and
+    /// the directory-read secret from the same counting stand-in store the self-grant check uses, so
+    /// <see cref="DirectoryReadFetches"/> counts every fetch of the change.
+    /// </summary>
+    public PermissionValidator ProtectedValidator(IIdentityResolver resolver, ProtectedPrincipalConfig protection)
+        => Validator(resolver, protectedPrincipalsConfig: null, protection);
+
+    /// <summary>kd-88. The protected-principal service the last <see cref="ProtectedValidator"/> was built over.</summary>
+    public ProtectedPrincipalService? ProtectedPrincipals { get; private set; }
+
+    private Task<(string username, string password, string domain)?> DirectoryReadSecret(int secretId)
+    {
+        Interlocked.Increment(ref _directoryReadFetches);
+        return _directoryReadSecretAnswer?.Invoke() ?? Task.FromResult<(string username, string password, string domain)?>(
+            secretId == DirectoryReadSecretId ? ("svc-dirread", "stand-in-secret", "CONTOSO") : null);
+    }
+
+    private PermissionValidator Validator(IIdentityResolver resolver, ModuleConfigService? protectedPrincipalsConfig,
+        ProtectedPrincipalConfig? protection)
     {
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(Dir);
@@ -586,28 +610,36 @@ internal sealed class ExchangeWriteHarness : IDisposable
                     ? ""
                     : DirectoryReadSecretId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             });
-        var protectedPrincipals = new ProtectedPrincipalService(env, Config, protectedPrincipalsConfig ?? ModuleConfig,
-            TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance);
-        var servicers = new ProtectedPrincipalServicerService(
-            new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(),
-                new SectionAccessRepository(TestConfigStore.Create(Dir))),
-            NullLogger<ProtectedPrincipalServicerService>.Instance);
         var scopeFactory = Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
         var scope = Substitute.For<Microsoft.Extensions.DependencyInjection.IServiceScope>();
         var provider = Substitute.For<IServiceProvider>();
         scopeFactory.CreateScope().Returns(scope);
         scope.ServiceProvider.Returns(provider);
         provider.GetService(typeof(IIdentityResolver)).Returns(resolver);
+        var protectedPrincipals = protection is null
+            ? new ProtectedPrincipalService(env, Config, protectedPrincipalsConfig ?? ModuleConfig,
+                TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance)
+            : new ProtectedPrincipalService(env, Config, ModuleConfig,
+                TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance, scopeFactory)
+            {
+                DirectoryReadSecretFetch = DirectoryReadSecret,
+                DirectoryRunspace = Forest.Open,
+            };
+        if (protection is not null)
+        {
+            protectedPrincipals.SaveConfig(protection);
+            Forest.DefaultDomainDn ??= SelfGrantDirectoryStandIn.DomainDn;
+            ProtectedPrincipals = protectedPrincipals;
+        }
+        var servicers = new ProtectedPrincipalServicerService(
+            new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(),
+                new SectionAccessRepository(TestConfigStore.Create(Dir))),
+            NullLogger<ProtectedPrincipalServicerService>.Instance);
         return new PermissionValidator(Config, ModuleConfig, Pool, protectedPrincipals, servicers,
             NullLogger<PermissionValidator>.Instance, scopeFactory)
         {
             SelfGrantDirectoryRunspace = Forest.Open,
-            DirectoryReadSecretFetch = secretId =>
-            {
-                Interlocked.Increment(ref _directoryReadFetches);
-                return _directoryReadSecretAnswer?.Invoke() ?? Task.FromResult<(string username, string password, string domain)?>(
-                    secretId == DirectoryReadSecretId ? ("svc-dirread", "stand-in-secret", "CONTOSO") : null);
-            },
+            DirectoryReadSecretFetch = DirectoryReadSecret,
         };
     }
 

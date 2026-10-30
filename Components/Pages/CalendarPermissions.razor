@@ -380,7 +380,7 @@
 
             // Own module id, never Mailbox Permissions': the validator is shared, the grants are not.
             // Read here: this check runs before the authorization re-check that creates `authState`.
-            var validationAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            using var directoryRead = DirectoryReadOperation.Begin(); var validationAuthState = await AuthStateProvider.GetAuthenticationStateAsync(); // kd-88: the target check and the self-grant check share one directory-read credential fetch
             var validation = await Validator.ValidateTargetMailboxAsync(target, validationAuthState.User, ServicerModuleId);
             servicedNote = validation.ServicedNote;
             var validationError = validation.Error;
@@ -655,7 +655,7 @@
             // pause: the earlier verdict may be arbitrarily stale, and the Constitution requires
             // the protection check immediately before the write regardless (pps-1). It also
             // produces the serviced note this path had no way to audit.
-            var onPremAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            using var directoryRead = DirectoryReadOperation.Begin(); var onPremAuthState = await AuthStateProvider.GetAuthenticationStateAsync(); // kd-88: the re-checks share one directory-read credential fetch
             var onPremValidation = await Validator.ValidateTargetMailboxAsync(
                 target, onPremAuthState.User, ServicerModuleId);
             if (onPremValidation.Error is not null)

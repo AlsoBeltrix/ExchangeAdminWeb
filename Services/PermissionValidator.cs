@@ -304,6 +304,10 @@ public class PermissionValidator
         System.Security.Claims.ClaimsPrincipal? actingUser,
         string? moduleId)
     {
+        // kd-88. The resolution, the check and the check of the typed string share one directory-read credential fetch - one
+        // operation, joined when the caller already began one (a single change's page handler, a bulk file).
+        using var operation = DirectoryReadOperation.Begin();
+
         // aud-a2d. The mailbox the central check resolved, when it resolved one: the write is bound
         // to it, so it is kept rather than re-derived from the string at the end.
         var centralResolved = false;
@@ -1123,7 +1127,8 @@ public class PermissionValidator
         (string username, string password, string domain)? secret;
         try
         {
-            secret = await (DirectoryReadSecretFetch ?? FetchDirectoryReadSecretAsync)(secretId.Value);
+            // kd-88: the operation's one fetch - in a single change the protected-principal check's reads share it.
+            secret = await DirectoryReadOperation.DirectoryReadSecretAsync(secretId.Value, DirectoryReadSecretFetch ?? FetchDirectoryReadSecretAsync);
         }
         catch (Exception ex)
         {

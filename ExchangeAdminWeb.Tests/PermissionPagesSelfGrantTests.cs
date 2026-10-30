@@ -79,7 +79,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// service a test gives, else a substitute mail service and a real progress service (aud-a53).
     /// </summary>
     private void Wire(ComponentBase page, IIdentityResolver resolver, AuditService audit, ILogger logger,
-        EmailService? email = null, IActivityProgress? progress = null)
+        EmailService? email = null, IActivityProgress? progress = null, PermissionValidator? validator = null)
     {
         var auth = Substitute.For<AuthenticationStateProvider>();
         auth.GetAuthenticationStateAsync().Returns(new AuthenticationState(_jdoe));
@@ -91,7 +91,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Set(page, "AuthStateProvider", auth);
         Set(page, "AuthorizationService", authorization);
         Set(page, "ServiceNow", new ServiceNowService(_h.Config, NullLogger<ServiceNowService>.Instance, http));
-        Set(page, "Validator", _h.NothingProtectedValidator(resolver));
+        Set(page, "Validator", validator ?? _h.NothingProtectedValidator(resolver));
         Set(page, "Audit", audit);
         Set(page, "Email", email ?? Substitute.For<EmailService>(_h.Config, Substitute.For<ILogger<EmailService>>()));
         Set(page, "ClientInfo", new ClientInfoService());
@@ -124,10 +124,11 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// </summary>
     private async Task<PermissionResult> SubmitMailboxGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
         string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
-        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false, bool removal = false)
+        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false, bool removal = false,
+        PermissionValidator? validator = null)
     {
         var page = new MailboxPermissions();
-        Wire(page, resolver, audit, logger, email, progress);
+        Wire(page, resolver, audit, logger, email, progress, validator);
         Set(page, "MailboxService", new MailboxPermissionService(pool ?? _h.Pool, null!, NullLogger<MailboxPermissionService>.Instance, _h.Config, null!, _h.Trace));
         SetField(page, "grantFullAccess", true);
         SetField(page, "grantSendAs", false);
@@ -146,10 +147,11 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     /// <summary>Calendar Permissions' <c>SubmitSingle</c> over a Reviewer grant, as <see cref="SubmitMailboxGrant"/>.</summary>
     private async Task<PermissionResult> SubmitCalendarGrant(IIdentityResolver resolver, AuditService audit, ILogger logger,
         string? grantee = null, EmailService? email = null, IActivityProgress? progress = null, string? target = null,
-        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false, bool removal = false)
+        ExoConnectionPool? pool = null, string? ticket = null, bool reauthorizationDenied = false, bool removal = false,
+        PermissionValidator? validator = null)
     {
         var page = new CalendarPermissions();
-        Wire(page, resolver, audit, logger, email, progress);
+        Wire(page, resolver, audit, logger, email, progress, validator);
         Set(page, "CalendarService", new CalendarPermissionService(pool ?? _h.Pool, null!, NullLogger<CalendarPermissionService>.Instance, _h.Config, null!, _h.Trace));
         SetField(page, "accessRight", CalendarAccessRight.Reviewer);
         if (grantee is not null) SetField(page, "affectedUser", grantee);
@@ -262,6 +264,44 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     private const string Other = "other@contoso.test";
 
     public static TheoryData<string> Pages => [MailboxPage, CalendarPage];
+
+    [Theory]
+    [MemberData(nameof(Pages))]
+    public async Task ASingleGrant_FetchesTheDirectoryReadCredentialOnce_ForEveryCheckItMakes(string page)
+    {
+        // kd-88. One change's checks - the target's resolution, the proof of its mailbox, its group check and the self-grant
+        // check - each fetched the directory-read secret for itself; the dev log shows the first three (4.1 s, 2.7 s, 2.7 s).
+        // The handler now opens one operation over its checks: one fetch, every check still made.
+        _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
+        {
+            Dn = $"CN=shared,OU=Staff,{SelfGrantDirectoryStandIn.DomainDn}",
+            Class = "user",
+            Upn = Target,
+            Mail = Target,
+            Sam = "shared",
+            Sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3998",
+            PrimaryGroupId = SelfGrantDirectoryStandIn.DomainUsersRid,
+            MailboxGuid = TargetMailbox,
+            Proxies = [$"SMTP:{Target}"],
+        });
+        var vip = _h.Forest.AddGroup("VIP Staff");
+        var resolver = ExchangeNamesTheAliasAsTheOperator();
+        resolver.ResolveRecipientAsync(Target).Returns(
+            new ResolvedRecipient(Target, "ext-" + Target, "UserMailbox", ExistsOnPrem: true, ExchangeGuid: TargetMailbox));
+        var validator = _h.ProtectedValidator(resolver, new ProtectedPrincipalConfig { Groups = [vip.Dn] });
+
+        var result = page == MailboxPage
+            ? await SubmitMailboxGrant(resolver, _h.Audit, NullLogger<MailboxPermissions>.Instance, grantee: Other, validator: validator)
+            : await SubmitCalendarGrant(resolver, _h.Audit, NullLogger<CalendarPermissions>.Instance, grantee: Other, validator: validator);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Contains(_h.Forest.Searches, search => search.StartsWith("Get-ADUser ", StringComparison.Ordinal));
+        Assert.Contains(_h.Forest.Searches, search => search.Contains("(msExchMailboxGuid=", StringComparison.Ordinal));
+        Assert.Contains(_h.Forest.Searches, search => search.EndsWith(" " + SelfGrantDirectoryStandIn.TokenGroups, StringComparison.Ordinal));
+        Assert.Contains(_h.Forest.Searches, search => search.Contains($"(userPrincipalName={Other})", StringComparison.Ordinal));
+        Assert.Empty(_h.Forest.Errors);
+        Assert.Equal(1, _h.DirectoryReadFetches);
+    }
 
     /// <summary>
     /// The on-premises Mailbox Permissions write, its credential and its session the harness's; over the pool and the settings

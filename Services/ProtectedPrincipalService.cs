@@ -190,6 +190,44 @@ public class ProtectedPrincipalService
 
     private DateTime _lastCredentialFailure = DateTime.MinValue;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+
+    /// <summary>
+    /// Test seam (kd-88): fetches the directory-read secret for its Secret ID. Null in production, which asks the secret store
+    /// (<see cref="DelineaService.GetCredentialsBySecretIdAsync"/>) as before.
+    /// </summary>
+    internal Func<int, Task<(string username, string password, string domain)?>>? DirectoryReadSecretFetch { get; set; }
+
+    /// <summary>
+    /// Test seam (kd-88): the directory session the resolution, the mailbox proof and the group check read in, not yet open.
+    /// Production builds the session they always built; the ActiveDirectory module is imported into it before the first read.
+    /// </summary>
+    internal Func<Runspace> DirectoryRunspace { get; set; } = DefaultDirectoryRunspace;
+
+    private static Runspace DefaultDirectoryRunspace()
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        return RunspaceFactory.CreateRunspace(iss);
+    }
+
+    /// <summary>
+    /// kd-88. The directory-read secret, fetched once per operation: inside a <see cref="DirectoryReadOperation"/> - a single
+    /// change, a bulk file - the operation's one answer, its secret or its failure; outside one, a fetch of its own. A fetch
+    /// that throws is a secret not retrieved, as the store's own failures already are.
+    /// </summary>
+    private async Task<(string username, string password, string domain)?> DirectoryReadSecretAsync(int secretId)
+    {
+        try
+        {
+            return await DirectoryReadOperation.DirectoryReadSecretAsync(secretId,
+                DirectoryReadSecretFetch ?? (id => _delineaService.GetCredentialsBySecretIdAsync(id)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The protected-principal directory-read credential could not be retrieved");
+            return null;
+        }
+    }
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
     public ProtectedPrincipalService(
@@ -434,7 +472,7 @@ public class ProtectedPrincipalService
             return (null, ResolutionStatus.Unavailable);
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -506,6 +544,9 @@ public class ProtectedPrincipalService
     // a live directory.
     public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
     {
+        // kd-88: its two directory lookups share the operation's one credential fetch.
+        using var operation = DirectoryReadOperation.Begin();
+
         var (principal, status) = await ResolveWithStatusAsync(identity);
         if (status != ResolutionStatus.NotFound)
             return (principal, status);
@@ -610,6 +651,10 @@ public class ProtectedPrincipalService
     // virtual: the same test seam as ResolveWithExchangeFallbackAsync.
     public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
     {
+        // kd-88: its directory lookups - the typed string, the canonical address, the mailbox proof - share the operation's
+        // one credential fetch, where each fetched its own (4.1 s and 2.7 s on the dev log).
+        using var operation = DirectoryReadOperation.Begin();
+
         var (answered, recipient) = await AskExchangeAsync(identity);
         if (!answered)
             return (null, ResolutionStatus.Unavailable);
@@ -785,7 +830,7 @@ public class ProtectedPrincipalService
             return (false, []);
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -819,12 +864,10 @@ public class ProtectedPrincipalService
         }
     }
 
-    private static IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
+    private IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
         Guid mailboxGuid, string username, string password, string domain)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = DirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
@@ -981,9 +1024,7 @@ public class ProtectedPrincipalService
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = DirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
@@ -1455,7 +1496,7 @@ public class ProtectedPrincipalService
             return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -1502,9 +1543,7 @@ public class ProtectedPrincipalService
     {
         var matches = new List<string>();
 
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        using var runspace = DirectoryRunspace();
         runspace.Open();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
