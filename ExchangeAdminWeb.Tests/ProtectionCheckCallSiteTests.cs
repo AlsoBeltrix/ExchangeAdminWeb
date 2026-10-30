@@ -34,6 +34,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S5 Emergency Disable: the lookup's resolution and its check (the disable's own re-check is one check of its own).
         { "Components/Pages/EmergencyDisable.razor", "private async Task PerformLookup()",
             "ProtectedPrincipalService.BeginCheck(identity)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity)" },
+        // S6 Cloud Password Reset: the admin account's resolution and its check.
+        { "Components/Pages/CloudPasswordReset.razor", "CheckProtectionAsync(System.Security.Claims.ClaimsPrincipal user, string upn, string entraObjectId)",
+            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
     };
 
     [Theory]
