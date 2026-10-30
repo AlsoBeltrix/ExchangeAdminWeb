@@ -650,7 +650,7 @@ public class CloudPasswordResetFillCatalogTests
     [Fact]
     public void The_module_is_at_1_2_0()
     {
-        Assert.Equal("1.2.0", Module.Version);
+        Assert.Equal("1.2.1", Module.Version);
     }
 
     [Fact]
@@ -668,10 +668,13 @@ public class CloudPasswordResetFillCatalogTests
     }
 
     [Fact]
-    public void The_reset_permission_says_a_reset_may_first_save_an_employee_id_and_no_new_permission_is_added()
+    public void The_reset_permission_and_the_card_say_one_thing_each_and_no_new_permission_is_added()
     {
-        Assert.Contains("saves", Module.MainPermission.Description, StringComparison.Ordinal);
-        Assert.Contains("employee ID", Module.MainPermission.Description, StringComparison.Ordinal);
+        // Owner, 2026-10-30: the card and the permission read like the other modules' - one sentence each. The
+        // employee-ID detail lives in the FillMissingEmployeeId and OwnerNameEndings hints, which the test below reads.
+        Assert.DoesNotContain("employee ID", Module.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("employee ID", Module.MainPermission.Description, StringComparison.Ordinal);
+        Assert.Contains(Module.ConfigFields, f => f.Key == "FillMissingEmployeeId" && f.Description.Contains("employee ID", StringComparison.Ordinal));
 
         // J4: the save rides the reset permission. Still exactly one granular permission, the reveal.
         Assert.Equal("CloudPasswordResetReveal", Assert.Single(Module.GranularPermissions).PolicyAlias);

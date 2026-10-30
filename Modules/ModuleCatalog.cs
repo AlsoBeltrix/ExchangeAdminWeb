@@ -1014,7 +1014,7 @@ public sealed class ModuleCatalog
         {
             Id = "CloudPasswordReset",
             DisplayName = "Cloud Password Reset",
-            Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner, found from the employee ID on the account, and the reset is recorded in the audit log. An account with no employee ID can, when the module is set to, have its owner found from its name and that owner's employee ID saved on it first.",
+            Description = "Reset the password of a cloud-only Entra ID account and email it to the account's owner.",
             Route = "cloud-password-reset",
             IconCss = "bi bi-person-fill-nav-menu",
             Category = ModuleCategories.IdentityAndAccess,
@@ -1041,11 +1041,13 @@ public sealed class ModuleCatalog
             // event gains employeeIdFill, employeeIdFillValue and employeeIdFillSource. A failed lookup leaves
             // today's refusal and today's reveal exactly as they were. No new permission: anyone who can reset
             // can trigger the save.
-            Version = "1.2.0",
+            // 1.2.1: the module card and the Access permission say one thing each again; the employee-ID detail
+            // lives in the settings' own hints and the README (owner, 2026-10-30).
+            Version = "1.2.1",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
-                "Open the module and reset the password of an Entra ID cloud-only account, including accounts holding administrative roles. The new password is emailed to the account's owner and is never shown to the operator. When filling in a missing employee ID is switched on, a reset of an account with none first saves, on that account, the employee ID of the owner its name points to.",
+                "Open the module and reset the password of a cloud-only Entra ID account, including accounts holding administrative roles. The new password is emailed to the account's owner and is never shown to the operator.",
                 FailClosed: true),
             GranularPermissions = [
                 new("Reveal", "CloudPasswordResetReveal",
