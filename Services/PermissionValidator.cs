@@ -791,8 +791,9 @@ public class PermissionValidator
     /// aud-a52. Whether a group holds the operator is the protected-group evaluator's question
     /// (<see cref="ProtectedGroupMembership.Evaluate"/>), asked once over every group concerned and read in this session
     /// under the protected-principal directory-read credential (<see cref="SelfGrantDirectory.GroupsUnder"/>, aud-a60) - once
-    /// per run (<see cref="SelfGrantRun"/>, aud-a61): ancestry in the operator's own domain, universal ancestry at the
-    /// catalog, a domain-local group in its own domain, and the primary group, which no member link records. It reads
+    /// per run (<see cref="SelfGrantRun"/>, aud-a61): the operator's token - their own domain's groups, universal groups across
+    /// the forest and their primary group, which no member link records - and, for what a token cannot carry (a domain-local
+    /// group of another domain, a distribution group), the links themselves, read by name (kd-88). It reads
     /// nesting where aud-a43 read a direct member link only, and an answer it could not complete refuses. A group Exchange
     /// names that the directory does not hold is the directory's to answer when Exchange calls it synced - it was not found,
     /// so the check refuses - and Exchange's when it is cloud-only (<see cref="CompareInExchangeGroupAsync"/>), where aud-a43

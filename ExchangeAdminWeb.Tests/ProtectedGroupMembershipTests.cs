@@ -289,7 +289,8 @@ public class ProtectedGroupMembershipTests
         Evaluate(forest, Tess, StaffA);
 
         Assert.Contains($"ReadTarget {DomainA}", forest.Calls);
-        Assert.Contains($"GroupsContainingAny {DomainA}", forest.Calls);
+        // kd-88: the target's groups are its own domain's answer, its token - read there.
+        Assert.Contains($"ReadTokenGroups {DomainA}", forest.Calls);
     }
 
     // ----- aud-a3c: universal groups are read from the global catalog -----
@@ -301,7 +302,8 @@ public class ProtectedGroupMembershipTests
     {
         // aud-a3c. The universal group's link to A\Staff lives in B and in the global catalog,
         // not in A. The previous query asked A, so it saw this only when A's DC happened to be a
-        // GC - which the fake's DCs are not.
+        // GC - which the fake's DCs are not. kd-88: A's DC computes the token through a global
+        // catalog, so the universal group is in it - and nothing else is read.
         var forest = Forest();
         forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
 
@@ -309,7 +311,8 @@ public class ProtectedGroupMembershipTests
 
         Assert.Equal(["Group:" + ExecutivesB], result.Matches);
         Assert.False(result.Incomplete);
-        Assert.Contains("UniversalGroupsContainingAny forest", forest.Calls);
+        Assert.Contains($"ReadTokenGroups {DomainA}", forest.Calls);
+        Assert.DoesNotContain(forest.Calls, call => call.StartsWith("ReadMemberOf ", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -357,7 +360,8 @@ public class ProtectedGroupMembershipTests
     {
         var forest = Forest();
         forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
-        forest.FailOn = "UniversalGroupsContainingAny";
+        // kd-88: the universal membership is the token's, which A's DC computes through a global catalog.
+        forest.FailOn = "ReadTokenGroups";
 
         var result = Evaluate(forest, Tess, ExecutivesB);
 
@@ -365,11 +369,278 @@ public class ProtectedGroupMembershipTests
         Assert.True(result.Incomplete);
     }
 
+    // ----- kd-88: an account's groups are its token; only what a token cannot carry is read from the links -----
+
+    private static bool ReadAnyLink(FakeForest forest)
+        => forest.Calls.Any(call => call.StartsWith("ReadMemberOf ", StringComparison.Ordinal)
+                                    || call.StartsWith("DomainLocalGroupContainsAny ", StringComparison.Ordinal));
+
+    [Fact]
+    public void AnAccountsSecurityGroups_AreAnsweredByItsTokenAlone()
+    {
+        var forest = Forest();
+
+        var result = Evaluate(forest, Tess, StaffA);
+
+        Assert.Equal(["Group:" + StaffA], result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.Equal([$"ReadTarget {DomainA}", $"ReadTokenGroups {DomainA}", $"FindGroups DistinguishedName {StaffA} {DomainA}"], forest.Calls);
+    }
+
+    [Fact]
+    public void AnAccountOutsideEveryProtectedSecurityGroup_IsAnsweredByItsTokenAlone()
+    {
+        // The common case - a target nobody protects - costs the target read, the token read and the entries' own reads.
+        var forest = Forest();
+        forest.Group(ExecutivesB, $"{SidB}-3030", DirectoryGroupScope.Universal, "Executives", StaffA);
+
+        var result = Evaluate(forest, Uma, StaffA, ExecutivesB, PrivilegedA);
+
+        Assert.Empty(result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.False(ReadAnyLink(forest));
+        Assert.Equal(5, forest.Calls.Count);
+    }
+
+    [Fact]
+    public void APrimaryGroupOnlyMembership_IsDetected()
+    {
+        // Hole 2, by construction: Uma is in nothing but her primary group, which no member link records; her token
+        // carries it, and the match comes from the token with no link read at all.
+        var forest = Forest();
+
+        var result = Evaluate(forest, Uma, DomainUsersA);
+
+        Assert.Equal(["Group:" + DomainUsersA], result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.False(ReadAnyLink(forest));
+    }
+
+    [Fact]
+    public void ATokenThatDoesNotCarryThePrimaryGroup_FailsClosed()
+    {
+        // A token the directory withholds from the reader reads as empty, not as "in nothing": every account's token
+        // carries its primary group, so one without it was not computed.
+        var forest = Forest();
+        forest.WithholdTokenGroups = true;
+
+        var result = Evaluate(forest, Tess, PrivilegedA);
+
+        Assert.Empty(result.Matches);
+        Assert.True(result.Incomplete);
+    }
+
+    [Fact]
+    public void ADistributionGroupHoldingTheTarget_Protects_ThroughItsLinks()
+    {
+        // No token carries a distribution group, so the token's silence is no answer for one: the target's links are.
+        var forest = Forest();
+        const string list = "CN=Exec List,OU=Groups,DC=a,DC=example";
+        forest.DistributionGroup(list, $"{SidA}-2040", DirectoryGroupScope.Universal, "Exec List", Tess);
+
+        var result = Evaluate(forest, Tess, list);
+
+        Assert.Equal(["Group:" + list], result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.Contains($"ReadMemberOf {DomainA}", forest.Calls);
+    }
+
+    [Fact]
+    public void ADistributionGroupOfAnotherDomain_HoldingTheTargetsGroup_Protects()
+    {
+        // B's universal distribution list holds A\Staff, which holds Tess: A holds the first link, the global catalog the second.
+        var forest = Forest();
+        const string list = "CN=All Hands,OU=Groups,DC=b,DC=example";
+        forest.DistributionGroup(list, $"{SidB}-3040", DirectoryGroupScope.Universal, "All Hands", StaffA);
+
+        var result = Evaluate(forest, Tess, list);
+
+        Assert.Equal(["Group:" + list], result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.Contains("ReadMemberOf forest", forest.Calls);
+    }
+
+    [Fact]
+    public void ADistributionGroupWithoutTheTarget_DoesNotProtect()
+    {
+        var forest = Forest();
+        const string list = "CN=All Hands,OU=Groups,DC=b,DC=example";
+        forest.DistributionGroup(list, $"{SidB}-3040", DirectoryGroupScope.Universal, "All Hands", StaffA);
+
+        var result = Evaluate(forest, Uma, list);
+
+        Assert.Empty(result.Matches);
+        Assert.False(result.Incomplete);
+    }
+
+    [Fact]
+    public void AGroupTarget_IsReadFromItsLinks_NotFromATokenItDoesNotHave()
+    {
+        var forest = Forest();
+
+        var result = Evaluate(forest, StaffA, ProtectedVipsB);
+
+        Assert.Single(result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.DoesNotContain(forest.Calls, call => call.StartsWith("ReadTokenGroups ", StringComparison.Ordinal));
+        Assert.Contains($"ReadMemberOf {DomainA}", forest.Calls);
+        Assert.Contains($"DomainLocalGroupContainsAny {DomainB}", forest.Calls);
+    }
+
+    [Fact]
+    public void AGroupTarget_NestedThroughItsOwnDomainIntoAUniversalGroupOfAnother_Protects()
+    {
+        // A\Staff is in A\Staff Leads (global), which is in B\Council (universal): A holds the first link, the global
+        // catalog the second - the shape the 2026-10-21 version found with its two unanchored searches.
+        var forest = Forest();
+        const string leads = "CN=Staff Leads,OU=Groups,DC=a,DC=example";
+        const string council = "CN=Council,OU=Groups,DC=b,DC=example";
+        forest.Group(leads, $"{SidA}-2050", DirectoryGroupScope.Global, "Staff Leads", StaffA);
+        forest.Group(council, $"{SidB}-3050", DirectoryGroupScope.Universal, "Council", leads);
+
+        Assert.Equal(["Group:" + council], Evaluate(forest, StaffA, council).Matches);
+        Assert.Empty(Evaluate(Forest(), StaffA, PrivilegedA).Matches);
+    }
+
+    [Fact]
+    public void AContactInAProtectedGroup_IsProtected_ThroughItsLinks()
+    {
+        // A contact has no SID and so no token; its links are all there is.
+        var forest = Forest();
+        const string contact = "CN=Vendor,OU=Contacts,DC=a,DC=example";
+        forest.Contact(contact);
+        forest.AddMember(StaffA, contact);
+
+        var result = Evaluate(forest, contact, StaffA);
+
+        Assert.Equal(["Group:" + StaffA], result.Matches);
+        Assert.False(result.Incomplete);
+    }
+
+    [Fact]
+    public void AnObjectTheLinkReadDoesNotReturn_FailsClosed()
+    {
+        // Everything the ancestry read asks for is known to exist; one left out of the answer was not read, and its links
+        // are not "none".
+        var forest = Forest();
+        forest.Unreturned.Add(StaffA);
+
+        var result = Evaluate(forest, StaffA, ProtectedVipsB);
+
+        Assert.Empty(result.Matches);
+        Assert.True(result.Incomplete);
+    }
+
+    [Theory]
+    [InlineData("ReadMemberOf")]
+    [InlineData("DomainLocalGroupContainsAny")]
+    public void AFailedLinkRead_FailsClosed(string failingRead)
+    {
+        var forest = Forest();
+        forest.FailOn = failingRead;
+
+        var result = Evaluate(forest, Uma, ProtectedVipsB);
+
+        Assert.Empty(result.Matches);
+        Assert.True(result.Incomplete);
+    }
+
+    [Fact]
+    public void ANestingDeeperThanTheLinkReadFollows_FailsClosed()
+    {
+        var forest = Forest();
+        var below = StaffA;
+        for (var i = 0; i < ProtectedGroupMembership.MaxNestingLevels + 2; i++)
+        {
+            var dn = $"CN=Layer {i},OU=Groups,DC=a,DC=example";
+            forest.Group(dn, $"{SidA}-{5000 + i}", DirectoryGroupScope.Global, $"Layer {i}", below);
+            below = dn;
+        }
+
+        var result = Evaluate(forest, StaffA, ProtectedVipsB);
+
+        // ProtectedVipsB holds StaffA directly, but the answer could only be had from a read that gave up: incomplete.
+        Assert.Empty(result.Matches);
+        Assert.True(result.Incomplete);
+    }
+
+    [Fact]
+    public void TheDirectorySeam_HasNoReadThatSearchesForWhateverContainsTheTarget()
+    {
+        // kd-88. The seam's reads, by name. GroupsContainingAny (every group of a domain whose chain reaches a DN) and
+        // UniversalGroupsContainingAny (every universal group of the forest likewise) are gone; a new member here is a new
+        // read and must be shown to be anchored before this list grows.
+        var reads = typeof(IProtectedGroupDirectory).GetMethods().Select(method => method.Name).Order(StringComparer.Ordinal);
+
+        Assert.Equal(
+            [
+                nameof(IProtectedGroupDirectory.DomainLocalGroupContainsAny), nameof(IProtectedGroupDirectory.FindGroups),
+                nameof(IProtectedGroupDirectory.FindObjectDnsBySid), nameof(IProtectedGroupDirectory.ReadMemberOf),
+                nameof(IProtectedGroupDirectory.ReadTarget), nameof(IProtectedGroupDirectory.ReadTokenGroups),
+                nameof(IProtectedGroupDirectory.ResolveDomainServer),
+            ],
+            reads);
+    }
+
+    public static TheoryData<string> PathsThroughTheDirectory =>
+    [
+        "an account and its own domain's group", "an account and a domain-local group of another domain",
+        "an account and a universal group", "an account and a distribution group", "an account and its primary group",
+        "a group and a domain-local group of another domain", "a group and a universal group",
+    ];
+
+    [Theory]
+    [MemberData(nameof(PathsThroughTheDirectory))]
+    public void NoPathSendsAnUnanchoredInChainFilter(string path)
+    {
+        // kd-88's tripwire, over the runspace reads themselves: every filter the check sends to the stand-in directory is
+        // recorded, and one that carries the in-chain rule must be anchored on one named group - never "every group whose
+        // chain reaches these", over a domain or the forest. The evaluation must also be answered, so no path passes by
+        // failing.
+        var forest = new SelfGrantDirectoryStandIn();
+        var user = forest.AddUser("tess");
+        var team = forest.AddGroup("Team", members: [user]);
+        const string other = SelfGrantDirectoryStandIn.OtherDomainDn;
+        const string otherSid = SelfGrantDirectoryStandIn.OtherDomainSid;
+        var (target, protectedGroup) = path switch
+        {
+            "an account and its own domain's group" => (user, team),
+            "an account and a domain-local group of another domain" =>
+                (user, forest.AddGroup("Remote", domainDn: other, domainSid: otherSid, domainLocal: true, members: [team])),
+            "an account and a universal group" =>
+                (user, forest.AddGroup("Council", domainDn: other, domainSid: otherSid, universal: true, members: [team])),
+            "an account and a distribution group" =>
+                (user, forest.AddGroup("List", domainDn: other, domainSid: otherSid, universal: true, distribution: true, members: [team])),
+            "an account and its primary group" => (user, forest.DomainUsers),
+            "a group and a domain-local group of another domain" =>
+                (team, forest.AddGroup("Remote", domainDn: other, domainSid: otherSid, domainLocal: true, members: [team])),
+            _ => (team, forest.AddGroup("Council", domainDn: other, domainSid: otherSid, universal: true, members: [team])),
+        };
+
+        using var runspace = forest.Open();
+        runspace.Open();
+        using var ps = System.Management.Automation.PowerShell.Create();
+        ps.Runspace = runspace;
+        var credential = new System.Management.Automation.PSCredential("svc", new System.Net.NetworkCredential("", "secret").SecurePassword);
+
+        var result = ProtectedGroupMembership.Evaluate(
+            [protectedGroup.Dn], target.Dn, new PowerShellProtectedGroupDirectory(ps, credential), NullLogger.Instance);
+
+        Assert.Equal(["Group:" + protectedGroup.Dn], result.Matches);
+        Assert.False(result.Incomplete);
+        Assert.Empty(forest.Errors);
+        var inChain = forest.Searches.Where(search => search.Contains(ProtectedGroupMembership.InChainRule, StringComparison.Ordinal)).ToList();
+        Assert.All(inChain, search =>
+            Assert.StartsWith("(&(distinguishedName=", search.Split(' ', 3)[2], StringComparison.Ordinal));
+        Assert.DoesNotContain(forest.Searches,
+            search => search.Contains("memberOf:" + ProtectedGroupMembership.InChainRule, StringComparison.OrdinalIgnoreCase));
+    }
+
     // ----- Fail closed on every read -----
 
     [Theory]
     [InlineData("ReadTarget")]
-    [InlineData("GroupsContainingAny")]
+    [InlineData("ReadTokenGroups")]
     [InlineData("FindGroups")]
     public void ADirectoryReadThatFails_FailsClosed(string failingRead)
     {
@@ -486,29 +757,21 @@ public class ProtectedGroupMembershipTests
     }
 
     [Fact]
-    public void ContainsAnyFilter_IsAnInChainOrOverTheMemberAttribute()
-    {
-        Assert.Equal(
-            "(|(member:1.2.840.113556.1.4.1941:=CN=A,DC=x)(member:1.2.840.113556.1.4.1941:=CN=B,DC=x))",
-            ProtectedGroupMembership.ContainsAnyFilter(["CN=A,DC=x", "CN=B,DC=x"]));
-    }
-
-    [Fact]
     public void GroupContainsAnyFilter_BindsTheGroupAndTheMembers()
     {
         Assert.Equal(
-            "(&(distinguishedName=CN=G,DC=b)(|(member:1.2.840.113556.1.4.1941:=CN=A,DC=a)))",
-            ProtectedGroupMembership.GroupContainsAnyFilter("CN=G,DC=b", ["CN=A,DC=a"]));
+            "(&(distinguishedName=CN=G,DC=b)(|(member:1.2.840.113556.1.4.1941:=CN=A,DC=a)(member:1.2.840.113556.1.4.1941:=CN=B,DC=a)))",
+            ProtectedGroupMembership.GroupContainsAnyFilter("CN=G,DC=b", ["CN=A,DC=a", "CN=B,DC=a"]));
     }
 
     [Fact]
-    public void UniversalContainsAnyFilter_IsLimitedToUniversalGroups()
+    public void AnyDnFilter_NamesEachObjectByItsDn_AndCarriesNoInChainRule()
     {
-        // The GC also holds its own domain's non-universal groups in full; the result is limited
-        // to universal groups because that is the only scope the GC is complete for forest-wide.
-        Assert.Equal(
-            "(&(groupType:1.2.840.113556.1.4.803:=8)(|(member:1.2.840.113556.1.4.1941:=CN=A,DC=a)))",
-            ProtectedGroupMembership.UniversalContainsAnyFilter(["CN=A,DC=a"]));
+        // kd-88: the ancestry read asks for named objects, never for whatever contains them.
+        var filter = ProtectedGroupMembership.AnyDnFilter(["CN=A,DC=a", @"CN=B\,C,DC=a"]);
+
+        Assert.Equal(@"(|(distinguishedName=CN=A,DC=a)(distinguishedName=CN=B\5c,C,DC=a))", filter);
+        Assert.DoesNotContain(ProtectedGroupMembership.InChainRule, filter, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -572,10 +835,10 @@ public class ProtectedGroupMembershipTests
 
     [Theory]
     [InlineData("public DirectoryTarget ReadTarget(", "public string ResolveDomainServer(", "= server,")]
-    [InlineData("public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<DirectoryGroup> GroupsContainingAny(", "= target,")]
-    [InlineData("public IReadOnlyList<DirectoryGroup> GroupsContainingAny(", "public bool DomainLocalGroupContainsAny(", "= server,")]
-    [InlineData("public bool DomainLocalGroupContainsAny(", "public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(", "= server,")]
-    [InlineData("public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(", "private string GlobalCatalog(", "= catalog,")]
+    [InlineData("public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<string> ReadTokenGroups(", "= target,")]
+    [InlineData("public IReadOnlyList<string> ReadTokenGroups(", "public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "= server,")]
+    [InlineData("public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "public bool DomainLocalGroupContainsAny(", "= target,")]
+    [InlineData("public bool DomainLocalGroupContainsAny(", "public IReadOnlyList<string> FindObjectDnsBySid(", "= server,")]
     public void EveryRead_CarriesTheServerItWasGiven(string signature, string next, string serverAssignment)
     {
         var body = MethodBody(DirectoryCode(), signature, next);
@@ -588,15 +851,34 @@ public class ProtectedGroupMembershipTests
     public void AForestLookup_GoesToTheGlobalCatalog_NeverTheLocalDomain()
     {
         var body = MethodBody(DirectoryCode(),
-            "public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<DirectoryGroup> GroupsContainingAny(");
+            "public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<string> ReadTokenGroups(");
 
         Assert.Contains("var target = server ?? GlobalCatalog();", body, StringComparison.Ordinal);
 
-        // aud-a3c: the universal ancestry is only complete on a global catalog.
-        var universal = MethodBody(DirectoryCode(),
-            "public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(", "private string GlobalCatalog(");
-        Assert.Contains("var catalog = GlobalCatalog();", universal, StringComparison.Ordinal);
-        Assert.Contains("ProtectedGroupMembership.UniversalContainsAnyFilter(batch)", universal, StringComparison.Ordinal);
+        // aud-a3c: universal links are only complete on a global catalog - kd-88's ancestry read asks it for them, by name.
+        var ancestry = MethodBody(DirectoryCode(),
+            "public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "public bool DomainLocalGroupContainsAny(");
+        Assert.Contains("var target = server ?? GlobalCatalog();", ancestry, StringComparison.Ordinal);
+        Assert.Contains("ProtectedGroupMembership.AnyDnFilter(batch)", ancestry, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheTokenRead_IsABaseSearchAtTheAccount_BoundByItsSid()
+    {
+        // kd-88, in kd-87's shape: tokenGroups is constructed only in a base-scope search, so the scope is stated in the
+        // command and the read is bound to the account by its SID. Raw text: the parameter names are string literals, which
+        // the code view blanks.
+        var raw = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "PowerShellProtectedGroupDirectory.cs"));
+        var start = raw.IndexOf("public IReadOnlyList<string> ReadTokenGroups(", StringComparison.Ordinal);
+        var end = raw.IndexOf("public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start, "Could not bound ReadTokenGroups - tripwire is stale.");
+        var body = raw[start..end];
+
+        Assert.Contains("[\"SearchBase\"] = accountDn,", body, StringComparison.Ordinal);
+        Assert.Contains("[\"SearchScope\"] = \"Base\",", body, StringComparison.Ordinal);
+        Assert.Contains("GroupLookupFilter(GroupLookupKey.Sid, accountSid)", body, StringComparison.Ordinal);
+        Assert.Contains("[\"Properties\"] = new[] { \"tokenGroups\" },", body, StringComparison.Ordinal);
+        Assert.Contains("Run(\"Get-ADObject\"", body, StringComparison.Ordinal);
     }
 
     [Fact]

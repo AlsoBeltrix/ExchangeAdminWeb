@@ -17,10 +17,15 @@ namespace ExchangeAdminWeb.Services;
 /// Every read uses <c>-ErrorAction Stop</c> and a cmdlet that wrote to its error stream is
 /// treated as a failed read: rows from a run that also reported an error prove nothing about how
 /// many objects exist, and the evaluator reads "no rows" as evidence.
+///
+/// kd-88. Every read is anchored - a base read at a DN, an equality search on an indexed key, or the in-chain question put
+/// to one named group - and none searches a domain or the forest for whatever contains the target. The two that did, every
+/// group whose member chain reaches a DN across the target's domain and every universal group at the global catalog, are
+/// gone: the first ran into the domain controller's two-minute timeout on the dev forest.
 /// </remarks>
 internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirectory
 {
-    private static readonly string[] GroupProperties = ["objectSid", "GroupScope"];
+    private static readonly string[] GroupProperties = ["objectSid", "GroupScope", "GroupCategory"];
 
     private readonly PowerShell _ps;
     private readonly PSCredential _credential;
@@ -93,22 +98,51 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
         }));
     }
 
-    public IReadOnlyList<DirectoryGroup> GroupsContainingAny(IReadOnlyList<string> memberDns, string server)
+    public IReadOnlyList<string> ReadTokenGroups(string accountDn, string accountSid, string server)
     {
-        var found = new Dictionary<string, DirectoryGroup>(StringComparer.OrdinalIgnoreCase);
-        foreach (var batch in ProtectedGroupMembership.Batches(memberDns))
+        // kd-88, in kd-87's shape. tokenGroups is constructed only in a base-scope search, so the scope is stated in the
+        // command - at the account's own DN, on a domain controller of its own domain - and the filter binds the read to the
+        // account by its SID: an object at that DN that is not this account matches nothing and fails below.
+        var rows = Run("Get-ADObject", new Dictionary<string, object>
         {
-            foreach (var group in ToGroups(Run("Get-ADGroup", new Dictionary<string, object>
+            ["SearchBase"] = accountDn,
+            ["SearchScope"] = "Base",
+            ["LDAPFilter"] = ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, accountSid),
+            ["Server"] = server,
+            ["Properties"] = new[] { "tokenGroups" },
+        });
+
+        if (rows.Count != 1 || rows[0] is null)
+            throw new InvalidOperationException(
+                $"Reading the account's token groups in its own domain returned {rows.Count} objects; expected exactly one.");
+
+        // Whatever shape the cmdlet produces - SecurityIdentifier, binary, text - read as the access re-check reads it. An
+        // empty answer is returned as one; the evaluator refuses a token without the account's primary group.
+        return OperatorMembershipDirectory.ParseSids(rows[0].Properties["tokenGroups"]?.Value).ToList();
+    }
+
+    public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(IReadOnlyList<string> dns, string? server)
+    {
+        // kd-88. The named objects' memberOf, by DN - never a search for whatever contains them. A null server is the forest's
+        // global catalog, which holds every universal group's links.
+        var target = server ?? GlobalCatalog();
+        var found = new List<DirectoryMemberOf>();
+        foreach (var batch in ProtectedGroupMembership.Batches(dns))
+        {
+            foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
             {
-                ["LDAPFilter"] = ProtectedGroupMembership.ContainsAnyFilter(batch),
-                ["Server"] = server,
-                ["Properties"] = GroupProperties,
-            })))
+                ["LDAPFilter"] = ProtectedGroupMembership.AnyDnFilter(batch),
+                ["Server"] = target,
+                ["Properties"] = new[] { "objectSid", "memberOf" },
+            }))
             {
-                found[group.Sid] = group;
+                // A row without a DN cannot say whose links it carries: a failed read, never a skipped one.
+                var dn = (row is null ? null : Text(row, "DistinguishedName"))
+                         ?? throw new InvalidOperationException("The directory returned an object without a readable DN.");
+                found.Add(new DirectoryMemberOf(dn, Text(row!, "objectSid"), DnValues(row!.Properties["memberOf"]?.Value)));
             }
         }
-        return found.Values.ToList();
+        return found;
     }
 
     public bool DomainLocalGroupContainsAny(string groupDn, IReadOnlyList<string> memberDns, string server)
@@ -124,27 +158,6 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
                 return true;
         }
         return false;
-    }
-
-    public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(IReadOnlyList<string> memberDns)
-    {
-        // The global catalog holds every universal group's member links, for every domain of the
-        // forest - the one place that is true whichever DC answers for the target (aud-a3c).
-        var catalog = GlobalCatalog();
-        var found = new Dictionary<string, DirectoryGroup>(StringComparer.OrdinalIgnoreCase);
-        foreach (var batch in ProtectedGroupMembership.Batches(memberDns))
-        {
-            foreach (var group in ToGroups(Run("Get-ADGroup", new Dictionary<string, object>
-            {
-                ["LDAPFilter"] = ProtectedGroupMembership.UniversalContainsAnyFilter(batch),
-                ["Server"] = catalog,
-                ["Properties"] = GroupProperties,
-            })))
-            {
-                found[group.Sid] = group;
-            }
-        }
-        return found.Values.ToList();
     }
 
     public IReadOnlyList<string> FindObjectDnsBySid(string sid)
@@ -240,9 +253,42 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             if (string.IsNullOrWhiteSpace(dn) || string.IsNullOrWhiteSpace(sid) || scope is null)
                 throw new InvalidOperationException("The directory returned a group without a readable DN, SID or scope.");
 
-            groups.Add(new DirectoryGroup(dn, sid, scope.Value));
+            // kd-88. A category that cannot be read is not "Security": the evaluator then reads the group's membership links
+            // rather than trusting a token to carry it.
+            groups.Add(new DirectoryGroup(dn, sid, scope.Value, ProtectedGroupMembership.IsSecurityCategory(Text(row, "GroupCategory"))));
         }
         return groups;
+    }
+
+    /// <summary>kd-88. A multi-valued DN attribute (memberOf) as its values; none when the attribute is absent.</summary>
+    private static List<string> DnValues(object? value)
+    {
+        var values = new List<string>();
+        switch (value)
+        {
+            case null:
+                break;
+            case PSObject wrapped:
+                return DnValues(wrapped.BaseObject);
+            case string single:
+                if (!string.IsNullOrWhiteSpace(single))
+                    values.Add(single.Trim());
+                break;
+            case System.Collections.IEnumerable many:
+                foreach (var item in many)
+                {
+                    var text = (item is PSObject wrapped ? wrapped.BaseObject : item)?.ToString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        values.Add(text.Trim());
+                }
+                break;
+            default:
+                var other = value.ToString();
+                if (!string.IsNullOrWhiteSpace(other))
+                    values.Add(other.Trim());
+                break;
+        }
+        return values;
     }
 
     private static string? Text(PSObject row, string property)

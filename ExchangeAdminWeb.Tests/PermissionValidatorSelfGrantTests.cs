@@ -290,9 +290,9 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [InlineData(true, true)]
     public async Task AGroupTheOperatorIsADirectMemberOf_IsRefused(bool otherDomain, bool universal)
     {
-        // Their own domain's group, among the groups that domain's member chains reach from them; a domain-local group of
-        // another domain - the scope a group of another domain needs to hold them at all - asked in its own domain, the only
-        // place its links are held; and a universal one, whose links the catalog holds (aud-a52: the evaluator's reads).
+        // Their own domain's group and a universal one, both in the token their own domain computes for them (kd-88); and a
+        // domain-local group of another domain - the scope a group of another domain needs to hold them at all - asked in its
+        // own domain, the only place its links are held (aud-a52: the evaluator's reads).
         var domain = otherDomain ? SelfGrantDirectoryStandIn.OtherDomainDn : SelfGrantDirectoryStandIn.DomainDn;
         var group = _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, domainDn: domain,
             domainSid: otherDomain ? SelfGrantDirectoryStandIn.OtherDomainSid : SelfGrantDirectoryStandIn.DomainSid,
@@ -306,9 +306,8 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         string[] seeds = [_jdoe.Dn, _h.Forest.DomainUsers.Dn];
         var decisive = (otherDomain, universal) switch
         {
-            (false, _) => $"Get-ADGroup contoso.test {ProtectedGroupMembership.ContainsAnyFilter(seeds)}",
             (true, false) => $"Get-ADGroup fabrikam.test {ProtectedGroupMembership.GroupContainsAnyFilter(group.Dn, seeds)}",
-            _ => $"Get-ADGroup {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} {ProtectedGroupMembership.UniversalContainsAnyFilter(seeds)}",
+            _ => $"Get-ADObject contoso.test {ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, _jdoe.Sid!)} {SelfGrantDirectoryStandIn.TokenGroups}",
         };
         Assert.Contains(decisive, _h.Forest.Searches);
         Assert.Empty(_h.Forest.Errors);
@@ -450,9 +449,10 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
     [Fact]
     public async Task ANestedMembershipThatCannotBeRead_IsRefused_AsIncomplete()
     {
-        // The catalog's read of universal nesting fails: a universal chain to the operator cannot be ruled out.
+        // The operator's token cannot be read - the read the universal nesting comes from since kd-88 - so a universal
+        // chain to the operator cannot be ruled out.
         _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other]);
-        _h.Forest.Failures["Get-ADGroup (&(groupType"] = "The server is not operational.";
+        _h.Forest.Failures["Get-ADObject " + SelfGrantDirectoryStandIn.TokenGroups] = "The server is not operational.";
         var resolver = ExchangeKnowsTheTarget();
         resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
 
@@ -647,7 +647,8 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
         Assert.NotEmpty(_h.Forest.MembershipReads);
         Assert.All(_h.Forest.CallsAs.Where(read => read.Call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)),
             read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
-        Assert.Contains(_h.Forest.CallsAs, read => read.Call.StartsWith("Get-ADForest", StringComparison.Ordinal)
+        // kd-88: the operator's groups are their token, read under the credential; the catalog is not needed for it.
+        Assert.Contains(_h.Forest.CallsAs, read => read.Call.EndsWith(" " + SelfGrantDirectoryStandIn.TokenGroups, StringComparison.Ordinal)
             && read.As == ExchangeWriteHarness.DirectoryReadAccount);
         // The operator's own lookup stays the session's: a resolver read, outside this finding. aud-a69: the grantee's is the
         // credential's.

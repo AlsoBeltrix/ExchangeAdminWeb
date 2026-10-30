@@ -30,7 +30,11 @@ namespace ExchangeAdminWeb.Tests;
 /// credential's account, or null for the session's own identity). A group can hide its member links from a read made with
 /// no credential (<see cref="Entry.MembersHiddenFromSession"/>): such a read sees no row for them, not an error - as a
 /// directory answers an identity that may not read a link. aud-a69: an object can hide itself from such a read
-/// (<see cref="Entry.HiddenFromSession"/>), which then finds no row for it and follows none of its links.
+/// (<see cref="Entry.HiddenFromSession"/>), which then finds no row for it and follows none of its links. kd-88: a read can
+/// ask for an account's <c>tokenGroups</c> - answered only in a base-scope search at the account on its own domain, refused
+/// in Active Directory's words in any other (<see cref="BaseSearchesOnly"/>) - and for <c>memberOf</c>, the groups whose
+/// links the server holds that name the object; a group can be a distribution group (<see cref="Entry.Distribution"/>),
+/// which no token carries.
 /// </remarks>
 internal sealed class SelfGrantDirectoryStandIn
 {
@@ -74,16 +78,31 @@ internal sealed class SelfGrantDirectoryStandIn
     public IReadOnlyList<(string Call, string? As)> CallsAs =>
         Calls.Cast<string>().Zip(Identities.Cast<string>(), (call, who) => (call, who.Length == 0 ? null : who)).ToList();
 
-    /// <summary>aud-a60. Every membership read (a search on <c>member</c>, by either cmdlet) with who it ran as.</summary>
+    /// <summary>
+    /// aud-a60. Every membership read with who it ran as: a search on <c>member</c>, by either cmdlet, and since kd-88 a read
+    /// of an account's <c>tokenGroups</c> or of named objects' <c>memberOf</c> (their calls end " tokenGroups", " memberOf").
+    /// </summary>
     public IReadOnlyList<(string Call, string? As)> MembershipReads =>
         CallsAs.Where(read => read.Call.StartsWith("Get-AD", StringComparison.Ordinal)
-            && read.Call.Contains("(member", StringComparison.OrdinalIgnoreCase)).ToList();
+            && (read.Call.Contains("(member", StringComparison.OrdinalIgnoreCase)
+                || read.Call.EndsWith(" " + TokenGroups, StringComparison.Ordinal)
+                || read.Call.EndsWith(" " + MemberOf, StringComparison.Ordinal))).ToList();
+
+    /// <summary>kd-88. The constructed attribute a domain controller computes only in a base-scope search.</summary>
+    public const string TokenGroups = "tokenGroups";
+
+    /// <summary>kd-88. The attribute the ancestry read asks for.</summary>
+    public const string MemberOf = "memberOf";
+
+    /// <summary>kd-88. Active Directory's refusal of a constructed attribute asked for in a search that is not base-scope.</summary>
+    public const string BaseSearchesOnly = "The requested search operation is only supported for base searches.";
 
     /// <summary>
     /// How a step fails instead of answering: "Import-Module", "Get-ADForest", "Get-ADObject" or "Get-ADGroup" (every
     /// search by that cmdlet), "&lt;cmdlet&gt; &lt;server&gt;" (every search it sends there), "&lt;cmdlet&gt; member" (a
-    /// membership read: a filter on <c>member</c>), or "&lt;cmdlet&gt; &lt;fragment&gt;" for a search whose filter contains
-    /// the fragment.
+    /// membership read: a filter on <c>member</c>), "&lt;cmdlet&gt; tokenGroups" or "&lt;cmdlet&gt; memberOf" (a read
+    /// asking for that attribute, kd-88), or "&lt;cmdlet&gt; &lt;fragment&gt;" for a search whose filter contains the
+    /// fragment.
     /// </summary>
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
@@ -134,10 +153,13 @@ internal sealed class SelfGrantDirectoryStandIn
 
         public string Name => Dn[3..Dn.IndexOf(',')];
 
-        /// <summary>A security group's groupType: the scope's flag and the security flag.</summary>
+        /// <summary>kd-88. A distribution group: no token carries it, its links still hold members.</summary>
+        public bool Distribution { get; init; }
+
+        /// <summary>A group's groupType: the scope's flag, and the security flag unless it is a distribution group.</summary>
         public int? GroupType => !string.Equals(Class, "group", StringComparison.OrdinalIgnoreCase)
             ? null
-            : unchecked((int)0x80000000) | (Scope switch
+            : (Distribution ? 0 : unchecked((int)0x80000000)) | (Scope switch
             {
                 "DomainLocal" => 0x4,
                 "Universal" => 0x8,
@@ -174,10 +196,11 @@ internal sealed class SelfGrantDirectoryStandIn
     /// </summary>
     public Entry AddGroup(string name, string? mail = null, string domainDn = DomainDn, string domainSid = DomainSid,
         int? rid = null, bool universal = false, bool catalogOnly = false, bool domainLocal = false,
-        bool membersHiddenFromSession = false, bool hiddenFromSession = false, params Entry[] members)
+        bool membersHiddenFromSession = false, bool hiddenFromSession = false, bool distribution = false, params Entry[] members)
     {
         var entry = new Entry
         {
+            Distribution = distribution,
             Dn = $"CN={name},OU=Groups,{domainDn}",
             Class = "group",
             Mail = mail,
@@ -233,21 +256,25 @@ internal sealed class SelfGrantDirectoryStandIn
             if ($problem) { Write-Error $problem; return }
             [pscustomobject]@{ GlobalCatalogs = [string[]]$SelfGrantCatalogs.Invoke() }
             """),
+        // kd-88: the searches take -SearchBase and -SearchScope, and a call that asks for tokenGroups or memberOf is recorded
+        // with that attribute after its filter, so a test can tell those reads from the lookups that share their filters.
         ("Get-ADObject", """
-            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential)
-            [void]$SelfGrantCalls.Add("Get-ADObject $Server $LDAPFilter")
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential, [string] $SearchBase, [string] $SearchScope)
+            $asked = $SelfGrantAsked.Invoke($Properties)
+            [void]$SelfGrantCalls.Add("Get-ADObject $Server $LDAPFilter$asked")
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
-            $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, $LDAPFilter)
+            $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $false, [bool]$Credential)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $false, [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
             """),
         ("Get-ADGroup", """
-            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential)
-            [void]$SelfGrantCalls.Add("Get-ADGroup $Server $LDAPFilter")
+            [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential, [string] $SearchBase, [string] $SearchScope)
+            $asked = $SelfGrantAsked.Invoke($Properties)
+            [void]$SelfGrantCalls.Add("Get-ADGroup $Server $LDAPFilter$asked")
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
-            $problem = $SelfGrantProblem.Invoke('Get-ADGroup', $Server, $LDAPFilter)
+            $problem = $SelfGrantProblem.Invoke('Get-ADGroup', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $true, [bool]$Credential)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, $true, [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
             """),
     ];
 
@@ -265,7 +292,9 @@ internal sealed class SelfGrantDirectoryStandIn
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantIdentities", Identities, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantProblem", (Func<string, string, string, string?>)Problem, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCatalogs", (Func<string[]>)(() => GlobalCatalogs), null));
-        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch", (Func<string, string, bool, bool, object[]>)Search, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch",
+            (Func<string, string, bool, bool, string?, string?, string[]?, object[]>)Search, null));
+        state.Variables.Add(new SessionStateVariableEntry("SelfGrantAsked", (Func<string[]?, string>)Asked, null));
         foreach (var (name, body) in Stubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, body));
         return RunspaceFactory.CreateRunspace(state);
@@ -281,6 +310,11 @@ internal sealed class SelfGrantDirectoryStandIn
             return here;
         if (filter.Contains("(member", StringComparison.OrdinalIgnoreCase) && Failures[$"{command} member"] is string member)
             return member;
+        foreach (var attribute in new[] { TokenGroups, MemberOf })
+        {
+            if (filter.EndsWith(" " + attribute, StringComparison.Ordinal) && Failures[$"{command} {attribute}"] is string read)
+                return read;
+        }
         foreach (var key in Failures.Keys.Cast<string>())
         {
             if (key.StartsWith(command + " (", StringComparison.Ordinal) && filter.Contains(key[(command.Length + 1)..], StringComparison.OrdinalIgnoreCase))
@@ -302,18 +336,37 @@ internal sealed class SelfGrantDirectoryStandIn
         return null;
     }
 
-    private object[] Search(string filter, string server, bool groupsOnly, bool credentialed)
+    // kd-88. " tokenGroups" or " memberOf" when the read asks for that attribute: recorded after the call's filter.
+    private static string Asked(string[]? properties) =>
+        properties?.Contains(TokenGroups, StringComparer.OrdinalIgnoreCase) == true ? " " + TokenGroups
+        : properties?.Contains(MemberOf, StringComparer.OrdinalIgnoreCase) == true ? " " + MemberOf
+        : "";
+
+    private object[] Search(string filter, string server, bool groupsOnly, bool credentialed, string? searchBase, string? searchScope,
+        string[]? properties)
     {
         try
         {
             var reach = Reach(server) ?? throw new InvalidOperationException(UnreachableServer);
+
+            // kd-88. tokenGroups is constructed only in a base-scope search: asked for in any other, the read is refused in
+            // Active Directory's words, as the access re-check's stand-in refuses it (kd-87).
+            var wantsToken = properties?.Contains(TokenGroups, StringComparer.OrdinalIgnoreCase) == true;
+            var wantsMemberOf = properties?.Contains(MemberOf, StringComparer.OrdinalIgnoreCase) == true;
+            var baseScope = string.Equals(searchScope, "Base", StringComparison.OrdinalIgnoreCase);
+            if (wantsToken && (!baseScope || string.IsNullOrEmpty(searchBase)))
+                throw new InvalidOperationException(BaseSearchesOnly);
+
             var match = LdapFilter.Parse(filter);
             return _objects
                 .Where(entry => !groupsOnly || string.Equals(entry.Class, "group", StringComparison.OrdinalIgnoreCase))
                 .Where(entry => credentialed || !entry.HiddenFromSession)
                 .Where(entry => Holds(reach, entry))
+                .Where(entry => string.IsNullOrEmpty(searchBase)
+                    || string.Equals(entry.Dn, searchBase, StringComparison.OrdinalIgnoreCase)
+                    || (!baseScope && entry.Dn.EndsWith("," + searchBase, StringComparison.OrdinalIgnoreCase)))
                 .Where(entry => match(attribute => Values(entry, attribute, reach, credentialed)))
-                .Select(Row)
+                .Select(entry => Row(entry, reach, credentialed, wantsToken, wantsMemberOf))
                 .Cast<object>()
                 .ToArray();
         }
@@ -376,6 +429,65 @@ internal sealed class SelfGrantDirectoryStandIn
 
     private static IEnumerable<string> One(string? value) => value is null ? [] : [value];
 
+    /// <summary>
+    /// kd-88. An account's token as a domain controller of its own domain computes it: every security group whose links that
+    /// DC holds (its own domain's) or the catalog it consults holds (universal groups'), followed from the account and its
+    /// primary group. The DC computes it as itself, so no link is hidden from it; a distribution group is never in it.
+    /// </summary>
+    private SecurityIdentifier[]? Token(Entry account, string reach)
+    {
+        if (!string.Equals(account.Class, "user", StringComparison.OrdinalIgnoreCase) || account.Sid is null
+            || !account.Dn.EndsWith("," + reach, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var reached = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { account.Dn };
+        var token = new List<SecurityIdentifier>();
+        var primarySid = account.PrimaryGroupId is int rid
+            ? $"{new SecurityIdentifier(account.Sid).AccountDomainSid!.Value}-{rid}"
+            : null;
+        var primary = _objects.FirstOrDefault(entry => entry.GroupType is not null && !entry.Distribution
+            && string.Equals(entry.Sid, primarySid, StringComparison.OrdinalIgnoreCase));
+        if (primary is not null)
+        {
+            reached.Add(primary.Dn);
+            token.Add(new SecurityIdentifier(primary.Sid!));
+        }
+
+        bool grew;
+        do
+        {
+            grew = false;
+            foreach (var group in _objects.Where(entry => entry.GroupType is not null && !entry.Distribution && !reached.Contains(entry.Dn)))
+            {
+                if ((LinksHeld(reach, group) || group.Universal) && group.Members.Any(reached.Contains))
+                {
+                    reached.Add(group.Dn);
+                    token.Add(new SecurityIdentifier(group.Sid!));
+                    grew = true;
+                }
+            }
+        } while (grew);
+
+        return [.. token];
+    }
+
+    // kd-88. The groups whose links this read sees and that name the object directly: its memberOf, as the server holds it.
+    private string[] MemberOfAt(Entry entry, string reach, bool credentialed) =>
+        _objects.Where(group => group.GroupType is not null && LinksSeen(reach, group, credentialed)
+                && group.Members.Contains(entry.Dn, StringComparer.OrdinalIgnoreCase))
+            .Select(group => group.Dn)
+            .ToArray();
+
+    private PSObject Row(Entry entry, string reach, bool credentialed, bool wantsToken, bool wantsMemberOf)
+    {
+        var row = Row(entry);
+        if (wantsToken && Token(entry, reach) is { } token)
+            row.Properties.Add(new PSNoteProperty(TokenGroups, token));
+        if (wantsMemberOf)
+            row.Properties.Add(new PSNoteProperty(MemberOf, MemberOfAt(entry, reach, credentialed)));
+        return row;
+    }
+
     private static PSObject Row(Entry entry)
     {
         var row = new PSObject();
@@ -389,7 +501,10 @@ internal sealed class SelfGrantDirectoryStandIn
         row.Properties.Add(new PSNoteProperty("objectSid", entry.Sid is null ? null : new SecurityIdentifier(entry.Sid)));
         row.Properties.Add(new PSNoteProperty("primaryGroupID", entry.PrimaryGroupId));
         if (entry.GroupType is not null)
+        {
             row.Properties.Add(new PSNoteProperty("GroupScope", entry.Scope));
+            row.Properties.Add(new PSNoteProperty("GroupCategory", entry.Distribution ? "Distribution" : "Security"));
+        }
         return row;
     }
 
