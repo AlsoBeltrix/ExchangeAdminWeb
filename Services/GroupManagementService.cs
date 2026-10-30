@@ -60,6 +60,9 @@ public class GroupManagementService
 
         try
         {
+            // kd-88: one protected-principal check for the resolution and the read of its rules - one credential fetch, one
+            // timing line - where each fetched the directory-read credential for itself.
+            using var protectionCheck = _protectedPrincipals.BeginCheck(member);
             var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(member);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
