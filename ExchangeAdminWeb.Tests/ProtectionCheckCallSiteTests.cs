@@ -36,6 +36,11 @@ public sealed class ProtectionCheckCallSiteTests
             "_protectedPrincipals.BeginCheck(member)", "CheckProtectedAsync(member, actingUser)" },
         { "Services/GroupManagementService.cs", "public async Task<PermissionResult> RemoveMemberAsync(",
             "_protectedPrincipals.BeginCheck(member)", "CheckProtectedAsync(member, actingUser)" },
+        // S4c Group Management page: a confirmed batch's members, one operation.
+        { "Components/Pages/GroupManagement.razor", "private async Task RemoveSelectedAsync()",
+            "DirectoryReadOperation.Begin()", "await RemoveOneAsync(group, row, ticket, sendAdminEmail: false)" },
+        { "Components/Pages/GroupManagement.razor", "private async Task AddResolvedAsync()",
+            "DirectoryReadOperation.Begin()", "await AddOneAsync(group, row.Line.Text, row.Match!.DistinguishedName, ticket, sendAdminEmail: false)" },
         // S5 Emergency Disable: the lookup's resolution and its check (the disable's own re-check is one check of its own).
         { "Components/Pages/EmergencyDisable.razor", "private async Task PerformLookup()",
             "ProtectedPrincipalService.BeginCheck(identity)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity)" },
