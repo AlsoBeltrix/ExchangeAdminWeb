@@ -206,6 +206,9 @@ public class M365GroupManagementService
 
         try
         {
+            // kd-88: one protected-principal check for the member's resolution and the read of its rules - one credential
+            // fetch, one timing line - where each fetched the directory-read credential for itself.
+            using var directoryCheck = _protectedPrincipals.BeginCheck(identity);
             var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(identity);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)

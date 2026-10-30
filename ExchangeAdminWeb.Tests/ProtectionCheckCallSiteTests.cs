@@ -43,6 +43,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S8 Blocked Senders: the sender's resolution and its check, or the raw address's check.
         { "Services/BlockedSenderProtectionGate.cs", "public async Task<BlockedSenderGateDecision> EvaluateAsync(string address,",
             "_protectedPrincipals.BeginCheck(address)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(address)" },
+        // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
+        { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
+            "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
     };
 
     [Theory]
