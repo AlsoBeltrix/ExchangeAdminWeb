@@ -46,6 +46,11 @@ public sealed class ProtectionCheckCallSiteTests
         // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
         { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
+        // S10 Migration: each mailbox's resolution and its check, and one operation for a batch's targets.
+        { "Services/MigrationService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
+            "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
+        { "Services/MigrationService.cs", "PartitionByProtectionAsync(",
+            "DirectoryReadOperation.Begin()", "await checker(target)" },
     };
 
     [Theory]

@@ -584,6 +584,9 @@ public class MigrationService : ExchangeServiceBase
             // Exchange fallback, not AD-only: an AD miss reports every cloud-only and
             // alias-addressed target as NotFound, which skipped the check entirely.
             // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
+            // kd-88: one protected-principal check for the mailbox's resolution and the read of its rules - one credential
+            // fetch, one timing line - where each fetched the directory-read credential for itself.
+            using var directoryCheck = _protectedPrincipals.BeginCheck(identity);
             var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(identity);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
@@ -651,6 +654,9 @@ public class MigrationService : ExchangeServiceBase
         var excluded = new List<string>();
         var servicedNotes = new List<string>();
         var unverified = new List<string>();
+
+        // kd-88: one operation for the batch - every target's check shares one directory-read credential fetch.
+        using var directoryRead = DirectoryReadOperation.Begin();
 
         foreach (var target in targets)
         {
