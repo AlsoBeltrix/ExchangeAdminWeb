@@ -362,6 +362,24 @@ public class ProtectedPrincipalService
         return ProtectedPrincipalResult.NotProtected();
     }
 
+    /// <summary>
+    /// kd-88. One directory read in a lent session, counted for the timing line: a read that throws fails the session, so a
+    /// session it may have broken is not lent again.
+    /// </summary>
+    private static System.Collections.ObjectModel.Collection<PSObject> InvokeIn(DirectorySessionPool.DirectorySession session)
+    {
+        DirectoryReadOperation.CountRead();
+        try
+        {
+            return session.PowerShell.Invoke();
+        }
+        catch
+        {
+            session.Fail();
+            throw;
+        }
+    }
+
     /// <summary>The check's name in the timing line (kd-88).</summary>
     internal const string ProtectionCheckName = "Protected-principal check";
 
@@ -1071,14 +1089,9 @@ public class ProtectedPrincipalService
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)
     {
-        using var runspace = DirectoryRunspace();
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        // kd-88: a warm session, lent for this lookup and given back - no runspace or module import of its own.
+        using var session = DirectorySessions.Lease(SessionWait);
+        var ps = session.PowerShell;
 
         var credential = CreateCredential(username, password, domain);
         var escaped = EscapeLdapFilter(identity);
@@ -1089,8 +1102,7 @@ public class ProtectedPrincipalService
           .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
-        var users = ps.Invoke();
+        var users = InvokeIn(session);
         ps.Commands.Clear();
 
         if (users.Count == 0)

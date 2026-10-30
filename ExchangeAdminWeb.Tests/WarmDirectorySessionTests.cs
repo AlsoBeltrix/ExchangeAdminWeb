@@ -83,6 +83,24 @@ public sealed class WarmDirectorySessionTests : IDisposable
     }
 
     [Fact]
+    public async Task TwoResolutions_BorrowOneWarmSession_AndAFailedLookupThrowsItsSessionAway()
+    {
+        // The sweep, S1: the resolution's lookup opened a runspace and imported the module for every identity it resolved.
+        var (service, search) = Service();
+
+        Assert.Equal(ProtectedPrincipalService.ResolutionStatus.Resolved, (await service.ResolveWithStatusAsync("tess@contoso.test")).status);
+        Assert.Equal(ProtectedPrincipalService.ResolutionStatus.Resolved, (await service.ResolveWithStatusAsync("tess")).status);
+        Assert.Equal(1, _h.Forest.RunspacesHandedOut);
+        Assert.Equal(1, ModuleImports);
+
+        _h.Forest.Failures["Get-ADUser"] = "The server is not operational.";
+        Assert.Equal(ProtectedPrincipalService.ResolutionStatus.Unavailable, (await service.ResolveWithStatusAsync("tess")).status);
+        _h.Forest.Failures.Clear();
+        Assert.Equal(ProtectedPrincipalService.ResolutionStatus.Resolved, (await service.ResolveWithStatusAsync("tess")).status);
+        Assert.Equal(2, search.CheckSessions.Opened);
+    }
+
+    [Fact]
     public void AFullPool_RefusesAfterItsWait_ItNeverLendsOneSessionTwice()
     {
         using var pool = new DirectorySessionPool(_h.Forest.Open, size: 1);
