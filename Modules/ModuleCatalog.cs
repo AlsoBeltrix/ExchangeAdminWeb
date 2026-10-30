@@ -779,7 +779,9 @@ public sealed class ModuleCatalog
             // only of control characters (kd-24).
             // 2.16.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "2.16.0",
+            // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
+            // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
+            Version = "2.16.1",
             MainPermission = new(
                 "Access",
                 "GroupManagement",

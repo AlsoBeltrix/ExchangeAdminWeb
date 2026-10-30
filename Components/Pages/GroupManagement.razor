@@ -848,11 +848,11 @@
     /// summary. Members are explicitly NOT emailed - "that's just noise" - so this never
     /// fans out, and a batch sends one message for the batch rather than one per row.
     ///
-    /// A group with no manager has no recipient. That is recorded in the audit log and
-    /// nothing is sent: no fallback to the admin address, no fallback to the members. The
-    /// same is true when managedBy names an object that cannot be resolved or has no
-    /// mailbox - the operator's change still succeeded, and the gap in who heard about it
-    /// is a durable fact rather than a line in a log nobody reads.
+    /// A group with no manager has no recipient: nothing is sent - no fallback to the admin
+    /// address, no fallback to the members - and, kd-92, nothing is filed as failed, since a
+    /// missing manager is not a failure; it is logged at Information. When managedBy names an
+    /// object that cannot be resolved or has no mailbox, the operator's change still succeeded
+    /// and the gap in who heard about it is a Failed audit row, a durable fact.
     /// </remarks>
     private async Task NotifyGroupManagerAsync(GroupInfo group, string action, string ticket, string summary, bool cleanSuccess)
     {
@@ -863,11 +863,11 @@
 
         if (manager is null)
         {
+            // kd-92: a group that names no manager is not a failure - one Information line, no audit row.
+            if (lookupError is null && string.IsNullOrWhiteSpace(group.ManagedBy)) { Logger.LogInformation("Group {Group} names no manager (managedBy is empty); no change summary was sent for {Action}.", group.Name, action); return; }
             var why = lookupError is not null
                 ? $"Could not resolve the group's manager: {lookupError}"
-                : string.IsNullOrWhiteSpace(group.ManagedBy)
-                    ? "The group names no manager (managedBy is empty), so there is no recipient for the change summary."
-                    : "The group's managedBy does not resolve to an object with a mailbox, so there is no recipient for the change summary.";
+                : "The group's managedBy does not resolve to an object with a mailbox, so there is no recipient for the change summary.";
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, $"{action}_ManagerNotNotified", "GroupManagement", group.Name, false, ticket, why, new Dictionary<string, object?> { ["managedBy"] = group.ManagedBy, ["change"] = summary }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the manager-notification gap on {Group}", group.Name); }
             return;

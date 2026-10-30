@@ -294,7 +294,8 @@ internal sealed class SelfGrantDirectory : IDisposable
     }
 
     // Get-ADObject reports the most specific class; read as the multi-valued attribute, the last value is that class.
-    private static string? ObjectClassOf(object? value)
+    // kd-92: Group Management's manager notice reads the class by this rule too.
+    internal static string? ObjectClassOf(object? value)
     {
         value = Unwrap(value);
         return value is string or null ? Text(value) : Strings(value).LastOrDefault();
