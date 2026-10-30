@@ -580,8 +580,10 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// the directory-read secret from the same counting stand-in store the self-grant check uses, so
     /// <see cref="DirectoryReadFetches"/> counts every fetch of the change.
     /// </summary>
-    public PermissionValidator ProtectedValidator(IIdentityResolver resolver, ProtectedPrincipalConfig protection)
-        => Validator(resolver, protectedPrincipalsConfig: null, protection);
+    public PermissionValidator ProtectedValidator(IIdentityResolver resolver, ProtectedPrincipalConfig protection,
+        ADDirectorySearchService? directorySearch = null, Microsoft.Extensions.Logging.ILogger<ProtectedPrincipalService>? protectedPrincipalsLogger = null,
+        Microsoft.Extensions.Logging.ILogger<PermissionValidator>? validatorLogger = null)
+        => Validator(resolver, protectedPrincipalsConfig: null, protection, directorySearch, protectedPrincipalsLogger, validatorLogger);
 
     /// <summary>kd-88. The protected-principal service the last <see cref="ProtectedValidator"/> was built over.</summary>
     public ProtectedPrincipalService? ProtectedPrincipals { get; private set; }
@@ -594,7 +596,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
     }
 
     private PermissionValidator Validator(IIdentityResolver resolver, ModuleConfigService? protectedPrincipalsConfig,
-        ProtectedPrincipalConfig? protection)
+        ProtectedPrincipalConfig? protection, ADDirectorySearchService? directorySearch = null,
+        Microsoft.Extensions.Logging.ILogger<ProtectedPrincipalService>? protectedPrincipalsLogger = null, Microsoft.Extensions.Logging.ILogger<PermissionValidator>? validatorLogger = null)
     {
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(Dir);
@@ -619,8 +622,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
         var protectedPrincipals = protection is null
             ? new ProtectedPrincipalService(env, Config, protectedPrincipalsConfig ?? ModuleConfig,
                 TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance)
-            : new ProtectedPrincipalService(env, Config, ModuleConfig,
-                TestConfigStore.CreateProtectedPrincipal(Dir), delinea, NullLogger<ProtectedPrincipalService>.Instance, scopeFactory)
+            : new ProtectedPrincipalService(env, Config, ModuleConfig, TestConfigStore.CreateProtectedPrincipal(Dir), delinea,
+                protectedPrincipalsLogger ?? NullLogger<ProtectedPrincipalService>.Instance, scopeFactory, directorySearch)
             {
                 DirectoryReadSecretFetch = DirectoryReadSecret,
                 DirectoryRunspace = Forest.Open,
@@ -636,7 +639,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 new SectionAccessRepository(TestConfigStore.Create(Dir))),
             NullLogger<ProtectedPrincipalServicerService>.Instance);
         return new PermissionValidator(Config, ModuleConfig, Pool, protectedPrincipals, servicers,
-            NullLogger<PermissionValidator>.Instance, scopeFactory)
+            validatorLogger ?? NullLogger<PermissionValidator>.Instance, scopeFactory)
         {
             SelfGrantDirectoryRunspace = Forest.Open,
             DirectoryReadSecretFetch = DirectoryReadSecret,

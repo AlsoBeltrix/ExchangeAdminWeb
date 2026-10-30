@@ -203,11 +203,39 @@ public class ProtectedPrincipalService
     /// </summary>
     internal Func<Runspace> DirectoryRunspace { get; set; } = DefaultDirectoryRunspace;
 
-    private static Runspace DefaultDirectoryRunspace()
+    private static Runspace DefaultDirectoryRunspace() => DirectorySessionPool.DefaultRunspace();
+
+    // kd-88. The directory search service, whose warm sessions for checks this service's reads borrow; null for a service
+    // built without one (the suite), which keeps warm sessions of its own over DirectoryRunspace.
+    private readonly ADDirectorySearchService? _directorySearch;
+    private DirectorySessionPool? _ownSessions;
+    private Func<Runspace>? _ownSessionsFactory;
+
+    /// <summary>How long a check waits for a warm session before it refuses as busy.</summary>
+    internal static readonly TimeSpan SessionWait = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// kd-88. The warm directory sessions this service's reads are lent: the directory search service's sessions for checks
+    /// in production, else sessions of its own over <see cref="DirectoryRunspace"/> - rebuilt if that seam is replaced.
+    /// </summary>
+    internal DirectorySessionPool DirectorySessions
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        return RunspaceFactory.CreateRunspace(iss);
+        get
+        {
+            if (_directorySearch is not null)
+                return _directorySearch.CheckSessions;
+
+            lock (_cacheLock)
+            {
+                if (_ownSessions is null || _ownSessionsFactory != DirectoryRunspace)
+                {
+                    _ownSessions?.Dispose();
+                    _ownSessions = new DirectorySessionPool(DirectoryRunspace);
+                    _ownSessionsFactory = DirectoryRunspace;
+                }
+                return _ownSessions;
+            }
+        }
     }
 
     /// <summary>
@@ -237,7 +265,8 @@ public class ProtectedPrincipalService
         ProtectedPrincipalRepository repository,
         DelineaService delineaService,
         ILogger<ProtectedPrincipalService> logger,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        ADDirectorySearchService? directorySearch = null)
     {
         _env = env;
         _config = config;
@@ -246,6 +275,7 @@ public class ProtectedPrincipalService
         _delineaService = delineaService;
         _logger = logger;
         _scopeFactory = scopeFactory;
+        _directorySearch = directorySearch;
         _changeWatcher = repository.CreateChangeWatcher(logger);
 
         var legacyPath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
@@ -1512,7 +1542,7 @@ public class ProtectedPrincipalService
             try
             {
                 var (groupMatches, expansionHadErrors) = await Task.Run(() =>
-                    CheckTransitiveGroupMembership(cfg.Groups, target, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    CheckGroupsInWarmSession(cfg.Groups, target, creds.Value.username, creds.Value.password, creds.Value.domain));
                 matches.AddRange(groupMatches);
 
                 // Fail closed: if expansion had errors and no matches were found,
@@ -1537,20 +1567,35 @@ public class ProtectedPrincipalService
         return (matches, false, null);
     }
 
-    private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
+    /// <summary>
+    /// kd-88. The group check in a warm session - the ActiveDirectory module already imported - lent for this check and given
+    /// back, where every check built a runspace and imported the module before its first read. A session a read failed in,
+    /// or whose answer was incomplete, is thrown away rather than lent again.
+    /// </summary>
+    private (List<string> matches, bool expansionHadErrors) CheckGroupsInWarmSession(
         string[] protectedGroups, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
+        using var session = DirectorySessions.Lease(SessionWait);
+        try
+        {
+            var outcome = CheckTransitiveGroupMembership(session.PowerShell, protectedGroups, target, username, password, domain);
+            if (outcome.expansionHadErrors)
+                session.Fail();
+            return outcome;
+        }
+        catch
+        {
+            session.Fail();
+            throw;
+        }
+    }
+
+    private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
+        PowerShell ps, string[] protectedGroups, ResolvedDirectoryPrincipal target,
+        string username, string password, string domain)
+    {
         var matches = new List<string>();
-
-        using var runspace = DirectoryRunspace();
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
 
         var credential = CreateCredential(username, password, domain);
 
