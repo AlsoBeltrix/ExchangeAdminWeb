@@ -180,6 +180,8 @@ public sealed class CircuitMembershipRevalidator
         ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, bool acceptRecordedAnswer, CancellationToken cancellationToken)
     {
         var userSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
+        // kd-90: the name read once, beside the SID, as a string; nothing below reads the principal for it again.
+        var accountName = user.Identity?.Name;
         if (!IsAccountSid(userSid))
         {
             return MembershipRevalidationResult.LookupFailed(
@@ -248,7 +250,7 @@ public sealed class CircuitMembershipRevalidator
                 return fromRecorded;
         }
 
-        var membership = await ReadDirectoryAsync(userSid!, user, cancellationToken).ConfigureAwait(false);
+        var membership = await ReadDirectoryAsync(userSid!, accountName, cancellationToken).ConfigureAwait(false);
 
         if (membership?.GroupSids is null)
             return MembershipRevalidationResult.LookupFailed("The directory lookup returned no answer.");
@@ -286,14 +288,14 @@ public sealed class CircuitMembershipRevalidator
     // has stopped answering does not go on confirming pages from an old answer. The read's START is
     // what is recorded: the answer is at least that fresh, and no fresher can be claimed for it.
     private async Task<OperatorDirectoryMembership?> ReadDirectoryAsync(
-        string userSid, ClaimsPrincipal user, CancellationToken cancellationToken)
+        string userSid, string? accountName, CancellationToken cancellationToken)
     {
         var started = Clock.GetTimestamp();
         OperatorDirectoryMembership? membership;
         try
         {
             membership = await _directory
-                .GetMembershipAsync(userSid, SectionAccessDirectoryReading.NetBiosFromNTAccount(user.Identity?.Name), cancellationToken)
+                .GetMembershipAsync(userSid, SectionAccessDirectoryReading.NetBiosFromNTAccount(accountName), cancellationToken)
                 .ConfigureAwait(false);
         }
         catch

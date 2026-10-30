@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -30,6 +31,12 @@ namespace ExchangeAdminWeb.Authorization;
 /// (<c>ComponentHub.ConnectCircuit</c> -&gt; <c>CircuitHost.SetCircuitUser</c>) sets the new
 /// connection's principal, which under Kerberos carries the same stale groups. Once revoked, the
 /// circuit is only ever given an anonymous one.
+/// </para>
+/// <para>
+/// kd-90. Everything the revalidation path reads of a principal - its account SID and groups for
+/// the check, its name for the warning and the audit line - comes from a copy of its claims taken
+/// when the principal is handed to the circuit (or first read by it), never from the identity
+/// again: the token behind a <c>WindowsIdentity</c> is disposed with the request that carried it.
 /// </para>
 /// </remarks>
 public sealed class MembershipRevalidatingAuthenticationStateProvider
@@ -75,6 +82,15 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     private readonly object _grantsSync = new();
     private readonly HashSet<AuthorizationGrant> _grants = new();
 
+    // kd-90. What the revalidation path reads of a principal: a copy of its claims - its name, its account SID, its groups -
+    // as plain strings, taken once, the first time this circuit is handed the principal or reads it, and read in its place
+    // ever after. The framework disposes a WindowsIdentity's token with the request that carried it and the circuit outlives
+    // that request, so a later read of the identity itself throws ObjectDisposedException (dev app-20261030.log 09:45:36: in
+    // Revoke, past the revocation, before its warning and its audit line, so the operator was signed out silently). Keyed by
+    // the principal: a reconnect's new principal is copied when it is handed over, and a principal no longer held is
+    // collected with its copy.
+    private readonly ConditionalWeakTable<ClaimsPrincipal, ClaimsPrincipal> _copies = new();
+
     public MembershipRevalidatingAuthenticationStateProvider(
         ILoggerFactory loggerFactory,
         CircuitMembershipRevalidator revalidator,
@@ -110,8 +126,14 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
 
     // The framework's way in - circuit creation, server rendering and, the reason this exists, a
     // reconnect. The framework's own sign-out calls the base method directly and is unaffected.
+    // kd-90: the principal is copied here, inside the request that carries its token, before anything needs to read it.
     void IHostEnvironmentAuthenticationStateProvider.SetAuthenticationState(Task<AuthenticationState> authenticationStateTask)
-        => SetAuthenticationState(_revocation.IsRevoked ? Anonymous : authenticationStateTask);
+    {
+        if (!_revocation.IsRevoked && authenticationStateTask.IsCompletedSuccessfully)
+            _ = Copy(authenticationStateTask.Result.User, out _);
+
+        SetAuthenticationState(_revocation.IsRevoked ? Anonymous : authenticationStateTask);
+    }
 
     /// <summary>
     /// True when <paramref name="user"/> may keep its access. False revokes the circuit first, so a
@@ -133,10 +155,20 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         if (_revocation.IsRevoked)
             return false;
 
+        // kd-90. The copy from here on, never the live identity: the check reads its SID and groups, the revocation its name.
+        // A principal that could not be read even the first time is not one whose access can be confirmed.
+        var copy = Copy(user, out var unreadable);
+        if (copy is null)
+        {
+            Revoke(user, MembershipRevalidationResult.LookupFailed(
+                $"The signed-in principal could not be read, so its access cannot be re-checked: {unreadable}"), trigger);
+            return false;
+        }
+
         MembershipRevalidationResult result;
         try
         {
-            result = await _revalidator.RevalidateAsync(user, CapturedGrants, cancellationToken).ConfigureAwait(false);
+            result = await _revalidator.RevalidateAsync(copy, CapturedGrants, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -176,7 +208,8 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         try
         {
             user = (await GetAuthenticationStateAsync().ConfigureAwait(false)).User;
-            if (user.Identity?.IsAuthenticated != true)
+            // kd-90: whether it is authenticated, from the copy too; one that cannot be read is checked, and refused there.
+            if (Copy(user, out _) is { } copy && copy.Identity?.IsAuthenticated != true)
                 return true;
 
             if (await ValidateAsync(user, TriggerCircuitOpened, cancellationToken).ConfigureAwait(false))
@@ -293,9 +326,10 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
         if (!_revocation.TryRevoke(result.Reason ?? CircuitRevocationReason.LookupFailed))
             return;
 
-        var account = user?.Identity?.Name;
-        if (string.IsNullOrWhiteSpace(account))
-            account = "Unknown";
+        // kd-90. The name from the principal's copy, never its live identity. Read from a WindowsIdentity whose token was
+        // disposed with its request it threw here - past the revocation, so the circuit was signed out with neither the
+        // warning nor the audit line below.
+        var account = AccountOf(user);
 
         _logger.LogWarning(
             "Session for {User} ended by access revalidation ({Trigger}): {Reason}. {Detail}",
@@ -303,6 +337,55 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
 
         WriteAuditLine(_audit, _logger, account, _clientInfo.IpAddress, result, trigger);
     }
+
+    // kd-90. The account a revocation names: the name in the principal's copy, or "Unknown" when there is none - never the
+    // live identity and never a throw, so the warning and the audit line after it are always written.
+    private string AccountOf(ClaimsPrincipal? user)
+    {
+        string? account = null;
+        try
+        {
+            account = Copy(user, out _)?.Identity?.Name;
+        }
+        catch (Exception)
+        {
+            // Copy itself does not throw; this keeps the two lines after the revocation unconditional whatever a principal does.
+        }
+
+        return string.IsNullOrWhiteSpace(account) ? "Unknown" : account;
+    }
+
+    // kd-90. The principal's copy, taken the first time this circuit sees the principal and kept beside it; null, with why,
+    // when it cannot be read even then.
+    private ClaimsPrincipal? Copy(ClaimsPrincipal? user, out string? unreadable)
+    {
+        unreadable = null;
+        if (user is null)
+            return null;
+
+        try
+        {
+            return _copies.GetValue(user, Detached);
+        }
+        catch (Exception ex)
+        {
+            unreadable = ex.Message;
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// kd-90. A principal of plain claims copied from <paramref name="user"/>: each identity's claims, authentication type,
+    /// name and role claim types, read now and nothing behind them - no token, no handle - so reading it can never throw.
+    /// </summary>
+    internal static ClaimsPrincipal Detached(ClaimsPrincipal user) =>
+        new(user.Identities
+            .Select(identity => new ClaimsIdentity(
+                identity.Claims
+                    .Select(claim => new Claim(claim.Type, claim.Value, claim.ValueType, claim.Issuer, claim.OriginalIssuer))
+                    .ToList(),
+                identity.AuthenticationType, identity.NameClaimType, identity.RoleClaimType))
+            .ToList());
 
     /// <summary>
     /// The one audit line for access revalidation refusing an operator - a circuit it ended, or a page

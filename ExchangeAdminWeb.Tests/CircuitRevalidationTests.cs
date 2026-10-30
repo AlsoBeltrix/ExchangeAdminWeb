@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -1470,6 +1471,160 @@ public class CircuitRevalidationTests
 
     // ------------------------------------------------------------------ helpers
 
+    // ------------------------------------------------------------------ kd-90: a disposed Windows identity
+
+    // kd-90, the dev log of 2026-10-30 09:45:36. The circuit's WindowsIdentity had had its token disposed with the request
+    // that carried it; the check revoked, then read the identity's name for the warning, the read threw
+    // ObjectDisposedException, and the circuit was signed out with no warning line and no audit row. The identity here
+    // throws on every read once disposed, as that one did, and it was handed to the circuit while its request was alive.
+    [Fact]
+    public async Task ADisposedIdentity_IsRevokedWithItsWarningAndItsAuditLine_AndNothingEscapes()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, DomainUsersSid); // the operator left the group: the revocation is the intended one
+        var identity = new DisposableIdentity(OperatorName, OperatorSid, SectionGroupSid, DomainUsersSid);
+        var user = new ClaimsPrincipal(identity);
+        var logs = new CapturingLoggerProvider();
+        using var loggers = LoggerFactory.Create(builder => builder.AddProvider(logs));
+        using var provider = h.Provider(loggers);
+        SignIn(provider, user);
+        identity.Dispose();
+
+        var valid = await provider.ValidateAsync(user, "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, h.Revocation.Reason);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal(OperatorName, audit.GetProperty("target").GetString());
+        Assert.Equal("operator", audit.GetProperty("user").GetString());
+        Assert.Equal(new[] { SectionGroupSid }, RemovedSids(audit));
+        var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.StartsWith($"Session for {OperatorName} ended by access revalidation (Interval): MembershipChanged.", warning.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(logs.Entries, entry => entry.Exception is ObjectDisposedException);
+    }
+
+    // kd-90. The same disposed identity, still in its groups: the check reads the copy taken when the circuit was handed the
+    // principal, so it confirms the access - no sign-out beyond the intended one, nothing audited.
+    [Fact]
+    public async Task ADisposedIdentityWhoseAccessStands_StaysValid()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        var identity = new DisposableIdentity(OperatorName, OperatorSid, SectionGroupSid, DomainUsersSid);
+        var user = new ClaimsPrincipal(identity);
+        using var provider = h.Provider();
+        SignIn(provider, user);
+        identity.Dispose();
+
+        var valid = await provider.ValidateAsync(user, "Interval", Ct);
+
+        Assert.True(valid);
+        Assert.False(h.Revocation.IsRevoked);
+        Assert.Empty(h.AuditEvents());
+        _ = h.Directory.Received(1).GetMembershipAsync(OperatorSid, "CONTOSO", AnyToken);
+    }
+
+    // kd-90. A principal whose identity cannot be read even the first time the circuit reads it cannot be confirmed: it is
+    // revoked as a lookup that failed, warned and audited under "Unknown", and nothing escapes to the framework's loop.
+    [Fact]
+    public async Task AnIdentityAlreadyDisposedWhenFirstRead_IsRevokedWarnedAndAudited_AndNothingEscapes()
+    {
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var identity = new DisposableIdentity(OperatorName, OperatorSid, SectionGroupSid);
+        identity.Dispose();
+        var logs = new CapturingLoggerProvider();
+        using var loggers = LoggerFactory.Create(builder => builder.AddProvider(logs));
+        using var provider = h.Provider(loggers);
+
+        var valid = await provider.ValidateAsync(new ClaimsPrincipal(identity), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("Unknown", audit.GetProperty("target").GetString());
+        Assert.Contains("could not be read", audit.GetProperty("error").GetString(), StringComparison.Ordinal);
+        Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Message.StartsWith("Session for Unknown ended", StringComparison.Ordinal));
+        _ = h.Directory.DidNotReceive().GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    // kd-90. The real type, not a stand-in: a WindowsIdentity of this process's own token, disposed before anything read it,
+    // throws ObjectDisposedException from its name - the dev log's stack, WindowsIdentity.get_Name over a disposed
+    // SafeAccessTokenHandle. Handed to the check in that state it is revoked as unreadable, warned and audited, and nothing
+    // escapes. Every Windows process has a token, so this asks nothing of the host's domain.
+    [Fact]
+    public async Task ARealWindowsIdentityDisposedUnread_IsRevokedWarnedAndAudited_AndNothingEscapes()
+    {
+        using var h = new Harness();
+        var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        identity.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => identity.Name);
+        var logs = new CapturingLoggerProvider();
+        using var loggers = LoggerFactory.Create(builder => builder.AddProvider(logs));
+        using var provider = h.Provider(loggers);
+
+        var valid = await provider.ValidateAsync(new System.Security.Principal.WindowsPrincipal(identity), "Interval", Ct);
+
+        Assert.False(valid);
+        Assert.Equal(CircuitRevocationReason.LookupFailed, h.Revocation.Reason);
+        Assert.Equal("Unknown", Assert.Single(h.AuditEvents()).RootElement.GetProperty("target").GetString());
+        Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Message.StartsWith("Session for Unknown ended", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// kd-90. An identity that, once disposed, throws on every read the way a <c>WindowsIdentity</c> whose token was disposed
+    /// with its request does - its name, its claims, whether it is authenticated - with the exception the dev log shows.
+    /// </summary>
+    private sealed class DisposableIdentity : ClaimsIdentity, IDisposable
+    {
+        private bool _disposed;
+
+        public DisposableIdentity(string name, string sid, params string[] groupSids)
+            : base("Negotiate", ClaimTypes.Name, ClaimTypes.Role)
+        {
+            AddClaim(new Claim(ClaimTypes.Name, name));
+            AddClaim(new Claim(ClaimTypes.PrimarySid, sid));
+            foreach (var group in groupSids)
+                AddClaim(new Claim(ClaimTypes.GroupSid, group));
+        }
+
+        public void Dispose() => _disposed = true;
+
+        public override string? Name => _disposed ? throw Gone() : base.Name;
+
+        public override IEnumerable<Claim> Claims => _disposed ? throw Gone() : base.Claims;
+
+        public override bool IsAuthenticated => _disposed ? throw Gone() : base.IsAuthenticated;
+
+        public override string? AuthenticationType => _disposed ? throw Gone() : base.AuthenticationType;
+
+        private static ObjectDisposedException Gone() => new("Microsoft.Win32.SafeHandles.SafeAccessTokenHandle");
+    }
+
+    /// <summary>kd-90. Every line the provider logs, with its level and exception.</summary>
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => new Logger(this);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger(CapturingLoggerProvider owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                owner.Entries.Enqueue((logLevel, formatter(state, exception), exception));
+        }
+    }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private static string AnySid => Arg.Any<string>();
@@ -1641,8 +1796,8 @@ public class CircuitRevalidationTests
 
         public CircuitMembershipRevalidator Revalidator() => new(Directory, Inventory(), Options);
 
-        public MembershipRevalidatingAuthenticationStateProvider Provider() =>
-            new(NullLoggerFactory.Instance, Revalidator(), Revocation, Options, Audit, ClientInfo);
+        public MembershipRevalidatingAuthenticationStateProvider Provider(ILoggerFactory? loggerFactory = null) =>
+            new(loggerFactory ?? NullLoggerFactory.Instance, Revalidator(), Revocation, Options, Audit, ClientInfo);
 
         public JsonDocument[] AuditEvents()
         {
