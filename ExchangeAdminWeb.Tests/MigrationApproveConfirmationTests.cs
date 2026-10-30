@@ -351,14 +351,16 @@ public sealed class MigrationApproveConfirmationTests : IDisposable
         Assert.Equal(TheTwoReads, _exchange.CallList());
     }
 
-    // Exchange's own "no such object", in each shape it is read from: there is no migration to approve.
+    // Exchange's own "no such object", in each shape it is read from: there is no migration to approve. kd-89: the bare
+    // text this tenant's module throws among them, for both reads - no batch of its own, then no migration user.
     [Theory]
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task NoMigrationUser_IsRefused_AndNothingIsWritten(string shape)
     {
-        _exchange.NotFound = shape switch { "category" => NotFoundByCategory, "type" => NotFoundByType, _ => NotFoundByIdentifier };
+        _exchange.NotFound = shape switch { "category" => NotFoundByCategory, "type" => NotFoundByType, "bare text" => NotFoundAsBareText, _ => NotFoundByIdentifier };
 
         var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
 

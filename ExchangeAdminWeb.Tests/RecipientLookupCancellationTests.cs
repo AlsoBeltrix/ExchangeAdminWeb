@@ -52,8 +52,13 @@ public sealed class RecipientLookupCancellationTests : IDisposable
             NullLogger<ExtendedLogService>.Instance);
         var http = Substitute.For<IHttpClientFactory>();
         http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(_vault, disposeHandler: false));
+        // kd-88: no credential window - each read's credential fetch is a request the vault is sent, which is where these
+        // tests cancel. The window itself is DelineaCredentialWindowTests'.
         _delinea = new DelineaService(http, config, NullLogger<DelineaService>.Instance, _extendedLog, _exchange.Trace,
-            _ => ("fixture-client", "fixture-key"));
+            _ => ("fixture-client", "fixture-key"))
+        {
+            CredentialWindow = TimeSpan.Zero,
+        };
         _service = _exchange.RecipientLookup(credentials: _exchange.Credentials("RecipientLookup", _delinea, secretId: 7));
     }
 

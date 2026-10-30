@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Management.Automation;
+using System.Security;
 using System.Text;
 using System.Text.Json;
 using Serilog.Events;
@@ -17,6 +20,39 @@ public class DelineaService
     private DateTime _tokenExpiry = DateTime.MinValue;
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
     private readonly Func<string, (string? username, string? password)> _readBootstrapCredentials;
+
+    /// <summary>
+    /// kd-88 (addition; the supervisor's call of 2026-10-30, to meet the owner's near-instant requirement - the owner may
+    /// veto). How long a credential <see cref="GetCredentialsBySecretIdAsync"/> fetched is kept after its last use: five
+    /// minutes, sliding. Each fetch from the store takes 2.7-4.1 s on the dev host (app-20261030.log 08:23), so one per
+    /// operation (kd-88 item 2) still put seconds into every grant.
+    /// </summary>
+    internal static readonly TimeSpan DefaultCredentialWindow = TimeSpan.FromMinutes(5);
+
+    /// <summary>kd-88. The window this instance keeps credentials for; zero keeps none. A test sets its own.</summary>
+    internal TimeSpan CredentialWindow { get; init; } = DefaultCredentialWindow;
+
+    /// <summary>kd-88. The clock the window is measured on; a test sets its own.</summary>
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    // kd-88. The credentials kept, by Secret ID - in this process's memory only, the password as a SecureString, never
+    // written to disk or to any log. A fetch inside the window is answered from here and slides the window on; a fetch that
+    // fails drops what was kept for its ID; another Secret ID - the configured one changed - is another entry, fetched on its
+    // own, and the old one lapses unused.
+    private readonly ConcurrentDictionary<int, KeptCredential> _kept = new();
+
+    private sealed class KeptCredential(PSCredential credential, string domain, long lastUsed)
+    {
+        private long _lastUsed = lastUsed;
+
+        public PSCredential Credential { get; } = credential;
+
+        public string Domain { get; } = domain;
+
+        public long LastUsed => Interlocked.Read(ref _lastUsed);
+
+        public void Use(long now) => Interlocked.Exchange(ref _lastUsed, now);
+    }
 
     public DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger, ExtendedLogService extLog, OperationTraceService operationTrace)
         : this(httpClientFactory, config, logger, extLog, operationTrace, CredentialManagerService.ReadCredential)
@@ -132,11 +168,17 @@ public class DelineaService
     public async Task<(string username, string password, string domain)?> GetCredentialsBySecretIdAsync(int secretId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        // kd-88: inside the window, the credential kept from the last fetch - no request to the store.
+        if (Kept(secretId) is { } kept)
+            return kept;
+
         if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
         {
             LoadCredentials();
             if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
             {
+                Forget(secretId);
                 _logger.LogWarning("Delinea credentials not found in Credential Manager (target: {Target})", _credentialTarget);
                 _extLog.Write(LogEventLevel.Error, "Delinea bootstrap credentials not found", "Delinea", () => $"Target={_credentialTarget}");
                 _operationTrace.Step("VaultCredentialRequested", "Failed", backend: "Delinea", details: new Dictionary<string, object?> { ["credentialTarget"] = _credentialTarget, ["reason"] = "Bootstrap credentials unavailable" });
@@ -169,6 +211,7 @@ public class DelineaService
 
             if (!response.IsSuccessStatusCode)
             {
+                Forget(secretId);
                 _logger.LogError("Failed to retrieve secret {SecretId}: {StatusCode}", secretId, response.StatusCode);
                 _extLog.Write(LogEventLevel.Error, "Delinea credential request failed", "Delinea", () => $"SecretId={secretId}; Status={response.StatusCode}");
                 _operationTrace.Step("VaultCredentialRequested", "Failed", backend: "Delinea", command: "GET /api/v1/secrets/{secretId}", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["status"] = response.StatusCode.ToString() });
@@ -198,6 +241,7 @@ public class DelineaService
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
+                Forget(secretId);
                 _logger.LogError("Secret {SecretId} missing username or password fields", secretId);
                 _extLog.Write(LogEventLevel.Error, "Delinea credential secret missing username or password", "Delinea", () => $"SecretId={secretId}");
                 _operationTrace.Step("VaultCredentialParsed", "Failed", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["reason"] = "Missing username or password" });
@@ -206,6 +250,7 @@ public class DelineaService
 
             if (string.IsNullOrEmpty(domain))
             {
+                Forget(secretId);
                 _logger.LogError("Secret {SecretId} missing Domain field - cannot construct credential", secretId);
                 _extLog.Write(LogEventLevel.Error, "Delinea credential secret missing Domain field", "Delinea", () => $"SecretId={secretId}");
                 _operationTrace.Step("VaultCredentialParsed", "Failed", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["reason"] = "Missing domain" });
@@ -214,6 +259,7 @@ public class DelineaService
 
             _extLog.Write(LogEventLevel.Information, "Delinea credentials retrieved", "Delinea", () => $"SecretId={secretId}; CredentialFields=Username,Password,Domain");
             _operationTrace.Step("VaultCredentialRetrieved", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["credentialFields"] = "Username,Password,Domain" });
+            Keep(secretId, username!, password!, domain);
             return (username!, password!, domain);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -222,12 +268,50 @@ public class DelineaService
         }
         catch (Exception ex)
         {
+            Forget(secretId);
             _logger.LogError(ex, "Error retrieving credentials from Delinea Secret Server for secret {SecretId}", secretId);
             _extLog.Write(LogEventLevel.Error, "Exception retrieving Delinea credentials", "Delinea", () => $"SecretId={secretId}; ErrorType={ex.GetType().Name}");
             _operationTrace.Step("VaultCredentialRetrieved", "Failed", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId }, exception: ex);
             return null;
         }
     }
+
+    // kd-88. The credential kept for this Secret ID when its last use is inside the window, the window slid on to now;
+    // otherwise nothing, and what had lapsed is dropped. The reuse is traced and logged by Secret ID alone, as the token's is.
+    private (string username, string password, string domain)? Kept(int secretId)
+    {
+        if (!_kept.TryGetValue(secretId, out var entry))
+            return null;
+
+        var now = Clock.GetTimestamp();
+        if (Clock.GetElapsedTime(entry.LastUsed, now) >= CredentialWindow)
+        {
+            _kept.TryRemove(new KeyValuePair<int, KeptCredential>(secretId, entry));
+            return null;
+        }
+
+        entry.Use(now);
+        _extLog.Write(LogEventLevel.Debug, "Using kept Delinea credential", "Delinea", () => $"SecretId={secretId}");
+        _operationTrace.Step("VaultCredentialReused", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId });
+        return (entry.Credential.UserName, entry.Credential.GetNetworkCredential().Password, entry.Domain);
+    }
+
+    // kd-88. Keeps what the store answered for the window - the password as a read-only SecureString - unless the window
+    // is zero.
+    private void Keep(int secretId, string username, string password, string domain)
+    {
+        if (CredentialWindow <= TimeSpan.Zero)
+            return;
+
+        var secure = new SecureString();
+        foreach (var character in password)
+            secure.AppendChar(character);
+        secure.MakeReadOnly();
+        _kept[secretId] = new KeptCredential(new PSCredential(username, secure), domain, Clock.GetTimestamp());
+    }
+
+    // kd-88. A fetch that failed: nothing is kept for its Secret ID, so the next asks the store again.
+    private void Forget(int secretId) => _kept.TryRemove(secretId, out _);
 
     private static string GetOAuthErrorCode(string errorBody)
     {

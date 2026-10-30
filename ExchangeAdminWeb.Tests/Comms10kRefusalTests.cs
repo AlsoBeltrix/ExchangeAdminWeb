@@ -393,8 +393,13 @@ public sealed partial class Comms10kRefusalTests
             }));
             var factory = Substitute.For<IHttpClientFactory>();
             factory.CreateClient(Arg.Any<string>()).Returns(_http);
+            // kd-88: no credential window - each row's credential fetch reaches the handler, where these tests hold it.
+            // The window itself is DelineaCredentialWindowTests'.
             var delinea = new DelineaService(factory, Config, NullLogger<DelineaService>.Instance,
-                new ExtendedLogService(Config, env, TestConfigStore.CreateAppSettings(_root), NullLogger<ExtendedLogService>.Instance), trace);
+                new ExtendedLogService(Config, env, TestConfigStore.CreateAppSettings(_root), NullLogger<ExtendedLogService>.Instance), trace)
+            {
+                CredentialWindow = TimeSpan.Zero,
+            };
             // Only these dummy fields reach the local HTTP handler. No vault or AD is contacted.
             SetField(delinea, "_apiUsername", "test-api");
             SetField(delinea, "_apiKey", "test-key");

@@ -92,11 +92,13 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
     }
 
     // Exchange saying there is no archive, read from the error's structure in each shape aud-a23h recognises, is no
-    // archive: nothing to measure, nothing unread.
+    // archive: nothing to measure, nothing unread. kd-89: and from its sentence about the mailbox, in the bare text this
+    // tenant's Exchange Online module throws - here for every not-found of the check, Exchange Online's and the archive's.
     [Theory]
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task NoOnPremArchive_IsNoArchive(string shape)
     {
         _exchange.Behaviour["OnPremNoArchive"] = true;
@@ -104,6 +106,7 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         {
             "category" => NotFoundByCategory,
             "type" => NotFoundByType,
+            "bare text" => NotFoundAsBareText,
             _ => NotFoundByIdentifier,
         };
 
@@ -245,6 +248,41 @@ public sealed class ExchangeServiceBaseOnPremReadTests : IDisposable
         var location = await _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken);
 
         Assert.Equal(expected, location);
+    }
+
+    // kd-89. The finding as the sweep found it: Exchange Online says it holds no such mailbox in the bare text this tenant's
+    // module throws, and the location read took that for "could not be asked" - every Mailbox or Calendar Permissions or Out
+    // of Office change on an on-premises mailbox was refused there. It is Exchange's answer, and on-premises decides.
+    [Theory]
+    [InlineData("on-premises mailbox", "OnPrem")]
+    [InlineData("remote mailbox", "Cloud")]
+    [InlineData("neither", "Unknown")]
+    public async Task NotInTheCloud_AsTheModulesBareText_OnPremisesDecides(string held, string expected)
+    {
+        _exchange.NotFound = NotFoundAsBareText;
+        if (held == "on-premises mailbox")
+            _exchange.OnPremMailboxes[Address] = Row(("Identity", Address));
+        if (held == "remote mailbox")
+            _exchange.OnPremRemoteMailboxes[Address] = Row(("Identity", Address));
+
+        var location = await _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken);
+
+        Assert.Equal(expected, location);
+        Assert.Contains($"OnPrem Get-Mailbox {Address}", _exchange.CallList());
+    }
+
+    // kd-89, the other direction: the sentence naming ANOTHER object - the dev log's was a grant's trustee - is not this
+    // mailbox's absence. The read failed; on-premises is not asked.
+    [Fact]
+    public async Task ACloudNotFoundNamingAnotherObject_IsAFailedRead_NeverNoMailbox()
+    {
+        _exchange.Failures[$"Get-Mailbox {Address}"] = NotFoundNaming("trustee@contoso.test");
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => _exchange.Service().GetMailboxLocationAsync(Address, TestContext.Current.CancellationToken));
+
+        Assert.StartsWith("Exchange Online could not be asked: ", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("'trustee@contoso.test' couldn't be found", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(_exchange.CallList(), call => call.StartsWith("OnPrem", StringComparison.Ordinal));
     }
 
     // The finding's on-premises half. Before: under SilentlyContinue each failed read was "no such mailbox", and both

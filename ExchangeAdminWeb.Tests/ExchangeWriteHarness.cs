@@ -135,6 +135,13 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public IList MissingLists { get; } = ArrayList.Synchronized(new ArrayList());
 
     /// <summary>
+    /// kd-89. List names the stand-in <c>Get-DistributionGroup</c> does not find, reported as this tenant's Exchange Online
+    /// module reports a not-found: Exchange's sentence as bare text over a plain exception, no category, written and then
+    /// rethrown (<c>throw $_</c>). Each name maps to the object the sentence names - the list itself, or another object.
+    /// </summary>
+    public Hashtable MissingListsInBareText { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// aud-a2ac. The list names the stand-in <c>Get-DistributionGroup</c> refuses as matching several recipients, the way
     /// Exchange refuses an ambiguous <c>-Identity</c>: an error that is not a not-found, so it is never read as absence.
     /// </summary>
@@ -777,6 +784,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("DefaultListGuid", DefaultListGuid);
         rs.SessionStateProxy.SetVariable("ListGuids", ListGuids);
         rs.SessionStateProxy.SetVariable("MissingLists", MissingLists);
+        rs.SessionStateProxy.SetVariable("MissingListsInBareText", MissingListsInBareText);
         rs.SessionStateProxy.SetVariable("AmbiguousLists", AmbiguousLists);
         rs.SessionStateProxy.SetVariable("ListsAnsweringTwice", ListsAnsweringTwice);
         rs.SessionStateProxy.SetVariable("CreatedListGuid", CreatedListGuid);
@@ -946,11 +954,23 @@ internal sealed class ExchangeWriteHarness : IDisposable
             $parsed = [guid]::Empty
             if ([guid]::TryParse("$Value", [ref]$parsed)) { $parsed } else { "$Value" }
         }
+        # kd-89. A nested writer, so a stand-in's catch can rethrow what it wrote, as the Exchange Online module's proxy does.
+        function global:Write-StandInRecord { [CmdletBinding()] param($Record) $PSCmdlet.WriteError($Record) }
         function global:Get-DistributionGroup {
             [CmdletBinding()] param($Identity)
             Write-StandInCall 'Get-DistributionGroup' $PSBoundParameters
             # aud-a2ac. Not found is reported as Exchange reports it, with the ObjectNotFound category, because that is what
             # the service now takes for an answer; every other failure here is an error it refuses on.
+            # kd-89. Or as this tenant's module throws it: the sentence as bare text, no category, written and rethrown.
+            if ($global:MissingListsInBareText.ContainsKey("$Identity")) {
+                $named = $global:MissingListsInBareText["$Identity"]
+                $record = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("||The operation couldn't be performed because object '$named' couldn't be found on 'AB1PR01MB0001.PROD.OUTLOOK.COM'."),
+                    '[Server=AB1PR01MB0001,RequestId=00000000-0000-0000-0000-000000000000]',
+                    [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+                try { Write-StandInRecord -Record $record } catch { throw $_ }
+                return
+            }
             if (@($global:MissingLists | Where-Object { "$_" -ieq "$Identity" }).Count -gt 0) {
                 Write-Error "The operation couldn't be performed because object '$Identity' couldn't be found on 'stand-in'." -Category ObjectNotFound
                 return

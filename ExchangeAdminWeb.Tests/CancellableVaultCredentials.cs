@@ -52,8 +52,13 @@ internal sealed class CancellableVaultCredentials : IDisposable
         Audit = new AuditService(log, Trace);
         var http = Substitute.For<IHttpClientFactory>();
         http.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(_vault, disposeHandler: false));
+        // kd-88: no credential window - every fetch is a request the vault is sent, which is what these tests count and
+        // where they cancel. The window itself is DelineaCredentialWindowTests'.
         var delinea = new DelineaService(http, Configuration, NullLogger<DelineaService>.Instance, _extendedLog, Trace,
-            _ => ("fixture-client", "fixture-key"));
+            _ => ("fixture-client", "fixture-key"))
+        {
+            CredentialWindow = TimeSpan.Zero,
+        };
         var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, new ModuleConfigRepository(store),
             NullLogger<ModuleConfigService>.Instance);
         moduleConfig.SaveModuleConfig(moduleId, new Dictionary<string, string>

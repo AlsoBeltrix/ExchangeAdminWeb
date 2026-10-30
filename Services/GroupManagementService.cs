@@ -324,13 +324,18 @@ public class GroupManagementService
                 // address delivers to every member, which is precisely what the owner
                 // refused ("do not email every user in the group"). An unexpected object
                 // class is therefore no recipient at all, not a best effort.
-                var classes = (found.Properties["objectClass"]?.Value as System.Collections.IEnumerable)?
-                    .Cast<object>().Select(o => o?.ToString() ?? "").ToArray() ?? [];
-                if (!classes.Any(c => string.Equals(c, "user", StringComparison.OrdinalIgnoreCase)))
+                // kd-92. The class as Get-ADObject reports it: a string, the object's most
+                // specific class (this file reads it so in ResolveMemberForWrite). Read as a
+                // list it came apart into its characters, "u,s,e,r", so no manager matched and
+                // none was ever notified. SelfGrantDirectory's one rule reads the string, or the
+                // multi-valued attribute's last value, so a computer ("user" among its classes)
+                // is still not a user.
+                var objectClass = SelfGrantDirectory.ObjectClassOf(found.Properties["objectClass"]?.Value);
+                if (!string.Equals(objectClass, "user", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogWarning(
-                        "managedBy {Dn} on group {Group} is not a user (objectClass: {Classes}); refusing to notify it.",
-                        managedBy, group.Name, string.Join(",", classes));
+                        "managedBy {Dn} on group {Group} is not a user (objectClass: {Class}); refusing to notify it.",
+                        managedBy, group.Name, objectClass ?? "none reported");
                     return null;
                 }
 

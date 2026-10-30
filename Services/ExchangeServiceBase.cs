@@ -465,26 +465,57 @@ public abstract class ExchangeServiceBase
 
     // aud-a23h. A read under -ErrorAction Stop through InvokeOptional (aud-a23g: it fails on an exception, not on
     // HadErrors alone, which an error a nested command suppresses sets with nothing thrown). Rows when Exchange found the
-    // object; none when it said there is no such object; any other failure thrown to the caller.
+    // object; none when it said there is no such object; any other failure thrown to the caller. kd-89: the object the read
+    // asks about is taken from its own command first - InvokeOptional clears the pipeline whatever happens - so Exchange's
+    // sentence is an answer only when it is about that object (IsNotFound).
     protected static Collection<PSObject> ReadUnlessNotFound(PowerShell ps, ConnectionErrorTracker tracker)
     {
+        var identity = AskedIdentity(ps);
         try
         {
             return InvokeOptional(ps, tracker);
         }
-        catch (Exception ex) when (IsNotFound(ex))
+        catch (Exception ex) when (IsNotFound(ex, identity))
         {
             return new Collection<PSObject>();
         }
     }
 
+    // kd-89. The object a read asks about: its -Identity, or the first -ArgumentList value of an on-premises read sent through
+    // Invoke-Command (AddOnPremRead, Recipient Lookup's own read). Null when the read names neither.
+    private static string? AskedIdentity(PowerShell ps)
+    {
+        foreach (var command in ps.Commands.Commands)
+        {
+            foreach (var parameter in command.Parameters)
+            {
+                if (string.Equals(parameter.Name, "Identity", StringComparison.OrdinalIgnoreCase))
+                    return AsText(parameter.Value);
+                if (string.Equals(parameter.Name, "ArgumentList", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(command.CommandText, "Invoke-Command", StringComparison.OrdinalIgnoreCase)
+                    && parameter.Value is object?[] { Length: > 0 } arguments)
+                    return AsText(arguments[0]);
+            }
+        }
+
+        return null;
+    }
+
+    private static string? AsText(object? value) =>
+        Convert.ToString(value is PSObject wrapped ? wrapped.BaseObject : value, System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>
     /// aud-a23h. Whether a failed read was Exchange saying there is no such object - the one failure that is an answer.
-    /// Read from the error record's structure, never its text: the category ObjectNotFound; a reason (the exception's
-    /// type name) ending NotFoundException; or such a name among the identifiers of its FullyQualifiedErrorId, the Exchange
-    /// Online module's form ("[FailureCategory=Cmdlet-ManagementObjectNotFoundException] 2B5E15D7,..."). The record is the
-    /// exception's own or, one level in, the one inside the base class's Invoke wrapper.
+    /// Read from the error record's structure: the category ObjectNotFound; a reason (the exception's type name) ending
+    /// NotFoundException; or such a name among the identifiers of its FullyQualifiedErrorId, the Exchange Online module's
+    /// remoting form ("[FailureCategory=Cmdlet-ManagementObjectNotFoundException] 2B5E15D7,..."). kd-89: or from Exchange's
+    /// own sentence, "couldn't be found", when it names the object the read asked about (<paramref name="identity"/>) or
+    /// names none. The record is the exception's own or, one level in, the one inside the base class's Invoke wrapper.
     /// </summary>
+    /// <param name="identity">
+    /// kd-89. The object the read asked about, as it was sent. Null when the caller does not say: then a sentence that names
+    /// an object is not taken for an answer, because nothing says it is the read's own.
+    /// </param>
     /// <remarks>
     /// ASSUMPTION, unverified (no live call): that the module reports "no such object" from Get-MigrationUser, Get-Mailbox
     /// and Get-MigrationBatch -Identity in one of those shapes. If it uses none, a check of a mailbox with no migration
@@ -501,8 +532,19 @@ public abstract class ExchangeServiceBase
     /// FullyQualifiedErrorId. If it does not, a location read of a mailbox not on that side is refused, and a move to Exchange
     /// Online of a mailbox with no archive is Undetermined - visible and fail-closed, never "no mailbox" or "no archive".
     /// </para>
+    /// <para>
+    /// kd-89. The Exchange Online module this tenant runs throws its "no such object" as bare text, which none of the
+    /// structural tests reads: a RuntimeException a throw statement raised (the module's proxy rethrows the record it wrote,
+    /// `throw $_`) over a plain System.Exception, "||The operation couldn't be performed because object '&lt;identity&gt;'
+    /// couldn't be found on '&lt;server&gt;'.", its category NotSpecified, its reason "Exception" and an error id that names
+    /// no exception type (prod app-20261012.log 12:08:23, dev app-20261023.log 04:35:13). So the sentence is read as well,
+    /// as ExchangeIdentityResolver has read it since July - but only about the read's own object. The dev line is a
+    /// TRUSTEE's not-found filed against a grant to another mailbox: a sentence that names another object says nothing
+    /// about the one asked for, and is a failure like any other. A sentence that names no object is the read's own.
+    /// Never CommandNotFoundException's, which is excluded first, and never a throw's error id read for identifiers.
+    /// </para>
     /// </remarks>
-    internal static bool IsNotFound(Exception ex)
+    internal static bool IsNotFound(Exception ex, string? identity = null)
     {
         var record = (ex as IContainsErrorRecord ?? ex.InnerException as IContainsErrorRecord)?.ErrorRecord;
         if (record is null
@@ -517,8 +559,45 @@ public abstract class ExchangeServiceBase
             return true;
 
         var thrown = record.Exception as RuntimeException ?? ex as RuntimeException ?? ex.InnerException as RuntimeException;
-        return thrown is not { WasThrownFromThrowStatement: true }
-            && Identifiers(record.FullyQualifiedErrorId).Any(NamesNotFound);
+        if (thrown is not { WasThrownFromThrowStatement: true }
+            && Identifiers(record.FullyQualifiedErrorId).Any(NamesNotFound))
+        {
+            return true;
+        }
+
+        return SaysNotFound(record, identity);
+    }
+
+    /// <summary>kd-89. Exchange's own words for "no such object", the fragment ExchangeIdentityResolver reads.</summary>
+    internal const string NotFoundSentence = "couldn't be found";
+
+    // kd-89. A quoted name just before the sentence is the object it is about: "object 'X' couldn't be found" (Get-Mailbox,
+    // Get-Recipient), "Identity:"X" couldn't be found" (Get-MailboxAutoReplyConfiguration, the 2026-08-18 audit trail).
+    private static readonly Regex NamedBeforeTheSentence =
+        new(@"['""]\s*" + NotFoundSentence, RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    // kd-89. The error's own words - its details when the cmdlet wrote any, and its exception's message - say the object is
+    // not there, and name the read's object or none.
+    private static bool SaysNotFound(ErrorRecord record, string? identity)
+    {
+        foreach (var text in new[] { record.ErrorDetails?.Message, record.Exception?.Message })
+        {
+            if (string.IsNullOrEmpty(text) || !text.Contains(NotFoundSentence, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var asked = identity?.Trim();
+            if (!string.IsNullOrEmpty(asked)
+                && (text.Contains($"'{asked}' {NotFoundSentence}", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains($"\"{asked}\" {NotFoundSentence}", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            if (!NamedBeforeTheSentence.IsMatch(text))
+                return true;
+        }
+
+        return false;
     }
 
     private static bool NamesNotFound(string? identifier) =>
@@ -724,10 +803,10 @@ public abstract class ExchangeServiceBase
     // TotalItemSize it could not parse as 0 (ParseExchangeSize's "?? 0", now gone) and any failure of the archive read as no
     // archive, so the quota check could pass a mailbox whose size was never read; and it returned null for every other
     // failure, which its callers filed under a cause they guessed. Exchange's own not-found for the archive, read from the
-    // error's structure (IsNotFound), is no archive; no row, or a size that does not parse, is a marker. Neither read's catch
-    // takes a cancellation. ASSUMPTION, unverified (no live call): on-premises Exchange reports a mailbox with no archive,
-    // through remoting, in a shape IsNotFound reads; if not, the check of such a mailbox is Undetermined - visible, never a
-    // guess, and one dev check of that error record settles it.
+    // error's structure or its sentence (IsNotFound, kd-89), is no archive; no row, or a size that does not parse, is a
+    // marker. Neither read's catch takes a cancellation. ASSUMPTION, unverified (no live call): on-premises Exchange reports
+    // a mailbox with no archive, through remoting, in a shape IsNotFound reads; if not, the check of such a mailbox is
+    // Undetermined - visible, never a guess, and one dev check of that error record settles it.
     // kd-37: the token for its credential read. kd-58 E7: and for the server's queue, the session's runspace, each connect
     // attempt and the gaps between the reads; a read already sent finishes, and the session is still removed, with no token.
     protected async Task<MailboxSizes> GetOnPremMailboxSizeAsync(string emailAddress, CancellationToken cancellationToken = default)
@@ -785,7 +864,7 @@ public abstract class ExchangeServiceBase
                     (archiveGB, archiveUnreadable) = ReadSize(archiveStats, "on-premises Exchange returned no archive statistics");
                     _logger.LogInformation("On-prem archive size for {Email}: {Size}", emailAddress, archiveUnreadable ?? $"{archiveGB} GB");
                 }
-                catch (Exception ex) when (IsNotFound(ex))
+                catch (Exception ex) when (IsNotFound(ex, emailAddress)) // kd-89: about the mailbox asked for
                 {
                     _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
                 }
@@ -940,8 +1019,8 @@ public abstract class ExchangeServiceBase
     }
 
     // aud-a23o. Stop, not SilentlyContinue, which made a read that failed "no such recipient": Exchange's not-found, by
-    // structure, is the answer, and any other failure is "<cmdlet> failed: <reason>". No session is no answer either; it was
-    // "no recipient".
+    // structure or by its sentence naming the identity (kd-89), is the answer, and any other failure is "<cmdlet> failed:
+    // <reason>". No session is no answer either; it was "no recipient".
     protected static bool OnPremRecipientExists(PowerShell ps, object? session, string commandName, string identity)
     {
         if (session is null)

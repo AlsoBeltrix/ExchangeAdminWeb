@@ -98,22 +98,49 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
         Assert.Contains(result.IneligibilityReasons, reason => reason.StartsWith("Could not be determined: Get-MigrationUser failed: ", StringComparison.Ordinal));
     }
 
-    // Only structure is read. A refusal whose message SAYS the object "couldn't be found", and a throw whose text names
-    // Exchange's not-found type, are failures like any other.
+    // kd-89. Exchange's own sentence about the mailbox asked for is Exchange's not-found, however it arrives - an error the
+    // cmdlet wrote, or text a throw carried (the module's own form, "|<type>|<message>", when it names the type) - so no
+    // migration is in progress and the cloud mailbox is eligible to move back. aud-a23h read structure alone, and this
+    // tenant's module sends its not-found as text.
     [Theory]
     [InlineData("a written error whose message says it")]
-    [InlineData("a throw whose text names the type")]
-    public async Task TextThatSaysNotFound_IsNotReadAsAnAnswer(string form)
+    [InlineData("a throw whose text says it")]
+    public async Task ExchangesSentenceAboutTheMailbox_IsExchangesNotFound(string form)
     {
         _exchange.Mailboxes[Address] = CloudMailbox(Address);
-        if (form == "a throw whose text names the type")
+        if (form == "a throw whose text says it")
             _exchange.Failures["Get-MigrationUser"] = $"|Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException|The operation couldn't be performed because object '{Address}' couldn't be found.";
         else
             _exchange.Failures["Get-MigrationUser"] = Refused($"The operation couldn't be performed because object '{Address}' couldn't be found.");
 
         var result = await _exchange.Service().CheckMigrationEligibilityAsync(Address, MigrationDirection.ToOnPrem);
 
+        Assert.Equal(MigrationStatus.Eligible, result.Status);
+        Assert.Empty(result.IneligibilityReasons);
+    }
+
+    // kd-89, the other direction. Text that is not Exchange's sentence - a throw that only names the type, "could not be
+    // found" - and the sentence naming ANOTHER object (the dev log's not-found was a grant's trustee) say nothing about this
+    // mailbox: each is a read that failed, Undetermined, never "no migration in progress".
+    [Theory]
+    [InlineData("a throw whose text names only the type")]
+    [InlineData("a written error that is not Exchange's sentence")]
+    [InlineData("the sentence naming another object")]
+    public async Task TextThatDoesNotSayThisMailboxIsNotFound_IsNotAnAnswer(string form)
+    {
+        _exchange.Mailboxes[Address] = CloudMailbox(Address);
+        _exchange.Failures["Get-MigrationUser"] = form switch
+        {
+            "a throw whose text names only the type" => "|Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException|no such object",
+            "a written error that is not Exchange's sentence" => Refused($"The operation could not be performed because object '{Address}' could not be found."),
+            _ => NotFoundNaming(Other),
+        };
+
+        var result = await _exchange.Service().CheckMigrationEligibilityAsync(Address, MigrationDirection.ToOnPrem);
+
         Assert.Equal(MigrationStatus.Undetermined, result.Status);
+        Assert.Contains(result.IneligibilityReasons, reason => reason.StartsWith("Could not be determined: Get-MigrationUser failed: ", StringComparison.Ordinal));
+        Assert.DoesNotContain("Migration already in progress", result.IneligibilityReasons);
     }
 
     // An answer that was already in stays: a migration in progress makes the mailbox ineligible whatever the next read
@@ -132,16 +159,20 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
 
     // ---- eligibility: Exchange's own "no such object" keeps its meaning ----------------------------
 
+    // kd-89: and as bare text, the form this tenant's module throws (prod app-20261012.log 12:08:23) - no category, no
+    // type, rethrown by a throw statement - which only its sentence identifies.
     [Theory]
     [InlineData("by its category")]
     [InlineData("by its exception's type")]
     [InlineData("by its identifier")]
+    [InlineData("as bare text")]
     public async Task ExchangesNotFound_KeepsItsMeaning(string shape)
     {
         _exchange.NotFound = shape switch
         {
             "by its category" => NotFoundByCategory,
             "by its exception's type" => NotFoundByType,
+            "as bare text" => NotFoundAsBareText,
             _ => NotFoundByIdentifier,
         };
         _exchange.Mailboxes[Address] = CloudMailbox(Address);
@@ -171,21 +202,52 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
     }
 
     // The recogniser on its own, over exceptions PowerShell itself raised under -ErrorAction Stop - each as the call
-    // throws it, and inside the wrapper the base class's Invoke throws.
+    // throws it, and inside the wrapper the base class's Invoke throws. kd-89: the record's structure, or Exchange's
+    // sentence about the object the read asked for (here the address) - in the module's bare-text form, written and
+    // rethrown as its proxy does, and in Get-MailboxAutoReplyConfiguration's "Identity:" form - or naming nothing.
     [Theory]
     [InlineData("Write-Error -Message 'no such object' -Category ObjectNotFound", true)]
     [InlineData("$PSCmdlet.WriteError($ByType)", true)]
     [InlineData("$PSCmdlet.WriteError($ByIdentifier)", true)]
     [InlineData("$PSCmdlet.ThrowTerminatingError($ByCategory)", true)]
+    [InlineData("try { Write-Nested -Record $ByBareText } catch { throw $_ }", true)]
+    [InlineData("Write-Error -Message 'The operation couldn''t be performed because Identity:\"alice@contoso.test\" couldn''t be found.'", true)]
+    [InlineData("Write-Error -Message 'The operation couldn''t be performed because the object couldn''t be found.'", true)]
+    [InlineData("try { Write-Nested -Record $ByBareTextNamingAnother } catch { throw $_ }", false)]
     [InlineData("Write-Error -Message 'The operation could not be performed because the object could not be found'", false)]
     [InlineData("throw '|Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException|no such object'", false)]
     [InlineData("Get-CmdletThisSessionDoesNotHave", false)]
-    public void IsNotFound_ReadsTheRecordsStructure_NeverItsText(string body, bool notFound)
+    public void IsNotFound_ReadsTheRecordsStructure_OrExchangesSentenceAboutTheObject(string body, bool notFound)
     {
         var thrown = Raise(body);
 
-        Assert.Equal(notFound, MigrationService.IsNotFound(thrown));
-        Assert.Equal(notFound, MigrationService.IsNotFound(new InvalidOperationException(thrown.Message, thrown)));
+        Assert.Equal(notFound, MigrationService.IsNotFound(thrown, Address));
+        Assert.Equal(notFound, MigrationService.IsNotFound(new InvalidOperationException(thrown.Message, thrown), Address));
+    }
+
+    // kd-89. A sentence that names an object is the answer only for a read that says what it asked about: with nothing to
+    // compare, it is not taken for the read's own. Structure needs no name.
+    [Fact]
+    public void ASentenceNamingAnObject_IsNotAnAnswer_ForAReadThatDoesNotSayWhatItAsked()
+    {
+        Assert.False(MigrationService.IsNotFound(Raise("try { Write-Nested -Record $ByBareText } catch { throw $_ }")));
+        Assert.True(MigrationService.IsNotFound(Raise("$PSCmdlet.WriteError($ByIdentifier)")));
+    }
+
+    // kd-89. The stand-in's bare-text form reaches the caller as the logs show this tenant's module's: a RuntimeException a
+    // throw statement raised, over a plain System.Exception carrying the sentence, its record of no category, the reason
+    // "Exception" and an error id naming no exception type - so nothing but the sentence says it is a not-found.
+    [Fact]
+    public void TheBareTextStandIn_IsTheShapeTheLogsRecord()
+    {
+        var thrown = Assert.IsAssignableFrom<RuntimeException>(Raise("try { Write-Nested -Record $ByBareText } catch { throw $_ }"));
+
+        Assert.True(thrown.WasThrownFromThrowStatement);
+        Assert.StartsWith($"||The operation couldn't be performed because object '{Address}' couldn't be found on '", thrown.Message, StringComparison.Ordinal);
+        Assert.Equal(typeof(Exception), thrown.InnerException?.GetType());
+        Assert.Equal(ErrorCategory.NotSpecified, thrown.ErrorRecord.CategoryInfo.Category);
+        Assert.Equal("Exception", thrown.ErrorRecord.CategoryInfo.Reason);
+        Assert.DoesNotContain("NotFoundException", thrown.ErrorRecord.FullyQualifiedErrorId, StringComparison.Ordinal);
     }
 
     private static Exception Raise(string body)
@@ -195,10 +257,15 @@ public sealed class MigrationEligibilityAndApproveTests : IDisposable
         runspace.SessionStateProxy.SetVariable("ByType", NotFoundByType(Address));
         runspace.SessionStateProxy.SetVariable("ByIdentifier", NotFoundByIdentifier(Address));
         runspace.SessionStateProxy.SetVariable("ByCategory", NotFoundByCategory(Address));
+        runspace.SessionStateProxy.SetVariable("ByBareText", NotFoundAsBareText(Address));
+        runspace.SessionStateProxy.SetVariable("ByBareTextNamingAnother", NotFoundNaming(Other)(Address));
         using (var define = PowerShell.Create())
         {
             define.Runspace = runspace;
-            define.AddScript($"function Get-Probe {{ [CmdletBinding()] param() {body} }}").Invoke();
+            // kd-89: Write-Nested writes a record from a function of its own, so a probe's catch can rethrow it as the
+            // Exchange Online module's proxy does - a function's catch never sees its own WriteError's stop.
+            define.AddScript("function Write-Nested { [CmdletBinding()] param($Record) $PSCmdlet.WriteError($Record) }\n"
+                + $"function Get-Probe {{ [CmdletBinding()] param() {body} }}").Invoke();
         }
 
         using var ps = PowerShell.Create();

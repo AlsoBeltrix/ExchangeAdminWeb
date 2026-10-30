@@ -229,14 +229,16 @@ public sealed class MigrationReportAndSizeReadTests : IDisposable
         Assert.Equal(1.5, result.MailboxSizeGB);
     }
 
-    // aud-a55. In each shape Exchange's not-found is read from - its structure, never its text.
+    // aud-a55. In each shape Exchange's not-found is read from - its structure, or (kd-89) its sentence about the mailbox,
+    // the bare text this tenant's module throws.
     [Theory]
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task NoArchive_IsNoArchive_ByEachNotFoundShape(string shape)
     {
-        _exchange.NotFound = shape switch { "category" => NotFoundByCategory, "type" => NotFoundByType, _ => NotFoundByIdentifier };
+        _exchange.NotFound = shape switch { "category" => NotFoundByCategory, "type" => NotFoundByType, "bare text" => NotFoundAsBareText, _ => NotFoundByIdentifier };
         _exchange.Behaviour["NoArchive"] = true;
 
         var result = await CheckToOnPrem();

@@ -39,6 +39,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
     {
         "category" => NotFoundByCategory,
         "type" => NotFoundByType,
+        "bare text" => NotFoundAsBareText, // kd-89: this tenant's module's form
         _ => NotFoundByIdentifier,
     };
 
@@ -99,6 +100,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task NoMailbox_IsNoMailbox(string shape)
     {
         _exchange.Recipients[Address] = Row(("DisplayName", "Alice"), ("IsDirSynced", false));
@@ -168,6 +170,7 @@ public sealed class RecipientLookupCloudReadTests : IDisposable
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task NoArchive_IsNoArchive(string shape)
     {
         ACloudMailbox();

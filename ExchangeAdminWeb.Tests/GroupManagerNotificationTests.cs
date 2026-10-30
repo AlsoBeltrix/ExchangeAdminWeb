@@ -79,22 +79,28 @@ public class GroupManagerNotificationTests
     }
 
     [Fact]
-    public void TheAbsentManagerIsRecordedInTheAudit()
+    public void AnUnresolvableManagerIsRecordedInTheAudit_ANoManagerGroupIsNot()
     {
         // "Say so in the audit record rather than falling back" - the operator's change
-        // succeeded, and who did not hear about it is a durable fact.
+        // succeeded, and who did not hear about it is a durable fact - for a managedBy that does
+        // not resolve to a mailbox. kd-92: a group that names no manager is not a failure, so it
+        // returns first, with an Information line and nothing audited. The behaviour itself is
+        // GroupManagerNoticeTests'; this pins the order in the source.
         var body = AuditCategoryFilingTests.MethodBody(
             Page(), "private async Task NotifyGroupManagerAsync");
 
         // Ordering, not presence. Review of A25: asserting both strings exist somewhere in
         // the method passed even if the no-manager branch returned before reaching them.
         var nullBranch = body[body.IndexOf("if (manager is null)", StringComparison.Ordinal)..];
+        var noManagerReturnAt = nullBranch.IndexOf("return;", StringComparison.Ordinal);
         var auditAt = nullBranch.IndexOf("_ManagerNotNotified", StringComparison.Ordinal);
-        var returnAt = nullBranch.IndexOf("return;", StringComparison.Ordinal);
+        var returnAt = nullBranch.IndexOf("return;", noManagerReturnAt + 1, StringComparison.Ordinal);
 
-        Assert.True(auditAt > 0, "the no-manager branch must audit");
-        Assert.True(auditAt < returnAt, "the audit must happen BEFORE the branch returns");
-        Assert.Contains("LogModuleAction", nullBranch[..returnAt], StringComparison.Ordinal);
+        Assert.True(noManagerReturnAt > 0 && noManagerReturnAt < auditAt, "a group with no manager returns before anything is audited");
+        Assert.Contains("LogInformation", nullBranch[..noManagerReturnAt], StringComparison.Ordinal);
+        Assert.DoesNotContain("LogModuleAction", nullBranch[..noManagerReturnAt], StringComparison.Ordinal);
+        Assert.True(auditAt < returnAt, "the unresolvable manager's audit must happen BEFORE the branch returns");
+        Assert.Contains("LogModuleAction", nullBranch[noManagerReturnAt..returnAt], StringComparison.Ordinal);
     }
 
     [Fact]

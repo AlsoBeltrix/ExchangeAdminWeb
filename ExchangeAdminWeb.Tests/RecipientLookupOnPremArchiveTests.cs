@@ -46,6 +46,7 @@ public sealed class RecipientLookupOnPremArchiveTests : IDisposable
     {
         "category" => NotFoundByCategory,
         "type" => NotFoundByType,
+        "bare text" => NotFoundAsBareText, // kd-89: this tenant's module's form
         _ => NotFoundByIdentifier,
     };
 
@@ -112,6 +113,7 @@ public sealed class RecipientLookupOnPremArchiveTests : IDisposable
     [InlineData("category")]
     [InlineData("type")]
     [InlineData("identifier")]
+    [InlineData("bare text")]
     public async Task NoOnPremArchive_IsDisabled(string shape)
     {
         _exchange.NotFound = NotFoundIn(shape);

@@ -407,7 +407,7 @@ public class MigrationService : ExchangeServiceBase
             {
                 groups = Invoke(ps);
             }
-            catch (Exception ex) when (IsNotFound(ex))
+            catch (Exception ex) when (IsNotFound(ex, configured))
             {
                 absent.Add($"{domain}: {ResolveFailure(ex).primary.TrimEnd('.')}");
                 continue;
@@ -1509,11 +1509,11 @@ https://admin.exchange.microsoft.com/#/migration";
     // aud-a55. Throws, before the first write, unless Exchange reports the migration user at a status the Approve action
     // approves a mailbox from: MigrationUserActionPlanner.Applies(Approve, ...), the rule's one owner (NeedsApproval) and the
     // call the page's Approve button and mailbox bar make - called here, not copied. The status is read as the page's mailbox
-    // list reads it (Get-MigrationUser's Status). A read that fails, no migration user (Exchange's not-found, by structure),
-    // several, or no status are each refused in their own words; RunAsync makes the refusal the row's failure, so "Nothing
-    // was changed." is true. ASSUMPTION, unverified (no live call): Get-MigrationUser -Identity reports the Status the list
-    // reads through -BatchId; if not, an approval the page offers is refused naming what Exchange said - visible and fail
-    // closed, never a write from a state nobody checked.
+    // list reads it (Get-MigrationUser's Status). A read that fails, no migration user (Exchange's not-found, by structure
+    // or by its sentence - kd-89), several, or no status are each refused in their own words; RunAsync makes the refusal
+    // the row's failure, so "Nothing was changed." is true. ASSUMPTION, unverified (no live call): Get-MigrationUser
+    // -Identity reports the Status the list reads through -BatchId; if not, an approval the page offers is refused naming
+    // what Exchange said - visible and fail closed, never a write from a state nobody checked.
     private static void RefuseUnlessAwaitingApproval(PowerShell ps, ConnectionErrorTracker tracker, string emailAddress)
     {
         ps.AddCommand("Get-MigrationUser")
@@ -1680,9 +1680,10 @@ https://admin.exchange.microsoft.com/#/migration";
     // aud-a23k. A size that could not be read used to be 0 - the read failing, no row, a size that did not parse, and any
     // failure of the archive read at all - which the page showed as an empty mailbox or no size. Each is a marker now (the
     // ReportedCount idea, for a size). Exchange's not-found for the archive is no archive, read from the error's structure
-    // (aud-a23h's IsNotFound). ASSUMPTION, unverified (no live call): Get-MailboxStatistics -Archive reports a mailbox with
-    // no archive in one of those shapes; if not, such a mailbox shows "Archive: could not be read (...)" - visible, and no
-    // decision reads it. Neither read's catch takes a cancellation (aud-a23g's rule); one escapes to the caller.
+    // or its sentence (aud-a23h's IsNotFound, kd-89). ASSUMPTION, unverified (no live call): Get-MailboxStatistics
+    // -Archive reports a mailbox with no archive in one of those shapes; if not, such a mailbox shows "Archive: could not
+    // be read (...)" - visible, and no decision reads it. Neither read's catch takes a cancellation (aud-a23g's rule); one
+    // escapes to the caller.
     private async Task<MailboxSizes> GetCloudMailboxSizeAsync(string emailAddress)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
@@ -1709,12 +1710,12 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("Archive")
                   .AddParameter("ErrorAction", "Stop");
-                // aud-a55. Only Exchange's own not-found, by structure, is no archive (the IsNotFound catch below). An answer
-                // with no row and no error is ReadSize's marker: through ReadUnlessNotFound both came back as no rows, and
-                // both were no archive.
+                // aud-a55. Only Exchange's own not-found, by structure or by its sentence about this mailbox (kd-89), is
+                // no archive (the IsNotFound catch below). An answer with no row and no error is ReadSize's marker:
+                // through ReadUnlessNotFound both came back as no rows, and both were no archive.
                 (archiveGB, archiveUnreadable) = ReadSize(InvokeOptional(ps, tracker), "Exchange returned no archive statistics");
             }
-            catch (Exception ex) when (IsNotFound(ex))
+            catch (Exception ex) when (IsNotFound(ex, emailAddress)) // kd-89: about the mailbox asked for
             {
                 _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
             }
