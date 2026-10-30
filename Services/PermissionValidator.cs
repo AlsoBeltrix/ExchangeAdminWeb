@@ -33,9 +33,33 @@ public class PermissionValidator
     /// <summary>Test seam (aud-a43): the session the self-grant check's directory reads run in.</summary>
     /// <remarks>
     /// The ADOrganizationalUnitService shape: a test hands back a runspace of stand-in cmdlets, so the reads run for real with
-    /// no directory. Production builds the session every directory path builds (<see cref="SelfGrantDirectory.DefaultRunspace"/>).
+    /// no directory. kd-88: null in production, where the check borrows a warm session from the directory sessions the
+    /// protected-principal check uses (<see cref="ProtectedPrincipalService.DirectorySessions"/>); a test's seam gets warm
+    /// sessions of its own over it.
     /// </remarks>
-    internal Func<Runspace> SelfGrantDirectoryRunspace { get; set; } = SelfGrantDirectory.DefaultRunspace;
+    internal Func<Runspace>? SelfGrantDirectoryRunspace { get; set; }
+
+    private DirectorySessionPool? _selfGrantSessions;
+    private Func<Runspace>? _selfGrantSessionsFactory;
+    private readonly object _selfGrantSessionsLock = new();
+
+    /// <summary>kd-88. The warm sessions the self-grant check borrows: the shared ones, or a test's own over its seam.</summary>
+    private DirectorySessionPool SelfGrantSessions()
+    {
+        if (SelfGrantDirectoryRunspace is not { } seam)
+            return _protectedPrincipalService.DirectorySessions;
+
+        lock (_selfGrantSessionsLock)
+        {
+            if (_selfGrantSessions is null || _selfGrantSessionsFactory != seam)
+            {
+                _selfGrantSessions?.Dispose();
+                _selfGrantSessions = new DirectorySessionPool(seam);
+                _selfGrantSessionsFactory = seam;
+            }
+            return _selfGrantSessions;
+        }
+    }
 
     /// <summary>
     /// Test seam (aud-a60): fetches the protected-principal directory-read secret for its Secret ID. Null in production, which
@@ -673,12 +697,12 @@ public class PermissionValidator
             return SelfGrantRefusal;
         }
 
-        // One directory session for the check - a runspace, the ActiveDirectory module and the forest's global catalog -
-        // opened and read off the caller's thread: the directory calls block.
+        // One directory session for the check - since kd-88 a warm one, lent with the ActiveDirectory module already
+        // imported - and the forest's global catalog, opened and read off the caller's thread: the directory calls block.
         SelfGrantDirectory directory;
         try
         {
-            directory = await Task.Run(() => SelfGrantDirectory.Open(SelfGrantDirectoryRunspace));
+            directory = await Task.Run(() => SelfGrantDirectory.Open(SelfGrantSessions()));
         }
         catch (Exception ex)
         {
@@ -913,6 +937,7 @@ public class PermissionValidator
 
         if (membership.Incomplete)
         {
+            directory.Fail(); // kd-88: a session whose answer was incomplete is not lent again
             _logger.LogWarning("The self-grant check could not read whether {User} is a member of every group {Affected} names - failing closed", exchangeIdentity, affectedUser);
             return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
         }

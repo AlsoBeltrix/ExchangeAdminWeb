@@ -124,6 +124,21 @@ public sealed class WarmDirectorySessionTests : IDisposable
     }
 
     [Fact]
+    public async Task TwoSelfGrantChecks_BorrowOneWarmSession()
+    {
+        // The sweep, S3: the self-grant check built a runspace, imported the module and found the catalog for every check.
+        var validator = _h.NothingProtectedValidator(ExchangeWriteHarness.ExchangeKnows("nobody@contoso.test", "nobody@contoso.test", Guid.NewGuid()));
+        var other = _h.Forest.AddUser("other", upn: "other@contoso.test", mail: "other@contoso.test", proxies: ["SMTP:other@contoso.test"]);
+
+        Assert.Null(await validator.ValidateSelfGrantAsync(_h.Operator, other.Upn!));
+        Assert.Null(await validator.ValidateSelfGrantAsync(_h.Operator, other.Upn!));
+
+        Assert.Equal(1, _h.Forest.RunspacesHandedOut);
+        Assert.Equal(1, ModuleImports);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
     public void AFullPool_RefusesAfterItsWait_ItNeverLendsOneSessionTwice()
     {
         using var pool = new DirectorySessionPool(_h.Forest.Open, size: 1);
