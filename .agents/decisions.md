@@ -5,6 +5,13 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-10-30 - The protected-principal check must be near-instant
+
+Owner, verbatim, on a permission grant that waited two minutes on the dev build: "this cannot take 2 minutes. this cannot take 10
+seconds. this has to be near-instant." Standing requirement for every authorization and protection check in the write path:
+sub-second to low-single-digit seconds end to end, measured and logged. No unanchored domain-wide LDAP walk; one credential
+fetch per operation; a warm directory session. kd-88 carries it; the figure measured on dev after the redeploy goes in its record.
+
 ### 2026-10-28 - In-app help plan approved to start after 2026-10-31; a functionality change carries its help change
 
 Owner, 2026-10-28, on `docs/InAppHelp-Plan.md`: "approved to start after 10/31. docs, governance, or something durable needs
