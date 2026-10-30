@@ -446,6 +446,10 @@ public class LicensingUpdatesService
         var servicedNotes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var servicedNotesByUpn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        // kd-88: one operation for the batch - every row's check shares one fetch of the directory-read credential, where
+        // each fetched it for itself; each check still logs its own timing line.
+        using var directoryRead = DirectoryReadOperation.Begin();
+
         foreach (var row in applyRows)
         {
             var key = PrincipalKey(row.Principal!);
