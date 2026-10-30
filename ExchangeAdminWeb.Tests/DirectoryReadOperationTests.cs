@@ -130,6 +130,56 @@ public sealed class DirectoryReadOperationTests
     }
 
     [Fact]
+    public async Task ACheck_LogsOneLine_WithTheReadsAndFetchesMadeWhileItRan_ItsNestedChecksIncluded()
+    {
+        var log = new Lines();
+        using (DirectoryReadOperation.BeginCheck(log, "Protected-principal check", "tess@contoso.test"))
+        {
+            DirectoryReadOperation.CountRead();
+            await DirectoryReadOperation.DirectoryReadSecretAsync(4242, Vault);
+            using (DirectoryReadOperation.BeginCheck(log, "Protected-principal check", "the service's own check"))
+                DirectoryReadOperation.CountRead();
+            using (DirectoryReadOperation.BeginCheck(log, "Self-grant check", "other@contoso.test"))
+            {
+                DirectoryReadOperation.CountRead();
+                await DirectoryReadOperation.DirectoryReadSecretAsync(4242, Vault);
+            }
+        }
+
+        // The inner check of the same name is part of the outer one; the self-grant check is its own, and shared the fetch.
+        Assert.Equal(2, log.Count);
+        Assert.Matches(@"^Self-grant check for other@contoso\.test took \d+ ms \(1 directory reads, 0 credential fetches\)$", log[0]);
+        Assert.Matches(@"^Protected-principal check for tess@contoso\.test took \d+ ms \(3 directory reads, 1 credential fetches\)$", log[1]);
+        Assert.Equal(1, _fetches);
+    }
+
+    [Fact]
+    public void ReadsOutsideAnyCheck_AreCountedNowhere()
+    {
+        var log = new Lines();
+        DirectoryReadOperation.CountRead();
+        using (DirectoryReadOperation.BeginCheck(log, "Protected-principal check", null))
+        {
+        }
+
+        Assert.Matches(@"^Protected-principal check for \(no target\) took \d+ ms \(0 directory reads, 0 credential fetches\)$", Assert.Single(log));
+    }
+
+    private sealed class Lines : List<string>, Microsoft.Extensions.Logging.ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Information)
+                Add(formatter(state, exception));
+        }
+    }
+
+    [Fact]
     public async Task AnOperationEndsWithTheFlowThatBeganIt()
     {
         // Begun inside an async method, it does not leak out to the caller when that method returns.

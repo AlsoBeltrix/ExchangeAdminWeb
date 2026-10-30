@@ -196,6 +196,7 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
         {
             _ps.AddScript("param($cred) (Get-ADForest -Credential $cred -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1")
                .AddArgument(_credential);
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             var host = _ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
             if (_ps.HadErrors || string.IsNullOrWhiteSpace(host))
                 throw new InvalidOperationException("The forest reported no global catalog.");
@@ -222,6 +223,7 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             cmd.AddParameter("Credential", _credential)
                .AddParameter("ErrorAction", "Stop");
 
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             var rows = _ps.Invoke();
             if (_ps.HadErrors)
             {

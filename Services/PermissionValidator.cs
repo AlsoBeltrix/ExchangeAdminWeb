@@ -304,9 +304,10 @@ public class PermissionValidator
         System.Security.Claims.ClaimsPrincipal? actingUser,
         string? moduleId)
     {
-        // kd-88. The resolution, the check and the check of the typed string share one directory-read credential fetch - one
-        // operation, joined when the caller already began one (a single change's page handler, a bulk file).
-        using var operation = DirectoryReadOperation.Begin();
+        // kd-88. The resolution, the check and the check of the typed string are one protected-principal check: one
+        // directory-read credential fetch - joined to the caller's operation when it began one (a single change's page
+        // handler, a bulk file) - and one timing line for the whole validation.
+        using var check = _protectedPrincipalService.BeginCheck(targetMailbox);
 
         // aud-a2d. The mailbox the central check resolved, when it resolved one: the write is bound
         // to it, so it is kept rather than re-derived from the string at the end.
@@ -617,6 +618,9 @@ public class PermissionValidator
         return ProtectedPrincipalServicing.NoteFor(_servicers, actingUser, moduleId, matchedRules);
     }
 
+    /// <summary>The self-grant check's name in the timing line (kd-88).</summary>
+    internal const string SelfGrantCheckName = "Self-grant check";
+
     /// <summary>The refusal of a grant to the operator themselves.</summary>
     internal const string SelfGrantRefusal = "Access denied: You cannot grant permissions to yourself.";
 
@@ -651,6 +655,9 @@ public class PermissionValidator
 
         if (!GetPreventSelfGrant())
             return null;
+
+        // kd-88: timed and logged; inside the change's operation it shares that operation's credential fetch.
+        using var check = DirectoryReadOperation.BeginCheck(_logger, SelfGrantCheckName, affectedUser);
 
         if (actingUser?.Identity?.IsAuthenticated != true)
         {

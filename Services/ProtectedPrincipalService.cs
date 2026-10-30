@@ -326,6 +326,9 @@ public class ProtectedPrincipalService
     // without a live AD/Delinea backend (no behavior change). Mirrors the EmailService seam pattern.
     public virtual async Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
     {
+        // kd-88: timed and logged, as part of the caller's check when it began one.
+        using var check = BeginCheck(target.UserPrincipalName is { Length: > 0 } upn ? upn : target.DistinguishedName ?? target.DisplayName);
+
         var (cfg, legacyExclusions, loadError) = LoadEffectiveConfig();
 
         if (loadError != null)
@@ -358,6 +361,19 @@ public class ProtectedPrincipalService
 
         return ProtectedPrincipalResult.NotProtected();
     }
+
+    /// <summary>The check's name in the timing line (kd-88).</summary>
+    internal const string ProtectionCheckName = "Protected-principal check";
+
+    /// <summary>
+    /// kd-88. Begins one protected-principal check of <paramref name="target"/> - its resolution and its rules - as one
+    /// operation: the directory-read credential fetched at most once for it, and when it ends one Information line with the
+    /// time it took, the directory reads it made and the credential fetches it started ("Protected-principal check for
+    /// {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)"). Dispose it where the check
+    /// ends. Begun inside a check already in progress, it is part of that one.
+    /// </summary>
+    public DirectoryReadOperation BeginCheck(string? target) =>
+        DirectoryReadOperation.BeginCheck(_logger, ProtectionCheckName, target);
 
     /// <summary>
     /// May this GROUP be WRITTEN TO (members added or removed)? A separate question from
@@ -912,6 +928,7 @@ public class ProtectedPrincipalService
           .AddParameter("Properties", new[] { "DistinguishedName", "ObjectGUID", "msExchMailboxGuid" })
           .AddParameter("Credential", CreateCredential(username, password, domain))
           .AddParameter("ErrorAction", "Stop");
+        DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
         var objects = ps.Invoke();
         ps.Commands.Clear();
 
@@ -1072,6 +1089,7 @@ public class ProtectedPrincipalService
           .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
         var users = ps.Invoke();
         ps.Commands.Clear();
 
@@ -1609,6 +1627,7 @@ public class ProtectedPrincipalService
               .AddParameter("LDAPFilter", $"(sAMAccountName={escaped})")
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             var objects = ps.Invoke();
             ps.Commands.Clear();
 

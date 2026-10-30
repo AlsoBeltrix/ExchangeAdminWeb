@@ -190,6 +190,7 @@ internal sealed class SelfGrantDirectory : IDisposable
         try
         {
             ps.AddScript("(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1");
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             var host = ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
             if (ps.HadErrors || string.IsNullOrWhiteSpace(host))
                 throw new InvalidOperationException("the forest reported no global catalog");
@@ -218,6 +219,7 @@ internal sealed class SelfGrantDirectory : IDisposable
                 command.AddParameter("Credential", credential);
             command.AddParameter("ErrorAction", "Stop");
 
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             Collection<PSObject> rows = _ps.Invoke();
             if (_ps.HadErrors)
                 throw new InvalidOperationException(
