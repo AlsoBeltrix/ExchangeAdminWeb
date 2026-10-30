@@ -31,6 +31,11 @@ public sealed class ProtectionCheckCallSiteTests
         // S4 Group Management: the member's resolution and its check.
         { "Services/GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string member,",
             "_protectedPrincipals.BeginCheck(member)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(member)" },
+        // S4b Group Management: the add's and the removal's two gates - the typed identity's and the resolved principal's.
+        { "Services/GroupManagementService.cs", "public async Task<PermissionResult> AddMemberAsync(",
+            "_protectedPrincipals.BeginCheck(member)", "CheckProtectedAsync(member, actingUser)" },
+        { "Services/GroupManagementService.cs", "public async Task<PermissionResult> RemoveMemberAsync(",
+            "_protectedPrincipals.BeginCheck(member)", "CheckProtectedAsync(member, actingUser)" },
         // S5 Emergency Disable: the lookup's resolution and its check (the disable's own re-check is one check of its own).
         { "Components/Pages/EmergencyDisable.razor", "private async Task PerformLookup()",
             "ProtectedPrincipalService.BeginCheck(identity)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity)" },
