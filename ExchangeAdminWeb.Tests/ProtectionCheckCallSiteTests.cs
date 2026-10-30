@@ -40,6 +40,9 @@ public sealed class ProtectionCheckCallSiteTests
         // S7 Conference Rooms: the room mailbox's resolution and its check, single and bulk.
         { "Services/ConferenceRoomProtectionGate.cs", "private async Task<ProtectionOutcome> EvaluateAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveExchangeTargetAsync(identity)" },
+        // S8 Blocked Senders: the sender's resolution and its check, or the raw address's check.
+        { "Services/BlockedSenderProtectionGate.cs", "public async Task<BlockedSenderGateDecision> EvaluateAsync(string address,",
+            "_protectedPrincipals.BeginCheck(address)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(address)" },
     };
 
     [Theory]
