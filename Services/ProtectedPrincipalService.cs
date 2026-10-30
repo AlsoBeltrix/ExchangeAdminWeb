@@ -190,6 +190,72 @@ public class ProtectedPrincipalService
 
     private DateTime _lastCredentialFailure = DateTime.MinValue;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+
+    /// <summary>
+    /// Test seam (kd-88): fetches the directory-read secret for its Secret ID. Null in production, which asks the secret store
+    /// (<see cref="DelineaService.GetCredentialsBySecretIdAsync"/>) as before.
+    /// </summary>
+    internal Func<int, Task<(string username, string password, string domain)?>>? DirectoryReadSecretFetch { get; set; }
+
+    /// <summary>
+    /// Test seam (kd-88): the directory session the resolution, the mailbox proof and the group check read in, not yet open.
+    /// Production builds the session they always built; the ActiveDirectory module is imported into it before the first read.
+    /// </summary>
+    internal Func<Runspace> DirectoryRunspace { get; set; } = DefaultDirectoryRunspace;
+
+    private static Runspace DefaultDirectoryRunspace() => DirectorySessionPool.DefaultRunspace();
+
+    // kd-88. The directory search service, whose warm sessions for checks this service's reads borrow; null for a service
+    // built without one (the suite), which keeps warm sessions of its own over DirectoryRunspace.
+    private readonly ADDirectorySearchService? _directorySearch;
+    private DirectorySessionPool? _ownSessions;
+    private Func<Runspace>? _ownSessionsFactory;
+
+    /// <summary>How long a check waits for a warm session before it refuses as busy.</summary>
+    internal static readonly TimeSpan SessionWait = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// kd-88. The warm directory sessions this service's reads are lent: the directory search service's sessions for checks
+    /// in production, else sessions of its own over <see cref="DirectoryRunspace"/> - rebuilt if that seam is replaced.
+    /// </summary>
+    internal DirectorySessionPool DirectorySessions
+    {
+        get
+        {
+            if (_directorySearch is not null)
+                return _directorySearch.CheckSessions;
+
+            lock (_cacheLock)
+            {
+                if (_ownSessions is null || _ownSessionsFactory != DirectoryRunspace)
+                {
+                    _ownSessions?.Dispose();
+                    _ownSessions = new DirectorySessionPool(DirectoryRunspace);
+                    _ownSessionsFactory = DirectoryRunspace;
+                }
+                return _ownSessions;
+            }
+        }
+    }
+
+    /// <summary>
+    /// kd-88. The directory-read secret, fetched once per operation: inside a <see cref="DirectoryReadOperation"/> - a single
+    /// change, a bulk file - the operation's one answer, its secret or its failure; outside one, a fetch of its own. A fetch
+    /// that throws is a secret not retrieved, as the store's own failures already are.
+    /// </summary>
+    private async Task<(string username, string password, string domain)?> DirectoryReadSecretAsync(int secretId)
+    {
+        try
+        {
+            return await DirectoryReadOperation.DirectoryReadSecretAsync(secretId,
+                DirectoryReadSecretFetch ?? (id => _delineaService.GetCredentialsBySecretIdAsync(id)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The protected-principal directory-read credential could not be retrieved");
+            return null;
+        }
+    }
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
     public ProtectedPrincipalService(
@@ -199,7 +265,8 @@ public class ProtectedPrincipalService
         ProtectedPrincipalRepository repository,
         DelineaService delineaService,
         ILogger<ProtectedPrincipalService> logger,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        ADDirectorySearchService? directorySearch = null)
     {
         _env = env;
         _config = config;
@@ -208,6 +275,7 @@ public class ProtectedPrincipalService
         _delineaService = delineaService;
         _logger = logger;
         _scopeFactory = scopeFactory;
+        _directorySearch = directorySearch;
         _changeWatcher = repository.CreateChangeWatcher(logger);
 
         var legacyPath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
@@ -258,6 +326,9 @@ public class ProtectedPrincipalService
     // without a live AD/Delinea backend (no behavior change). Mirrors the EmailService seam pattern.
     public virtual async Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
     {
+        // kd-88: timed and logged, as part of the caller's check when it began one.
+        using var check = BeginCheck(target.UserPrincipalName is { Length: > 0 } upn ? upn : target.DistinguishedName ?? target.DisplayName);
+
         var (cfg, legacyExclusions, loadError) = LoadEffectiveConfig();
 
         if (loadError != null)
@@ -290,6 +361,37 @@ public class ProtectedPrincipalService
 
         return ProtectedPrincipalResult.NotProtected();
     }
+
+    /// <summary>
+    /// kd-88. One directory read in a lent session, counted for the timing line: a read that throws fails the session, so a
+    /// session it may have broken is not lent again.
+    /// </summary>
+    private static System.Collections.ObjectModel.Collection<PSObject> InvokeIn(DirectorySessionPool.DirectorySession session)
+    {
+        DirectoryReadOperation.CountRead();
+        try
+        {
+            return session.PowerShell.Invoke();
+        }
+        catch
+        {
+            session.Fail();
+            throw;
+        }
+    }
+
+    /// <summary>The check's name in the timing line (kd-88).</summary>
+    internal const string ProtectionCheckName = "Protected-principal check";
+
+    /// <summary>
+    /// kd-88. Begins one protected-principal check of <paramref name="target"/> - its resolution and its rules - as one
+    /// operation: the directory-read credential fetched at most once for it, and when it ends one Information line with the
+    /// time it took, the directory reads it made and the credential fetches it started ("Protected-principal check for
+    /// {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)"). Dispose it where the check
+    /// ends. Begun inside a check already in progress, it is part of that one.
+    /// </summary>
+    public DirectoryReadOperation BeginCheck(string? target) =>
+        DirectoryReadOperation.BeginCheck(_logger, ProtectionCheckName, target);
 
     /// <summary>
     /// May this GROUP be WRITTEN TO (members added or removed)? A separate question from
@@ -434,7 +536,7 @@ public class ProtectedPrincipalService
             return (null, ResolutionStatus.Unavailable);
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -506,6 +608,9 @@ public class ProtectedPrincipalService
     // a live directory.
     public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
     {
+        // kd-88: its two directory lookups share the operation's one credential fetch.
+        using var operation = DirectoryReadOperation.Begin();
+
         var (principal, status) = await ResolveWithStatusAsync(identity);
         if (status != ResolutionStatus.NotFound)
             return (principal, status);
@@ -610,6 +715,10 @@ public class ProtectedPrincipalService
     // virtual: the same test seam as ResolveWithExchangeFallbackAsync.
     public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
     {
+        // kd-88: its directory lookups - the typed string, the canonical address, the mailbox proof - share the operation's
+        // one credential fetch, where each fetched its own (4.1 s and 2.7 s on the dev log).
+        using var operation = DirectoryReadOperation.Begin();
+
         var (answered, recipient) = await AskExchangeAsync(identity);
         if (!answered)
             return (null, ResolutionStatus.Unavailable);
@@ -785,7 +894,7 @@ public class ProtectedPrincipalService
             return (false, []);
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -819,33 +928,28 @@ public class ProtectedPrincipalService
         }
     }
 
-    private static IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
+    private IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
         Guid mailboxGuid, string username, string password, string domain)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-        ps.Streams.Error.Clear();
+        // kd-88: a warm session, lent for the mailbox proof and given back - no runspace or module import of its own.
+        using var session = DirectorySessions.Lease(SessionWait);
+        var ps = session.PowerShell;
 
         ps.AddCommand("Get-ADObject")
           .AddParameter("LDAPFilter", BuildMailboxGuidFilter(mailboxGuid))
           .AddParameter("Properties", new[] { "DistinguishedName", "ObjectGUID", "msExchMailboxGuid" })
           .AddParameter("Credential", CreateCredential(username, password, domain))
           .AddParameter("ErrorAction", "Stop");
-        var objects = ps.Invoke();
+        var objects = InvokeIn(session);
         ps.Commands.Clear();
 
         // Completeness matters here, not just success: a search that dropped a second holder would
-        // read as a unique one. Any error recorded alongside the results fails the lookup.
+        // read as a unique one. Any error recorded alongside the results fails the lookup - and the session.
         if (ps.Streams.Error.Count > 0)
+        {
+            session.Fail();
             throw new InvalidOperationException($"The mailbox GUID lookup reported {ps.Streams.Error.Count} error(s).");
+        }
 
         return objects
             .Where(o => o != null)
@@ -981,16 +1085,9 @@ public class ProtectedPrincipalService
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)
     {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
+        // kd-88: a warm session, lent for this lookup and given back - no runspace or module import of its own.
+        using var session = DirectorySessions.Lease(SessionWait);
+        var ps = session.PowerShell;
 
         var credential = CreateCredential(username, password, domain);
         var escaped = EscapeLdapFilter(identity);
@@ -1001,7 +1098,7 @@ public class ProtectedPrincipalService
           .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
-        var users = ps.Invoke();
+        var users = InvokeIn(session);
         ps.Commands.Clear();
 
         if (users.Count == 0)
@@ -1455,7 +1552,7 @@ public class ProtectedPrincipalService
             return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -1471,7 +1568,7 @@ public class ProtectedPrincipalService
             try
             {
                 var (groupMatches, expansionHadErrors) = await Task.Run(() =>
-                    CheckTransitiveGroupMembership(cfg.Groups, target, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    CheckGroupsInWarmSession(cfg.Groups, target, creds.Value.username, creds.Value.password, creds.Value.domain));
                 matches.AddRange(groupMatches);
 
                 // Fail closed: if expansion had errors and no matches were found,
@@ -1496,22 +1593,35 @@ public class ProtectedPrincipalService
         return (matches, false, null);
     }
 
-    private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
+    /// <summary>
+    /// kd-88. The group check in a warm session - the ActiveDirectory module already imported - lent for this check and given
+    /// back, where every check built a runspace and imported the module before its first read. A session a read failed in,
+    /// or whose answer was incomplete, is thrown away rather than lent again.
+    /// </summary>
+    private (List<string> matches, bool expansionHadErrors) CheckGroupsInWarmSession(
         string[] protectedGroups, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
+        using var session = DirectorySessions.Lease(SessionWait);
+        try
+        {
+            var outcome = CheckTransitiveGroupMembership(session.PowerShell, protectedGroups, target, username, password, domain);
+            if (outcome.expansionHadErrors)
+                session.Fail();
+            return outcome;
+        }
+        catch
+        {
+            session.Fail();
+            throw;
+        }
+    }
+
+    private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
+        PowerShell ps, string[] protectedGroups, ResolvedDirectoryPrincipal target,
+        string username, string password, string domain)
+    {
         var matches = new List<string>();
-
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
 
         var credential = CreateCredential(username, password, domain);
 
@@ -1525,6 +1635,7 @@ public class ProtectedPrincipalService
               .AddParameter("LDAPFilter", $"(sAMAccountName={escaped})")
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             var objects = ps.Invoke();
             ps.Commands.Clear();
 

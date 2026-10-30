@@ -274,6 +274,10 @@ public class MailboxPermissionService : ExchangeServiceBase
         // that failed is that failure for each of them.
         var selfGrantRun = new SelfGrantRun();
 
+        // kd-88. One operation for the whole file: every row's protected-principal and self-grant checks share one fetch of
+        // the directory-read credential (aud-a70's rule for the file), where each row's checks fetched it for themselves.
+        using var directoryRead = DirectoryReadOperation.Begin();
+
         foreach (var row in records)
         {
             try

@@ -60,6 +60,9 @@ public class GroupManagementService
 
         try
         {
+            // kd-88: one protected-principal check for the resolution and the read of its rules - one credential fetch, one
+            // timing line - where each fetched the directory-read credential for itself.
+            using var protectionCheck = _protectedPrincipals.BeginCheck(member);
             var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(member);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
@@ -595,6 +598,10 @@ public class GroupManagementService
     /// resolver with its exactly-one refusal.</param>
     public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberDn = null)
     {
+        // kd-88: the add's two protection gates - the typed identity's below, the resolved principal's after it - are one
+        // protected-principal check: one directory-read credential fetch, one timing line.
+        using var directoryCheck = _protectedPrincipals.BeginCheck(member);
+
         // Pre-gate on the typed identity, exactly as before: for USER members this closes the
         // secondary-alias bypass via the Exchange fallback (pinned by tests). A GROUP identity
         // resolves NotFound here and passes through - the class-aware gate on the RESOLVED
@@ -774,6 +781,9 @@ public class GroupManagementService
         // absent immutable key to the mutable display name and act on a same-named local object.
         if (memberObjectGuid is not null && string.IsNullOrWhiteSpace(memberObjectGuid))
             return PermissionResult.Fail("That member could not be fully resolved from the list and cannot be removed here. Reload the member list and try again.");
+
+        // kd-88: the removal's two protection gates are one protected-principal check: one credential fetch, one timing line.
+        using var directoryCheck = _protectedPrincipals.BeginCheck(member);
 
         // String pre-gate as before (secondary-alias bypass for USER members; pinned by tests).
         // Vacuous when the label is empty or names no user - the resolved-principal gate below

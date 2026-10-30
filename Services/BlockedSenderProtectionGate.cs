@@ -147,6 +147,10 @@ public class BlockedSenderProtectionGate
         if (!hasCentralRules && legacyExclusions.Length == 0)
             return BlockedSenderGateDecision.Allow();
 
+        // kd-88: one protected-principal check for the sender's resolution and the read of its rules - one credential fetch,
+        // one timing line - where each fetched the directory-read credential for itself.
+        using var directoryCheck = _protectedPrincipals.BeginCheck(address);
+
         ProtectedPrincipalService.ResolutionStatus status;
         ResolvedDirectoryPrincipal? resolved;
         try

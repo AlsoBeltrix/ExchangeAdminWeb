@@ -6,8 +6,14 @@ namespace ExchangeAdminWeb.Services;
 /// <summary>
 /// Read-only Active Directory search service for autocomplete purposes.
 /// Runs under the app pool's ambient identity (no Delinea credential).
-/// NOT used for authorization, protected-principal enforcement, or writes.
+/// Its searches are NOT used for authorization, protected-principal enforcement, or writes.
 /// </summary>
+/// <remarks>
+/// kd-88. It also keeps the warm directory sessions the protection checks borrow (<see cref="CheckSessions"/>): runspaces with
+/// the ActiveDirectory module imported, kept by this service's cached-runspace rule (<c>GetOrCreateRunspace</c>: reused while
+/// open, replaced after a failure) but apart from the searches' own runspace, so a check never waits behind the picker nor
+/// the picker behind a check. A session holds no identity: each read a check runs in it names its own credential.
+/// </remarks>
 public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGroupGrantDirectory
 {
     private readonly ILogger<ADDirectorySearchService> _logger;
@@ -624,6 +630,19 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
     // object kind runs is proven with no directory. Production builds the session this always built, which imports the
     // ActiveDirectory module when it opens.
     internal Func<Runspace> CreateSearchRunspace { get; init; } = SearchRunspace;
+
+    // kd-88. The session the warm sessions for checks open, the searches' twin: a test hands back a session of stand-in
+    // cmdlets. Production builds the default session; the pool imports the ActiveDirectory module into it as its first command.
+    internal Func<Runspace> CreateCheckRunspace { get; init; } = DirectorySessionPool.DefaultRunspace;
+
+    private DirectorySessionPool? _checkSessions;
+
+    /// <summary>
+    /// kd-88. The warm directory sessions the protection checks borrow - the protected-principal check's resolution, mailbox
+    /// proof and group check, and the self-grant check - created when first asked for.
+    /// </summary>
+    internal DirectorySessionPool CheckSessions =>
+        LazyInitializer.EnsureInitialized(ref _checkSessions, () => new DirectorySessionPool(CreateCheckRunspace));
 
     private static Runspace SearchRunspace()
     {

@@ -966,7 +966,7 @@
                 return;
             }
 
-            var outcomes = new List<BulkRowOutcome>(rows.Count);
+            using var directoryRead = DirectoryReadOperation.Begin(); var outcomes = new List<BulkRowOutcome>(rows.Count); // kd-88: one directory-read credential fetch for the batch's checks
             foreach (var row in rows)
                 outcomes.Add(await RemoveOneAsync(group, row, ticket, sendAdminEmail: false));
 
@@ -1111,7 +1111,7 @@
                 return;
             }
 
-            var outcomes = new List<BulkRowOutcome>(rows.Count);
+            using var directoryRead = DirectoryReadOperation.Begin(); var outcomes = new List<BulkRowOutcome>(rows.Count); // kd-88: one directory-read credential fetch for the batch's checks
             foreach (var row in rows)
                 outcomes.Add(await AddOneAsync(group, row.Line.Text, row.Match!.DistinguishedName, ticket, sendAdminEmail: false));
 

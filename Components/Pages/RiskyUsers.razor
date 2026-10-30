@@ -903,7 +903,7 @@
             //    MfaReset shipped before 1.1.0, on a module whose normal input is a cloud identity.
             try
             {
-                var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn);
+                using var directoryCheck = ProtectedPrincipalService.BeginCheck(upn); var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn); // kd-88: one check - one credential fetch, one timing line - for the resolution and the rules
                 if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                 {
                     var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous

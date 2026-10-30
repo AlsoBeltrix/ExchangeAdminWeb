@@ -132,7 +132,8 @@ public class ResourceDomainDeniesTests
     [InlineData("FindGroups")]
     [InlineData("FindObjectDnsBySid")]
     [InlineData("ReadTarget")]
-    [InlineData("UniversalGroupsContainingAny")]
+    [InlineData("ReadTokenGroups")]
+    [InlineData("ReadMemberOf")]
     [InlineData("DomainLocalGroupContainsAny")]
     public void AReadThatFails_Refuses(string failingRead)
     {

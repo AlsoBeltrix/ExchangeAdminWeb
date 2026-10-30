@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Collections.ObjectModel;
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using System.Security.Principal;
 
 namespace ExchangeAdminWeb.Services;
@@ -31,8 +30,11 @@ internal sealed record SelfGrantDirectoryObject(
 /// and whether a group holds the operator.
 /// </summary>
 /// <remarks>
-/// One session per check: a fresh runspace, the ActiveDirectory module (<see cref="ActiveDirectoryModuleImport"/>) and the
-/// host forest's global catalog, discovered from <c>Get-ADForest</c> at runtime - the
+/// One session per check, warm since kd-88: lent from the directory sessions the protection checks share
+/// (<see cref="DirectorySessionPool"/>) - a runspace with the ActiveDirectory module already imported
+/// (<see cref="ActiveDirectoryModuleImport"/>) - where every check built a runspace and imported the module before its first
+/// read. A read that fails in it throws it away, so a session a failure may have broken is not lent again. The
+/// host forest's global catalog is discovered from <c>Get-ADForest</c> at runtime - the
 /// <c>PowerShellProtectedGroupDirectory.GlobalCatalog</c> idiom. Nothing is named, defaulted or configured (Architectural
 /// Invariant 7). The lookup of the operator by SID runs under the app pool's identity, as the other read-only lookups of the
 /// signed-in operator do (<c>OperatorEmailResolver</c>, <c>OperatorMembershipDirectory</c>); a missing or doubled operator
@@ -53,14 +55,14 @@ internal sealed class SelfGrantDirectory : IDisposable
     private static readonly string[] Properties =
         ["objectClass", "userPrincipalName", "mail", "proxyAddresses", "objectSid", "primaryGroupID"];
 
-    private readonly Runspace _runspace;
+    private readonly DirectorySessionPool.DirectorySession _session;
     private readonly PowerShell _ps;
     private readonly string _globalCatalog;
 
-    private SelfGrantDirectory(Runspace runspace, PowerShell ps, string globalCatalog)
+    private SelfGrantDirectory(DirectorySessionPool.DirectorySession session, string globalCatalog)
     {
-        _runspace = runspace;
-        _ps = ps;
+        _session = session;
+        _ps = session.PowerShell;
         _globalCatalog = globalCatalog;
     }
 
@@ -72,43 +74,34 @@ internal sealed class SelfGrantDirectory : IDisposable
     internal IProtectedGroupDirectory GroupsUnder(PSCredential credential) =>
         new PowerShellProtectedGroupDirectory(_ps, credential ?? throw new ArgumentNullException(nameof(credential)));
 
-    /// <summary>The production session, built as every directory path here builds it; not yet opened.</summary>
-    internal static Runspace DefaultRunspace()
-    {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        return RunspaceFactory.CreateRunspace(iss);
-    }
+    /// <summary>How long a check waits for a warm session before it refuses as busy.</summary>
+    internal static readonly TimeSpan SessionWait = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Opens one check's session. Throws when the runspace, the module or the forest's catalog cannot be had; nothing is
-    /// left open then.
+    /// Opens one check's session: a warm one lent from <paramref name="sessions"/> (kd-88), and the forest's catalog. Throws
+    /// when no session can be had - none free in time, or a new one whose runspace or module cannot be had - or the catalog
+    /// cannot; nothing is left lent then, and a session the catalog's discovery failed in is thrown away.
     /// </summary>
-    internal static SelfGrantDirectory Open(Func<Runspace> createRunspace)
+    internal static SelfGrantDirectory Open(DirectorySessionPool sessions)
     {
-        var runspace = createRunspace();
-        PowerShell? ps = null;
+        var session = sessions.Lease(SessionWait);
         try
         {
-            runspace.Open();
-            ps = PowerShell.Create();
-            ps.Runspace = runspace;
-            ActiveDirectoryModuleImport.Import(ps);
-            return new SelfGrantDirectory(runspace, ps, GlobalCatalog(ps));
+            return new SelfGrantDirectory(session, GlobalCatalog(session.PowerShell));
         }
         catch
         {
-            ps?.Dispose();
-            runspace.Dispose();
+            session.Fail();
+            session.Dispose();
             throw;
         }
     }
 
-    public void Dispose()
-    {
-        _ps.Dispose();
-        _runspace.Dispose();
-    }
+    /// <summary>Gives the session back - warm, unless a read failed in it.</summary>
+    public void Dispose() => _session.Dispose();
+
+    /// <summary>A read in this session could not be completed: the session is thrown away, not lent again (kd-88).</summary>
+    internal void Fail() => _session.Fail();
 
     /// <summary>Every object in the forest whose objectSid is <paramref name="sid"/>, under the session's identity.</summary>
     internal IReadOnlyList<SelfGrantDirectoryObject> FindBySid(string sid) =>
@@ -190,6 +183,7 @@ internal sealed class SelfGrantDirectory : IDisposable
         try
         {
             ps.AddScript("(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1");
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             var host = ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
             if (ps.HadErrors || string.IsNullOrWhiteSpace(host))
                 throw new InvalidOperationException("the forest reported no global catalog");
@@ -218,12 +212,19 @@ internal sealed class SelfGrantDirectory : IDisposable
                 command.AddParameter("Credential", credential);
             command.AddParameter("ErrorAction", "Stop");
 
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             Collection<PSObject> rows = _ps.Invoke();
             if (_ps.HadErrors)
                 throw new InvalidOperationException(
                     _ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADObject reported an error");
 
             return rows.Select(ToObject).ToList();
+        }
+        catch
+        {
+            // kd-88: a read that failed throws the warm session away rather than lending it again.
+            _session.Fail();
+            throw;
         }
         finally
         {

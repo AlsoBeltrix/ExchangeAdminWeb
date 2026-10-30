@@ -358,7 +358,7 @@
             // and "the directory did not answer" both rendered as a typo message, so an AD outage
             // told the operator to check their spelling. It also missed cloud-only targets
             // entirely. docs/ProtectedPrincipalGapFix-Plan.md GAP B.
-            var (resolved, resolveStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity);
+            using var directoryCheck = ProtectedPrincipalService.BeginCheck(identity); var (resolved, resolveStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity); // kd-88: one check - one credential fetch, one timing line - for the resolution and the rules
 
             if (resolveStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable
                               or ProtectedPrincipalService.ResolutionStatus.Ambiguous)

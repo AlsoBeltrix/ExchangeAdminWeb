@@ -33,9 +33,33 @@ public class PermissionValidator
     /// <summary>Test seam (aud-a43): the session the self-grant check's directory reads run in.</summary>
     /// <remarks>
     /// The ADOrganizationalUnitService shape: a test hands back a runspace of stand-in cmdlets, so the reads run for real with
-    /// no directory. Production builds the session every directory path builds (<see cref="SelfGrantDirectory.DefaultRunspace"/>).
+    /// no directory. kd-88: null in production, where the check borrows a warm session from the directory sessions the
+    /// protected-principal check uses (<see cref="ProtectedPrincipalService.DirectorySessions"/>); a test's seam gets warm
+    /// sessions of its own over it.
     /// </remarks>
-    internal Func<Runspace> SelfGrantDirectoryRunspace { get; set; } = SelfGrantDirectory.DefaultRunspace;
+    internal Func<Runspace>? SelfGrantDirectoryRunspace { get; set; }
+
+    private DirectorySessionPool? _selfGrantSessions;
+    private Func<Runspace>? _selfGrantSessionsFactory;
+    private readonly object _selfGrantSessionsLock = new();
+
+    /// <summary>kd-88. The warm sessions the self-grant check borrows: the shared ones, or a test's own over its seam.</summary>
+    private DirectorySessionPool SelfGrantSessions()
+    {
+        if (SelfGrantDirectoryRunspace is not { } seam)
+            return _protectedPrincipalService.DirectorySessions;
+
+        lock (_selfGrantSessionsLock)
+        {
+            if (_selfGrantSessions is null || _selfGrantSessionsFactory != seam)
+            {
+                _selfGrantSessions?.Dispose();
+                _selfGrantSessions = new DirectorySessionPool(seam);
+                _selfGrantSessionsFactory = seam;
+            }
+            return _selfGrantSessions;
+        }
+    }
 
     /// <summary>
     /// Test seam (aud-a60): fetches the protected-principal directory-read secret for its Secret ID. Null in production, which
@@ -304,6 +328,11 @@ public class PermissionValidator
         System.Security.Claims.ClaimsPrincipal? actingUser,
         string? moduleId)
     {
+        // kd-88. The resolution, the check and the check of the typed string are one protected-principal check: one
+        // directory-read credential fetch - joined to the caller's operation when it began one (a single change's page
+        // handler, a bulk file) - and one timing line for the whole validation.
+        using var check = _protectedPrincipalService.BeginCheck(targetMailbox);
+
         // aud-a2d. The mailbox the central check resolved, when it resolved one: the write is bound
         // to it, so it is kept rather than re-derived from the string at the end.
         var centralResolved = false;
@@ -613,6 +642,9 @@ public class PermissionValidator
         return ProtectedPrincipalServicing.NoteFor(_servicers, actingUser, moduleId, matchedRules);
     }
 
+    /// <summary>The self-grant check's name in the timing line (kd-88).</summary>
+    internal const string SelfGrantCheckName = "Self-grant check";
+
     /// <summary>The refusal of a grant to the operator themselves.</summary>
     internal const string SelfGrantRefusal = "Access denied: You cannot grant permissions to yourself.";
 
@@ -648,6 +680,9 @@ public class PermissionValidator
         if (!GetPreventSelfGrant())
             return null;
 
+        // kd-88: timed and logged; inside the change's operation it shares that operation's credential fetch.
+        using var check = DirectoryReadOperation.BeginCheck(_logger, SelfGrantCheckName, affectedUser);
+
         if (actingUser?.Identity?.IsAuthenticated != true)
         {
             _logger.LogWarning("The self-grant check for {Affected} has no signed-in operator - failing closed", affectedUser);
@@ -662,12 +697,12 @@ public class PermissionValidator
             return SelfGrantRefusal;
         }
 
-        // One directory session for the check - a runspace, the ActiveDirectory module and the forest's global catalog -
-        // opened and read off the caller's thread: the directory calls block.
+        // One directory session for the check - since kd-88 a warm one, lent with the ActiveDirectory module already
+        // imported - and the forest's global catalog, opened and read off the caller's thread: the directory calls block.
         SelfGrantDirectory directory;
         try
         {
-            directory = await Task.Run(() => SelfGrantDirectory.Open(SelfGrantDirectoryRunspace));
+            directory = await Task.Run(() => SelfGrantDirectory.Open(SelfGrantSessions()));
         }
         catch (Exception ex)
         {
@@ -791,8 +826,9 @@ public class PermissionValidator
     /// aud-a52. Whether a group holds the operator is the protected-group evaluator's question
     /// (<see cref="ProtectedGroupMembership.Evaluate"/>), asked once over every group concerned and read in this session
     /// under the protected-principal directory-read credential (<see cref="SelfGrantDirectory.GroupsUnder"/>, aud-a60) - once
-    /// per run (<see cref="SelfGrantRun"/>, aud-a61): ancestry in the operator's own domain, universal ancestry at the
-    /// catalog, a domain-local group in its own domain, and the primary group, which no member link records. It reads
+    /// per run (<see cref="SelfGrantRun"/>, aud-a61): the operator's token - their own domain's groups, universal groups across
+    /// the forest and their primary group, which no member link records - and, for what a token cannot carry (a domain-local
+    /// group of another domain, a distribution group), the links themselves, read by name (kd-88). It reads
     /// nesting where aud-a43 read a direct member link only, and an answer it could not complete refuses. A group Exchange
     /// names that the directory does not hold is the directory's to answer when Exchange calls it synced - it was not found,
     /// so the check refuses - and Exchange's when it is cloud-only (<see cref="CompareInExchangeGroupAsync"/>), where aud-a43
@@ -901,6 +937,7 @@ public class PermissionValidator
 
         if (membership.Incomplete)
         {
+            directory.Fail(); // kd-88: a session whose answer was incomplete is not lent again
             _logger.LogWarning("The self-grant check could not read whether {User} is a member of every group {Affected} names - failing closed", exchangeIdentity, affectedUser);
             return SelfGrantCheckIncompleteBecause($"whether you are a member of the group '{affectedUser}' could not be read");
         }
@@ -1122,7 +1159,8 @@ public class PermissionValidator
         (string username, string password, string domain)? secret;
         try
         {
-            secret = await (DirectoryReadSecretFetch ?? FetchDirectoryReadSecretAsync)(secretId.Value);
+            // kd-88: the operation's one fetch - in a single change the protected-principal check's reads share it.
+            secret = await DirectoryReadOperation.DirectoryReadSecretAsync(secretId.Value, DirectoryReadSecretFetch ?? FetchDirectoryReadSecretAsync);
         }
         catch (Exception ex)
         {

@@ -300,6 +300,9 @@ public class CalendarPermissionService : ExchangeServiceBase
         // aud-a61. One run of the self-grant check for the whole file, as the Mailbox Permissions loop has.
         var selfGrantRun = new SelfGrantRun();
 
+        // kd-88. One operation for the whole file, as the Mailbox Permissions loop has: one directory-read credential fetch.
+        using var directoryRead = DirectoryReadOperation.Begin();
+
         foreach (var row in records)
         {
             try

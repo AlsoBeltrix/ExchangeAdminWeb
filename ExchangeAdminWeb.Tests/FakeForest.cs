@@ -7,13 +7,20 @@ namespace ExchangeAdminWeb.Tests;
 /// groups' member links and nothing else - no global catalog replicas - and the global catalog
 /// holds every universal group's links in every domain and no other group's. That is the
 /// strictest case, and the one where "the target's domain returned no rows" is most often wrong.
-/// Shared by the protected-group evaluator's tests (aud-a3b, aud-a3c) and the self-service
+/// Shared by the protected-group evaluator's tests (aud-a3b, aud-a3c, kd-88) and the self-service
 /// resource-domain Deny tests (aud-a4b finding 7).
 /// </summary>
+/// <remarks>
+/// kd-88. An account's <c>tokenGroups</c> is computed as a domain controller of its own domain computes it: every SECURITY
+/// group whose links that DC holds (its own domain's groups) or the global catalog it consults holds (universal groups),
+/// followed from the account and its primary group until nothing more is reached - so another domain's domain-local groups
+/// and every distribution group are absent, as they are from a real token. <c>memberOf</c> is answered from the same holdings:
+/// a domain's DC names the groups of its own domain that link an object directly, the global catalog the universal ones.
+/// </remarks>
 internal sealed class FakeForest : IProtectedGroupDirectory
 {
     private sealed record Entry(
-        string Dn, string? Sid, string ObjectClass, int? PrimaryGroupRid, DirectoryGroupScope? Scope, string? Sam);
+        string Dn, string? Sid, string ObjectClass, int? PrimaryGroupRid, DirectoryGroupScope? Scope, string? Sam, bool Security);
 
     private readonly Dictionary<string, Entry> _objects = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> _members = new(StringComparer.OrdinalIgnoreCase);
@@ -21,6 +28,12 @@ internal sealed class FakeForest : IProtectedGroupDirectory
 
     public List<string> Calls { get; } = new();
     public string? FailOn { get; set; }
+
+    /// <summary>kd-88. Token groups the directory withholds from the reader: the read answers, without them.</summary>
+    public bool WithholdTokenGroups { get; set; }
+
+    /// <summary>kd-88. Objects a memberOf read leaves out of its answer, as a read that did not see them would.</summary>
+    public HashSet<string> Unreturned { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public FakeForest Domain(string netBios, string dns)
     {
@@ -30,11 +43,22 @@ internal sealed class FakeForest : IProtectedGroupDirectory
     }
 
     public void Account(string dn, string sid, int? primaryGroupRid)
-        => _objects[dn] = new Entry(dn, sid, "user", primaryGroupRid, null, null);
+        => _objects[dn] = new Entry(dn, sid, "user", primaryGroupRid, null, null, Security: false);
+
+    /// <summary>kd-88. An object with no SID - a contact - that groups can still hold.</summary>
+    public void Contact(string dn)
+        => _objects[dn] = new Entry(dn, null, "contact", null, null, null, Security: false);
 
     public void Group(string dn, string sid, DirectoryGroupScope scope, string sam, params string[] members)
     {
-        _objects[dn] = new Entry(dn, sid, "group", null, scope, sam);
+        _objects[dn] = new Entry(dn, sid, "group", null, scope, sam, Security: true);
+        _members[dn] = members.ToList();
+    }
+
+    /// <summary>kd-88. A distribution group: its links are links, but no token carries it.</summary>
+    public void DistributionGroup(string dn, string sid, DirectoryGroupScope scope, string sam, params string[] members)
+    {
+        _objects[dn] = new Entry(dn, sid, "group", null, scope, sam, Security: false);
         _members[dn] = members.ToList();
     }
 
@@ -54,7 +78,7 @@ internal sealed class FakeForest : IProtectedGroupDirectory
     private IEnumerable<Entry> GroupsIn(string? server) => _objects.Values.Where(o =>
         o.Scope is not null && (server is null || SameDomain(DomainOf(o.Dn), server)));
 
-    private static DirectoryGroup AsGroup(Entry e) => new(e.Dn, e.Sid!, e.Scope!.Value);
+    private static DirectoryGroup AsGroup(Entry e) => new(e.Dn, e.Sid!, e.Scope!.Value, e.Security);
 
     private static string CommonName(string dn) => ProtectedPrincipalService.ExtractCnFromDn(dn) ?? dn;
 
@@ -65,6 +89,73 @@ internal sealed class FakeForest : IProtectedGroupDirectory
         if (!_objects.TryGetValue(targetDn, out var o) || !SameDomain(DomainOf(o.Dn), server))
             throw new InvalidOperationException("No such object in that domain.");
         return new DirectoryTarget(o.Sid, o.ObjectClass, o.PrimaryGroupRid);
+    }
+
+    public IReadOnlyList<string> ReadTokenGroups(string accountDn, string accountSid, string server)
+    {
+        Record($"ReadTokenGroups {server}", nameof(ReadTokenGroups));
+        // A base read at the account's DN, bound by its SID, on a DC of its own domain.
+        if (!_objects.TryGetValue(accountDn, out var account) || !SameDomain(DomainOf(account.Dn), server)
+            || !string.Equals(account.Sid, accountSid, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("No such account at that DN in that domain.");
+        if (WithholdTokenGroups)
+            return [];
+
+        // The DC's expansion: security groups only, through the links it holds (its own domain's groups) and the ones its
+        // global catalog holds (universal groups), from the account and its primary group.
+        var reached = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { account.Dn };
+        var token = new List<string>();
+        var primary = account.PrimaryGroupRid is int rid
+            ? ProtectedGroupMembership.PrimaryGroupSid(account.Sid!, rid)
+            : null;
+        var primaryGroup = primary is null
+            ? null
+            : _objects.Values.FirstOrDefault(o => o.Scope is not null && o.Security
+                && string.Equals(o.Sid, primary, StringComparison.OrdinalIgnoreCase) && SameDomain(DomainOf(o.Dn), server));
+        if (primaryGroup is not null)
+        {
+            reached.Add(primaryGroup.Dn);
+            token.Add(primaryGroup.Sid!);
+        }
+
+        bool grew;
+        do
+        {
+            grew = false;
+            foreach (var g in _objects.Values.Where(o => o.Scope is not null && o.Security && !reached.Contains(o.Dn)))
+            {
+                var held = SameDomain(DomainOf(g.Dn), server) || g.Scope == DirectoryGroupScope.Universal;
+                if (held && _members[g.Dn].Any(reached.Contains))
+                {
+                    reached.Add(g.Dn);
+                    token.Add(g.Sid!);
+                    grew = true;
+                }
+            }
+        } while (grew);
+
+        return token;
+    }
+
+    public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(IReadOnlyList<string> dns, string? server)
+    {
+        Record($"ReadMemberOf {server ?? "forest"}", nameof(ReadMemberOf));
+        var rows = new List<DirectoryMemberOf>();
+        foreach (var dn in dns)
+        {
+            // A DC holds only its own domain's objects; the global catalog holds every object.
+            if (!_objects.TryGetValue(dn, out var o) || (server is not null && !SameDomain(DomainOf(o.Dn), server))
+                || Unreturned.Contains(dn))
+                continue;
+
+            var parents = _objects.Values
+                .Where(g => g.Scope is not null && _members[g.Dn].Contains(o.Dn, StringComparer.OrdinalIgnoreCase))
+                .Where(g => server is null ? g.Scope == DirectoryGroupScope.Universal : SameDomain(DomainOf(g.Dn), server))
+                .Select(g => g.Dn)
+                .ToList();
+            rows.Add(new DirectoryMemberOf(o.Dn, o.Sid, parents));
+        }
+        return rows;
     }
 
     public string ResolveDomainServer(string domain)
@@ -85,12 +176,6 @@ internal sealed class FakeForest : IProtectedGroupDirectory
             GroupLookupKey.SamAccountName => string.Equals(g.Sam, value, StringComparison.OrdinalIgnoreCase),
             _ => string.Equals(CommonName(g.Dn), value, StringComparison.OrdinalIgnoreCase),
         }).Select(AsGroup).ToList();
-    }
-
-    public IReadOnlyList<DirectoryGroup> GroupsContainingAny(IReadOnlyList<string> memberDns, string server)
-    {
-        Record($"GroupsContainingAny {server}", nameof(GroupsContainingAny));
-        return Closure(memberDns, GroupsIn(server));
     }
 
     public bool DomainLocalGroupContainsAny(string groupDn, IReadOnlyList<string> memberDns, string server)
@@ -116,13 +201,6 @@ internal sealed class FakeForest : IProtectedGroupDirectory
         return false;
     }
 
-    public IReadOnlyList<DirectoryGroup> UniversalGroupsContainingAny(IReadOnlyList<string> memberDns)
-    {
-        // The global catalog: every universal group's links, in every domain, and no other group's.
-        Record("UniversalGroupsContainingAny forest", nameof(UniversalGroupsContainingAny));
-        return Closure(memberDns, GroupsIn(null).Where(g => g.Scope == DirectoryGroupScope.Universal));
-    }
-
     public IReadOnlyList<string> FindObjectDnsBySid(string sid)
     {
         Record($"FindObjectDnsBySid {sid}", nameof(FindObjectDnsBySid));
@@ -130,28 +208,5 @@ internal sealed class FakeForest : IProtectedGroupDirectory
             .Where(o => string.Equals(o.Sid, sid, StringComparison.OrdinalIgnoreCase))
             .Select(o => o.Dn)
             .ToList();
-    }
-
-    /// <summary>The groups among <paramref name="holders"/> whose member chain, through those same groups' links, reaches a start DN.</summary>
-    private List<DirectoryGroup> Closure(IReadOnlyList<string> startDns, IEnumerable<Entry> holders)
-    {
-        var candidates = holders.ToList();
-        var reached = new HashSet<string>(startDns, StringComparer.OrdinalIgnoreCase);
-        var found = new List<Entry>();
-        bool grew;
-        do
-        {
-            grew = false;
-            foreach (var g in candidates.Where(g => !reached.Contains(g.Dn)))
-            {
-                if (_members[g.Dn].Any(reached.Contains))
-                {
-                    reached.Add(g.Dn);
-                    found.Add(g);
-                    grew = true;
-                }
-            }
-        } while (grew);
-        return found.Select(AsGroup).ToList();
     }
 }

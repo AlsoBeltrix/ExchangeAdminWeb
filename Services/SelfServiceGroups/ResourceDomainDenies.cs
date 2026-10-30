@@ -13,8 +13,9 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 ///
 /// The membership question is the one <see cref="ProtectedGroupMembership.Evaluate"/> already
 /// answers for the protected-principal check: it asks a domain-local group in its own domain,
-/// reads universal ancestry from the global catalog and counts the primary group. It is reused,
-/// not re-derived.
+/// seeded with the caller and every group their links reach, and counts the primary group (since
+/// kd-88 with anchored reads only: the caller's token and memberOf by name, never a search of a
+/// domain or the forest for whatever contains them). It is reused, not re-derived.
 ///
 /// What is found can only make a Deny apply. It never satisfies an Allow: the finding is the Deny
 /// that was missed, and widening grants on a directory computation is not needed to close it.

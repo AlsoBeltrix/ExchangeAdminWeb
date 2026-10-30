@@ -565,7 +565,11 @@ public class SelfServiceGroupService
 
                 // Re-check eligibility RIGHT NOW (AC5): the caller's member-write right may have been
                 // revoked since the page listed the group. Same fail-closed DACL check the list uses.
-                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids, denyOnlySids))
+                // kd-88: timed and logged, as every protection check in a write path is.
+                bool mayWriteMembers;
+                using (DirectoryReadOperation.BeginCheck(_logger, "Self-service access check", groupDn))
+                    mayWriteMembers = CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids, denyOnlySids);
+                if (!mayWriteMembers)
                     return MembershipChangeResult.From(PermissionResult.Fail("You are no longer permitted to manage this group's membership."));
 
                 // Protected Group Targets deliberately do NOT gate self-service (owner ruling
@@ -1447,6 +1451,7 @@ public class SelfServiceGroupService
                 "}")
               .AddArgument(groupDn)
               .AddArgument(credential);
+            DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
             aces = ps.Invoke();
         }
         catch

@@ -340,6 +340,10 @@ public sealed class AccountLockoutRemediationService
                 return EmptyLogoffResult(message, execute);
             }
 
+            // kd-88: one operation for the guard and the SID step - every target user's resolution, check and re-read
+            // share one fetch of the directory-read credential, where each fetched it for itself.
+            using var directoryRead = DirectoryReadOperation.Begin();
+
             // Null on the dry-run path, which never runs the guard. The SID step then has no
             // approved object to compare against, and says so on the finding rather than
             // pretending the cross-check happened.
@@ -452,6 +456,9 @@ public sealed class AccountLockoutRemediationService
 
         foreach (var user in allUsers)
         {
+            // kd-88: one protected-principal check per user - its resolution, its rules and the re-read - one timing line.
+            using var directoryCheck = _protectedPrincipals.BeginCheck(user);
+
             // Exchange fallback, not AD-only. NOTE: unlike the other GAP B sites this one was
             // already fail-CLOSED - an unresolved identity is blocked at the next line, not allowed
             // - so this is not closing a bypass. It stops cloud-only users being refused as
