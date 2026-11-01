@@ -6,7 +6,7 @@ matches the text (about 502-504). Not on the pipeline's path; any elevated plan 
 changing anything. No test covers it.
 **Status**: Fixed on branch, verified; closes on guard proof
 **Branch**: `fix/sweep-b` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-b`, from master `81ae0762`)
-**Commit**: `244fd2a0` (the fix); the comment fix is the commit that adds this line (its SHA in the implementer's hand-back) |
+**Commit**: `244fd2a0` (the fix); `f9ed946c` (the comment fix) |
 **Reviewer**: implementer (candidate)
 
 ## Approach
@@ -61,7 +61,9 @@ lifted read run under 5.1 reads "SpecificUser" and 3 both as identityType 3 with
 
 Gates on this tree: `Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error` 0 errors (the three touched files keep master's
 warning counts: module 2, installer 47, tests 2 - the stand-in carries its suppressions); `tools/Test-AsciiOnly.ps1` passed;
-`git diff --check` clean. The full `Invoke-Pester tests/ps` run is recorded with the branch-tip gates.
+`git diff --check` clean. Full `Invoke-Pester tests/ps` (6.2.0) on the final tree: 554 passed, 0 failed, 0 skipped (master
+534; this row +20) - the first full run, at `244fd2a0`, failed the one Invariant 1 case above. Branch-tip gates: the canonical
+copy is in `kd-91.md`.
 
 ## Known gaps
 
