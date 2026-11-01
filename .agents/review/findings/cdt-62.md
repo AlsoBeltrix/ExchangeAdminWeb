@@ -6,7 +6,8 @@ matches the text (about 502-504). Not on the pipeline's path; any elevated plan 
 changing anything. No test covers it.
 **Status**: Fixed on branch, verified; closes on guard proof
 **Branch**: `fix/sweep-b` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-b`, from master `81ae0762`)
-**Commit**: the commit that adds this line (its SHA in the implementer's hand-back) | **Reviewer**: implementer (candidate)
+**Commit**: `244fd2a0` (the fix); the comment fix is the commit that adds this line (its SHA in the implementer's hand-back) |
+**Reviewer**: implementer (candidate)
 
 ## Approach
 
@@ -45,8 +46,13 @@ fixed tree - restore from a saved copy, touch, MD5 compare; log `bin/scratch/cdt
 
 | # | Mutation | File, fixed MD5 | Mutant MD5 | Failed (of 126) | Restored |
 | --- | --- | --- | --- | --- | --- |
-| C1 (the brief's) | the `[int]` cast restored at the installer's read | installer `B3DE49C58F8293544F1C7016B4AA42B3` | `D77FD200DC6FB4D245CB3C3832D9BE5C` | 3: "SpecificUser", "ApplicationPoolIdentity" (the cast's "Cannot convert value" error), and the refusal (the cast's error, not the refusal's words); the integer forms pass, as they must | equal |
+| C1 (the brief's) | the `[int]` cast restored at the installer's read | installer `4F932DC417E19A27D448FF8E81B50FE1` (first `B3DE49C58F8293544F1C7016B4AA42B3`, before the comment fix below) | `93C02571C023BED77EC6F68364B9669B` (first `D77FD200DC6FB4D245CB3C3832D9BE5C`) | 3, both times: "SpecificUser", "ApplicationPoolIdentity" (the cast's "Cannot convert value" error), and the refusal (the cast's error, not the refusal's words); the integer forms pass, as they must | equal |
 | C2 | the converter no longer matches the name `SpecificUser` | module `17770DC5D477D5049D840FE5D76D91A6` | `DA49EE90BF0A0004EBFB25DB04C46FB3` | 2: the converter's SpecificUser case and the installer's | equal |
+
+**Caught by the full Pester gate, fixed in a second commit:** the fix commit's installer comment said the value is matched
+"as deploy.ps1 does", and Invariant 1's guard (`DeployInvariants.Tests.ps1`, "is standalone: never references deploy.ps1")
+matches that name anywhere in the installer, comments included. The comment now names no other script; C1 and the 5.1 checks
+were run again on the final bytes.
 
 **Windows PowerShell 5.1** (`powershell.exe` 5.1.20348, `bin/scratch/cdt62-ps51.log`): the installer, the module and the test
 file parse with 0 errors; the module imports and maps "SpecificUser" [String] -> 3, 3 [Int32] -> 3, "3" -> 3,
