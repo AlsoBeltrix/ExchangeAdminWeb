@@ -8,43 +8,46 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
-### Master is deployable - 2026-10-29; three plans implemented after the fix stream closed
+### 2026-10-31 - after the first dev deploy since 14 October: the live failures fixed, prod waits on three owner decisions
 
-**Final master `11a14e83` (cdt-61, the 5.1 deploy refusal, fixed after the first dev deploy attempt), every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit
-8181 passed, 0 failed, 0 skipped (live-directory cases opt-in: `dotnet test ExchangeAdminWeb.slnx -s
-ExchangeAdminWeb.Tests/LiveDirectory.runsettings`); Pester 531; PSScriptAnalyzer 0 errors; `dotnet format`, `git diff
---check`, ASCII lint clean. Base app version 2.36.0, which is NOT deployed and absorbs every shared change since 2.35.0.
-No worktree or fix branch remains. Master is NOT pushed (`.agents/push-policy.md`).
+**Master `5c4c2970`, every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit 8316
+passed, 0 failed, 0 skipped; Pester 554; PSScriptAnalyzer 0 errors; `dotnet format`, `git diff --check`, ASCII lint clean.
+Base app version 2.36.0 (not yet on prod; absorbs every shared change since 2.35.0). No worktree or fix branch remains.
+Master is NOT pushed. Dev runs `8557a15a` (deployed 2026-10-30 08:18) and needs a redeploy to pick up everything below.
 
-**Landed since the fix stream closed (2026-10-28/29), each under its approved plan, each on guard proof (the single
-codex-commercial review was spent on 2026-10-27):**
-- `docs/CloudPasswordResetEmployeeId-Plan.md` - Implemented (`683a8ce7`). A cloud admin account with no employee ID gets
-  it from the owner's directory record (the account name minus the configured endings, as a logon name), then the reset
-  mails the owner. Off until the switch and the endings are set in Module Configuration > Cloud Password Reset. The Graph
-  grant to write employeeId (assumption A1) is unconfirmed; without it resets still go out and no number is saved.
-- `docs/RecipientLookupAccuracy-Plan.md` - Implemented (`af86f699`). The page says what a recipient is; "Not applicable",
-  "Not read", "Could not be determined" where they are true; quotas, directory facts, mailbox settings without holds, a
-  show-all switch, the resolved address in the audit row. Displayed fields per kind are in the plan and the README.
-- `docs/CancellationDepth-Plan.md` - Implemented (`5b05bba9`). A cancel ends work waiting for an Exchange Online connection
-  or the on-premises server and between a read's commands; a command already sent is never interrupted; a connection ever
-  found stopped is discarded; a Module Configuration save the page gave up on writes nothing and is filed PageMoved; the
-  leave prompt is page-aware and truthful. kd-58, aud-a67 (12) and kd-81's on-premises half are closed by it.
-- `docs/InAppHelp-Plan.md` - Approved to start after 2026-10-31. The rule that a functionality change carries its help
-  change is in the Constitution (Code Change Discipline) and Known Failure Class 5.
+**What the dev deploy exposed, all fixed on master.** The dev build before 2026-10-29 was `107cfe4f` (14 October); prod is
+`32d28f96` (9 October). About 1,300 commits had never run live. Found live: cdt-61 (the pre-stop serving-pool check read a
+property 5.1 sites lack - every deploy refused), kd-87 (tokenGroups read by SID - every page refused), kd-88 (the
+protected-group check's domain-wide walk and triple credential fetch - every grant waited two minutes and refused; owner:
+"this has to be near-instant" - now one tokenGroups read, one credential fetch per operation kept five minutes in memory, a
+warm session, a timing line, swept across 17 modules), kd-90 (a silent sign-out on a disposed Windows identity). Found by
+the live-risk sweep (`.agents/review/live-risk-sweep-2026-10-30.md`, 12 HIGH / 33 MEDIUM / 32 LOW) and fixed: kd-89
+(Exchange's not-found sentence recognised again - Migration checks and on-premises permission targets), kd-91 (connect
+gate re-checks the pool; autocomplete cancels superseded searches), kd-92 (Group Management's manager notice sent, no false
+Failed row), kd-93 (Defender's Site read outside the hunting budget), cdt-62 (installer identity-type cast). Also:
+CloudPasswordReset 1.2.1 (card and permission text trimmed).
 
-**Operator-visible changes to know before deploying 2.36.0:** every Mailbox and Calendar Permissions grant is refused
-while the Directory Read Credential (Admin Settings > Protected principals) cannot be had - confirm it is configured;
-a plan-only promotion or cutover names the jobs database it would read instead of listing live jobs; the Delegation
-Report Check button enables as the operator types; cancels are shown and filed as "Cancelled by the operator"; the leave
-prompt now states what a cancel does on that page; Recipient Lookup's rows read differently (see its README section);
-a job whose processor cannot be built is marked Interrupted with the reason instead of stopping the runner.
+**Open:**
+- kd-94 (`[ ]`): on-premises "no archive" may read as Undetermined; no log carries the error text - settled by ONE dev
+  Migration ToCloud eligibility check of an on-premises mailbox with no archive.
+- Three OWNER decisions from the sweep (HIGH items 6, 8, 12): (a) the mailbox-GUID proof (aud-a2c) refuses a grant to a
+  cloud mailbox whose on-premises object lacks msExchMailboxGuid or lives in another domain - revert, or warn instead of
+  refuse until counted; (b) module-admin grants stored by name stopped authorizing when dev deployed (shared database) -
+  re-pick each group in Module Configuration; the list of affected grants aud-a1 promised is not yet produced; (c) `D:\`
+  grants Authenticated Users Modify by inheritance, so elevated scripts run a user-writable DLL and anyone can replace both
+  pools' binaries - break the inheritance under `D:\inetpub`, `D:\backups`, `E:\WWWOutput`, or make the scripts refuse.
+- The sweep's 33 MEDIUM items are unaddressed; the file ranks them with a check each. Notables the owner should read:
+  Comms-10k's GUID form (item 19, can empty a list on first run), bulk-run notifications per person (item 21), the
+  manager-notice template with the operator's IP (item 9 "Also").
+- Manual dev checks still owed: one ToCloud eligibility check; one grant on an on-premises mailbox and its duration from
+  the new timing line; one approval of a mailbox in a batch; one Group Management change; a day of logs with no "error
+  occurred while revalidating"; Recipient Lookup one of each kind; Cloud Password Reset once switched on.
 
-**Open:** nothing marked `[ ]` in `.agents/review/index.md`. Manual production checks not yet run: Cloud Password Reset
-(plan section 13, once switched on), Recipient Lookup (plan section 12, one lookup of each kind). Next round's token
-rule (owner, 2026-10-28): briefs point agents at sections and line ranges, not whole plans and record sets; the model
-stays Opus 5.5.
+**Plans:** CloudPasswordResetEmployeeId, RecipientLookupAccuracy, CancellationDepth - Implemented. InAppHelp - Approved,
+starts after 2026-10-31. Next-round rule (owner 2026-10-28): briefs point agents at sections and line ranges; model Opus 5.5.
 
-**Next step:** the owner re-runs `tools/deploy-pipeline.ps1 -Dev` from an elevated shell - the first live run of the fixed check - then prod.
+**Next step:** redeploy dev (`tools/deploy-pipeline.ps1 -Dev`, elevated), run the checks above, then the owner's three
+decisions, then prod.
 ### Fix-everything work stream - HALTED TWICE on 2026-10-26, now by the gateway key limit
 
 **What it is.** Owner go of 2026-10-21, verbatim: "fix all the bugs that you know about and any

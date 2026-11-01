@@ -469,3 +469,5 @@ Final ordered D2 gate: Release build 40 existing warnings / 0 errors; full solut
 **2026-10-29, cdt-61.** The dev deploy refused at the pre-stop serving-pool check under Windows PowerShell 5.1 (ItemXPath); fixed: ~299K agent tokens, 87 tool uses, 26 min; Pester 534; merged `11a14e83`. The fixed check has not run live - the owner's re-run of the dev deploy is its first.
 
 **2026-10-29, kd-87.** The deployed dev build refused every page: tokenGroups read by SID, refused by AD. Fixed with a base-scope read at the DN; ~334K agent tokens, 97 tool uses, 42 min, 15 new tests, 11 mutants; merged. Dev redeploy is the first live run.
+
+**2026-10-30/31, after the first dev deploy.** cdt-61 ~299K; kd-87 ~334K; kd-88 (17-module sweep) ~881K, 365 tool uses, 2 h 23 min; live-risk sweep (12 reviewers under one agent) ~502K; sweep slice A (kd-89, kd-90, kd-92, cache) ~657K, 288 tool uses, 2 h 1 min; sweep slice B (kd-91, kd-93, cdt-62, kd-94 record) ~531K across a spend-limit stop, 135 tool uses. Final master 5c4c2970: 8316 xUnit, 554 Pester.
