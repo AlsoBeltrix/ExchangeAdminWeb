@@ -71,25 +71,28 @@ public class DefenderSiteDeadlineTests
         {
             var firstTask = service.ListDevicesAsync();
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
-            clock.Advance(TimeSpan.FromMinutes(4));
-            var first = await firstTask;
+            // kd-93: the site read's own bound, begun after the hunting finished - so the hunting is not reported as cut.
+            clock.Advance(DefenderEndpointDeviceService.DefaultSiteReadDeadline);
+            var first = await firstTask.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
             Assert.Equal(DefenderDeviceListOutcome.Complete, first.Outcome);
             Assert.False(first.SiteMapRead);
-            Assert.Equal(DefenderDiscoveryReasons.DeadlineReached, first.EnrichmentStopReason);
+            Assert.Equal("", first.EnrichmentStopReason);
             Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, first.Devices[0].Site);
             Assert.False(disposed.Task.IsCompleted);
             Assert.Equal(phase == "cleanup" ? 0 : 1, stops);
 
             var secondTask = service.ListDevicesAsync();
-            // Admission is awaited, so another full budget expires without another worker.
+            // Admission is awaited, so another site bound expires without another worker. Two timers a run: the hunting
+            // deadline and the site bound; the second run's site bound must exist before the clock moves.
+            await WaitUntil(() => clock.TimerCount == 4, "the second run's site bound is set");
             Assert.Equal(1, factories);
             Assert.Equal(1, scheduler.Submitted);
-            clock.Advance(TimeSpan.FromMinutes(4));
-            var second = await secondTask;
+            clock.Advance(DefenderEndpointDeviceService.DefaultSiteReadDeadline);
+            var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
             Assert.False(second.SiteMapRead);
             Assert.Equal(1, factories);
             Assert.Equal(1, scheduler.Submitted);
-            Assert.Equal(2, clock.TimerCount);
+            Assert.Equal(4, clock.TimerCount);
 
             release.Set();
             await disposed.Task.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
@@ -104,6 +107,16 @@ public class DefenderSiteDeadlineTests
         {
             release.Set();
             await disposed.Task.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+        }
+    }
+
+    private static async Task WaitUntil(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting until {what}.");
+            await Task.Delay(20, TestContext.Current.CancellationToken);
         }
     }
 
