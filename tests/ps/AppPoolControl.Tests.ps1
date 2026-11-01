@@ -284,6 +284,114 @@ Describe 'A34 call site' {
     }
 }
 
+Describe 'cdt-62: the pool identity is read as text' {
+
+    # Finding cdt-62. The installer cast processModel.identityType with [int]. The provider reports
+    # the NAME under PowerShell 7 and the number under Windows PowerShell 5.1, and the 2026-09-08
+    # cutover failed on exactly that cast: "Cannot convert value SpecificUser to type System.Int32"
+    # (7ba6b255). deploy.ps1 and the cutover script match the text; the installer now does too.
+
+    Context 'ConvertTo-AppPoolIdentityType' {
+
+        It 'maps <Reported> to <Expected>' -TestCases @(
+            @{ Reported = 'SpecificUser'; Expected = 3 }
+            @{ Reported = 3; Expected = 3 }
+            @{ Reported = '3'; Expected = 3 }
+            @{ Reported = 'ApplicationPoolIdentity'; Expected = 4 }
+            @{ Reported = 4; Expected = 4 }
+            @{ Reported = 'LocalSystem'; Expected = 0 }
+            @{ Reported = 0; Expected = 0 }
+            @{ Reported = 'LocalService'; Expected = 1 }
+            @{ Reported = 'NetworkService'; Expected = 2 }
+            @{ Reported = 2; Expected = 2 }
+        ) {
+            ConvertTo-AppPoolIdentityType -IdentityType $Reported -AppPoolName 'ExchangeAdminWeb' | Should -Be $Expected
+        }
+
+        It 'refuses <Reported>, naming it, rather than reading it as no custom identity' -TestCases @(
+            @{ Reported = 'SomethingNew' }
+            @{ Reported = 7 }
+            @{ Reported = '' }
+            @{ Reported = $null }
+        ) {
+            # Read as "not a custom identity", an unplaced value would move the pool to
+            # ApplicationPoolIdentity - audit finding A34 by another road.
+            { ConvertTo-AppPoolIdentityType -IdentityType $Reported -AppPoolName 'ExchangeAdminWeb' } |
+                Should -Throw -ExpectedMessage "*identityType '$Reported'*ExchangeAdminWeb*Nothing was changed*"
+        }
+    }
+
+    Context 'the installer''s own read of an existing pool' {
+
+        BeforeAll {
+            # The installer's own statement, lifted from its source by the parser and run unchanged,
+            # with a stand-in Get-ItemProperty answering the pool's processModel. Nothing else of the
+            # installer runs and no IIS is touched.
+            $installerPath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\tools\Install-ExchangeAdminWeb.ps1')).Path
+            $tokens = $null
+            $parseErrors = $null
+            $installerAst = [System.Management.Automation.Language.Parser]::ParseFile($installerPath, [ref]$tokens, [ref]$parseErrors)
+            $reads = @($installerAst.FindAll({
+                        param($node)
+                        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+                        $node.Clauses[0].Item1.Extent.Text -eq '$poolExists' -and
+                        $node.Clauses[0].Item2.Extent.Text -match 'Get-ItemProperty[^\r\n]*-Name processModel'
+                    }, $true))
+            $script:IdentityReadCount = $reads.Count
+            $script:IdentityRead = [scriptblock]::Create($reads[0].Extent.Text)
+
+            function Invoke-InstallerIdentityRead {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Reported',
+                    Justification = 'Read by the stand-in Get-ItemProperty below, through the caller scope')]
+                param($Reported)
+                $poolExists = $true
+                $AppPoolName = 'ExchangeAdminWeb'
+                $existingIdentityType = $null
+                $existingUser = $null
+                function Get-ItemProperty {
+                    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
+                        Justification = 'The installer passes both; the stand-in answers whatever it is asked')]
+                    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '',
+                        Justification = 'A stand-in for the IIS read, scoped to this helper, so no test reaches IIS')]
+                    param([string]$Path, [string]$Name)
+                    [pscustomobject]@{ identityType = $Reported; userName = 'CONTOSO\svc-eaw' }
+                }
+                . $script:IdentityRead
+                [pscustomobject]@{ IdentityType = $existingIdentityType; UserName = $existingUser; PoolExists = $poolExists; Pool = $AppPoolName }
+            }
+        }
+
+        It 'finds the one read of the existing pool in the installer' {
+            $script:IdentityReadCount | Should -Be 1
+        }
+
+        It 'reads a pool reported as <Reported> as a specific user, and the plan keeps that account' -TestCases @(
+            @{ Reported = 'SpecificUser' }
+            @{ Reported = 3 }
+        ) {
+            $read = Invoke-InstallerIdentityRead $Reported
+
+            $read.IdentityType | Should -Be 3
+            $read.UserName | Should -Be 'CONTOSO\svc-eaw'
+            $plan = Resolve-AppPoolIdentityPlan -AppPoolName $read.Pool -PoolExists $read.PoolExists `
+                -ExistingIdentityType $read.IdentityType -ExistingUserName $read.UserName -ResetRequested $false
+            $plan.Action | Should -Be 'PreserveExisting'
+            $plan.IdentityForAcl | Should -Be 'CONTOSO\svc-eaw'
+        }
+
+        It 'reads a pool reported as <Reported> as ApplicationPoolIdentity' -TestCases @(
+            @{ Reported = 'ApplicationPoolIdentity' }
+            @{ Reported = 4 }
+        ) {
+            (Invoke-InstallerIdentityRead $Reported).IdentityType | Should -Be 4
+        }
+
+        It 'refuses an identityType it cannot place, before anything is changed' {
+            { Invoke-InstallerIdentityRead 'SomethingNew' } | Should -Throw -ExpectedMessage '*Nothing was changed*'
+        }
+    }
+}
+
 Describe 'Start-AppPoolVerified' {
 
     # Audit finding A38. The promotion script called Start-WebAppPool and printed "Prod app

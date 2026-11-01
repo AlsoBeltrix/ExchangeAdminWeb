@@ -918,7 +918,11 @@ $existingIdentityType = $null
 $existingUser = $null
 if ($poolExists) {
     $existingProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
-    $existingIdentityType = [int]$existingProcessModel.identityType
+    # cdt-62: matched as text, as deploy.ps1 does - the provider yields the name under PowerShell 7
+    # and the number under Windows PowerShell 5.1, and an [int] cast of "SpecificUser" throws
+    # (the 2026-09-08 cutover's failure). An identityType it cannot place refuses before anything
+    # is changed rather than reading as "no custom identity".
+    $existingIdentityType = ConvertTo-AppPoolIdentityType -IdentityType $existingProcessModel.identityType -AppPoolName $AppPoolName
     $existingUser = $existingProcessModel.userName
 }
 
