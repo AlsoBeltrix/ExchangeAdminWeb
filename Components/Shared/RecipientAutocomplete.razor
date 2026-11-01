@@ -67,7 +67,15 @@
     private bool _isSearching;
     private int _highlightedIndex = -1;
     private System.Threading.Timer? _debounceTimer;
+
+    // The text whose results _results holds: set when a search's results land, never when it starts (kd-91) - a search
+    // superseded before it landed must not make a later search for the same text look already answered.
     private string _lastSearchTerm = "";
+
+    // kd-91. The search whose results may still land, or null. A newer keystroke or search cancels it: its borrow stops
+    // waiting for a connection, and whatever it reads is for an older text and never lands. Read and written on the
+    // renderer's dispatcher only.
+    private CancellationTokenSource? _search;
 
     private async Task OnInput(ChangeEventArgs e)
     {
@@ -79,6 +87,9 @@
 
         // Debounce the search
         _debounceTimer?.Dispose();
+
+        // kd-91: this keystroke supersedes the search in flight, whatever comes of it - a shorter text clears the list.
+        _search?.Cancel();
 
         if (!ExoPool.IsConfigured || newValue.Trim().Length < 3)
         {
@@ -99,7 +110,12 @@
         if (term == _lastSearchTerm && _results.Count > 0)
             return;
 
-        _lastSearchTerm = term;
+        // kd-91: a newer search supersedes the one in flight, so the older text's results cannot land after these.
+        _search?.Cancel();
+        using var search = new CancellationTokenSource();
+        _search = search;
+        var superseded = search.Token;
+
         _isSearching = true;
         StateHasChanged();
 
@@ -110,11 +126,20 @@
 
             // Short wait: an autocomplete keystroke must not queue for minutes
             // behind mutation operations; on a busy pool it just shows no results.
-            var pooled = await ExoPool.BorrowAsync(TimeSpan.FromSeconds(5));
+            // kd-91: and a superseded one stops waiting at once - the pool takes the token for the wait for a slot and the
+            // wait at the connect gate.
+            var pooled = await ExoPool.BorrowAsync(TimeSpan.FromSeconds(5), superseded);
+            if (superseded.IsCancellationRequested)
+            {
+                // kd-91: superseded while its connection was being made: unused, so it goes back as it came.
+                ExoPool.Return(pooled);
+                return;
+            }
+
             try
             {
                 var tracker = new ExchangeAdminWeb.Services.ExchangeServiceBase.ConnectionErrorTracker();
-                _results = await Task.Run(() =>
+                var found = await Task.Run(() =>
                 {
                     var ps = pooled.PowerShell;
                     ps.Commands.Clear();
@@ -153,29 +178,47 @@
                     return list;
                 });
 
-                _showDropdown = _results.Count > 0;
-
                 if (tracker.HasConnectionError)
                     ExoPool.Discard(pooled);
                 else
                     ExoPool.Return(pooled);
+
+                // kd-91: read for a text a newer keystroke has replaced - it never lands.
+                if (superseded.IsCancellationRequested)
+                    return;
+
+                _results = found;
+                _lastSearchTerm = term;
+                _showDropdown = _results.Count > 0;
             }
             catch
             {
                 ExoPool.Discard(pooled);
-                _results = [];
-                _showDropdown = false;
+                if (!superseded.IsCancellationRequested)
+                {
+                    _results = [];
+                    _showDropdown = false;
+                }
             }
         }
         catch
         {
-            _results = [];
-            _showDropdown = false;
+            // kd-91: a superseded search's borrow ends cancelled; the list is the newer search's.
+            if (!superseded.IsCancellationRequested)
+            {
+                _results = [];
+                _showDropdown = false;
+            }
         }
         finally
         {
-            _isSearching = false;
-            StateHasChanged();
+            // kd-91: only the search in flight clears the spinner; a superseded one leaves the newer one's state alone.
+            if (ReferenceEquals(_search, search))
+            {
+                _search = null;
+                _isSearching = false;
+                StateHasChanged();
+            }
         }
     }
 
@@ -259,6 +302,7 @@
     {
         _disposed = true;
         _debounceTimer?.Dispose();
+        _search?.Cancel(); // kd-91: leaving the page supersedes the search in flight too
     }
 
     private class RecipientSearchResult

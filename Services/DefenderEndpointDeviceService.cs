@@ -98,6 +98,17 @@ public sealed class DefenderEndpointDeviceService
     internal int HuntingBatchSizeOverride { get; init; }
 
     internal static readonly TimeSpan DefaultEnrichmentDeadline = TimeSpan.FromMinutes(4);
+
+    /// <summary>
+    /// kd-93. The site read's own bound: one directory read of the forest's subnets and the in-memory match of every device,
+    /// begun after the hunting enrichment and never sharing its deadline. Site is the module's primary output (decisions
+    /// 2026-10-14); under the shared deadline a hunting run that spent its four minutes cancelled the read, and every Site
+    /// read "(unavailable)". The read is one directory query whatever the device count, so two minutes is a stall rather than
+    /// a slow directory; reaching it marks the unevaluated cells "(unavailable)", as the shared deadline did.
+    /// </summary>
+    internal static readonly TimeSpan DefaultSiteReadDeadline = TimeSpan.FromMinutes(2);
+
+    /// <summary>Test seam: the clock both deadlines - the hunting enrichment's and the site read's - are measured on.</summary>
     internal TimeProvider EnrichmentTimeProvider { get; init; } = TimeProvider.System;
 
     private int EffectiveHuntingBatchSize =>
@@ -551,13 +562,23 @@ public sealed class DefenderEndpointDeviceService
         // independent of the listing's success: a 403, a 429 or a timeout here leaves every device
         // row above fully rendered and turns five columns into "(unavailable)" with a reason. It
         // must never take the page down, and it must never leave those columns merely blank.
-        using var enrichmentBudget = new CancellationTokenSource(DefaultEnrichmentDeadline, EnrichmentTimeProvider);
-        var enrichment = devices.Count == 0
-            ? DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.NoDevices)
-            : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList(), enrichmentBudget.Token);
+        DefenderDiscoveryEnrichment enrichment;
+        bool huntingDeadlineReached;
+        using (var enrichmentBudget = new CancellationTokenSource(DefaultEnrichmentDeadline, EnrichmentTimeProvider))
+        {
+            enrichment = devices.Count == 0
+                ? DefenderDiscoveryEnrichment.NotAttempted(DefenderDiscoveryReasons.NoDevices)
+                : await GetDiscoveryEnrichmentAsync(devices.Select(d => d.Id).ToList(), enrichmentBudget.Token);
+
+            // kd-93: read as the hunting ends - the deadline is the hunting's alone, so time the site read takes after it
+            // cannot make a hunting run that finished read as one the deadline cut.
+            huntingDeadlineReached = enrichmentBudget.IsCancellationRequested;
+        }
 
         ApplyEnrichment(devices, enrichment);
-        var siteMapRead = await ApplySitesAsync(devices, enrichmentBudget.Token);
+
+        // kd-93: outside the hunting budget, on its own bound, so the Site column is filled whatever the hunting cost.
+        var siteMapRead = await ApplySitesAsync(devices);
 
         return DefenderDeviceListResult.CompleteRun(
             devices,
@@ -574,7 +595,7 @@ public sealed class DefenderEndpointDeviceService
             enrichment.AttemptedBatches,
             enrichment.ObserverAttemptedBatches,
             enrichment.ObserverReason,
-            enrichmentBudget.IsCancellationRequested ? DefenderDiscoveryReasons.DeadlineReached : enrichment.StopReason);
+            huntingDeadlineReached ? DefenderDiscoveryReasons.DeadlineReached : enrichment.StopReason);
     }
 
     /// <summary>
@@ -1201,8 +1222,13 @@ public sealed class DefenderEndpointDeviceService
     /// nothing at all rather than a device list with one column degraded.
     /// </para>
     /// <para>Returns whether all Site values were evaluated, which the caller reports.</para>
+    /// <para>
+    /// kd-93. Bounded by <see cref="DefaultSiteReadDeadline"/>, a budget of its own begun here - the wait for the directory
+    /// worker, the read and the matching - and never by the hunting enrichment's deadline, which cancelled it whenever the
+    /// hunting spent its four minutes. Reaching this bound marks the unevaluated cells exactly as reaching that one did.
+    /// </para>
     /// </remarks>
-    private async Task<bool> ApplySitesAsync(List<DefenderDevice> devices, CancellationToken cancellationToken)
+    private async Task<bool> ApplySitesAsync(List<DefenderDevice> devices)
     {
         if (_siteDirectory is null)
             return true;
@@ -1212,6 +1238,9 @@ public sealed class DefenderEndpointDeviceService
         // devices - two different things the operator would have to tell apart.
         if (devices.Count == 0)
             return true;
+
+        using var siteBudget = new CancellationTokenSource(DefaultSiteReadDeadline, EnrichmentTimeProvider);
+        var cancellationToken = siteBudget.Token;
 
         IReadOnlyList<AdSiteSubnetMap.Subnet> subnets;
         try

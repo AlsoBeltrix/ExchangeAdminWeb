@@ -14,6 +14,7 @@ namespace ExchangeAdminWeb.Tests;
 #pragma warning disable BL0006 // Inspect the compiled page, as in the existing renderer tests.
 public class DefenderSiteMatchingDeadlineTests
 {
+    // kd-93: the bound reached here is the site read's own; the hunting had finished, so it is not reported as cut.
     [Fact]
     public async Task DeadlineBeforeSiteContinuationResumesKeepsInventoryAndCompletedHunting()
     {
@@ -30,13 +31,13 @@ public class DefenderSiteMatchingDeadlineTests
         var continuation = await context.NextAsync();
         Assert.Contains("<ApplySitesAsync>", continuation.Label);
         Assert.False(listing.IsCompleted);
-        clock.Advance(TimeSpan.FromMinutes(4));
+        clock.Advance(DefenderEndpointDeviceService.DefaultSiteReadDeadline);
         context.Run(continuation);
         var result = await context.CompleteAsync(listing);
 
         Assert.False(result.SiteMapRead);
-        Assert.Equal(DefenderDiscoveryReasons.DeadlineReached, result.EnrichmentStopReason);
-        Assert.Equal(1, clock.TimerCount);
+        Assert.Equal("", result.EnrichmentStopReason);
+        Assert.Equal(2, clock.TimerCount);
         Assert.Equal(["a", "b", "c"], result.Devices.Select(device => device.Id));
         Assert.All(result.Devices, device => Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, device.Site));
         AssertCompletedHunting(result);

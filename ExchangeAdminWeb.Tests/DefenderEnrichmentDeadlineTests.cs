@@ -15,20 +15,76 @@ namespace ExchangeAdminWeb.Tests;
 #pragma warning disable BL0006 // Inspect the compiled page frames, matching existing renderer tests.
 public class DefenderEnrichmentDeadlineTests
 {
+    // kd-93: the four-minute deadline is the hunting's alone. Whichever hunting stage spends it, the site read that follows
+    // runs on its own bound and fills the Site column. Under the shared deadline every Site here read "(unavailable)" and
+    // the directory was never asked.
     [Theory]
     [InlineData("setup")]
     [InlineData("token")]
     [InlineData("posture")]
     [InlineData("observer")]
-    [InlineData("site")]
-    public async Task OneDeadlineSpansEveryStageAndRetainsTheInventory(string stage)
+    public async Task TheHuntingDeadlineSpansEveryHuntingStage_AndTheSiteColumnIsStillFilled(string stage)
+    {
+        var (result, clock, calls, commands) = await RunThroughTheDeadline(stage);
+
+        Assert.Equal(2, clock.TimerCount);
+        Assert.Equal([TimeSpan.FromMinutes(4), DefenderEndpointDeviceService.DefaultSiteReadDeadline], clock.Dues);
+        Assert.Equal(DefenderDiscoveryReasons.DeadlineReached, result.EnrichmentStopReason);
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Equal("host-a", Assert.Single(result.Devices).ComputerDnsName);
+        Assert.True(result.SiteMapRead);
+        Assert.Equal("Site", result.Devices[0].Site);
+        Assert.Equal(["Get-ADRootDSE", "Get-ADObject"], commands.Calls);
+        Assert.Equal(stage is "setup" or "token" ? stage == "setup" ? ["setup"] : ["setup", "token"]
+            : stage == "posture" ? ["setup", "token", "posture"] : ["setup", "token", "posture", "observer"], calls);
+        Assert.Equal(1, result.DiscoveryTotalBatches);
+        Assert.Equal(stage == "setup" ? 0 : 1, result.DiscoveryAttemptedBatches);
+        Assert.Equal(stage is "token" or "posture" ? 1 : 0, result.DiscoveryFailedBatches);
+        Assert.Equal(stage == "observer" ? "Network" : DefenderEndpointDeviceService.EnrichmentUnavailable,
+            DefenderEndpointDeviceService.DescribeEnrichmentCell(result.DiscoveryEnrichment, result.Devices[0].DiscoverySources));
+        if (stage == "observer")
+        {
+            Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+            Assert.Equal("", result.DiscoveryEnrichmentReason);
+            Assert.Equal(DefenderDiscoveryReasons.DeadlineReached, result.ObserverEnrichmentReason);
+            Assert.Equal(1, result.ObserverAttemptedBatches);
+            Assert.Equal(1, result.ObserverFailedBatches);
+            Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[0].RecentlySeenBy);
+        }
+    }
+
+    // kd-93: the site read's own bound. The hunting finishes inside its deadline (three minutes); the directory read then
+    // takes the whole site bound - the clock passing the hunting's four minutes on the way - so only Site is marked, and the
+    // hunting reads as finished, not as cut by a deadline it beat.
+    [Fact]
+    public async Task TheSiteReadHasItsOwnBound_AndReachingItLeavesTheHuntingResultAlone()
+    {
+        var (result, clock, calls, commands) = await RunThroughTheDeadline("site");
+
+        Assert.Equal(2, clock.TimerCount);
+        Assert.Equal([TimeSpan.FromMinutes(4), DefenderEndpointDeviceService.DefaultSiteReadDeadline], clock.Dues);
+        Assert.Equal("", result.EnrichmentStopReason);
+        Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
+        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
+        Assert.Equal(["setup", "token", "posture", "observer"], calls);
+        Assert.Equal("Network",
+            DefenderEndpointDeviceService.DescribeEnrichmentCell(result.DiscoveryEnrichment, result.Devices[0].DiscoverySources));
+        Assert.False(result.SiteMapRead);
+        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[0].Site);
+        Assert.Equal(["Get-ADRootDSE"], commands.Calls); // the bound reached inside the first directory command
+    }
+
+    // One inventory device through the whole run on the fake clock: the stage named spends what is left of the hunting
+    // deadline, or - "site" - the hunting takes three minutes and the directory's first command the whole site bound.
+    private static async Task<(DefenderDeviceListResult Result, D7Clock Clock, ConcurrentQueue<string> Calls, D7Commands Commands)>
+        RunThroughTheDeadline(string stage)
     {
         var clock = new D7Clock();
         var calls = new ConcurrentQueue<string>();
         var commands = new D7Commands(command =>
         {
             if (stage == "site" && command == "Get-ADRootDSE")
-                clock.Advance(TimeSpan.FromMinutes(1));
+                clock.Advance(DefenderEndpointDeviceService.DefaultSiteReadDeadline);
             return D7.RootOrSubnet(command);
         });
         using var inventoryHttp = D7.Http((request, _) =>
@@ -63,32 +119,7 @@ public class DefenderEnrichmentDeadlineTests
         { EnrichmentTimeProvider = clock, HuntingBatchSizeOverride = 1 };
 
         var result = await service.ListDevicesAsync();
-
-        Assert.Equal(1, clock.TimerCount);
-        Assert.Equal(TimeSpan.FromMinutes(4), clock.InitialDue);
-        Assert.Equal(DefenderDiscoveryReasons.DeadlineReached, result.EnrichmentStopReason);
-        Assert.Equal(DefenderDeviceListOutcome.Complete, result.Outcome);
-        Assert.Equal("host-a", Assert.Single(result.Devices).ComputerDnsName);
-        Assert.False(result.SiteMapRead);
-        Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[0].Site);
-        Assert.Equal(stage is "setup" or "token" ? stage == "setup" ? ["setup"] : ["setup", "token"]
-            : stage == "posture" ? ["setup", "token", "posture"] : ["setup", "token", "posture", "observer"], calls);
-        Assert.Equal(1, result.DiscoveryTotalBatches);
-        Assert.Equal(stage == "setup" ? 0 : 1, result.DiscoveryAttemptedBatches);
-        Assert.Equal(stage is "token" or "posture" ? 1 : 0, result.DiscoveryFailedBatches);
-        Assert.Equal(stage is "observer" or "site" ? "Network" : DefenderEndpointDeviceService.EnrichmentUnavailable,
-            DefenderEndpointDeviceService.DescribeEnrichmentCell(result.DiscoveryEnrichment, result.Devices[0].DiscoverySources));
-        if (stage == "observer")
-        {
-            Assert.Equal(DefenderDiscoveryEnrichmentState.Succeeded, result.DiscoveryEnrichment);
-            Assert.Equal("", result.DiscoveryEnrichmentReason);
-            Assert.Equal(DefenderDiscoveryReasons.DeadlineReached, result.ObserverEnrichmentReason);
-            Assert.Equal(1, result.ObserverAttemptedBatches);
-            Assert.Equal(1, result.ObserverFailedBatches);
-            Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[0].RecentlySeenBy);
-        }
-        if (stage != "site")
-            Assert.Empty(commands.Calls);
+        return (result, clock, calls, commands);
     }
 
     [Theory]
@@ -130,7 +161,7 @@ public class DefenderEnrichmentDeadlineTests
         Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[1].RecentlySeenBy);
         Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[2].DiscoverySources);
         Assert.Equal(DefenderEndpointDeviceService.EnrichmentUnavailable, result.Devices[2].RecentlySeenBy);
-        Assert.True(result.SiteMapRead); // Authorization stop leaves the remaining budget for AD.
+        Assert.True(result.SiteMapRead); // The site read has its own bound, whatever stopped the hunting (kd-93).
         Assert.All(result.Devices, device => Assert.Equal("Site", device.Site));
     }
 
@@ -347,6 +378,9 @@ internal sealed class D7Clock : TimeProvider
     private TimeSpan _elapsed;
     internal int TimerCount { get; private set; }
     internal TimeSpan InitialDue { get; private set; }
+
+    /// <summary>kd-93. Every timer's due time, in the order they were made: the hunting deadline's, then the site read's.</summary>
+    internal List<TimeSpan> Dues { get; } = [];
     public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch + _elapsed;
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
     {
@@ -354,6 +388,7 @@ internal sealed class D7Clock : TimeProvider
         {
             TimerCount++;
             InitialDue = dueTime;
+            Dues.Add(dueTime);
             var timer = new ClockTimer(this, callback, state);
             _timers.Add(timer);
             timer.Change(dueTime, period);

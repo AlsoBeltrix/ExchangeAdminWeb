@@ -186,6 +186,53 @@ function Resolve-AppPoolIdentityPlan {
 
 Export-ModuleMember -Function Resolve-AppPoolIdentityPlan
 
+function ConvertTo-AppPoolIdentityType {
+    <#
+    .SYNOPSIS
+        Turns processModel.identityType, as the IIS provider reports it, into the number IIS
+        documents for it.
+
+    .DESCRIPTION
+        Finding cdt-62. The installer read the value with an [int] cast. The provider reports
+        the NAME under PowerShell 7 ("SpecificUser") and the number under Windows PowerShell
+        5.1, and the 2026-09-08 cutover failed on exactly that cast: "Cannot convert value
+        SpecificUser to type System.Int32" (7ba6b255). So the value is matched as text, as
+        deploy.ps1 and the cutover script match it, and mapped to IIS's number:
+        0 LocalSystem, 1 LocalService, 2 NetworkService, 3 SpecificUser,
+        4 ApplicationPoolIdentity. The name, the number, or the number written as text - and an
+        enum value, whose text is its name - all map.
+
+        Anything else throws, naming the value. A value that cannot be placed must not be taken
+        for "not a custom identity": Resolve-AppPoolIdentityPlan would then move the pool to
+        ApplicationPoolIdentity, which is audit finding A34 again.
+
+    .OUTPUTS
+        [int]
+    #>
+    [CmdletBinding()]
+    param(
+        # processModel.identityType as the provider returned it.
+        [AllowNull()]
+        [object]$IdentityType,
+
+        # For the refusal's words only.
+        [string]$AppPoolName
+    )
+
+    $text = "$IdentityType".Trim()
+    switch ($text) {
+        { $_ -in @('LocalSystem', '0') } { return 0 }
+        { $_ -in @('LocalService', '1') } { return 1 }
+        { $_ -in @('NetworkService', '2') } { return 2 }
+        { $_ -in @('SpecificUser', '3') } { return 3 }
+        { $_ -in @('ApplicationPoolIdentity', '4') } { return 4 }
+    }
+
+    throw "IIS reports identityType '$text' for app pool '$AppPoolName', which is none of LocalSystem, LocalService, NetworkService, SpecificUser or ApplicationPoolIdentity (0-4), so the pool's current identity cannot be told. Nothing was changed."
+}
+
+Export-ModuleMember -Function ConvertTo-AppPoolIdentityType
+
 function Start-AppPoolVerified {
     <#
     .SYNOPSIS
