@@ -358,20 +358,12 @@ public sealed class ExoConnectionPool : IDisposable
             // the pool and handed to a borrower of the other organization. That is persistent
             // contamination, not one operation finishing late.
             var (_, currentGen) = DrainIfConnectionConfigChanged(current);
-            if (_available.TryTake(out var pooled))
+            var pooled = TakePooled(currentGen, "Pool", out var stale);
+            if (pooled is not null)
+                return pooled;
+
+            if (stale is not null)
             {
-                if (pooled.ConfigGeneration == currentGen && DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
-                {
-                    pooled.LastUsed = DateTime.UtcNow;
-                    pooled.PowerShell.Commands.Clear();
-                    pooled.PowerShell.Streams.ClearStreams();
-                    _operationTrace.Step("ExoConnectionBorrowed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["source"] = "Pool" });
-                    return pooled;
-                }
-
-                _operationTrace.Step(pooled.ConfigGeneration != currentGen ? "ExoConnectionStaleConfig" : "ExoConnectionExpired", backend: "ExchangeOnline");
-                var stale = pooled;
-
                 // aud-a6d: no token here. This runspace has already left the pool, so destroying it
                 // is cleanup this borrow owes, not work it may abandon - and Task.Run handed a token
                 // that is already cancelled never runs its delegate, which stranded the connection.
@@ -494,6 +486,36 @@ public sealed class ExoConnectionPool : IDisposable
             _available.Add(runspace);
             return true;
         }
+    }
+
+    /// <summary>
+    /// One runspace out of the pool for a borrower, or null when there is none to lend. It is lent when it was connected
+    /// under <paramref name="generation"/> and has not sat idle past the timeout - cleared, and traced as borrowed from
+    /// <paramref name="source"/>. One that fails the test comes back in <paramref name="retired"/>: it has left the pool, so
+    /// the caller owes its destruction.
+    /// </summary>
+    /// <remarks>
+    /// kd-91. The borrow looks before it connects, and again once it holds the connect gate (<see cref="CreateConnected"/>),
+    /// so a connection returned while it queued there is lent instead of a new one being made. One rule for both looks.
+    /// </remarks>
+    private PooledRunspace? TakePooled(long generation, string source, out PooledRunspace? retired)
+    {
+        retired = null;
+        if (!_available.TryTake(out var pooled))
+            return null;
+
+        if (pooled.ConfigGeneration == generation && DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
+        {
+            pooled.LastUsed = DateTime.UtcNow;
+            pooled.PowerShell.Commands.Clear();
+            pooled.PowerShell.Streams.ClearStreams();
+            _operationTrace.Step("ExoConnectionBorrowed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["source"] = source });
+            return pooled;
+        }
+
+        _operationTrace.Step(pooled.ConfigGeneration != generation ? "ExoConnectionStaleConfig" : "ExoConnectionExpired", backend: "ExchangeOnline");
+        retired = pooled;
+        return null;
     }
 
     public void Discard(PooledRunspace runspace)
@@ -789,6 +811,9 @@ public sealed class ExoConnectionPool : IDisposable
     /// Held across the whole Connect-ExchangeOnline call, which takes seconds. That is the cost
     /// of the fix and it is deliberate: borrowing stays concurrent, only ESTABLISHING a new
     /// connection queues, and the pool reuses connections so this is not the common path.
+    /// kd-91: it is the common path whenever the pool is empty - after every restart and every
+    /// idle sweep - so a borrower that holds the gate looks in the pool again before connecting,
+    /// and one returned while it queued is lent instead.
     /// </remarks>
     /// <remarks>
     /// A semaphore rather than `lock`, because review of the first A6B fix showed `lock` was an
@@ -906,11 +931,21 @@ public sealed class ExoConnectionPool : IDisposable
             // kd-58 E1: the caller's cancel ends the wait for the gate at once. Past it nothing looks at the token: the connect
             // and its two snapshots run to their end, and the connection they make is healthy, so it is pooled, not destroyed.
             string? connectionId;
+            PooledRunspace? reused = null;
+            PooledRunspace? retired = null;
             if (!_connectGate.Wait(ConnectGateTimeout, cancellationToken))
                 throw new InvalidOperationException(
                     "Exchange service is busy establishing connections. Please try again shortly.");
             try
             {
+                // kd-91: this borrow found the pool empty before it queued here, and a connection can come back while it
+                // waits. Connecting regardless made the k-th of k cold borrowers wait for k connects in a row (dev,
+                // 2026-10-30: 9.8, 16.7 and 25.5 s after asking, with connections returned meanwhile). So the pool is
+                // looked at again now the gate is held, and a connection returned meanwhile is lent instead.
+                reused = TakePooled(generation, "PoolAfterConnectGate", out retired);
+                if (reused is not null)
+                    return reused;
+
                 var before = ReadConnectionIds(ps);
 
                 ps.AddCommand("Connect-ExchangeOnline")
@@ -935,6 +970,20 @@ public sealed class ExoConnectionPool : IDisposable
             finally
             {
                 _connectGate.Release();
+
+                // kd-91: what the second look took and could not lend has left the pool; destroyed once the gate is free, as
+                // the look before the gate does, so its disconnect holds up no one else's connect. Never throws.
+                if (retired is not null)
+                    DestroyRunspace(retired);
+
+                // kd-91: lent from the pool, so the session opened here for the connect was never connected - nothing to
+                // disconnect - and goes.
+                if (reused is not null)
+                {
+                    _logger.LogInformation("EXO pool: a connection returned while this borrow waited to connect was lent instead (Org={Org})", organization);
+                    ps.Dispose();
+                    runspace.Dispose();
+                }
             }
 
             if (connectionId is null)
