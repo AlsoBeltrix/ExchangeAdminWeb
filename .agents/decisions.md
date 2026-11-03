@@ -5,6 +5,37 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-03 - Identifier conversion is a one-time command-line step, not a startup pass
+
+Owner, on the sweep-c item-17 build (a protected Groups entry naming several groups protects the members of each):
+"this is a lot of plumbing for something that isn't going to happen and won't even be possible after the next
+deployment." Then: "then we need a solution that obviates this problem now." On the proposal to resolve names only in
+the startup conversion pass: "what conversion pass? why do we need to build in a conversion pass and carry that tech
+debt when we could just write something to update the db before deploying." On a pipeline step: "I don't want that to
+be part of the deployment pipeline." Approval: "test by copying the db and running against the copy then verifying.
+add that, then go."
+
+Ruling, as approved (`docs/ProtectedPrincipalIdentifiers-Plan.md` section K, exec summary K.1):
+
+- The conversion of legacy protected-principal rows and module-admin name grants to identifiers is a verb on the app's
+  `db` command-line mode, run by hand by the owner from an elevated shell against the build about to be deployed, with a
+  plan-only switch. It refuses, writing nothing, if any row resolves to none or several objects. The deploy pipeline
+  does not call it, know about it or check for it.
+- The new build never resolves or matches names. A legacy row with no identifier companion makes the protected check
+  incomplete, naming the row and saying to run the conversion (fail closed, loud). The startup passes
+  (`ProtectedPrincipalIdentifierMigration`, `ModuleAdminSidMigration`), the flags, both Resolve now buttons, both
+  "not converted" badges and the evaluator's name-resolution and shared-name branches are removed.
+- Legacy rows stay beside their companions until prod is on the new build; the new build writes both forms on save.
+  Dropping them is a later slice (the same verb with a drop switch).
+- Test: copy the live database, run the verb against the copy (plan-only, then for real), verify with the status verb,
+  and only then run against the live path.
+
+Supersedes: plan section B.3/B.4 (startup pass), B.5/B.6 (Resolve now, badges), section J D1 (enforce unconverted rows
+"exactly as today" - they now fail closed with a named reason instead of being matched by name); the 2026-11-03
+"Thorough fixes" entry's clause "existing rows migrated by directory lookup, unresolvable ones surfaced on the admin
+page" is amended: migrated by the command-line step; unresolvable ones are named by the step, which refuses, and by the
+check's banner until converted. The sweep-c-17 first build (`db0813b9`) is superseded on its branch before merge.
+
 ### 2026-11-03 - The protection check reads the on-premises SID from Graph with the password-reset registration
 
 Owner's live read (I.1 of `docs/ProtectedPrincipalIdentifiers-Plan.md`): Exchange Online's `Get-User` `Sid` for a synced
