@@ -514,6 +514,15 @@ What the answers decide: EXO `Sid` equal to AD `objectSid` for (a) and (b) -> so
 Graph's `onPremisesSecurityIdentifier` equal to AD's -> source 2 and decision D2. (c) must show no on-premises SID in any
 source; if one does, stop and report. Record the results (values redacted to their domain part) in the S3 record.
 
+**Outcome (owner, 2026-11-03):** for a synced user mailbox, Exchange Online `Get-User` `Sid` =
+`S-1-5-21-2487086965-1590389379-877760383-6391383`; Active Directory `objectSid` = `S-1-5-21-8915387-325452579-1788637320-133093`.
+They differ: EXO's is cloud-generated. **Source 1 is out; source 2 (Graph `onPremisesSecurityIdentifier`) is taken.**
+D2 settled the same day (`.agents/decisions.md` 2026-11-03): the protection service uses Cloud Password Reset's app
+registration and secret (`GraphDelineaSecretId`), through a new app-wide Admin Settings field pre-filled from it. The room
+read was not run; a room mailbox is a user object in Entra and carries the same attribute. S3 confirms the Graph value for
+one user before binding by it (the `Get-MgUser ... -Property onPremisesSecurityIdentifier` read, or the app's own first read
+logged at Information).
+
 ### I.2 Legacy row counts (owner runs; the agent does not touch the shared database)
 
 ```
@@ -541,7 +550,7 @@ removed, and flag it), and "nothing the directory can resolve is re-picked by ha
 resolves to exactly one group, effective at once; the pass's audit event lists each). One decision remains, and only
 conditionally:
 
-- **D2 - Graph as the SID source** (asked only if I.1 shows Exchange Online does not carry the on-premises SID).
+- **D2 - Graph as the SID source - SETTLED 2026-11-03 (I.1 showed EXO does not carry it): yes, with the Cloud Password Reset registration and secret.**
   Action: add an app-wide Graph read setting (`User.Read.All`) on Admin Settings for the protection service.
   Consequence: a new credential to hold and an Entra dependency in the write path; without it, synced targets bind by
   address as today. **Recommendation: yes, if and only if I.1 requires it.**
