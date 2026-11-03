@@ -378,6 +378,9 @@ try
 
     var app = builder.Build();
 
+    // sweep-c item 13: the Warning a refused mailbox-GUID identity is logged with (the helper is static, as Invoke is).
+    MailboxGuidIdentityRefusal.Logger = app.Services.GetRequiredService<ILogger<ExchangeServiceBase>>();
+
     // Ensure the config database schema exists / is current before serving requests
     // (SqliteConfigStore-Plan Phase A). Idempotent: a no-op once the DB is at the target
     // version. Fail fast - a config store that cannot be opened/migrated is not a state we

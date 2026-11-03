@@ -354,10 +354,15 @@ public abstract class ExchangeServiceBase
             var psErrors = SnapshotErrorMessages(ps);
             ClassifyConnectionError(tracker, ex, ps);
 
+            // sweep-c item 13: Exchange's not-found for the mailbox GUID the command named is said as that - read off the
+            // command before the pipeline is cleared, in Exchange's own words (an error under Stop is its ErrorRecord).
+            var primary = psErrors.FirstOrDefault() ?? ex.Message;
+            if (MailboxGuidIdentityRefusal.Describe(ps, psErrors.Count > 0 ? primary : ResolveFailure(ex).primary, psErrors) is { } described)
+                psErrors.Insert(0, primary = described); // first in the detail too, which ResolveFailure reads
+
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
 
-            var primary = psErrors.FirstOrDefault() ?? ex.Message;
             throw BuildPsException(primary, psErrors, ex);
         }
 
@@ -366,10 +371,13 @@ public abstract class ExchangeServiceBase
             var psErrors = SnapshotErrorMessages(ps);
             ClassifyConnectionError(tracker, null, ps);
 
+            var primary = psErrors.FirstOrDefault() ?? ErrorNotSurfaced;
+            if (MailboxGuidIdentityRefusal.Describe(ps, primary, psErrors) is { } described) // sweep-c item 13
+                psErrors.Insert(0, primary = described);
+
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
 
-            var primary = psErrors.FirstOrDefault() ?? ErrorNotSurfaced;
             throw BuildPsException(primary, psErrors);
         }
 

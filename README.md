@@ -1333,6 +1333,16 @@ Configure email notifications, group-based access control, self-grant prevention
 
 ## Troubleshooting
 
+### "Exchange refused the mailbox GUID identity ..."
+- Every Exchange change and the read-back before it name the mailbox by its Exchange mailbox GUID - the mailbox the
+  protection check validated, never the string typed (aud-a2d). That Exchange accepts this form for every cmdlet used
+  (Get-Mailbox, Add/Remove-MailboxPermission, Add/Remove-RecipientPermission, the calendar folder cmdlets,
+  Set-MailboxAutoReplyConfiguration, Set-Place, Add-DistributionGroupMember -Member) is checked at the first deployment
+- When Exchange answers "couldn't be found" for that GUID, the message begins with this text and names the cmdlet; the
+  application log has a Warning with the cmdlet and the GUID. Nothing was changed by that step. A Conference Rooms read
+  whose Get-Place returns nothing for the GUID logs a Warning too (its city, building and capacity read blank)
+- Report it with the cmdlet named: it is sweep item 13's check, not a problem with the mailbox
+
 ### "401 Unauthorized" when accessing the app
 - Verify Windows Authentication is enabled in IIS for the application
 - Check user is member of an allowed AD group

@@ -108,6 +108,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
           .AddParameter("ErrorAction", "SilentlyContinue");
         var placeResults = InvokeOptional(ps, tracker);
         var place = placeResults.FirstOrDefault();
+        if (place is null)
+            MailboxGuidIdentityRefusal.NoPlaceFor(identity); // sweep-c item 13: under SilentlyContinue a refused GUID reads as no place
 
         string timezone = "";
         try
