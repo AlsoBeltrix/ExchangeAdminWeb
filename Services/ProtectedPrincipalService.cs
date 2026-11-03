@@ -201,7 +201,7 @@ public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? Disti
     }
 }
 
-public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
+public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IModuleAdminGrantResolver
 {
     private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
@@ -1939,8 +1939,30 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
     /// however many rows it reads (kd-88). Never throws for a lookup that could not run: every row is then returned as
     /// <see cref="ProtectedPrincipalLeftReason.DirectoryUnavailable"/> with the cause, and nothing is written.
     /// </summary>
-    async Task<IReadOnlyList<ProtectedPrincipalRowResolution>> IProtectedPrincipalLegacyResolver.ResolveLegacyRowsAsync(
+    Task<IReadOnlyList<ProtectedPrincipalRowResolution>> IProtectedPrincipalLegacyResolver.ResolveLegacyRowsAsync(
         IReadOnlyList<ProtectedPrincipalLegacyRow> rows, CancellationToken cancellationToken)
+        => ResolveInOneOperationAsync(rows,
+            directory => ProtectedPrincipalIdentifierResolver.Resolve(rows, directory, cancellationToken),
+            "The protected-principal identifier pass", cancellationToken);
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.6. The module-admin pass's lookups, in the same ONE operation as the
+    /// identifier pass's: one directory-read credential fetch and one warm session however many grants it reads. Never
+    /// throws for a lookup that could not run.
+    /// </summary>
+    Task<IReadOnlyList<ProtectedPrincipalRowResolution>> IModuleAdminGrantResolver.ResolveModuleAdminGrantsAsync(
+        IReadOnlyList<string> grants, CancellationToken cancellationToken)
+    {
+        var rows = grants.Select(g => new ProtectedPrincipalLegacyRow(ProtectedPrincipalRepository.KindGroup, g)).ToList();
+        return ResolveInOneOperationAsync(rows,
+            directory => ProtectedPrincipalIdentifierResolver.ResolveModuleAdminGrants(grants, directory, cancellationToken),
+            "The module-admin SID pass", cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<ProtectedPrincipalRowResolution>> ResolveInOneOperationAsync(
+        IReadOnlyList<ProtectedPrincipalLegacyRow> rows,
+        Func<IProtectedPrincipalResolveDirectory, IReadOnlyList<ProtectedPrincipalRowResolution>> resolve,
+        string passName, CancellationToken cancellationToken)
     {
         if (rows.Count == 0)
             return [];
@@ -1970,7 +1992,7 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
                 {
                     var directory = new PowerShellProtectedGroupDirectory(
                         session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
-                    var resolved = ProtectedPrincipalIdentifierResolver.Resolve(rows, directory, cancellationToken);
+                    var resolved = resolve(directory);
 
                     // A session a read failed in is thrown away rather than lent again, as the group check's is.
                     if (resolved.Any(r => r.Reason == ProtectedPrincipalLeftReason.DirectoryUnavailable))
@@ -1986,7 +2008,7 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "The protected-principal identifier pass could not read the directory");
+            _logger.LogWarning(ex, "{Pass} could not read the directory", passName);
             return AllLeft(ex.Message);
         }
         finally

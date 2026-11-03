@@ -41,9 +41,12 @@ public class ModuleAdminService
     /// than loosely matched.
     ///
     /// <b>A legacy name-valued grant therefore stops authorizing the moment this ships</b> - that
-    /// is the owner's ruling of 2026-10-19 (refuse rather than silently honour), and it is why the
-    /// list of non-resolving grants goes to the owner before deployment. Do NOT re-add a name
-    /// fallback here to soften it; that reopens the hole this closes.
+    /// is the owner's ruling of 2026-10-19 (refuse rather than silently honour). Since ppi-s5 the
+    /// name is converted instead of softened: <see cref="ModuleAdminSidMigration"/> resolves each
+    /// legacy name, at startup and on Resolve now, to the SID of the one group it names and
+    /// replaces the row with it, and lists on the Module Configuration page every name that does
+    /// not resolve to exactly one group. Do NOT re-add a name fallback here; that reopens the hole
+    /// this closes.
     ///
     /// Contrast <c>Security:AdminGroups</c> in appsettings, which must NOT be filtered this way:
     /// no migration converts it, it ships as <c>DOMAIN\Name</c>, and filtering it locks every
@@ -65,7 +68,8 @@ public class ModuleAdminService
     /// <remarks>
     /// These grants authorize NOTHING - see <see cref="IsModuleAdmin"/>. This exists so that fact
     /// is reportable before anyone is surprised by it, rather than discovered when an admin cannot
-    /// open their own module.
+    /// open their own module. Read through <see cref="TryGetUnusableGrants"/> by the module-admin
+    /// SID pass (its inventory) and the Module Configuration page (its flagged list), ppi-s5.
     /// </remarks>
     public IReadOnlyDictionary<string, string[]> GetUnusableGrants()
         => TryGetUnusableGrants(out var unusable)
@@ -168,6 +172,22 @@ public class ModuleAdminService
             var outcome = _repository.ApplyChanges(moduleId, add, remove, cancellationToken);
             if (outcome.Written)
                 _logger.LogInformation("Module admins for {Module} changed ({Before} -> {After} group(s))", moduleId, outcome.Before.Length, outcome.After.Length);
+            return outcome;
+        }
+    }
+
+    /// <summary>
+    /// The module-admin SID pass's write (ppi-s5): each name grant replaced by the SID it resolved to, in one transaction,
+    /// each row re-checked under the write lock (<see cref="ModuleAdminRepository.ReplaceNamesWithSids"/>). Throws when the
+    /// write fails; nothing is then changed.
+    /// </summary>
+    internal ModuleAdminSidConversionOutcome ReplaceNameGrantsWithSids(IReadOnlyList<ModuleAdminSidConversion> conversions)
+    {
+        lock (_writeLock)
+        {
+            var outcome = _repository.ReplaceNamesWithSids(conversions);
+            if (outcome.Written.Count > 0)
+                _logger.LogInformation("Module admins: {Count} grant(s) stored by name replaced by their group SID", outcome.Written.Count);
             return outcome;
         }
     }

@@ -99,6 +99,85 @@ internal static class ProtectedPrincipalIdentifierResolver
 
     internal static IReadOnlyList<ProtectedPrincipalRowResolution> Resolve(
         IReadOnlyList<ProtectedPrincipalLegacyRow> rows, IProtectedPrincipalResolveDirectory directory, CancellationToken cancellationToken)
+        => ResolveEach(rows, row => row.Kind switch
+        {
+            ProtectedPrincipalRepository.KindUser => ResolveUser(row, directory),
+            ProtectedPrincipalRepository.KindGroup => ResolveGroup(row, directory),
+            ProtectedPrincipalRepository.KindOu => ResolveOu(row, directory),
+            _ => ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.Unsupported, "not a user, group or OU row"),
+        }, cancellationToken);
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.6. Resolves module-admin grants stored by name - each value once - to the
+    /// one group each names. Every returned row is of kind <c>group</c>, its value the grant as stored.
+    /// </summary>
+    /// <remarks>
+    /// <para>The way section access resolved its names (docs/SectionAccessSidStorage-Plan.md, Migration step 2), with the
+    /// display name added because the old module-admin picker stored either the sAMAccountName or the display name:</para>
+    /// <para>- <c>DOMAIN\name</c> in the domain the prefix names, never the forest: a same-named group of another domain is
+    /// not this grant. A <c>BUILTIN\</c> or <c>NT AUTHORITY\</c> prefix names a well-known group and is refused without a
+    /// lookup.</para>
+    /// <para>- A bare name through the global catalog, so a group of any domain is found and a name two domains share is
+    /// ambiguous rather than whichever answered first.</para>
+    /// <para>- One search, <see cref="GroupLookupKey.AnyGroupName"/>: <c>sAMAccountName</c>, <c>cn</c>, <c>name</c> and
+    /// <c>displayName</c> together, groups only.</para>
+    /// <para>Exactly one group converts, unless its SID is well-known or not a domain group's. A value already shaped like a
+    /// SID but unusable (a well-known SID, an SDDL alias) is refused without a lookup.</para>
+    /// </remarks>
+    internal static IReadOnlyList<ProtectedPrincipalRowResolution> ResolveModuleAdminGrants(
+        IReadOnlyList<string> grants, IProtectedGroupDirectory directory, CancellationToken cancellationToken)
+        => ResolveEach(
+            grants.Select(g => new ProtectedPrincipalLegacyRow(ProtectedPrincipalRepository.KindGroup, g)).ToList(),
+            row => ResolveGrantName(row, directory),
+            cancellationToken);
+
+    private static readonly string[] WellKnownPrefixes = ["BUILTIN", "NT AUTHORITY"];
+
+    private static ProtectedPrincipalRowResolution ResolveGrantName(ProtectedPrincipalLegacyRow row, IProtectedGroupDirectory directory)
+    {
+        var parsed = SectionAccessGroupIdentity.Parse(row.Value);
+        string? server = null;
+        switch (parsed.Kind)
+        {
+            case StoredGroupValueKind.Sid:
+                // Already a usable SID: nothing to convert. Not reached from the pass, which reads only unusable grants.
+                return ProtectedPrincipalRowResolution.Converted(row, parsed.Sid!);
+
+            case StoredGroupValueKind.Unusable:
+                return (row.Value ?? string.Empty).Trim().StartsWith("S-1-", StringComparison.OrdinalIgnoreCase)
+                    ? ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.WellKnownSid, "well-known SID refused")
+                    : ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.Unsupported, $"not looked up ({parsed.RejectionReason}); remove it and pick the group from the search");
+
+            case StoredGroupValueKind.DomainQualified:
+                if (WellKnownPrefixes.Contains(parsed.NetBiosDomain!.Trim(), StringComparer.OrdinalIgnoreCase))
+                    return ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.WellKnownSid, "well-known group refused");
+                // Throws when the forest has no such domain - recorded as a lookup that could not run, never as a search of
+                // some other domain.
+                server = directory.ResolveDomainServer(parsed.NetBiosDomain!.Trim());
+                break;
+        }
+
+        var groups = directory.FindGroups(GroupLookupKey.AnyGroupName, parsed.Name!.Trim(), server)
+            .DistinctBy(g => g.DistinguishedName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (groups.Count == 0)
+            return ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.NotFound, "not found");
+        if (groups.Count > 1)
+            return ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.Ambiguous,
+                $"{groups.Count} groups match: " + string.Join("; ", groups.Select(g => g.DistinguishedName)));
+
+        var sid = ProtectedPrincipalIdEntry.CanonicalSid(groups[0].Sid);
+        if (sid is null)
+            return ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.DirectoryUnavailable, "directory unavailable: the group's SID could not be read");
+
+        return SectionAccessGroupIdentity.SidRejectionReason(sid) is not null
+            ? ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.WellKnownSid, "well-known SID refused")
+            : ProtectedPrincipalRowResolution.Converted(row, sid);
+    }
+
+    private static IReadOnlyList<ProtectedPrincipalRowResolution> ResolveEach(
+        IReadOnlyList<ProtectedPrincipalLegacyRow> rows, Func<ProtectedPrincipalLegacyRow, ProtectedPrincipalRowResolution> resolve,
+        CancellationToken cancellationToken)
     {
         var resolved = new List<ProtectedPrincipalRowResolution>(rows.Count);
         foreach (var row in rows)
@@ -106,13 +185,7 @@ internal static class ProtectedPrincipalIdentifierResolver
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                resolved.Add(row.Kind switch
-                {
-                    ProtectedPrincipalRepository.KindUser => ResolveUser(row, directory),
-                    ProtectedPrincipalRepository.KindGroup => ResolveGroup(row, directory),
-                    ProtectedPrincipalRepository.KindOu => ResolveOu(row, directory),
-                    _ => ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.Unsupported, "not a user, group or OU row"),
-                });
+                resolved.Add(resolve(row));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

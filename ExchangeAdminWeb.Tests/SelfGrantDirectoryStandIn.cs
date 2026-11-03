@@ -138,6 +138,9 @@ internal sealed class SelfGrantDirectoryStandIn
         public string? Mail { get; init; }
         public string? Sam { get; init; }
         public string? Nickname { get; init; }
+
+        /// <summary>ppi-s5. The displayName a group can carry: what the old module-admin picker stored for some grants.</summary>
+        public string? DisplayName { get; init; }
         public string? Sid { get; init; }
         public int? PrimaryGroupId { get; init; }
 
@@ -427,6 +430,7 @@ internal sealed class SelfGrantDirectoryStandIn
         "mail" => One(entry.Mail),
         "proxyaddresses" => entry.Proxies,
         "mailnickname" => One(entry.Nickname),
+        "displayname" => One(entry.DisplayName),
         "samaccountname" => One(entry.Sam),
         "name" or "cn" => One(entry.Name),
         "distinguishedname" => One(entry.Dn),

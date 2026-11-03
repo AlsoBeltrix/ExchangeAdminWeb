@@ -2116,6 +2116,13 @@ public static class ProgressRegistry
                 + "the number of new grants is known, Report raised from the worker thread as "
                 + "GlobalProgress.razor marshals. Success is false only when the directory could "
                 + "not be asked: a refused grant is a check that ran"),
+            new("ResolveAdminsNowAsync", "AdminSidMigration.RunAsync(",
+                "docs/ProtectedPrincipalIdentifiers-Plan.md B.6: Resolve now runs the module-admin SID pass - one credential "
+                + "fetch and one directory lookup per distinct grant stored by name, then one write. The Begin sits below the "
+                + "authorization re-check and the unsaved-changes refusal, which settle without a round trip, and above the one "
+                + "call that waits (Admin Settings' ResolveNowAsync shape). ActivitySize.Unknown: the number of grants the pass "
+                + "reads is decided inside it, under its own read. The pass is handed the activity's own token, and Complete "
+                + "reads the pass's own result, a local, with no await between"),
         ],
         Exempt =
         [

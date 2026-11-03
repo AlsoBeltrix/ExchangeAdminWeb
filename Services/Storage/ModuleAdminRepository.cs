@@ -143,6 +143,76 @@ public sealed class ModuleAdminRepository
         public IReadOnlyList<string> AlreadyApplied { get; } = alreadyApplied;
     }
 
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.6. Replaces each module-admin grant stored by name with the SID it was
+    /// resolved to, in place, in ONE write transaction. Each row is re-checked under the write lock: a grant no longer
+    /// present - removed, or replaced, since the pass read it - is left as that change left it and reported in
+    /// <see cref="ModuleAdminSidConversionOutcome.Changed"/> (aud-a33b). Where the module already holds the SID, the name row
+    /// is deleted rather than updated: the grant is then held once, by SID. Nothing to write rolls the transaction back.
+    /// </summary>
+    /// <remarks>
+    /// In place is safe here and nowhere else in the plan: every build since aud-a1 ignores the name, and every build before
+    /// it evaluates a grant with <c>WindowsPrincipal.IsInRole(string)</c>, which accepts a SID string as well as a name.
+    /// </remarks>
+    public ModuleAdminSidConversionOutcome ReplaceNamesWithSids(IReadOnlyList<ModuleAdminSidConversion> conversions)
+    {
+        ArgumentNullException.ThrowIfNull(conversions);
+        if (conversions.Count == 0)
+            return new ModuleAdminSidConversionOutcome([], []);
+
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                var written = new List<ModuleAdminSidConversion>();
+                var changed = new List<ModuleAdminSidConversion>();
+                foreach (var conversion in conversions)
+                {
+                    if (!RowExists(connection, transaction, conversion.ModuleId, conversion.Name))
+                    {
+                        changed.Add(conversion);
+                        continue;
+                    }
+
+                    using var command = connection.CreateCommand();
+                    command.Transaction = transaction;
+                    command.CommandText = RowExists(connection, transaction, conversion.ModuleId, conversion.Sid)
+                        ? "DELETE FROM module_admins WHERE module_id = $id AND admin_group = $name;"
+                        : "UPDATE module_admins SET admin_group = $sid WHERE module_id = $id AND admin_group = $name;";
+                    command.Parameters.AddWithValue("$id", conversion.ModuleId);
+                    command.Parameters.AddWithValue("$name", conversion.Name);
+                    command.Parameters.AddWithValue("$sid", conversion.Sid);
+                    command.ExecuteNonQuery();
+                    written.Add(conversion);
+                }
+
+                if (written.Count == 0)
+                    throw new NothingConverted(changed);
+                return new ModuleAdminSidConversionOutcome(written, changed);
+            });
+        }
+        catch (NothingConverted nothing)
+        {
+            return new ModuleAdminSidConversionOutcome([], nothing.Changed);
+        }
+    }
+
+    // ReplaceNamesWithSids' rollback when every row changed elsewhere: as NothingWritten, never leaves this class.
+    private sealed class NothingConverted(IReadOnlyList<ModuleAdminSidConversion> changed) : Exception
+    {
+        public IReadOnlyList<ModuleAdminSidConversion> Changed { get; } = changed;
+    }
+
+    private static bool RowExists(SqliteConnection connection, SqliteTransaction transaction, string moduleId, string group)
+    {
+        using var check = connection.CreateCommand();
+        check.Transaction = transaction;
+        check.CommandText = "SELECT 1 FROM module_admins WHERE module_id = $id AND admin_group = $group LIMIT 1;";
+        check.Parameters.AddWithValue("$id", moduleId);
+        check.Parameters.AddWithValue("$group", group);
+        return check.ExecuteScalar() is not null;
+    }
+
     private static string[] ReadModuleGroups(SqliteConnection connection, SqliteTransaction transaction, string moduleId)
     {
         using var command = connection.CreateCommand();
@@ -224,3 +294,13 @@ public sealed class ModuleAdminRepository
 /// </summary>
 public sealed record ModuleAdminChangeOutcome(
     bool Readable, bool Written, string[] Before, string[] After, IReadOnlyList<string> AlreadyApplied);
+
+/// <summary>One module-admin grant stored by name and the SID the pass resolved it to.</summary>
+public sealed record ModuleAdminSidConversion(string ModuleId, string Name, string Sid);
+
+/// <summary>
+/// What <see cref="ModuleAdminRepository.ReplaceNamesWithSids"/> did: the grants it converted, and those it left because
+/// the row was no longer present as the pass read it.
+/// </summary>
+public sealed record ModuleAdminSidConversionOutcome(
+    IReadOnlyList<ModuleAdminSidConversion> Written, IReadOnlyList<ModuleAdminSidConversion> Changed);
