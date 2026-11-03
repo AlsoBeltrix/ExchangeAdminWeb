@@ -174,6 +174,24 @@ public sealed class ExchangeGroupMembersTests : IDisposable
     }
 
     [Fact]
+    public void EachMember_CarriesTheCloudGroupsItWasReachedThrough_OutermostFirst()
+    {
+        // sweep-c item 18: the self-grant refusal names the path a member is in the group by, so each says which nested cloud
+        // groups the read went through to reach it - none for the group's own members.
+        Group("outer@contoso.test", Dl, User("a@contoso.test"), Nested("inner@contoso.test", Security, synced: false));
+        Group("inner@contoso.test", Security, User("b@contoso.test"), Nested("m365@contoso.test", Microsoft365, synced: false));
+        Group("m365@contoso.test", Microsoft365, User("c@contoso.test"));
+
+        var via = Read("outer@contoso.test").ToDictionary(member => member.PrimarySmtpAddress!, member => member.Via);
+
+        Assert.Empty(via["a@contoso.test"]);
+        Assert.Empty(via["inner@contoso.test"]);
+        Assert.Equal(["inner@contoso.test"], via["b@contoso.test"]);
+        Assert.Equal(["inner@contoso.test"], via["m365@contoso.test"]);
+        Assert.Equal(["inner@contoso.test", "m365@contoso.test"], via["c@contoso.test"]);
+    }
+
+    [Fact]
     public void AMicrosoft365GroupNestedInIt_IsAGroup_ByItsDetails_AndIsRead()
     {
         // aud-a60. Exchange reports a Microsoft 365 group with RecipientType UserMailbox; only RecipientTypeDetails names it a

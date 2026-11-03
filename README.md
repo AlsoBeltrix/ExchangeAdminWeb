@@ -652,6 +652,9 @@ permission that could. Disabled by default and fail-closed.
   - Mailbox Permissions and Calendar Permissions check the grantee against Exchange Online and the on-premises
     directory, including every group that holds the operator - nested, through their primary group, or, for a group
     only Exchange Online holds, through its members. A check that cannot be completed refuses; it never clears a grant
+  - A grant to a group the operator is in is refused too - it would grant them - and the refusal and its audit row name
+    the group and how they are in it: directly, through the nested groups between (innermost first), or through their
+    primary group. When the membership is confirmed but the groups between cannot be read, the refusal says so
   - **Needs the Directory Read Credential** (Admin Settings, Protected principals) - the credential the
     protected-principal check reads with. While the check is on (Prevent Self-Grant, the default), every grant needs
     it: without it, every grant is refused as incomplete, naming the setting - to a person or to a group, whichever

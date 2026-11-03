@@ -206,7 +206,9 @@ public sealed class ModuleCatalog
             // 1.6.9: a synced target mailbox is checked as the one account holding the on-premises SID Graph reports for it
             // (docs/ProtectedPrincipalIdentifiers-Plan.md S3), read at a global catalog - a mailbox in another domain resolves,
             // and the mailbox-GUID refusals no longer appear; until the Graph Directory Read Credential is set it is refused.
-            Version = "1.6.9",
+            // 1.6.10: a grant to a group the operator is in is still refused, but the refusal (and its audit row) names the
+            // group and how they are in it - directly, through nested groups, or through their primary group (sweep-c item 18).
+            Version = "1.6.10",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -277,7 +279,8 @@ public sealed class ModuleCatalog
             // once, nothing read or sent - the removal's only until it claims its send, so a removal the pool runs again after
             // Exchange's pre-flight answer still runs. A command already sent runs to its end.
             // 1.4.9: as Mailbox Permissions 1.6.9 - the target mailbox is bound by its on-premises SID (ppi S3).
-            Version = "1.4.9",
+            // 1.4.10: as Mailbox Permissions 1.6.10 - a self-grant refusal for a group names the group and the path (sweep-c item 18).
+            Version = "1.4.10",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

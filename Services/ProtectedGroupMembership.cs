@@ -517,6 +517,95 @@ internal static class ProtectedGroupMembership
         return new(dns, sids);
     }
 
+    /// <summary>
+    /// sweep-c item 18. How the target is in <paramref name="groupDn"/>: the groups between them, innermost first, and whether
+    /// the first is the target's primary group; empty <see cref="MembershipPath.Through"/> for a direct member. Null when the
+    /// path could not be traced from the membership links - a domain-local group of another domain holds the only link, or the
+    /// nesting runs past the evaluator's bounds.
+    /// </summary>
+    /// <remarks>
+    /// Explanation only: it runs after <see cref="Evaluate"/> has found the match, and its answer never decides anything - the
+    /// refusal stands whatever it returns, and a caller that catches its throw names the group without the path. Read the way
+    /// <see cref="ReadAncestry"/> reads, level by level from the target and its primary group, at the target's own domain and
+    /// at a global catalog, keeping for each group the object that led to it; an object an answer leaves out is skipped, not
+    /// refused, since nothing here is evidence.
+    /// </remarks>
+    internal static MembershipPath? TracePath(string targetDn, string groupDn, IProtectedGroupDirectory directory)
+    {
+        var targetServer = GroupManagementService.ServerFromDn(targetDn);
+        if (targetServer is null)
+            return null;
+
+        var target = directory.ReadTarget(targetDn, targetServer);
+        string? primaryDn = null;
+        if (RequiresPrimaryGroup(target) && target.PrimaryGroupId is int rid && PrimaryGroupSid(target.Sid!, rid) is { } primarySid)
+        {
+            var primary = directory.FindGroups(GroupLookupKey.Sid, primarySid, targetServer);
+            if (primary.Count == 1)
+                primaryDn = primary[0].DistinguishedName;
+        }
+
+        if (primaryDn is not null && string.Equals(primaryDn, groupDn, StringComparison.OrdinalIgnoreCase))
+            return new([], ThroughPrimaryGroup: true);
+
+        // Each DN reached, and the DN whose memberOf named it: the target has none, its primary group is reached from it.
+        var cameFrom = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase) { [targetDn] = null };
+        if (primaryDn is not null)
+            cameFrom[primaryDn] = targetDn;
+        var frontier = cameFrom.Keys.ToList();
+
+        for (var level = 0; frontier.Count > 0; level++)
+        {
+            if (level >= MaxNestingLevels || cameFrom.Count > MaxAncestors)
+                return null;
+
+            var next = new List<string>();
+            var ownDomain = frontier
+                .Where(dn => SameDomain(GroupManagementService.ServerFromDn(dn), targetServer))
+                .ToList();
+
+            foreach (var (asked, server) in new[] { (ownDomain, (string?)targetServer), (frontier, (string?)null) })
+            {
+                if (asked.Count == 0)
+                    continue;
+
+                foreach (var row in directory.ReadMemberOf(asked, server))
+                {
+                    foreach (var parent in row.MemberOf)
+                    {
+                        if (string.IsNullOrWhiteSpace(parent) || !cameFrom.TryAdd(parent, row.DistinguishedName))
+                            continue;
+
+                        if (string.Equals(parent, groupDn, StringComparison.OrdinalIgnoreCase))
+                            return PathTo(parent, targetDn, primaryDn, cameFrom);
+
+                        next.Add(parent);
+                    }
+                }
+            }
+
+            frontier = next;
+        }
+
+        return null;
+    }
+
+    private static MembershipPath PathTo(string groupDn, string targetDn, string? primaryDn, Dictionary<string, string?> cameFrom)
+    {
+        var through = new List<string>();
+        for (var at = cameFrom[groupDn]; at is not null && !string.Equals(at, targetDn, StringComparison.OrdinalIgnoreCase); at = cameFrom[at])
+            through.Insert(0, at);
+
+        var viaPrimary = primaryDn is not null && through.Count > 0
+            && string.Equals(through[0], primaryDn, StringComparison.OrdinalIgnoreCase);
+        return new(through, viaPrimary);
+    }
+
+    /// <summary>sweep-c item 18. The groups between a target and a group it is in, innermost first (DNs).</summary>
+    /// <param name="Through">Empty for a direct member, or for a group that is the target's primary group.</param>
+    /// <param name="ThroughPrimaryGroup">The first group is - or, with no groups between, the group itself is - the target's primary group.</param>
+    internal sealed record MembershipPath(IReadOnlyList<string> Through, bool ThroughPrimaryGroup);
+
     private static bool SameDomain(string? a, string? b)
         => a is not null && b is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 

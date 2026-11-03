@@ -649,6 +649,33 @@ public class PermissionValidator
     internal const string SelfGrantRefusal = "Access denied: You cannot grant permissions to yourself.";
 
     /// <summary>
+    /// sweep-c item 18. The refusal of a grant to a group the operator is in: a permission granted to the group is granted to
+    /// them, so it still refuses (fail closed), but it names the group and how they are in it, where
+    /// <see cref="SelfGrantRefusal"/> read as if they had named themselves.
+    /// </summary>
+    /// <param name="group">The group granted, as the operator will recognise it.</param>
+    /// <param name="through">The groups between the operator and <paramref name="group"/>, innermost first; empty for a direct
+    /// member; null when the path could not be read (the membership itself was read - the refusal stands).</param>
+    /// <param name="throughPrimaryGroup">The first of <paramref name="through"/> - or, when it is empty, the group itself - is
+    /// the operator's primary group.</param>
+    internal static string SelfGrantGroupRefusal(string group, IReadOnlyList<string>? through, bool throughPrimaryGroup)
+    {
+        const string consequence = ", so a permission granted to that group is granted to you.";
+        if (through is null)
+            return $"Access denied: You are a member of the group '{group}' (the groups that membership runs through could not be read){consequence}";
+
+        if (through.Count == 0)
+        {
+            return throughPrimaryGroup
+                ? $"Access denied: The group '{group}' is your primary group{consequence}"
+                : $"Access denied: You are a member of the group '{group}'{consequence}";
+        }
+
+        var path = string.Join(", which is in ", through.Select(name => $"'{name}'"));
+        return $"Access denied: You are a member of the group '{group}' through {(throughPrimaryGroup ? "your primary group " : "")}{path}{consequence}";
+    }
+
+    /// <summary>
     /// Null when the grant is to someone other than <paramref name="actingUser"/>; otherwise the refusal - a self-grant, or
     /// a check that could not be completed.
     /// </summary>
@@ -888,6 +915,10 @@ public class PermissionValidator
 
         var groups = named.Where(candidate => candidate.IsGroup).Select(candidate => candidate.DistinguishedName).ToList();
 
+        // sweep-c item 18: a synced group found inside a cloud-only grantee, by its DN, and the Exchange member it was found as -
+        // so a refusal for it names the cloud group the operator granted and the groups between.
+        var syncedInCloud = new Dictionary<string, ExchangeGroupMember>(StringComparer.OrdinalIgnoreCase);
+
         if (grantee is not null && IsGroupRecipient(grantee)
             && !named.Any(candidate => candidate.IsGroup && candidate.CarriesAddress(grantee.PrimarySmtpAddress)))
         {
@@ -903,7 +934,11 @@ public class PermissionValidator
                 credential);
             if (refusal is not null)
                 return refusal;
-            groups.AddRange(synced);
+            foreach (var (dn, member) in synced)
+            {
+                groups.Add(dn);
+                syncedInCloud.TryAdd(dn, member);
+            }
         }
 
         if (account is null || groups.Count == 0)
@@ -931,8 +966,11 @@ public class PermissionValidator
 
         if (membership.Matches.Count > 0)
         {
-            _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}, {Groups})", exchangeIdentity, affectedUser, string.Join("; ", membership.MatchedEntries));
-            return SelfGrantRefusal;
+            var refusal = await GroupMembershipRefusalAsync(directory, credential, account, affectedUser, membership.MatchedEntries[0],
+                syncedInCloud, run);
+            _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}, {Groups}): {Refusal}",
+                exchangeIdentity, affectedUser, string.Join("; ", membership.MatchedEntries), refusal);
+            return refusal;
         }
 
         if (membership.Incomplete)
@@ -943,6 +981,47 @@ public class PermissionValidator
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// sweep-c item 18. The refusal for a grant to a group the operator was found in: the group by the name the operator will
+    /// know, and the groups between - read from the membership links once per run (<see cref="SelfGrantRun.MembershipPathAsync"/>).
+    /// </summary>
+    /// <remarks>
+    /// Explanation only: the evaluator has already found the match, so the grant is refused whatever this reads. A trace that
+    /// throws or finds no path (a domain-local group of another domain holds the only link) still names the group, and says
+    /// the path could not be read. A synced group found inside a cloud-only grantee (<paramref name="syncedInCloud"/>) is
+    /// named as the cloud group the operator granted, the synced group and the cloud groups between them.
+    /// </remarks>
+    private async Task<string> GroupMembershipRefusalAsync(SelfGrantDirectory directory, PSCredential credential,
+        SelfGrantDirectoryObject account, string affectedUser, string matchedDn, IReadOnlyDictionary<string, ExchangeGroupMember> syncedInCloud,
+        SelfGrantRun run)
+    {
+        ProtectedGroupMembership.MembershipPath? path;
+        try
+        {
+            path = await run.MembershipPathAsync(account.DistinguishedName, matchedDn,
+                () => Task.Run(() => ProtectedGroupMembership.TracePath(account.DistinguishedName, matchedDn, directory.GroupsUnder(credential))));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The self-grant check could not read how {Account} is in {Group}; the refusal names the group without the path",
+                account.DistinguishedName, matchedDn);
+            path = null;
+        }
+
+        var through = path?.Through.Select(GroupManagementService.DisplayNameFromDn).ToList();
+        if (syncedInCloud.TryGetValue(matchedDn, out var member))
+        {
+            // The synced group is one of the groups between: inside it the directory's path, outside it the cloud groups Exchange
+            // read through, innermost first.
+            through = through is null
+                ? null
+                : [.. through, GroupManagementService.DisplayNameFromDn(matchedDn), .. member.Via.Reverse()];
+            return SelfGrantGroupRefusal(affectedUser, through, path?.ThroughPrimaryGroup == true);
+        }
+
+        return SelfGrantGroupRefusal(GroupManagementService.DisplayNameFromDn(matchedDn), through, path?.ThroughPrimaryGroup == true);
     }
 
     /// <summary>
@@ -962,7 +1041,7 @@ public class PermissionValidator
     /// there, before any lookup (aud-a70 (6)). aud-a72: a dynamic distribution group's members are the ones Exchange
     /// calculated. A check that could not be completed is never a cleared grant (aud-a28y).
     /// </remarks>
-    private async Task<(string? Refusal, IReadOnlyList<string> SyncedGroups)> CompareInExchangeGroupAsync(SelfGrantDirectory directory,
+    private async Task<(string? Refusal, IReadOnlyList<(string Dn, ExchangeGroupMember Member)> SyncedGroups)> CompareInExchangeGroupAsync(SelfGrantDirectory directory,
         SelfGrantDirectoryObject? account, ResolvedRecipient? actor, string exchangeIdentity, string affectedUser, ResolvedRecipient group,
         SelfGrantRun run, PSCredential credential)
     {
@@ -1015,10 +1094,12 @@ public class PermissionValidator
         // read in the directory below. A match anywhere refuses as a self-grant before a member that cannot be compared
         // refuses as incomplete - both refuse, and the self-grant is the more exact answer.
         var people = members.Where(member => !member.IsGroup).ToList();
-        if (people.Any(member => IsTheOperatorsRecipient(member, account, actor)))
+        if (people.FirstOrDefault(member => IsTheOperatorsRecipient(member, account, actor)) is { } self)
         {
-            _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}) - Exchange Online names them among its members", exchangeIdentity, affectedUser);
-            return (SelfGrantRefusal, []);
+            // sweep-c item 18: named as the group granted and the cloud groups Exchange read through to reach them, innermost first.
+            var refusal = SelfGrantGroupRefusal(affectedUser, [.. self.Via.Reverse()], throughPrimaryGroup: false);
+            _logger.LogWarning("User {User} attempted to grant permissions to a group they are a member of ({Affected}) - Exchange Online names them among its members: {Refusal}", exchangeIdentity, affectedUser, refusal);
+            return (refusal, []);
         }
 
         if (people.Any(member => !CanBeCompared(member, actor)))
@@ -1031,7 +1112,7 @@ public class PermissionValidator
         if (account is null)
             return (null, []);
 
-        var synced = new List<string>();
+        var synced = new List<(string Dn, ExchangeGroupMember Member)>();
         foreach (var nested in members.Where(member => member.IsGroup && member.IsDirSynced == true))
         {
             // aud-a69. Found under the credential the evaluation reads under, so what it reads is what was found - never looked
@@ -1059,7 +1140,7 @@ public class PermissionValidator
                 return (unread, []);
             }
 
-            synced.AddRange(held.Select(candidate => candidate.DistinguishedName));
+            synced.AddRange(held.Select(candidate => (candidate.DistinguishedName, nested)));
         }
 
         return (null, synced);
