@@ -212,11 +212,15 @@ internal interface IProtectedGroupDirectory
 /// ancestry, one read of the named objects per level, in its own domain and at the global catalog, then the one anchored
 /// question to a domain-local group's own domain. Nothing searches a domain or the forest for whatever contains the target.
 ///
-/// Fail closed throughout: a read that fails, a lookup that matches nothing (for a group the caller has just read), a domain
-/// that cannot be determined, a token without the primary group - each marks the answer incomplete, naming the entry, and the
-/// caller refuses an incomplete answer that found no match. A match found elsewhere still protects. sweep-c item 17: a name
-/// several groups carry protects the members of each, and a configured entry the directory says names no group protects
-/// nobody and is named (<see cref="Result.Stale"/>) - neither makes every check incomplete any more.
+/// Fail closed throughout: a read that fails, a lookup that matches nothing or several, a domain that cannot be determined, a
+/// token without the primary group - each marks the answer incomplete, naming the entry (<see cref="Result.Problems"/>), and
+/// the caller refuses an incomplete answer that found no match. A match found elsewhere still protects.
+///
+/// docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3: entries are SIDs - a <c>group_sid</c> row, a legacy row stored as a
+/// SID - or a DN the caller has just read from the directory (the self-grant check, the self-service deny trustees). A name -
+/// <c>DOMAIN\Name</c> or bare - is never looked up here: it is incomplete, <see cref="NotConverted"/>. Turning a stored name
+/// into a group is <c>db convert-identifiers</c>' job alone (<see cref="ProtectedPrincipalIdentifierResolver"/>); sweep-c item
+/// 17's first build, which looked names up here and let a name several groups carry protect the members of each, is gone.
 /// </remarks>
 internal static class ProtectedGroupMembership
 {
@@ -233,13 +237,13 @@ internal static class ProtectedGroupMembership
         /// reads), so a refusal names the entry rather than "expansion errors".
         /// </summary>
         public IReadOnlyList<EntryProblem> Problems { get; init; } = [];
-
-        /// <summary>
-        /// sweep-c item 17. Configured entries the directory answered name no group: they protect nobody, and did not make
-        /// the answer incomplete (<see cref="Evaluate"/>'s <c>configuredEntries</c>).
-        /// </summary>
-        public IReadOnlyList<string> Stale { get; init; } = [];
     }
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md K.3. The problem for an entry stored by name only: the check never resolves
+    /// or matches a name, so the entry cannot be answered until <c>db convert-identifiers</c> has given it its identifier.
+    /// </summary>
+    internal const string NotConverted = "not converted - run db convert-identifiers";
 
     /// <summary>sweep-c item 17. One cause of an incomplete answer.</summary>
     /// <param name="Entry">The entry as passed in; null when the cause is the target's own reads.</param>
@@ -265,25 +269,14 @@ internal static class ProtectedGroupMembership
     /// <param name="targetDn">The target's DN.</param>
     /// <param name="directory">The reads.</param>
     /// <param name="logger">Where each entry the evaluation cannot use is named.</param>
-    /// <param name="configuredEntries">
-    /// sweep-c item 17. True for the protection rules an administrator configured, false (the default) for groups the caller
-    /// has just read from the directory (the self-grant check, the self-service deny trustees). A configured entry the
-    /// directory answers names no group - a deleted group's SID, a DN no group holds, a name no group carries - protects
-    /// nobody: there is no group for the target to be in. It is named in <see cref="Result.Stale"/> and logged on every
-    /// check, and the check goes on without it, where before it made every check that found no other match incomplete, and
-    /// so refused every change in every module. For a group just read, the same answer is still incomplete: the read raced
-    /// a change. A read that throws is incomplete for both, as before.
-    /// </param>
     internal static Result Evaluate(
         IReadOnlyList<string> protectedGroups,
         string targetDn,
         IProtectedGroupDirectory directory,
-        ILogger logger,
-        bool configuredEntries = false)
+        ILogger logger)
     {
         var matches = new List<string>();
         var problems = new List<EntryProblem>();
-        var stale = new List<string>();
         var entries = protectedGroups.Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
         if (entries.Count == 0)
             return new(matches, false);
@@ -343,62 +336,43 @@ internal static class ProtectedGroupMembership
                     continue;
                 }
 
-                if (candidates.Count == 0)
+                // Exactly one group, or the entry cannot be answered: none (a deleted group's SID, a DN no group holds any
+                // more) or several is incomplete, named, and refuses a check that found no other match.
+                if (candidates.Count != 1)
                 {
-                    if (configuredEntries)
-                    {
-                        // sweep-c item 17: the directory's answer is that no such group exists, so nobody is in it. Named on
-                        // every check (and on the Admin Settings page) until it is removed or re-picked.
-                        logger.LogWarning(
-                            "Protected group {ProtectedGroup} names no group in the directory - it protects nobody until it is removed or re-picked; the check goes on without it",
-                            raw);
-                        stale.Add(raw);
-                        continue;
-                    }
-
+                    var why = candidates.Count == 0 ? NoSuchGroup : $"{candidates.Count} groups match";
                     logger.LogWarning(
                         "Protected group {ProtectedGroup} could not be resolved to exactly one directory group ({Problem}) - check incomplete",
-                        raw, NoSuchGroup);
-                    Incomplete(raw, NoSuchGroup);
+                        raw, why);
+                    Incomplete(raw, why);
                     continue;
                 }
 
-                if (candidates.Count > 1)
+                var group = candidates[0];
+
+                // The target itself, or a group its token carries.
+                if (membership.Sids.Contains(group.Sid))
                 {
-                    // sweep-c item 17: a name several groups carry protects the members of each - the fail-closed reading,
-                    // where refusing to bind it made every check that found no other match incomplete. Named with the
-                    // groups, so it can be re-picked.
+                    Match(raw);
+                    continue;
+                }
+
+                var groupServer = GroupManagementService.ServerFromDn(group.DistinguishedName);
+                if (groupServer is null)
+                {
                     logger.LogWarning(
-                        "Protected group {ProtectedGroup} names {Count} groups ({Groups}) - the members of each are protected until it is re-picked",
-                        raw, candidates.Count, string.Join("; ", candidates.Select(c => c.DistinguishedName)));
+                        "Protected group {ProtectedGroup} resolved to DN {GroupDn}, which names no domain - check incomplete",
+                        raw, group.DistinguishedName);
+                    Incomplete(raw, $"its group {group.DistinguishedName} names no domain");
+                    continue;
                 }
 
-                foreach (var group in candidates)
-                {
-                    // The target itself, or a group its token carries.
-                    if (membership.Sids.Contains(group.Sid))
-                    {
-                        Match(raw);
-                        break;
-                    }
+                // A security group the token is complete for, and does not carry: not a member. Every other group - one a
+                // token cannot carry - is asked of the membership links below.
+                if (TokenAnswers(membership, group, groupServer, targetServer))
+                    continue;
 
-                    var groupServer = GroupManagementService.ServerFromDn(group.DistinguishedName);
-                    if (groupServer is null)
-                    {
-                        logger.LogWarning(
-                            "Protected group {ProtectedGroup} resolved to DN {GroupDn}, which names no domain - check incomplete",
-                            raw, group.DistinguishedName);
-                        Incomplete(raw, $"its group {group.DistinguishedName} names no domain");
-                        continue;
-                    }
-
-                    // A security group the token is complete for, and does not carry: not a member. Every other group - one a
-                    // token cannot carry - is asked of the membership links below.
-                    if (TokenAnswers(membership, group, groupServer, targetServer))
-                        continue;
-
-                    unanswered.Add((raw, group, groupServer));
-                }
+                unanswered.Add((raw, group, groupServer));
             }
             catch (Exception ex)
             {
@@ -424,7 +398,7 @@ internal static class ProtectedGroupMembership
                 "Protected-group check could not read the groups {TargetDn} is in from their member links - check incomplete",
                 targetDn);
             problems.Add(new(null, "the groups the target is in could not be read from their member links"));
-            return new(matches, true) { Problems = problems, Stale = stale };
+            return new(matches, true) { Problems = problems };
         }
 
         foreach (var (raw, group, groupServer) in unanswered)
@@ -476,7 +450,7 @@ internal static class ProtectedGroupMembership
             problems.Add(new(raw, why));
         }
 
-        Result Answer() => new(matches, incomplete) { Problems = problems, Stale = stale };
+        Result Answer() => new(matches, incomplete) { Problems = problems };
     }
 
     /// <summary>
@@ -697,36 +671,34 @@ internal static class ProtectedGroupMembership
     private static bool SameDomain(string? a, string? b)
         => a is not null && b is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The problem <see cref="Resolve"/> reports for an entry no group matches.</summary>
+    /// <summary>The problem an entry no group matches is recorded with.</summary>
     internal const string NoSuchGroup = "no such group";
 
-    /// <summary>The problem <see cref="Resolve"/> reports for a DN with no DC components.</summary>
+    /// <summary>The problem a DN with no DC components is recorded with.</summary>
     internal const string DnNamesNoDomain = "the DN names no domain";
 
     /// <summary>
-    /// Binds one entry to exactly one group, in the directory its shape names. Null, with the
-    /// reason in <paramref name="problem"/>, for no match or several. Also the identifier migration's group lookup
-    /// (docs/ProtectedPrincipalIdentifiers-Plan.md B.4), so a legacy row converts to the group the check binds it to.
+    /// The groups one entry names, for the check: a SID at the global catalog, or a DN - one the caller has just read from the
+    /// directory - read in its own domain. Null, with the reason in <paramref name="problem"/>, for a DN with no DC components
+    /// and for a name (<c>DOMAIN\Name</c> or bare), which the check never looks up (<see cref="NotConverted"/>); throws when a
+    /// read fails.
     /// </summary>
-    internal static DirectoryGroup? Resolve(
-        ProtectedGroupEntry entry, IProtectedGroupDirectory directory, out string? problem)
-    {
-        var groups = Candidates(entry, directory, out problem);
-        return groups is null ? null : One(groups, out problem);
-    }
-
-    /// <summary>
-    /// sweep-c item 17. Every group one entry names, in the directory its shape names: a DN read in its own domain, a SID at
-    /// the global catalog, <c>DOMAIN\Name</c> in that domain, a bare name forest-wide. Null, with the reason in
-    /// <paramref name="problem"/>, only for a DN with no DC components; throws when a read fails or the forest has no such
-    /// domain. <see cref="Resolve"/> holds the answer to exactly one; <see cref="Evaluate"/> protects the members of each.
-    /// </summary>
+    /// <remarks>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3. The <c>DOMAIN\Name</c> and bare-name lookups moved to
+    /// <see cref="ProtectedPrincipalIdentifierResolver.ResolveGroupEntry"/>, used only by <c>db convert-identifiers</c>. The DN
+    /// read stays because the self-grant check and the self-service deny trustees hand this evaluator the DNs of groups they have
+    /// just read, and K.3 leaves those checks unchanged; the protected-principal check never hands it a stored DN - its legacy
+    /// rows stored by name are refused before it is asked (<see cref="ProtectedPrincipalService"/>).
+    /// </remarks>
     internal static IReadOnlyList<DirectoryGroup>? Candidates(
         ProtectedGroupEntry entry, IProtectedGroupDirectory directory, out string? problem)
     {
         problem = null;
         switch (entry.Kind)
         {
+            case ProtectedGroupEntryKind.Sid:
+                return directory.FindGroups(GroupLookupKey.Sid, entry.Value, null);
+
             case ProtectedGroupEntryKind.DistinguishedName:
                 var dnServer = GroupManagementService.ServerFromDn(entry.Value);
                 if (dnServer is null)
@@ -738,43 +710,10 @@ internal static class ProtectedGroupMembership
                 // Read, never passed through: a DN that no longer exists names no group.
                 return directory.FindGroups(GroupLookupKey.DistinguishedName, entry.Value, dnServer);
 
-            case ProtectedGroupEntryKind.DomainQualified:
-                // Throws when the forest has no such domain - which the caller records as an
-                // incomplete check, never as a lookup in some other domain.
-                var namedServer = directory.ResolveDomainServer(entry.Domain!);
-                return ByName(entry.Value, namedServer, directory);
-
-            case ProtectedGroupEntryKind.Sid:
-                return directory.FindGroups(GroupLookupKey.Sid, entry.Value, null);
-
             default:
-                // No domain named, so none is assumed: the forest is searched, and a name two domains share names both
-                // rather than whichever answered first.
-                return ByName(entry.Value, null, directory);
+                problem = NotConverted;
+                return null;
         }
-    }
-
-    /// <summary>
-    /// sAMAccountName first, then the common name. An exact sAMAccountName match wins outright
-    /// within one domain because it is unique there; the common name is only consulted when no
-    /// group carries the name as its sAMAccountName.
-    /// </summary>
-    private static IReadOnlyList<DirectoryGroup> ByName(string name, string? server, IProtectedGroupDirectory directory)
-    {
-        var bySam = directory.FindGroups(GroupLookupKey.SamAccountName, name, server);
-        return bySam.Count > 0 ? bySam : directory.FindGroups(GroupLookupKey.CommonName, name, server);
-    }
-
-    private static DirectoryGroup? One(IReadOnlyList<DirectoryGroup> groups, out string? problem)
-    {
-        if (groups.Count == 1)
-        {
-            problem = null;
-            return groups[0];
-        }
-
-        problem = groups.Count == 0 ? NoSuchGroup : $"{groups.Count} groups match";
-        return null;
     }
 
     /// <summary>

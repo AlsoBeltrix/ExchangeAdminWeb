@@ -160,40 +160,39 @@ public class ProtectedGroupMembershipTests
         Assert.True(Evaluate(forest, odd, StaffA).Incomplete);
     }
 
-    // ----- Hole 3: the resolver -----
+    // ----- Hole 3: the resolver. K.3: names are resolved only by db convert-identifiers (ConfigDbIdentifierTests) -----
 
-    [Fact]
-    public void DomainQualifiedEntry_ResolvesInTheNamedDomain_NotAnother()
+    [Theory]
+    [InlineData(@"B\Privileged")]
+    [InlineData("Privileged")]
+    [InlineData("Protected VIPs")]
+    public void ANameEntry_IsNeverLookedUp_ItIsIncomplete_NotConverted(string name)
     {
-        // The finding: "B\Privileged" had its domain stripped and resolved as A\Privileged,
-        // which Tess is not in, so a target protected through B's group passed.
+        // Tess is in B\Privileged and in Protected VIPs: a lookup by name would have matched. The check does not look a name
+        // up at all - not in the named domain, not forest-wide - and cannot answer for it.
         var forest = Forest();
 
-        var result = Evaluate(forest, Tess, @"B\Privileged");
-
-        Assert.Equal([@"Group:B\Privileged"], result.Matches);
-        Assert.False(result.Incomplete);
-        Assert.Contains($"FindGroups SamAccountName Privileged {DomainB}", forest.Calls);
-    }
-
-    [Fact]
-    public void DomainQualifiedEntry_ForTheOtherDomain_SelectsThatDomainsGroup()
-    {
-        // The control for the test above: the same name, the other domain, a group Tess is not
-        // in. Proves the domain half SELECTS rather than being ignored either way.
-        var result = Evaluate(Forest(), Tess, @"A\Privileged");
-
-        Assert.Empty(result.Matches);
-        Assert.False(result.Incomplete);
-    }
-
-    [Fact]
-    public void DomainQualifiedEntry_NamingNoDomainOfTheForest_FailsClosed()
-    {
-        var result = Evaluate(Forest(), Tess, @"NOWHERE\Privileged");
+        var result = Evaluate(forest, Tess, name);
 
         Assert.Empty(result.Matches);
         Assert.True(result.Incomplete);
+        var problem = Assert.Single(result.Problems);
+        Assert.Equal(name, problem.Entry);
+        Assert.Equal(ProtectedGroupMembership.NotConverted, problem.Problem);
+        Assert.DoesNotContain(forest.Calls, c => c.Contains("SamAccountName", StringComparison.Ordinal) || c.Contains("CommonName", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ASidEntryNamingNoGroup_IsIncomplete_AndNamed()
+    {
+        // A deleted group's SID: sweep-c item 17's first build let it protect nobody; K.3 removed that branch - the check
+        // cannot answer for it, refuses, and names it until it is removed or re-picked.
+        var result = Evaluate(Forest(), Uma, $"{SidA}-9999", StaffA);
+
+        Assert.True(result.Incomplete);
+        var problem = Assert.Single(result.Problems);
+        Assert.Equal($"{SidA}-9999", problem.Entry);
+        Assert.Equal(ProtectedGroupMembership.NoSuchGroup, problem.Problem);
     }
 
     [Fact]
@@ -218,73 +217,6 @@ public class ProtectedGroupMembershipTests
     }
 
     [Fact]
-    public void BareName_SharedByTwoDomains_ProtectsTheMembersOfEach()
-    {
-        // No domain named, so none is assumed. Resolving to whichever domain answered first is
-        // the same defect as stripping the domain half. sweep-c item 17: refusing to bind it made
-        // every check with no other match incomplete - every change in every module refused. The
-        // fail-closed reading protects the members of each group the name carries: Tess is in
-        // B\Privileged only, and is protected.
-        var result = Evaluate(Forest(), Tess, "Privileged");
-
-        Assert.Equal(["Group:Privileged"], result.Matches);
-        Assert.False(result.Incomplete);
-    }
-
-    [Fact]
-    public void BareName_SharedByTwoDomains_IsACompleteAnswer_ForATargetInNeither()
-    {
-        // The control: Uma is in neither Privileged group, and the answer is "not protected", not "cannot tell".
-        var result = Evaluate(Forest(), Uma, "Privileged");
-
-        Assert.Empty(result.Matches);
-        Assert.False(result.Incomplete);
-    }
-
-    // ----- sweep-c item 17: one stale configured entry no longer refuses every check -----
-
-    private static ProtectedGroupMembership.Result EvaluateConfigured(FakeForest forest, string targetDn, params string[] protectedGroups)
-        => ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, forest, NullLogger.Instance, configuredEntries: true);
-
-    [Theory]
-    [InlineData("CN=Gone,OU=Groups,DC=a,DC=example")]
-    [InlineData("S-1-5-21-100-200-300-9999")]
-    [InlineData("Decommissioned Team")]
-    public void AConfiguredEntryNamingNoGroup_ProtectsNobody_IsNamed_AndTheCheckIsComplete(string stale)
-    {
-        // A deleted group's SID, a DN no group holds, a name no group carries: nobody can be in a group that does not exist.
-        // It made every check with no other match incomplete; now the check goes on without it, and it is named.
-        var result = EvaluateConfigured(Forest(), Uma, stale, StaffA);
-
-        Assert.Empty(result.Matches);
-        Assert.False(result.Incomplete);
-        Assert.Equal([stale], result.Stale);
-    }
-
-    [Fact]
-    public void AConfiguredStaleEntry_DoesNotCancelAMatchOnAnotherEntry()
-    {
-        var result = EvaluateConfigured(Forest(), Tess, "CN=Gone,OU=Groups,DC=a,DC=example", StaffA);
-
-        Assert.Equal(["Group:" + StaffA], result.Matches);
-        Assert.False(result.Incomplete);
-    }
-
-    [Fact]
-    public void AConfiguredEntryThatCannotBeRead_IsStillIncomplete_AndNamedInTheProblems()
-    {
-        // Only the directory's answer that no group exists protects nobody; a read that throws is no answer.
-        var forest = Forest();
-        forest.FailOn = nameof(FakeForest.FindGroups);
-
-        var result = EvaluateConfigured(forest, Uma, "Privileged");
-
-        Assert.True(result.Incomplete);
-        Assert.Empty(result.Stale);
-        Assert.Equal("Privileged", Assert.Single(result.Problems).Entry);
-    }
-
-    [Fact]
     public void AnEntryForAGroupJustRead_ThatNamesNoGroup_IsStillIncomplete()
     {
         // The self-grant check and the self-service deny trustees pass groups they have just read: no such group there means
@@ -292,17 +224,7 @@ public class ProtectedGroupMembershipTests
         var result = Evaluate(Forest(), Uma, "CN=Gone,OU=Groups,DC=a,DC=example");
 
         Assert.True(result.Incomplete);
-        Assert.Empty(result.Stale);
         Assert.Equal(ProtectedGroupMembership.NoSuchGroup, Assert.Single(result.Problems).Problem);
-    }
-
-    [Fact]
-    public void BareName_UniqueInTheForest_IsResolvedForestWide()
-    {
-        var forest = Forest();
-
-        Assert.Single(Evaluate(forest, Tess, "Protected VIPs").Matches);
-        Assert.Contains("FindGroups SamAccountName Protected VIPs forest", forest.Calls);
     }
 
     [Fact]
@@ -737,7 +659,7 @@ public class ProtectedGroupMembershipTests
     public void AMatchElsewhere_StillProtects_WhenAnotherEntryCannotBeAnswered()
     {
         // Protected is the safe answer; an unresolvable entry must not cancel a real match.
-        // sweep-c item 17: a forest with no such domain - a name several groups carry now protects the members of each.
+        // K.3: a name is never looked up by the check - it is incomplete, "not converted" - and still cannot cancel a real match.
         var result = Evaluate(Forest(), Tess, @"NOWHERE\Privileged", StaffA);
 
         Assert.Equal(["Group:" + StaffA], result.Matches);
@@ -982,7 +904,7 @@ public class ProtectedGroupMembershipTests
             "private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckTransitiveGroupMembership(",
             "internal static (string? TargetDn, bool Failed) SelectFallbackDn(");
 
-        Assert.Contains("ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger, configuredEntries: true)", body, StringComparison.Ordinal);
+        Assert.Contains("ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger)", body, StringComparison.Ordinal);
         // ppi-s1: the ou_guid comparison shares the session, so the evaluator's incompleteness is folded into one flag
         // that is what the method returns.
         Assert.Contains("incomplete |= outcome.Incomplete;", body, StringComparison.Ordinal);

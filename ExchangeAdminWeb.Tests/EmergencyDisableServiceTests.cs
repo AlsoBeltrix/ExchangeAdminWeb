@@ -832,6 +832,21 @@ public class EmergencyDisableServiceTests : IDisposable
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extendedLog, operationTrace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
+
+        // docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a user row is compared only through its user_sid row (here by its label:
+        // the test principals carry no SID), so each imported row gets the one db convert-identifiers writes.
+        var (loaded, _, loadError) = protectedPrincipalService.LoadEffectiveConfig();
+        if (loadError is null && loaded is { Users.Length: > 0 })
+        {
+            protectedPrincipalService.SaveConfig(new ProtectedPrincipalConfig
+            {
+                Users = loaded.Users,
+                Groups = loaded.Groups,
+                OrganizationalUnits = loaded.OrganizationalUnits,
+                SamAccountNamePatterns = loaded.SamAccountNamePatterns,
+                UserIds = loaded.Users.Select((u, i) => ProtectedPrincipalIdEntry.Format($"S-1-5-21-1000000000-1000000000-1000000000-{1100 + i}", u)).ToArray(),
+            });
+        }
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
 
         // Real servicer service. With no servicerGroups it holds NO ProtectedServicer row and so

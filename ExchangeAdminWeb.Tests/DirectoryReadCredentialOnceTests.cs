@@ -43,7 +43,7 @@ public sealed class DirectoryReadCredentialOnceTests : IDisposable
             Proxies = [$"SMTP:{Target}"],
         });
         var other = _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
-        _protectedGroupDn = _h.Forest.AddGroup("VIP Staff", members: [other]).Dn;
+        _protectedGroupDn = _h.Forest.AddGroup("VIP Staff", members: [other]).Sid!; // K.3: stored as the SID db convert-identifiers writes
     }
 
     public void Dispose() => _h.Dispose();

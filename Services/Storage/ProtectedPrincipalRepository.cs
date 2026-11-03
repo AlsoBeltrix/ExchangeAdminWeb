@@ -210,99 +210,24 @@ public sealed class ProtectedPrincipalRepository
     }
 
     /// <summary>
-    /// The identifier migration's write (docs/ProtectedPrincipalIdentifiers-Plan.md B.4 step 4): for each conversion, a NEW
-    /// identifier row beside its legacy row, which is never rewritten and becomes its companion. One transaction, under the
-    /// write lock.
+    /// The rows of every kind on <paramref name="connection"/>, inside <paramref name="transaction"/> when one is given: the read
+    /// <c>db convert-identifiers</c> and <c>db identifier-status</c> make, which have no <see cref="IConfigStore"/> to read through
+    /// (docs/ProtectedPrincipalIdentifiers-Plan.md K.3). Throws when the read fails.
     /// </summary>
-    /// <remarks>
-    /// The lookups ran with no lock held, and dev and prod share this database, so every row is re-checked here (aud-a33b):
-    /// a conversion is written only while its legacy row is still present exactly as the pass read it and still pairs with
-    /// no identifier row. A row removed or changed meanwhile is that writer's and is left alone (<c>Changed</c>); a row
-    /// another writer converted first is not converted twice (<c>AlreadyConverted</c>). When nothing is written the
-    /// transaction is rolled back, so neither the rows nor the change token every cache watches move.
-    /// </remarks>
-    public ProtectedPrincipalIdConversionOutcome AddIdentifierRows(IReadOnlyList<ProtectedPrincipalIdConversion> conversions)
+    internal static ProtectedPrincipalData ReadRows(SqliteConnection connection, SqliteTransaction? transaction)
+        => ReadLists(connection, transaction);
+
+    /// <summary>
+    /// <c>db convert-identifiers</c>' write of one conversion: a NEW identifier row, <c>identifier|legacy value</c>, in its
+    /// identifier kind beside the legacy row, which is never rewritten and becomes its companion (plan B.1). Inside the verb's
+    /// one transaction, which has re-read every row under the write lock first.
+    /// </summary>
+    internal static void InsertIdentifierRow(SqliteConnection connection, SqliteTransaction transaction, ProtectedPrincipalIdConversion conversion)
     {
-        ArgumentNullException.ThrowIfNull(conversions);
-        if (conversions.Count == 0)
-            return new([], [], []);
-
-        try
-        {
-            return _store.Write((connection, transaction) =>
-            {
-                var written = new List<ProtectedPrincipalIdConversion>();
-                var already = new List<ProtectedPrincipalIdConversion>();
-                var changed = new List<ProtectedPrincipalIdConversion>();
-                var idRows = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-
-                foreach (var conversion in conversions)
-                {
-                    if (!LegacyRowAsRead(connection, transaction, conversion.LegacyKind, conversion.LegacyValue))
-                    {
-                        changed.Add(conversion);
-                        continue;
-                    }
-
-                    if (!idRows.TryGetValue(conversion.IdKind, out var rows))
-                        idRows[conversion.IdKind] = rows = ValuesOfKind(connection, transaction, conversion.IdKind);
-
-                    if (ProtectedPrincipalIdEntry.IsCompanion(conversion.LegacyValue, rows))
-                    {
-                        already.Add(conversion);
-                        continue;
-                    }
-
-                    var row = ProtectedPrincipalIdEntry.Format(conversion.Identifier, conversion.LegacyValue);
-                    InsertKind(connection, transaction, conversion.IdKind, [row]);
-                    rows.Add(row);
-                    written.Add(conversion);
-                }
-
-                var outcome = new ProtectedPrincipalIdConversionOutcome(written, already, changed);
-                return written.Count == 0 ? throw new NothingConverted(outcome) : outcome;
-            });
-        }
-        catch (NothingConverted nothing)
-        {
-            return nothing.Outcome;
-        }
-    }
-
-    // The rollback for a conversion write that wrote nothing: IConfigStore.Write commits whenever its callback returns.
-    private sealed class NothingConverted(ProtectedPrincipalIdConversionOutcome outcome) : Exception
-    {
-        public ProtectedPrincipalIdConversionOutcome Outcome { get; } = outcome;
-    }
-
-    // Present and exactly as read: the table's key may compare ignoring case, so the stored value is compared ordinally.
-    private static bool LegacyRowAsRead(SqliteConnection connection, SqliteTransaction transaction, string kind, string value)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT value FROM protected_principal WHERE kind = $kind AND value = $value;";
-        command.Parameters.AddWithValue("$kind", kind);
-        command.Parameters.AddWithValue("$value", value);
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            if (string.Equals(reader.GetString(0), value, StringComparison.Ordinal))
-                return true;
-        }
-        return false;
-    }
-
-    private static List<string> ValuesOfKind(SqliteConnection connection, SqliteTransaction transaction, string kind)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT value FROM protected_principal WHERE kind = $kind;";
-        command.Parameters.AddWithValue("$kind", kind);
-        var values = new List<string>();
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-            values.Add(reader.GetString(0));
-        return values;
+        // Never into a legacy kind, where an older build would read "S-1-...|..." as a name (ProtectedPrincipalIdKindsTripwireTests).
+        if (conversion.IdKind is not (KindUserSid or KindGroupSid or KindOuGuid))
+            throw new ArgumentException($"'{conversion.IdKind}' is not an identifier kind.", nameof(conversion));
+        InsertKind(connection, transaction, conversion.IdKind, [ProtectedPrincipalIdEntry.Format(conversion.Identifier, conversion.LegacyValue)]);
     }
 
     private static ProtectedPrincipalData ReadLists(SqliteConnection connection) => ReadLists(connection, null);
@@ -438,16 +363,7 @@ public sealed record ProtectedPrincipalReplaceOutcome(
     bool Replaced, ProtectedPrincipalSnapshot Before, ProtectedPrincipalSnapshot? After);
 
 /// <summary>
-/// One conversion the identifier migration writes: the legacy row as the pass read it, and the identifier row to add beside
-/// it (docs/ProtectedPrincipalIdentifiers-Plan.md B.4).
+/// One conversion <c>db convert-identifiers</c> writes (docs/ProtectedPrincipalIdentifiers-Plan.md K.3): the legacy row as the
+/// verb read it, and the identifier row it adds beside it, the legacy value its label.
 /// </summary>
 public sealed record ProtectedPrincipalIdConversion(string LegacyKind, string LegacyValue, string IdKind, string Identifier);
-
-/// <summary>
-/// What <see cref="ProtectedPrincipalRepository.AddIdentifierRows"/> did with each conversion: written; already converted by
-/// another writer; or left because its legacy row was removed or changed after the pass read it.
-/// </summary>
-public sealed record ProtectedPrincipalIdConversionOutcome(
-    IReadOnlyList<ProtectedPrincipalIdConversion> Written,
-    IReadOnlyList<ProtectedPrincipalIdConversion> AlreadyConverted,
-    IReadOnlyList<ProtectedPrincipalIdConversion> Changed);

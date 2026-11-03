@@ -288,7 +288,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var resolver = ExchangeNamesTheAliasAsTheOperator();
         resolver.ResolveRecipientAsync(Target).Returns(
             new ResolvedRecipient(Target, "ext-" + Target, "UserMailbox", ExistsOnPrem: true, ExchangeGuid: TargetMailbox));
-        var validator = _h.ProtectedValidator(resolver, new ProtectedPrincipalConfig { Groups = [vip.Dn] });
+        var validator = _h.ProtectedValidator(resolver, new ProtectedPrincipalConfig { Groups = [vip.Sid!] });
 
         var result = page == MailboxPage
             ? await SubmitMailboxGrant(resolver, _h.Audit, NullLogger<MailboxPermissions>.Instance, grantee: Other, validator: validator)

@@ -5,7 +5,6 @@
 @rendermode InteractiveServer
 @inject ModuleConfigService ModuleConfigSvc
 @inject ModuleAdminService ModuleAdmin
-@inject ModuleAdminSidMigration AdminSidMigration
 @inject ModuleEnablementService Enablement
 @inject SectionAccessService SectionAccess
 @inject ExchangeAdminWeb.Services.IGroupGrantDirectory ADSearch
@@ -619,7 +618,7 @@
 
                 <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.
                     A grant is stored as the group's SID and matched against the SIDs in the signed-in user's token, so a same-named group in another domain never satisfies it.
-                    A grant stored by name - written before grants were stored as SIDs - grants nothing; it is marked <em>not converted</em>. The resolve pass that runs at every start of this app - or <strong>Resolve now</strong> - looks each such name up once and, when it names exactly one group, replaces it with that group's SID, which grants from then on. A name that matches no group or several, or could not be looked up, is left with its reason beside it: remove it, and pick the group from the search.</small></p>
+                    A grant stored by name - written before grants were stored as SIDs - grants nothing and is marked <em>not converted - run db convert-identifiers</em>. The app's <code>db convert-identifiers</code> command (README, Troubleshooting) replaces each such name that names exactly one group with that group's SID, which grants from then on; or remove it, and pick the group from the search.</small></p>
 
                 @if (moduleAdminsUnreadable)
                 {
@@ -630,20 +629,12 @@
 
                 @if (!moduleAdminsUnreadable && UnconvertedAdminCount() > 0)
                 {
-                    @* docs/ProtectedPrincipalIdentifiers-Plan.md B.6: a grant still stored by name grants nothing (aud-a1) and is listed
-                       here, with the last resolve pass's reason, until it is converted or removed. *@
+                    @* docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a grant still stored by name grants nothing (aud-a1) and is listed
+                       here until db convert-identifiers converts it or it is removed. *@
                     <div class="alert alert-warning py-2 small">
                         <strong>@UnconvertedAdminCount() @(UnconvertedAdminCount() == 1 ? "grant is" : "grants are") stored by name</strong> and @(UnconvertedAdminCount() == 1 ? "grants" : "grant") nothing.
-                        Press Resolve now to convert each name that names exactly one group, or remove it and pick the group from the search.
-                        Each is marked below with the reason the last resolve pass gave@(adminFlags.RanAt is { } adminRanAt ? $" (it ran {adminRanAt.ToLocalTime():g})" : "").
-                        <button class="btn btn-sm btn-outline-dark ms-2" type="button" @onclick="ResolveAdminsNowAsync" disabled="@(adminResolving || saving)"
-                                title="@ResolveAdminsNowTip">@(adminResolving ? "Resolving..." : "Resolve now")</button>
+                        Run <code>db convert-identifiers</code> against the settings database (README, Troubleshooting), or remove each and pick the group from the search.
                     </div>
-                }
-
-                @if (adminResolveResult != null)
-                {
-                    <div class="alert @(adminResolveIsError ? "alert-danger" : "alert-info") py-2 small">@adminResolveResult</div>
                 }
 
                 @* Rows, not chips - same reasoning as the Access pane, and this is a list the
@@ -661,8 +652,7 @@
                             <tr>
                                 <td class="adm-grp" title="@capturedGroup">@DisplayNameFor(capturedGroup)@if (IsUnconvertedAdmin(capturedGroup))
                                     {
-                                        <span class="badge bg-secondary ms-1" title="@AdminNotConvertedTip(capturedGroup)">not converted</span>
-                                        <br /><small class="text-muted">@AdminNotConvertedReason(capturedGroup)</small>
+                                        <br /><small class="text-muted">@NotConvertedAdminText</small>
                                     }</td>
                                 <td class="adm-act">
                                     <button class="adm-rm" type="button" @onclick="() => RemoveModuleAdmin(capturedGroup)"
@@ -2345,22 +2335,13 @@
             RecountAdmins();
     }
 
-    // docs/ProtectedPrincipalIdentifiers-Plan.md B.6. This module's grants still stored by name, as the store holds them
-    // (ModuleAdminService.TryGetUnusableGrants), the last resolve pass's reasons (display-only), whether a pass started from
-    // this page is running, and what it reported.
+    // docs/ProtectedPrincipalIdentifiers-Plan.md K.3. This module's grants still stored by name, as the store holds them
+    // (ModuleAdminService.TryGetUnusableGrants): listed with one fixed text, since nothing here converts them - the app's
+    // db convert-identifiers command does, run by hand.
     private HashSet<string> unconvertedAdmins = new(StringComparer.OrdinalIgnoreCase);
-    private ModuleAdminMigrationFlags adminFlags = ModuleAdminMigrationFlags.None;
-    private bool adminResolving;
-    private string? adminResolveResult;
-    private bool adminResolveIsError;
 
-    private const string ResolveAdminsNowTip =
-        "Looks each module-admin grant still stored by name up in Active Directory, once, with the directory-read credential "
-        + "(Admin Settings, Protected principals): a DOMAIN\\name in that domain, a bare name across the forest, matched on the "
-        + "group's sAMAccountName, common name, name or display name. A name that names exactly one group is replaced by that "
-        + "group's SID and grants module admin at once; one that matches no group or several, or could not be looked up, is left "
-        + "as it is - granting nothing - with its reason beside it. The same pass runs at every start of the app, for every "
-        + "module; this runs it now.";
+    /// <summary>The text beside every grant stored by name (K.3 point 4).</summary>
+    internal const string NotConvertedAdminText = "not converted - run db convert-identifiers";
 
     private void LoadUnconvertedAdmins(string moduleId)
     {
@@ -2368,114 +2349,12 @@
         unconvertedAdmins = ModuleAdmin.TryGetUnusableGrants(out var unusable) && unusable.TryGetValue(moduleId, out var names)
             ? new HashSet<string>(names, StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        adminFlags = AdminSidMigration.ReadFlags();
     }
 
     private bool IsUnconvertedAdmin(string group) => unconvertedAdmins.Contains(group);
 
-    /// <summary>How many of the listed grants are stored by name: shown, counted and flagged until converted or removed.</summary>
+    /// <summary>How many of the listed grants are stored by name: shown and counted until converted or removed.</summary>
     private int UnconvertedAdminCount() => moduleAdminGroups.Count(IsUnconvertedAdmin);
-
-    private ModuleAdminFlaggedGrant? AdminFlagFor(string group) => module is null ? null : adminFlags.For(module.Id, group);
-
-    /// <summary>The reason shown beside a grant stored by name: the last pass's, or that no pass has looked at it.</summary>
-    private string AdminNotConvertedReason(string group) => NotConvertedAdminReason(AdminFlagFor(group));
-
-    internal static string NotConvertedAdminReason(ModuleAdminFlaggedGrant? flag) => flag is null
-        ? "Stored by name; no resolve pass has looked at it yet. Press Resolve now."
-        : flag.Reason switch
-        {
-            ProtectedPrincipalLeftReason.DirectoryUnavailable => $"Stored by name; the directory could not be asked ({flag.Detail}). Press Resolve now to try again.",
-            ProtectedPrincipalLeftReason.Ambiguous => $"Stored by name; {flag.Detail}. Remove it and pick the group from the search.",
-            ProtectedPrincipalLeftReason.NotFound => "Stored by name; not found: no group carries this name. Remove it, or pick the group from the search.",
-            _ => $"Stored by name; {flag.Detail}. Remove it and pick the group from the search.",
-        };
-
-    private string AdminNotConvertedTip(string group) => NotConvertedAdminTip(AdminFlagFor(group), adminFlags.RanAt);
-
-    internal static string NotConvertedAdminTip(ModuleAdminFlaggedGrant? flag, DateTimeOffset? ranAt)
-    {
-        var when = ranAt is { } at ? $" ({at.ToLocalTime():g})" : "";
-        var why = flag is null
-            ? "no resolve pass has looked at this grant yet."
-            : $"the last resolve pass{when} left it: {flag.Detail}.";
-        return "Not converted to a group SID: " + why + " A grant stored by name grants nothing - its group's members are not "
-            + "module admins through it - because a name can be satisfied by a same-named group in another domain. Press "
-            + "Resolve now to convert it when it names exactly one group, or remove it and pick the group from the search.";
-    }
-
-    /// <summary>
-    /// Resolve now (B.6): runs the module-admin SID pass the app runs at every start, here, and reloads this module's admin list
-    /// to show what it converted.
-    /// </summary>
-    /// <remarks>
-    /// Refused while this tab has unsaved changes: the pass writes the stored grants and the page then reloads them, which
-    /// would drop those changes. Busy-guarded before the first await (the aud-a67 shape). Cancelled only through the
-    /// activity's own token, which the pass honours up to its write and never during it.
-    /// </remarks>
-    private async Task ResolveAdminsNowAsync()
-    {
-        if (adminResolving)
-        {
-            adminResolveResult = "A resolve pass started from this page is still running.";
-            adminResolveIsError = true;
-            return;
-        }
-
-        if (module is null) return;
-        var moduleId = module.Id;
-        adminResolving = true;
-        adminResolveResult = null;
-        var ip = ClientInfo.GetIpForUser(currentUser);
-        try
-        {
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
-            if (!authResult.Succeeded)
-            {
-                adminResolveResult = "Only global admins can resolve module-admin grants.";
-                adminResolveIsError = true;
-                return;
-            }
-
-            if (dirty.IsSectionDirty(SecAdmins))
-            {
-                adminResolveResult = "Save or discard the changes on this tab first: Resolve now writes to the stored grants and then "
-                    + "reloads them, which would lose the unsaved changes. Nothing was changed.";
-                adminResolveIsError = true;
-                return;
-            }
-
-            using var activity = Progress.Begin(
-                "Module Config",
-                "Resolving module-admin grants stored by name to group SIDs",
-                ActivitySize.Unknown);
-
-            var result = await AdminSidMigration.RunAsync(currentUser, ip, activity.CancellationToken);
-
-            var failed = result.Status is ProtectedPrincipalMigrationStatus.StoreUnavailable
-                or ProtectedPrincipalMigrationStatus.DirectoryUnavailable
-                or ProtectedPrincipalMigrationStatus.AlreadyRunning
-                or ProtectedPrincipalMigrationStatus.Cancelled;
-            activity.Complete(!failed, result.Summary);
-            adminResolveResult = result.Summary;
-            adminResolveIsError = failed;
-
-            // The page may have opened another module while the pass ran; its own load has read that module's grants.
-            if (Shows(moduleId))
-            {
-                moduleAdminsUnreadable = !ModuleAdmin.TryGetAllGrants(out var adminGrants);
-                moduleAdminGroups = (adminGrants.TryGetValue(moduleId, out var admins) ? admins : Array.Empty<string>()).ToList();
-                moduleAdminGroupsBaseline = new List<string>(moduleAdminGroups);
-                LoadUnconvertedAdmins(moduleId);
-                RecountAdmins();
-            }
-        }
-        finally
-        {
-            adminResolving = false;
-        }
-    }
 
     private void HandleAdminKeyDown(KeyboardEventArgs e)
     {

@@ -174,7 +174,7 @@ public class ProtectedPrincipalIdentifierTests : IDisposable
     [Fact]
     public void RowsToEvaluate_ACompanionIsNotEvaluated_AnUnpairedLegacyRowIs_InItsOrder()
     {
-        var (legacy, ids) = ProtectedPrincipalService.RowsToEvaluate(
+        var (legacy, _, ids) = ProtectedPrincipalService.RowsToEvaluate(
             ["bob@contoso.com", "ALICE@contoso.com", "carol@contoso.com"],
             [$"{AliceSid}|{Alice}"],
             ProtectedPrincipalIdEntry.CanonicalSid);
@@ -186,23 +186,25 @@ public class ProtectedPrincipalIdentifierTests : IDisposable
     [Fact]
     public void RowsToEvaluate_WithNoIdentifierRows_IsEveryLegacyRowExactlyAsStored()
     {
-        // D1: an unmigrated store is enforced exactly as before.
+        // Every unpaired row, as stored: the check refuses naming each (K.3), so none may be dropped here.
         string[] stored = ["bob@contoso.com", "CONTOSO\\carol", "bob@contoso.com"];
 
-        var (legacy, ids) = ProtectedPrincipalService.RowsToEvaluate(stored, [], ProtectedPrincipalIdEntry.CanonicalSid);
+        var (legacy, _, ids) = ProtectedPrincipalService.RowsToEvaluate(stored, [], ProtectedPrincipalIdEntry.CanonicalSid);
 
         Assert.Equal(stored, legacy);
         Assert.Empty(ids);
     }
 
     [Fact]
-    public void RowsToEvaluate_AnIdentifierThatDoesNotParse_IsEvaluatedByItsLabel()
+    public void RowsToEvaluate_AnIdentifierThatDoesNotParse_IsReturnedAsUnreadable_NeverComparedByItsLabel()
     {
-        // Its companion is not evaluated, so a row that cannot be compared by identifier must not compare by nothing.
-        var (legacy, ids) = ProtectedPrincipalService.RowsToEvaluate(
+        // Its companion is not evaluated, so a row that cannot be compared by identifier must not compare by nothing: since K.3
+        // it is returned to be refused by name, never matched by its label.
+        var (legacy, unreadable, ids) = ProtectedPrincipalService.RowsToEvaluate(
             [Alice], [$"not-a-sid|{Alice}"], ProtectedPrincipalIdEntry.CanonicalSid);
 
-        Assert.Equal([Alice], legacy);
+        Assert.Empty(legacy);
+        Assert.Equal([Alice], unreadable);
         Assert.Empty(ids);
     }
 
@@ -237,9 +239,11 @@ public class ProtectedPrincipalIdentifierTests : IDisposable
     }
 
     [Fact]
-    public async Task ALegacyUserRowWithNoCompanion_IsStillEvaluatedExactlyAsBefore()
+    public async Task ALegacyUserRowWithNoCompanion_IsNeverMatchedByName_TheCheckRefusesNamingIt()
     {
-        // Bob was added before identifiers were stored; Alice since. Bob's row still matches every form it matched.
+        // Bob was added before identifiers were stored; Alice since. K.3: Bob's row is not matched by any form it matched
+        // before - the check cannot say a target is not Bob, so it refuses, naming the row and the cure - while Alice's
+        // identifier row still matches her.
         var service = ServiceWith(new ProtectedPrincipalConfig
         {
             Users = ["bob@contoso.com", "CONTOSO\\carol", Alice],
@@ -247,10 +251,12 @@ public class ProtectedPrincipalIdentifierTests : IDisposable
         });
 
         var bob = await service.CheckAsync(Target(upn: "bob@contoso.com", sid: MallorySid));
-        var carol = await service.CheckAsync(Target(upn: "c.other@contoso.com", sid: MallorySid, sam: "carol"));
+        var alice = await service.CheckAsync(Target(upn: Alice, sid: AliceSid));
 
-        Assert.Equal(["User:bob@contoso.com"], bob.MatchedRules);
-        Assert.Equal(["User:CONTOSO\\carol"], carol.MatchedRules);
+        Assert.True(bob.CheckFailed, bob.Reason);
+        Assert.Contains("protected user 'bob@contoso.com': not converted - run db convert-identifiers", bob.Reason, StringComparison.Ordinal);
+        Assert.Contains("protected user 'CONTOSO\\carol': not converted - run db convert-identifiers", bob.Reason, StringComparison.Ordinal);
+        Assert.Equal([$"User:{Alice}"], alice.MatchedRules);
     }
 
     [Fact]

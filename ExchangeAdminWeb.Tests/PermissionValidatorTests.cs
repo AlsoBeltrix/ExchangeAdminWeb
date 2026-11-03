@@ -734,6 +734,17 @@ public sealed class PermissionValidatorTests : IDisposable
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
 
         var pp = new ScriptedPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delinea);
+        if (addressOnlyConfig)
+        {
+            // docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a user row is compared by its user_sid row only - here, the
+            // scripted targets carrying no SID, by that row's label - so the address row gets the one db convert-identifiers
+            // writes. A legacy row alone would refuse every check as "not converted".
+            pp.SaveConfig(new ProtectedPrincipalConfig
+            {
+                Users = ["vip@contoso.com"],
+                UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000000000-1000000000-1000000000-1105", "vip@contoso.com")],
+            });
+        }
 
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig, TestConfigStore.CreateModuleEnablement(testDir), config, Substitute.For<ILogger<ModuleEnablementService>>());
         var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, Substitute.For<ILogger<ExoConnectionPool>>(), trace);

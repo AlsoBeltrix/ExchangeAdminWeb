@@ -129,7 +129,7 @@ public sealed class ConferenceRoomBinderTests : IDisposable
         // (asserted below, so the rule is known to bite). Conference Rooms does not ask: the room is written.
         var vip = _h.Forest.AddGroup("Fabrikam VIP Rooms", domainDn: SelfGrantDirectoryStandIn.OtherDomainDn,
             domainSid: FabrikamSid, members: [_room]);
-        var binder = Binder(Exchange(Recipient()), new ProtectedPrincipalConfig { Groups = [vip.Dn] });
+        var binder = Binder(Exchange(Recipient()), new ProtectedPrincipalConfig { Groups = [vip.Sid!] });
 
         var (room, refusal, writes) = await Run(binder);
 

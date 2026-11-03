@@ -7,15 +7,28 @@ namespace ExchangeAdminWeb.Services;
 internal sealed record DirectoryUserObject(string DistinguishedName, string? Sid);
 
 /// <summary>
-/// The directory reads the identifier migration makes (docs/ProtectedPrincipalIdentifiers-Plan.md B.4): the group check's
-/// reads for groups, the <c>ou_guid</c> comparison's read for OUs, and one equality search for users.
+/// The directory reads <c>db convert-identifiers</c> makes (docs/ProtectedPrincipalIdentifiers-Plan.md K.3, B.4 step 3, B.6):
+/// group lookups, the read of an OU by DN, one equality search for users, and the forest's NetBIOS-to-DNS mapping. In the
+/// verb, <see cref="InvokingUserIdentifierDirectory"/> - as the invoking user, no credential; in tests, a stand-in.
 /// </summary>
 /// <remarks>
 /// Every member returns the directory's answer or throws; none reports "no rows" for a read that did not complete, because
 /// the resolver reads an empty answer as "not found".
 /// </remarks>
-internal interface IProtectedPrincipalResolveDirectory : IProtectedGroupDirectory, IProtectedOuDirectory
+internal interface IProtectedPrincipalResolveDirectory
 {
+    /// <summary>
+    /// The DNS name of the forest domain a <c>DOMAIN\</c> prefix names, from the forest's own crossRefs. Throws when the forest
+    /// has no such domain, or more than one.
+    /// </summary>
+    string ResolveDomainServer(string domain);
+
+    /// <summary>Groups whose <paramref name="key"/> equals <paramref name="value"/>; a null server is the forest's global catalog.</summary>
+    IReadOnlyList<DirectoryGroup> FindGroups(GroupLookupKey key, string value, string? server);
+
+    /// <summary>The objects at <paramref name="dns"/>, read by DN on <paramref name="server"/>, each with its objectGUID.</summary>
+    IReadOnlyList<DirectoryObjectGuid> ReadObjectGuids(IReadOnlyList<string> dns, string server);
+
     /// <summary>
     /// The user-class objects <paramref name="ldapFilter"/> matches on <paramref name="server"/>: a domain controller of that
     /// domain, or - null - a global catalog for the whole forest.
@@ -23,10 +36,13 @@ internal interface IProtectedPrincipalResolveDirectory : IProtectedGroupDirector
     IReadOnlyList<DirectoryUserObject> FindUsers(string ldapFilter, string? server);
 }
 
-/// <summary>One legacy row the migration reads: its kind (<c>user</c>, <c>group</c> or <c>ou</c>) and its value as stored.</summary>
+/// <summary>One legacy row the conversion reads: its kind (<c>user</c>, <c>group</c> or <c>ou</c>) and its value as stored.</summary>
 public sealed record ProtectedPrincipalLegacyRow(string Kind, string Value);
 
-/// <summary>Why a legacy row was not converted. The row is left exactly as it was and enforced as before.</summary>
+/// <summary>
+/// Why a legacy row does not convert. <c>db convert-identifiers</c> then writes nothing at all and names the row with this
+/// reason (docs/ProtectedPrincipalIdentifiers-Plan.md K.3).
+/// </summary>
 public enum ProtectedPrincipalLeftReason
 {
     /// <summary>The directory answered and holds no object matching the value.</summary>
@@ -38,10 +54,10 @@ public enum ProtectedPrincipalLeftReason
     /// <summary>The value resolves to a built-in or well-known SID, which names no one domain group.</summary>
     WellKnownSid,
 
-    /// <summary>The lookup could not run, or its answer could not be read. The next pass tries again.</summary>
+    /// <summary>The lookup could not run, or its answer could not be read. Running the verb again asks again.</summary>
     DirectoryUnavailable,
 
-    /// <summary>The value has a shape the pass does not look up; re-pick the entry from the search.</summary>
+    /// <summary>The value has a shape the conversion does not look up; re-pick the entry from the search.</summary>
     Unsupported,
 }
 
@@ -67,9 +83,11 @@ public sealed record ProtectedPrincipalRowResolution(
 }
 
 /// <summary>
-/// Resolves legacy protected-principal rows to one directory object each (docs/ProtectedPrincipalIdentifiers-Plan.md B.4).
-/// Pure over <see cref="IProtectedPrincipalResolveDirectory"/>, so the exactly-one rule and the reason each refusal is
-/// recorded with are testable without a domain controller.
+/// Resolves legacy protected-principal rows and module-admin name grants to one directory object each - the lookups of
+/// <c>db convert-identifiers</c> (docs/ProtectedPrincipalIdentifiers-Plan.md K.3, with the rules of B.4 step 3 and B.6). Pure
+/// over <see cref="IProtectedPrincipalResolveDirectory"/>, so the exactly-one rule and the reason each refusal is recorded
+/// with are testable without a domain controller. The only place in the app that turns a name into an object: the protection
+/// check compares identifiers only.
 /// </summary>
 /// <remarks>
 /// <para>Each row is looked up once, in the directory its shape names:</para>
@@ -77,12 +95,13 @@ public sealed record ProtectedPrincipalRowResolution(
 /// the forest is found and a name two domains share is ambiguous rather than whichever answered first; <c>DOMAIN\name</c>
 /// in the domain the prefix names; a DN by a read of that DN in its own domain. Always <c>objectCategory=person</c> and
 /// <c>objectClass=user</c>, so a computer account - also of class user - is never the match.</para>
-/// <para>- A group: <see cref="ProtectedGroupMembership.Resolve"/>, the lookup the protection check itself binds the row
-/// with, so the conversion names the group the check was already enforcing.</para>
+/// <para>- A group (<see cref="ResolveGroupEntry"/>, moved here from the protection check, which bound rows with it before
+/// K): a DN read in its own domain, a SID at the global catalog, <c>DOMAIN\Name</c> in that domain, a bare name forest-wide -
+/// sAMAccountName first, then the common name.</para>
 /// <para>- An OU: a read of the DN in its own domain for the objectGUID.</para>
-/// <para>Exactly one match converts. Zero, several, a well-known SID or a lookup that could not run leaves the row - it is
-/// enforced by name exactly as before (decision D1) - and records why. A lookup that throws is recorded as
-/// <see cref="ProtectedPrincipalLeftReason.DirectoryUnavailable"/> for that row alone; the others still resolve.</para>
+/// <para>Exactly one match converts. Zero, several, a well-known SID or a lookup that could not run is recorded with why; the
+/// verb then writes nothing. A lookup that throws is recorded as <see cref="ProtectedPrincipalLeftReason.DirectoryUnavailable"/>
+/// for that row alone; the others still resolve, so one run names every offending row.</para>
 /// </remarks>
 internal static class ProtectedPrincipalIdentifierResolver
 {
@@ -125,7 +144,7 @@ internal static class ProtectedPrincipalIdentifierResolver
     /// SID but unusable (a well-known SID, an SDDL alias) is refused without a lookup.</para>
     /// </remarks>
     internal static IReadOnlyList<ProtectedPrincipalRowResolution> ResolveModuleAdminGrants(
-        IReadOnlyList<string> grants, IProtectedGroupDirectory directory, CancellationToken cancellationToken)
+        IReadOnlyList<string> grants, IProtectedPrincipalResolveDirectory directory, CancellationToken cancellationToken)
         => ResolveEach(
             grants.Select(g => new ProtectedPrincipalLegacyRow(ProtectedPrincipalRepository.KindGroup, g)).ToList(),
             row => ResolveGrantName(row, directory),
@@ -133,14 +152,14 @@ internal static class ProtectedPrincipalIdentifierResolver
 
     private static readonly string[] WellKnownPrefixes = ["BUILTIN", "NT AUTHORITY"];
 
-    private static ProtectedPrincipalRowResolution ResolveGrantName(ProtectedPrincipalLegacyRow row, IProtectedGroupDirectory directory)
+    private static ProtectedPrincipalRowResolution ResolveGrantName(ProtectedPrincipalLegacyRow row, IProtectedPrincipalResolveDirectory directory)
     {
         var parsed = SectionAccessGroupIdentity.Parse(row.Value);
         string? server = null;
         switch (parsed.Kind)
         {
             case StoredGroupValueKind.Sid:
-                // Already a usable SID: nothing to convert. Not reached from the pass, which reads only unusable grants.
+                // Already a usable SID: nothing to convert. Not reached from the verb, which reads only unusable grants.
                 return ProtectedPrincipalRowResolution.Converted(row, parsed.Sid!);
 
             case StoredGroupValueKind.Unusable:
@@ -189,7 +208,7 @@ internal static class ProtectedPrincipalIdentifierResolver
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // A read that failed proves nothing about the object: the row is left, enforced as before, and the next pass
+                // A read that failed proves nothing about the object: the row is named, nothing is written, and the next run
                 // asks again. Never "not found".
                 resolved.Add(ProtectedPrincipalRowResolution.Left(
                     row, ProtectedPrincipalLeftReason.DirectoryUnavailable, $"directory unavailable: {ex.Message}"));
@@ -264,7 +283,7 @@ internal static class ProtectedPrincipalIdentifierResolver
         if (entry.Kind == ProtectedGroupEntryKind.Sid && SectionAccessGroupIdentity.SidRejectionReason(entry.Value) is not null)
             return ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.WellKnownSid, "well-known SID refused");
 
-        var group = ProtectedGroupMembership.Resolve(entry, directory, out var problem);
+        var group = ResolveGroupEntry(entry, directory, out var problem);
         if (group is null)
         {
             return problem switch
@@ -283,6 +302,70 @@ internal static class ProtectedPrincipalIdentifierResolver
         return SectionAccessGroupIdentity.SidRejectionReason(sid) is not null
             ? ProtectedPrincipalRowResolution.Left(row, ProtectedPrincipalLeftReason.WellKnownSid, "well-known SID refused")
             : ProtectedPrincipalRowResolution.Converted(row, sid);
+    }
+
+    /// <summary>
+    /// Binds one protected-group entry to exactly one group, in the directory its shape names: a DN read in its own domain, a
+    /// SID at the global catalog, <c>DOMAIN\Name</c> in that domain, a bare name forest-wide. Null, with the reason in
+    /// <paramref name="problem"/>, for no match (<see cref="ProtectedGroupMembership.NoSuchGroup"/>), several, or a DN with
+    /// no DC components; throws when a read fails or the forest has no such domain.
+    /// </summary>
+    /// <remarks>
+    /// Moved here from <c>ProtectedGroupMembership.Resolve</c>/<c>Candidates</c> (docs/ProtectedPrincipalIdentifiers-Plan.md
+    /// K.3 point 3): the protection check no longer resolves a name; only this conversion does. aud-a3b hole 3: the domain half
+    /// of <c>DOMAIN\Name</c> selects the domain asked, never the forest or whichever domain answered.
+    /// </remarks>
+    internal static DirectoryGroup? ResolveGroupEntry(
+        ProtectedGroupEntry entry, IProtectedPrincipalResolveDirectory directory, out string? problem)
+    {
+        problem = null;
+        IReadOnlyList<DirectoryGroup> groups;
+        switch (entry.Kind)
+        {
+            case ProtectedGroupEntryKind.DistinguishedName:
+                var dnServer = GroupManagementService.ServerFromDn(entry.Value);
+                if (dnServer is null)
+                {
+                    problem = ProtectedGroupMembership.DnNamesNoDomain;
+                    return null;
+                }
+
+                // Read, never passed through: a DN that no longer exists names no group.
+                groups = directory.FindGroups(GroupLookupKey.DistinguishedName, entry.Value, dnServer);
+                break;
+
+            case ProtectedGroupEntryKind.DomainQualified:
+                // Throws when the forest has no such domain - recorded as a lookup that could not run, never as a lookup in
+                // some other domain.
+                groups = GroupsByName(entry.Value, directory.ResolveDomainServer(entry.Domain!), directory);
+                break;
+
+            case ProtectedGroupEntryKind.Sid:
+                groups = directory.FindGroups(GroupLookupKey.Sid, entry.Value, null);
+                break;
+
+            default:
+                // No domain named, so none is assumed: the forest is searched, and a name two domains share is ambiguous
+                // rather than whichever answered first.
+                groups = GroupsByName(entry.Value, null, directory);
+                break;
+        }
+
+        if (groups.Count == 1)
+            return groups[0];
+
+        problem = groups.Count == 0 ? ProtectedGroupMembership.NoSuchGroup : $"{groups.Count} groups match";
+        return null;
+    }
+
+    /// <summary>
+    /// sAMAccountName first, then the common name. An exact sAMAccountName match wins outright within one domain because it is
+    /// unique there; the common name is only consulted when no group carries the name as its sAMAccountName.
+    /// </summary>
+    private static IReadOnlyList<DirectoryGroup> GroupsByName(string name, string? server, IProtectedPrincipalResolveDirectory directory)
+    {
+        var bySam = directory.FindGroups(GroupLookupKey.SamAccountName, name, server);
+        return bySam.Count > 0 ? bySam : directory.FindGroups(GroupLookupKey.CommonName, name, server);
     }
 
     private static ProtectedPrincipalRowResolution ResolveOu(ProtectedPrincipalLegacyRow row, IProtectedPrincipalResolveDirectory directory)

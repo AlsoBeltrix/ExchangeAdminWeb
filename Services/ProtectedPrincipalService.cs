@@ -201,7 +201,7 @@ public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? Disti
     }
 }
 
-public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IModuleAdminGrantResolver
+public class ProtectedPrincipalService
 {
     private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
@@ -408,17 +408,28 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
             CheckPatternMatches(cfg, target, matchedRules);
             CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: false);
 
-            // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: group_sid rows join the group check as SIDs, and ou_guid rows
-            // are compared by the objectGUIDs of the target's containers - both read in the one directory session the group
-            // check already takes. With no identifier rows this is the group check exactly as it was.
+            // docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3: a user, group or OU row stored by name only is never
+            // resolved or matched by name. It cannot be answered, so the check is incomplete, naming it, and refuses unless
+            // another rule matched - forgetting db convert-identifiers fails closed and says so.
+            var notConverted = NotConvertedProblems(cfg);
+
+            // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: group_sid rows (and legacy Group rows stored as a SID) join the
+            // group check as SIDs, and ou_guid rows are compared by the objectGUIDs of the target's containers - both read in
+            // the one directory session the group check takes.
             var groupEntries = GroupEntries(cfg, out var groupLabels);
             var ouIds = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid).Ids;
             if (groupEntries.Count > 0 || ouIds.Count > 0)
             {
-                var groupResult = await CheckGroupMembershipAsync(groupEntries, groupLabels, ouIds, target);
+                var groupResult = await CheckGroupMembershipAsync(groupEntries, groupLabels, ouIds, target, notConverted, matchedRules.Count > 0);
                 if (groupResult.checkFailed)
                     return ProtectedPrincipalResult.Failed(groupResult.failReason ?? "Group membership check failed.");
                 matchedRules.AddRange(groupResult.matches);
+            }
+            else if (notConverted.Count > 0 && matchedRules.Count == 0)
+            {
+                var reason = IncompleteReason(notConverted);
+                _logger.LogWarning("Protected-principal check incomplete for {Target}: {Reason}", target.UserPrincipalName, reason);
+                return ProtectedPrincipalResult.Failed(reason);
             }
         }
 
@@ -499,6 +510,12 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
             // this check compared that OU before the identifier rows existed: no protection it gave is lost.
             CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: true);
             CheckGroupTargetMatches(cfg, target, matchedRules);
+
+            // K.3 point 3: a user or OU row stored by name only is never compared by its text; with no rule matched, the check
+            // cannot say the target is not protected, and refuses naming the rows (the Groups rule is not evaluated here).
+            var notConverted = NotConvertedProblems(cfg, includeGroups: false);
+            if (notConverted.Count > 0 && matchedRules.Count == 0)
+                return ProtectedPrincipalResult.Failed(IncompleteReason(notConverted));
         }
 
         if (matchedRules.Count > 0)
@@ -1632,21 +1649,22 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
     }
 
     /// <summary>
-    /// The rows one base kind evaluates (docs/ProtectedPrincipalIdentifiers-Plan.md B.2): the legacy rows no identifier
-    /// row pairs with - unmigrated, and enforced exactly as before - and the identifier rows, their identifiers canonical.
+    /// The rows one base kind evaluates (docs/ProtectedPrincipalIdentifiers-Plan.md B.2, K.3): the legacy rows no identifier
+    /// row pairs with - stored by name only, never matched by name - the identifier rows whose identifier does not parse, and
+    /// the identifier rows, their identifiers canonical.
     /// </summary>
     /// <remarks>
-    /// An identifier row whose identifier does not parse cannot be compared by it, and its companion is not evaluated; it
-    /// is evaluated by its label instead, joining the legacy rows, as its companion would have been. A row that cannot
-    /// answer the question it was written for falls back to the answer it gave before, never to none.
+    /// K.3 point 3: the new build never resolves or matches a stored name. An unpaired legacy row and an identifier row that
+    /// cannot be read are each returned so the check can refuse naming them (<see cref="NotConvertedProblems"/>), never
+    /// compared by their text: decision D1's "enforced exactly as before" is superseded.
     /// </remarks>
-    internal static (string[] Legacy, IReadOnlyList<ProtectedPrincipalIdEntry> Ids) RowsToEvaluate(
+    internal static (string[] Legacy, string[] Unreadable, IReadOnlyList<ProtectedPrincipalIdEntry> Ids) RowsToEvaluate(
         string[]? legacyRows, string[]? idRows, Func<string?, string?> canonical)
     {
         legacyRows ??= [];
         idRows ??= [];
         var ids = new List<ProtectedPrincipalIdEntry>();
-        var byLabel = new List<string>();
+        var unreadable = new List<string>();
         foreach (var row in idRows)
         {
             if (ProtectedPrincipalIdEntry.Parse(row) is not { } entry)
@@ -1654,23 +1672,55 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
 
             if (canonical(entry.Identifier) is { } id)
                 ids.Add(entry with { Identifier = id });
-            else if (entry.Label.Length > 0)
-                byLabel.Add(entry.Label);
+            else
+                unreadable.Add(entry.Display);
         }
 
-        return (ProtectedPrincipalIdEntry.Unpaired(legacyRows, idRows).Concat(byLabel).ToArray(), ids);
+        return (ProtectedPrincipalIdEntry.Unpaired(legacyRows.Where(v => !string.IsNullOrWhiteSpace(v)), idRows), unreadable.ToArray(), ids);
     }
 
     /// <summary>
-    /// The entries the group check evaluates: unmigrated legacy Group rows as stored, and each group_sid row as its SID,
-    /// which <see cref="ProtectedGroupEntry.Parse"/> reads as a SID entry. <paramref name="labels"/> maps each SID back to
-    /// its row's label, so a matched rule names the group as the page does.
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3. Every protected user, group and OU row the check cannot compare
+    /// by identifier, named as the page names it: a legacy row with no identifier companion - "not converted - run db
+    /// convert-identifiers" - and an identifier row whose identifier does not parse. A legacy Group row stored as a SID is not
+    /// among them: it is compared by that SID. Non-empty, the check refuses unless another rule matched
+    /// (<see cref="IncompleteReason"/>), so forgetting the conversion is loud and fails closed rather than dropping protection.
+    /// </summary>
+    /// <param name="cfg">The rules.</param>
+    /// <param name="includeGroups">False for the write-target check, which has no Groups rule.</param>
+    internal static List<string> NotConvertedProblems(ProtectedPrincipalConfig cfg, bool includeGroups = true)
+    {
+        var problems = new List<string>();
+        void Add(string noun, (string[] Legacy, string[] Unreadable, IReadOnlyList<ProtectedPrincipalIdEntry> Ids) rows, Func<string, bool> evaluated)
+        {
+            foreach (var value in rows.Legacy.Where(v => !evaluated(v)))
+                problems.Add($"protected {noun} '{value.Trim()}': {ProtectedGroupMembership.NotConverted}");
+            foreach (var label in rows.Unreadable)
+                problems.Add($"protected {noun} '{label}': its stored identifier cannot be read - remove it and pick it again from the search");
+        }
+
+        Add("user", RowsToEvaluate(cfg.Users, cfg.UserIds, ProtectedPrincipalIdEntry.CanonicalSid), _ => false);
+        if (includeGroups)
+            Add("group", RowsToEvaluate(cfg.Groups, cfg.GroupIds, ProtectedPrincipalIdEntry.CanonicalSid), IsLegacySidGroupRow);
+        Add("OU", RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid), _ => false);
+        return problems;
+    }
+
+    // A legacy Group row stored as a SID: compared by that SID, as a group_sid row is (K.3 point 3).
+    private static bool IsLegacySidGroupRow(string value) =>
+        ProtectedGroupEntry.Parse(value).Kind == ProtectedGroupEntryKind.Sid;
+
+    /// <summary>
+    /// The entries the group check evaluates: each group_sid row as its SID, and each legacy Group row stored as a SID - both
+    /// read by <see cref="ProtectedGroupEntry.Parse"/> as SID entries. Nothing stored by name: those are
+    /// <see cref="NotConvertedProblems"/>. <paramref name="labels"/> maps each SID back to its row's label, so a matched rule
+    /// names the group as the page does.
     /// </summary>
     private static List<string> GroupEntries(ProtectedPrincipalConfig cfg, out Dictionary<string, string> labels)
     {
-        var (legacy, ids) = RowsToEvaluate(cfg.Groups, cfg.GroupIds, ProtectedPrincipalIdEntry.CanonicalSid);
+        var (legacy, _, ids) = RowsToEvaluate(cfg.Groups, cfg.GroupIds, ProtectedPrincipalIdEntry.CanonicalSid);
         labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var entries = legacy.ToList();
+        var entries = legacy.Where(IsLegacySidGroupRow).Select(v => v.Trim()).ToList();
         foreach (var id in ids)
         {
             entries.Add(id.Identifier);
@@ -1681,16 +1731,11 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
 
     private static void CheckDirectUserMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
     {
-        var (legacy, ids) = RowsToEvaluate(cfg.Users, cfg.UserIds, ProtectedPrincipalIdEntry.CanonicalSid);
-        foreach (var protectedUser in legacy)
-        {
-            if (MatchesIdentity(protectedUser, target))
-                matchedRules.Add($"User:{protectedUser}");
-        }
-
         // A user_sid row is this object, compared by SID: another account carrying its address in mail or UPN is not it
         // (plan C.2). A target whose resolution did not read a SID is compared by the row's label, as its companion was -
-        // the absence of an identifier on the TARGET is not evidence it is someone else.
+        // the absence of an identifier on the TARGET is not evidence it is someone else. Legacy rows stored by name only are
+        // not compared at all (K.3): they are NotConvertedProblems.
+        var (_, _, ids) = RowsToEvaluate(cfg.Users, cfg.UserIds, ProtectedPrincipalIdEntry.CanonicalSid);
         var targetSid = ProtectedPrincipalIdEntry.CanonicalSid(target.ObjectSid);
         foreach (var id in ids)
         {
@@ -1750,26 +1795,18 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
     }
 
     /// <summary>
-    /// Unmigrated OU rows by DN suffix, as always. ou_guid rows are compared by objectGUID in the directory phase of
-    /// <see cref="CheckAsync"/>; with <paramref name="ouIdsByLabel"/> - the directory-free write-target check - by their
-    /// label's DN suffix instead, the comparison their companion row gets from an older build.
+    /// ou_guid rows are compared by objectGUID in the directory phase of <see cref="CheckAsync"/>; with
+    /// <paramref name="ouIdsByLabel"/> - the directory-free write-target check - by their label's DN suffix instead, the
+    /// comparison their companion row gets from an older build. Legacy OU rows stored by name only are not compared at all
+    /// (K.3): they are <see cref="NotConvertedProblems"/>.
     /// </summary>
     private static void CheckOuMatches(
         ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules, bool ouIdsByLabel)
     {
-        if (string.IsNullOrEmpty(target.DistinguishedName))
+        if (string.IsNullOrEmpty(target.DistinguishedName) || !ouIdsByLabel)
             return;
 
-        var (legacy, ids) = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid);
-        foreach (var ou in legacy)
-        {
-            if (IsAtOrBeneath(target.DistinguishedName, ou))
-                matchedRules.Add($"OU:{ou}");
-        }
-
-        if (!ouIdsByLabel)
-            return;
-
+        var (_, _, ids) = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid);
         foreach (var id in ids)
         {
             if (id.Label.Length > 0 && IsAtOrBeneath(target.DistinguishedName, id.Label))
@@ -1783,7 +1820,8 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
 
     private async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckGroupMembershipAsync(
         IReadOnlyList<string> groupEntries, IReadOnlyDictionary<string, string> groupLabels,
-        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target)
+        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
+        IReadOnlyList<string> notConverted, bool otherRuleMatched)
     {
         var matches = new List<string>();
 
@@ -1821,8 +1859,16 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
                 // answered - the entry by its label - where it said only "expansion errors".
                 if (expansionHadErrors && matches.Count == 0)
                 {
-                    var reason = IncompleteReason(problems);
+                    var reason = IncompleteReason([.. notConverted, .. problems]);
                     _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}: {Reason}", target.UserPrincipalName, reason);
+                    return (matches, true, reason);
+                }
+
+                // K.3 point 3: rows stored by name only could not be answered at all; with no rule matched, refuse naming them.
+                if (notConverted.Count > 0 && matches.Count == 0 && !otherRuleMatched)
+                {
+                    var reason = IncompleteReason(notConverted);
+                    _logger.LogWarning("Protected-principal check incomplete for {Target}: {Reason}", target.UserPrincipalName, reason);
                     return (matches, true, reason);
                 }
             }
@@ -1920,9 +1966,9 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
         var problems = new List<string>();
         if (protectedGroups.Count > 0)
         {
-            // sweep-c item 17: configured entries - one the directory says names no group protects nobody and is named in the
-            // log, rather than making every check incomplete; whatever stays unanswered is named by its label.
-            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger, configuredEntries: true);
+            // SIDs only (K.3 point 3); whatever stays unanswered - a SID no group carries any more, a read that failed - is
+            // named by its row's label (sweep-c item 17's banner).
+            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
             matches.AddRange(LabelGroupMatches(outcome, groupLabels));
             incomplete |= outcome.Incomplete;
             problems.AddRange(LabelGroupProblems(outcome, groupLabels));
@@ -1951,97 +1997,14 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
             : $"protected group '{(groupLabels.TryGetValue(p.Entry, out var label) ? label : p.Entry)}': {p.Problem}");
 
     /// <summary>
-    /// sweep-c item 17. The refusal for a group check that could not be completed and found no match: what could not be
-    /// answered, by name, where it used to say only "expansion errors".
+    /// sweep-c item 17. The refusal for a check that could not be completed and found no match: what could not be answered,
+    /// by name, where it used to say only "expansion errors" - since K.3 also each user, group and OU row stored by name only,
+    /// "not converted - run db convert-identifiers".
     /// </summary>
     internal static string IncompleteReason(IReadOnlyList<string> problems) =>
         problems.Count == 0
             ? "Group membership check was incomplete due to expansion errors. Cannot confirm target is not protected."
-            : $"Group membership check was incomplete - {string.Join("; ", problems.Distinct(StringComparer.Ordinal))}. Cannot confirm target is not protected.";
-
-    /// <summary>
-    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.4. Looks each legacy row up once, inside ONE
-    /// <see cref="DirectoryReadOperation"/>: one directory-read credential fetch and one warm session for the whole pass,
-    /// however many rows it reads (kd-88). Never throws for a lookup that could not run: every row is then returned as
-    /// <see cref="ProtectedPrincipalLeftReason.DirectoryUnavailable"/> with the cause, and nothing is written.
-    /// </summary>
-    Task<IReadOnlyList<ProtectedPrincipalRowResolution>> IProtectedPrincipalLegacyResolver.ResolveLegacyRowsAsync(
-        IReadOnlyList<ProtectedPrincipalLegacyRow> rows, CancellationToken cancellationToken)
-        => ResolveInOneOperationAsync(rows,
-            directory => ProtectedPrincipalIdentifierResolver.Resolve(rows, directory, cancellationToken),
-            "The protected-principal identifier pass", cancellationToken);
-
-    /// <summary>
-    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.6. The module-admin pass's lookups, in the same ONE operation as the
-    /// identifier pass's: one directory-read credential fetch and one warm session however many grants it reads. Never
-    /// throws for a lookup that could not run.
-    /// </summary>
-    Task<IReadOnlyList<ProtectedPrincipalRowResolution>> IModuleAdminGrantResolver.ResolveModuleAdminGrantsAsync(
-        IReadOnlyList<string> grants, CancellationToken cancellationToken)
-    {
-        var rows = grants.Select(g => new ProtectedPrincipalLegacyRow(ProtectedPrincipalRepository.KindGroup, g)).ToList();
-        return ResolveInOneOperationAsync(rows,
-            directory => ProtectedPrincipalIdentifierResolver.ResolveModuleAdminGrants(grants, directory, cancellationToken),
-            "The module-admin SID pass", cancellationToken);
-    }
-
-    private async Task<IReadOnlyList<ProtectedPrincipalRowResolution>> ResolveInOneOperationAsync(
-        IReadOnlyList<ProtectedPrincipalLegacyRow> rows,
-        Func<IProtectedPrincipalResolveDirectory, IReadOnlyList<ProtectedPrincipalRowResolution>> resolve,
-        string passName, CancellationToken cancellationToken)
-    {
-        if (rows.Count == 0)
-            return [];
-
-        IReadOnlyList<ProtectedPrincipalRowResolution> AllLeft(string cause) => rows
-            .Select(r => ProtectedPrincipalRowResolution.Left(r, ProtectedPrincipalLeftReason.DirectoryUnavailable, $"directory unavailable: {cause}"))
-            .ToList();
-
-        using var operation = DirectoryReadOperation.Begin();
-        var secretId = GetDirectoryReadSecretId();
-        if (secretId is null)
-            return AllLeft("the directory-read credential is not configured (Admin Settings, Protected principals)");
-
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the pass's one fetch
-        if (creds is null)
-            return AllLeft("the directory-read credential could not be retrieved");
-
-        if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
-            return AllLeft("the directory service is busy");
-
-        try
-        {
-            return await Task.Run(() =>
-            {
-                using var session = DirectorySessions.Lease(SessionWait);
-                try
-                {
-                    var directory = new PowerShellProtectedGroupDirectory(
-                        session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
-                    var resolved = resolve(directory);
-
-                    // A session a read failed in is thrown away rather than lent again, as the group check's is.
-                    if (resolved.Any(r => r.Reason == ProtectedPrincipalLeftReason.DirectoryUnavailable))
-                        session.Fail();
-                    return resolved;
-                }
-                catch
-                {
-                    session.Fail();
-                    throw;
-                }
-            }, cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "{Pass} could not read the directory", passName);
-            return AllLeft(ex.Message);
-        }
-        finally
-        {
-            _adThrottle.Release();
-        }
-    }
+            : $"Protected-principal check was incomplete - {string.Join("; ", problems.Distinct(StringComparer.Ordinal))}. Cannot confirm target is not protected.";
 
     /// <summary>A matched group_sid entry named by its row's label, as the page names it; every other match as it was.</summary>
     internal static IEnumerable<string> LabelGroupMatches(

@@ -1747,7 +1747,10 @@ public sealed class ModuleCatalog
             // (docs/ProtectedPrincipalIdentifiers-Plan.md S2).
             // 1.2.5: the protected-principals pane gains the Graph Directory Read Credential (Delinea Secret ID) field, its
             // help and its save (docs/ProtectedPrincipalIdentifiers-Plan.md S3).
-            Version = "1.2.5",
+            // 1.2.6: Resolve now and the "not converted" badges are gone; the pane counts the entries stored by name only and
+            // says they refuse every check until db convert-identifiers converts them; the "not in AD" tip says the same
+            // (docs/ProtectedPrincipalIdentifiers-Plan.md K, S6).
+            Version = "1.2.6",
             MainPermission = new(
                 "Access",
                 "AdminSettings",
