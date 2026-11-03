@@ -1,6 +1,6 @@
 # Protected principals by immutable identifier - Plan
 
-Status: **Implemented 2026-11-03 - S1-S5 merged (853275e4, 28f6ba67, 3b7a946e, 73d1fdf5, 2e80f488); records ppi-s1..ppi-s5. Not yet deployed: the one dev deploy and its checks (section I, E timing) are owed.**
+Status: **Implemented 2026-11-03 - S1-S5 merged (853275e4, 28f6ba67, 3b7a946e, 73d1fdf5, 2e80f488); records ppi-s1..ppi-s5. Amended 2026-11-03 by section K (approved): the startup conversion passes are replaced by a one-time `db` command-line step the owner runs; S6 builds it. Not yet deployed: the one dev deploy and its checks (section I, E timing) are owed.**
 Owner: Michael
 Date: 2026-11-03
 Last verified against code: local `master` `c94b443e`, 2026-11-03. Every file:line cited below was read there; lines
@@ -546,7 +546,7 @@ sqlite3 -readonly "<ConfigStore:Path>" "SELECT module_id, admin_group FROM modul
 
 ## J. Open decisions (ask one at a time, per decisions.md 2026-11-03)
 
-D1 and D3 are settled by the 2026-11-03 rulings and are not asked: "do it correctly" rules out an inert legacy row
+D1 is re-settled by section K (2026-11-03): an unconverted legacy row fails every check closed with a named reason, never matched by name; the conversion is the owner-run `db convert-identifiers` step. The paragraph below is history. D1 and D3 were settled by the earlier 2026-11-03 rulings and were not asked: "do it correctly" rules out an inert legacy row
 that protects less than today (D1: enforce each unconverted entry exactly as today until converted, re-picked or
 removed, and flag it), and "nothing the directory can resolve is re-picked by hand" rules D3 (convert every name that
 resolves to exactly one group, effective at once; the pass's audit event lists each). One decision remains, and only
@@ -556,3 +556,101 @@ conditionally:
   Action: add an app-wide Graph read setting (`User.Read.All`) on Admin Settings for the protection service.
   Consequence: a new credential to hold and an Entra dependency in the write path; without it, synced targets bind by
   address as today. **Recommendation: yes, if and only if I.1 requires it.**
+
+## K. Amendment 2026-11-03 - one-time conversion by command line; no startup passes
+
+Status: **Approved 2026-11-03** (owner: "test by copying the db and running against the copy then verifying. add that,
+then go."). Supersedes B.3, B.4 steps 1-6 as a startup pass, the Resolve now buttons and "not converted" badges of B.5
+and B.6, the D1 ruling in section J, and the live name resolution in `ProtectedGroupMembership` (sweep item 17 as first
+built on `fix/sweep-c`, `db0813b9`). Decision entry: `.agents/decisions.md` 2026-11-03 "Identifier conversion is a
+one-time command-line step, not a startup pass".
+
+### K.1 Exec summary (the only part the owner reads or is bound by)
+
+The conversion is a standalone step you run by hand once, before the dev deploy. Everything else in the proposal stands:
+
+- **The conversion is a verb on the app's `db` command-line mode**, run from an elevated shell against the build about
+  to be deployed. It has a plan-only switch that reports what it would change without writing. It refuses and names the
+  row if anything resolves to none or several objects. The deploy pipeline does not call it, know about it, or check
+  for it.
+- **The new build never resolves names.** A legacy row with no companion makes the check incomplete, naming that row
+  and saying to run the conversion, so forgetting the step is loud and fails closed rather than silently dropping
+  protection. The two startup passes, the flags, the Resolve now buttons, the badges, and the evaluator's name branches
+  are removed.
+- **Legacy rows stay** until prod is upgraded, with the new build writing both forms on save. Dropping them later is
+  the same verb with a drop switch, in a later slice.
+- **Documentation:** a short run-book entry in the deploy docs and the README.
+- **Test (owner's addition):** take a copy of the live settings database, run the verb against the copy (plan-only,
+  then for real), then verify the copy with the status verb before the real run. The live database is touched only
+  after the copy converts cleanly.
+
+The one operational constraint: do not save Admin Settings on prod's old build between the conversion and the prod
+deploy. If you do, run the verb again. The risk is that the deploy host must reach the directory for the conversion,
+which it already does for the running app.
+
+### K.2 Why (owner, verbatim)
+
+"this is a lot of plumbing for something that isn't going to happen and won't even be possible after the next
+deployment." ... "then we need a solution that obviates this problem now." ... "why do we need to build in a
+conversion pass and carry that tech debt when we could just write something to update the db before deploying." ...
+"I don't want that to be part of the deployment pipeline."
+
+### K.3 What the agent builds (slice S6, on `fix/sweep-c` after its item-17 rework; one agent)
+
+1. **Two verbs in `Services/Storage/ConfigDbCli.cs`** (dispatch at `:49-91`, usage text `:21-26`; the CLI reads no
+   appsettings.json and starts no host, `:9-12` - keep that):
+   - `db convert-identifiers <db> [--plan]`: for every `user`/`group`/`ou` protected-principal row with no identifier
+     companion (the B.4 step-3 resolution rules; the exactly-one rule for every kind; well-known SIDs refused) insert the
+     companion `user_sid`/`group_sid`/`ou_guid` row (value `id|label`, label = the legacy value), and for every module-admin
+     grant that is not a SID (B.6 rules: `DOMAIN\name` in that domain, bare name forest-wide, `sAMAccountName`/`cn`/`name`/
+     `displayName`, groups only) replace it in place with the group's SID. **All or nothing:** if any row resolves to none
+     or several objects, or any read fails, write nothing, exit 2, and print every offending row with its kind, value and
+     reason. `--plan` prints the same report and the would-be writes and never opens the database for writing. Exit 0
+     prints each conversion `kind: legacy value -> identifier`. Idempotent: a second run finds nothing to do and says so.
+   - `db identifier-status <db>`: one line per protected-principal row and module-admin grant: `converted` (identifier
+     row with its companion), `identifier` (identifier row with no legacy companion), `legacy` (legacy row with no
+     companion), `grant-sid`, `grant-name`. Exit 0 when nothing is `legacy` or `grant-name`, else exit 2. Read-only.
+   - Directory access runs as the invoking user (an elevated admin shell), the way section access's and the protection
+     service's reads do but with no credential fetch, no Delinea, no `DirectoryReadOperation`: the CLI has no host. Reuse
+     the resolution code the passes already hold (`ProtectedPrincipalIdentifierResolver`, `ModuleAdminSidMigration`'s
+     lookup) by moving it, not copying it. Environment neutrality (repo-guidance Invariant 7): the forest and its
+     catalog are discovered from the host's own membership; nothing is named or defaulted.
+   - The usage text, exit codes and the "stdout meaningful only after exit 0" contract (`:5-7`) are extended, not
+     changed. `tests/ps` has a Pester guard that no script runs sqlite3; nothing here is a script.
+2. **Removed:** `Services/ProtectedPrincipalIdentifierMigration.cs` and `Services/ModuleAdminSidMigration.cs` as startup
+   passes and their `Program.cs` registration and invocation; the `protected_principal_identifier_flags` app_setting and
+   every reader of it; both **Resolve now** buttons and both "not converted" badges (Admin Settings Protected Principals
+   pane; Module Configuration Admins pane) and the tests that pin them (`ProtectedPrincipalIdentifierMigrationTests.cs`,
+   `AdminSettingsResolveNowTests.cs`, `ModuleAdminSidMigrationTests.cs`, `ModuleConfigAdminResolveNowTests.cs` - keep any
+   test in them that pins resolution logic the verb now owns, re-homed). ClickGate entries below any removed page lines
+   are re-anchored per `.agents/playbooks/clickgate-reanchor.md`.
+3. **The evaluator compares SIDs only.** `ProtectedGroupMembership.Evaluate` evaluates `group_sid` rows and legacy rows
+   already stored as a SID. A legacy Group row with no companion that is not a SID -> incomplete, with the reason
+   "not converted - run db convert-identifiers" and the row's label, through the named banner item 17 built
+   (`ProtectedPrincipalService.IncompleteReason`). `Candidates` keeps only the `Sid` case for check-time use; the DN,
+   `DOMAIN\Name` and bare-name resolution moves to the verb's resolver. The shared-name branch, `Result.Stale`, the
+   `configuredEntries` parameter and their tests go. Legacy User and OU rows with no companion: the same incomplete
+   reason, not the legacy string match (the owner's rule: the new build never resolves or matches names). Self-grant
+   and self-service checks that read a group themselves are unchanged.
+4. **Module-admin grants:** `ModuleAdminService.IsModuleAdmin` already ignores non-SID grants (aud-a1). The Admins pane
+   lists a name grant with the fixed text "not converted - run db convert-identifiers" (no Resolve now). Nothing
+   authorises by name.
+5. **Save writes both forms** (S1 already does: a new-build add writes legacy + identifier rows, a remove deletes both -
+   `ProtectedPrincipalRepository`); verify, do not re-implement.
+6. **Help and docs (Known Failure Class 5):** Admin Settings and Module Configuration help text for the removed buttons
+   and badges; README Protected Principals, Module Configuration and Troubleshooting entries; `docs/ConfigDbOperations.md`
+   run-book entry: copy (`db backup --source <live> --dest <copy>`), `db convert-identifiers <copy> --plan`,
+   `db convert-identifiers <copy>`, `db identifier-status <copy>`, then the same three against the live path; and the
+   constraint about old-build saves. `docs/ConfigDbToolInApp-Plan.md` section 3.1 gets a pointer to the two new verbs.
+7. **Versions:** AdminSettings and ModuleConfig one patch each (page behaviour); base stays 2.36.0 (undeployed).
+8. **Records:** finding `ppi-s6.md`, index row, `sweep-c-17.md` rewritten to the K.3 shape (its first build is
+   superseded, say so), state.md untouched (supervisor), token-log line by the supervisor.
+9. **Gates:** the full set in `.agents/repo-guidance.md` Verification, plus Pester/PSSA if any `.ps1` changes (none
+   expected). Non-vacuity proof for every new test.
+
+### K.4 What the owner runs (not the agent; the live database is never touched by an agent)
+
+Against the build about to be deployed, from an elevated shell, with `<live>` = the path in `ConfigStore:Path`:
+`db backup --source <live> --dest <copy>`; `db convert-identifiers <copy> --plan`; `db convert-identifiers <copy>`;
+`db identifier-status <copy>` (exit 0). Fix any named row in the old build's Admin Settings and repeat until the copy
+converts cleanly. Then the same three verbs against `<live>`. Then the dev deploy.
