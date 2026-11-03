@@ -193,7 +193,7 @@ public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? Disti
     }
 }
 
-public class ProtectedPrincipalService
+public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
 {
     private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
@@ -1793,6 +1793,68 @@ public class ProtectedPrincipalService
         }
 
         return (matches, incomplete);
+    }
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.4. Looks each legacy row up once, inside ONE
+    /// <see cref="DirectoryReadOperation"/>: one directory-read credential fetch and one warm session for the whole pass,
+    /// however many rows it reads (kd-88). Never throws for a lookup that could not run: every row is then returned as
+    /// <see cref="ProtectedPrincipalLeftReason.DirectoryUnavailable"/> with the cause, and nothing is written.
+    /// </summary>
+    async Task<IReadOnlyList<ProtectedPrincipalRowResolution>> IProtectedPrincipalLegacyResolver.ResolveLegacyRowsAsync(
+        IReadOnlyList<ProtectedPrincipalLegacyRow> rows, CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+            return [];
+
+        IReadOnlyList<ProtectedPrincipalRowResolution> AllLeft(string cause) => rows
+            .Select(r => ProtectedPrincipalRowResolution.Left(r, ProtectedPrincipalLeftReason.DirectoryUnavailable, $"directory unavailable: {cause}"))
+            .ToList();
+
+        using var operation = DirectoryReadOperation.Begin();
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId is null)
+            return AllLeft("the directory-read credential is not configured (Admin Settings, Protected principals)");
+
+        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the pass's one fetch
+        if (creds is null)
+            return AllLeft("the directory-read credential could not be retrieved");
+
+        if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
+            return AllLeft("the directory service is busy");
+
+        try
+        {
+            return await Task.Run(() =>
+            {
+                using var session = DirectorySessions.Lease(SessionWait);
+                try
+                {
+                    var directory = new PowerShellProtectedGroupDirectory(
+                        session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
+                    var resolved = ProtectedPrincipalIdentifierResolver.Resolve(rows, directory, cancellationToken);
+
+                    // A session a read failed in is thrown away rather than lent again, as the group check's is.
+                    if (resolved.Any(r => r.Reason == ProtectedPrincipalLeftReason.DirectoryUnavailable))
+                        session.Fail();
+                    return resolved;
+                }
+                catch
+                {
+                    session.Fail();
+                    throw;
+                }
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "The protected-principal identifier pass could not read the directory");
+            return AllLeft(ex.Message);
+        }
+        finally
+        {
+            _adThrottle.Release();
+        }
     }
 
     /// <summary>A matched group_sid entry named by its row's label, as the page names it; every other match as it was.</summary>

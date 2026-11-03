@@ -292,6 +292,9 @@ try
     builder.Services.AddSingleton<ExchangeAdminWeb.Authorization.ISectionAccessGroupDirectory,
         SectionAccessGroupDirectory>();
     builder.Services.AddSingleton<SectionAccessSidMigration>();
+    // Protected users, groups and OUs stored by name gain an identifier row beside them (docs/ProtectedPrincipalIdentifiers-Plan.md
+    // B.3, B.4): once per start, off the startup path, and on Admin Settings' Resolve now.
+    builder.Services.AddSingleton<ProtectedPrincipalIdentifierMigration>();
     builder.Services.AddScoped<EmergencyDisableService>();
     builder.Services.AddScoped<AccountLockoutRemediationService>();
     builder.Services.AddScoped<LicensingUpdatesService>();
@@ -421,6 +424,12 @@ try
         var sectionAccessSids = app.Services.GetRequiredService<SectionAccessSidMigration>();
         var sidMigrationStatus = sectionAccessSids.Run();
         Log.Information("Section-access SID migration: {Status}", sidMigrationStatus);
+
+        // Protected users, groups and OUs still stored by name are looked up and given an identifier row beside them
+        // (docs/ProtectedPrincipalIdentifiers-Plan.md B.3). Started, never awaited: it reads the secret store and Active
+        // Directory, and an unconverted row is enforced exactly as before, so startup has nothing to wait for. It never
+        // rewrites a legacy row and never half-writes; Admin Settings' Resolve now runs the same pass on demand.
+        _ = app.Services.GetRequiredService<ProtectedPrincipalIdentifierMigration>().StartAtStartup();
 
         // Circuit revalidation's off-switch (aud-a29b, Authentication:RevalidationEnabled). When it
         // is off, say so here - one warning and one audit line - before anything is served, so the
