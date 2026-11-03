@@ -1,65 +1,49 @@
-# sweep-c-17: one stale or ambiguous protected-group entry no longer refuses every protected check (sweep item 17)
+# sweep-c-17: one stale or ambiguous protected-group entry no longer refuses every check unnamed (sweep item 17)
 
 **Severity**: MEDIUM - `.agents/review/live-risk-sweep-2026-10-30.md` item 17: since aud-a3b (ef0664e9) a protected-group
 entry the directory could not bind to exactly one group - a deleted group's SID, a renamed/moved group's DN, a name two
 domains share - marked every check incomplete, and an incomplete check with no other match refuses: every change in every
 module that runs the check was refused, with "Group membership check was incomplete due to expansion errors", naming nothing.
-**Status**: Fixed on branch; awaiting review
+**Status**: Fixed on branch; awaiting review. Rebuilt to `docs/ProtectedPrincipalIdentifiers-Plan.md` K.3 by ppi-s6; the
+first build (`db0813b9`) is superseded on the branch before merge (decision 2026-11-03 "Identifier conversion is a one-time
+command-line step, not a startup pass").
 **Branch**: `fix/sweep-c` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-c`, from master `72611fc2`)
-**Commit**: see `git log master..fix/sweep-c` (`fix(sweep-c, item 17): ...`) | **Reviewer**: implementer (candidate)
+**Commit**: `db0813b9` (first build, superseded); the K.3 shape in `fix(ppi-s6): ...` (see `ppi-s6.md`) | **Reviewer**: implementer (candidate)
 
 ## Evidence
 
 - At `72611fc2`: `ProtectedGroupMembership.Evaluate` -> `Resolve` -> `One(...)`: zero -> "no such group", two or more ->
   "{n} groups match", both `incomplete = true`; `ProtectedPrincipalService.CheckGroupMembershipAsync` refused
-  `expansionHadErrors && matches.Count == 0` with the unnamed text. Plan B.2/B.5 (`docs/ProtectedPrincipalIdentifiers-Plan.md`)
-  kept unmigrated Group rows "enforced as today", and the S2 page help said such an entry "fails every check closed".
+  `expansionHadErrors && matches.Count == 0` with the unnamed text.
 - **Protected Group Targets** (`GroupTargets`, `objectGUID|DN`): checked only by `CheckWriteTarget`, directory-free, GUID first
-  then DN (`ProtectedGroupTargetEntry.Matches`). A stale target entry cannot make any check incomplete; a renamed or moved
-  group still matches by GUID; a deleted one protects nothing, as the page's "not in AD" tip already says. Nothing to fix
-  there - the sweep's "Protected Group Targets" names the protected **Groups** list, whose lines it cites.
+  then DN (`ProtectedGroupTargetEntry.Matches`). A stale target entry cannot make any check incomplete. Nothing to fix there.
 
-## Approach (as built)
+## What the first build did (superseded)
 
-- **Per-entry isolation in the evaluator.** `ProtectedGroupMembership.Candidates` returns every group an entry names
-  (`Resolve` keeps exactly-one for the identifier pass). `Evaluate(..., configuredEntries)`:
-  - several groups -> the members of each are protected (the fail-closed reading; a superset of the pre-aud-a3b host-domain
-    lookup), logged at Warning with their DNs;
-  - none, for a configured entry -> protects nobody (no one can be in a group that does not exist), named in `Result.Stale`
-    and a Warning on every check; the check goes on without it;
-  - none, for a group the caller just read (self-grant, self-service deny trustees: `configuredEntries` false) -> still
-    incomplete: the read raced a change;
-  - a read that throws, a domain the forest lacks, a DN naming no domain -> still incomplete, now with the entry in
-    `Result.Problems`.
-- **Writes to that group.** For a protected-group entry the group itself is protected by the same comparison (the target's
-  own SID); an entry naming no group has no group a write could target - a group that exists under that DN, SID or name
-  would have been found.
-- **Banner names the entry.** `ProtectedPrincipalService.IncompleteReason`: "Group membership check was incomplete -
-  protected group '<label>': <problem>; .... Cannot confirm target is not protected." (labels as the page shows them, via
-  `LabelGroupProblems`); the old text remains only when no cause was recorded.
-- **Help (Known Failure Class 5).** Admin Settings "not in AD" Group tip and "not converted" Group tip rewritten (same line
-  count; Admin Settings has no ClickGate line entries); README Protected Principals paragraph.
-- **Versions.** None: the evaluator is shared (base 2.36.0 undeployed, no bump); the Admin Settings change is help text.
+`db0813b9` isolated each entry inside the evaluator: a name several groups carry protected the members of each, a configured
+entry naming no group protected nobody (`Result.Stale`, `Evaluate(configuredEntries)`), and the refusal named the entry. The
+owner ruled that plumbing out (K.2): names are not to be resolved by the new build at all.
 
-## Where the code goes beside the plan's and the sweep's text
+## The K.3 shape (as built by ppi-s6)
 
-- **This changes behaviour the approved plan's B.2/B.5 and S2's help described** ("an unresolvable Group row ... fails every
-  check closed"). B.2's reason was not to make unmigrated rows *inert* during an old-build save or a directory blip; they are
-  still evaluated on every check, and a blip (a read that throws) still refuses. Only the directory's definite answer "no
-  such group" now protects nobody - which is what the build before the October weekend did (a DN passed unread matched
-  nobody). Supervisor: the owner may want to see this one line.
-- A foreign-forest SID reads as "no such group" at this forest's catalog and so protects nobody; the check could never read
-  a foreign forest's membership, so no protection the pre-weekend build gave is lost.
+- **No name is resolved at check time.** The evaluator compares SIDs (and DNs its self-grant and self-service callers have just
+  read). A stored Group row with no identifier companion that is not a SID is never looked up: the check is incomplete with
+  "protected group '<label>': not converted - run db convert-identifiers". So "a name two domains share" cannot arise at check
+  time; `db convert-identifiers` refuses such a row by name, writing nothing, until it is re-picked.
+- **The banner names the entry** (kept from the first build): `ProtectedPrincipalService.IncompleteReason` -
+  "Protected-principal check was incomplete - protected group '<label>': <problem>; .... Cannot confirm target is not
+  protected." The unnamed text remains only when no cause was recorded.
+- **A group_sid row no group carries any more** (a deleted group) and a read that fails are still incomplete, named, and refuse a
+  check that found no other match: `Result.Stale` and `configuredEntries` are gone, as K.3 orders. The cure is to remove or
+  re-pick the named entry.
+- **Help.** Admin Settings "not in AD" tips and README rewritten to say the above (ppi-s6).
 
 ## Guard proof
 
-| Revert | Failing test |
-|---|---|
-| M1 a configured stale entry back to incomplete | `AConfiguredEntryNamingNoGroup_ProtectsNobody_IsNamed_AndTheCheckIsComplete` (3), `AConfiguredStaleEntry_DoesNotCancelAMatchOnAnotherEntry`, `AnUnmigratedGroupRowNamingNoGroup_ProtectsNobody_BeforeAndAfterAPass_AndIsLeftWithItsReason` |
-| M2 several groups back to incomplete | `BareName_SharedByTwoDomains_ProtectsTheMembersOfEach`, `BareName_SharedByTwoDomains_IsACompleteAnswer_ForATargetInNeither` |
-| M3 refusal back to the unnamed text | `AGroupRowWhoseLookupFails_StillFailsTheCheckClosed_NamingTheRow` |
-| M4 the service passes `configuredEntries: false` | `AnUnmigratedGroupRowNamingNoGroup_...` |
+See `ppi-s6.md`: `ASidEntryNamingNoGroup_IsIncomplete_AndNamed`, `ANameEntry_IsNeverLookedUp_ItIsIncomplete_NotConverted`,
+`AGroupSidRowWhoseLookupFails_StillFailsTheCheckClosed_NamingTheRow`, `ARowStoredByNameOnly_RefusesTheCheck_NamingIt_...`.
+The first build's four guard tests were removed with the branches they pinned.
 
 ## Gates
 
-Run once for the branch at its tip: see the sweep-c report. Not run: any live directory read.
+Run once for the branch at its tip: see the ppi-s6 report. Not run: any live directory read.
