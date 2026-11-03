@@ -15,6 +15,12 @@ namespace ExchangeAdminWeb.Services;
 /// identifies the mailbox, so that a write can be bound to the mailbox that was checked rather
 /// than to the string the operator typed (aud-a2d).
 /// </param>
+/// <param name="ObjectSid">
+/// The Active Directory object's objectSid, canonical, when the resolution read it; null otherwise. Filled by
+/// <see cref="ProtectedPrincipalService"/>'s own AD resolution. A <c>user_sid</c> protection row compares against it
+/// (docs/ProtectedPrincipalIdentifiers-Plan.md C.2); a target that does not carry one is compared by the row's label,
+/// as before the identifier rows existed, so a resolution that did not read it cannot drop a protection.
+/// </param>
 public sealed record ResolvedDirectoryPrincipal(
     string Source,
     string DisplayName,
@@ -24,7 +30,8 @@ public sealed record ResolvedDirectoryPrincipal(
     string? DistinguishedName,
     string? ObjectGuid,
     string? EntraObjectId,
-    Guid? ExchangeGuid = null);
+    Guid? ExchangeGuid = null,
+    string? ObjectSid = null);
 
 /// <summary>
 /// One Active Directory object returned by the mailbox GUID lookup
@@ -58,6 +65,41 @@ public sealed class ProtectedPrincipalConfig
     /// <see cref="ProtectedPrincipalService.CheckAsync"/>. Entry format: "objectGUID|DN".
     /// </summary>
     public string[] GroupTargets { get; set; } = [];
+
+    /// <summary>
+    /// Identifier rows (docs/ProtectedPrincipalIdentifiers-Plan.md A.2), each "identifier|label"
+    /// (<see cref="ProtectedPrincipalIdEntry"/>): protected users by objectSid. A row of <see cref="Users"/> whose value is
+    /// one of these rows' label is its companion - written for an older build, not evaluated by this one.
+    /// </summary>
+    public string[] UserIds { get; set; } = [];
+
+    /// <summary>Protected groups by objectSid, "objectSid|DN"; their companions are in <see cref="Groups"/>.</summary>
+    public string[] GroupIds { get; set; } = [];
+
+    /// <summary>Protected OUs by objectGUID, "objectGUID|DN"; their companions are in <see cref="OrganizationalUnits"/>.</summary>
+    public string[] OuIds { get; set; } = [];
+
+    /// <summary>These lists, repository-shaped: all eight kinds, a null list as an empty one.</summary>
+    public ProtectedPrincipalData ToData() =>
+        new(Users ?? [], Groups ?? [], OrganizationalUnits ?? [], SamAccountNamePatterns ?? [], GroupTargets ?? [])
+        {
+            UserIds = UserIds ?? [],
+            GroupIds = GroupIds ?? [],
+            OuIds = OuIds ?? [],
+        };
+
+    /// <summary>The lists <paramref name="data"/> holds, all eight kinds.</summary>
+    public static ProtectedPrincipalConfig FromData(ProtectedPrincipalData data) => new()
+    {
+        Users = data.Users,
+        Groups = data.Groups,
+        OrganizationalUnits = data.OrganizationalUnits,
+        SamAccountNamePatterns = data.SamAccountNamePatterns,
+        GroupTargets = data.GroupTargets,
+        UserIds = data.UserIds,
+        GroupIds = data.GroupIds,
+        OuIds = data.OuIds,
+    };
 }
 
 /// <summary>How <see cref="ProtectedPrincipalService.ReplaceConfig"/> ended.</summary>
@@ -340,11 +382,16 @@ public class ProtectedPrincipalService
         {
             CheckDirectUserMatches(cfg, target, matchedRules);
             CheckPatternMatches(cfg, target, matchedRules);
-            CheckOuMatches(cfg, target, matchedRules);
+            CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: false);
 
-            if (cfg.Groups.Length > 0)
+            // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: group_sid rows join the group check as SIDs, and ou_guid rows
+            // are compared by the objectGUIDs of the target's containers - both read in the one directory session the group
+            // check already takes. With no identifier rows this is the group check exactly as it was.
+            var groupEntries = GroupEntries(cfg, out var groupLabels);
+            var ouIds = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid).Ids;
+            if (groupEntries.Count > 0 || ouIds.Count > 0)
             {
-                var groupResult = await CheckGroupMembershipAsync(cfg, target);
+                var groupResult = await CheckGroupMembershipAsync(groupEntries, groupLabels, ouIds, target);
                 if (groupResult.checkFailed)
                     return ProtectedPrincipalResult.Failed(groupResult.failReason ?? "Group membership check failed.");
                 matchedRules.AddRange(groupResult.matches);
@@ -424,7 +471,9 @@ public class ProtectedPrincipalService
         {
             CheckDirectUserMatches(cfg, target, matchedRules);
             CheckPatternMatches(cfg, target, matchedRules);
-            CheckOuMatches(cfg, target, matchedRules);
+            // Directory-free, so an ou_guid row is compared here by its label - the DN suffix its companion carries - as
+            // this check compared that OU before the identifier rows existed: no protection it gave is lost.
+            CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: true);
             CheckGroupTargetMatches(cfg, target, matchedRules);
         }
 
@@ -490,16 +539,7 @@ public class ProtectedPrincipalService
             return (null, [], "Protected-principals configuration is corrupt. Contact your administrator.");
         }
 
-        ProtectedPrincipalConfig? config = configured
-            ? new ProtectedPrincipalConfig
-            {
-                Users = data.Users,
-                Groups = data.Groups,
-                OrganizationalUnits = data.OrganizationalUnits,
-                SamAccountNamePatterns = data.SamAccountNamePatterns,
-                GroupTargets = data.GroupTargets,
-            }
-            : null;
+        ProtectedPrincipalConfig? config = configured ? ProtectedPrincipalConfig.FromData(data) : null;
 
         lock (_cacheLock)
         {
@@ -1095,7 +1135,7 @@ public class ProtectedPrincipalService
 
         ps.AddCommand("Get-ADUser")
           .AddParameter("LDAPFilter", filter)
-          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
+          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID", "objectSid" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var users = InvokeIn(session);
@@ -1120,7 +1160,10 @@ public class ProtectedPrincipalService
             PrimarySmtpAddress: adUser.Properties["mail"]?.Value?.ToString(),
             DistinguishedName: adUser.Properties["DistinguishedName"]?.Value?.ToString(),
             ObjectGuid: adUser.Properties["ObjectGUID"]?.Value?.ToString(),
-            EntraObjectId: null);
+            EntraObjectId: null,
+            // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: what a user_sid row compares against.
+            ObjectSid: ProtectedPrincipalIdEntry.CanonicalSid(
+                AccountLockoutRemediationService.SidText(adUser.Properties["objectSid"]?.Value)));
     }
 
     /// <summary>
@@ -1134,12 +1177,7 @@ public class ProtectedPrincipalService
     /// </remarks>
     internal void SaveConfig(ProtectedPrincipalConfig config)
     {
-        _repository.Save(new ProtectedPrincipalData(
-            config.Users ?? [],
-            config.Groups ?? [],
-            config.OrganizationalUnits ?? [],
-            config.SamAccountNamePatterns ?? [],
-            config.GroupTargets ?? []));
+        _repository.Save(config.ToData());
 
         InvalidateCache();
         _logger.LogInformation("Protected-principals config saved and cache invalidated");
@@ -1182,12 +1220,7 @@ public class ProtectedPrincipalService
         if (_legacyFileCorrupt)
             return new ProtectedPrincipalSaveOutcome(ProtectedPrincipalSaveStatus.StoreCorrupt, null, null);
 
-        var data = new ProtectedPrincipalData(
-            config.Users ?? [],
-            config.Groups ?? [],
-            config.OrganizationalUnits ?? [],
-            config.SamAccountNamePatterns ?? [],
-            config.GroupTargets ?? []);
+        var data = config.ToData();
         var refusal = ProtectedPrincipalSaveStatus.Saved;
 
         var outcome = _repository.Replace(current =>
@@ -1253,16 +1286,7 @@ public class ProtectedPrincipalService
             return null;
 
         var rules = snapshot.Configured ? snapshot.Data : ProtectedPrincipalData.Empty;
-        return new ProtectedPrincipalRulesForEditing(
-            new ProtectedPrincipalConfig
-            {
-                Users = rules.Users,
-                Groups = rules.Groups,
-                OrganizationalUnits = rules.OrganizationalUnits,
-                SamAccountNamePatterns = rules.SamAccountNamePatterns,
-                GroupTargets = rules.GroupTargets,
-            },
-            RulesVersion(snapshot));
+        return new ProtectedPrincipalRulesForEditing(ProtectedPrincipalConfig.FromData(rules), RulesVersion(snapshot));
     }
 
     /// <summary>The rules' own content as a version: each kind's stored rows in order, and the presence marker.</summary>
@@ -1285,6 +1309,9 @@ public class ProtectedPrincipalService
             OrganizationalUnits = Sorted(snapshot.Data.OrganizationalUnits),
             SamAccountNamePatterns = Sorted(snapshot.Data.SamAccountNamePatterns),
             GroupTargets = Sorted(snapshot.Data.GroupTargets),
+            UserIds = Sorted(snapshot.Data.UserIds),
+            GroupIds = Sorted(snapshot.Data.GroupIds),
+            OuIds = Sorted(snapshot.Data.OuIds),
         });
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
     }
@@ -1299,7 +1326,10 @@ public class ProtectedPrincipalService
         && SameSet(stored.Groups, wanted.Groups)
         && SameSet(stored.OrganizationalUnits, wanted.OrganizationalUnits)
         && SameSet(stored.SamAccountNamePatterns, wanted.SamAccountNamePatterns)
-        && SameSet(stored.GroupTargets, wanted.GroupTargets);
+        && SameSet(stored.GroupTargets, wanted.GroupTargets)
+        && SameSet(stored.UserIds, wanted.UserIds)
+        && SameSet(stored.GroupIds, wanted.GroupIds)
+        && SameSet(stored.OuIds, wanted.OuIds);
 
     private static bool SameSet(string[] a, string[] b) =>
         new HashSet<string>(a.Where(v => !string.IsNullOrWhiteSpace(v)), StringComparer.OrdinalIgnoreCase)
@@ -1337,12 +1367,7 @@ public class ProtectedPrincipalService
 
             try
             {
-                _repository.ImportIfMissing(new ProtectedPrincipalData(
-                    parsed.Users ?? [],
-                    parsed.Groups ?? [],
-                    parsed.OrganizationalUnits ?? [],
-                    parsed.SamAccountNamePatterns ?? [],
-                    parsed.GroupTargets ?? []));
+                _repository.ImportIfMissing(parsed.ToData());
             }
             catch (Exception ex)
             {
@@ -1468,12 +1493,74 @@ public class ProtectedPrincipalService
         return true;
     }
 
+    /// <summary>
+    /// The rows one base kind evaluates (docs/ProtectedPrincipalIdentifiers-Plan.md B.2): the legacy rows no identifier
+    /// row pairs with - unmigrated, and enforced exactly as before - and the identifier rows, their identifiers canonical.
+    /// </summary>
+    /// <remarks>
+    /// An identifier row whose identifier does not parse cannot be compared by it, and its companion is not evaluated; it
+    /// is evaluated by its label instead, joining the legacy rows, as its companion would have been. A row that cannot
+    /// answer the question it was written for falls back to the answer it gave before, never to none.
+    /// </remarks>
+    internal static (string[] Legacy, IReadOnlyList<ProtectedPrincipalIdEntry> Ids) RowsToEvaluate(
+        string[]? legacyRows, string[]? idRows, Func<string?, string?> canonical)
+    {
+        legacyRows ??= [];
+        idRows ??= [];
+        var ids = new List<ProtectedPrincipalIdEntry>();
+        var byLabel = new List<string>();
+        foreach (var row in idRows)
+        {
+            if (ProtectedPrincipalIdEntry.Parse(row) is not { } entry)
+                continue;
+
+            if (canonical(entry.Identifier) is { } id)
+                ids.Add(entry with { Identifier = id });
+            else if (entry.Label.Length > 0)
+                byLabel.Add(entry.Label);
+        }
+
+        return (ProtectedPrincipalIdEntry.Unpaired(legacyRows, idRows).Concat(byLabel).ToArray(), ids);
+    }
+
+    /// <summary>
+    /// The entries the group check evaluates: unmigrated legacy Group rows as stored, and each group_sid row as its SID,
+    /// which <see cref="ProtectedGroupEntry.Parse"/> reads as a SID entry. <paramref name="labels"/> maps each SID back to
+    /// its row's label, so a matched rule names the group as the page does.
+    /// </summary>
+    private static List<string> GroupEntries(ProtectedPrincipalConfig cfg, out Dictionary<string, string> labels)
+    {
+        var (legacy, ids) = RowsToEvaluate(cfg.Groups, cfg.GroupIds, ProtectedPrincipalIdEntry.CanonicalSid);
+        labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var entries = legacy.ToList();
+        foreach (var id in ids)
+        {
+            entries.Add(id.Identifier);
+            labels.TryAdd(id.Identifier, id.Display);
+        }
+        return entries;
+    }
+
     private static void CheckDirectUserMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
     {
-        foreach (var protectedUser in cfg.Users)
+        var (legacy, ids) = RowsToEvaluate(cfg.Users, cfg.UserIds, ProtectedPrincipalIdEntry.CanonicalSid);
+        foreach (var protectedUser in legacy)
         {
             if (MatchesIdentity(protectedUser, target))
                 matchedRules.Add($"User:{protectedUser}");
+        }
+
+        // A user_sid row is this object, compared by SID: another account carrying its address in mail or UPN is not it
+        // (plan C.2). A target whose resolution did not read a SID is compared by the row's label, as its companion was -
+        // the absence of an identifier on the TARGET is not evidence it is someone else.
+        var targetSid = ProtectedPrincipalIdEntry.CanonicalSid(target.ObjectSid);
+        foreach (var id in ids)
+        {
+            var matches = targetSid is not null
+                ? string.Equals(id.Identifier, targetSid, StringComparison.OrdinalIgnoreCase)
+                : id.Label.Length > 0 && MatchesIdentity(id.Label, target);
+            if (matches)
+                matchedRules.Add($"User:{id.Display}");
         }
     }
 
@@ -1524,21 +1611,41 @@ public class ProtectedPrincipalService
         return Regex.IsMatch(value, regexPattern, RegexOptions.IgnoreCase, RegexTimeout);
     }
 
-    private static void CheckOuMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
+    /// <summary>
+    /// Unmigrated OU rows by DN suffix, as always. ou_guid rows are compared by objectGUID in the directory phase of
+    /// <see cref="CheckAsync"/>; with <paramref name="ouIdsByLabel"/> - the directory-free write-target check - by their
+    /// label's DN suffix instead, the comparison their companion row gets from an older build.
+    /// </summary>
+    private static void CheckOuMatches(
+        ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules, bool ouIdsByLabel)
     {
         if (string.IsNullOrEmpty(target.DistinguishedName))
             return;
 
-        foreach (var ou in cfg.OrganizationalUnits)
+        var (legacy, ids) = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid);
+        foreach (var ou in legacy)
         {
-            if (target.DistinguishedName.EndsWith("," + ou, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(target.DistinguishedName, ou, StringComparison.OrdinalIgnoreCase))
+            if (IsAtOrBeneath(target.DistinguishedName, ou))
                 matchedRules.Add($"OU:{ou}");
+        }
+
+        if (!ouIdsByLabel)
+            return;
+
+        foreach (var id in ids)
+        {
+            if (id.Label.Length > 0 && IsAtOrBeneath(target.DistinguishedName, id.Label))
+                matchedRules.Add($"OU:{id.Display}");
         }
     }
 
+    private static bool IsAtOrBeneath(string targetDn, string ou) =>
+        targetDn.EndsWith("," + ou, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(targetDn, ou, StringComparison.OrdinalIgnoreCase);
+
     private async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckGroupMembershipAsync(
-        ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target)
+        IReadOnlyList<string> groupEntries, IReadOnlyDictionary<string, string> groupLabels,
+        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target)
     {
         var matches = new List<string>();
 
@@ -1548,7 +1655,7 @@ public class ProtectedPrincipalService
         var secretId = GetDirectoryReadSecretId();
         if (secretId == null)
         {
-            _logger.LogError("Directory-read credential is not configured but protected groups are defined - configure it on the Admin Settings page");
+            _logger.LogError("Directory-read credential is not configured but protected groups or OUs are defined - configure it on the Admin Settings page");
             return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
@@ -1568,7 +1675,7 @@ public class ProtectedPrincipalService
             try
             {
                 var (groupMatches, expansionHadErrors) = await Task.Run(() =>
-                    CheckGroupsInWarmSession(cfg.Groups, target, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    CheckGroupsInWarmSession(groupEntries, groupLabels, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
                 matches.AddRange(groupMatches);
 
                 // Fail closed: if expansion had errors and no matches were found,
@@ -1599,13 +1706,15 @@ public class ProtectedPrincipalService
     /// or whose answer was incomplete, is thrown away rather than lent again.
     /// </summary>
     private (List<string> matches, bool expansionHadErrors) CheckGroupsInWarmSession(
-        string[] protectedGroups, ResolvedDirectoryPrincipal target,
+        IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels,
+        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
         using var session = DirectorySessions.Lease(SessionWait);
         try
         {
-            var outcome = CheckTransitiveGroupMembership(session.PowerShell, protectedGroups, target, username, password, domain);
+            var outcome = CheckTransitiveGroupMembership(
+                session.PowerShell, protectedGroups, groupLabels, ouIds, target, username, password, domain);
             if (outcome.expansionHadErrors)
                 session.Fail();
             return outcome;
@@ -1618,7 +1727,8 @@ public class ProtectedPrincipalService
     }
 
     private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
-        PowerShell ps, string[] protectedGroups, ResolvedDirectoryPrincipal target,
+        PowerShell ps, IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels,
+        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
         var matches = new List<string>();
@@ -1666,10 +1776,30 @@ public class ProtectedPrincipalService
         // the reads it is told to. The owning domain is still derived from the target's DN and
         // an undeterminable one still fails closed; that rule moved into the evaluator with it.
         var directory = new PowerShellProtectedGroupDirectory(ps, credential);
-        var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
-        matches.AddRange(outcome.Matches);
-        return (matches, outcome.Incomplete);
+        var incomplete = false;
+        if (protectedGroups.Count > 0)
+        {
+            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
+            matches.AddRange(LabelGroupMatches(outcome, groupLabels));
+            incomplete |= outcome.Incomplete;
+        }
+
+        // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: one read of the target's containers, by DN, in its own domain.
+        if (ouIds.Count > 0)
+        {
+            var (ouMatches, ouIncomplete) = ProtectedOuMembership.Evaluate(ouIds, targetDn, directory, _logger);
+            matches.AddRange(ouMatches);
+            incomplete |= ouIncomplete;
+        }
+
+        return (matches, incomplete);
     }
+
+    /// <summary>A matched group_sid entry named by its row's label, as the page names it; every other match as it was.</summary>
+    internal static IEnumerable<string> LabelGroupMatches(
+        ProtectedGroupMembership.Result outcome, IReadOnlyDictionary<string, string> groupLabels) =>
+        outcome.MatchedEntries.Select(entry =>
+            "Group:" + (groupLabels.TryGetValue(entry, out var label) ? label : entry));
 
     /// <summary>
     /// The exactly-one rule for the class-agnostic sAMAccountName fallback in

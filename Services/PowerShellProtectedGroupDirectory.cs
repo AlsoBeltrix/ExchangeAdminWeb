@@ -23,7 +23,7 @@ namespace ExchangeAdminWeb.Services;
 /// group whose member chain reaches a DN across the target's domain and every universal group at the global catalog, are
 /// gone: the first ran into the domain controller's two-minute timeout on the dev forest.
 /// </remarks>
-internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirectory
+internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirectory, IProtectedOuDirectory
 {
     private static readonly string[] GroupProperties = ["objectSid", "GroupScope", "GroupCategory"];
 
@@ -140,6 +140,28 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
                 var dn = (row is null ? null : Text(row, "DistinguishedName"))
                          ?? throw new InvalidOperationException("The directory returned an object without a readable DN.");
                 found.Add(new DirectoryMemberOf(dn, Text(row!, "objectSid"), DnValues(row!.Properties["memberOf"]?.Value)));
+            }
+        }
+        return found;
+    }
+
+    public IReadOnlyList<DirectoryObjectGuid> ReadObjectGuids(IReadOnlyList<string> dns, string server)
+    {
+        // The named containers by DN, in the domain that holds them - never a search for whatever is beneath an OU.
+        var found = new List<DirectoryObjectGuid>();
+        foreach (var batch in ProtectedGroupMembership.Batches(dns))
+        {
+            foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+            {
+                ["LDAPFilter"] = ProtectedGroupMembership.AnyDnFilter(batch),
+                ["Server"] = server,
+                ["Properties"] = new[] { "ObjectGUID" },
+            }))
+            {
+                // A row without a DN is a failed read, never a missing object.
+                var dn = (row is null ? null : Text(row, "DistinguishedName"))
+                         ?? throw new InvalidOperationException("The directory returned an object without a readable DN.");
+                found.Add(new DirectoryObjectGuid(dn, Text(row!, "ObjectGUID")));
             }
         }
         return found;

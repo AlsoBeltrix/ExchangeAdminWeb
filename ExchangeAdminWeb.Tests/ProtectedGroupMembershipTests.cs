@@ -914,7 +914,10 @@ public class ProtectedGroupMembershipTests
             "internal static (string? TargetDn, bool Failed) SelectFallbackDn(");
 
         Assert.Contains("ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger)", body, StringComparison.Ordinal);
-        Assert.Contains("return (matches, outcome.Incomplete);", body, StringComparison.Ordinal);
+        // ppi-s1: the ou_guid comparison shares the session, so the evaluator's incompleteness is folded into one flag
+        // that is what the method returns.
+        Assert.Contains("incomplete |= outcome.Incomplete;", body, StringComparison.Ordinal);
+        Assert.Contains("return (matches, incomplete);", body, StringComparison.Ordinal);
         // The per-group query that read "no rows" as "not a member" is gone from the service.
         Assert.DoesNotContain("inChainResult", body, StringComparison.Ordinal);
     }
