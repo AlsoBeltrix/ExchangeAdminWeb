@@ -145,6 +145,57 @@ it too (harmless if already present).
 > This is the authorization store. A mistake here locks people out of every module, or lets
 > the wrong people in. Double-check the alias and the resolved SID, and prefer the admin page.
 
+## Converting protected principals and module-admin grants to identifiers
+
+Once, by hand, before deploying the first build with `docs/ProtectedPrincipalIdentifiers-Plan.md` section K
+(decision 2026-11-03). That build never resolves or matches a stored name: a protected user, group or OU stored by
+name only refuses every protection check that finds no other match, naming it ("not converted - run db
+convert-identifiers"), and a module-admin grant stored by name grants nothing. The deploy pipeline does not run,
+check or know about this step.
+
+- `db convert-identifiers <db> [--plan]` looks up every protected user, group and OU row that has no identifier
+  companion and every module-admin grant that is not a SID, once each, **as you** - no credential, no Delinea - in the
+  forest this host belongs to (the ActiveDirectory PowerShell module must be installed, as the app already needs). It
+  adds a `user_sid` / `group_sid` / `ou_guid` row beside each protected-principal row (the name row stays, for the older
+  build sharing the database) and replaces each name grant with its group's SID. **All or nothing:** if any entry
+  matches no object or several, or a lookup fails, it writes nothing, exits 2, and names every such entry with its
+  reason. `--plan` prints what a real run would write and never opens the database for writing. Exit 0 prints each
+  conversion (`kind: legacy value -> identifier`). A second run finds nothing to do and says so.
+- `db identifier-status <db>` is read-only: one line per protected-principal row and module-admin grant -
+  `converted`, `identifier` (an identifier row with no name row), `legacy` (a name row with no identifier),
+  `grant-sid`, `grant-name` - and exit 0 only when nothing is `legacy` or `grant-name`.
+
+On exit 0 the report is on stdout; on exit 2 it is on stderr, ending in an `error:` line.
+
+Run from an **elevated** shell on the deploy host, with `$app` the `ExchangeAdminWeb.dll` of the build about to be
+deployed (its publish output, not the running instance's folder), `$dotnet` as at the top, and `$db` the
+`ConfigStore:Path` value above. The live database is touched only after a copy converts cleanly:
+
+```powershell
+$copy = "D:\backups\exchangeadmin.identifiers-test.$(Get-Date -Format yyyyMMdd-HHmmss).db"
+
+# 1. Test against a copy.
+& $dotnet $app db backup --source $db --dest $copy
+& $dotnet $app db convert-identifiers $copy --plan
+& $dotnet $app db convert-identifiers $copy
+& $dotnet $app db identifier-status $copy        # must exit 0
+
+# Any entry named in step 1: fix it in the OLD build's Admin Settings or Module Configuration (remove it, or pick it
+# again from the search), then repeat step 1 with a new copy until it converts cleanly.
+
+# 2. The same three against the live database (safe while the app runs; the write is one transaction under the lock).
+& $dotnet $app db convert-identifiers $db --plan
+& $dotnet $app db convert-identifiers $db
+& $dotnet $app db identifier-status $db          # must exit 0
+
+# 3. Then the dev deploy (tools/deploy-pipeline.ps1 -Dev).
+```
+
+**The one constraint:** between the live conversion and the prod deploy, do **not** save Admin Settings' Protected
+principals pane on prod's older build. Its save rewrites the whole table and drops every identifier row, which makes
+every protection check on the new build refuse until the conversion is run again. If it happens, run step 2 again;
+`db identifier-status` shows it (`legacy` lines).
+
 ## Recover from corruption
 
 **Do not delete the database.** With `ConfigStore:Path` set, the app will not start against a

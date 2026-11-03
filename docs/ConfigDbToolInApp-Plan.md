@@ -130,6 +130,12 @@ beyond `Path.GetFullPath`):
 Any other argument shape: usage to stderr, exit 1. Exit codes are the only success signal
 the PowerShell side trusts; stdout is parsed only after exit 0.
 
+Two more verbs, `convert-identifiers <db> [--plan]` and `identifier-status <db>`, were added by
+`docs/ProtectedPrincipalIdentifiers-Plan.md` section K (slice S6, `Services/Storage/ConfigDbIdentifiers.cs`): a one-time,
+by-hand conversion of protected principals and module-admin grants stored by name, which no script calls. Same exit codes
+and the same stdout-after-exit-0 contract; their contracts and the run-book are in that plan's K.3 and in
+`docs/ConfigDbOperations.md` "Converting protected principals and module-admin grants to identifiers".
+
 **How long a verb waits for a database another process holds (corrected 2026-10-26, cons-3).** The table's
 `PRAGMA busy_timeout=5000` was read as "the verb waits five seconds". It did not. `busy_timeout` is SQLite's own wait
 inside each step, and Microsoft.Data.Sqlite then runs a statement that came back busy again - each run another full
