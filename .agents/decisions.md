@@ -5,6 +5,32 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-03 - Thorough fixes by default; protected principals and module-admin grants by immutable identifier
+
+Owner, 2026-11-03, verbatim: "do it correctly. assume I will ALWAYS say do it correctly, regardless of the work involved."
+Scope of the ruling: when a fix has a thorough form and a cheap form, the agent takes the thorough one and does not ask
+which. It changes nothing else - the mandate's conditions hold (no intended functionality removed or significantly
+changed), code changes still need an approved plan with an Exec summary, and owner gates on scope, host actions and
+anything outward-facing still apply.
+
+Applied the same day to the sweep's open decisions:
+
+- **Protected principals are stored and compared by immutable identifier.** Users and groups by SID, OUs by objectGUID;
+  existing rows migrated by directory lookup, unresolvable ones surfaced on the admin page. A write target is identified by
+  the SID Exchange reports for the mailbox and read from Active Directory by that SID; the address lookup stays only as the
+  fallback when Exchange reports no SID, and the msExchMailboxGuid proof (aud-a2c, sweep item 6) retires with it. Plan:
+  `docs/ProtectedPrincipalIdentifiers-Plan.md`. Closes item 6 without a revert-or-warn choice.
+- **Module-admin grants (item 8):** stored names are migrated to SIDs by directory lookup; a name that does not resolve to
+  exactly one group is listed on the Module Configuration page for re-picking. Nothing the directory can resolve is
+  re-picked by hand.
+- **Writable binaries run elevated (item 12):** both halves. The scripts refuse to run a tool from a folder a
+  non-administrator can write, and the host's inherited grant is removed under the app, backup and output folders. The
+  host half is an owner-run action, commands shown first.
+- **Bulk-run notifications (item 21):** one digest per affected person after the loop; no mail for a row Exchange treated
+  as a no-op. **Manager notice (item 9):** a user-facing template, never the administrator template carrying the
+  operator's IP. **Credential cache:** the five-minute in-memory cache stays; it is how the near-instant requirement is
+  met.
+
 ### 2026-11-03 - Conference Rooms runs no protected-principal check at all
 
 Owner ruling, 2026-11-03: "protected principals does not apply to conference rooms." Supersedes the one part of the
