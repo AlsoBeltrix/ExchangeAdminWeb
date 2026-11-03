@@ -645,7 +645,8 @@ permission that could. Disabled by default and fail-closed.
     protected-principal check reads with. While the check is on (Prevent Self-Grant, the default), every grant needs
     it: without it, every grant is refused as incomplete, naming the setting - to a person or to a group, whichever
     directory holds the grantee - and nothing is written. A removal is not checked and does not need it. With it
-    configured, each check fetches it once (a bulk file once for the whole file)
+    configured, each check fetches it once (a bulk file once for the whole file), and the protected-principal
+    resolve pass (see Protected Users / Excluded Users) once per pass
   - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
     refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient
     its filter matches only since then is not compared. One Exchange reports no member of is refused as incomplete,
@@ -1094,7 +1095,15 @@ check compares a user by SID wherever the target's SID was read (another account
 protected in its place), a group by SID against the target's token, and an OU by the object GUIDs of the target's
 containers, so a renamed OU still protects the accounts beneath it. A user or OU is looked up in any domain of the
 forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. An entry added
-before identifiers were stored is enforced by name, exactly as before (docs/ProtectedPrincipalIdentifiers-Plan.md).
+before identifiers were stored - or saved by an older build, whose save drops the identifier rows - is enforced by name,
+exactly as before, and marked **not converted** on the page. At every start, without delaying it, and on **Resolve now**
+in that pane, the app looks each such entry up once with the Directory Read Credential (one fetch for the whole pass):
+one that matches exactly one object gains its identifier row beside the name row, which is never changed; one that
+matches none or several, resolves to a built-in group, or could not be looked up is left as it is, with the reason on
+its badge. Each pass is audited (`ProtectedPrincipalIdentifierMigration`), listing what it converted and what it left.
+The **not in AD** badge says what such an entry still does: a user or OU entry matches only a target carrying that exact
+value, and a group entry that resolves to no group makes every protection check with no other match refuse the change
+(docs/ProtectedPrincipalIdentifiers-Plan.md).
 
 #### Protected principal servicing (authorised bypass)
 

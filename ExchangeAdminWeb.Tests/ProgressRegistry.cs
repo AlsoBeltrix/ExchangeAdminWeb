@@ -627,6 +627,13 @@ public static class ProgressRegistry
                 + "Unavailable is the one that never reached the directory. The Complete reads "
                 + "two LOCALS rather than ppAddError, which any of the four Add buttons clears "
                 + "on entry while this one can still be suspended on its lookup"),
+            new("ResolveNowAsync", "IdentifierMigration.RunAsync(",
+                "docs/ProtectedPrincipalIdentifiers-Plan.md B.3: Resolve now runs the identifier pass - one credential fetch "
+                + "and one directory lookup per entry still stored by name, then one write. The Begin sits below the "
+                + "authorization re-check and the unsaved-changes refusal, which settle without a round trip (the "
+                + "AddValidatedAsync shape), and above the one call that waits. ActivitySize.Unknown: the number of rows the pass "
+                + "reads is decided inside it, under its own read. The pass is handed the activity's own token, and Complete "
+                + "reads the pass's own result, a local, with no await between"),
         ],
         Exempt =
         [

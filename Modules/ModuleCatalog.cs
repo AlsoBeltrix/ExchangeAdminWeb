@@ -1724,7 +1724,10 @@ public sealed class ModuleCatalog
             // four protected-principal Add paths were silent (docs/ProgressCoverage-Plan.md S4).
             // 1.2.3: the enablement, protected-principal and log-level saves write the toggles, the directory-read
             // secret ID and the level as they stood at the click, read above their yield (kd-72).
-            Version = "1.2.3",
+            // 1.2.4: the protected-principals pane flags each entry still stored by name ("not converted", with the last
+            // resolve pass's reason), offers Resolve now, and says what a "not in AD" entry still does per kind
+            // (docs/ProtectedPrincipalIdentifiers-Plan.md S2).
+            Version = "1.2.4",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

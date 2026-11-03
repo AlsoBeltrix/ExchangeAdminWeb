@@ -97,6 +97,9 @@ internal sealed class SettingsPageHarness : IDisposable
         ProtectedPrincipals = new ProtectedPrincipalService(
             Env, Config, ModuleConfig, new ProtectedPrincipalRepository(ProtectedStore), Delinea,
             NullLogger<ProtectedPrincipalService>.Instance);
+        IdentifierMigration = new ProtectedPrincipalIdentifierMigration(
+            new ProtectedPrincipalRepository(ProtectedStore), ProtectedPrincipals, new AppSettingRepository(ProtectedStore), Audit,
+            NullLogger<ProtectedPrincipalIdentifierMigration>.Instance);
         ExoPool = new ExoConnectionPool(Config, ModuleConfig, Enablement, NullLogger<ExoConnectionPool>.Instance, Trace);
 
         ClientInfo = new ClientInfoService();
@@ -140,6 +143,9 @@ internal sealed class SettingsPageHarness : IDisposable
     public AttributeEditorHarness.SwitchableStore AllowlistStore { get; }
 
     public ProtectedPrincipalService ProtectedPrincipals { get; }
+
+    /// <summary>The identifier pass behind Admin Settings' Resolve now (docs/ProtectedPrincipalIdentifiers-Plan.md S2).</summary>
+    public ProtectedPrincipalIdentifierMigration IdentifierMigration { get; }
     public ExoConnectionPool ExoPool { get; }
     public ClientInfoService ClientInfo { get; }
     public AuthenticationStateProvider AuthState { get; }
@@ -254,6 +260,7 @@ internal sealed class SettingsPageHarness : IDisposable
             ["Catalog"] = Catalog,
             ["Enablement"] = Enablement,
             ["ProtectedPrincipalService"] = ProtectedPrincipals,
+            ["IdentifierMigration"] = IdentifierMigration,
             ["ModuleConfigSvc"] = ModuleConfig,
             ["Progress"] = Progress,
         });

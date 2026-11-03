@@ -431,6 +431,8 @@ internal sealed class SelfGrantDirectoryStandIn
         "name" or "cn" => One(entry.Name),
         "distinguishedname" => One(entry.Dn),
         "objectclass" => One(entry.Class),
+        // As Active Directory's shorthand reads it: a user account is a person, any other object its own class.
+        "objectcategory" => One(string.Equals(entry.Class, "user", StringComparison.OrdinalIgnoreCase) ? "person" : entry.Class),
         "msexchmailboxguid" => entry.MailboxGuid is Guid guid ? [new string(guid.ToByteArray().Select(b => (char)b).ToArray())] : [],
         "member" => LinksSeen(reach, entry, credentialed) ? entry.Members : [],
         MemberChain => LinksSeen(reach, entry, credentialed) ? Chain(entry, reach, credentialed) : [],

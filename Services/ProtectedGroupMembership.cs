@@ -512,11 +512,18 @@ internal static class ProtectedGroupMembership
     private static bool SameDomain(string? a, string? b)
         => a is not null && b is not null && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>The problem <see cref="Resolve"/> reports for an entry no group matches.</summary>
+    internal const string NoSuchGroup = "no such group";
+
+    /// <summary>The problem <see cref="Resolve"/> reports for a DN with no DC components.</summary>
+    internal const string DnNamesNoDomain = "the DN names no domain";
+
     /// <summary>
     /// Binds one entry to exactly one group, in the directory its shape names. Null, with the
-    /// reason in <paramref name="problem"/>, for no match or several.
+    /// reason in <paramref name="problem"/>, for no match or several. Also the identifier migration's group lookup
+    /// (docs/ProtectedPrincipalIdentifiers-Plan.md B.4), so a legacy row converts to the group the check binds it to.
     /// </summary>
-    private static DirectoryGroup? Resolve(
+    internal static DirectoryGroup? Resolve(
         ProtectedGroupEntry entry, IProtectedGroupDirectory directory, out string? problem)
     {
         switch (entry.Kind)
@@ -525,7 +532,7 @@ internal static class ProtectedGroupMembership
                 var dnServer = GroupManagementService.ServerFromDn(entry.Value);
                 if (dnServer is null)
                 {
-                    problem = "the DN names no domain";
+                    problem = DnNamesNoDomain;
                     return null;
                 }
 
@@ -572,7 +579,7 @@ internal static class ProtectedGroupMembership
             return groups[0];
         }
 
-        problem = groups.Count == 0 ? "no such group" : $"{groups.Count} groups match";
+        problem = groups.Count == 0 ? NoSuchGroup : $"{groups.Count} groups match";
         return null;
     }
 

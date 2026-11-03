@@ -23,7 +23,7 @@ namespace ExchangeAdminWeb.Services;
 /// group whose member chain reaches a DN across the target's domain and every universal group at the global catalog, are
 /// gone: the first ran into the domain controller's two-minute timeout on the dev forest.
 /// </remarks>
-internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirectory, IProtectedOuDirectory
+internal sealed class PowerShellProtectedGroupDirectory : IProtectedPrincipalResolveDirectory
 {
     private static readonly string[] GroupProperties = ["objectSid", "GroupScope", "GroupCategory"];
 
@@ -180,6 +180,26 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
                 return true;
         }
         return false;
+    }
+
+    public IReadOnlyList<DirectoryUserObject> FindUsers(string ldapFilter, string? server)
+    {
+        // docs/ProtectedPrincipalIdentifiers-Plan.md B.4. An equality search on an indexed key - UPN, mail, sAMAccountName or
+        // DN - built by ProtectedPrincipalIdentifierResolver; a null server is the forest, through a global catalog.
+        var users = new List<DirectoryUserObject>();
+        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        {
+            ["LDAPFilter"] = ldapFilter,
+            ["Server"] = server ?? GlobalCatalog(),
+            ["Properties"] = new[] { "objectSid" },
+        }))
+        {
+            // A row without a DN is a failed read, never a missing object.
+            var dn = (row is null ? null : Text(row, "DistinguishedName"))
+                     ?? throw new InvalidOperationException("The directory returned an object without a readable DN.");
+            users.Add(new DirectoryUserObject(dn, Text(row!, "objectSid")));
+        }
+        return users;
     }
 
     public IReadOnlyList<string> FindObjectDnsBySid(string sid)
