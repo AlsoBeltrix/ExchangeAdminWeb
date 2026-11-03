@@ -127,16 +127,22 @@ None.
 
 ## Known gaps
 
-**The non-resolving-grant list has NOT been produced, and the owner ruled it must reach him
-before this ships.** `GetUnusableGrants()` exists and is tested, but the grants live in the
-shared config database on the deployed hosts - there is no `ConfigStore:Path` in the repo and
-no local `config/*.db`, so the list cannot be generated from source. **It must be produced
-against the live store before deployment**, and nothing yet surfaces it in the UI. Carried as
-the next slice; see `.agents/state.md`.
+**Closed by [ppi-s5](ppi-s5.md) (2026-11-03): the non-resolving-grant list is now produced, on the
+page, by the pass.** The original gap: the list had not been produced, the owner ruled it must
+reach him before this shipped, and the grants live in the shared config database on the deployed
+hosts, so it could not be generated from source. Superseded by the owner's ruling of 2026-11-03
+(`.agents/decisions.md`, item 8: "stored names are migrated to SIDs by directory lookup; a name
+that does not resolve to exactly one group is listed on the Module Configuration page for
+re-picking"). `ModuleAdminSidMigration` runs at every start and on the Admins pane's **Resolve
+now**: each name that names exactly one group is replaced by its SID (and authorises from then
+on, decision D3); every other name is listed on that module's Admins pane through
+`TryGetUnusableGrants` - its first production caller - marked *not converted*, with the pass's
+reason and a Remove beside it, and every pass files one audit event naming each grant converted
+and each left.
 
-Until that happens the effect of this change on the running system is: **every module-admin
-grant stored as a name stops authorizing.** That is the ruled behaviour, not a regression, but
-it is invisible until someone cannot open their module.
+What this change alone did on the running system, before ppi-s5: **every module-admin grant
+stored as a name stopped authorizing** - the ruled behaviour, and invisible until someone could
+not open their module. ppi-s5 makes it visible and converts what the directory can resolve.
 
 The guard on `AddModuleAdmin` is source-verified only - no bUnit harness exists, so nothing
 proves the message renders.

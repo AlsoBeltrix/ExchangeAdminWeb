@@ -163,7 +163,14 @@ Each module has its own config page (linked in the sidebar) with:
 - **Module Status** — enable/disable the module (global admin only)
 - **Section Access** — which AD groups can use the module (global admin only)
 - **Configuration** — module-specific settings (config fields)
-- **Module Admins** — AD groups that can configure this module without global admin
+- **Module Admins** — AD groups that can configure this module without global admin. A grant is stored as the group's SID
+  and matched against the SIDs in the user's token. A grant stored by name, from before grants were stored as SIDs, grants
+  nothing. At every start the app looks each such name up once (`DOMAIN\name` in that domain, a bare name across the forest,
+  matched on sAMAccountName, common name, name or display name, groups only). Where the name matches exactly one group it
+  replaces the name with that group's SID, which grants from then on. Every name it cannot convert (no match, several
+  matches, a well-known group, or a directory it could not reach) is listed on the pane, marked *not converted*, with the
+  reason and a Remove beside it. **Resolve now** runs the same pass on demand. Each pass files one audit event listing
+  every grant it converted and every grant it left (`docs/ProtectedPrincipalIdentifiers-Plan.md` B.6).
 
 Changes are stored in the config database - the `module_enablement`, `section_access`, `module_config` and `module_admins` tables (`docs/ConfigDbOperations.md`) - and take effect immediately. The legacy `config/*.json` files are imported once and archived; a tab whose store cannot be read says which table, or which legacy file was not imported, and does not offer Save.
 Global admins see all module config links; module admins see only their delegated modules.

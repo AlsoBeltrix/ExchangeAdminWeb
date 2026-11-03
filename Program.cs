@@ -295,6 +295,9 @@ try
     // Protected users, groups and OUs stored by name gain an identifier row beside them (docs/ProtectedPrincipalIdentifiers-Plan.md
     // B.3, B.4): once per start, off the startup path, and on Admin Settings' Resolve now.
     builder.Services.AddSingleton<ProtectedPrincipalIdentifierMigration>();
+    // Module-admin grants stored by name are replaced by the SID of the one group each names (docs/ProtectedPrincipalIdentifiers-Plan.md
+    // B.6): once per start, off the startup path, and on Module Configuration's Resolve now.
+    builder.Services.AddSingleton<ModuleAdminSidMigration>();
     builder.Services.AddScoped<EmergencyDisableService>();
     builder.Services.AddScoped<AccountLockoutRemediationService>();
     builder.Services.AddScoped<LicensingUpdatesService>();
@@ -436,6 +439,12 @@ try
         // Directory, and an unconverted row is enforced exactly as before, so startup has nothing to wait for. It never
         // rewrites a legacy row and never half-writes; Admin Settings' Resolve now runs the same pass on demand.
         _ = app.Services.GetRequiredService<ProtectedPrincipalIdentifierMigration>().StartAtStartup();
+
+        // Module-admin grants still stored by name - inert since aud-a1 - are looked up and, where a name names exactly one group,
+        // replaced by its SID, which grants from then on (docs/ProtectedPrincipalIdentifiers-Plan.md B.6, decision D3). Started,
+        // never awaited, as the pass above: a pass that is slow or cannot run changes nothing. Module Configuration's Resolve now
+        // runs the same pass on demand and lists every grant it left.
+        _ = app.Services.GetRequiredService<ModuleAdminSidMigration>().StartAtStartup();
 
         // Circuit revalidation's off-switch (aud-a29b, Authentication:RevalidationEnabled). When it
         // is off, say so here - one warning and one audit line - before anything is served, so the

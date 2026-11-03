@@ -107,6 +107,14 @@ internal enum GroupLookupKey
     Sid,
     SamAccountName,
     CommonName,
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md B.6: a module-admin grant stored by name, which the old picker stored as
+    /// either the group's sAMAccountName or its display name. One equality search on <c>sAMAccountName</c>, <c>cn</c>,
+    /// <c>name</c> and <c>displayName</c> together, groups only, so a name that is one group's sAMAccountName and another's
+    /// display name is two matches - ambiguous - rather than whichever attribute happened to be asked first.
+    /// </summary>
+    AnyGroupName,
 }
 
 /// <summary>
@@ -659,6 +667,8 @@ internal static class ProtectedGroupMembership
             GroupLookupKey.DistinguishedName => $"(distinguishedName={escaped})",
             GroupLookupKey.Sid => $"(objectSid={escaped})",
             GroupLookupKey.SamAccountName => $"(sAMAccountName={escaped})",
+            GroupLookupKey.AnyGroupName =>
+                $"(&(objectCategory=group)(|(sAMAccountName={escaped})(cn={escaped})(name={escaped})(displayName={escaped})))",
             _ => $"(|(cn={escaped})(name={escaped}))",
         };
     }
