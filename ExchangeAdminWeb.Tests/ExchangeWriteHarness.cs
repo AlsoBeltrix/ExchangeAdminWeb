@@ -592,6 +592,32 @@ internal sealed class ExchangeWriteHarness : IDisposable
         Microsoft.Extensions.Logging.ILogger<PermissionValidator>? validatorLogger = null)
         => Validator(resolver, protectedPrincipalsConfig: null, protection, directorySearch, protectedPrincipalsLogger, validatorLogger);
 
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md C.2. What the stand-in Graph reports as each synced recipient's on-premises
+    /// SID, by ExternalDirectoryObjectId, for every <see cref="ProtectedValidator"/>: a SID, or null for "answered, none
+    /// reported". A recipient not listed is one Graph could not be asked about.
+    /// </summary>
+    public Hashtable GraphSids { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>How many times the stand-in Graph was asked for an on-premises SID.</summary>
+    public int GraphSidReads => Volatile.Read(ref _graphSidReads);
+    private int _graphSidReads;
+
+    private sealed class StandInSidSource(ExchangeWriteHarness harness) : IOnPremisesSidSource
+    {
+        public string Name => "Graph";
+
+        public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId)
+        {
+            Interlocked.Increment(ref harness._graphSidReads);
+            if (!harness.GraphSids.ContainsKey(externalDirectoryObjectId))
+                return Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
+            return Task.FromResult(harness.GraphSids[externalDirectoryObjectId] is string sid
+                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid)
+                : new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported));
+        }
+    }
+
     /// <summary>kd-88. The protected-principal service the last <see cref="ProtectedValidator"/> was built over.</summary>
     public ProtectedPrincipalService? ProtectedPrincipals { get; private set; }
 
@@ -634,6 +660,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
             {
                 DirectoryReadSecretFetch = DirectoryReadSecret,
                 DirectoryRunspace = Forest.Open,
+                OnPremisesSidSource = new StandInSidSource(this),
             };
         if (protection is not null)
         {

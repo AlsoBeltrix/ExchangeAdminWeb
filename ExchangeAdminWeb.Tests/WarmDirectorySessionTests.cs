@@ -101,22 +101,24 @@ public sealed class WarmDirectorySessionTests : IDisposable
     }
 
     [Fact]
-    public async Task TwoMailboxProofs_BorrowOneWarmSession()
+    public async Task TwoReadsBySid_BorrowOneWarmSession_AndDiscoverTheCatalogOnce()
     {
-        // The sweep, S2: the proof that the directory object holds the mailbox Exchange names built a session of its own.
-        var mailbox = Guid.Parse("0f0f0f0f-6666-4777-8888-aaaaaaaaaaaa");
+        // The sweep, S2, for the read that replaced the mailbox proof (docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 4):
+        // the account by its SID at the global catalog, in a lent session, the catalog discovered once and kept.
+        var sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3996";
         _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
         {
             Dn = $"CN=room,OU=Staff,{SelfGrantDirectoryStandIn.DomainDn}",
             Class = "user",
             Sam = "room",
-            Sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3996",
-            MailboxGuid = mailbox,
+            Sid = sid,
         });
         var (service, search) = Service();
 
-        Assert.Single((await service.FindMailboxGuidHoldersAsync(mailbox)).holders);
-        Assert.Single((await service.FindMailboxGuidHoldersAsync(mailbox)).holders);
+        Assert.Single((await service.FindObjectsBySidAsync(sid)).found);
+        Assert.Single((await service.FindObjectsBySidAsync(sid)).found);
+        Assert.Single(_h.Forest.Calls.Cast<string>(), call => call == "Get-ADForest");
+        Assert.All(_h.Forest.Searches, read => Assert.StartsWith($"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} (objectSid=", read));
 
         Assert.Equal(1, _h.Forest.RunspacesHandedOut);
         Assert.Equal(1, ModuleImports);

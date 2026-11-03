@@ -30,7 +30,9 @@ namespace ExchangeAdminWeb.Services;
 /// <para>
 /// A check begun with <see cref="BeginCheck"/> is timed: when it ends it logs one Information line, "{Check} for {Target}
 /// took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)" - the directory reads made and the
-/// credential fetches started while it ran, its nested work included. A check begun inside one of the same name is part of
+/// credential fetches started while it ran, its nested work included. A check that read a synced recipient's on-premises SID
+/// (docs/ProtectedPrincipalIdentifiers-Plan.md E) adds ", {SidReads} SID source reads from {SidSource} in {SidMs} ms" inside the
+/// parentheses: that read is not a directory read, so it is counted and timed on its own. A check begun inside one of the same name is part of
 /// it and logs nothing of its own, so a protected-principal check that reaches the service's own check logs once.
 /// </para>
 /// </remarks>
@@ -47,6 +49,9 @@ public sealed class DirectoryReadOperation : IDisposable
     private readonly long _started;
     private int _reads;
     private int _fetches;
+    private int _sidReads;
+    private long _sidMs;
+    private string? _sidSource;
     private int _disposed;
 
     private DirectoryReadOperation(DirectoryReadOperation? outer, bool joined, bool ownsSecrets,
@@ -105,6 +110,20 @@ public sealed class DirectoryReadOperation : IDisposable
             Interlocked.Increment(ref node._reads);
     }
 
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md E. One read of a synced recipient's on-premises SID from <paramref name="source"/>
+    /// (Graph), which is not a directory read, and how long it took - counted for every check the flow is in.
+    /// </summary>
+    internal static void CountSidSourceRead(string source, long elapsedMs)
+    {
+        for (var node = Ambient.Value; node is not null; node = node._outer)
+        {
+            Interlocked.Increment(ref node._sidReads);
+            Interlocked.Add(ref node._sidMs, elapsedMs);
+            node._sidSource = source;
+        }
+    }
+
     private static void CountFetch()
     {
         for (var node = Ambient.Value; node is not null; node = node._outer)
@@ -154,8 +173,21 @@ public sealed class DirectoryReadOperation : IDisposable
         if (_logger is not null && _check is not null)
         {
             var elapsedMs = (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds;
-            _logger.LogInformation("{Check} for {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)",
-                _check, _target, elapsedMs, Volatile.Read(ref _reads), Volatile.Read(ref _fetches));
+            var sidReads = Volatile.Read(ref _sidReads);
+            if (sidReads == 0)
+            {
+                _logger.LogInformation("{Check} for {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)",
+                    _check, _target, elapsedMs, Volatile.Read(ref _reads), Volatile.Read(ref _fetches));
+            }
+            else
+            {
+                // docs/ProtectedPrincipalIdentifiers-Plan.md E: the SID source's read is not a directory read, so it has its own
+                // count and elapsed figure, on the same line, so a slow source is visible.
+                _logger.LogInformation("{Check} for {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches, "
+                    + "{SidReads} SID source reads from {SidSource} in {SidMs} ms)",
+                    _check, _target, elapsedMs, Volatile.Read(ref _reads), Volatile.Read(ref _fetches),
+                    sidReads, Volatile.Read(ref _sidSource), Interlocked.Read(ref _sidMs));
+            }
         }
     }
 }

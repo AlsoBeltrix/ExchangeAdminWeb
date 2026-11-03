@@ -18,14 +18,20 @@ namespace ExchangeAdminWeb.Services;
 /// </param>
 /// <param name="ExchangeGuid">
 /// The mailbox GUID Exchange reports, or null when it reports none (groups, contacts and mail
-/// users without a mailbox report all zeros, which is read as none). For a synced mailbox this is
-/// the value its on-premises object holds in <c>msExchMailboxGuid</c>, and it is what the
-/// protected-principal check requires that object to prove before it is accepted (aud-a2c). An
-/// address can be carried by any AD object; this cannot be, by accident.
+/// users without a mailbox report all zeros, which is read as none). It names the mailbox an
+/// Exchange write is bound to (aud-a2d). It is not how the protected-principal check finds the
+/// mailbox's on-premises object: that is <paramref name="OnPremisesSid"/>.
 /// </param>
 /// <param name="RecipientTypeDetails">
 /// Exchange's finer kind of the recipient, or null when it reported none (aud-a60). A Microsoft 365 group's
 /// RecipientType names no group; this does (<c>GroupMailbox</c>).
+/// </param>
+/// <param name="OnPremisesSid">
+/// The objectSid of the on-premises account a synced recipient is synced from, canonical, when one was read; null
+/// otherwise. Exchange Online does not report it - its <c>Get-User</c> <c>Sid</c> is a cloud-generated SID
+/// (docs/ProtectedPrincipalIdentifiers-Plan.md I.1) - so <see cref="IIdentityResolver"/> never fills it. The
+/// protected-principal check reads it from Microsoft Graph (<see cref="IOnPremisesSidSource"/>) and binds the target to
+/// the one account in the forest that holds it (plan C.2).
 /// </param>
 public sealed record ResolvedRecipient(
     string PrimarySmtpAddress,
@@ -33,7 +39,8 @@ public sealed record ResolvedRecipient(
     string? RecipientType,
     bool ExistsOnPrem,
     Guid? ExchangeGuid = null,
-    string? RecipientTypeDetails = null)
+    string? RecipientTypeDetails = null,
+    string? OnPremisesSid = null)
 {
     /// <summary>Whether Exchange reports a group, by either kind it gave (<see cref="ExchangeRecipientKinds.NamesAGroup"/>).</summary>
     public bool IsGroup => ExchangeRecipientKinds.NamesAGroup(RecipientType, RecipientTypeDetails);

@@ -116,12 +116,11 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
     /// <summary>
     /// Exchange's mailbox GUID, or null when the recipient has none. Unlike
     /// <see cref="IsDirSynced"/>, null does not fail the lookup: a group or a contact legitimately
-    /// has no mailbox GUID, and only the synced-mailbox branch of
-    /// <c>ProtectedPrincipalService.ResolveExchangeTargetAsync</c> needs one - where its absence
-    /// refuses (aud-a2c). All zeros is Exchange's way of saying "none", so it is read as null;
-    /// passing it through would send a search for a zero GUID into Active Directory.
+    /// has no mailbox GUID, and only a write bound to a mailbox needs one - where its absence
+    /// refuses (aud-a2d, <see cref="ValidatedMailbox"/>). All zeros is Exchange's way of saying
+    /// "none", so it is read as null; passing it through would bind a write to a zero GUID.
     /// Shared with <see cref="ExchangeServiceBase"/>'s read-back of a validated mailbox (aud-a2d),
-    /// so the GUID a write is checked against is parsed exactly as the GUID the check proved.
+    /// so the GUID a write is checked against is parsed exactly as the GUID the check carried.
     /// </summary>
     internal static Guid? ReadExchangeGuid(PSObject recipient)
     {

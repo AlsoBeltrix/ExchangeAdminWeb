@@ -18,6 +18,8 @@ public sealed class DirectoryReadCredentialOnceTests : IDisposable
     private const string Target = "shared@contoso.test";
     private const string Other = "other@contoso.test";
     private static readonly Guid TargetMailbox = Guid.Parse("0f0f0f0f-4444-4555-8666-888888888888");
+    private const string TargetSid = SelfGrantDirectoryStandIn.DomainSid + "-3999";
+    private static readonly string ReadBySid = $"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} (objectSid={TargetSid})";
 
     private readonly ExchangeWriteHarness _h = new();
     private readonly string _protectedGroupDn;
@@ -26,8 +28,9 @@ public sealed class DirectoryReadCredentialOnceTests : IDisposable
     {
         _h.AddMailbox(Target, TargetMailbox);
 
-        // The target is a synced mailbox: its directory account carries the mailbox GUID Exchange names, so the resolution
-        // reads it, proves it holds the mailbox, and the group check reads its groups - each of the three a fetch, before.
+        // The target is a synced mailbox: Graph reports its account's SID, so the resolution reads the typed string, reads the
+        // account by that SID at the global catalog, and the group check reads its groups - each of the three a fetch, before.
+        _h.GraphSids["ext-" + Target] = TargetSid;
         _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
         {
             Dn = $"CN=shared,OU=Staff,{SelfGrantDirectoryStandIn.DomainDn}",
@@ -35,9 +38,8 @@ public sealed class DirectoryReadCredentialOnceTests : IDisposable
             Upn = Target,
             Mail = Target,
             Sam = "shared",
-            Sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3999",
+            Sid = TargetSid,
             PrimaryGroupId = SelfGrantDirectoryStandIn.DomainUsersRid,
-            MailboxGuid = TargetMailbox,
             Proxies = [$"SMTP:{Target}"],
         });
         var other = _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
@@ -60,15 +62,15 @@ public sealed class DirectoryReadCredentialOnceTests : IDisposable
 
     private void AssertEveryCheckRead()
     {
-        // Each of the reads that used to fetch for itself was made: the resolution, the mailbox proof, the group check.
+        // Each of the reads that used to fetch for itself was made: the resolution, the read by SID, the group check.
         Assert.Contains(_h.Forest.Searches, search => search.StartsWith("Get-ADUser ", StringComparison.Ordinal));
-        Assert.Contains(_h.Forest.Searches, search => search.Contains("(msExchMailboxGuid=", StringComparison.Ordinal));
+        Assert.Contains(_h.Forest.Searches, search => search == ReadBySid);
         Assert.Contains(_h.Forest.Searches, search => search.EndsWith(" " + SelfGrantDirectoryStandIn.TokenGroups, StringComparison.Ordinal));
         Assert.Empty(_h.Forest.Errors);
     }
 
     [Fact]
-    public async Task TheTargetCheck_FetchesTheCredentialOnce_ForItsResolutionItsMailboxProofAndItsGroupCheck()
+    public async Task TheTargetCheck_FetchesTheCredentialOnce_ForItsResolutionItsReadBySidAndItsGroupCheck()
     {
         var validation = await Validator().ValidateTargetMailboxAsync(Target, _h.Operator, "MailboxPermissions");
 
@@ -136,7 +138,7 @@ public sealed class DirectoryReadCredentialOnceTests : IDisposable
         }
 
         AssertEveryCheckRead();
-        Assert.Equal(3, _h.Forest.Searches.Count(search => search.Contains("(msExchMailboxGuid=", StringComparison.Ordinal)));
+        Assert.Equal(3, _h.Forest.Searches.Count(search => search == ReadBySid));
         Assert.Equal(1, _h.DirectoryReadFetches);
     }
 }

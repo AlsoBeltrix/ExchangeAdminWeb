@@ -1272,8 +1272,8 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity) =>
             Unresolved(nameof(ResolveExchangeTargetAsync));
 
-        public override Task<(bool answered, IReadOnlyList<MailboxGuidHolder> holders)> FindMailboxGuidHoldersAsync(Guid mailboxGuid) =>
-            Task.FromResult(Record(nameof(FindMailboxGuidHoldersAsync), (false, (IReadOnlyList<MailboxGuidHolder>)Array.Empty<MailboxGuidHolder>())));
+        public override Task<(bool answered, IReadOnlyList<DirectorySidObject> found)> FindObjectsBySidAsync(string sid) =>
+            Task.FromResult(Record(nameof(FindObjectsBySidAsync), (false, (IReadOnlyList<DirectorySidObject>)Array.Empty<DirectorySidObject>())));
 
         private T Record<T>(string member, T answer)
         {
