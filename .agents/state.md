@@ -16,7 +16,7 @@ objectGUID in their own kinds with companion legacy rows (S1); conversion pass a
 Read Credential (Delinea Secret ID)", the aud-a2c GUID proof retired (S3); Conference Rooms runs no protected-principal
 check - binder replaces the gate, servicing option gone, Constitution and repo guidance rewritten, ConferenceRooms 2.20.0
 (S4); module-admin name grants converted to SIDs at start and on Resolve now, the rest listed with reasons (S5). Records
-ppi-s1..ppi-s5. Supervisor's full gate run on master after the merges: see the line below this entry once it lands.
+ppi-s1..ppi-s5. Supervisor's full gate run on master at `2e80f488`: Release build 0 errors (19 known warnings); xUnit 8412 passed, 0 failed; format, whitespace and ASCII clean.
 
 **Owner rulings today (`.agents/decisions.md` 2026-11-03):** Conference Rooms - no protected-principal check at all; one
 decision at a time; "do it correctly" is the standing answer (thorough form, never ask about cost); the sweep's open
