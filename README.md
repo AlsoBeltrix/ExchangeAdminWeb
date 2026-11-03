@@ -1066,8 +1066,14 @@ rendered (aud-a29g).
   keeps another, the session ends at its next check, although nothing changed in Active
   Directory. A grant added later is remembered from the first check after it appears. If the
   access settings cannot be read, the check fails closed and the session ends.
+- **One failed lookup does not end a session** (sweep-c item 15). When the directory read fails or
+  does not answer within 60 seconds, the account's last answer is used instead if it was read
+  within one interval plus two minutes - so the answer of the tab's previous check, or of a recent
+  page load - and is compared exactly as a fresh one: it confirms, or it refuses for its own reason.
+  Each such fallback is logged as a warning with a running count. Two failed checks in a row find
+  no answer that recent, and end the session.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
-  cannot be completed within 60 seconds (fail closed). The tab stops responding and shows
+  cannot be completed within 60 seconds with no recent answer to fall back to (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the
   operator has now. Each ended session writes one audit line (action `SessionRevalidation`,
   category `Authentication`).
@@ -1081,8 +1087,8 @@ rendered (aud-a29g).
   request gets a short "This page was not shown" page (HTTP 403) instead of the page - nothing of
   the page, its menu or its initialization runs - with the reason and a Reload link, and writes one
   audit line (trigger `PageRequest`, `path` the page asked for - path base and path, never the query
-  string, at most 256 characters; aud-a29i). If the check cannot be completed the page is refused (fail
-  closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
+  string, at most 256 characters; aud-a29i). If the check cannot be completed, and no recent answer
+  stands in for it as above, the page is refused (fail closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
   status frame shows it loading. The directory is not read for every page: an answer read for the
   same account within `RevalidationInterval` - by an earlier page request or by one of its open
   tabs' checks - confirms the request, while a refusal is always decided by a fresh read, so
