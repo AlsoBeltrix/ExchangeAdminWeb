@@ -5,6 +5,14 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-03 - One dev deploy, when everything is complete
+
+Owner: "I'm not going to deploy until you tell me everything is complete and ready for testing." Dev is not redeployed
+piecemeal. The supervisor declares one point at which every slice in flight (the ProtectedPrincipalIdentifiers plan S1-S5,
+the sweep's MEDIUM items, kd-94's shape if it needs one) is merged on master with green gates, and lists the manual checks
+for that one deploy. Until then the dev instance keeps running 8557a15a and users are told to use prod. The read-only
+Exchange and Active Directory reads S3 needs do not depend on a deploy and are asked for separately.
+
 ### 2026-11-03 - Thorough fixes by default; protected principals and module-admin grants by immutable identifier
 
 Owner, 2026-11-03, verbatim: "do it correctly. assume I will ALWAYS say do it correctly, regardless of the work involved."
