@@ -547,7 +547,7 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         SetProperty(page, "AuthorizationService", Authorization());
         SetProperty(page, "OpTrace", _h.Trace);
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
-        SetProperty(page, "ProtectionGate", Gate());
+        SetProperty(page, "RoomBinder", Binder());
         SetProperty(page, "Progress", progress);
 
         SetField(page, "currentUser", @"CONTOSO\operator");
@@ -565,28 +565,25 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         return page;
     }
 
-    /// <summary>A protected-principal check that resolves every target to the synced room, unprotected.</summary>
+    /// <summary>The shared SID binder, binding every synced room to the room's account.</summary>
     private sealed class RoomResolvingCheck(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
         ProtectedPrincipalRepository repo, DelineaService delinea)
         : ProtectedPrincipalService(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
     {
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity) =>
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(
+            string identity, ResolvedRecipient recipient) =>
             Task.FromResult<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)>((
                 new ResolvedDirectoryPrincipal("Test", "Room 1", Typed, null, Typed, null, CheckedObject, null, ExchangeGuid: Checked),
                 ResolutionStatus.Resolved));
-
-        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
-            Task.FromResult(ProtectedPrincipalResult.NotProtected());
     }
 
-    private ConferenceRoomProtectionGate Gate()
+    private ConferenceRoomBinder Binder()
     {
         var env = Environment();
         var extLog = new ExtendedLogService(_h.Config, env, TestConfigStore.CreateAppSettings(_h.Dir), NullLogger<ExtendedLogService>.Instance);
         var delinea = new DelineaService(HttpClients(), _h.Config, NullLogger<DelineaService>.Instance, extLog, _h.Trace);
         var check = new RoomResolvingCheck(env, _h.Config, _h.ModuleConfig, TestConfigStore.CreateProtectedPrincipal(_h.Dir), delinea);
-        var servicers = new ProtectedPrincipalServicerService(_sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
-        return new ConferenceRoomProtectionGate(check, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        return new ConferenceRoomBinder(RoomBinderFixtures.ExchangeKnowsASyncedRoom(Checked), check, NullLogger<ConferenceRoomBinder>.Instance);
     }
 
     private IWebHostEnvironment Environment()

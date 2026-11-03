@@ -14,7 +14,7 @@
 @inject OperationTraceService OpTrace
 @inject IJSRuntime JS
 @inject ILogger<ConferenceRooms> Logger
-@inject ConferenceRoomProtectionGate ProtectionGate
+@inject ConferenceRoomBinder RoomBinder
 @inject SectionAccessService SectionAccess
 @inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
 @implements IDisposable
@@ -1050,8 +1050,8 @@
         // Opened HERE, above the try, so the ticket round trip and both refusals are inside the
         // window, and completed in the finally BELOW the admin notification. It used to open
         // inside onAllowed and close next to the write, which left the two slowest waits on this
-        // handler outside it at the top - the ServiceNow call and the shared protection gate,
-        // where ProtectedPrincipalService.ResolveWithExchangeFallbackAsync runs - and the admin
+        // handler outside it at the top - the ServiceNow call and the shared room binding, where
+        // Exchange and Active Directory are asked which room this is - and the admin
         // email outside it at the bottom (docs/ProgressCoverage-Plan.md S3, the seventh partial).
         // SetSingleRoomType below is the shape this now copies; its own comment already records
         // that THIS handler was the nearest example in the file not to copy.
@@ -1077,19 +1077,20 @@
 
             if (!await ReauthorizeAsync()) { AuditRefusal("ConferenceRooms_SetMetadata", email, ticket, "Authorization denied.", "Authorization"); return; }
 
-            // Protected-principal gate: the metadata write runs only inside onAllowed, so a protected
-            // or fail-closed target never reaches old-value capture, the trace scope, or Set-Place.
-            // A denial is audited here under the Finder (SetMetadata) action. This closes the
-            // single-room Finder gap via the same shared gate the Type and bulk paths use.
-            result = completed = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
-                onDenied: denial =>
+            // Room binding: the metadata write runs only inside onBound, so a target with no room to
+            // bind never reaches old-value capture, the trace scope, or Set-Place. A refusal is
+            // audited here under the Finder (SetMetadata) action - the same shared binder the Type
+            // and bulk paths use. No protection check: protected principals do not apply to
+            // Conference Rooms (owner ruling 2026-11-03).
+            result = completed = await RoomBinder.BindThenRunAsync(email,
+                onRefused: refusal =>
                 {
-                    AuditFinderAction(email, false, ticket, denial.AuditDetail);
-                    return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
+                    AuditFinderAction(email, false, ticket, refusal.AuditDetail);
+                    return new RoomOperationResult { Email = email, Success = false, Message = refusal.Message };
                 },
-                onAllowed: async (serviced, room) =>
+                onBound: async room =>
                 {
-                    // Capture old values - of the room the gate validated, which is the room written (aud-a2d)
+                    // Capture old values - of the room the binder bound, which is the room written (aud-a2d)
                     Dictionary<string, object?>? oldValues = null;
                     try
                     {
@@ -1113,7 +1114,7 @@
 
                     op.Complete(r.Success, r.Message);
 
-                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced, room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, room, r.WrittenDirectoryObject, r.DirectoryMembershipConfirmed, r.DirectoryAttributesConfirmed);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message, r.DirectoryAttributesConfirmed, r.DirectoryMembershipConfirmed);
                     return r;
                 });
@@ -1293,7 +1294,7 @@
     // then runs off this browser connection (survives closing the tab); progress streams back via the
     // jobs panel. Only resolvable rows are submitted; unresolved rows are reported up front. Ticket
     // validation and authorization are done here on the circuit (submission-time gate); the runner
-    // re-checks the captured auth snapshot and the protected-principal gate per row.
+    // re-checks the captured auth snapshot and binds each row's room.
     private async Task ApplyFinderCsv()
     {
         // Captured at handler entry, above the first await AND above the try, because the catch has
@@ -1479,16 +1480,16 @@
                 AuditRefusal("ConferenceRooms_SetType", email, ticket, completed.Message, "Validation"); return; // kd-29: the refusal row
             }
 
-            // Protected-principal gate: the write runs only inside onAllowed, so a protected or
-            // fail-closed target never reaches the trace scope or Set-* write. A denial is audited
-            // here under the Type action; the shared gate is the single enforcement point.
-            result = completed = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
-                onDenied: denial =>
+            // Room binding: the write runs only inside onBound, so a target with no room to bind
+            // never reaches the trace scope or Set-* write. A refusal is audited here under the Type
+            // action; the shared binder is the single binding point.
+            result = completed = await RoomBinder.BindThenRunAsync(email,
+                onRefused: refusal =>
                 {
-                    AuditTypeAction(email, false, ticket, denial.AuditDetail);
-                    return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
+                    AuditTypeAction(email, false, ticket, refusal.AuditDetail);
+                    return new RoomOperationResult { Email = email, Success = false, Message = refusal.Message };
                 },
-                onAllowed: async (serviced, room) =>
+                onBound: async room =>
                 {
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
 
@@ -1504,7 +1505,7 @@
                         ["roomType"] = typeName, ["timezone"] = tz,
                         ["site"] = site, ["removePerms"] = removePerms
                     };
-                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, servicedAuditDetail: serviced, room: room);
+                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, room: room);
 
                     activity.Step("notifying the administrators");
                     await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, r.Success, ticket, r.Message);
@@ -1637,9 +1638,9 @@
         finally { isLoading = false; }
     }
 
-    // Submits the parsed Type CSV as a durable server-side job (see ApplyFinderCsv). The protected-
-    // principal gate and per-row auth re-check now run inside the job, on every row, for BOTH the
-    // Type and Finder paths.
+    // Submits the parsed Type CSV as a durable server-side job (see ApplyFinderCsv). The room
+    // binding and per-row auth re-check run inside the job, on every row, for BOTH the Type and
+    // Finder paths.
     private async Task ApplyTypeCsv()
     {
         // The same three captures as ApplyFinderCsv, for the same three reasons: the catch needs the
@@ -1782,18 +1783,6 @@
         }
     }
 
-    /// <summary>
-    /// The acting operator, for the protected-principal servicer decision.
-    /// </summary>
-    /// <remarks>
-    /// Read fresh at the call site rather than cached in a field: the servicer grant is checked
-    /// against the CURRENT token, so a stale copy could authorise a bypass using group membership
-    /// the operator no longer has. Both mutating handlers call this immediately after
-    /// <see cref="ReauthorizeAsync"/>, on the same circuit.
-    /// </remarks>
-    private async Task<System.Security.Claims.ClaimsPrincipal> CurrentUserAsync() =>
-        (await AuthStateProvider.GetAuthenticationStateAsync()).User;
-
     private async Task<bool> ReauthorizeAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1806,33 +1795,19 @@
         return true;
     }
     private void AuditRefusal(string action, string target, string ticket, string refusal, string refusedAt) { try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, action, target, false, ticket, errorDetail: refusal, extra: new Dictionary<string, object?> { ["refusedAt"] = refusedAt, ["mutationAttempted"] = false }); } catch (Exception ex) { Logger.LogError(ex, "Audit failed"); } } // kd-52/kd-29: a refusal before any write, the aud-a28 fields
-    /// <summary>
-    /// Wraps a serviced-action note for the audit event's <c>extra</c>.
-    /// </summary>
-    /// <remarks>
-    /// It must go in `extra`, never `errorDetail`: LogConferenceRoomAction writes
-    /// <c>["error"] = success ? null : errorDetail</c>, and a serviced action SUCCEEDS - so the one
-    /// field explaining why a protected room could be modified would be dropped exactly when it
-    /// matters. That defect already happened once in Blocked Senders.
-    /// </remarks>
-    private static Dictionary<string, object?>? ServicedExtra(string? servicedAuditDetail) =>
-        string.IsNullOrWhiteSpace(servicedAuditDetail)
-            ? null
-            : new Dictionary<string, object?> { ["protectedPrincipalServiced"] = servicedAuditDetail };
-
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null, string? refusedAt = null, bool cancelled = false)
+        ValidatedMailbox? room = null, string? writtenDirectoryObject = null, string? membershipConfirmed = null, string? attributesConfirmed = null, string? refusedAt = null, bool cancelled = false)
     {
-        try { var extra = ConferenceRoomService.WithRefusal(ConferenceRoomService.WithAttributesConfirmed(ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room, writtenDirectoryObject), membershipConfirmed), attributesConfirmed), refusedAt); Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: cancelled ? AuditService.FiledCancelled(extra) : extra); } // kd-59: an operator's cancel is filed Cancelled (kd-57)
+        try { var extra = ConferenceRoomService.WithRefusal(ConferenceRoomService.WithAttributesConfirmed(ConferenceRoomService.WithMembershipConfirmed(ValidatedMailbox.WithWrittenIdentity(null, room, writtenDirectoryObject), membershipConfirmed), attributesConfirmed), refusedAt); Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: cancelled ? AuditService.FiledCancelled(extra) : extra); } // kd-59: an operator's cancel is filed Cancelled (kd-57)
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 
     private void AuditTypeAction(string target, bool success, string ticket, string? error = null,
         Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
-        string? servicedAuditDetail = null, ValidatedMailbox? room = null, string? refusedAt = null)
+        ValidatedMailbox? room = null, string? refusedAt = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ConferenceRoomService.WithRefusal(ValidatedMailbox.WithWrittenIdentity(ServicedExtra(servicedAuditDetail), room), refusedAt)); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ConferenceRoomService.WithRefusal(ValidatedMailbox.WithWrittenIdentity(null, room), refusedAt)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 

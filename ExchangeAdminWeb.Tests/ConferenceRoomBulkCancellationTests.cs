@@ -190,7 +190,7 @@ public sealed class ConferenceRoomBulkCancellationTests : IDisposable
     private BulkJobService Runner(ConferenceRoomService service)
     {
         var services = new ServiceCollection();
-        services.AddScoped(_ => new ConferenceRoomBulkProcessor(service, Gate(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
+        services.AddScoped(_ => new ConferenceRoomBulkProcessor(service, Binder(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
             Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance), NullLogger<ConferenceRoomBulkProcessor>.Instance,
             _jobs));
         var provider = services.BuildServiceProvider();
@@ -240,28 +240,25 @@ public sealed class ConferenceRoomBulkCancellationTests : IDisposable
     private List<JsonElement> BulkRows() =>
         _h.AuditRows().Where(r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata_Bulk").ToList();
 
-    /// <summary>A protected-principal check that resolves every target to the room, unprotected.</summary>
+    /// <summary>The shared SID binder, binding every synced room to the room's account.</summary>
     private sealed class RoomResolvingCheck(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
         ProtectedPrincipalRepository repo, DelineaService delinea)
         : ProtectedPrincipalService(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
     {
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity) =>
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(
+            string identity, ResolvedRecipient recipient) =>
             Task.FromResult<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)>((
                 new ResolvedDirectoryPrincipal("Test", "Room 1", Typed, null, Typed, null, CheckedObject, null, ExchangeGuid: Checked),
                 ResolutionStatus.Resolved));
-
-        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
-            Task.FromResult(ProtectedPrincipalResult.NotProtected());
     }
 
-    private ConferenceRoomProtectionGate Gate()
+    private ConferenceRoomBinder Binder()
     {
         var env = Environment();
         var extLog = new ExtendedLogService(_h.Config, env, TestConfigStore.CreateAppSettings(_h.Dir), NullLogger<ExtendedLogService>.Instance);
         var delinea = new DelineaService(HttpClients(), _h.Config, NullLogger<DelineaService>.Instance, extLog, _h.Trace);
         var check = new RoomResolvingCheck(env, _h.Config, _h.ModuleConfig, TestConfigStore.CreateProtectedPrincipal(_h.Dir), delinea);
-        var servicers = new ProtectedPrincipalServicerService(_sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
-        return new ConferenceRoomProtectionGate(check, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        return new ConferenceRoomBinder(RoomBinderFixtures.ExchangeKnowsASyncedRoom(Checked), check, NullLogger<ConferenceRoomBinder>.Instance);
     }
 
     private IWebHostEnvironment Environment()

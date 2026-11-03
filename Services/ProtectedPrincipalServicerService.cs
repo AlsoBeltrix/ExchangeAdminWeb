@@ -145,4 +145,42 @@ public class ProtectedPrincipalServicerService
             return ServicerDecision.Deny();
         }
     }
+
+    /// <summary>
+    /// Modules that once offered protected-principal servicing and no longer run any protected-principal check, so a
+    /// servicer group stored for them grants nothing. Conference Rooms: owner ruling 2026-11-03, "protected principals does
+    /// not apply to conference rooms" (docs/ProtectedPrincipalIdentifiers-Plan.md D.2).
+    /// </summary>
+    internal static readonly IReadOnlyList<string> RetiredModuleIds = ["ConferenceRooms"];
+
+    /// <summary>
+    /// Logs, once - call it at startup - each retired module (<see cref="RetiredModuleIds"/>) that still has a servicer
+    /// group in the store. The row is left where it is: Module Configuration no longer shows it, its save writes only the
+    /// keys it edited, and no gate reads it. Returns the modules logged. Never throws: an unreadable store is logged and
+    /// reported as none.
+    /// </summary>
+    public IReadOnlyList<string> ReportRetiredGrants()
+    {
+        var logged = new List<string>();
+        foreach (var moduleId in RetiredModuleIds)
+        {
+            try
+            {
+                var groups = _sectionAccess.GetGroupsForSection(SectionKeyFor(moduleId));
+                if (groups is { Length: > 0 })
+                {
+                    _logger.LogWarning(
+                        "{Module} runs no protected-principal check, so the {Count} servicer group(s) stored under {Key} grant "
+                        + "nothing. Left in the store; not shown on Module Configuration.",
+                        moduleId, groups.Length, SectionKeyFor(moduleId));
+                    logged.Add(moduleId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read the retired servicer key for {Module}", moduleId);
+            }
+        }
+        return logged;
+    }
 }

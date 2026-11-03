@@ -3549,7 +3549,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1863,
+        ExpectedLineCount = 1838,
 
         Predicates =
         [

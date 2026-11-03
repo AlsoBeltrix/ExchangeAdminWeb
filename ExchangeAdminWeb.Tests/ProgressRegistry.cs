@@ -1077,7 +1077,7 @@ public static class ProgressRegistry
             new("SetSingleRoomType",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectionGate.GuardThenRunAsync(",
+                    "RoomBinder.BindThenRunAsync(",
                     "RoomService.SetRoomTypeAsync(",
                     "NotifyRoomAdminAsync(",
                 ],
@@ -1092,17 +1092,17 @@ public static class ProgressRegistry
                 + "measured by reading the callee rather than assumed from its shape: "
                 + "ServiceNow.ValidateTicketAsync is an HttpClient GET against the ServiceNow "
                 + "table API and is the OPENING pin, the one call that forbids a Begin hoisted "
-                + "into the try; GuardThenRunAsync reaches "
-                + "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync, the 10-15 second "
+                + "into the try; BindThenRunAsync (the room binder, which replaced the protection "
+                + "gate in 2.20.0) reaches the Exchange recipient lookup, the 10-15 second "
                 + "Exchange round trip OutOfOffice.SetOof names for the same reason, and is the "
                 + "slowest thing the operator waits on; SetRoomTypeAsync is the live Set-Place "
                 + "write, the operation itself; NotifyRoomAdminAsync is the CLOSING pin, because "
                 + "its catch-block occurrence is the last remote call anywhere in the body - it "
                 + "reaches Email.SendAdminNotificationAsync, which cannot be named directly "
                 + "because it runs in the helper and condition 1 requires the method's own code. "
-                + "Two calls were read and deliberately NOT named: ReauthorizeAsync and "
-                + "CurrentUserAsync both resolve from the Windows token's group SIDs plus a "
-                + "cached section-access read and make no remote hop, exactly as "
+                + "One call was read and deliberately NOT named: ReauthorizeAsync "
+                + "resolves from the Windows token's group SIDs plus a "
+                + "cached section-access read and makes no remote hop, exactly as "
                 + "ADAttributeEditor.ConfirmSave found for its own prechecks. Complete reads a "
                 + "LOCAL, not the result field: the banner on this page renders a dismiss button "
                 + "wired at () => result = null, so the field can be nulled while the handler is "
@@ -1110,7 +1110,7 @@ public static class ProgressRegistry
             new("SetupSingleRoom",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectionGate.GuardThenRunAsync(",
+                    "RoomBinder.BindThenRunAsync(",
                     "RoomService.GetRoomInfoAsync(",
                     "RoomService.SetRoomMetadataAndListAsync(",
                     "NotifyRoomAdminAsync(",
@@ -1127,12 +1127,11 @@ public static class ProgressRegistry
                 + "reading the callee. ServiceNow.ValidateTicketAsync is the OPENING pin and the "
                 + "one call that forbids a Begin hoisted into the try, but it is NOT the argument "
                 + "for the window: Services/ServiceNowService.cs returns a local IsValid = true "
-                + "without opening a socket when ServiceNow:Enabled is false. GuardThenRunAsync is "
-                + "that argument and it holds in every configuration - it reaches "
-                + "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync, a Delinea "
-                + "credential fetch, then an AD search behind a throttle that waits up to thirty "
-                + "seconds, then the Exchange fallback this codebase documents as 10 to 15 "
-                + "seconds. GetRoomInfoAsync is the room read the gap entry named: three EXO "
+                + "without opening a socket when ServiceNow:Enabled is false. BindThenRunAsync is "
+                + "that argument and it holds in every configuration - it reaches the Exchange "
+                + "recipient lookup this codebase documents as 10 to 15 seconds and, for a synced "
+                + "room, a Delinea credential fetch, the Graph SID read and an AD search behind a "
+                + "throttle that waits up to thirty seconds. GetRoomInfoAsync is the room read the gap entry named: three EXO "
                 + "cmdlets in a pooled runspace, Get-Mailbox then Get-Place then "
                 + "Get-MailboxRegionalConfiguration, and it has no sibling on SetSingleRoomType, "
                 + "which is why this entry names one call more than that one does. "

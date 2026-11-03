@@ -84,7 +84,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     /// <summary>
-    /// The room the protection gate validated, read by its GUID (aud-a2d) - the room every write
+    /// The room the room binder bound, read by its GUID (aud-a2d) - the room every write
     /// of the operation is bound to. Throws unless Exchange returns exactly that mailbox.
     /// </summary>
     /// <param name="cancellationToken">
@@ -508,7 +508,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     /// <param name="roomEmail">The operator's input, for the result and messages only.</param>
     /// <param name="room">
-    /// The room the protection gate validated (aud-a2d): every Exchange write takes its GUID and the
+    /// The room the room binder bound (aud-a2d): every Exchange write takes its GUID and the
     /// Active Directory steps its proven objectGUID. Null refuses before anything is read or written.
     /// </param>
     /// <param name="cancellationToken">
@@ -996,7 +996,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     /// <param name="roomEmail">The operator's input, for the result and messages only.</param>
     /// <param name="room">
-    /// The room the protection gate validated (aud-a2d): every cmdlet below takes its GUID and the
+    /// The room the room binder bound (aud-a2d): every cmdlet below takes its GUID and the
     /// calendar folder is <c>&lt;GUID&gt;:\&lt;folder&gt;</c>. Null refuses before anything is read.
     /// </param>
     public async Task<RoomOperationResult> SetRoomTypeAsync(
@@ -1721,9 +1721,10 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Runs in its own AD runspace, as the Comms-10k service's directory reads do, not through
     // the EXO pool.
     //
-    // aud-a2d. The object is the one the protection gate PROVED owns the room's mailbox - the
-    // only AD object holding its ExchangeGuid in msExchMailboxGuid (aud-a2c) - written by that
-    // objectGUID. It used to be found by matching the TYPED string against userPrincipalName, on
+    // aud-a2d. The object is the one ConferenceRoomBinder bound the room's mailbox to - the one
+    // account in the forest holding the on-premises SID Microsoft Graph reports for the room
+    // (docs/ProtectedPrincipalIdentifiers-Plan.md C.2, D.2) - written by that objectGUID. It used
+    // to be found by matching the TYPED string against userPrincipalName, on
     // the reasoning that UPN equals the address "in this environment"; a different object holding
     // the typed string as its UPN was written, and nothing had checked it.
     //
@@ -2190,8 +2191,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // is known to have written (aud-a2n) - and (a failure message, null, null) otherwise (aud-a2g).
     // See docs/ConferenceRooms-OnPremRoomListAdd-Plan.md, and aud-a2j for the form of the write.
     //
-    // aud-a2d. The member added is the AD object the protection gate proved owns the room's
-    // mailbox, by objectGUID - not a userPrincipalName match of the typed string. aud-a2k. The group
+    // aud-a2d. The member added is the AD object the room binder bound the room
+    // mailbox to, by objectGUID - not a userPrincipalName match of the typed string. aud-a2k. The group
     // is found by listAddress, the primary SMTP address Exchange reported for the list before any
     // write - the address the preflight found it by.
     private async Task<(string? error, string? written, string? confirmed)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName, string? listAddress)

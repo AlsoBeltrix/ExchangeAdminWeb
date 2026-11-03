@@ -29,7 +29,7 @@ namespace ExchangeAdminWeb.Tests;
 /// with its injected services set through reflection (the <see cref="OutOfOfficeRequestCaptureTests"/>
 /// idiom) and its single-room handler invoked. The bulk path: the real
 /// <see cref="ConferenceRoomBulkProcessor"/>. Both over the real <see cref="ConferenceRoomService"/> on
-/// <see cref="ExchangeWriteHarness"/>, the real <see cref="ConferenceRoomProtectionGate"/> (its
+/// <see cref="ExchangeWriteHarness"/>, the real <see cref="ConferenceRoomBinder"/> (its
 /// resolver scripted to the synced room) and the real audit, read back from its JSONL file.
 /// </remarks>
 public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
@@ -91,7 +91,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
     [InlineData("bulk")]
     public async Task NoActiveDirectoryWrite_TheAuditNamesNoDirectoryObject(string surface)
     {
-        // The codex trigger: a synced room (the gate proved its AD object), no City/State/Country, a
+        // The codex trigger: a synced room (the binder bound its AD object), no City/State/Country, a
         // cloud list. Every write is Exchange's; the row names none in Active Directory.
         var row = await ApplyAndReadAudit(surface);
 
@@ -422,7 +422,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
             return Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata");
         }
 
-        var processor = new ConferenceRoomBulkProcessor(service, Gate(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
+        var processor = new ConferenceRoomBulkProcessor(service, Binder(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
             Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance), NullLogger<ConferenceRoomBulkProcessor>.Instance,
             Substitute.For<IBulkJobCancelRequests>());
         _bulkRow = await processor.ProcessRowAsync(FinderJob(city), 0, CancellationToken.None);
@@ -443,18 +443,16 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         protected override Runspace OpenDirectoryRunspace() => _h.OpenDirectoryRunspace();
     }
 
-    /// <summary>A protected-principal check that resolves every target to the synced room, unprotected.</summary>
+    /// <summary>The shared SID binder, binding every synced room to the room's account.</summary>
     private sealed class RoomResolvingCheck(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
         ProtectedPrincipalRepository repo, DelineaService delinea)
         : ProtectedPrincipalService(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
     {
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity) =>
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(
+            string identity, ResolvedRecipient recipient) =>
             Task.FromResult<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)>((
                 new ResolvedDirectoryPrincipal("Test", "Room 1", Typed, null, Typed, null, CheckedObject, null, ExchangeGuid: Checked),
                 ResolutionStatus.Resolved));
-
-        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
-            Task.FromResult(ProtectedPrincipalResult.NotProtected());
     }
 
     private IWebHostEnvironment Environment()
@@ -471,14 +469,13 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         return factory;
     }
 
-    private ConferenceRoomProtectionGate Gate()
+    private ConferenceRoomBinder Binder()
     {
         var env = Environment();
         var extLog = new ExtendedLogService(_h.Config, env, TestConfigStore.CreateAppSettings(_h.Dir), NullLogger<ExtendedLogService>.Instance);
         var delinea = new DelineaService(HttpClients(), _h.Config, NullLogger<DelineaService>.Instance, extLog, _h.Trace);
         var check = new RoomResolvingCheck(env, _h.Config, _h.ModuleConfig, TestConfigStore.CreateProtectedPrincipal(_h.Dir), delinea);
-        var servicers = new ProtectedPrincipalServicerService(_sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
-        return new ConferenceRoomProtectionGate(check, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        return new ConferenceRoomBinder(RoomBinderFixtures.ExchangeKnowsASyncedRoom(Checked), check, NullLogger<ConferenceRoomBinder>.Instance);
     }
 
     private Page BuildPage(ConferenceRoomService service, string city)
@@ -493,7 +490,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
         SetProperty(page, "AuthorizationService", Authorization());
         SetProperty(page, "OpTrace", _h.Trace);
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
-        SetProperty(page, "ProtectionGate", Gate());
+        SetProperty(page, "RoomBinder", Binder());
         SetProperty(page, "Progress", _progress);
 
         SetField(page, "currentUser", @"CONTOSO\operator");

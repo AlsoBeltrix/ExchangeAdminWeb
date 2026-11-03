@@ -10,10 +10,10 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// snapshot), never any ambient circuit which no longer exists.
 ///
 /// Per row it: (1) re-checks the submitter's captured authorization snapshot against the section's
-/// current allowed groups (option (a)); (2) enforces the protected-principal gate on BOTH Finder and
-/// Type paths via the shared <see cref="ConferenceRoomProtectionGate"/> (one enforcement point for
-/// the whole module) - the write runs only inside the gate's onAllowed delegate, so a protected
-/// target never reaches a side effect; (3) opens a CLEAN ROOT trace scope so the row is not nested
+/// current allowed groups (option (a)); (2) binds the row's room on BOTH Finder and Type paths via the
+/// shared <see cref="ConferenceRoomBinder"/> (one binding point for the whole module) - the write runs
+/// only inside its onBound delegate, so a row with no room to bind never reaches a side effect;
+/// (3) opens a CLEAN ROOT trace scope so the row is not nested
 /// under leaked async-local context; (4) calls the SAME ConferenceRoomService methods the live page
 /// uses (per-row Exchange/AD logic is unchanged); (5) audits per row with the captured
 /// actor/ip/ticket. The completion admin notification fires from the job at terminal state.
@@ -24,7 +24,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 {
     private readonly IConferenceRoomBulkOperations _rooms;
-    private readonly ConferenceRoomProtectionGate _protectionGate;
+    private readonly ConferenceRoomBinder _roomBinder;
     private readonly SectionAccessService _sectionAccess;
     private readonly ModuleEnablementService _enablement;
     private readonly OperationTraceService _trace;
@@ -46,7 +46,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     public ConferenceRoomBulkProcessor(
         IConferenceRoomBulkOperations rooms,
-        ConferenceRoomProtectionGate protectionGate,
+        ConferenceRoomBinder roomBinder,
         SectionAccessService sectionAccess,
         ModuleEnablementService enablement,
         OperationTraceService trace,
@@ -56,7 +56,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         IBulkJobCancelRequests cancelRequests)
     {
         _rooms = rooms;
-        _protectionGate = protectionGate;
+        _roomBinder = roomBinder;
         _sectionAccess = sectionAccess;
         _enablement = enablement;
         _trace = trace;
@@ -102,7 +102,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         }
 
         // kd-23. A job with no ticket is refused, row by row, before the authorization re-check, the
-        // protection gate and any write - the page's order. The page has refused a blank ticket since
+        // room binding and any write - the page's order. The page has refused a blank ticket since
         // kd-7, but a job submitted before that, while ServiceNow was dormant and passed one, can still
         // be queued or persisted, and this is the writer that runs it. Same check as the page
         // (ConferenceRoomService.RequireTicket); the row's audit says nothing was attempted.
@@ -130,29 +130,22 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             return Failed(target, "Authorization denied.");
         }
 
-        // 2) Protected-principal gate - enforced on BOTH Finder AND Type paths (no carve-out;
-        // owner 2026-07-02), through the SHARED ConferenceRoomProtectionGate so the check runs
-        // exactly once per row and no path can write without it. The write (steps 3-5) lives inside
-        // onAllowed, so a protected/fail-closed target never reaches the trace scope or any side
-        // effect (Known Failure Class #1). A denial is audited here under the _Bulk action with the
-        // captured job actor/ip/ticket.
-        // NO SERVICER BYPASS HERE, and the null is explicit rather than incidental. A job runs
-        // off-circuit: the submitting operator's circuit is gone, and this row is executing later
-        // under no one. The job record carries SubmittedBy as a STRING, which cannot answer
-        // "is this principal in the servicing group" - IsInRole needs a real token, and
-        // reconstructing one from a name would be inventing an identity. So a protected room in a
-        // bulk CSV still refuses, whoever submitted it, and the operator re-runs that row
-        // interactively where their own token is present.
-        return await _protectionGate.GuardThenRunAsync(target, user: null,
-            onDenied: denial =>
+        // 2) Room binding - on BOTH Finder AND Type paths, through the SHARED ConferenceRoomBinder so
+        // the room is bound exactly once per row and no path can write without it. The write (steps
+        // 3-5) lives inside onBound, so a row with no room to bind never reaches the trace scope or any
+        // side effect (Known Failure Class #1). A refusal is audited here under the _Bulk action with
+        // the captured job actor/ip/ticket. No protection check and no operator: protected principals
+        // do not apply to Conference Rooms (owner ruling 2026-11-03), so a bulk row needs no principal.
+        return await _roomBinder.BindThenRunAsync(target,
+            onRefused: refusal =>
             {
-                Audit(job, actionAudit, target, success: false, ticket, denial.AuditDetail);
-                return Failed(target, denial.Message);
+                Audit(job, actionAudit, target, success: false, ticket, refusal.AuditDetail);
+                return Failed(target, refusal.Message);
             },
-            onAllowed: async (_, room) =>
+            onBound: async room =>
             {
                 // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses,
-                // bound to the room the gate validated for THIS row (aud-a2d), never the row's string.
+                // bound to the room the binder bound for THIS row (aud-a2d), never the row's string.
                 var traceAction = isFinder ? "SetMetadata_Bulk" : "SetType_Bulk";
                 using var op = _trace.BeginRootOperation(ModuleName, traceAction, job.SubmittedBy, job.SubmittedIp, target, ticket);
                 try

@@ -10,14 +10,15 @@ using NSubstitute;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// aud-a2aa: an ambiguous resolution is told as what it is. The gate said "matches multiple AD users" for every
-/// <c>Ambiguous</c> status, which names the wrong thing for most of the ways the resolution reaches it since aud-a2b and
-/// aud-a2c - Exchange Online and Active Directory naming different objects, or two directory objects of any class holding
-/// the mailbox's GUID.
+/// aud-a2aa: an ambiguous binding is told as what it is. The old gate said "matches multiple AD users" for every
+/// <c>Ambiguous</c> status, which names the wrong thing for most of the ways the binding reaches it - Exchange Online and
+/// Active Directory naming different objects (aud-a2b), or two objects of any class carrying the room's on-premises SID.
+/// Since docs/ProtectedPrincipalIdentifiers-Plan.md S4 the message is <see cref="ConferenceRoomBinder"/>'s, and it carries
+/// no protection wording: Conference Rooms runs no protected-principal check (owner ruling 2026-11-03).
 /// </summary>
 /// <remarks>
-/// The two shapes are driven through the REAL <see cref="ProtectedPrincipalService.ResolveExchangeTargetAsync"/>, with only
-/// its two directory seams scripted - the Active Directory lookup and the Exchange resolver - so each test reaches
+/// The shapes are driven through the REAL <see cref="ProtectedPrincipalService.BindSyncedRecipientAsync"/>, with only its
+/// directory seams scripted - the Active Directory lookup, the read by SID and the SID source - so each test reaches
 /// <c>Ambiguous</c> the way the live code reaches it, by a collision that involves no "AD users" at all.
 /// </remarks>
 public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
@@ -40,6 +41,9 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
     {
         private readonly Dictionary<string, (ResolvedDirectoryPrincipal?, ResolutionStatus)> _script = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>What the global catalog holds under the SID the source reports.</summary>
+        public IReadOnlyList<DirectorySidObject> SidHolders { get; set; } = [];
+
         public ScriptedAdService AdReturns(string identity, ResolutionStatus status, ResolvedDirectoryPrincipal? principal = null)
         {
             _script[identity] = (principal, status);
@@ -48,16 +52,27 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
 
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity) =>
             Task.FromResult(_script.TryGetValue(identity, out var scripted) ? scripted : ((ResolvedDirectoryPrincipal?)null, ResolutionStatus.NotFound));
+
+        public override Task<(bool answered, IReadOnlyList<DirectorySidObject> found)> FindObjectsBySidAsync(string sid) =>
+            Task.FromResult((true, SidHolders));
     }
 
-    /// <summary>A SID source that answers, and reports no on-premises SID.</summary>
-    private sealed class NoSidReported : IOnPremisesSidSource
+    /// <summary>A SID source that answers, and reports <paramref name="sid"/> - none when it is null.</summary>
+    private sealed class SidSource(string? sid) : IOnPremisesSidSource
     {
         public string Name => "Graph";
 
         public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId) =>
-            Task.FromResult(new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported));
+            Task.FromResult(sid is null
+                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported)
+                : new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid));
     }
+
+    private const string RoomSid = "S-1-5-21-1000000001-1000000002-1000000003-5001";
+    private static readonly Guid RoomMailbox = Guid.Parse("22222222-2222-4222-8222-222222222222");
+
+    private static ResolvedRecipient SyncedRoom(string primary) =>
+        new(primary, "ext-" + primary, "UserMailbox", ExistsOnPrem: true, ExchangeGuid: RoomMailbox, RecipientTypeDetails: "RoomMailbox");
 
     private static ResolvedDirectoryPrincipal Group(string name, string objectGuid) =>
         new("Test-AD", name, string.Empty, name, null, $"CN={name},OU=Groups,DC=contoso,DC=test", objectGuid, null);
@@ -65,7 +80,10 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
     private static ResolvedDirectoryPrincipal User(string address, string objectGuid) =>
         new("Test-AD", address, address, address.Split('@')[0], address, $"CN={address},OU=Users,DC=contoso,DC=test", objectGuid, null);
 
-    private ScriptedAdService Resolution(ResolvedRecipient? exchangeAnswer)
+    private static DirectorySidObject SidHolder(string name, string objectClass) =>
+        new($"CN={name},OU=Rooms,DC=contoso,DC=test", Guid.NewGuid().ToString(), RoomSid, objectClass, name, null, null, name);
+
+    private (ScriptedAdService resolution, IIdentityResolver exchange) Resolution(ResolvedRecipient? exchangeAnswer)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -89,81 +107,72 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
         services.AddSingleton(resolver);
         var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
-        return new ScriptedAdService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, scopeFactory);
+        return (new ScriptedAdService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, scopeFactory),
+            resolver);
     }
 
-    private ConferenceRoomProtectionGate GateOver(ProtectedPrincipalService resolution)
-    {
-        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Audit:LogRoot"] = _tempDir,
-        }).Build();
-        var env = Substitute.For<IWebHostEnvironment>();
-        env.ContentRootPath.Returns(_tempDir);
-        var servicers = new ProtectedPrincipalServicerService(
-            new SectionAccessService(config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(),
-                new SectionAccessRepository(TestConfigStore.Create(_tempDir))),
-            NullLogger<ProtectedPrincipalServicerService>.Instance);
-        return new ConferenceRoomProtectionGate(resolution, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
-    }
-
-    /// <summary>Runs the gate and returns the operator-facing denial, or null when it allowed.</summary>
-    private static async Task<string?> DenialFrom(ConferenceRoomProtectionGate gate) =>
-        await gate.GuardThenRunAsync(Typed, onDenied: denial => denial.Message, onAllowed: _ => Task.FromResult<string?>(null));
+    /// <summary>Runs the binder and returns the operator-facing refusal, or null when it bound the room.</summary>
+    private static async Task<string?> RefusalFrom(ScriptedAdService resolution, IIdentityResolver exchange) =>
+        await new ConferenceRoomBinder(exchange, resolution, NullLogger<ConferenceRoomBinder>.Instance)
+            .BindThenRunAsync(Typed, onRefused: refusal => refusal.Message, onBound: _ => Task.FromResult<string?>(null));
 
     [Fact]
-    public async Task TwoGroups_AreNotReportedAsMultipleAdUsers()
+    public async Task TwoObjectsCarryingTheRoomsSid_AreNotReportedAsMultipleAdUsers()
     {
-        // aud-a2b's cloud-only branch, with groups on both sides: Exchange Online holds the name as a cloud distribution
-        // group and Active Directory holds an on-premises group of the same name, so the string names two objects. Not one
-        // user is involved.
-        var resolution = Resolution(new ResolvedRecipient("rooms@contoso.test", "ext-rooms", "MailUniversalDistributionGroup", ExistsOnPrem: false))
-            .AdReturns(Typed, ProtectedPrincipalService.ResolutionStatus.Resolved, Group("Boardroom Rooms", "11111111-1111-4111-8111-111111111111"));
+        // A room account and a group both carry the SID Graph reports for the room: the forest is not answering as one, and
+        // one of the two is not a user at all.
+        var (resolution, exchange) = Resolution(SyncedRoom("room1@contoso.test"));
+        resolution.OnPremisesSidSource = new SidSource(RoomSid);
+        resolution.SidHolders = [SidHolder("Room 1", "user"), SidHolder("Room 1 Owners", "group")];
 
-        var denial = await DenialFrom(GateOver(resolution));
+        var refusal = await RefusalFrom(resolution, exchange);
 
-        Assert.Equal(ConferenceRoomProtectionGate.AmbiguousMessage, denial);
-        Assert.DoesNotContain("AD users", denial, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ConferenceRoomBinder.AmbiguousMessage, refusal);
+        Assert.DoesNotContain("AD users", refusal, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task AUserAndAGroup_AreNotReportedAsMultipleAdUsers()
     {
-        // aud-a2b's agreement check: Exchange resolves the typed string to a synced mailbox whose canonical address Active
+        // aud-a2b's agreement check: Exchange resolves the typed string to a synced room whose canonical address Active
         // Directory holds as a GROUP, while the typed string itself reads as a USER. Two objects of different classes, and
         // the old text named the class of only one of them.
-        var resolution = Resolution(new ResolvedRecipient("room1@contoso.test", null, "UserMailbox", ExistsOnPrem: true,
-                ExchangeGuid: Guid.Parse("22222222-2222-4222-8222-222222222222")))
+        var (resolution, exchange) = Resolution(SyncedRoom("room1@contoso.test"));
+        resolution
             .AdReturns(Typed, ProtectedPrincipalService.ResolutionStatus.Resolved, User("someone@contoso.test", "33333333-3333-4333-8333-333333333333"))
             .AdReturns("room1@contoso.test", ProtectedPrincipalService.ResolutionStatus.Resolved, Group("Room 1 Owners", "44444444-4444-4444-8444-444444444444"));
-        // docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 5: Graph answers with no on-premises SID, so the mailbox is bound by
+        // docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 5: Graph answers with no on-premises SID, so the room is bound by
         // its canonical address, as this collision needs.
-        resolution.OnPremisesSidSource = new NoSidReported();
+        resolution.OnPremisesSidSource = new SidSource(null);
 
-        var denial = await DenialFrom(GateOver(resolution));
+        var refusal = await RefusalFrom(resolution, exchange);
 
-        Assert.Equal(ConferenceRoomProtectionGate.AmbiguousMessage, denial);
-        Assert.DoesNotContain("AD users", denial, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ConferenceRoomBinder.AmbiguousMessage, refusal);
+        Assert.DoesNotContain("AD users", refusal, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void TheMessage_NamesNeitherAClassNorADirectory_AndSaysWhatToLookAt()
     {
-        // The wording itself, pinned once: no object class, no single directory, and an instruction the operator can act on.
-        Assert.DoesNotContain("users", ConferenceRoomProtectionGate.AmbiguousMessage, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("more than one directory object", ConferenceRoomProtectionGate.AmbiguousMessage, StringComparison.Ordinal);
-        Assert.Contains("Check the address.", ConferenceRoomProtectionGate.AmbiguousMessage, StringComparison.Ordinal);
+        // The wording itself, pinned once: no object class, no single directory, an instruction the operator can act on -
+        // and no protection language, since Conference Rooms runs no protection check.
+        Assert.DoesNotContain("users", ConferenceRoomBinder.AmbiguousMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("more than one directory object", ConferenceRoomBinder.AmbiguousMessage, StringComparison.Ordinal);
+        Assert.Contains("Check the address.", ConferenceRoomBinder.AmbiguousMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("protect", ConferenceRoomBinder.AmbiguousMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task AnUnavailableResolution_StillSaysTheCheckCouldNotBeMade()
+    public async Task AnUnavailableBinding_SaysTheAccountCouldNotBeIdentified_WithNoProtectionWording()
     {
-        // The sibling status is untouched: it is not an ambiguity and must not borrow its words.
-        var resolution = Resolution(exchangeAnswer: null)
-            .AdReturns(Typed, ProtectedPrincipalService.ResolutionStatus.Unavailable);
+        // The sibling status: not an ambiguity, so it must not borrow its words - and it is not a protection check, so it
+        // no longer says "Protection check unavailable."
+        var (resolution, exchange) = Resolution(SyncedRoom("room1@contoso.test"));
+        resolution.AdReturns(Typed, ProtectedPrincipalService.ResolutionStatus.Unavailable);
 
-        var denial = await DenialFrom(GateOver(resolution));
+        var refusal = await RefusalFrom(resolution, exchange);
 
-        Assert.Equal("Protection check unavailable.", denial);
+        Assert.Equal(ConferenceRoomBinder.AccountUnavailable, refusal);
+        Assert.DoesNotContain("protect", refusal, StringComparison.OrdinalIgnoreCase);
     }
 }
