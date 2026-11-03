@@ -5,6 +5,20 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-03 - Conference Rooms runs no protected-principal check at all
+
+Owner ruling, 2026-11-03: "protected principals does not apply to conference rooms." Supersedes the one part of the
+2026-10-26/27 entry (item 2) that kept the July 2026 gate on the room mailbox: that gate goes too. Conference Rooms is
+exempt from the Constitution's protected-principal rule in full - no check of the room mailbox it writes, no check of the
+room-list group, no check of a protected member - and `ConferenceRoomProtectionGate` and its call sites are removed. The
+Constitution's third module-scoped exemption is widened to match. Scoped to this one module; no other module may read
+itself into it. This also takes Conference Rooms out of the mailbox-GUID proof question (sweep item 6), which the owner
+decides separately.
+
+**Process, same day, verbatim: "ONE DECISION AT A TIME ... I will stop after the first decision and give that answer, so
+anything after that is not to be assumed answered."** When several decisions are open, the agent asks one, waits for its
+answer, records it, and only then asks the next. An answer to one question is never read as an answer to another.
+
 ### 2026-10-30 - The protected-principal check must be near-instant
 
 Owner, verbatim, on a permission grant that waited two minutes on the dev build: "this cannot take 2 minutes. this cannot take 10
