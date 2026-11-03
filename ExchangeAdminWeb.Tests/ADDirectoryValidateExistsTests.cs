@@ -303,7 +303,7 @@ public class ADDirectoryValidateExistsTests
     // kind asks, what it maps back, and - the distinction the class exists for - an absence reported as NotFound.
 
     [Theory]
-    [InlineData("User", "Get-ADUser", "Alex Doe", "CN=Alex Doe,OU=Staff,DC=example,DC=test")]
+    [InlineData("User", "Get-ADUser|" + ADDirectorySearchServiceTests.StandInGlobalCatalog + ":3268", "Alex Doe", "CN=Alex Doe,OU=Staff,DC=example,DC=test")]
     [InlineData("Group", "Get-ADGroup|", "Finance Approvers", "CN=Finance Approvers,OU=Groups,DC=example,DC=test")]
     [InlineData("OU", "Get-ADOrganizationalUnit", "Test Rooms", "OU=Test Rooms,DC=example,DC=test")]
     public void ValidateExists_EachObjectKind_AsksItsCommand_AndMapsTheMatch(string objectKind, string call, string label, string dn)
@@ -313,15 +313,72 @@ public class ADDirectoryValidateExistsTests
 
         var result = svc.ValidateExists("Finance Approvers", objectKind);
 
-        Assert.Equal([call], calls);
+        // ppi-s1: a user is looked up in the forest's global catalog, so it is found in whichever domain holds it.
+        Assert.Equal(objectKind == "User" ? ["Get-ADForest", call] : [call], calls);
         Assert.Equal(DirectoryLookupOutcome.Found, result.Outcome);
         Assert.False(result.Ambiguous);
         var match = Assert.IsType<ADSearchResult>(result.Match);
         Assert.Equal(objectKind, match.ObjectType);
         Assert.Equal(label, match.DisplayName);
         Assert.Equal(dn, match.DistinguishedName);
-        // The protected-target admin input stores a group's immutable id beside its DN, so validation must return it.
-        Assert.Equal(objectKind == "Group" ? ADDirectorySearchServiceTests.StandInGroupGuid : null, match.ObjectGuid);
+        // Every entry stores its object's immutable identifier beside its label, so validation must return it: the
+        // objectGUID of a group (a protected target) and of an OU, the objectSid of a user and of a group.
+        Assert.Equal(objectKind switch
+        {
+            "Group" => ADDirectorySearchServiceTests.StandInGroupGuid,
+            "OU" => ADDirectorySearchServiceTests.StandInOuGuid,
+            _ => ADDirectorySearchServiceTests.StandInUserGuid,
+        }, match.ObjectGuid);
+        Assert.Equal(objectKind switch
+        {
+            "Group" => "S-1-5-21-1000000000-1000000000-1000000000-2001",
+            "OU" => null,
+            _ => ADDirectorySearchServiceTests.StandInUserSid,
+        }, match.ObjectSid);
+    }
+
+    [Fact]
+    public void ValidateExists_AUser_WithNoGlobalCatalog_IsUnavailable_NeverALocalSearch()
+    {
+        // ppi-s1 (plan A.3). Without a catalog the lookup cannot see the other domains, so a local search would answer
+        // NotFound for a user who exists in one of them - telling the admin to check a name that is right.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls, catalog: "");
+
+        var result = svc.ValidateExists("alex.doe@example.test", "User");
+
+        Assert.Equal(DirectoryLookupOutcome.Unavailable, result.Outcome);
+        Assert.DoesNotContain(calls, c => c.StartsWith("Get-ADUser", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("OU=Test Rooms,DC=winroot,DC=example,DC=test", "Get-ADOrganizationalUnit|winroot.example.test")]
+    [InlineData("OU=Test Rooms,DC=example,DC=test", "Get-ADOrganizationalUnit|example.test")]
+    public void ValidateExists_ADnShapedOu_InADomainTheForestKnows_IsAskedOfThatDomain(string identity, string call)
+    {
+        // ppi-s1 (plan A.3): an OU in another domain of the forest could not be entered while OUs were looked up in the
+        // local domain only.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls);
+
+        var result = svc.ValidateExists(identity, "OU");
+
+        Assert.Equal(DirectoryLookupOutcome.Found, result.Outcome);
+        Assert.Equal(["Get-ADRootDSE", "Get-ADObject", call], calls);
+    }
+
+    [Fact]
+    public void ValidateExists_ADnShapedOu_InADomainTheForestDoesNotKnow_IsNotFound_AndNothingIsAskedOfIt()
+    {
+        // The live-proven contract (ADDirectoryLiveTests): a nonexistent DN under a bogus domain answers NotFound, never
+        // Unavailable - routing the lookup to a host that does not exist would turn the affirmative absence into an outage.
+        var calls = new List<string>();
+        var svc = ADDirectorySearchServiceTests.AvailableStandInService(calls);
+
+        var result = svc.ValidateExists("OU=NoSuchOu,DC=invalid,DC=example", "OU");
+
+        Assert.Equal(DirectoryLookupOutcome.NotFound, result.Outcome);
+        Assert.Equal(["Get-ADRootDSE", "Get-ADObject"], calls);
     }
 
     [Theory]
@@ -339,7 +396,8 @@ public class ADDirectoryValidateExistsTests
 
         Assert.Equal(DirectoryLookupOutcome.NotFound, result.Outcome);
         Assert.Null(result.Match);
-        Assert.Single(calls);
+        // One lookup; a user's is preceded by the catalog discovery (ppi-s1).
+        Assert.Single(calls, c => c != "Get-ADForest");
     }
 
     [Theory]

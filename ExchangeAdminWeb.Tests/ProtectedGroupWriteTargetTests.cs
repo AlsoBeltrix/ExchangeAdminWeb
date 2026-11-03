@@ -339,10 +339,11 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         Assert.False(decision.Accepted);
         Assert.Contains("more than one group", decision.ErrorMessage!, StringComparison.Ordinal);
 
-        // The existing lists keep their existence-only semantics: ambiguity still accepts.
+        // docs/ProtectedPrincipalIdentifiers-Plan.md A.3: the Protected Groups list stores one group's SID too, so it
+        // refuses ambiguity as well - it used to accept it and store whichever match AD returned first.
         var groupList = ProtectedPrincipalEntryValidator.Decide(
             [], "Ops", "Group", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match, Ambiguous: true));
-        Assert.True(groupList.Accepted);
+        Assert.False(groupList.Accepted);
 
         // And the lookup actually reports ambiguity (source tripwire - the live path needs AD).
         var svc = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADDirectorySearchService.cs"));
@@ -384,9 +385,12 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         Assert.True(iRoute >= 0, "DN-shaped validation lookups must route to the owning domain (pgwt-5).");
         Assert.True(iInvoke > iRoute, "The routing must be applied before the lookup runs (pgwt-5).");
         Assert.Contains("AddParameter(\"Server\", server)", body, StringComparison.Ordinal);
-        // Scoped to GROUPS: only the group pickers are forest-wide, and the OU/User kinds have
-        // a live-proven NotFound contract for bogus-domain DNs that routing would break.
-        Assert.Contains("objectKind == \"Group\" && normalized.Contains('=')", body, StringComparison.Ordinal);
+        // Groups and OUs route a DN (docs/ProtectedPrincipalIdentifiers-Plan.md A.3). The OU kind's live-proven NotFound
+        // contract for bogus-domain DNs is kept by routing only a domain the forest's crossRefs know: an unknown one
+        // answers NotFound before any lookup is sent to it.
+        Assert.Contains("objectKind is \"Group\" or \"OU\"", body, StringComparison.Ordinal);
+        Assert.Contains("server = ForestDomainServer(runspace, dnDomain);", body, StringComparison.Ordinal);
+        Assert.Contains("ValidationStep.CompletedWithNoResults", body[..body.IndexOf("ps.Invoke()", StringComparison.Ordinal)], StringComparison.Ordinal);
     }
 
     [Fact]
