@@ -27,7 +27,11 @@ public class ProtectedPrincipalEntryValidatorTests
         string? upn = "jane@contoso.com",
         string? mail = "jane@contoso.com")
         => new(DirectoryLookupOutcome.Found,
-               new ADSearchResult("Jane", dn ?? "", "jane", upn, mail, "User"));
+               new ADSearchResult("Jane", dn ?? "", "jane", upn, mail, "User", ObjectSid: JaneSid));
+
+    // ppi-s1: a user entry is stored by its objectSid, so a Found match must carry one to be accepted.
+    private const string JaneSid = "S-1-5-21-1000000000-1000000000-1000000000-1105";
+    private const string OuGuid = "0b5e3c2a-7d41-4f8e-9c6a-2e1f3d4b5a69";
 
     private static DirectoryValidationResult NotFound
         => new(DirectoryLookupOutcome.NotFound, null);
@@ -274,19 +278,94 @@ public class ProtectedPrincipalEntryValidatorTests
             Empty, "CONTOSO\\jane", "User", Found(upn: "jane.doe@contoso.com"));
 
         Assert.True(d.Accepted);
-        Assert.Equal("jane.doe@contoso.com", d.ValueToAdd);
+        // ppi-s1: the identifier row, labelled with the canonical form, and that canonical form as its companion.
+        Assert.Equal(ProtectedPrincipalIdEntry.Format(JaneSid, "jane.doe@contoso.com"), d.ValueToAdd);
+        Assert.Equal("jane.doe@contoso.com", d.CompanionValue);
     }
 
     [Fact]
-    public void Decide_Ou_StoresTheDistinguishedName()
+    public void Decide_Ou_StoresTheObjectGuid_LabelledWithTheDistinguishedName()
     {
         var match = new DirectoryValidationResult(
             DirectoryLookupOutcome.Found,
-            new ADSearchResult("Tier0", "OU=Tier0,DC=contoso,DC=com", null, null, null, "OU"));
+            new ADSearchResult("Tier0", "OU=Tier0,DC=contoso,DC=com", null, null, null, "OU", ObjectGuid: OuGuid));
 
         var d = ProtectedPrincipalEntryValidator.Decide(Empty, "OU=Tier0,DC=contoso,DC=com", "OU", match);
 
         Assert.True(d.Accepted);
-        Assert.Equal("OU=Tier0,DC=contoso,DC=com", d.ValueToAdd);
+        Assert.Equal(ProtectedPrincipalIdEntry.Format(OuGuid, "OU=Tier0,DC=contoso,DC=com"), d.ValueToAdd);
+        Assert.Equal("OU=Tier0,DC=contoso,DC=com", d.CompanionValue);
+    }
+
+    // ---- ppi-s1: identifier required, ambiguity refused for every kind (plan A.3) ----------------
+
+    [Theory]
+    [InlineData("User", "more than one user")]
+    [InlineData("Group", "more than one group")]
+    [InlineData("OU", "more than one OU")]
+    [InlineData("GroupTarget", "more than one group")]
+    public void Decide_AnAmbiguousMatch_IsRefused_ForEveryKind(string objectKind, string message)
+    {
+        // A User, Group or OU input that matched two objects used to be accepted, storing whichever AD returned first.
+        // With an identifier stored that would pin the wrong object, so ambiguity is refused for every kind, not only
+        // for GroupTarget.
+        var match = new ADSearchResult("Ops", "OU=Ops,DC=contoso,DC=com", "ops", "ops@contoso.com", null, objectKind,
+            ObjectSid: JaneSid, ObjectGuid: OuGuid);
+
+        var d = ProtectedPrincipalEntryValidator.Decide(
+            Empty, "Ops", objectKind, new DirectoryValidationResult(DirectoryLookupOutcome.Found, match, Ambiguous: true));
+
+        Assert.False(d.Accepted);
+        Assert.Null(d.ValueToAdd);
+        Assert.Null(d.CompanionValue);
+        Assert.False(d.ClearInput);
+        Assert.Contains(message, d.ErrorMessage!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("User")]
+    [InlineData("Group")]
+    [InlineData("OU")]
+    public void Decide_AFoundMatchWithoutItsIdentifier_IsRefused(string objectKind)
+    {
+        // A user or group without a readable objectSid, an OU without a readable objectGUID: a name-only row would be
+        // stored, which a rename or another object taking the name silently changes.
+        var match = new ADSearchResult("Ops", "CN=Ops,DC=contoso,DC=com", "ops", "ops@contoso.com", null, objectKind);
+
+        var d = ProtectedPrincipalEntryValidator.Decide(
+            Empty, "Ops", objectKind, new DirectoryValidationResult(DirectoryLookupOutcome.Found, match));
+
+        Assert.False(d.Accepted);
+        Assert.Contains("identifier could not be read", d.ErrorMessage!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("S-1-5-32-544")]
+    [InlineData("S-1-1-0")]
+    public void Decide_AWellKnownGroup_IsRefused(string sid)
+    {
+        var match = new ADSearchResult("Administrators", "CN=Administrators,CN=Builtin,DC=contoso,DC=com",
+            "Administrators", null, null, "Group", ObjectSid: sid);
+
+        var d = ProtectedPrincipalEntryValidator.Decide(
+            Empty, "Administrators", "Group", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match));
+
+        Assert.False(d.Accepted);
+        Assert.Contains("well-known", d.ErrorMessage!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Decide_Group_StoresTheSid_LabelledWithTheDistinguishedName()
+    {
+        const string dn = "CN=VR Staff,OU=Groups,DC=contoso,DC=com";
+        const string sid = "S-1-5-21-1000000000-1000000000-1000000000-2001";
+        var match = new ADSearchResult("VR Staff", dn, "VRStaff", null, null, "Group", ObjectSid: sid);
+
+        var d = ProtectedPrincipalEntryValidator.Decide(
+            Empty, "VR Staff", "Group", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match));
+
+        Assert.True(d.Accepted);
+        Assert.Equal($"{sid}|{dn}", d.ValueToAdd);
+        Assert.Equal(dn, d.CompanionValue);
     }
 }

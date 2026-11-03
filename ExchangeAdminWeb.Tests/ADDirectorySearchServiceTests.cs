@@ -256,6 +256,11 @@ public class ADDirectorySearchServiceTests
     /// <summary>kd-55. The objectGUID the stand-in group answers with - what a validated group's result must carry.</summary>
     internal const string StandInGroupGuid = "6f1c2c7e-3b9a-4d55-9a51-1c2f0e4b7a10";
 
+    /// <summary>ppi-s1. The identifiers the stand-in user and OU answer with - what a validated entry stores.</summary>
+    internal const string StandInUserSid = "S-1-5-21-1000000000-1000000000-1000000000-1105";
+    internal const string StandInUserGuid = "3c9e1d27-58b4-4a0f-b6e2-7f1a9c0d4e83";
+    internal const string StandInOuGuid = "a4d2f6b1-0c7e-4e93-8b25-6d1f3e9a7c40";
+
     /// <summary>
     /// The service with both its sessions standing in (psl-11): the probe's import loads, so the directory reads as
     /// available - checked here, with the probe's one import - and the search's session answers <c>Get-ADUser</c>,
@@ -268,7 +273,7 @@ public class ADDirectorySearchServiceTests
     /// the absence an existence check must report as NotFound rather than Unavailable - or "two", which makes a validation
     /// ambiguous. <c>Get-ADForest</c> always answers its catalog.
     /// </param>
-    internal static ADDirectorySearchService AvailableStandInService(List<string> calls, string answers = "one")
+    internal static ADDirectorySearchService AvailableStandInService(List<string> calls, string answers = "one", string catalog = StandInGlobalCatalog)
     {
         var times = answers switch { "none" => 0, "two" => 2, _ => 1 };
         var probeCalls = new List<string>();
@@ -281,8 +286,8 @@ public class ADDirectorySearchServiceTests
             CreateSearchRunspace = () => StandInSession(calls,
                 ("Get-ADUser", $$"""
                     [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
-                    $global:DirectoryCalls.Add('Get-ADUser')
-                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ DisplayName = 'Alex Doe'; DistinguishedName = 'CN=Alex Doe,OU=Staff,DC=example,DC=test'; SamAccountName = 'adoe'; UserPrincipalName = 'alex.doe@example.test'; mail = 'alex.doe@example.test' } }
+                    if ($Server) { $global:DirectoryCalls.Add("Get-ADUser|$Server") } else { $global:DirectoryCalls.Add('Get-ADUser') }
+                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ DisplayName = 'Alex Doe'; DistinguishedName = 'CN=Alex Doe,OU=Staff,DC=example,DC=test'; SamAccountName = 'adoe'; UserPrincipalName = 'alex.doe@example.test'; mail = 'alex.doe@example.test'; objectSid = '{{StandInUserSid}}'; ObjectGUID = [guid]'{{StandInUserGuid}}' } }
                     """),
                 ("Get-ADGroup", $$"""
                     [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
@@ -291,13 +296,27 @@ public class ADDirectorySearchServiceTests
                     """),
                 ("Get-ADOrganizationalUnit", $$"""
                     [CmdletBinding()] param($LDAPFilter, $Properties, $ResultSetSize, $Server)
-                    $global:DirectoryCalls.Add('Get-ADOrganizationalUnit')
-                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ Name = 'Test Rooms'; DistinguishedName = 'OU=Test Rooms,DC=example,DC=test' } }
+                    if ($Server) { $global:DirectoryCalls.Add("Get-ADOrganizationalUnit|$Server") } else { $global:DirectoryCalls.Add('Get-ADOrganizationalUnit') }
+                    for ($i = 0; $i -lt {{times}}; $i++) { [pscustomobject]@{ Name = 'Test Rooms'; DistinguishedName = 'OU=Test Rooms,DC=example,DC=test'; ObjectGUID = [guid]'{{StandInOuGuid}}' } }
                     """),
                 ("Get-ADForest", $$"""
                     [CmdletBinding()] param()
                     $global:DirectoryCalls.Add('Get-ADForest')
-                    [pscustomobject]@{ GlobalCatalogs = @('{{StandInGlobalCatalog}}') }
+                    [pscustomobject]@{ GlobalCatalogs = @('{{catalog}}') }
+                    """),
+                // ppi-s1: the forest's crossRefs, which an OU's DN is checked against before it is routed. The forest
+                // knows example.test and its child winroot.example.test, and no other domain.
+                ("Get-ADRootDSE", """
+                    [CmdletBinding()] param()
+                    $global:DirectoryCalls.Add('Get-ADRootDSE')
+                    [pscustomobject]@{ configurationNamingContext = 'CN=Configuration,DC=example,DC=test' }
+                    """),
+                ("Get-ADObject", """
+                    [CmdletBinding()] param($SearchBase, $LDAPFilter, $Properties)
+                    $global:DirectoryCalls.Add('Get-ADObject')
+                    foreach ($known in @('winroot.example.test', 'example.test')) {
+                        if ($LDAPFilter -like "*(dnsRoot=$known)*") { [pscustomobject]@{ nETBIOSName = $known.Split('.')[0].ToUpper(); dnsRoot = $known }; break }
+                    }
                     """)),
         };
 

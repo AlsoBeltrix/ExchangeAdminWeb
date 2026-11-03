@@ -107,7 +107,9 @@
     <!-- Protected Principals -->
     <div class="adm-pane @PaneClass(SecProtected)">
 
-            <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.</small></p>
+            <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.
+                A user, group or OU added here is stored by its directory identifier - a user's or group's SID, an OU's object GUID - and the protection check compares that identifier rather than the name wherever it knows the target's own: another account later given the same name or address is not protected in its place, and a renamed OU still protects the accounts beneath it. Hover over an entry to see its identifier.
+                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover was added before identifiers were stored and is still enforced by name, exactly as before.</small></p>
 
             @if (ppLoadError != null)
             {
@@ -117,17 +119,27 @@
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected Users</label>
-                    <small class="text-muted d-block mb-1">UPN, email, sAMAccountName, or DOMAIN\username</small>
+                    <small class="text-muted d-block mb-1">UPN, email, sAMAccountName, or DOMAIN\username - any domain of the forest; stored by SID</small>
                     @* Rows, not a stack of borderless lines: at 4+ entries the old list
                        gave the eye nothing to separate one principal from the next. *@
                     <div class="adm-scroll mb-2">
                         <table class="adm-tbl">
                             <tbody>
-                                @if (ppUsers.Count == 0)
+                                @if (ppUserIds.Count == 0 && ppUsers.Count == 0)
                                 {
                                     <tr><td colspan="2" class="adm-empty">None</td></tr>
                                 }
-                                @foreach (var u in ppUsers.ToList())
+                                @foreach (var u in ppUserIds.ToList())
+                                {
+                                    var captured = u;
+                                    <tr>
+                                        <td class="adm-val" title="@IdTip(captured, "objectSid")">@IdLabel(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePpId(ppUserIds, ppUsers, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                                @foreach (var u in ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds))
                                 {
                                     var captured = u;
                                     <tr>
@@ -147,15 +159,25 @@
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected Groups</label>
-                    <small class="text-muted d-block mb-1">DN, DOMAIN\GroupName, or CN — transitive membership</small>
+                    <small class="text-muted d-block mb-1">DN, DOMAIN\GroupName, or CN — transitive membership; stored by SID</small>
                     <div class="adm-scroll mb-2">
                         <table class="adm-tbl">
                             <tbody>
-                                @if (ppGroups.Count == 0)
+                                @if (ppGroupIds.Count == 0 && ppGroups.Count == 0)
                                 {
                                     <tr><td colspan="2" class="adm-empty">None</td></tr>
                                 }
-                                @foreach (var g in ppGroups.ToList())
+                                @foreach (var g in ppGroupIds.ToList())
+                                {
+                                    var captured = g;
+                                    <tr>
+                                        <td class="adm-val" title="@IdTip(captured, "objectSid")">@IdLabel(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePpId(ppGroupIds, ppGroups, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                                @foreach (var g in ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds))
                                 {
                                     var captured = g;
                                     <tr>
@@ -175,15 +197,25 @@
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected OUs</label>
-                    <small class="text-muted d-block mb-1">Search by OU name — all objects beneath are protected</small>
+                    <small class="text-muted d-block mb-1">Search by OU name — all objects beneath are protected; stored by object GUID</small>
                     <div class="adm-scroll mb-2">
                         <table class="adm-tbl">
                             <tbody>
-                                @if (ppOus.Count == 0)
+                                @if (ppOuIds.Count == 0 && ppOus.Count == 0)
                                 {
                                     <tr><td colspan="2" class="adm-empty">None</td></tr>
                                 }
-                                @foreach (var o in ppOus.ToList())
+                                @foreach (var o in ppOuIds.ToList())
+                                {
+                                    var captured = o;
+                                    <tr>
+                                        <td class="adm-val" title="@IdTip(captured, "objectGUID")">@IdLabel(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePpId(ppOuIds, ppOus, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                                @foreach (var o in ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds))
                                 {
                                     var captured = o;
                                     <tr>
@@ -378,7 +410,11 @@
     private string PaneClass(string section) => tab == section ? "on" : "";
 
     /// <summary>Total protected entries across all five kinds, for the tab count.</summary>
-    private int ProtectedCount() => ppUsers.Count + ppGroups.Count + ppOus.Count + ppPatterns.Count + ppTargets.Count;
+    private int ProtectedCount() =>
+        ppUserIds.Count + ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds).Length
+        + ppGroupIds.Count + ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds).Length
+        + ppOuIds.Count + ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds).Length
+        + ppPatterns.Count + ppTargets.Count;
 
     /// <summary>
     /// Saves what the visible tab owns. Deliberately not "save everything": each save has its own
@@ -480,6 +516,24 @@
     }
 
     /// <summary>
+    /// Removes an identifier row and the companion legacy row stored with it (docs/ProtectedPrincipalIdentifiers-Plan.md
+    /// B.2), unless another identifier row still pairs with that companion. Removing only the identifier row would leave
+    /// the companion unpaired - an unmigrated row, enforced by name - so the entry would look removed and still protect.
+    /// </summary>
+    private void RemovePpId(List<string> ids, List<string> legacy, string row)
+    {
+        if (ProtectedPrincipalIdEntry.RemoveWithCompanion(ids, legacy, row))
+            RecountProtected();
+    }
+
+    /// <summary>An identifier row as the list shows it: its label (the DN or address), else its identifier.</summary>
+    private static string IdLabel(string row) => ProtectedPrincipalIdEntry.Parse(row)?.Display ?? row;
+
+    /// <summary>The hover tip naming what an identifier row is stored and compared by.</summary>
+    private static string IdTip(string row, string attribute) =>
+        $"Stored and compared by {attribute} {ProtectedPrincipalIdEntry.Parse(row)?.Identifier}";
+
+    /// <summary>
     /// Counts protected entries added and removed against what the page loaded, across all five
     /// kinds.
     /// </summary>
@@ -501,6 +555,9 @@
             + EntryDelta(ppOus, ppOusBaseline)
             + EntryDelta(ppPatterns, ppPatternsBaseline)
             + EntryDelta(ppTargets, ppTargetsBaseline)
+            + EntryDelta(ppUserIds, ppUserIdsBaseline)
+            + EntryDelta(ppGroupIds, ppGroupIdsBaseline)
+            + EntryDelta(ppOuIds, ppOuIdsBaseline)
             + SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline);
 
         dirty.SetCount(SectionProtected, changes);
@@ -535,6 +592,9 @@
         ppOusBaseline = new List<string>(ppOus);
         ppPatternsBaseline = new List<string>(ppPatterns);
         ppTargetsBaseline = new List<string>(ppTargets);
+        ppUserIdsBaseline = new List<string>(ppUserIds);
+        ppGroupIdsBaseline = new List<string>(ppGroupIds);
+        ppOuIdsBaseline = new List<string>(ppOuIds);
     }
 
     /// <summary>The five rule baselines become <paramref name="rules"/> - what the store holds after a save.</summary>
@@ -550,6 +610,9 @@
         ppOusBaseline = rules.OrganizationalUnits.ToList();
         ppPatternsBaseline = rules.SamAccountNamePatterns.ToList();
         ppTargetsBaseline = rules.GroupTargets.ToList();
+        ppUserIdsBaseline = rules.UserIds.ToList();
+        ppGroupIdsBaseline = rules.GroupIds.ToList();
+        ppOuIdsBaseline = rules.OuIds.ToList();
     }
 
     /// <summary>The five lists show <paramref name="rules"/>.</summary>
@@ -560,6 +623,9 @@
         ppOus = rules.OrganizationalUnits.ToList();
         ppPatterns = rules.SamAccountNamePatterns.ToList();
         ppTargets = rules.GroupTargets.ToList();
+        ppUserIds = rules.UserIds.ToList();
+        ppGroupIds = rules.GroupIds.ToList();
+        ppOuIds = rules.OuIds.ToList();
     }
 
     /// <summary>Whether the five lists still hold exactly <paramref name="config"/>'s entries, in order and casing.</summary>
@@ -568,14 +634,18 @@
         && ppGroups.SequenceEqual(config.Groups, StringComparer.Ordinal)
         && ppOus.SequenceEqual(config.OrganizationalUnits, StringComparer.Ordinal)
         && ppPatterns.SequenceEqual(config.SamAccountNamePatterns, StringComparer.Ordinal)
-        && ppTargets.SequenceEqual(config.GroupTargets, StringComparer.Ordinal);
+        && ppTargets.SequenceEqual(config.GroupTargets, StringComparer.Ordinal)
+        && ppUserIds.SequenceEqual(config.UserIds, StringComparer.Ordinal)
+        && ppGroupIds.SequenceEqual(config.GroupIds, StringComparer.Ordinal)
+        && ppOuIds.SequenceEqual(config.OuIds, StringComparer.Ordinal);
 
     private static ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData RulesOf(ProtectedPrincipalConfig config) =>
-        new(config.Users, config.Groups, config.OrganizationalUnits, config.SamAccountNamePatterns, config.GroupTargets);
+        config.ToData();
 
-    /// <summary>How many rules of the five kinds the page last loaded or saved.</summary>
+    /// <summary>How many rows of the eight kinds the page last loaded or saved.</summary>
     private int LoadedRuleCount() =>
-        ppUsersBaseline.Count + ppGroupsBaseline.Count + ppOusBaseline.Count + ppPatternsBaseline.Count + ppTargetsBaseline.Count;
+        ppUsersBaseline.Count + ppGroupsBaseline.Count + ppOusBaseline.Count + ppPatternsBaseline.Count + ppTargetsBaseline.Count
+        + ppUserIdsBaseline.Count + ppGroupIdsBaseline.Count + ppOuIdsBaseline.Count;
 
     private List<string> ppUsers = new();
     private List<string> ppGroups = new();
@@ -587,6 +657,16 @@
     private List<string> ppOusBaseline = new();
     private List<string> ppPatternsBaseline = new();
     private List<string> ppTargetsBaseline = new();
+
+    // docs/ProtectedPrincipalIdentifiers-Plan.md A.2. The identifier rows ("identifier|label") beside the legacy lists
+    // above, which also hold each one's companion: the row an older build enforces. A companion is not shown as its
+    // own entry; its identifier row is (B.2).
+    private List<string> ppUserIds = new();
+    private List<string> ppGroupIds = new();
+    private List<string> ppOuIds = new();
+    private List<string> ppUserIdsBaseline = new();
+    private List<string> ppGroupIdsBaseline = new();
+    private List<string> ppOuIdsBaseline = new();
     private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "", ppNewTarget = "";
     private string ppDirectoryReadSecretId = "";
     private string ppDirectoryReadSecretIdBaseline = "";
@@ -866,6 +946,9 @@
         ppOus = editing.Config.OrganizationalUnits.ToList();
         ppPatterns = editing.Config.SamAccountNamePatterns.ToList();
         ppTargets = editing.Config.GroupTargets.ToList();
+        ppUserIds = editing.Config.UserIds.ToList();
+        ppGroupIds = editing.Config.GroupIds.ToList();
+        ppOuIds = editing.Config.OuIds.ToList();
         ppRulesVersion = editing.Version;
         SnapshotProtectedRulesBaseline();
         ppLoaded = true;
@@ -903,9 +986,13 @@
     // Patterns are deliberately NOT validated - they are wildcards matched against a resolved
     // target at check time, so there is no object for them to correspond to, and one matching
     // nothing today is legitimate (it may exist to catch future accounts).
-    private async Task AddPpUser() => await AddValidatedAsync(ppUsers, ppNewUser, "User", v => ppNewUser = v);
-    private async Task AddPpGroup() => await AddValidatedAsync(ppGroups, ppNewGroup, "Group", v => ppNewGroup = v);
-    private async Task AddPpOu() => await AddValidatedAsync(ppOus, ppNewOu, "OU", v => ppNewOu = v);
+    //
+    // A validated user, group or OU is stored as two rows (docs/ProtectedPrincipalIdentifiers-Plan.md A.2, B.1): its
+    // identifier row, which this build compares, and its companion - the name an older build stores - in the legacy
+    // list, which an older build sharing the database keeps enforcing.
+    private async Task AddPpUser() => await AddValidatedAsync(ppUsers, ppNewUser, "User", v => ppNewUser = v, ids: ppUserIds);
+    private async Task AddPpGroup() => await AddValidatedAsync(ppGroups, ppNewGroup, "Group", v => ppNewGroup = v, ids: ppGroupIds);
+    private async Task AddPpOu() => await AddValidatedAsync(ppOus, ppNewOu, "OU", v => ppNewOu = v, ids: ppOuIds);
 
     // Protected TARGETS look up an AD Group but canonicalise as "GroupTarget": the stored value
     // is "objectGUID|DN" (pgwt T0), produced by the validator so the saved entry is exactly
@@ -977,9 +1064,12 @@
     private async Task SweepExistingEntriesAsync()
     {
         var targets = new List<(string Entry, string Kind)>();
-        targets.AddRange(ppUsers.Select(u => (u, "User")));
-        targets.AddRange(ppGroups.Select(g => (g, "Group")));
-        targets.AddRange(ppOus.Select(o => (o, "OU")));
+        // Only the rows enforced by name: legacy rows no identifier row pairs with. An identifier row and its companion
+        // are not swept, the Group Targets reasoning below - their identity is the identifier, so a lookup by name would
+        // badge a renamed-but-still-effective entry "protects nothing" (docs/ProtectedPrincipalIdentifiers-Plan.md B.2).
+        targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds).Select(u => (u, "User")));
+        targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds).Select(g => (g, "Group")));
+        targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds).Select(o => (o, "OU")));
         // Group TARGETS are deliberately not swept (pgwt-6, the patterns precedent): their
         // identity is the GUID, which keeps protecting across a rename or move - a DN lookup
         // would badge a renamed-but-still-effective row "protects nothing" and invite the
@@ -1061,13 +1151,18 @@
     /// retry. Collapsing them would tell an admin their correct entry was a typo during an outage
     /// (owner ruling, .agents/decisions.md and the plan's D1).
     /// </remarks>
-    private async Task AddValidatedAsync(List<string> target, string raw, string objectKind, Action<string> setInput, string? lookupKind = null)
+    private async Task AddValidatedAsync(
+        List<string> target, string raw, string objectKind, Action<string> setInput, string? lookupKind = null, List<string>? ids = null)
     {
+        // An entry already stored by identifier is a duplicate by its label. A legacy row with no identifier is not: adding
+        // it again stores its identifier row, and the legacy row becomes that row's companion.
+        IReadOnlyCollection<string> existing = ids is null ? target : ids.Select(IdLabel).ToList();
+
         // Blank and duplicate are settled without a directory round-trip.
-        if (!ProtectedPrincipalEntryValidator.ShouldConsultDirectory(target, raw))
+        if (!ProtectedPrincipalEntryValidator.ShouldConsultDirectory(existing, raw))
         {
             var quick = ProtectedPrincipalEntryValidator.Decide(
-                target, raw, objectKind, new DirectoryValidationResult(DirectoryLookupOutcome.NotFound, null));
+                existing, raw, objectKind, new DirectoryValidationResult(DirectoryLookupOutcome.NotFound, null));
             ppAddError = quick.ErrorMessage;
             if (quick.ClearInput) setInput("");
             return;
@@ -1105,9 +1200,13 @@
             ppValidating = false;
         }
 
-        var decision = ProtectedPrincipalEntryValidator.Decide(target, raw, objectKind, result);
+        var decision = ProtectedPrincipalEntryValidator.Decide(existing, raw, objectKind, result);
 
-        if (decision.Accepted && decision.ValueToAdd is { } toAdd)
+        if (decision.Accepted && decision.ValueToAdd is { } idRow && ids is not null)
+        {
+            AddIdentifierRow(ids, target, idRow, decision.CompanionValue);
+        }
+        else if (decision.Accepted && decision.ValueToAdd is { } toAdd)
         {
             // pgwt-6: a target's identity is its GUID, so re-adding a renamed group REPLACES
             // the old row (refreshing the stored DN) instead of accumulating two rows that
@@ -1140,6 +1239,18 @@
         activity.Complete(
             result.Outcome != DirectoryLookupOutcome.Unavailable,
             decision.ErrorMessage ?? "Active Directory confirmed the entry.");
+    }
+
+    /// <summary>
+    /// Stores a validated user, group or OU as its identifier row and its companion legacy row
+    /// (docs/ProtectedPrincipalIdentifiers-Plan.md A.2, B.1). The same object added again - under another name, or after a
+    /// rename - replaces its identifier row, refreshing the label, rather than accumulating two rows for one object (the
+    /// pgwt-6 rule for targets); the old label's companion goes with it unless another row still pairs with it.
+    /// </summary>
+    private void AddIdentifierRow(List<string> ids, List<string> legacy, string idRow, string? companion)
+    {
+        if (ProtectedPrincipalIdEntry.AddWithCompanion(ids, legacy, idRow, companion))
+            RecountProtected();
     }
 
     private async Task SaveProtectedPrincipals()
@@ -1242,7 +1353,10 @@
                 Groups = ppGroups.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
                 OrganizationalUnits = ppOus.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
                 SamAccountNamePatterns = ppPatterns.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
-                GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
+                GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                UserIds = ppUserIds.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                GroupIds = ppGroupIds.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                OuIds = ppOuIds.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
             };
             var pageLoadedRules = LoadedRuleCount() > 0;
             var loadedVersion = ppRulesVersion;
@@ -1440,6 +1554,9 @@
                 .Concat(rules.OrganizationalUnits.Select(v => "OUs:" + v))
                 .Concat(rules.SamAccountNamePatterns.Select(v => "Patterns:" + v))
                 .Concat(rules.GroupTargets.Select(v => "Targets:" + v))
+                .Concat(rules.UserIds.Select(v => "UserIds:" + v))
+                .Concat(rules.GroupIds.Select(v => "GroupIds:" + v))
+                .Concat(rules.OuIds.Select(v => "OuIds:" + v))
                 .ToArray();
 
     /// <summary>The entries a save of <paramref name="saved"/> added or removed against what the page loaded, as <c>Kind:value</c>.</summary>
@@ -1449,6 +1566,9 @@
             .Concat(ChangedEntries("OUs", saved.OrganizationalUnits, ppOusBaseline))
             .Concat(ChangedEntries("Patterns", saved.SamAccountNamePatterns, ppPatternsBaseline))
             .Concat(ChangedEntries("Targets", saved.GroupTargets, ppTargetsBaseline))
+            .Concat(ChangedEntries("UserIds", saved.UserIds, ppUserIdsBaseline))
+            .Concat(ChangedEntries("GroupIds", saved.GroupIds, ppGroupIdsBaseline))
+            .Concat(ChangedEntries("OuIds", saved.OuIds, ppOuIdsBaseline))
             .ToArray();
 
     // aud-a26s. Ordinal, as EntryDelta counts: an entry removed and added back in other casing, which the count shows as two
@@ -1461,5 +1581,5 @@
     private static string RuleCounts(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>
         rules is null
             ? ""
-            : $"Users:{rules.Users.Length},Groups:{rules.Groups.Length},OUs:{rules.OrganizationalUnits.Length},Patterns:{rules.SamAccountNamePatterns.Length},Targets:{rules.GroupTargets.Length}";
+            : $"Users:{rules.Users.Length},Groups:{rules.Groups.Length},OUs:{rules.OrganizationalUnits.Length},Patterns:{rules.SamAccountNamePatterns.Length},Targets:{rules.GroupTargets.Length},UserIds:{rules.UserIds.Length},GroupIds:{rules.GroupIds.Length},OuIds:{rules.OuIds.Length}";
 }

@@ -278,7 +278,18 @@ internal static class ProtectedGroupMembership
         {
             try
             {
-                var group = Resolve(ProtectedGroupEntry.Parse(raw), directory, out var problem);
+                // docs/ProtectedPrincipalIdentifiers-Plan.md C.2. A SID entry - a group_sid row, or a legacy row stored as a
+                // SID - that the target is, or that its token carries, is a match without reading the group: the SID is the
+                // identity compared below, and the token is the directory's own answer. Only a SID the token does not carry
+                // is resolved, for the paths that read membership links.
+                var entry = ProtectedGroupEntry.Parse(raw);
+                if (entry.Kind == ProtectedGroupEntryKind.Sid && membership.Sids.Contains(entry.Value))
+                {
+                    matches.Add($"Group:{raw}");
+                    continue;
+                }
+
+                var group = Resolve(entry, directory, out var problem);
                 if (group is null)
                 {
                     logger.LogWarning(

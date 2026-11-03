@@ -1087,6 +1087,15 @@ C-Suite, Board of Directors, ceo@example.com
   Principals admin UI)
 - Cache is invalidated immediately when module config is saved via UI
 
+The app-wide protection rules - **Admin Settings → Protected principals** (users, groups, OUs, sAMAccountName
+patterns, group targets) - store a user or group added there by its SID and an OU by its object GUID, each beside a
+companion row by name that an older build sharing the database keeps enforcing; removing the entry removes both. The
+check compares a user by SID wherever the target's SID was read (another account given the same address is not
+protected in its place), a group by SID against the target's token, and an OU by the object GUIDs of the target's
+containers, so a renamed OU still protects the accounts beneath it. A user or OU is looked up in any domain of the
+forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. An entry added
+before identifiers were stored is enforced by name, exactly as before (docs/ProtectedPrincipalIdentifiers-Plan.md).
+
 #### Protected principal servicing (authorised bypass)
 
 Named groups can be allowed to act on protected principals **within one specific module** — built

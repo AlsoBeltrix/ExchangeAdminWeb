@@ -462,6 +462,48 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
     private DirectoryValidationResult ExecuteValidateExists(string identity, string objectKind)
     {
         var runspace = GetOrCreateRunspace();
+
+        // docs/ProtectedPrincipalIdentifiers-Plan.md A.3. Where the question is asked, decided before the lookup:
+        //
+        // - A USER is looked up in the forest's global catalog, which holds every domain's userPrincipalName, mail,
+        //   sAMAccountName and objectSid: a protected user in another domain of the forest could not be entered while
+        //   this searched the local domain only. ResultSetSize 2 and Decide's ambiguity refusal keep the exactly-one
+        //   rule forest-wide. No catalog is Unavailable, never a local-domain search that would answer NotFound for a
+        //   user who exists - the ValidateGroupSid rule.
+        // - pgwt-5: a DN names its owning domain, but the default binding is the LOCAL domain - so a forest-wide picker
+        //   selection (a WINROOT group) revalidated here read as nonexistent. DN-shaped GROUP and OU input is asked of
+        //   its own domain. The live-proven contract that a nonexistent DN under a bogus domain answers NotFound
+        //   (ADDirectoryLiveTests) is kept for OUs by routing only a domain the forest's crossRefs know, and answering
+        //   NotFound for the rest. NormalizeIdentity already distinguishes a DN's escape-backslash from a DOMAIN\name
+        //   separator.
+        string? server = null;
+        var normalized = NormalizeIdentity(identity);
+        if (objectKind is "Group" or "OU")
+        {
+            if (normalized.Contains('=') && DnsDomainFromDn(normalized) is { } dnDomain)
+            {
+                if (objectKind == "OU")
+                {
+                    server = ForestDomainServer(runspace, dnDomain);
+                    if (server is null)
+                        return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.CompletedWithNoResults), null);
+                }
+                else
+                {
+                    server = dnDomain;
+                }
+            }
+        }
+        else
+        {
+            server = ResolveGlobalCatalog(runspace);
+            if (server is null || server.StartsWith(':'))
+            {
+                _logger.LogWarning("No global catalog could be resolved, so a user cannot be confirmed forest-wide");
+                return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.DirectoryUnavailable), null);
+            }
+        }
+
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
 
@@ -477,23 +519,8 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
           .AddParameter("Properties", ValidationProperties(objectKind))
           .AddParameter("ResultSetSize", 2)
           .AddParameter("ErrorAction", "Stop");
-
-        // pgwt-5: a DN names its owning domain, but the default binding is the LOCAL domain -
-        // so a forest-wide picker selection (a WINROOT group) revalidated here read as
-        // nonexistent and could not be protected through the UI at all. Route DN-shaped GROUP
-        // input to its own domain. Scoped to the Group kind deliberately: only the group
-        // pickers are forest-wide, and the OU/User kinds carry a live-proven contract that a
-        // nonexistent DN under a bogus domain answers NotFound from the local DC
-        // (ADDirectoryLiveTests) - routing those to an unresolvable host would turn the
-        // affirmative absence into Unavailable. NormalizeIdentity already distinguishes a DN's
-        // escape-backslash from a DOMAIN\name separator.
-        var normalized = NormalizeIdentity(identity);
-        if (objectKind == "Group" && normalized.Contains('='))
-        {
-            var server = DnsDomainFromDn(normalized);
-            if (server is not null)
-                ps.AddParameter("Server", server);
-        }
+        if (server is not null)
+            ps.AddParameter("Server", server);
 
         var found = ps.Invoke();
         ps.Commands.Clear();
@@ -528,18 +555,56 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
                 UserPrincipalName: obj.Properties["UserPrincipalName"]?.Value?.ToString(),
                 Email: obj.Properties["mail"]?.Value?.ToString(),
                 ObjectType: objectKind == "OU" ? "OU" : (objectKind == "Group" ? "Group" : "User"),
+                ObjectSid: AccountLockoutRemediationService.SidText(obj.Properties["objectSid"]?.Value),
                 ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString()),
             Ambiguous: matches > 1);
     }
 
     private static string[] ValidationProperties(string objectKind) => objectKind switch
     {
-        // ObjectGUID: the protected-target admin input stores the immutable id beside the DN
-        // (docs/ProtectedGroupWriteTarget-Plan.md T0), so validation must return it.
-        "Group" => ["DisplayName", "DistinguishedName", "SamAccountName", "mail", "ObjectGUID"],
-        "OU" => ["Name", "DistinguishedName"],
-        _ => ["DisplayName", "DistinguishedName", "SamAccountName", "UserPrincipalName", "mail"]
+        // The immutable identifier each entry stores beside its label: ObjectGUID for a protected
+        // target (docs/ProtectedGroupWriteTarget-Plan.md T0) and an OU, objectSid for a user or a
+        // group (docs/ProtectedPrincipalIdentifiers-Plan.md A.2), so validation must return it.
+        "Group" => ["DisplayName", "DistinguishedName", "SamAccountName", "mail", "ObjectGUID", "objectSid"],
+        "OU" => ["Name", "DistinguishedName", "ObjectGUID"],
+        _ => ["DisplayName", "DistinguishedName", "SamAccountName", "UserPrincipalName", "mail", "ObjectGUID", "objectSid"]
     };
+
+    /// <summary>
+    /// The DNS name of the forest domain <paramref name="dnsDomain"/> names, from the forest's CN=Partitions crossRefs; null
+    /// when the forest has no such domain. Throws when the read fails or names more than one, which the caller reports as
+    /// Unavailable: a crossRef read that did not complete is not evidence the domain is absent.
+    /// </summary>
+    private static string? ForestDomainServer(Runspace runspace, string dnsDomain)
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Get-ADRootDSE").AddParameter("ErrorAction", "Stop");
+        var rootDse = ps.Invoke();
+        ps.Commands.Clear();
+        var configNc = rootDse.FirstOrDefault(o => o is not null)?.Properties["configurationNamingContext"]?.Value?.ToString();
+        if (ps.HadErrors || string.IsNullOrWhiteSpace(configNc))
+            throw new InvalidOperationException("Could not read the forest's configuration naming context.");
+
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("SearchBase", $"CN=Partitions,{configNc}")
+          .AddParameter("LDAPFilter", ProtectedGroupMembership.DomainCrossRefFilter(dnsDomain))
+          .AddParameter("Properties", new[] { "nETBIOSName", "dnsRoot" })
+          .AddParameter("ErrorAction", "Stop");
+        var partitions = ps.Invoke().Where(o => o is not null).ToList();
+        ps.Commands.Clear();
+        if (ps.HadErrors)
+            throw new InvalidOperationException("The forest's crossRefs could not be read.");
+
+        if (partitions.Count == 0)
+            return null;
+        if (partitions.Count > 1)
+            throw new InvalidOperationException($"Domain '{dnsDomain}' matches {partitions.Count} crossRefs.");
+
+        return ExchangeAdminWeb.Authorization.SectionAccessDirectoryReading.UnwrapDnsRoot(partitions[0].Properties["dnsRoot"]?.Value)
+               ?? throw new InvalidOperationException($"Domain '{dnsDomain}' has no usable dnsRoot.");
+    }
 
     /// <summary>
     /// Builds the exact-match LDAP filter for an existence check. Separated from the directory
