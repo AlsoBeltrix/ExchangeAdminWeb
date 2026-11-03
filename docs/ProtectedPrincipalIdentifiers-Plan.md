@@ -517,8 +517,10 @@ source; if one does, stop and report. Record the results (values redacted to the
 **Outcome (owner, 2026-11-03):** for a synced user mailbox, Exchange Online `Get-User` `Sid` =
 `S-1-5-21-2487086965-1590389379-877760383-6391383`; Active Directory `objectSid` = `S-1-5-21-8915387-325452579-1788637320-133093`.
 They differ: EXO's is cloud-generated. **Source 1 is out; source 2 (Graph `onPremisesSecurityIdentifier`) is taken.**
-D2 settled the same day (`.agents/decisions.md` 2026-11-03): the protection service uses Cloud Password Reset's app
-registration and secret (`GraphDelineaSecretId`), through a new app-wide Admin Settings field pre-filled from it. The room
+D2 settled the same day (`.agents/decisions.md` 2026-11-03): the protection service reads Graph through its OWN app-wide
+Admin Settings field, "Graph Directory Read Credential (Delinea Secret ID)", empty until an admin fills it - nothing is
+read from or pre-filled from Cloud Password Reset's `GraphDelineaSecretId` (owner: "this still gets its own config
+field"). The owner intends to enter the same secret the password-reset registration uses. The room
 read was not run; a room mailbox is a user object in Entra and carries the same attribute. S3 confirms the Graph value for
 one user before binding by it (the `Get-MgUser ... -Property onPremisesSecurityIdentifier` read, or the app's own first read
 logged at Information).

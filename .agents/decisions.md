@@ -10,10 +10,11 @@ conversation history and should name superseded guidance when relevant.
 Owner's live read (I.1 of `docs/ProtectedPrincipalIdentifiers-Plan.md`): Exchange Online's `Get-User` `Sid` for a synced
 mailbox is a cloud-generated SID (`S-1-5-21-2487086965-...`), not the Active Directory `objectSid`
 (`S-1-5-21-8915387-...`). Source 1 is out. Source 2 is taken: Microsoft Graph `onPremisesSecurityIdentifier`. D2 is
-settled: the protection service reads it with the SAME app registration and Secret Server secret Cloud Password Reset
-already uses ("We have an existing one, same one we use for password reset."), exposed as one app-wide Admin Settings
-field "Graph Directory Read Credential (Delinea Secret ID)" beside the Directory Read Credential, pre-filled from Cloud
-Password Reset's `GraphDelineaSecretId` when empty. The registration must hold `User.Read.All` (application); S3's record
+settled: the protection service reads it through its OWN app-wide Admin Settings field, "Graph Directory Read Credential
+(Delinea Secret ID)", beside the Directory Read Credential. The field is empty until an admin fills it; nothing is read
+from or pre-filled from Cloud Password Reset's setting (owner: "this still gets its own config field"). The secret the
+owner intends to enter there is the existing one the password-reset registration uses ("We have an existing one, same one
+we use for password reset."), but that is the admin's entry, not the code's. The registration must hold `User.Read.All` (application); S3's record
 states whether the owner confirmed `onPremisesSecurityIdentifier` for one user before S3 was written. No cloud-only
 mailboxes are known in this tenant; the code still fails closed for a synced recipient with no SID in Graph.
 
