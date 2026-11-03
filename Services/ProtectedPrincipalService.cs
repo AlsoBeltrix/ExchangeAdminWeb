@@ -834,6 +834,47 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
             return (CloudOnlyPrincipal(identity, recipient), ResolutionStatus.Resolved);
         }
 
+        return await BindSyncedAsync(identity, recipient, adPrincipal, adStatus);
+    }
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md D.2 step 3: binds the Active Directory account of a directory-synced
+    /// Exchange recipient Exchange has already named - the binding half of <see cref="ResolveExchangeTargetAsync"/>, with
+    /// none of a protection check: no rules are read and nothing is matched against them.
+    /// </summary>
+    /// <remarks>
+    /// The same binder as <see cref="ResolveExchangeTargetAsync"/>'s synced branch (C.2 steps 3-6): the one account whose
+    /// objectSid is the on-premises SID Microsoft Graph reports, read at a global catalog; Graph answering with no SID falls
+    /// to the canonical address with its one-match rule; a source that could not be asked is <c>Unavailable</c>. Then the
+    /// aud-a2b agreement, here a correctness rule: Active Directory's reading of <paramref name="identity"/> must be the
+    /// object bound, because the caller hands Exchange the mailbox GUID and Active Directory the objectGUID of one room.
+    /// Its directory reads share one directory-read credential fetch (kd-88). For a recipient Exchange does not report as
+    /// synced it binds nothing and returns <c>Unavailable</c>: there is no on-premises account to bind.
+    /// </remarks>
+    // virtual: the same test seam as ResolveExchangeTargetAsync.
+    public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(
+        string identity, ResolvedRecipient recipient)
+    {
+        ArgumentNullException.ThrowIfNull(recipient);
+        if (!recipient.ExistsOnPrem)
+            return (null, ResolutionStatus.Unavailable);
+
+        using var operation = DirectoryReadOperation.Begin();
+
+        var (adPrincipal, adStatus) = await ResolveWithStatusAsync(identity);
+        if (adStatus is ResolutionStatus.Ambiguous or ResolutionStatus.Unavailable)
+            return (null, adStatus);
+
+        return await BindSyncedAsync(identity, recipient, adPrincipal, adStatus);
+    }
+
+    /// <summary>
+    /// C.2 steps 3-6 and the aud-a2b agreement for a synced recipient, given Active Directory's reading of the typed string.
+    /// Shared by <see cref="ResolveExchangeTargetAsync"/> and <see cref="BindSyncedRecipientAsync"/>.
+    /// </summary>
+    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedAsync(
+        string identity, ResolvedRecipient recipient, ResolvedDirectoryPrincipal? adPrincipal, ResolutionStatus adStatus)
+    {
         // C.2 step 3: the on-premises SID of the account the recipient is synced from. Step 6: a source that could not be
         // asked refuses; only an answer with no SID falls to the address (step 5).
         var sid = await ReadOnPremisesSidAsync(identity, recipient);

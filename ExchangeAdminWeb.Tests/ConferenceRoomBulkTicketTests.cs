@@ -137,7 +137,8 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
     {
         public int EvalCount;
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(
+            string identity, ResolvedRecipient recipient)
         {
             EvalCount++;
             return Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>((
@@ -145,9 +146,6 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
                     Guid.Parse("5b5b5b5b-0000-4000-8000-000000000001")),
                 ResolutionStatus.Resolved));
         }
-
-        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
-            Task.FromResult(ProtectedPrincipalResult.NotProtected());
     }
 
     private sealed record Fixture(FakeRoomOps Rooms, FakePpService Pp, ConferenceRoomBulkProcessor Processor);
@@ -178,8 +176,8 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         new SectionAccessRepository(store).SaveAll(new Dictionary<string, string[]> { ["ConferenceRooms"] = ["AllUsers"] });
 
         var pp = new FakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_temp.Path), delinea);
-        var servicers = new ProtectedPrincipalServicerService(sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
-        var gate = new ConferenceRoomProtectionGate(pp, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        var gate = new ConferenceRoomBinder(RoomBinderFixtures.ExchangeKnowsASyncedRoom(Guid.Parse("5b5b5b5b-0000-4000-8000-000000000001")),
+            pp, NullLogger<ConferenceRoomBinder>.Instance);
 
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig,
             TestConfigStore.CreateModuleEnablement(_temp.Path), config, NullLogger<ModuleEnablementService>.Instance);

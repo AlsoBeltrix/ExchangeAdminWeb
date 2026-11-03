@@ -67,7 +67,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     {
         /// <summary>
         /// The mailbox GUID a resolved row carries. aud-a2d: the default used to be NotFound, which
-        /// the gate allowed; it now refuses (no room to bind the write to), so an ordinary row is a
+        /// the old gate allowed; it now refuses (no room to bind the write to), so an ordinary row is a
         /// resolved, unprotected room with a mailbox.
         /// </summary>
         public static readonly Guid RoomGuid = Guid.Parse("5b5b5b5b-0000-4000-8000-000000000001");
@@ -75,17 +75,31 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.Resolved;
         public ProtectedPrincipalResult Verdict = ProtectedPrincipalResult.NotProtected();
         public int EvalCount;
+        public int CheckCount;
+
+        /// <summary>Whether Exchange knows the row's address as a synced room mailbox; false is "no such recipient".</summary>
+        public bool ExchangeKnows = true;
 
         public FakePpService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
             ProtectedPrincipalRepository repo, DelineaService delinea)
             : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
         { }
 
-        // Scripts the seam the gate actually calls - since aud-a2b the room gate resolves through
-        // ResolveExchangeTargetAsync (Exchange first, AD must agree). Overriding
-        // ResolveWithStatusAsync instead would let the real resolution run and fail closed, so
-        // EvalCount would stay at zero and the allow cases would not be tested.
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
+        /// <summary>Exchange, as the room binder asks it: every row a synced room mailbox, unless told it knows none.</summary>
+        public IIdentityResolver Exchange()
+        {
+            var resolver = Substitute.For<IIdentityResolver>();
+            resolver.ResolveRecipientAsync(Arg.Any<string>()).Returns(call => ExchangeKnows
+                ? new ResolvedRecipient(call.Arg<string>(), "ext-room", "UserMailbox", ExistsOnPrem: true, ExchangeGuid: RoomGuid,
+                    RecipientTypeDetails: "RoomMailbox")
+                : null);
+            return resolver;
+        }
+
+        // Scripts the seam the room binder calls for a synced room (docs/ProtectedPrincipalIdentifiers-Plan.md D.2): the
+        // shared SID binder. EvalCount records how many times it is reached - one binding per row.
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(
+            string identity, ResolvedRecipient recipient)
         {
             EvalCount++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
@@ -94,8 +108,13 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             return Task.FromResult((p, Status));
         }
 
+        // Never reached: protected principals do not apply to Conference Rooms (owner ruling 2026-11-03). Counted so a
+        // test can say so.
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
-            => Task.FromResult(Verdict);
+        {
+            CheckCount++;
+            return Task.FromResult(Verdict);
+        }
     }
 
     private sealed class Fixture
@@ -141,11 +160,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         });
 
         var pp = new FakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
-        // Real servicer service over the same section-access store. No ProtectedServicer row is
-        // seeded, so it denies - which is what keeps these bulk assertions unchanged: a job has no
-        // ClaimsPrincipal to service with in the first place.
-        var servicers = new ProtectedPrincipalServicerService(sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
-        var gate = new ConferenceRoomProtectionGate(pp, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        var binder = new ConferenceRoomBinder(pp.Exchange(), pp, NullLogger<ConferenceRoomBinder>.Instance);
         // The usage sink is passed explicitly as null: the proxy generator binds constructors by
         // exact arity and does not fill in the optional third parameter.
         var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace, null);
@@ -165,7 +180,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             ["ExchangeOnline"] = true,
         });
 
-        var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, enablement, trace, audit, email,
+        var processor = new ConferenceRoomBulkProcessor(rooms, binder, sectionAccess, enablement, trace, audit, email,
             NullLogger<ConferenceRoomBulkProcessor>.Instance, CancelRequests);
 
         return new Fixture { Rooms = rooms, Pp = pp, Audit = audit, Email = email, SectionAccess = sectionAccess, Enablement = enablement, Processor = processor };
@@ -248,8 +263,9 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
 
         Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
         Assert.Equal(["room1@x"], f.Rooms.FinderCalls);
-        // Exactly one protection evaluation per row - the consolidation guarantee (no double-check).
+        // Exactly one binding per row - the consolidation guarantee - and no protection check.
         Assert.Equal(1, f.Pp.EvalCount);
+        Assert.Equal(0, f.Pp.CheckCount);
         f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             "room1@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>(),
             extra: Arg.Any<Dictionary<string, object?>?>());
@@ -258,9 +274,9 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ARow_IsWrittenToTheRoomTheGateResolvedForIt_AndTheAuditRecordsIt(bool finder)
+    public async Task ARow_IsWrittenToTheRoomTheBinderBoundForIt_AndTheAuditRecordsIt(bool finder)
     {
-        // aud-a2d. The row's room operation is handed the gate's room, not row.Email, and the row's
+        // aud-a2d. The row's room operation is handed the binder's room, not row.Email, and the row's
         // audit keeps the typed target while recording the identity written.
         var f = CreateFixture();
         var job = finder ? FinderJob("AllUsers", "room1@x") : TypeJob("AllUsers", "room1@x");
@@ -281,14 +297,15 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     public async Task ARowNeitherDirectoryKnows_HasNoRoomToBindTo_IsDeniedAndNotApplied()
     {
         // NotFound used to reach the write (the old fixture default); with nothing resolved there is
-        // no room to bind it to, so the row is refused and audited as a denial.
+        // no room to bind it to, so the row is refused and audited as a refusal.
         var f = CreateFixture();
-        f.Pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
+        f.Pp.ExchangeKnows = false;
         var job = FinderJob("AllUsers", "ghost@x");
 
         var outcome = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
 
         Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
+        Assert.Equal("Room 'ghost@x' not found.", outcome.Message);
         Assert.Empty(f.Rooms.FinderCalls);
         f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             "ghost@x", false, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>());
@@ -368,41 +385,43 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     }, "AllUsers");
 
     [Fact]
-    public async Task Finder_ProtectedTarget_IsBlocked_NotApplied_AuditedDenial()
+    public async Task Finder_AProtectedRoom_IsApplied_WithNoUser_AndNoCheckRuns()
     {
-        // GAP 3 fix: the Finder path now enforces the protected-principal gate.
+        // docs/ProtectedPrincipalIdentifiers-Plan.md S4: protected principals do not apply to Conference Rooms (owner ruling
+        // 2026-11-03). A bulk row runs under no operator, and needs none: a room the rules would call protected is written
+        // like any other, and the check is never asked.
         var f = CreateFixture();
-        f.Pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
         f.Pp.Verdict = ProtectedPrincipalResult.Protected("matched", "Users");
         var job = FinderJob("AllUsers", "ceo@x");
 
         var outcome = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
 
-        Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
-        Assert.Contains("protected principal", outcome.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(f.Rooms.FinderCalls); // never applied
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.Equal(["ceo@x"], f.Rooms.FinderCalls);
+        Assert.Equal(0, f.Pp.CheckCount);
         f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
-            "ceo@x", false, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>());
+            "ceo@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>(),
+            extra: Arg.Is<Dictionary<string, object?>?>(x => x != null && !x.ContainsKey("protectedPrincipalServiced")));
     }
 
     [Fact]
-    public async Task Type_ProtectedTarget_IsBlocked_NotApplied()
+    public async Task Type_AProtectedRoom_IsApplied_WithNoUser_AndNoCheckRuns()
     {
         var f = CreateFixture();
-        f.Pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
         f.Pp.Verdict = ProtectedPrincipalResult.Protected("matched", "Users");
         var job = TypeJob("AllUsers", "ceo@x");
 
         var outcome = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
 
-        Assert.Equal(BulkJobRowStatus.Failed, outcome.Status);
-        Assert.Empty(f.Rooms.TypeCalls);
+        Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
+        Assert.Equal(["ceo@x"], f.Rooms.TypeCalls);
+        Assert.Equal(0, f.Pp.CheckCount);
     }
 
     [Theory]
     [InlineData(ProtectedPrincipalService.ResolutionStatus.Unavailable)]
     [InlineData(ProtectedPrincipalService.ResolutionStatus.Ambiguous)]
-    public async Task ProtectionUnresolvable_FailsClosed_NotApplied(ProtectedPrincipalService.ResolutionStatus status)
+    public async Task ARoomWhoseAccountCannotBeBound_IsRefused_NotApplied(ProtectedPrincipalService.ResolutionStatus status)
     {
         var f = CreateFixture();
         f.Pp.Status = status;

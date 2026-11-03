@@ -1195,7 +1195,11 @@ public sealed class ModuleCatalog
             // "The service stopped before this row was written. Nothing was written."
             // 2.19.12: its protection gate (ResolveExchangeTargetAsync) binds a synced room mailbox by the on-premises SID Graph
             // reports (docs/ProtectedPrincipalIdentifiers-Plan.md S3); until the Graph Directory Read Credential is set it refuses.
-            Version = "2.19.12",
+            // 2.20.0: protected principals do not apply to Conference Rooms (owner ruling 2026-11-03). The protection gate is
+            // gone: ConferenceRoomBinder binds each write to the room Exchange names (RoomMailbox / RemoteRoomMailbox only) and,
+            // for a synced room, to the account holding its on-premises SID, and checks no rules; a protected room is written.
+            // The servicing option is withdrawn from Module Configuration and the audit's protectedPrincipalServiced extra goes.
+            Version = "2.20.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

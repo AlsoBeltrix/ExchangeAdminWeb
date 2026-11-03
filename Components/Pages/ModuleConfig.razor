@@ -718,12 +718,16 @@
     /// The broadcast-list module is deliberately absent, and its absence is the rule working, not
     /// an omission: it runs no principal-protection check of either kind (owner ruling
     /// 2026-09-30, <c>.agents/decisions.md</c>), so there is no gate for a servicer grant to
-    /// override and an entry here would advertise a capability that does nothing.
+    /// override and an entry here would advertise a capability that does nothing. Conference Rooms
+    /// is absent for the same reason (owner ruling 2026-11-03): it runs no protected-principal check
+    /// at all. A servicer group already stored for it is dead config - left in the store, not
+    /// shown here, and logged once at startup
+    /// (<see cref="ProtectedPrincipalServicerService.ReportRetiredGrants"/>).
     /// </remarks>
     private static readonly HashSet<string> ModulesWithProtectedPrincipalServicing =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "BlockedSenders", "ConferenceRooms", "MfaReset", "EmergencyDisable",
+            "BlockedSenders", "MfaReset", "EmergencyDisable",
             "ADAttributeEditor", "MailboxPermissions", "CalendarPermissions", "OutOfOffice",
             "GroupManagement", "M365GroupManagement", "SelfServiceGroups", "Migration",
             "AccountLockoutRemediation", "LicensingUpdates", "RiskyUsers", "IntuneDevices",

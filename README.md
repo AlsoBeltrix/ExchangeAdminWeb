@@ -387,6 +387,10 @@ Room mailbox metadata configuration and booking policy management.
   its audit entry is `Cancelled`, "Cancelled by the operator. Nothing was written.", under the submitter's name and ticket,
   and it is not listed among the job's row outcomes. A row already past Set-Place finishes and is recorded. A row stopped by
   the service shutting down is filed `Failed`, "The service stopped before this row was written. Nothing was written.".
+- **No protected-principal check** (owner ruling 2026-11-03): protected principals do not apply to this module, so a room
+  the protection rules name is written like any other and no servicing option is offered. Every write is still bound to
+  the room mailbox Exchange names - a RoomMailbox or RemoteRoomMailbox only - and, for a synced room, to the one Active
+  Directory account holding its on-premises SID; a room that cannot be bound is refused and nothing is written.
 - Section access key: `ConferenceRooms`
 
 ### Emergency Disable (`/emergency-disable`)
@@ -1123,8 +1127,11 @@ on use; the actions are audited like every other action, and additionally record
 authorised them.
 
 - Configured per module, on **Module Config** → **Access** → *Protected principal servicing*
-- Offered only for modules whose code consults the servicer service. Today that is
-  **Blocked Senders** alone; a grant elsewhere would confer nothing, so no editor is shown
+- Offered only for modules whose code consults the servicer service - the list is
+  `ModulesWithProtectedPrincipalServicing` in `Components/Pages/ModuleConfig.razor`; a grant
+  elsewhere would confer nothing, so no editor is shown. **Conference Rooms** is not among them:
+  protected principals do not apply to it (owner ruling 2026-11-03), and a servicer group already
+  stored for it is left in the store, not shown, and logged once at startup
 - Separate from the module's own access groups: being able to use a module never implies being
   able to act on protected principals in it
 - Fail-closed and inert by default. With no group configured — the shipped state — the capability

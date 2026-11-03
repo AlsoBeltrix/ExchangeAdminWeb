@@ -228,10 +228,10 @@ try
     builder.Services.AddSingleton<IntuneDeviceService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
-    // Single protected-principal enforcement point for every ConferenceRooms room-mutating write
-    // (page Finder/Type + each bulk row). Guarded-execution: the write runs only through its
-    // onAllowed delegate, so the gate cannot be bypassed and is decided before any side effect.
-    builder.Services.AddScoped<ConferenceRoomProtectionGate>();
+    // The one binding point for every ConferenceRooms room-mutating write (page Finder/Type + each bulk row): the write runs
+    // only through its onBound delegate, after the room is bound. Not a protection check - protected principals do not
+    // apply to Conference Rooms (owner ruling 2026-11-03).
+    builder.Services.AddScoped<ConferenceRoomBinder>();
     // The bulk job processor talks to rooms through the narrow IConferenceRoomBulkOperations seam
     // (implemented by ConferenceRoomService) so it is unit-testable without live EXO/AD.
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.IConferenceRoomBulkOperations>(
@@ -426,6 +426,10 @@ try
         var sectionAccessSids = app.Services.GetRequiredService<SectionAccessSidMigration>();
         var sidMigrationStatus = sectionAccessSids.Run();
         Log.Information("Section-access SID migration: {Status}", sidMigrationStatus);
+
+        // A servicer group stored for a module that runs no protected-principal check any more (Conference Rooms, owner
+        // ruling 2026-11-03) is dead config: left in the store, not shown on Module Configuration, and said once, here.
+        _ = app.Services.GetRequiredService<ProtectedPrincipalServicerService>().ReportRetiredGrants();
 
         // Protected users, groups and OUs still stored by name are looked up and given an identifier row beside them
         // (docs/ProtectedPrincipalIdentifiers-Plan.md B.3). Started, never awaited: it reads the secret store and Active

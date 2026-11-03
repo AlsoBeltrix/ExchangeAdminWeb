@@ -47,9 +47,8 @@ public sealed class ProtectionCheckCallSiteTests
         // S6 Cloud Password Reset: the admin account's resolution and its check.
         { "Components/Pages/CloudPasswordReset.razor", "CheckProtectionAsync(System.Security.Claims.ClaimsPrincipal user, string upn, string entraObjectId)",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
-        // S7 Conference Rooms: the room mailbox's resolution and its check, single and bulk.
-        { "Services/ConferenceRoomProtectionGate.cs", "private async Task<ProtectionOutcome> EvaluateAsync(string identity,",
-            "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveExchangeTargetAsync(identity)" },
+        // S7 Conference Rooms: no longer a protection call site - protected principals do not apply to it (owner ruling
+        // 2026-11-03); see ConferenceRoomBinder_RunsNoProtectionCheck below.
         // S8 Blocked Senders: the sender's resolution and its check, or the raw address's check.
         { "Services/BlockedSenderProtectionGate.cs", "public async Task<BlockedSenderGateDecision> EvaluateAsync(string address,",
             "_protectedPrincipals.BeginCheck(address)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(address)" },
@@ -94,5 +93,26 @@ public sealed class ProtectionCheckCallSiteTests
         Assert.True(read >= 0, $"{firstRead} not found in {signature} - the tripwire is stale.");
         Assert.True(begun >= 0 && begun < read,
             $"{file} {signature}: no protected-principal check is begun before {firstRead} - each read fetches the credential for itself.");
+    }
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md D.2/D.3 (slice S4): Conference Rooms runs no protected-principal check of any
+    /// kind (owner ruling 2026-11-03). Its binder binds the room and nothing else - it begins no check, runs none, reads no
+    /// rules and consults no servicer. The behavioural half is <c>ConferenceRoomBinderTests</c>.
+    /// </summary>
+    [Fact]
+    public void ConferenceRoomBinder_RunsNoProtectionCheck()
+    {
+        var code = ProgressScan.CodeView(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ConferenceRoomBinder.cs")));
+
+        Assert.Contains("BindSyncedRecipientAsync(", code, StringComparison.Ordinal);
+        foreach (var forbidden in new[]
+                 {
+                     "CheckAsync(", "BeginCheck(", "ResolveExchangeTargetAsync(", "CheckWriteTarget(", "LoadEffectiveConfig(",
+                     "ProtectedPrincipalServicerService", ".Evaluate(", "ClaimsPrincipal",
+                 })
+        {
+            Assert.DoesNotContain(forbidden, code, StringComparison.Ordinal);
+        }
     }
 }

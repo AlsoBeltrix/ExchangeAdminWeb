@@ -175,10 +175,12 @@ only the new module's own version is set (Constitution "Deployment And Versionin
      app's broadest exemption, scoped to that one module, which exists only to
      replace the membership of one broadcast list whose membership grants access to
      nothing.
-   - Conference Rooms does not check the room-list group it adds a room to against
-     Protected Group Targets, and creates a building's list when none exists (owner
-     ruling 2026-10-26, .agents/decisions.md, Constitution carries it). Its gate on
-     the room mailbox it writes stays.
+   - Conference Rooms runs no protected-principal check of any kind - not on the room
+     mailbox it writes, not on the room-list group it adds a room to (it creates a
+     building's list when none exists), not on any member (owner rulings 2026-10-26 and
+     2026-11-03, .agents/decisions.md, Constitution carries it: "protected principals
+     does not apply to conference rooms"). Its writes stay bound to the room mailbox and
+     the room's AD account (aud-a2d); that binding is not a protection check.
 4. **Stale references** — never trust remembered file contents or doc claims. Re-read
    files before editing; verify doc statements against current code.
 5. **Help left behind** — a change to what a page or setting does must change its in-app
