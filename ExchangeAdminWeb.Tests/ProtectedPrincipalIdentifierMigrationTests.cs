@@ -272,8 +272,11 @@ public class ProtectedPrincipalIdentifierMigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUnmigratedGroupRowThatCannotResolve_StillFailsTheCheckClosed_BeforeAndAfterAPass()
+    public async Task AnUnmigratedGroupRowNamingNoGroup_ProtectsNobody_BeforeAndAfterAPass_AndIsLeftWithItsReason()
     {
+        // sweep-c item 17: a row the directory says names no group made every check with no other match incomplete - every
+        // change in every module refused. Nobody can be in a group that does not exist: the check goes on without it, and the
+        // pass still leaves it, NotFound, for the page to flag.
         var forest = new SelfGrantDirectoryStandIn();
         var target = forest.AddUser("carol", upn: "carol@contoso.test");
         var gone = "CN=Decommissioned,OU=Groups," + SelfGrantDirectoryStandIn.DomainDn;
@@ -288,9 +291,31 @@ public class ProtectedPrincipalIdentifierMigrationTests : IDisposable
             .RunAsync(ProtectedPrincipalIdentifierMigration.SystemActor, "", CancellationToken.None);
         var after = await service.CheckAsync(principal);
 
-        Assert.True(before.CheckFailed, before.Reason);
+        Assert.False(before.CheckFailed, before.Reason);
+        Assert.False(before.IsProtected);
         Assert.Equal(ProtectedPrincipalLeftReason.NotFound, Assert.Single(pass.Left).Reason);
-        Assert.True(after.CheckFailed, after.Reason);
+        Assert.False(after.CheckFailed, after.Reason);
+        Assert.False(after.IsProtected);
+    }
+
+    [Fact]
+    public async Task AGroupRowWhoseLookupFails_StillFailsTheCheckClosed_NamingTheRow()
+    {
+        // The other half of sweep-c item 17: a read that fails is no answer, so the check still refuses - and the refusal now
+        // names the row, where it said only "expansion errors".
+        var forest = new SelfGrantDirectoryStandIn();
+        var target = forest.AddUser("carol", upn: "carol@contoso.test");
+        var unreadable = "CN=Unreadable,OU=Groups," + SelfGrantDirectoryStandIn.DomainDn;
+        forest.Failures["Get-ADGroup"] = "The server is not operational.";
+        var service = Service(forest, () => { });
+        service.SaveConfig(new ProtectedPrincipalConfig { Groups = [unreadable] });
+        var principal = new ResolvedDirectoryPrincipal("Test", "carol", target.Upn!, target.Sam, target.Upn, target.Dn, null, null, ObjectSid: target.Sid);
+
+        var result = await service.CheckAsync(principal);
+
+        Assert.True(result.CheckFailed, result.Reason);
+        Assert.Contains($"protected group '{unreadable}'", result.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("expansion errors", result.Reason, StringComparison.Ordinal);
     }
 
     // ----- harness -----

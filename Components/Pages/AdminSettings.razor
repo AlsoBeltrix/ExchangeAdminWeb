@@ -1106,8 +1106,8 @@
     /// and false. Absence of a badge therefore means "not known to be stale", never "verified".
     ///
     /// The hover says what the entry still does, per kind (docs/ProtectedPrincipalIdentifiers-Plan.md B.5). It used to say
-    /// every such entry "protects nothing", which is false for a Group: an entry that resolves to no group makes every
-    /// protection check that finds no other match fail closed, refusing the change.
+    /// every such entry "protects nothing"; sweep-c item 17 made that true for a Group as well: an entry that resolves to no
+    /// group no longer makes every protection check fail closed - it protects nobody and is named in the log on each check.
     /// </remarks>
     private MarkupString StaleBadge(string entry, string kind)
         => ppStaleEntries.Contains(entry)
@@ -1117,9 +1117,9 @@
 
     internal static string StaleTip(string kind) => kind switch
     {
-        "Group" => "Active Directory has no group matching this entry. It is not inert: every protection check that finds no "
-            + "other match cannot confirm the target is outside this group, so it fails closed and refuses the change. "
-            + "Remove it or replace it with a current one.",
+        "Group" => "Active Directory has no group matching this entry, so it protects nobody: no one can be in a group that does "
+            + "not exist. Every protection check goes on without it and the application log names it each time; a lookup that "
+            + "fails (rather than finding no group) still fails closed and refuses the change. Remove it or replace it with a current one.",
         "GroupTarget" => "Active Directory has no group matching this entry. A group target protects the group as a write "
             + "target, so one that no longer exists protects nothing. Remove it or replace it with a current one.",
         "OU" => "Active Directory has no OU at this DN. It is still matched by name: it protects only a target whose DN is at or "
@@ -1166,9 +1166,9 @@
         var does = kind switch
         {
             ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindGroup =>
-                "Until it is converted it is looked up by name on every protection check, exactly as before: while it resolves "
-                + "to exactly one group, that group's members are protected; while it does not - no such group, or several - "
-                + "every protection check that finds no other match fails closed and refuses the change.",
+                "Until it is converted it is looked up by name on every protection check: while it names one group, that group's "
+                + "members are protected; while it names several, the members of each are; while it names none, it protects nobody "
+                + "and the log names it. A lookup that fails still fails closed and refuses the change.",
             ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindOu =>
                 "Until it is converted it is matched by name, exactly as before: it protects every target whose DN is at or "
                 + "beneath this DN, and stops protecting them if the OU is renamed or moved.",

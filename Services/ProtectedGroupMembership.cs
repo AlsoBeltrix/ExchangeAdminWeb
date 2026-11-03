@@ -212,9 +212,11 @@ internal interface IProtectedGroupDirectory
 /// ancestry, one read of the named objects per level, in its own domain and at the global catalog, then the one anchored
 /// question to a domain-local group's own domain. Nothing searches a domain or the forest for whatever contains the target.
 ///
-/// Fail closed throughout: a read that fails, a lookup that matches nothing or more than one object, a domain that cannot be
-/// determined, a token without the primary group - each marks the answer incomplete, and the caller refuses an incomplete
-/// answer that found no match. A match found elsewhere still protects.
+/// Fail closed throughout: a read that fails, a lookup that matches nothing (for a group the caller has just read), a domain
+/// that cannot be determined, a token without the primary group - each marks the answer incomplete, naming the entry, and the
+/// caller refuses an incomplete answer that found no match. A match found elsewhere still protects. sweep-c item 17: a name
+/// several groups carry protects the members of each, and a configured entry the directory says names no group protects
+/// nobody and is named (<see cref="Result.Stale"/>) - neither makes every check incomplete any more.
 /// </remarks>
 internal static class ProtectedGroupMembership
 {
@@ -225,7 +227,24 @@ internal static class ProtectedGroupMembership
     {
         /// <summary>The entries matched, exactly as they were passed in.</summary>
         public IReadOnlyList<string> MatchedEntries => Matches.Select(m => m["Group:".Length..]).ToList();
+
+        /// <summary>
+        /// sweep-c item 17. What made the answer incomplete, each with the entry it concerns (null for the target's own
+        /// reads), so a refusal names the entry rather than "expansion errors".
+        /// </summary>
+        public IReadOnlyList<EntryProblem> Problems { get; init; } = [];
+
+        /// <summary>
+        /// sweep-c item 17. Configured entries the directory answered name no group: they protect nobody, and did not make
+        /// the answer incomplete (<see cref="Evaluate"/>'s <c>configuredEntries</c>).
+        /// </summary>
+        public IReadOnlyList<string> Stale { get; init; } = [];
     }
+
+    /// <summary>sweep-c item 17. One cause of an incomplete answer.</summary>
+    /// <param name="Entry">The entry as passed in; null when the cause is the target's own reads.</param>
+    /// <param name="Problem">What could not be answered, in words an operator can act on.</param>
+    internal sealed record EntryProblem(string? Entry, string Problem);
 
     /// <summary>
     /// The target as the evaluation knows it before reading any link: its SID, and for an account its token and its primary
@@ -242,13 +261,29 @@ internal static class ProtectedGroupMembership
     /// <summary>Groups the ancestry read collects before it calls the answer incomplete.</summary>
     internal const int MaxAncestors = 10_000;
 
+    /// <param name="protectedGroups">The entries, as stored.</param>
+    /// <param name="targetDn">The target's DN.</param>
+    /// <param name="directory">The reads.</param>
+    /// <param name="logger">Where each entry the evaluation cannot use is named.</param>
+    /// <param name="configuredEntries">
+    /// sweep-c item 17. True for the protection rules an administrator configured, false (the default) for groups the caller
+    /// has just read from the directory (the self-grant check, the self-service deny trustees). A configured entry the
+    /// directory answers names no group - a deleted group's SID, a DN no group holds, a name no group carries - protects
+    /// nobody: there is no group for the target to be in. It is named in <see cref="Result.Stale"/> and logged on every
+    /// check, and the check goes on without it, where before it made every check that found no other match incomplete, and
+    /// so refused every change in every module. For a group just read, the same answer is still incomplete: the read raced
+    /// a change. A read that throws is incomplete for both, as before.
+    /// </param>
     internal static Result Evaluate(
         IReadOnlyList<string> protectedGroups,
         string targetDn,
         IProtectedGroupDirectory directory,
-        ILogger logger)
+        ILogger logger,
+        bool configuredEntries = false)
     {
         var matches = new List<string>();
+        var problems = new List<EntryProblem>();
+        var stale = new List<string>();
         var entries = protectedGroups.Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
         if (entries.Count == 0)
             return new(matches, false);
@@ -261,7 +296,7 @@ internal static class ProtectedGroupMembership
             logger.LogWarning(
                 "Protected-group check cannot determine the owning domain for target DN {TargetDn} - failing closed",
                 targetDn);
-            return new(matches, true);
+            return new(matches, true) { Problems = [new(null, "the target's domain could not be determined from its DN")] };
         }
 
         TargetMembership? membership;
@@ -274,13 +309,14 @@ internal static class ProtectedGroupMembership
             logger.LogWarning(ex,
                 "Protected-group check could not read target {TargetDn} or its groups in {Server} - failing closed",
                 targetDn, targetServer);
-            return new(matches, true);
+            return new(matches, true) { Problems = [new(null, "the target or the groups it is in could not be read")] };
         }
 
         if (membership is null)
-            return new(matches, true);
+            return new(matches, true) { Problems = [new(null, "the target's groups could not be read in full")] };
 
         var incomplete = false;
+        var matched = new HashSet<string>(StringComparer.Ordinal);
         var unanswered = new List<(string Raw, DirectoryGroup Group, string Server)>();
         foreach (var raw in entries)
         {
@@ -293,55 +329,89 @@ internal static class ProtectedGroupMembership
                 var entry = ProtectedGroupEntry.Parse(raw);
                 if (entry.Kind == ProtectedGroupEntryKind.Sid && membership.Sids.Contains(entry.Value))
                 {
-                    matches.Add($"Group:{raw}");
+                    Match(raw);
                     continue;
                 }
 
-                var group = Resolve(entry, directory, out var problem);
-                if (group is null)
+                var candidates = Candidates(entry, directory, out var problem);
+                if (candidates is null)
                 {
+                    logger.LogWarning(
+                        "Protected group {ProtectedGroup} could not be resolved ({Problem}) - check incomplete",
+                        raw, problem);
+                    Incomplete(raw, problem!);
+                    continue;
+                }
+
+                if (candidates.Count == 0)
+                {
+                    if (configuredEntries)
+                    {
+                        // sweep-c item 17: the directory's answer is that no such group exists, so nobody is in it. Named on
+                        // every check (and on the Admin Settings page) until it is removed or re-picked.
+                        logger.LogWarning(
+                            "Protected group {ProtectedGroup} names no group in the directory - it protects nobody until it is removed or re-picked; the check goes on without it",
+                            raw);
+                        stale.Add(raw);
+                        continue;
+                    }
+
                     logger.LogWarning(
                         "Protected group {ProtectedGroup} could not be resolved to exactly one directory group ({Problem}) - check incomplete",
-                        raw, problem);
-                    incomplete = true;
+                        raw, NoSuchGroup);
+                    Incomplete(raw, NoSuchGroup);
                     continue;
                 }
 
-                // The target itself, or a group its token carries.
-                if (membership.Sids.Contains(group.Sid))
+                if (candidates.Count > 1)
                 {
-                    matches.Add($"Group:{raw}");
-                    continue;
-                }
-
-                var groupServer = GroupManagementService.ServerFromDn(group.DistinguishedName);
-                if (groupServer is null)
-                {
+                    // sweep-c item 17: a name several groups carry protects the members of each - the fail-closed reading,
+                    // where refusing to bind it made every check that found no other match incomplete. Named with the
+                    // groups, so it can be re-picked.
                     logger.LogWarning(
-                        "Protected group {ProtectedGroup} resolved to DN {GroupDn}, which names no domain - check incomplete",
-                        raw, group.DistinguishedName);
-                    incomplete = true;
-                    continue;
+                        "Protected group {ProtectedGroup} names {Count} groups ({Groups}) - the members of each are protected until it is re-picked",
+                        raw, candidates.Count, string.Join("; ", candidates.Select(c => c.DistinguishedName)));
                 }
 
-                // A security group the token is complete for, and does not carry: not a member. Every other group - one a
-                // token cannot carry - is asked of the membership links below.
-                if (TokenAnswers(membership, group, groupServer, targetServer))
-                    continue;
+                foreach (var group in candidates)
+                {
+                    // The target itself, or a group its token carries.
+                    if (membership.Sids.Contains(group.Sid))
+                    {
+                        Match(raw);
+                        break;
+                    }
 
-                unanswered.Add((raw, group, groupServer));
+                    var groupServer = GroupManagementService.ServerFromDn(group.DistinguishedName);
+                    if (groupServer is null)
+                    {
+                        logger.LogWarning(
+                            "Protected group {ProtectedGroup} resolved to DN {GroupDn}, which names no domain - check incomplete",
+                            raw, group.DistinguishedName);
+                        Incomplete(raw, $"its group {group.DistinguishedName} names no domain");
+                        continue;
+                    }
+
+                    // A security group the token is complete for, and does not carry: not a member. Every other group - one a
+                    // token cannot carry - is asked of the membership links below.
+                    if (TokenAnswers(membership, group, groupServer, targetServer))
+                        continue;
+
+                    unanswered.Add((raw, group, groupServer));
+                }
             }
             catch (Exception ex)
             {
                 logger.LogWarning(ex,
                     "Failed to evaluate protected group {ProtectedGroup} during the membership check - check incomplete",
                     raw);
-                incomplete = true;
+                Incomplete(raw, "it could not be read");
             }
         }
 
+        unanswered.RemoveAll(u => matched.Contains(u.Raw));
         if (unanswered.Count == 0)
-            return new(matches, incomplete);
+            return Answer();
 
         Ancestry ancestry;
         try
@@ -353,17 +423,21 @@ internal static class ProtectedGroupMembership
             logger.LogWarning(ex,
                 "Protected-group check could not read the groups {TargetDn} is in from their member links - check incomplete",
                 targetDn);
-            return new(matches, true);
+            problems.Add(new(null, "the groups the target is in could not be read from their member links"));
+            return new(matches, true) { Problems = problems, Stale = stale };
         }
 
         foreach (var (raw, group, groupServer) in unanswered)
         {
+            if (matched.Contains(raw))
+                continue;
+
             try
             {
                 // A group the target's own domain or the global catalog links it into.
                 if (ancestry.Sids.Contains(group.Sid))
                 {
-                    matches.Add($"Group:{raw}");
+                    Match(raw);
                     continue;
                 }
 
@@ -372,7 +446,7 @@ internal static class ProtectedGroupMembership
                 if (group.Scope == DirectoryGroupScope.DomainLocal
                     && directory.DomainLocalGroupContainsAny(group.DistinguishedName, ancestry.Dns, groupServer))
                 {
-                    matches.Add($"Group:{raw}");
+                    Match(raw);
                 }
 
                 // Anything else not among the ancestors does not contain the target: every universal ancestor came from the
@@ -384,11 +458,25 @@ internal static class ProtectedGroupMembership
                 logger.LogWarning(ex,
                     "Failed to evaluate protected group {ProtectedGroup} during the membership check - check incomplete",
                     raw);
-                incomplete = true;
+                Incomplete(raw, $"the membership of {group.DistinguishedName} could not be read");
             }
         }
 
-        return new(matches, incomplete);
+        return Answer();
+
+        void Match(string raw)
+        {
+            if (matched.Add(raw))
+                matches.Add($"Group:{raw}");
+        }
+
+        void Incomplete(string raw, string why)
+        {
+            incomplete = true;
+            problems.Add(new(raw, why));
+        }
+
+        Result Answer() => new(matches, incomplete) { Problems = problems, Stale = stale };
     }
 
     /// <summary>
@@ -623,6 +711,20 @@ internal static class ProtectedGroupMembership
     internal static DirectoryGroup? Resolve(
         ProtectedGroupEntry entry, IProtectedGroupDirectory directory, out string? problem)
     {
+        var groups = Candidates(entry, directory, out problem);
+        return groups is null ? null : One(groups, out problem);
+    }
+
+    /// <summary>
+    /// sweep-c item 17. Every group one entry names, in the directory its shape names: a DN read in its own domain, a SID at
+    /// the global catalog, <c>DOMAIN\Name</c> in that domain, a bare name forest-wide. Null, with the reason in
+    /// <paramref name="problem"/>, only for a DN with no DC components; throws when a read fails or the forest has no such
+    /// domain. <see cref="Resolve"/> holds the answer to exactly one; <see cref="Evaluate"/> protects the members of each.
+    /// </summary>
+    internal static IReadOnlyList<DirectoryGroup>? Candidates(
+        ProtectedGroupEntry entry, IProtectedGroupDirectory directory, out string? problem)
+    {
+        problem = null;
         switch (entry.Kind)
         {
             case ProtectedGroupEntryKind.DistinguishedName:
@@ -633,23 +735,22 @@ internal static class ProtectedGroupMembership
                     return null;
                 }
 
-                // Read, never passed through: a DN that no longer exists protects nobody, and the
-                // check must say it cannot answer rather than answer for a group that is gone.
-                return One(directory.FindGroups(GroupLookupKey.DistinguishedName, entry.Value, dnServer), out problem);
+                // Read, never passed through: a DN that no longer exists names no group.
+                return directory.FindGroups(GroupLookupKey.DistinguishedName, entry.Value, dnServer);
 
             case ProtectedGroupEntryKind.DomainQualified:
                 // Throws when the forest has no such domain - which the caller records as an
                 // incomplete check, never as a lookup in some other domain.
                 var namedServer = directory.ResolveDomainServer(entry.Domain!);
-                return ByName(entry.Value, namedServer, directory, out problem);
+                return ByName(entry.Value, namedServer, directory);
 
             case ProtectedGroupEntryKind.Sid:
-                return One(directory.FindGroups(GroupLookupKey.Sid, entry.Value, null), out problem);
+                return directory.FindGroups(GroupLookupKey.Sid, entry.Value, null);
 
             default:
-                // No domain named, so none is assumed: the forest is searched and a name two
-                // domains share refuses rather than resolving to whichever answered first.
-                return ByName(entry.Value, null, directory, out problem);
+                // No domain named, so none is assumed: the forest is searched, and a name two domains share names both
+                // rather than whichever answered first.
+                return ByName(entry.Value, null, directory);
         }
     }
 
@@ -658,14 +759,10 @@ internal static class ProtectedGroupMembership
     /// within one domain because it is unique there; the common name is only consulted when no
     /// group carries the name as its sAMAccountName.
     /// </summary>
-    private static DirectoryGroup? ByName(
-        string name, string? server, IProtectedGroupDirectory directory, out string? problem)
+    private static IReadOnlyList<DirectoryGroup> ByName(string name, string? server, IProtectedGroupDirectory directory)
     {
         var bySam = directory.FindGroups(GroupLookupKey.SamAccountName, name, server);
-        if (bySam.Count > 0)
-            return One(bySam, out problem);
-
-        return One(directory.FindGroups(GroupLookupKey.CommonName, name, server), out problem);
+        return bySam.Count > 0 ? bySam : directory.FindGroups(GroupLookupKey.CommonName, name, server);
     }
 
     private static DirectoryGroup? One(IReadOnlyList<DirectoryGroup> groups, out string? problem)

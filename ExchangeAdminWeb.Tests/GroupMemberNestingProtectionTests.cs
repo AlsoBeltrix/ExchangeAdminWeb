@@ -74,7 +74,7 @@ public class GroupMemberNestingProtectionTests
         var text = File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Services", "ProtectedPrincipalService.cs"));
         var start = text.IndexOf(
-            "private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(",
+            "private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckTransitiveGroupMembership(",
             StringComparison.Ordinal);
         Assert.True(start >= 0, "CheckTransitiveGroupMembership signature not found - tripwire is stale.");
         var end = text.IndexOf("\n    internal static (string? TargetDn", start, StringComparison.Ordinal);

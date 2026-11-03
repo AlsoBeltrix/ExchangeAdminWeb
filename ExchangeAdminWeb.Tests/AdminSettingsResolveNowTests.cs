@@ -26,12 +26,13 @@ public sealed class AdminSettingsResolveNowTests : IDisposable
     public void TheBadges_SayWhatAnUnconvertedOrMissingEntryStillDoes()
     {
         var groupStale = ExchangeAdminWeb.Components.Pages.AdminSettings.StaleTip("Group");
-        Assert.DoesNotContain("protects nothing", groupStale);
-        Assert.Contains("fails closed", groupStale);
+        Assert.Contains("protects nobody", groupStale); // sweep-c item 17: a group entry naming no group no longer refuses every check
+        Assert.Contains("a lookup that fails (rather than finding no group) still fails closed", groupStale);
 
         var flag = new ProtectedPrincipalFlaggedRow(ProtectedPrincipalRepository.KindGroup, "Ops", ProtectedPrincipalLeftReason.Ambiguous, "2 groups match");
         var tip = ExchangeAdminWeb.Components.Pages.AdminSettings.NotConvertedTip(ProtectedPrincipalRepository.KindGroup, flag, null);
         Assert.Contains("2 groups match", tip);
+        Assert.Contains("the members of each are", tip);
         Assert.Contains("fails closed", tip);
         Assert.Contains("no resolve pass has looked at this entry yet",
             ExchangeAdminWeb.Components.Pages.AdminSettings.NotConvertedTip(ProtectedPrincipalRepository.KindUser, null, null));

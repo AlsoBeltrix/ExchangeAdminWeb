@@ -1125,7 +1125,10 @@ one that matches exactly one object gains its identifier row beside the name row
 matches none or several, resolves to a built-in group, or could not be looked up is left as it is, with the reason on
 its badge. Each pass is audited (`ProtectedPrincipalIdentifierMigration`), listing what it converted and what it left.
 The **not in AD** badge says what such an entry still does: a user or OU entry matches only a target carrying that exact
-value, and a group entry that resolves to no group makes every protection check with no other match refuse the change
+value, and a group entry the directory says names no group protects nobody - every check goes on without it and the
+application log names it each time (sweep-c item 17; it used to make every protection check with no other match refuse
+the change, in every module). A group name several groups carry protects the members of each until it is re-picked. A
+group lookup that fails, rather than finding no group, still fails the check closed, and the refusal names the entry
 (docs/ProtectedPrincipalIdentifiers-Plan.md).
 
 #### Protected principal servicing (authorised bypass)

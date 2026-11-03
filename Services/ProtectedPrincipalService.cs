@@ -1812,16 +1812,18 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
 
             try
             {
-                var (groupMatches, expansionHadErrors) = await Task.Run(() =>
+                var (groupMatches, expansionHadErrors, problems) = await Task.Run(() =>
                     CheckGroupsInWarmSession(groupEntries, groupLabels, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
                 matches.AddRange(groupMatches);
 
                 // Fail closed: if expansion had errors and no matches were found,
-                // we cannot confirm the user is NOT in a protected group
+                // we cannot confirm the user is NOT in a protected group. sweep-c item 17: the refusal names what could not be
+                // answered - the entry by its label - where it said only "expansion errors".
                 if (expansionHadErrors && matches.Count == 0)
                 {
-                    _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}", target.UserPrincipalName);
-                    return (matches, true, "Group membership check was incomplete due to expansion errors. Cannot confirm target is not protected.");
+                    var reason = IncompleteReason(problems);
+                    _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}: {Reason}", target.UserPrincipalName, reason);
+                    return (matches, true, reason);
                 }
             }
             finally
@@ -1843,7 +1845,7 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
     /// back, where every check built a runspace and imported the module before its first read. A session a read failed in,
     /// or whose answer was incomplete, is thrown away rather than lent again.
     /// </summary>
-    private (List<string> matches, bool expansionHadErrors) CheckGroupsInWarmSession(
+    private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckGroupsInWarmSession(
         IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels,
         IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
@@ -1864,7 +1866,7 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
         }
     }
 
-    private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
+    private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckTransitiveGroupMembership(
         PowerShell ps, IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels,
         IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
@@ -1898,12 +1900,12 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
                 _logger.LogWarning(
                     "sAMAccountName {Sam} resolved to {Count} directory objects during the protected-group check - failing closed",
                     target.SamAccountName, objects.Count);
-                return (matches, true);
+                return (matches, true, [$"the target's sAMAccountName {target.SamAccountName} names {objects.Count} directory objects"]);
             }
         }
 
         if (string.IsNullOrEmpty(targetDn))
-            return (matches, false);
+            return (matches, false, []);
 
         // Audit findings A3 and aud-a3b. What used to follow was one in-chain query per
         // protected group, sent to the target's domain (A3 added the routing), reading "no rows"
@@ -1915,11 +1917,15 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
         // an undeterminable one still fails closed; that rule moved into the evaluator with it.
         var directory = new PowerShellProtectedGroupDirectory(ps, credential);
         var incomplete = false;
+        var problems = new List<string>();
         if (protectedGroups.Count > 0)
         {
-            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
+            // sweep-c item 17: configured entries - one the directory says names no group protects nobody and is named in the
+            // log, rather than making every check incomplete; whatever stays unanswered is named by its label.
+            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger, configuredEntries: true);
             matches.AddRange(LabelGroupMatches(outcome, groupLabels));
             incomplete |= outcome.Incomplete;
+            problems.AddRange(LabelGroupProblems(outcome, groupLabels));
         }
 
         // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: one read of the target's containers, by DN, in its own domain.
@@ -1928,10 +1934,30 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver, IMod
             var (ouMatches, ouIncomplete) = ProtectedOuMembership.Evaluate(ouIds, targetDn, directory, _logger);
             matches.AddRange(ouMatches);
             incomplete |= ouIncomplete;
+            if (ouIncomplete)
+                problems.Add("the containers the target is in could not be read for the protected OUs");
         }
 
-        return (matches, incomplete);
+        return (matches, incomplete, problems);
     }
+
+    /// <summary>
+    /// sweep-c item 17. Each cause of an incomplete group answer, its entry named by its row's label as the page names it.
+    /// </summary>
+    internal static IEnumerable<string> LabelGroupProblems(
+        ProtectedGroupMembership.Result outcome, IReadOnlyDictionary<string, string> groupLabels) =>
+        outcome.Problems.Select(p => p.Entry is null
+            ? p.Problem
+            : $"protected group '{(groupLabels.TryGetValue(p.Entry, out var label) ? label : p.Entry)}': {p.Problem}");
+
+    /// <summary>
+    /// sweep-c item 17. The refusal for a group check that could not be completed and found no match: what could not be
+    /// answered, by name, where it used to say only "expansion errors".
+    /// </summary>
+    internal static string IncompleteReason(IReadOnlyList<string> problems) =>
+        problems.Count == 0
+            ? "Group membership check was incomplete due to expansion errors. Cannot confirm target is not protected."
+            : $"Group membership check was incomplete - {string.Join("; ", problems.Distinct(StringComparer.Ordinal))}. Cannot confirm target is not protected.";
 
     /// <summary>
     /// docs/ProtectedPrincipalIdentifiers-Plan.md B.4. Looks each legacy row up once, inside ONE
