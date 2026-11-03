@@ -34,9 +34,9 @@ public sealed class ProtectionCheckTimingTests : IDisposable
             Sam = "shared",
             Sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3997",
             PrimaryGroupId = SelfGrantDirectoryStandIn.DomainUsersRid,
-            MailboxGuid = TargetMailbox,
             Proxies = [$"SMTP:{Target}"],
         });
+        _h.GraphSids["ext-" + Target] = $"{SelfGrantDirectoryStandIn.DomainSid}-3997";
         var other = _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
         _protectedGroupDn = _h.Forest.AddGroup("VIP Staff", members: [other]).Dn;
     }
@@ -58,7 +58,7 @@ public sealed class ProtectionCheckTimingTests : IDisposable
     private static Match Line(IEnumerable<string> lines, string check, string target)
     {
         var pattern = new Regex(
-            $@"^{Regex.Escape(check)} for {Regex.Escape(target)} took (?<ms>\d+) ms \((?<reads>\d+) directory reads, (?<fetches>\d+) credential fetches\)$");
+            $@"^{Regex.Escape(check)} for {Regex.Escape(target)} took (?<ms>\d+) ms \((?<reads>\d+) directory reads, (?<fetches>\d+) credential fetches(, (?<sid>\d+) SID source reads from Graph in \d+ ms)?\)$");
         var matches = lines.Select(line => pattern.Match(line)).Where(match => match.Success).ToList();
         return Assert.Single(matches);
     }
@@ -83,11 +83,14 @@ public sealed class ProtectionCheckTimingTests : IDisposable
         var validation = await Validator().ValidateTargetMailboxAsync(Target, _h.Operator, "MailboxPermissions");
 
         Assert.Null(validation.Error);
-        // One line for the whole validation - the service's own check inside it is part of it: the resolution's lookup,
-        // the mailbox proof, and the check's three reads; the one fetch they share.
+        // One line for the whole validation - the service's own check inside it is part of it: the resolution's lookup, the
+        // catalog's discovery (once per service) and the read by SID there, and the check's three reads; the one fetch they
+        // share; and the one Graph read of the SID, not a directory read, counted on its own (docs/ProtectedPrincipalIdentifiers-Plan.md E).
         var line = Line(_serviceLog.Information.Concat(_validatorLog.Information), "Protected-principal check", Target);
-        Assert.Equal("5", line.Groups["reads"].Value);
+        Assert.Equal("6", line.Groups["reads"].Value);
         Assert.Equal("1", line.Groups["fetches"].Value);
+        Assert.Equal("1", line.Groups["sid"].Value);
+        Assert.Equal(1, _h.GraphSidReads);
     }
 
     [Fact]
@@ -122,8 +125,18 @@ public sealed class ProtectionCheckTimingTests : IDisposable
         }
 
         var line = Line(_serviceLog.Information, "Protected-principal check", Target);
-        Assert.Equal("5", line.Groups["reads"].Value);
+        Assert.Equal("6", line.Groups["reads"].Value);
         Assert.Equal("1", line.Groups["fetches"].Value);
+        Assert.Equal("1", line.Groups["sid"].Value);
+
+        // A second check: the catalog the first discovered is kept, so it is one read fewer.
+        using (service.BeginCheck(Target))
+        {
+            var (again, _) = await service.ResolveExchangeTargetAsync(Target);
+            Assert.False((await service.CheckAsync(again!)).CheckFailed);
+        }
+        var second = _serviceLog.Information.Last(l => l.StartsWith("Protected-principal check for ", StringComparison.Ordinal));
+        Assert.Contains("(5 directory reads, 1 credential fetches, 1 SID source reads from Graph in ", second, StringComparison.Ordinal);
     }
 
     /// <summary>A logger that keeps the Information lines it is given, as rendered.</summary>

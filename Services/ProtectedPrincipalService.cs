@@ -9,17 +9,18 @@ namespace ExchangeAdminWeb.Services;
 
 /// <param name="ExchangeGuid">
 /// The mailbox GUID Exchange will write, when one was established; null otherwise. Set by
-/// <see cref="ProtectedPrincipalService.ResolveExchangeTargetAsync"/> only: for a synced mailbox,
-/// the GUID its Active Directory object was shown to hold in <c>msExchMailboxGuid</c> (aud-a2c);
-/// for a cloud-only recipient, Exchange's own. It is not compared against protection rows - it
+/// <see cref="ProtectedPrincipalService.ResolveExchangeTargetAsync"/> only: Exchange's own, for the
+/// recipient Exchange resolved - a synced mailbox's carried beside the account found by its
+/// on-premises SID, a cloud-only recipient's alone. It is not compared against protection rows - it
 /// identifies the mailbox, so that a write can be bound to the mailbox that was checked rather
 /// than to the string the operator typed (aud-a2d).
 /// </param>
 /// <param name="ObjectSid">
 /// The Active Directory object's objectSid, canonical, when the resolution read it; null otherwise. Filled by
-/// <see cref="ProtectedPrincipalService"/>'s own AD resolution. A <c>user_sid</c> protection row compares against it
-/// (docs/ProtectedPrincipalIdentifiers-Plan.md C.2); a target that does not carry one is compared by the row's label,
-/// as before the identifier rows existed, so a resolution that did not read it cannot drop a protection.
+/// <see cref="ProtectedPrincipalService"/>'s own AD resolution and by its binding of a synced Exchange recipient by SID.
+/// A <c>user_sid</c> protection row compares against it (docs/ProtectedPrincipalIdentifiers-Plan.md C.2); a target that
+/// does not carry one is compared by the row's label, as before the identifier rows existed, so a resolution that did not
+/// read it cannot drop a protection.
 /// </param>
 public sealed record ResolvedDirectoryPrincipal(
     string Source,
@@ -34,11 +35,18 @@ public sealed record ResolvedDirectoryPrincipal(
     string? ObjectSid = null);
 
 /// <summary>
-/// One Active Directory object returned by the mailbox GUID lookup
-/// (<see cref="ProtectedPrincipalService.FindMailboxGuidHoldersAsync"/>), with the
-/// <c>msExchMailboxGuid</c> AD returned for it - null when absent or unreadable.
+/// One object the global catalog holds under an objectSid (<see cref="ProtectedPrincipalService.FindObjectsBySidAsync"/>),
+/// as it was read. docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 4.
 /// </summary>
-public sealed record MailboxGuidHolder(string? ObjectGuid, string? DistinguishedName, Guid? MailboxGuid);
+public sealed record DirectorySidObject(
+    string? DistinguishedName,
+    string? ObjectGuid,
+    string? ObjectSid,
+    string? ObjectClass,
+    string? SamAccountName,
+    string? UserPrincipalName,
+    string? Mail,
+    string? DisplayName);
 
 public sealed record ProtectedPrincipalResult(
     bool IsProtected,
@@ -245,6 +253,13 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
     /// </summary>
     internal Func<Runspace> DirectoryRunspace { get; set; } = DefaultDirectoryRunspace;
 
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 3: where a synced Exchange recipient's on-premises SID is read -
+    /// Microsoft Graph in production (<see cref="GraphOnPremisesSidSource"/>). Null for a service built without one, which
+    /// cannot ask, so a synced Exchange target is refused as Unavailable. Settable as a test seam.
+    /// </summary>
+    internal IOnPremisesSidSource? OnPremisesSidSource { get; set; }
+
     private static Runspace DefaultDirectoryRunspace() => DirectorySessionPool.DefaultRunspace();
 
     // kd-88. The directory search service, whose warm sessions for checks this service's reads borrow; null for a service
@@ -308,8 +323,10 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
         DelineaService delineaService,
         ILogger<ProtectedPrincipalService> logger,
         IServiceScopeFactory? scopeFactory = null,
-        ADDirectorySearchService? directorySearch = null)
+        ADDirectorySearchService? directorySearch = null,
+        IOnPremisesSidSource? onPremisesSidSource = null)
     {
+        OnPremisesSidSource = onPremisesSidSource;
         _env = env;
         _config = config;
         _moduleConfig = moduleConfig;
@@ -325,6 +342,13 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
     }
 
     public const string DirectoryReadSecretConfigKey = "DirectoryReadSecretId";
+
+    /// <summary>
+    /// The Admin Settings field "Graph Directory Read Credential (Delinea Secret ID)": the secret of the app registration
+    /// (<c>User.Read.All</c>, application) through which <see cref="GraphOnPremisesSidSource"/> reads a synced recipient's
+    /// on-premises SID. Its own field, empty until an admin fills it, with no appsettings fallback (owner ruling 2026-11-03).
+    /// </summary>
+    public const string GraphDirectoryReadSecretConfigKey = "GraphDirectoryReadSecretId";
     public const string ProtectedPrincipalsModuleKey = "ProtectedPrincipals";
 
     // True if a protected-principals config has been saved (presence marker). An unparseable
@@ -681,6 +705,24 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
             {
                 // The alias case. Re-resolve against the canonical address so the principal
                 // carries a DN and the group / OU / pattern rules apply normally.
+                // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: when the SID source reports the recipient's on-premises
+                // SID, the principal is the one account holding it, read at the global catalog (steps 3-4), not whatever
+                // AD holds under the address. A source that reports none, or cannot be asked, leaves the address
+                // re-resolve below exactly as it was: this entry point is not re-ordered, and its 13 callers keep working
+                // while the Graph credential is unset.
+                if (OnPremisesSidSource is not null)
+                {
+                    var sid = await ReadOnPremisesSidAsync(identity, recipient);
+                    if (sid.Outcome == OnPremisesSidOutcome.Reported)
+                    {
+                        var (bySid, bySidStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
+                        // ExchangeGuid stays ResolveExchangeTargetAsync's alone (aud-a2d, ValidatedMailbox.From).
+                        return bySidStatus == ResolutionStatus.Resolved && bySid is not null
+                            ? (bySid with { ExchangeGuid = null }, ResolutionStatus.Resolved)
+                            : (null, bySidStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : bySidStatus);
+                    }
+                }
+
                 _logger.LogInformation(
                     "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
                     identity, recipient.PrimarySmtpAddress);
@@ -729,7 +771,7 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
     /// <summary>
     /// Resolves the target of an operation EXCHANGE will perform with the operator's string, the
     /// way Exchange will resolve it, and refuses when Active Directory reads the same string as a
-    /// different object. aud-a2b hole 2.
+    /// different object. aud-a2b hole 2; bound by SID since docs/ProtectedPrincipalIdentifiers-Plan.md C.2.
     /// </summary>
     /// <remarks>
     /// <see cref="ResolveWithExchangeFallbackAsync"/> asks AD first and stops at a Resolved answer.
@@ -740,13 +782,17 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
     ///
     /// Here Exchange is asked first, because it performs the write, and AD's reading of the
     /// string must agree with it:
-    /// - synced recipient: the principal is the AD object behind its canonical address, and if AD
-    ///   reads the typed string as a DIFFERENT object (by objectGUID) the string names two
-    ///   objects - <c>Ambiguous</c>. No AD object under the canonical address is the directories
-    ///   disagreeing - <c>Unavailable</c>. That object must then prove it owns the mailbox: it has
-    ///   to be the only AD object whose <c>msExchMailboxGuid</c> is the recipient's ExchangeGuid
-    ///   (aud-a2c, <see cref="SelectMailboxBacking"/>). An address alone is not proof - it can sit
-    ///   in <c>mail</c> or <c>userPrincipalName</c> on an account that has no mailbox at all.
+    /// - synced recipient: the principal is the one account in the forest whose objectSid is the
+    ///   on-premises SID Microsoft Graph reports for the recipient (<see cref="IOnPremisesSidSource"/>),
+    ///   read at a global catalog - so a mailbox in another domain resolves, and an account that
+    ///   merely carries the mailbox's address in <c>mail</c> or <c>userPrincipalName</c> is never it
+    ///   (aud-a2c, closed by construction: an address is not an identifier, a SID is). No such account
+    ///   is <c>Unavailable</c>; two, or one that is not a user object, <c>Ambiguous</c>. If AD reads the
+    ///   typed string as a DIFFERENT object (by objectGUID) the string names two objects -
+    ///   <c>Ambiguous</c>.
+    /// - synced recipient whose SID source answered with no SID: the canonical address, with its
+    ///   one-match rule, logged ("bound by address") so its frequency is visible. A source that could
+    ///   not be asked - no setting, a failed or throttled read - is <c>Unavailable</c>, never "no SID".
     /// - cloud-only recipient: an AD object for the same string is a second object - <c>Ambiguous</c>.
     /// - no recipient: an Exchange write cannot land anywhere, so AD's answer is the only object the
     ///   string names; neither directory knowing it is <c>NotFound</c>.
@@ -755,8 +801,8 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
     // virtual: the same test seam as ResolveWithExchangeFallbackAsync.
     public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveExchangeTargetAsync(string identity)
     {
-        // kd-88: its directory lookups - the typed string, the canonical address, the mailbox proof - share the operation's
-        // one credential fetch, where each fetched its own (4.1 s and 2.7 s on the dev log).
+        // kd-88: its directory lookups - the typed string, the account by SID or by address - share the operation's one
+        // credential fetch, where each fetched its own (4.1 s and 2.7 s on the dev log).
         using var operation = DirectoryReadOperation.Begin();
 
         var (answered, recipient) = await AskExchangeAsync(identity);
@@ -788,6 +834,111 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
             return (CloudOnlyPrincipal(identity, recipient), ResolutionStatus.Resolved);
         }
 
+        // C.2 step 3: the on-premises SID of the account the recipient is synced from. Step 6: a source that could not be
+        // asked refuses; only an answer with no SID falls to the address (step 5).
+        var sid = await ReadOnPremisesSidAsync(identity, recipient);
+        if (sid.Outcome == OnPremisesSidOutcome.NotAnswered)
+        {
+            _logger.LogWarning(
+                "{Identity} is a directory-synced recipient whose on-premises SID could not be read - failing closed", identity);
+            return (null, ResolutionStatus.Unavailable);
+        }
+
+        ResolvedDirectoryPrincipal? bound;
+        ResolutionStatus boundStatus;
+        if (sid.Outcome == OnPremisesSidOutcome.NoneReported)
+        {
+            _logger.LogWarning("no on-premises SID reported for {Identity}; bound by address", identity);
+            (bound, boundStatus) = await BindByAddressAsync(identity, recipient, adPrincipal, adStatus);
+        }
+        else
+        {
+            (bound, boundStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
+        }
+
+        if (boundStatus != ResolutionStatus.Resolved || bound is null)
+            return (null, boundStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : boundStatus);
+
+        // aud-a2b, unchanged: AD's reading of the typed string must be the object Exchange will write.
+        if (adStatus == ResolutionStatus.Resolved && (adPrincipal is null || !IsSameDirectoryObject(adPrincipal, bound)))
+        {
+            _logger.LogWarning(
+                "{Identity} resolves to one object in Active Directory and Exchange will write another "
+                + "(canonical {Canonical}) - failing closed",
+                identity, recipient.PrimarySmtpAddress);
+            return (null, ResolutionStatus.Ambiguous);
+        }
+
+        return (bound, ResolutionStatus.Resolved);
+    }
+
+    /// <summary>
+    /// C.2 step 3. Asks the SID source for the on-premises SID of the account <paramref name="recipient"/> is synced from,
+    /// counted and timed for the check's timing line. No source - a service built without one - could not be asked.
+    /// </summary>
+    private async Task<OnPremisesSidAnswer> ReadOnPremisesSidAsync(string identity, ResolvedRecipient recipient)
+    {
+        var source = OnPremisesSidSource;
+        if (source is null)
+        {
+            _logger.LogWarning(
+                "No on-premises SID source is available to read the SID of {Identity} - failing closed", identity);
+            return OnPremisesSidAnswer.NotAnswered("no on-premises SID source");
+        }
+
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        OnPremisesSidAnswer answer;
+        try
+        {
+            answer = await source.ReadAsync(recipient.ExternalDirectoryObjectId ?? "");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The on-premises SID read for {Identity} failed", identity);
+            answer = OnPremisesSidAnswer.NotAnswered("the read failed");
+        }
+        finally
+        {
+            DirectoryReadOperation.CountSidSourceRead(source.Name,
+                (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
+
+        if (answer.Outcome == OnPremisesSidOutcome.NotAnswered)
+        {
+            _logger.LogWarning(
+                "The on-premises SID of {Identity} could not be read from {Source} ({Reason})",
+                identity, source.Name, answer.Reason ?? "no reason given");
+        }
+        return answer;
+    }
+
+    /// <summary>
+    /// C.2 step 4. The one user object in the forest whose objectSid is <paramref name="sid"/>, read at a global catalog,
+    /// as the principal: its objectSid, objectGUID and DN, with the recipient's canonical address and mailbox GUID.
+    /// </summary>
+    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindBySidAsync(
+        string identity, ResolvedRecipient recipient, string sid)
+    {
+        var (answered, found) = await FindObjectsBySidAsync(sid);
+        if (!answered)
+            return (null, ResolutionStatus.Unavailable);
+
+        var (principal, status, refusal) = SelectSidObject(sid, recipient, found);
+        if (status != ResolutionStatus.Resolved)
+        {
+            _logger.LogWarning("{Identity} (canonical {Canonical}): {Refusal} - failing closed",
+                identity, recipient.PrimarySmtpAddress, refusal);
+        }
+        return (principal, status);
+    }
+
+    /// <summary>
+    /// C.2 step 5, for a synced recipient whose SID source answered with no SID: AD's one object under the canonical
+    /// address, as the resolution read it before the SID binding. Its one-match rule is the resolution's own.
+    /// </summary>
+    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindByAddressAsync(
+        string identity, ResolvedRecipient recipient, ResolvedDirectoryPrincipal? adPrincipal, ResolutionStatus adStatus)
+    {
         var (canonical, canonicalStatus) =
             string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase)
                 ? (adPrincipal, adStatus)
@@ -805,132 +956,90 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
         if (canonicalStatus != ResolutionStatus.Resolved || canonical is null)
             return (null, canonicalStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : canonicalStatus);
 
-        if (adStatus == ResolutionStatus.Resolved && (adPrincipal is null || !IsSameDirectoryObject(adPrincipal, canonical)))
-        {
-            _logger.LogWarning(
-                "{Identity} resolves to one object in Active Directory and Exchange will write another "
-                + "(canonical {Canonical}) - failing closed",
-                identity, recipient.PrimarySmtpAddress);
-            return (null, ResolutionStatus.Ambiguous);
-        }
-
-        // aud-a2c. Everything above compares AD with AD: its reading of the typed string against
-        // its reading of the canonical address. Neither reading is tied to the mailbox Exchange
-        // resolved, and the address lookup matches mail and userPrincipalName, which a non-recipient
-        // account can carry - an admin's second account pointed at the owner's address, or any
-        // account in the searched domain when the mailbox's own object lives in another. Checked
-        // here, that account stood in for the mailbox and Exchange wrote the mailbox.
-        return await ProveMailboxBackingAsync(identity, recipient, canonical);
+        // aud-a2d: the mailbox Exchange will write, carried for the write to be bound to.
+        return (canonical with { ExchangeGuid = recipient.ExchangeGuid }, ResolutionStatus.Resolved);
     }
 
     /// <summary>
-    /// Accepts <paramref name="canonical"/> - AD's object under the recipient's canonical address -
-    /// only when Active Directory shows it owns the mailbox Exchange resolved, by the mailbox GUID
-    /// both directories carry (aud-a2c). Every way of not knowing refuses; nothing here can turn an
-    /// earlier refusal into an answer, because it runs only on a principal a2b already accepted.
-    /// </summary>
-    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ProveMailboxBackingAsync(
-        string identity, ResolvedRecipient recipient, ResolvedDirectoryPrincipal canonical)
-    {
-        if (recipient.ExchangeGuid is not Guid exchangeGuid)
-        {
-            _logger.LogWarning(
-                "Exchange reports no mailbox GUID for {Identity} (canonical {Canonical}) - the Active Directory object "
-                + "under that address cannot be shown to own the mailbox, failing closed",
-                identity, recipient.PrimarySmtpAddress);
-            return (null, ResolutionStatus.Unavailable);
-        }
-
-        var (answered, holders) = await FindMailboxGuidHoldersAsync(exchangeGuid);
-        if (!answered)
-            return (null, ResolutionStatus.Unavailable);
-
-        var (proven, status, refusal) = SelectMailboxBacking(exchangeGuid, canonical, holders);
-        if (status != ResolutionStatus.Resolved)
-        {
-            _logger.LogWarning(
-                "{Identity} (canonical {Canonical}, mailbox GUID {MailboxGuid}): {Refusal} - failing closed",
-                identity, recipient.PrimarySmtpAddress, exchangeGuid, refusal);
-        }
-
-        return (proven, status);
-    }
-
-    /// <summary>
-    /// The aud-a2c decision, pure so every outcome is testable without a directory.
-    /// <paramref name="canonical"/> is accepted only when it is the one and only object in
-    /// <paramref name="found"/> that holds <paramref name="exchangeGuid"/>, compared by objectGUID.
+    /// The C.2 step 4 decision, pure so every outcome is testable without a directory: <paramref name="found"/> is what
+    /// the global catalog holds under <paramref name="sid"/>.
     /// </summary>
     /// <remarks>
-    /// - An object returned WITHOUT the GUID is not a holder, whatever the lookup that produced it:
-    ///   the proof is the GUID, never the fact that a query returned the object.
-    /// - No holder is <c>Unavailable</c>: nothing in AD shows which object owns the mailbox (a remote
-    ///   mailbox whose ExchangeGuid was never stamped on-premises, or a mailbox object outside the
-    ///   searched domain). It is never read as "not protected".
-    /// - Two holders is <c>Ambiguous</c>, even when one of them is the canonical object: a copied
-    ///   GUID is how a forged stand-in would look, and the real owner still holding it is how it is
-    ///   seen.
-    /// - One holder that is not the canonical object is <c>Ambiguous</c>: the address names one
-    ///   object and the mailbox is another. This is the case the finding describes.
-    /// - The comparison needs objectGUID on both sides - an identifier no attribute edit can give
-    ///   another object. Without it there is nothing to compare, so <c>Unavailable</c>.
+    /// - None is <c>Unavailable</c>: Exchange names an on-premises account the forest does not hold. Never "not protected".
+    /// - Two or more is <c>Ambiguous</c>: a SID names one object, so the forest is not answering as one.
+    /// - One that is not a user object (<c>user</c> or <c>inetOrgPerson</c>; rooms and equipment are user objects) is
+    ///   <c>Ambiguous</c>: a mailbox is synced from a user object, so the SID does not name the mailbox's account.
+    /// - One read without its DN or objectGUID, or answering under another SID, is <c>Unavailable</c>: there is nothing to
+    ///   bind a write to, or the read is not the one asked.
     /// </remarks>
-    internal static (ResolvedDirectoryPrincipal? principal, ResolutionStatus status, string? refusal) SelectMailboxBacking(
-        Guid exchangeGuid, ResolvedDirectoryPrincipal canonical, IReadOnlyList<MailboxGuidHolder> found)
+    internal static (ResolvedDirectoryPrincipal? principal, ResolutionStatus status, string? refusal) SelectSidObject(
+        string sid, ResolvedRecipient recipient, IReadOnlyList<DirectorySidObject> found)
     {
-        var holders = found.Where(h => h.MailboxGuid == exchangeGuid).ToList();
-
-        if (holders.Count == 0)
+        if (found.Count == 0)
         {
             return (null, ResolutionStatus.Unavailable,
-                "no Active Directory object holds this mailbox GUID in msExchMailboxGuid (a remote mailbox whose "
-                + "ExchangeGuid was never stamped on-premises, or an object outside the searched domain)");
+                "Exchange names an on-premises account the forest does not hold (no object carries the SID Graph reports)");
         }
 
-        if (holders.Count > 1)
-            return (null, ResolutionStatus.Ambiguous, $"{holders.Count} Active Directory objects hold this mailbox GUID");
+        if (found.Count > 1)
+            return (null, ResolutionStatus.Ambiguous, $"{found.Count} objects in the forest carry the SID Graph reports");
 
-        var holder = holders[0];
-        if (string.IsNullOrWhiteSpace(holder.ObjectGuid) || string.IsNullOrWhiteSpace(canonical.ObjectGuid))
-        {
-            return (null, ResolutionStatus.Unavailable,
-                "the mailbox GUID holder or the object under the canonical address has no objectGUID to compare");
-        }
-
-        if (!string.Equals(holder.ObjectGuid, canonical.ObjectGuid, StringComparison.OrdinalIgnoreCase))
+        var only = found[0];
+        if (!IsUserObject(only.ObjectClass))
         {
             return (null, ResolutionStatus.Ambiguous,
-                $"the object under the canonical address ({canonical.DistinguishedName}) is not the object that "
-                + $"holds this mailbox GUID ({holder.DistinguishedName})");
+                $"the object carrying the SID Graph reports is not a user object ({only.ObjectClass ?? "class not read"})");
         }
 
-        return (canonical with { ExchangeGuid = exchangeGuid }, ResolutionStatus.Resolved, null);
+        if (string.IsNullOrWhiteSpace(only.DistinguishedName) || string.IsNullOrWhiteSpace(only.ObjectGuid))
+            return (null, ResolutionStatus.Unavailable, "the object carrying the SID Graph reports was read without its DN or objectGUID");
+
+        var wanted = ProtectedPrincipalIdEntry.CanonicalSid(sid);
+        if (wanted is null || !string.Equals(ProtectedPrincipalIdEntry.CanonicalSid(only.ObjectSid), wanted, StringComparison.Ordinal))
+            return (null, ResolutionStatus.Unavailable, "the global catalog answered with an object under another SID");
+
+        return (new ResolvedDirectoryPrincipal(
+            Source: "ProtectedPrincipalService-AD",
+            DisplayName: only.DisplayName ?? recipient.PrimarySmtpAddress,
+            UserPrincipalName: only.UserPrincipalName ?? recipient.PrimarySmtpAddress,
+            SamAccountName: only.SamAccountName,
+            // The mailbox's canonical address, which Exchange reported for it: a protected user row stored as that address
+            // protects this mailbox, whatever the account's mail attribute holds.
+            PrimarySmtpAddress: recipient.PrimarySmtpAddress,
+            DistinguishedName: only.DistinguishedName,
+            ObjectGuid: only.ObjectGuid,
+            EntraObjectId: recipient.ExternalDirectoryObjectId,
+            ExchangeGuid: recipient.ExchangeGuid,
+            ObjectSid: wanted), ResolutionStatus.Resolved, null);
     }
 
+    private static bool IsUserObject(string? objectClass) =>
+        string.Equals(objectClass, "user", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(objectClass, "inetOrgPerson", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
-    /// Every Active Directory object whose <c>msExchMailboxGuid</c> is <paramref name="mailboxGuid"/>.
-    /// <c>answered</c> is false when the lookup could not run - credential, throttle, any error,
-    /// including a schema with no Exchange attributes - and the list is then meaningless.
+    /// C.2 step 4. Every object in the forest whose objectSid is <paramref name="sid"/>: one indexed equality read at a
+    /// global catalog (<see cref="ADDirectorySearchService.BuildSidFilter"/>). <c>answered</c> is false when the read could
+    /// not run - credential, throttle, no catalog, any error - and the list is then meaningless.
     /// </summary>
     /// <remarks>
-    /// <c>Get-ADObject</c>, not <c>Get-ADUser</c>: a second holder of any object class has to be
-    /// seen for <see cref="SelectMailboxBacking"/> to call it ambiguous. Same credential, throttle and
-    /// fail-closed handling as <see cref="ResolveWithStatusAsync"/>, and the same scope: the default
-    /// domain, so a holder elsewhere in the forest is not seen (the miss refuses; it cannot admit).
+    /// The catalog is discovered from the host's own forest (Invariant 7) and kept for later checks; a read that fails
+    /// forgets it, so the next check discovers again. Same credential, throttle and fail-closed handling as
+    /// <see cref="ResolveWithStatusAsync"/>, and inside an operation the same one credential fetch (kd-88).
     /// </remarks>
     // virtual: test seam, the same shape as ResolveWithStatusAsync.
-    public virtual async Task<(bool answered, IReadOnlyList<MailboxGuidHolder> holders)> FindMailboxGuidHoldersAsync(Guid mailboxGuid)
+    public virtual async Task<(bool answered, IReadOnlyList<DirectorySidObject> found)> FindObjectsBySidAsync(string sid)
     {
         if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
         {
-            _logger.LogDebug("Skipping the mailbox GUID lookup - credential recently failed");
+            _logger.LogDebug("Skipping the read by SID - credential recently failed");
             return (false, []);
         }
 
         var secretId = GetDirectoryReadSecretId();
         if (secretId == null)
         {
-            _logger.LogDebug("Cannot look up a mailbox GUID - directory-read credential not configured");
+            _logger.LogDebug("Cannot read an object by SID - directory-read credential not configured");
             return (false, []);
         }
 
@@ -938,7 +1047,7 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogWarning("Failed to retrieve directory-read credential for the mailbox GUID lookup");
+            _logger.LogWarning("Failed to retrieve directory-read credential for the read by SID");
             return (false, []);
         }
 
@@ -946,15 +1055,15 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
         {
             if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             {
-                _logger.LogWarning("AD throttle timeout during the mailbox GUID lookup for {MailboxGuid}", mailboxGuid);
+                _logger.LogWarning("AD throttle timeout during the read by SID");
                 return (false, []);
             }
 
             try
             {
-                var holders = await Task.Run(() => FindMailboxGuidHoldersViaActiveDirectory(
-                    mailboxGuid, creds.Value.username, creds.Value.password, creds.Value.domain));
-                return (true, holders);
+                var found = await Task.Run(() => FindObjectsBySidAtCatalog(
+                    sid, creds.Value.username, creds.Value.password, creds.Value.domain));
+                return (true, found);
             }
             finally
             {
@@ -963,82 +1072,32 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Mailbox GUID lookup failed for {MailboxGuid}", mailboxGuid);
+            Volatile.Write(ref _globalCatalog, null);
+            _logger.LogWarning(ex, "The read by SID at the global catalog failed");
             return (false, []);
         }
     }
 
-    private IReadOnlyList<MailboxGuidHolder> FindMailboxGuidHoldersViaActiveDirectory(
-        Guid mailboxGuid, string username, string password, string domain)
+    // The global catalog the read by SID last reached, host:3268; null until discovered, and after a read that failed.
+    private string? _globalCatalog;
+
+    private IReadOnlyList<DirectorySidObject> FindObjectsBySidAtCatalog(string sid, string username, string password, string domain)
     {
-        // kd-88: a warm session, lent for the mailbox proof and given back - no runspace or module import of its own.
+        // kd-88: a warm session, lent for this read and given back.
         using var session = DirectorySessions.Lease(SessionWait);
-        var ps = session.PowerShell;
-
-        ps.AddCommand("Get-ADObject")
-          .AddParameter("LDAPFilter", BuildMailboxGuidFilter(mailboxGuid))
-          .AddParameter("Properties", new[] { "DistinguishedName", "ObjectGUID", "msExchMailboxGuid" })
-          .AddParameter("Credential", CreateCredential(username, password, domain))
-          .AddParameter("ErrorAction", "Stop");
-        var objects = InvokeIn(session);
-        ps.Commands.Clear();
-
-        // Completeness matters here, not just success: a search that dropped a second holder would
-        // read as a unique one. Any error recorded alongside the results fails the lookup - and the session.
-        if (ps.Streams.Error.Count > 0)
+        try
+        {
+            var directory = new PowerShellProtectedGroupDirectory(
+                session.PowerShell, CreateCredential(username, password, domain), Volatile.Read(ref _globalCatalog));
+            var found = directory.FindObjectsBySidAtCatalog(sid);
+            Volatile.Write(ref _globalCatalog, directory.KnownGlobalCatalog);
+            return found;
+        }
+        catch
         {
             session.Fail();
-            throw new InvalidOperationException($"The mailbox GUID lookup reported {ps.Streams.Error.Count} error(s).");
+            throw;
         }
-
-        return objects
-            .Where(o => o != null)
-            .Select(o => new MailboxGuidHolder(
-                ObjectGuid: o.Properties["ObjectGUID"]?.Value?.ToString(),
-                DistinguishedName: o.Properties["DistinguishedName"]?.Value?.ToString(),
-                MailboxGuid: ParseMailboxGuid(o.Properties["msExchMailboxGuid"]?.Value)))
-            .ToList();
-    }
-
-    /// <summary>
-    /// Reads <c>msExchMailboxGuid</c> as AD returns it - a 16-byte octet string in the Windows GUID
-    /// layout (Data1, Data2 and Data3 little-endian), which is the layout <see cref="Guid(byte[])"/>
-    /// reads. Wrapped, single-element and already-parsed forms are accepted; anything else, and all
-    /// zeros, is null - which <see cref="SelectMailboxBacking"/> treats as "not a holder".
-    /// </summary>
-    internal static Guid? ParseMailboxGuid(object? value)
-    {
-        switch (value)
-        {
-            case PSObject wrapped:
-                return ParseMailboxGuid(wrapped.BaseObject);
-            case byte[] bytes:
-                return bytes.Length == 16 ? NonEmpty(new Guid(bytes)) : null;
-            case Guid g:
-                return NonEmpty(g);
-            case string s:
-                return Guid.TryParse(s, out var parsed) ? NonEmpty(parsed) : null;
-            case System.Collections.IList { Count: 1 } single:
-                return ParseMailboxGuid(single[0]);
-            default:
-                return null;
-        }
-
-        static Guid? NonEmpty(Guid g) => g == Guid.Empty ? null : g;
-    }
-
-    /// <summary>
-    /// The LDAP equality filter for a binary attribute: every byte escaped as <c>\hh</c>, in the
-    /// order AD stores them (<see cref="Guid.ToByteArray"/>). Matching the GUID's text form would
-    /// match nothing - which would refuse every synced mailbox rather than admit one, but is still
-    /// wrong.
-    /// </summary>
-    internal static string BuildMailboxGuidFilter(Guid mailboxGuid)
-    {
-        var sb = new System.Text.StringBuilder("(msExchMailboxGuid=", 19 + 48 + 1);
-        foreach (var b in mailboxGuid.ToByteArray())
-            sb.Append('\\').Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
-        return sb.Append(')').ToString();
     }
 
     /// <summary>
@@ -1471,6 +1530,44 @@ public class ProtectedPrincipalService : IProtectedPrincipalLegacyResolver
             ProtectedPrincipalsModuleKey,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = loaded },
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [DirectoryReadSecretConfigKey] = wanted });
+
+    /// <summary>
+    /// The Graph Directory Read Credential's Secret ID as the database holds it (<see cref="GraphDirectoryReadSecretConfigKey"/>),
+    /// for the admin page: false when the ProtectedPrincipals module config cannot be read, so the page can say so rather
+    /// than show the id as unset (the aud-a26k rule the directory-read secret follows). No fallback: the field is its own.
+    /// </summary>
+    public bool TryGetGraphDirectoryReadSecret(out string stored)
+    {
+        if (!_moduleConfig.TryGetModuleConfig(ProtectedPrincipalsModuleKey, out var values))
+        {
+            stored = "";
+            return false;
+        }
+
+        stored = values.GetValueOrDefault(GraphDirectoryReadSecretConfigKey) ?? "";
+        return true;
+    }
+
+    /// <summary>
+    /// The admin page's write of the Graph Directory Read Credential's Secret ID: the rule
+    /// <see cref="SaveDirectoryReadSecretId(string, string)"/> applies - written only while the stored value is still
+    /// <paramref name="loaded"/>, decided under the write lock. Throws when the write fails.
+    /// </summary>
+    public ModuleConfigSaveOutcome SaveGraphDirectoryReadSecretId(string loaded, string wanted) =>
+        _moduleConfig.SaveChangedValues(
+            ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [GraphDirectoryReadSecretConfigKey] = loaded },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [GraphDirectoryReadSecretConfigKey] = wanted });
+
+    /// <summary>
+    /// The decision <see cref="SaveGraphDirectoryReadSecretId"/> makes, writing nothing - run before the protection rules
+    /// are written, as <see cref="CompareDirectoryReadSecretId"/> is (aud-a28r).
+    /// </summary>
+    public ModuleConfigSaveOutcome CompareGraphDirectoryReadSecretId(string loaded, string wanted) =>
+        _moduleConfig.CompareChangedValues(
+            ProtectedPrincipalsModuleKey,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [GraphDirectoryReadSecretConfigKey] = loaded },
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [GraphDirectoryReadSecretConfigKey] = wanted });
 
     // Legacy exclusions come only from the MailboxPermissions/ExcludedUsers module
     // config. The appsettings Security:ExcludedUsers fallback was retired 2026-07-28:

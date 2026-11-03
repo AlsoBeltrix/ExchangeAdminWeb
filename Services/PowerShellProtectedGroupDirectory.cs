@@ -31,11 +31,15 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedPrincipalRes
     private readonly PSCredential _credential;
     private string? _globalCatalog;
 
-    internal PowerShellProtectedGroupDirectory(PowerShell ps, PSCredential credential)
+    internal PowerShellProtectedGroupDirectory(PowerShell ps, PSCredential credential, string? globalCatalog = null)
     {
         _ps = ps;
         _credential = credential;
+        _globalCatalog = string.IsNullOrWhiteSpace(globalCatalog) ? null : globalCatalog;
     }
+
+    /// <summary>The global catalog this directory reads through, host:3268, once discovered or handed in; null before.</summary>
+    internal string? KnownGlobalCatalog => _globalCatalog;
 
     public DirectoryTarget ReadTarget(string targetDn, string server)
     {
@@ -216,6 +220,37 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedPrincipalRes
                     ?? throw new InvalidOperationException("The directory returned an object without a readable DN."));
         }
         return dns;
+    }
+
+    /// <summary>
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 4. Every object the global catalog holds under objectSid
+    /// <paramref name="sid"/>: one indexed equality read, the properties the binding needs - all in the partial attribute set.
+    /// Not on <see cref="IProtectedGroupDirectory"/>: the protected-principal service's binding is its only caller.
+    /// </summary>
+    internal IReadOnlyList<DirectorySidObject> FindObjectsBySidAtCatalog(string sid)
+    {
+        var found = new List<DirectorySidObject>();
+        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        {
+            ["LDAPFilter"] = ADDirectorySearchService.BuildSidFilter(sid),
+            ["Server"] = GlobalCatalog(),
+            ["Properties"] = new[] { "objectSid", "objectGUID", "objectClass", "sAMAccountName", "userPrincipalName", "mail", "displayName" },
+        }))
+        {
+            // A row that cannot be read is a failed read, never a missing object: dropping it would turn "two" into "one".
+            if (row is null)
+                throw new InvalidOperationException("The directory returned an empty row for a read by SID.");
+            found.Add(new DirectorySidObject(
+                DistinguishedName: Text(row, "DistinguishedName"),
+                ObjectGuid: Text(row, "ObjectGUID"),
+                ObjectSid: Text(row, "objectSid"),
+                ObjectClass: Text(row, "ObjectClass"),
+                SamAccountName: Text(row, "SamAccountName"),
+                UserPrincipalName: Text(row, "userPrincipalName"),
+                Mail: Text(row, "mail"),
+                DisplayName: Text(row, "displayName")));
+        }
+        return found;
     }
 
     /// <summary>

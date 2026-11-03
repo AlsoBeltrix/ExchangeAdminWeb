@@ -203,7 +203,10 @@ public sealed class ModuleCatalog
             // written.", filed Cancelled, no one notified - where it waited its turn, connected and was sent. And the single
             // Exchange Online change's own wait for a free connection takes it: a cancel there ends the change at once, nothing
             // read or sent. A command already sent runs to its end. The leave prompt says so for the on-premises change too.
-            Version = "1.6.8",
+            // 1.6.9: a synced target mailbox is checked as the one account holding the on-premises SID Graph reports for it
+            // (docs/ProtectedPrincipalIdentifiers-Plan.md S3), read at a global catalog - a mailbox in another domain resolves,
+            // and the mailbox-GUID refusals no longer appear; until the Graph Directory Read Credential is set it is refused.
+            Version = "1.6.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -273,7 +276,8 @@ public sealed class ModuleCatalog
             // the single Exchange Online change's own wait for a free connection takes it: a cancel there ends the change at
             // once, nothing read or sent - the removal's only until it claims its send, so a removal the pool runs again after
             // Exchange's pre-flight answer still runs. A command already sent runs to its end.
-            Version = "1.4.8",
+            // 1.4.9: as Mailbox Permissions 1.6.9 - the target mailbox is bound by its on-premises SID (ppi S3).
+            Version = "1.4.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -678,7 +682,9 @@ public sealed class ModuleCatalog
             // chain - the protected-principal resolve, the authorization re-check, the read of the
             // current state, the live mailbox write and both notification emails - ran with the
             // bar reading Idle, on a page whose Check Status tab reported correctly.
-            Version = "1.1.3",
+            // 1.1.4: as Mailbox Permissions 1.6.9 - its protection check (ValidateTargetMailboxAsync) binds a synced mailbox
+            // by its on-premises SID (ppi S3).
+            Version = "1.1.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1187,7 +1193,9 @@ public sealed class ModuleCatalog
             // Cancelled, "Cancelled by the operator. Nothing was written.", under the submitter and ticket, no row outcome -
             // and the job stops; before, the row ran to its end first. A row the service's shutdown stops is filed Failed,
             // "The service stopped before this row was written. Nothing was written."
-            Version = "2.19.11",
+            // 2.19.12: its protection gate (ResolveExchangeTargetAsync) binds a synced room mailbox by the on-premises SID Graph
+            // reports (docs/ProtectedPrincipalIdentifiers-Plan.md S3); until the Graph Directory Read Credential is set it refuses.
+            Version = "2.19.12",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1727,7 +1735,9 @@ public sealed class ModuleCatalog
             // 1.2.4: the protected-principals pane flags each entry still stored by name ("not converted", with the last
             // resolve pass's reason), offers Resolve now, and says what a "not in AD" entry still does per kind
             // (docs/ProtectedPrincipalIdentifiers-Plan.md S2).
-            Version = "1.2.4",
+            // 1.2.5: the protected-principals pane gains the Graph Directory Read Credential (Delinea Secret ID) field, its
+            // help and its save (docs/ProtectedPrincipalIdentifiers-Plan.md S3).
+            Version = "1.2.5",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

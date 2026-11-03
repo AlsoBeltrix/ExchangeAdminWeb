@@ -3,7 +3,7 @@
 **Severity**: HIGH - a stable, non-racy way to modify a protected mailbox through every
 Exchange-written module (Mailbox Permissions, Calendar Permissions, Out of Office, Conference
 Rooms).
-**Status**: On master (applied by the supervisor from the agent's verified patch; its worktree had forked from the remote tip and lacked a2b); codex review pending; codex misc-batch-1 clean (2026-10-23); dev check owed
+**Status**: Retired by ppi-s3 (owner ruling 2026-11-03) - the mailbox-GUID proof is gone: a synced mailbox is now bound to the one account holding the on-premises SID Microsoft Graph reports for it, so an account carrying its address is never the object checked (`.agents/review/findings/ppi-s3.md`, docs/ProtectedPrincipalIdentifiers-Plan.md C.2). History below as it was: on master `7f1a0e6e`, codex misc-batch-1 clean (2026-10-23).
 **Branch**: `worktree-agent-a8c8880451a1663f0`, on master `b82de603`
 **Commit**: `7f1a0e6e`
 

@@ -5,14 +5,15 @@ namespace ExchangeAdminWeb.Services;
 /// cannot name different objects (aud-a2d).
 /// </summary>
 /// <remarks>
-/// aud-a2b and aud-a2c made the check resolve the operator's string the way Exchange will and prove
-/// which object it is. The writes then handed Exchange the same string again, to be resolved again by
+/// aud-a2b made the check resolve the operator's string the way Exchange will, and the check binds a
+/// synced mailbox to the one account in the forest holding the on-premises SID Microsoft Graph reports
+/// for it (docs/ProtectedPrincipalIdentifiers-Plan.md C.2). The writes then handed Exchange the same string again, to be resolved again by
 /// Exchange's own rules - so a change in the directory between the check and the write, or any rule
 /// the two resolutions do not share, put the change on a mailbox nothing had checked.
 ///
-/// This carries the answer instead of the question: Exchange's own mailbox GUID - the value aud-a2c
-/// proved the on-premises object holds, or Exchange's own for a cloud-only mailbox - and, when the
-/// check proved one, the Active Directory objectGUID of the object that owns it. No operator types
+/// This carries the answer instead of the question: Exchange's own mailbox GUID for the recipient the
+/// check resolved and, when the check bound one, the Active Directory objectGUID of the account it
+/// bound - the object found by SID. No operator types
 /// either. There is no public constructor: an instance comes only from a check's result, and a
 /// result without a usable GUID gives null, which every write refuses (<see cref="Refusal"/>). A
 /// write never falls back to the typed string.
@@ -35,9 +36,10 @@ public sealed record ValidatedMailbox
     public Guid ExchangeGuid { get; }
 
     /// <summary>
-    /// The objectGUID of the Active Directory object the check proved owns this mailbox
-    /// (aud-a2c: the only holder of the GUID in <c>msExchMailboxGuid</c>), or null when the check
-    /// proved none - a cloud-only mailbox, or a check that did not consult Active Directory. The
+    /// The objectGUID of the Active Directory account the check bound this mailbox to - the one object
+    /// holding the on-premises SID Graph reports for it (C.2), or, where Graph reports none, the one
+    /// object under its canonical address - or null when the check bound none: a cloud-only mailbox, or
+    /// a check that did not consult Active Directory. The
     /// identity for writes Active Directory performs, never re-found from the typed string.
     /// </summary>
     public string? DirectoryObjectGuid { get; }
@@ -45,7 +47,7 @@ public sealed record ValidatedMailbox
     /// <summary>
     /// The <c>-Identity</c> every Exchange write passes: the mailbox GUID in "D" form. Exchange
     /// Online and on-premises Exchange both accept a mailbox GUID as a mailbox identity - an
-    /// assumption recorded in aud-a2c and aud-a2d, which fails closed (the cmdlet reports the
+    /// assumption recorded in aud-a2d, which fails closed (the cmdlet reports the
     /// identity "couldn't be found") rather than open.
     /// </summary>
     public string Identity => ExchangeGuid.ToString("D");

@@ -3,6 +3,7 @@ using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using static ExchangeAdminWeb.Services.ProtectedPrincipalService;
@@ -56,9 +57,12 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         public readonly List<string> AdLookups = new();
 
         public ScriptedAdService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
-            ProtectedPrincipalRepository repo, DelineaService delinea, IServiceScopeFactory? scopeFactory)
-            : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance, scopeFactory)
-        { }
+            ProtectedPrincipalRepository repo, DelineaService delinea, IServiceScopeFactory? scopeFactory,
+            ILogger<ProtectedPrincipalService>? logger = null)
+            : base(env, config, moduleConfig, repo, delinea, logger ?? NullLogger<ProtectedPrincipalService>.Instance, scopeFactory)
+        {
+            OnPremisesSidSource = new ScriptedSidSource(this);
+        }
 
         public ScriptedAdService AdReturns(string identity, ResolutionStatus status, ResolvedDirectoryPrincipal? principal = null)
         {
@@ -74,36 +78,63 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
                 : ((ResolvedDirectoryPrincipal?)null, ResolutionStatus.NotFound));
         }
 
-        private readonly Dictionary<Guid, MailboxGuidHolder[]> _mailboxGuidScript = new();
+        // docs/ProtectedPrincipalIdentifiers-Plan.md C.2. What Graph reports as each recipient's on-premises SID, by
+        // ExternalDirectoryObjectId - null for "answered, none reported"; absent for "could not be asked".
+        public readonly Dictionary<string, string?> GraphSids = new(StringComparer.OrdinalIgnoreCase);
 
-        public readonly List<Guid> MailboxGuidLookups = new();
+        public readonly List<string> GraphReads = new();
 
-        public bool MailboxGuidLookupFails;
+        private readonly Dictionary<string, DirectorySidObject[]> _sidScript = new(StringComparer.Ordinal);
 
-        public ScriptedAdService MailboxGuidHeldBy(Guid mailboxGuid, params ResolvedDirectoryPrincipal[] holders)
+        public readonly List<string> SidLookups = new();
+
+        public bool SidLookupFails;
+
+        public ScriptedAdService GraphReports(string externalDirectoryObjectId, string? sid)
         {
-            _mailboxGuidScript[mailboxGuid] = holders
-                .Select(h => new MailboxGuidHolder(h.ObjectGuid, h.DistinguishedName, mailboxGuid))
-                .ToArray();
+            GraphSids[externalDirectoryObjectId] = sid;
             return this;
         }
 
-        public ScriptedAdService MailboxGuidLookupReturns(Guid mailboxGuid, params MailboxGuidHolder[] returned)
+        /// <summary>The objects the global catalog holds under <paramref name="sid"/>, each carrying it.</summary>
+        public ScriptedAdService SidHeldBy(string sid, params ResolvedDirectoryPrincipal[] holders) =>
+            SidReturns(sid, holders.Select(h => SidObject(h, sid)).ToArray());
+
+        public ScriptedAdService SidReturns(string sid, params DirectorySidObject[] returned)
         {
-            _mailboxGuidScript[mailboxGuid] = returned;
+            _sidScript[sid] = returned;
             return this;
         }
 
-        public override Task<(bool answered, IReadOnlyList<MailboxGuidHolder> holders)> FindMailboxGuidHoldersAsync(Guid mailboxGuid)
+        public override Task<(bool answered, IReadOnlyList<DirectorySidObject> found)> FindObjectsBySidAsync(string sid)
         {
-            MailboxGuidLookups.Add(mailboxGuid);
-            if (MailboxGuidLookupFails)
-                return Task.FromResult((false, (IReadOnlyList<MailboxGuidHolder>)Array.Empty<MailboxGuidHolder>()));
+            SidLookups.Add(sid);
+            if (SidLookupFails)
+                return Task.FromResult((false, (IReadOnlyList<DirectorySidObject>)Array.Empty<DirectorySidObject>()));
 
-            return Task.FromResult((true, (IReadOnlyList<MailboxGuidHolder>)(
-                _mailboxGuidScript.TryGetValue(mailboxGuid, out var holders) ? holders : Array.Empty<MailboxGuidHolder>())));
+            return Task.FromResult((true, (IReadOnlyList<DirectorySidObject>)(
+                _sidScript.TryGetValue(sid, out var found) ? found : Array.Empty<DirectorySidObject>())));
         }
     }
+
+    /// <summary>The service's SID source over <see cref="ScriptedAdService.GraphSids"/>.</summary>
+    private sealed class ScriptedSidSource(ScriptedAdService service) : IOnPremisesSidSource
+    {
+        public string Name => "Graph";
+
+        public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId)
+        {
+            service.GraphReads.Add(externalDirectoryObjectId);
+            if (!service.GraphSids.TryGetValue(externalDirectoryObjectId, out var sid))
+                return Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
+            return Task.FromResult(sid is null
+                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported)
+                : new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid));
+        }
+    }
+
+    private static DirectorySidObject SidObject(ResolvedDirectoryPrincipal p, string sid, string objectClass = "user") =>
+        new(p.DistinguishedName, p.ObjectGuid, sid, objectClass, p.SamAccountName, p.UserPrincipalName, p.PrimarySmtpAddress, p.DisplayName);
 
     private static ResolvedDirectoryPrincipal AdPrincipal(string address, string? dn = "CN=x,OU=Users,DC=contoso,DC=com")
         => new("ProtectedPrincipalService-AD", address, address, address.Split('@')[0], address, dn, "guid", null);
@@ -111,7 +142,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     /// <param name="resolver">null registers no IIdentityResolver at all.</param>
     /// <param name="withScopeFactory">false constructs the service the way the direct-construction
     /// test files do, with no scope factory available.</param>
-    private ScriptedAdService CreateService(IIdentityResolver? resolver, bool withScopeFactory = true)
+    private ScriptedAdService CreateService(IIdentityResolver? resolver, bool withScopeFactory = true,
+        ILogger<ProtectedPrincipalService>? logger = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -142,7 +174,7 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         }
 
         return new ScriptedAdService(env, config, moduleConfig,
-            TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, scopeFactory);
+            TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, scopeFactory, logger);
     }
 
     private static IIdentityResolver ResolverReturning(ResolvedRecipient? recipient)
@@ -487,7 +519,9 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
     // ---- aud-a2b hole 2: ResolveExchangeTargetAsync --------------------------
     // For a write Exchange performs with the typed string. Exchange is asked first and AD must
-    // agree with it; the object checked must be the object Exchange will write.
+    // agree with it; the object checked must be the object Exchange will write. Since
+    // docs/ProtectedPrincipalIdentifiers-Plan.md C.2 a synced recipient is bound to the one account
+    // holding the on-premises SID Graph reports for it.
 
     private static ResolvedDirectoryPrincipal AdObject(string upn, string sam, string? mail, string guid, string dn)
         => new("ProtectedPrincipalService-AD", sam, upn, sam, mail, dn, guid, null);
@@ -498,15 +532,13 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     private static readonly ResolvedDirectoryPrincipal VipMailboxUser =
         AdObject("vip.person@contoso.com", "vperson", "vip.person@contoso.com", "guid-vip", "CN=VIP Person,OU=Execs,DC=contoso,DC=com");
 
-    // aud-a2c fixtures. Since aud-a2c a synced recipient resolves only when its AD object holds the
-    // recipient's ExchangeGuid in msExchMailboxGuid, so the agreeing cases above script that too.
+    private const string VipSid = "S-1-5-21-1000-2000-3000-1101";
     private static readonly Guid VipMailboxGuid = Guid.Parse("6f1d7c9e-2b4a-4e0f-9a3d-5c8b1e7f2a40");
 
-    private static ResolvedRecipient SyncedVipRecipient(Guid? exchangeGuid)
-        => new("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true, ExchangeGuid: exchangeGuid);
+    private static ResolvedRecipient SyncedVipRecipient()
+        => new("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true, ExchangeGuid: VipMailboxGuid);
 
-    /// <summary>The protected mailbox's own AD object: holds the mailbox GUID, but its
-    /// <c>mail</c> is empty and its UPN differs from the primary address.</summary>
+    /// <summary>The protected mailbox's own AD object: its <c>mail</c> is empty and its UPN differs from the primary address.</summary>
     private static readonly ResolvedDirectoryPrincipal VipBackingObject =
         AdObject("vperson@corp.contoso.com", "vperson", null, "guid-vip", "CN=VIP Person,OU=Execs,DC=contoso,DC=com");
 
@@ -516,16 +548,22 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         AdObject("a-vperson@corp.contoso.com", "a-vperson", "vip.person@contoso.com", "guid-namesake",
             "CN=a-vperson,OU=Admins,DC=contoso,DC=com");
 
+    /// <summary>The VIP as Graph and the catalog know it: Graph reports VipSid, the catalog holds <paramref name="holder"/> under it.</summary>
+    private ScriptedAdService VipService(ResolvedDirectoryPrincipal? holder = null)
+    {
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.GraphReports("ext-vip", VipSid).SidHeldBy(VipSid, holder ?? VipMailboxUser);
+        return service;
+    }
+
     [Fact]
     public async Task ExchangeTarget_AnAdAccountSharingTheString_DoesNotStandInForTheMailbox()
     {
         // The finding. "vip" is the sAMAccountName of an unrelated, non-mail AD account and the
         // Exchange alias of the protected VIP mailbox. AD alone answers with the account; the
         // write would land on the mailbox. The two directories name different objects.
-        var service = CreateService(ResolverReturning(
-            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        var service = VipService();
         service.AdReturns("vip", ResolutionStatus.Resolved, UnrelatedAccount);
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
 
         var (principal, status) = await service.ResolveExchangeTargetAsync("vip");
 
@@ -542,31 +580,32 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     [Fact]
     public async Task ExchangeTarget_AgreeingDirectories_ResolveToTheMailboxUser()
     {
-        // The ordinary case: the typed UPN, AD's reading of it and the object behind Exchange's
-        // canonical address are one object.
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
-        service.AdReturns("vperson@corp.contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+        // The ordinary case: the typed UPN, AD's reading of it and the account holding the SID are one object.
+        var service = VipService();
         service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser);
 
-        var (principal, status) = await service.ResolveExchangeTargetAsync("vperson@corp.contoso.com");
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
 
         Assert.Equal(ResolutionStatus.Resolved, status);
         Assert.Equal("guid-vip", principal!.ObjectGuid);
+        Assert.Equal(VipSid, principal.ObjectSid);
+        Assert.Equal(VipMailboxGuid, principal.ExchangeGuid);
+        Assert.Equal(new[] { "ext-vip" }, service.GraphReads);
+        Assert.Equal(new[] { VipSid }, service.SidLookups);
     }
 
     [Fact]
     public async Task ExchangeTarget_AnAliasAdDoesNotKnow_ResolvesToTheObjectExchangeWillWrite()
     {
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
+        var service = VipService();
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser);
 
         var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
 
         Assert.Equal(ResolutionStatus.Resolved, status);
         Assert.Equal("guid-vip", principal!.ObjectGuid);
+        // Bound by SID: the canonical address is never re-read in AD.
+        Assert.Equal(new[] { "vip.alias@contoso.com" }, service.AdLookups);
     }
 
     [Fact]
@@ -584,7 +623,7 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     }
 
     [Fact]
-    public async Task ExchangeTarget_ACloudOnlyRecipient_ResolvesToItsCanonicalAddress()
+    public async Task ExchangeTarget_ACloudOnlyRecipient_ResolvesToItsCanonicalAddress_AndAsksNoSidSource()
     {
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vip.cloud@contoso.com", "ext-cloud", "UserMailbox", ExistsOnPrem: false)));
@@ -595,19 +634,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         Assert.Equal(ResolutionStatus.Resolved, status);
         Assert.Equal("vip.cloud@contoso.com", principal!.PrimarySmtpAddress);
         Assert.Null(principal.DistinguishedName);
-    }
-
-    [Fact]
-    public async Task ExchangeTarget_ASyncedRecipientAdHoldsNoObjectFor_IsUnavailable()
-    {
-        var service = CreateService(ResolverReturning(
-            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
-        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.NotFound);
-
-        var (_, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
-
-        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Empty(service.GraphReads);
+        Assert.Empty(service.SidLookups);
     }
 
     [Fact]
@@ -653,8 +681,7 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     [InlineData(ResolutionStatus.Unavailable)]
     public async Task ExchangeTarget_AdThatCannotAnswerCleanly_Refuses(ResolutionStatus adStatus)
     {
-        var service = CreateService(ResolverReturning(
-            new ResolvedRecipient("vip.person@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        var service = VipService();
         service.AdReturns("vip", adStatus);
 
         var (_, status) = await service.ResolveExchangeTargetAsync("vip");
@@ -674,66 +701,175 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
             a with { ObjectGuid = null, DistinguishedName = null }));
     }
 
-    // ---- aud-a2c: the AD object must own the mailbox, by mailbox GUID ------
-    // a2b found the AD object by the recipient's canonical address through mail / UPN /
-    // sAMAccountName. An account with no mailbox can carry that address, and was then the object
-    // checked while Exchange wrote the mailbox.
+    // ---- C.2: a synced recipient is bound by its on-premises SID ------------------
+    // aud-a2c found the AD object by the recipient's canonical address through mail / UPN; an
+    // account with no mailbox can carry that address, and was then the object checked while
+    // Exchange wrote the mailbox. The mailbox-GUID proof that closed it is retired: the SID Graph
+    // reports names the one account the mailbox is synced from.
 
-    [Theory]
-    [InlineData("vip.person@contoso.com")]
-    [InlineData("vip.alias@contoso.com")]
-    public async Task ExchangeTarget_AnAdNamesakeOfTheAddress_IsNeverTheObjectChecked(string typed)
+    [Fact]
+    public async Task ExchangeTarget_AnotherAccountCarryingTheAddress_IsNeverTheObjectChecked_TheSidsAccountIs()
     {
-        // The codex case. Exchange resolves either string to the protected VIP mailbox; AD's only
-        // match for the canonical address is the admin account carrying it in mail. Before aud-a2c
-        // the admin account was returned as Resolved - for both strings - and checked instead.
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
+        // The aud-a2c scenario. AD's only object under the canonical address is the admin account
+        // carrying it in mail; the mailbox's own account has no mail and another UPN. Bound by
+        // address, the admin account is checked; bound by SID, the mailbox's own account is.
+        var service = VipService(holder: VipBackingObject);
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
         service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, AddressNamesake);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipBackingObject);
 
-        var (principal, status) = await service.ResolveExchangeTargetAsync(typed);
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("guid-vip", principal!.ObjectGuid);
+        Assert.Equal(VipBackingObject.DistinguishedName, principal.DistinguishedName);
+        Assert.Equal(VipSid, principal.ObjectSid);
+        Assert.Equal(VipMailboxGuid, principal.ExchangeGuid);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_TypedAsTheAddressAnotherAccountCarries_IsAmbiguous()
+    {
+        // The same namesake, typed as the address it carries: AD reads the typed string as the
+        // admin account, the SID names the mailbox's account - two objects (aud-a2b, unchanged).
+        var service = VipService(holder: VipBackingObject);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, AddressNamesake);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
 
         Assert.Equal(ResolutionStatus.Ambiguous, status);
         Assert.Null(principal);
     }
 
     [Fact]
-    public async Task ExchangeTarget_NoAdObjectHoldsTheMailboxGuid_IsUnavailable_NotTheNamesake()
+    public async Task ExchangeTarget_NoObjectHoldsTheSid_IsUnavailable()
     {
-        // The mailbox's own object is not in the searched domain (or is a remote mailbox whose
-        // ExchangeGuid was never stamped), so the namesake is all AD has. Nothing proves which
-        // object owns the mailbox: refuse, never fall back to the namesake.
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, AddressNamesake);
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.GraphReports("ext-vip", VipSid);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
 
         var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
 
         Assert.Equal(ResolutionStatus.Unavailable, status);
         Assert.Null(principal);
-        Assert.Equal(new[] { VipMailboxGuid }, service.MailboxGuidLookups);
+        Assert.Equal(new[] { VipSid }, service.SidLookups);
     }
 
     [Fact]
-    public async Task ExchangeTarget_TheTrueBackingObject_ResolvesAndCarriesTheAgreedMailboxGuid()
+    public async Task ExchangeTarget_TwoObjectsHoldTheSid_IsAmbiguous()
     {
-        // The matching case, so the refusals above cannot be passing by refusing everything. The
-        // GUID rides on the principal: it is what aud-a2d binds the write to.
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser);
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.GraphReports("ext-vip", VipSid).SidHeldBy(VipSid, VipMailboxUser, AddressNamesake);
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
 
-        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Ambiguous, status);
+        Assert.Null(principal);
+    }
+
+    [Theory]
+    [InlineData("computer")]
+    [InlineData("group")]
+    [InlineData("contact")]
+    public async Task ExchangeTarget_TheOneObjectHoldingTheSidIsNotAUser_IsAmbiguous(string objectClass)
+    {
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.GraphReports("ext-vip", VipSid).SidReturns(VipSid, SidObject(VipMailboxUser, VipSid, objectClass));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Ambiguous, status);
+        Assert.Null(principal);
+    }
+
+    [Theory]
+    [InlineData("user")]
+    [InlineData("inetOrgPerson")]
+    public async Task ExchangeTarget_AUserObjectHoldingTheSid_Resolves(string objectClass)
+    {
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.GraphReports("ext-vip", VipSid).SidReturns(VipSid, SidObject(VipMailboxUser, VipSid, objectClass));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+
+        var (_, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_TheReadBySidCannotRun_IsUnavailable()
+    {
+        var service = VipService();
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.SidLookupFails = true;
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Null(principal);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_TheSidSourceUnanswered_IsUnavailable_NotTheAddressFallback()
+    {
+        // C.2 step 6: Graph could not be asked (no setting, an error, a throttle). The canonical
+        // address names the mailbox's account in AD, and that is still not used: "could not ask"
+        // is never "no SID".
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Null(principal);
+        Assert.Equal(new[] { "ext-vip" }, service.GraphReads);
+        Assert.Equal(new[] { "vip.alias@contoso.com" }, service.AdLookups);
+        Assert.Empty(service.SidLookups);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_AServiceWithNoSidSource_IsUnavailable()
+    {
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.OnPremisesSidSource = null;
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (_, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+    }
+
+    [Fact]
+    public async Task ExchangeTarget_GraphAnsweredWithNoSid_BindsByAddress_WithItsOneMatchRule_AndSaysSo()
+    {
+        // C.2 step 5. Graph answered and reports no on-premises SID: the canonical address, one match.
+        var logger = new CapturingLogger();
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()), logger: logger);
+        service.GraphReports("ext-vip", null);
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
 
         Assert.Equal(ResolutionStatus.Resolved, status);
         Assert.Equal("guid-vip", principal!.ObjectGuid);
-        Assert.Equal("CN=VIP Person,OU=Execs,DC=contoso,DC=com", principal.DistinguishedName);
         Assert.Equal(VipMailboxGuid, principal.ExchangeGuid);
+        Assert.Empty(service.SidLookups);
+        Assert.Contains("no on-premises SID reported for vip.alias@contoso.com; bound by address", logger.Messages);
+
+        // Its one-match rule: two objects under the address refuse; none is the directories disagreeing.
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Ambiguous);
+        Assert.Equal(ResolutionStatus.Ambiguous, (await service.ResolveExchangeTargetAsync("vip.alias@contoso.com")).status);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.NotFound);
+        Assert.Equal(ResolutionStatus.Unavailable, (await service.ResolveExchangeTargetAsync("vip.alias@contoso.com")).status);
     }
 
     [Fact]
-    public async Task ExchangeTarget_TheProvenMailbox_IsCheckedAsItself()
+    public async Task ExchangeTarget_TheBoundMailbox_IsCheckedAsItself()
     {
-        // End to end: the proven principal reaches CheckAsync with its DN and objectGUID intact, so
+        // End to end: the principal bound by SID reaches CheckAsync with its DN and objectGUID intact, so
         // a mailbox protected by objectGUID is still protected when reached by an alias.
         var json = System.Text.Json.JsonSerializer.Serialize(new
         {
@@ -747,10 +883,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         });
         File.WriteAllText(Path.Combine(_tempDir, "config", "protected-principals.json"), json);
 
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
+        var service = VipService();
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser);
 
         var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");
         Assert.Equal(ResolutionStatus.Resolved, status);
@@ -759,49 +893,6 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         Assert.True(verdict.IsProtected);
         Assert.Contains("User:guid-vip", verdict.MatchedRules);
-    }
-
-    [Fact]
-    public async Task ExchangeTarget_ExchangeReportsNoMailboxGuid_IsUnavailable()
-    {
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(exchangeGuid: null)));
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser);
-
-        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
-
-        Assert.Equal(ResolutionStatus.Unavailable, status);
-        Assert.Null(principal);
-        Assert.Empty(service.MailboxGuidLookups);
-    }
-
-    [Fact]
-    public async Task ExchangeTarget_TheMailboxGuidLookupCannotRun_IsUnavailable()
-    {
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser);
-        service.MailboxGuidLookupFails = true;
-
-        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
-
-        Assert.Equal(ResolutionStatus.Unavailable, status);
-        Assert.Null(principal);
-    }
-
-    [Fact]
-    public async Task ExchangeTarget_TwoAdObjectsHoldTheMailboxGuid_IsAmbiguous()
-    {
-        // A GUID copied onto a second object. The canonical object is one of the holders, and
-        // that is still not enough: two objects claim the mailbox.
-        var service = CreateService(ResolverReturning(SyncedVipRecipient(VipMailboxGuid)));
-        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
-        service.MailboxGuidHeldBy(VipMailboxGuid, VipMailboxUser, AddressNamesake);
-
-        var (principal, status) = await service.ResolveExchangeTargetAsync("vip.person@contoso.com");
-
-        Assert.Equal(ResolutionStatus.Ambiguous, status);
-        Assert.Null(principal);
     }
 
     [Fact]
@@ -816,75 +907,66 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         Assert.Equal(ResolutionStatus.Resolved, status);
         Assert.Equal(cloudGuid, principal!.ExchangeGuid);
-        Assert.Empty(service.MailboxGuidLookups);
+        Assert.Empty(service.SidLookups);
     }
 
     [Fact]
-    public void SelectMailboxBacking_AnObjectReturnedWithoutTheMailboxGuid_IsNotProof()
+    public void SelectSidObject_AnObjectWithoutItsDnOrGuid_OrUnderAnotherSid_IsUnavailable()
     {
-        // The selector must not trust the query that fed it: an object returned without the GUID
-        // - a regressed filter, an odd directory - proves nothing, even when it IS the canonical
-        // object.
-        var withoutGuid = SelectMailboxBacking(VipMailboxGuid, VipMailboxUser,
-            new[] { new MailboxGuidHolder("guid-vip", VipMailboxUser.DistinguishedName, null) });
-        var withAnotherGuid = SelectMailboxBacking(VipMailboxGuid, VipMailboxUser,
-            new[] { new MailboxGuidHolder("guid-vip", VipMailboxUser.DistinguishedName, Guid.Parse("11111111-2222-3333-4444-555555555555")) });
+        var recipient = SyncedVipRecipient();
+        Assert.Equal(ResolutionStatus.Unavailable, SelectSidObject(VipSid, recipient,
+            [SidObject(VipMailboxUser with { ObjectGuid = null }, VipSid)]).status);
+        Assert.Equal(ResolutionStatus.Unavailable, SelectSidObject(VipSid, recipient,
+            [SidObject(VipMailboxUser with { DistinguishedName = null }, VipSid)]).status);
+        Assert.Equal(ResolutionStatus.Unavailable, SelectSidObject(VipSid, recipient,
+            [SidObject(VipMailboxUser, "S-1-5-21-1000-2000-3000-1102")]).status);
+        Assert.Equal(ResolutionStatus.Resolved, SelectSidObject(VipSid, recipient, [SidObject(VipMailboxUser, VipSid)]).status);
+    }
 
-        Assert.Equal(ResolutionStatus.Unavailable, withoutGuid.status);
-        Assert.Null(withoutGuid.principal);
-        Assert.Equal(ResolutionStatus.Unavailable, withAnotherGuid.status);
-        Assert.Null(withAnotherGuid.principal);
+    // ---- C.2: the AD-first entry point's alias branch -------------------------------
+
+    [Fact]
+    public async Task Fallback_AnAliasOfASyncedMailbox_IsBoundBySid_WhenGraphReportsOne()
+    {
+        var service = VipService(holder: VipBackingObject);
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, AddressNamesake);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("guid-vip", principal!.ObjectGuid);
+        Assert.Equal(VipSid, principal.ObjectSid);
+        // The mailbox GUID stays ResolveExchangeTargetAsync's alone (aud-a2d).
+        Assert.Null(principal.ExchangeGuid);
+        Assert.Equal(new[] { "vip.alias@contoso.com" }, service.AdLookups);
     }
 
     [Fact]
-    public void SelectMailboxBacking_WithoutObjectGuidsToCompare_IsUnavailable()
+    public async Task Fallback_AnAliasOfASyncedMailbox_WithGraphUnanswered_ReResolvesTheAddressAsBefore()
     {
-        // Two blanks are not "the same object". Without objectGUIDs there is nothing immutable to
-        // compare, and string equality of two nulls must not stand in for it.
-        var noGuids = VipMailboxUser with { ObjectGuid = null };
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
 
-        var holderAndCanonicalBlank = SelectMailboxBacking(VipMailboxGuid, noGuids,
-            new[] { new MailboxGuidHolder(null, VipMailboxUser.DistinguishedName, VipMailboxGuid) });
-        var holderBlank = SelectMailboxBacking(VipMailboxGuid, VipMailboxUser,
-            new[] { new MailboxGuidHolder(null, VipMailboxUser.DistinguishedName, VipMailboxGuid) });
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
 
-        Assert.Equal(ResolutionStatus.Unavailable, holderAndCanonicalBlank.status);
-        Assert.Null(holderAndCanonicalBlank.principal);
-        Assert.Equal(ResolutionStatus.Unavailable, holderBlank.status);
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("guid-vip", principal!.ObjectGuid);
+        Assert.Equal(new[] { "vip.alias@contoso.com", "vip.person@contoso.com" }, service.AdLookups);
     }
 
-    [Fact]
-    public void ParseMailboxGuid_ReadsAdsOctetStringInWindowsGuidByteOrder()
+    /// <summary>Every message the service logged, rendered.</summary>
+    private sealed class CapturingLogger : ILogger<ProtectedPrincipalService>
     {
-        // 00112233-4455-6677-8899-aabbccddeeff as AD stores it: Data1, Data2 and Data3 little-endian.
-        byte[] adBytes =
-        [
-            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66,
-            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
-        ];
-        var expected = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
-
-        Assert.Equal(expected, ParseMailboxGuid(adBytes));
-        Assert.Equal(expected, ParseMailboxGuid(new System.Management.Automation.PSObject(adBytes)));
-        Assert.Equal(expected, ParseMailboxGuid(new List<object> { adBytes }));
-        Assert.Equal(expected, ParseMailboxGuid(expected));
-        Assert.Equal(expected, ParseMailboxGuid("00112233-4455-6677-8899-aabbccddeeff"));
-
-        Assert.Null(ParseMailboxGuid(new byte[16]));
-        Assert.Null(ParseMailboxGuid(new byte[15]));
-        Assert.Null(ParseMailboxGuid(Guid.Empty));
-        Assert.Null(ParseMailboxGuid("not-a-guid"));
-        Assert.Null(ParseMailboxGuid(null));
-    }
-
-    [Fact]
-    public void BuildMailboxGuidFilter_EscapesEachByteInAdsOrder()
-    {
-        // A hand-written literal, not recomputed from Guid.ToByteArray(), so the test cannot agree
-        // with a wrong implementation by sharing its mistake.
-        Assert.Equal(
-            @"(msExchMailboxGuid=\33\22\11\00\55\44\77\66\88\99\aa\bb\cc\dd\ee\ff)",
-            BuildMailboxGuidFilter(Guid.Parse("00112233-4455-6677-8899-aabbccddeeff")));
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (Messages)
+                Messages.Add(formatter(state, exception));
+        }
     }
 
     // ---- the legacy entry point is untouched --------------------------------

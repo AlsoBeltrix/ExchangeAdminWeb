@@ -50,6 +50,15 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
             Task.FromResult(_script.TryGetValue(identity, out var scripted) ? scripted : ((ResolvedDirectoryPrincipal?)null, ResolutionStatus.NotFound));
     }
 
+    /// <summary>A SID source that answers, and reports no on-premises SID.</summary>
+    private sealed class NoSidReported : IOnPremisesSidSource
+    {
+        public string Name => "Graph";
+
+        public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId) =>
+            Task.FromResult(new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported));
+    }
+
     private static ResolvedDirectoryPrincipal Group(string name, string objectGuid) =>
         new("Test-AD", name, string.Empty, name, null, $"CN={name},OU=Groups,DC=contoso,DC=test", objectGuid, null);
 
@@ -127,6 +136,9 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
                 ExchangeGuid: Guid.Parse("22222222-2222-4222-8222-222222222222")))
             .AdReturns(Typed, ProtectedPrincipalService.ResolutionStatus.Resolved, User("someone@contoso.test", "33333333-3333-4333-8333-333333333333"))
             .AdReturns("room1@contoso.test", ProtectedPrincipalService.ResolutionStatus.Resolved, Group("Room 1 Owners", "44444444-4444-4444-8444-444444444444"));
+        // docs/ProtectedPrincipalIdentifiers-Plan.md C.2 step 5: Graph answers with no on-premises SID, so the mailbox is bound by
+        // its canonical address, as this collision needs.
+        resolution.OnPremisesSidSource = new NoSidReported();
 
         var denial = await DenialFrom(GateOver(resolution));
 

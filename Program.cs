@@ -338,6 +338,8 @@ try
     builder.Services.AddSingleton<PageLoadTracker>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
+    // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: where the protection check reads a synced recipient's on-premises SID.
+    builder.Services.AddSingleton<IOnPremisesSidSource, GraphOnPremisesSidSource>();
     builder.Services.AddSingleton<ProtectedPrincipalService>();
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddScoped<BlockedSenderProtectionGate>();

@@ -269,7 +269,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     [MemberData(nameof(Pages))]
     public async Task ASingleGrant_FetchesTheDirectoryReadCredentialOnce_ForEveryCheckItMakes(string page)
     {
-        // kd-88. One change's checks - the target's resolution, the proof of its mailbox, its group check and the self-grant
+        // kd-88. One change's checks - the target's resolution, its read by SID (once the proof of its mailbox), its group check and the self-grant
         // check - each fetched the directory-read secret for itself; the dev log shows the first three (4.1 s, 2.7 s, 2.7 s).
         // The handler now opens one operation over its checks: one fetch, every check still made.
         _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
@@ -281,9 +281,9 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
             Sam = "shared",
             Sid = $"{SelfGrantDirectoryStandIn.DomainSid}-3998",
             PrimaryGroupId = SelfGrantDirectoryStandIn.DomainUsersRid,
-            MailboxGuid = TargetMailbox,
             Proxies = [$"SMTP:{Target}"],
         });
+        _h.GraphSids["ext-" + Target] = $"{SelfGrantDirectoryStandIn.DomainSid}-3998";
         var vip = _h.Forest.AddGroup("VIP Staff");
         var resolver = ExchangeNamesTheAliasAsTheOperator();
         resolver.ResolveRecipientAsync(Target).Returns(
@@ -296,7 +296,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
 
         Assert.True(result.Success, result.Message);
         Assert.Contains(_h.Forest.Searches, search => search.StartsWith("Get-ADUser ", StringComparison.Ordinal));
-        Assert.Contains(_h.Forest.Searches, search => search.Contains("(msExchMailboxGuid=", StringComparison.Ordinal));
+        Assert.Contains(_h.Forest.Searches, search => search == $"Get-ADObject {SelfGrantDirectoryStandIn.GlobalCatalogEndpoint} (objectSid={SelfGrantDirectoryStandIn.DomainSid}-3998)");
         Assert.Contains(_h.Forest.Searches, search => search.EndsWith(" " + SelfGrantDirectoryStandIn.TokenGroups, StringComparison.Ordinal));
         Assert.Contains(_h.Forest.Searches, search => search.Contains($"(userPrincipalName={Other})", StringComparison.Ordinal));
         Assert.Empty(_h.Forest.Errors);
