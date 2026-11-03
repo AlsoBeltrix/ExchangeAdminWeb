@@ -1,6 +1,6 @@
 # Protected principals by immutable identifier - Plan
 
-Status: **Draft 2026-11-03, awaiting owner approval**
+Status: **Approved 2026-11-03 (owner: "go"). In progress - S1 first.**
 Owner: Michael
 Date: 2026-11-03
 Last verified against code: local `master` `c94b443e`, 2026-11-03. Every file:line cited below was read there; lines
