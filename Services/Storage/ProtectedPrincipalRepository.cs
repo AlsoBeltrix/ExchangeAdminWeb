@@ -24,6 +24,21 @@ public sealed class ProtectedPrincipalRepository
     /// </summary>
     public const string KindGroupTarget = "group_target";
 
+    /// <summary>
+    /// Identifier rows (docs/ProtectedPrincipalIdentifiers-Plan.md A.2): a protected user by objectSid, a protected
+    /// group by objectSid, a protected OU by objectGUID. Value format "identifier|label"
+    /// (<see cref="ProtectedPrincipalIdEntry"/>), the label being the value an older build stores in the legacy kind.
+    /// An older build's reader has no arm for these kinds and ignores them; it keeps enforcing the companion legacy row
+    /// the admin page writes beside each one (plan B.1, B.2).
+    /// </summary>
+    public const string KindUserSid = "user_sid";
+
+    /// <inheritdoc cref="KindUserSid"/>
+    public const string KindGroupSid = "group_sid";
+
+    /// <inheritdoc cref="KindUserSid"/>
+    public const string KindOuGuid = "ou_guid";
+
     private readonly IConfigStore _store;
 
     public ProtectedPrincipalRepository(IConfigStore store) => _store = store;
@@ -82,11 +97,7 @@ public sealed class ProtectedPrincipalRepository
                 delete.ExecuteNonQuery();
             }
 
-            InsertKind(connection, transaction, KindUser, data.Users);
-            InsertKind(connection, transaction, KindGroup, data.Groups);
-            InsertKind(connection, transaction, KindOu, data.OrganizationalUnits);
-            InsertKind(connection, transaction, KindSamPattern, data.SamAccountNamePatterns);
-            InsertKind(connection, transaction, KindGroupTarget, data.GroupTargets);
+            InsertAll(connection, transaction, data);
 
             MarkPresent(connection, transaction);
         });
@@ -123,11 +134,7 @@ public sealed class ProtectedPrincipalRepository
                     delete.ExecuteNonQuery();
                 }
 
-                InsertKind(connection, transaction, KindUser, replacement.Users);
-                InsertKind(connection, transaction, KindGroup, replacement.Groups);
-                InsertKind(connection, transaction, KindOu, replacement.OrganizationalUnits);
-                InsertKind(connection, transaction, KindSamPattern, replacement.SamAccountNamePatterns);
-                InsertKind(connection, transaction, KindGroupTarget, replacement.GroupTargets);
+                InsertAll(connection, transaction, replacement);
                 MarkPresent(connection, transaction);
 
                 return new ProtectedPrincipalReplaceOutcome(true, before, ReadSnapshot(connection, transaction));
@@ -196,11 +203,7 @@ public sealed class ProtectedPrincipalRepository
                     return false;
             }
 
-            InsertKind(connection, transaction, KindUser, data.Users);
-            InsertKind(connection, transaction, KindGroup, data.Groups);
-            InsertKind(connection, transaction, KindOu, data.OrganizationalUnits);
-            InsertKind(connection, transaction, KindSamPattern, data.SamAccountNamePatterns);
-            InsertKind(connection, transaction, KindGroupTarget, data.GroupTargets);
+            InsertAll(connection, transaction, data);
             MarkPresent(connection, transaction);
             return true;
         });
@@ -218,6 +221,9 @@ public sealed class ProtectedPrincipalRepository
         var ous = new List<string>();
         var patterns = new List<string>();
         var targets = new List<string>();
+        var userIds = new List<string>();
+        var groupIds = new List<string>();
+        var ouIds = new List<string>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -230,10 +236,18 @@ public sealed class ProtectedPrincipalRepository
                 case KindOu: ous.Add(value); break;
                 case KindSamPattern: patterns.Add(value); break;
                 case KindGroupTarget: targets.Add(value); break;
+                case KindUserSid: userIds.Add(value); break;
+                case KindGroupSid: groupIds.Add(value); break;
+                case KindOuGuid: ouIds.Add(value); break;
             }
         }
         return new ProtectedPrincipalData(
-            users.ToArray(), groups.ToArray(), ous.ToArray(), patterns.ToArray(), targets.ToArray());
+            users.ToArray(), groups.ToArray(), ous.ToArray(), patterns.ToArray(), targets.ToArray())
+        {
+            UserIds = userIds.ToArray(),
+            GroupIds = groupIds.ToArray(),
+            OuIds = ouIds.ToArray(),
+        };
     }
 
     private static bool ReadConfigured(SqliteConnection connection) => ReadConfigured(connection, null);
@@ -244,6 +258,20 @@ public sealed class ProtectedPrincipalRepository
         command.Transaction = transaction;
         command.CommandText = "SELECT 1 FROM protected_principal_present LIMIT 1;";
         return command.ExecuteScalar() is not null;
+    }
+
+    // Every kind, legacy and identifier, each into its own kind: an identifier row is never written into a legacy kind,
+    // where an older build would read it as a user, group or OU named "S-1-...|..." (ProtectedPrincipalIdKindsTripwireTests).
+    private static void InsertAll(SqliteConnection connection, SqliteTransaction transaction, ProtectedPrincipalData data)
+    {
+        InsertKind(connection, transaction, KindUser, data.Users);
+        InsertKind(connection, transaction, KindGroup, data.Groups);
+        InsertKind(connection, transaction, KindOu, data.OrganizationalUnits);
+        InsertKind(connection, transaction, KindSamPattern, data.SamAccountNamePatterns);
+        InsertKind(connection, transaction, KindGroupTarget, data.GroupTargets);
+        InsertKind(connection, transaction, KindUserSid, data.UserIds);
+        InsertKind(connection, transaction, KindGroupSid, data.GroupIds);
+        InsertKind(connection, transaction, KindOuGuid, data.OuIds);
     }
 
     private static void InsertKind(SqliteConnection connection, SqliteTransaction transaction, string kind, string[] values)
@@ -284,9 +312,19 @@ public sealed record ProtectedPrincipalData(
 {
     public static ProtectedPrincipalData Empty { get; } = new([], [], [], [], []);
 
-    /// <summary>How many rules of all five kinds these lists hold.</summary>
+    /// <summary>Identifier rows of kind <c>user_sid</c>, each "objectSid|label" (docs/ProtectedPrincipalIdentifiers-Plan.md A.2).</summary>
+    public string[] UserIds { get; init; } = [];
+
+    /// <summary>Identifier rows of kind <c>group_sid</c>, each "objectSid|DN".</summary>
+    public string[] GroupIds { get; init; } = [];
+
+    /// <summary>Identifier rows of kind <c>ou_guid</c>, each "objectGUID|DN".</summary>
+    public string[] OuIds { get; init; } = [];
+
+    /// <summary>How many rows of all eight kinds these lists hold, a companion legacy row counted as its own row.</summary>
     public int RuleCount =>
-        Users.Length + Groups.Length + OrganizationalUnits.Length + SamAccountNamePatterns.Length + GroupTargets.Length;
+        Users.Length + Groups.Length + OrganizationalUnits.Length + SamAccountNamePatterns.Length + GroupTargets.Length
+        + UserIds.Length + GroupIds.Length + OuIds.Length;
 }
 
 /// <summary>The protected-principal rows and presence marker, read together (aud-a28j).</summary>
