@@ -80,10 +80,10 @@ public sealed class MigrationExcludedGroupTests : IDisposable
                 _exchange.DirectoryGroups.Remove("Sales");
                 return "the excluded group 'Sales' could not be resolved in any domain of the forest (contoso.test: Cannot find an object with identity: 'Sales' under: 'DC=contoso,DC=test')";
             case "no directory user":
-                return $"no directory user in the forest has the user principal name {Address}";
+                return $"no directory user in the forest carries the address {Address} as its user principal name, mail or proxy address";
             case "two directory users":
                 _exchange.DirectoryUsers[Address] = Users(DirectoryUser(Address, StaffDn), DirectoryUser(Address, StaffDn));
-                return $"2 directory users in the forest have the user principal name {Address}";
+                return $"2 directory users in the forest carry the address {Address} as their user principal name, mail or proxy address ({UserDn("contoso.test", Address)}; {UserDn("contoso.test", Address)})";
             case "no memberOf":
                 _exchange.DirectoryUsers[Address] = Users(Row(("UserPrincipalName", Address), ("DistinguishedName", UserDn("contoso.test", Address))));
                 return $"the directory reported no memberOf for {Address}";

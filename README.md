@@ -22,6 +22,13 @@ ASP.NET Core 10 Blazor Server application for Exchange Online administration, ma
 Check migration eligibility and create move batches between Exchange Online and on-premises Exchange.
 
 - Validates current mailbox location before eligibility decisions
+- **Excluded AD Groups** (Migration module config): a move to Exchange Online is refused for a direct member of a
+  configured group. The user is found at the forest's global catalog by the typed address - as their UPN, mail or an
+  smtp proxy address, one read - and read in their own domain for memberOf; each group is resolved in every domain. A
+  name held by groups in several domains excludes a member of any of them, naming the group and the domains (a member of
+  none passes, with a warning); enter the group's SID or objectGUID to name one. A check that cannot be completed is
+  Undetermined, never Eligible; in a bulk file a failed read is read once and repeated for each row, which says so. The
+  check runs in a warm directory session and logs its time (sweep-c item 14)
 - Checks on-prem mailbox and archive size before cloud migrations. The `CloudQuotaGB` limit applies to the primary mailbox and the archive separately; their combined size is not a criterion
 - Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
