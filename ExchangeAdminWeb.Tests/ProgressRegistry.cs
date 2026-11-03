@@ -656,6 +656,7 @@ public static class ProgressRegistry
             new("SaveCurrentTabAsync", ConfigStoreWrite),
             new("DiscardChanges", "reloads the page; pure navigation"),
             new("RemovePp", LocalUiState + "; the save is a separate action"),
+            new("RemovePpId", LocalUiState + " - an identifier row and its companion; the save is a separate action"),
             new("AddPpPattern",
                 "a pattern is a string, not a directory object, so this one Add does NOT reach "
                 + "the AD validation path its four siblings do"),
