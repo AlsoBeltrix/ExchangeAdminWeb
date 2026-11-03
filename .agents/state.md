@@ -8,6 +8,29 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-03 - protected principals by identifier landed (S1-S5); one dev deploy owed when everything in flight is done
+
+**Master `2e80f488`.** `docs/ProtectedPrincipalIdentifiers-Plan.md` Implemented: protected users/groups by SID and OUs by
+objectGUID in their own kinds with companion legacy rows (S1); conversion pass at every start plus Resolve now and badges
+(S2); synced write targets bound by the on-premises SID Graph reports through the new Admin Settings field "Graph Directory
+Read Credential (Delinea Secret ID)", the aud-a2c GUID proof retired (S3); Conference Rooms runs no protected-principal
+check - binder replaces the gate, servicing option gone, Constitution and repo guidance rewritten, ConferenceRooms 2.20.0
+(S4); module-admin name grants converted to SIDs at start and on Resolve now, the rest listed with reasons (S5). Records
+ppi-s1..ppi-s5. Supervisor's full gate run on master after the merges: see the line below this entry once it lands.
+
+**Owner rulings today (`.agents/decisions.md` 2026-11-03):** Conference Rooms - no protected-principal check at all; one
+decision at a time; "do it correctly" is the standing answer (thorough form, never ask about cost); the sweep's open
+decisions resolved by it (item 6 via the plan, item 8 via S5, item 12 both halves, items 9 and 21 by judgement, the cache
+stays); Graph is the SID source, through its own field, nothing pre-filled from Cloud Password Reset; ONE dev deploy,
+declared by the supervisor when everything in flight is merged and green - dev stays on `8557a15a` until then, and users
+who land on `/ExchangeAdminWebDev` (three did today, hitting kd-88's walk) are told to use prod.
+
+**Still in flight before the deploy is declared:** the sweep's MEDIUM items 13-45 (`.agents/review/live-risk-sweep-2026-10-30.md`;
+item 6 closed by the plan, 8 by S5, 17 and 28 largely by S1-S4 - each still gets its own check), the script refusal for a
+non-admin-writable folder (item 12 code half), kd-94's shape if the dev check shows one. Owner-side, at the deploy: fill
+the Graph field; confirm the registration holds application `User.Read.All`; the host ACL commands (item 12 host half);
+then the check list the supervisor hands over.
+
 ### 2026-10-31 - after the first dev deploy since 14 October: the live failures fixed, prod waits on three owner decisions
 
 **Master `5c4c2970`, every gate green, re-run by the supervisor:** Release build 0 errors (19 known warnings); xUnit 8316

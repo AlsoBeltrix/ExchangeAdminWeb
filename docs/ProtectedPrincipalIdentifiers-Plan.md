@@ -1,6 +1,6 @@
 # Protected principals by immutable identifier - Plan
 
-Status: **Approved 2026-11-03 (owner: "go"). In progress - S1 first.**
+Status: **Implemented 2026-11-03 - S1-S5 merged (853275e4, 28f6ba67, 3b7a946e, 73d1fdf5, 2e80f488); records ppi-s1..ppi-s5. Not yet deployed: the one dev deploy and its checks (section I, E timing) are owed.**
 Owner: Michael
 Date: 2026-11-03
 Last verified against code: local `master` `c94b443e`, 2026-11-03. Every file:line cited below was read there; lines
