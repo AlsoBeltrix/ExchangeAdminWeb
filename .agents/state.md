@@ -8,9 +8,30 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-03 (later) - sweep items 13-18 and S6 landed; the identifier conversion is a one-time owner-run db verb
+
+**Master `82a67e2f`** (merge of `fix/sweep-c`; worktree and branch gone). Owner rulings, `.agents/decisions.md` 2026-11-03
+"Identifier conversion is a one-time command-line step, not a startup pass" and plan section K: the S2/S5 startup passes,
+flags, Resolve now buttons and badges are removed; `db convert-identifiers <db> [--plan]` and `db identifier-status <db>`
+(`Services/Storage/ConfigDbIdentifiers.cs`, directory as the invoking user via `InvokingUserIdentifierDirectory`) convert
+legacy protected-principal rows and module-admin name grants, all or nothing; the new build never resolves or matches
+names - an unconverted row fails the check closed, named ("not converted - run db convert-identifiers"). Run-book:
+`docs/ConfigDbOperations.md` (copy, plan, convert, status, then live). Sweep items 13, 14, 15, 18 fixed (records
+sweep-c-13/14/15/18), 17 rebuilt under K (sweep-c-17), 16 is a record for the owner
+(`.agents/review/findings/item-16-revalidation-decision.md`). Records ppi-s6. Supervisor's gates on master at `82a67e2f`:
+Release build 0 errors (19 known warnings); xUnit 8461 passed, 0 failed; format, whitespace and ASCII clean. Not pushed.
+
+**Open owner question (ask alone, next):** a `group_sid` row whose group has since been deleted. The directory definitively
+answers "no such object" for the SID; under K as built that makes every check that finds no other match incomplete,
+naming the row - the item-17 outage shape for a deleted protected group. Then item 16 (keep session revalidation).
+
+**Still in flight before the deploy is declared:** sweep MEDIUM items 19-45, item 12 code half, kd-94's shape if needed.
+Owner-side at the deploy, in order: `db convert-identifiers` against a copy then live (plan K.4); fill the Graph field;
+confirm application `User.Read.All`; host ACLs (item 12); then the supervisor's check list.
+
 ### 2026-11-03 - protected principals by identifier landed (S1-S5); one dev deploy owed when everything in flight is done
 
-**Master `2e80f488`.** `docs/ProtectedPrincipalIdentifiers-Plan.md` Implemented: protected users/groups by SID and OUs by
+**Master `2e80f488`** (superseded above for S2/S5: the passes are gone). `docs/ProtectedPrincipalIdentifiers-Plan.md` Implemented: protected users/groups by SID and OUs by
 objectGUID in their own kinds with companion legacy rows (S1); conversion pass at every start plus Resolve now and badges
 (S2); synced write targets bound by the on-premises SID Graph reports through the new Admin Settings field "Graph Directory
 Read Credential (Delinea Secret ID)", the aud-a2c GUID proof retired (S3); Conference Rooms runs no protected-principal
