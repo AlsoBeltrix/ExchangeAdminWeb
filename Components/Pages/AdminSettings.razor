@@ -110,7 +110,8 @@
 
             <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.
                 A user, group or OU added here is stored by its directory identifier - a user's or group's SID, an OU's object GUID - and the protection check compares that identifier rather than the name wherever it knows the target's own: another account later given the same name or address is not protected in its place, and a renamed OU still protects the accounts beneath it. Hover over an entry to see its identifier.
-                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover was added before identifiers were stored, or by an older build of this app, and is still enforced by name, exactly as before; it is marked <em>not converted</em>. The resolve pass that runs at every start of this app - or <strong>Resolve now</strong> - looks each such entry up once and, when it matches exactly one directory object, stores that object's identifier beside it; an entry that matches none or several, or could not be looked up, is left as it is, with the reason on its badge.</small></p>
+                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover was added before identifiers were stored, or by an older build of this app, and is still enforced by name, exactly as before; it is marked <em>not converted</em>. The resolve pass that runs at every start of this app - or <strong>Resolve now</strong> - looks each such entry up once and, when it matches exactly one directory object, stores that object's identifier beside it; an entry that matches none or several, or could not be looked up, is left as it is, with the reason on its badge.
+                A change Exchange makes to a synced mailbox is checked against the one Active Directory account holding the on-premises SID Microsoft Graph reports for it, read with the <strong>Graph Directory Read Credential</strong> below; until that is set, such changes are refused.</small></p>
 
             @if (ppLoadError != null)
             {
@@ -342,6 +343,23 @@
                         {
                             <small class="text-muted d-block">@SecretFallbackText(fallbackId)</small>
                         }
+                    }
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Graph Directory Read Credential (Delinea Secret ID)</label>
+                    @* docs/ProtectedPrincipalIdentifiers-Plan.md C.2. Bound by hand for the same reason as the field beside it. *@
+                    <input type="text" class="form-control form-control-sm"
+                           value="@ppGraphReadSecretId"
+                           disabled="@ppSecretUnreadable"
+                           @oninput="(e) => SetPpGraphReadSecretId(e.Value?.ToString() ?? string.Empty)"
+                           placeholder="Required for every write to a synced mailbox" />
+                    @if (ppSecretUnreadable)
+                    {
+                        <small class="text-danger d-block">@SecretUnreadableText</small>
+                    }
+                    else
+                    {
+                        <small class="text-muted">@GraphSecretHelpText</small>
                     }
                 </div>
             </div>
@@ -577,7 +595,8 @@
             + EntryDelta(ppUserIds, ppUserIdsBaseline)
             + EntryDelta(ppGroupIds, ppGroupIdsBaseline)
             + EntryDelta(ppOuIds, ppOuIdsBaseline)
-            + SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline);
+            + SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline)
+            + SecretIdDelta(ppGraphReadSecretId, ppGraphReadSecretIdBaseline);
 
         dirty.SetCount(SectionProtected, changes);
     }
@@ -689,6 +708,10 @@
     private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "", ppNewTarget = "";
     private string ppDirectoryReadSecretId = "";
     private string ppDirectoryReadSecretIdBaseline = "";
+    // docs/ProtectedPrincipalIdentifiers-Plan.md C.2, owner ruling 2026-11-03: the Graph Directory Read Credential's Secret
+    // ID - its own field, saved, counted and refused exactly as the directory-read one beside it is. No fallback.
+    private string ppGraphReadSecretId = "";
+    private string ppGraphReadSecretIdBaseline = "";
     private string? ppLoadError;
 
     // aud-a28j. True only when the protection rules were read. A load that failed leaves the five lists
@@ -706,6 +729,15 @@
     // unreadable store as an unset id, and a changed id saved from there wrote over a value never shown. The
     // field is disabled, and a save that would change the id refuses on its own: the field is not the guard.
     private bool ppSecretUnreadable;
+
+    // Known Failure Class 5: what the field is for, what it needs, and what an empty one does.
+    private const string GraphSecretHelpText =
+        "The Secret Server secret (Tenant ID, Application ID, Client Secret) of an Entra app registration holding the "
+        + "application permission User.Read.All. The protection check reads each synced mailbox's on-premises SID from "
+        + "Microsoft Graph with it, and checks the one Active Directory account holding that SID - not whatever account "
+        + "carries the mailbox's address. While it is empty, or Graph cannot be read, every protection-checked change to a synced "
+        + "mailbox in Mailbox Permissions, Calendar Permissions, Out of Office and Conference Rooms is refused as unavailable; "
+        + "cloud-only mailboxes are unaffected.";
 
     private string SecretUnreadableText =>
         "The directory-read credential's setting could not be read, so it is not shown and cannot be changed here. "
@@ -990,6 +1022,11 @@
         ppDirectoryReadSecretId = secret.Stored;
         ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
         ppSecretFallbackId = secret.FallbackInEffect;
+        // The same module's row: unreadable for one is unreadable for both, and both fields are then disabled.
+        if (!ProtectedPrincipalService.TryGetGraphDirectoryReadSecret(out var graphSecret))
+            ppSecretUnreadable = true;
+        ppGraphReadSecretId = graphSecret;
+        ppGraphReadSecretIdBaseline = ppGraphReadSecretId;
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -1049,6 +1086,13 @@
     private void SetPpDirectoryReadSecretId(string value)
     {
         ppDirectoryReadSecretId = value;
+        RecountProtected();
+    }
+
+    /// <summary>Edits the Graph Directory Read Credential's Secret ID and recounts the section, as the field beside it does.</summary>
+    private void SetPpGraphReadSecretId(string value)
+    {
+        ppGraphReadSecretId = value;
         RecountProtected();
     }
 
@@ -1414,6 +1458,7 @@
         // authorization re-check was the ID validated and saved. The lists are built by the Add and Remove clicks,
         // and their snapshot stays below the in-flight-Add refusal (ppv-3), where it was.
         var submittedSecretId = ppDirectoryReadSecretId;
+        var submittedGraphSecretId = ppGraphReadSecretId;
 
         saving = true;
         statusMessage = null;
@@ -1497,10 +1542,31 @@
                 return;
             }
 
+            // docs/ProtectedPrincipalIdentifiers-Plan.md C.2. The Graph Directory Read Credential's Secret ID, by the same rules.
+            var graphSecretId = submittedGraphSecretId.Trim();
+            var graphSecretChanged = SecretIdDelta(submittedGraphSecretId, ppGraphReadSecretIdBaseline) > 0;
+            if (graphSecretChanged && graphSecretId.Length > 0 && !ProtectedPrincipalService.IsSecretId(graphSecretId))
+            {
+                statusMessage = "Refusing to save: the Graph Directory Read Credential (Delinea Secret ID) must be the ID of a secret in Secret Server - a whole number greater than zero, in digits only, with no sign or leading zero - or empty to clear it. Nothing was changed.";
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "Validation", statusMessage);
+                return;
+            }
+
+            if (graphSecretChanged && (ppSecretUnreadable || ModuleConfigSvc.IsModuleCorrupt(ProtectedPrincipalService.ProtectedPrincipalsModuleKey)))
+            {
+                statusMessage = "Refusing to save: the Graph Directory Read Credential's setting could not be read, so the value shown is not the stored one and saving it could overwrite a value never shown. Nothing was changed. "
+                    + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+                statusIsError = true;
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, ppSecretUnreadable ? "StoreUnreadable" : "StoreCorrupt", statusMessage);
+                return;
+            }
+
             // aud-a41. What this save writes, taken before its first store call. Each of its three calls runs off the circuit - a
             // call can wait up to the store's busy timeout for a lock held elsewhere, and on the circuit that wait froze the page -
             // so the admin can edit while it runs, and an edit made then is not part of this save.
             var loadedSecretId = ppDirectoryReadSecretIdBaseline;
+            var loadedGraphSecretId = ppGraphReadSecretIdBaseline;
             var newConfig = new ProtectedPrincipalConfig
             {
                 Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
@@ -1543,6 +1609,24 @@
                     statusMessage = "Refusing to save: the directory-read credential (Delinea Secret ID) was changed after this page loaded it - by another administrator, or on the other instance. Nothing was saved, the protection rules included. Reload the page and re-apply your changes.";
                     statusIsError = true;
                     Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, "ConcurrentChange", statusMessage);
+                    return;
+                }
+            }
+
+            // aud-a28r, for the Graph Directory Read Credential: compared before the rules are written, so a value changed
+            // elsewhere refuses the whole save rather than half of it.
+            if (graphSecretChanged)
+            {
+                var graphCheck = await Task.Run(() => ProtectedPrincipalService.CompareGraphDirectoryReadSecretId(loadedGraphSecretId, graphSecretId));
+                if (graphCheck.Status is ModuleConfigSaveStatus.StoreCorrupt or ModuleConfigSaveStatus.ConcurrentChange)
+                {
+                    var concurrent = graphCheck.Status == ModuleConfigSaveStatus.ConcurrentChange;
+                    statusMessage = concurrent
+                        ? "Refusing to save: the Graph Directory Read Credential (Delinea Secret ID) was changed after this page loaded it - by another administrator, or on the other instance. Nothing was saved, the protection rules included. Reload the page and re-apply your changes."
+                        : "Refusing to save: the Graph Directory Read Credential's setting could not be read as the save went to check it. Nothing was saved, the protection rules included. "
+                            + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey);
+                    statusIsError = true;
+                    Audit.LogSettingsSaveRefused(Logger, currentUser, ip, section, concurrent ? "ConcurrentChange" : "StoreCorrupt", statusMessage);
                     return;
                 }
             }
@@ -1605,6 +1689,9 @@
             ppRulesVersion = outcome.Version ?? "";
             SetRulesBaseline(rulesNow);
             var secretFailure = secretChanged ? await SaveDirectoryReadSecretAsync(loadedSecretId, secretId, ip) : null;
+            var graphFailure = graphSecretChanged ? await SaveGraphReadSecretAsync(loadedGraphSecretId, graphSecretId, ip) : null;
+            if (graphFailure is not null)
+                secretFailure = secretFailure is null ? graphFailure : secretFailure + " " + graphFailure;
             RecountProtected();
             if (secretFailure is null)
             {
@@ -1695,9 +1782,63 @@
     }
 
     private static string[] SecretValue(IReadOnlyDictionary<string, string> values) =>
-        values.TryGetValue(ProtectedPrincipalService.DirectoryReadSecretConfigKey, out var value) && !string.IsNullOrWhiteSpace(value)
+        SecretValueOf(values, ProtectedPrincipalService.DirectoryReadSecretConfigKey);
+
+    private static string[] SecretValueOf(IReadOnlyDictionary<string, string> values, string key) =>
+        values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
             ? [value.Trim()]
             : [];
+
+    private const string GraphSecretSection = "ProtectedPrincipals:GraphDirectoryReadSecretId";
+
+    /// <summary>
+    /// Writes the Graph Directory Read Credential's Secret ID after the rules have been saved and records it under its own
+    /// section, as <see cref="SaveDirectoryReadSecretAsync"/> does for the directory-read one. Null when it was saved;
+    /// otherwise what the admin is told.
+    /// </summary>
+    private async Task<string?> SaveGraphReadSecretAsync(string loadedSecretId, string secretId, string ip)
+    {
+        try
+        {
+            var outcome = await Task.Run(() => ProtectedPrincipalService.SaveGraphDirectoryReadSecretId(loadedSecretId, secretId));
+            if (outcome.Status is ModuleConfigSaveStatus.StoreCorrupt or ModuleConfigSaveStatus.ConcurrentChange)
+            {
+                var concurrent = outcome.Status == ModuleConfigSaveStatus.ConcurrentChange;
+                var refusal = "The protection rules were saved and are in effect, but the Graph Directory Read Credential (Delinea Secret ID) was not saved: "
+                    + (concurrent
+                        ? "it was changed after this page loaded it - by another administrator, or on the other instance. Reload the page and re-apply your change."
+                        : "its setting could not be read as the save went to change it. " + SettingsStoreText.ModuleConfig(ProtectedPrincipalService.ProtectedPrincipalsModuleKey));
+                Audit.LogSettingsSaveRefused(Logger, currentUser, ip, GraphSecretSection, concurrent ? "ConcurrentChange" : "StoreCorrupt", refusal);
+                return refusal;
+            }
+
+            try
+            {
+                Audit.LogSettingsChange(currentUser, ip, GraphSecretSection,
+                    SecretValueOf(outcome.Before, ProtectedPrincipalService.GraphDirectoryReadSecretConfigKey),
+                    SecretValueOf(outcome.After, ProtectedPrincipalService.GraphDirectoryReadSecretConfigKey),
+                    outcome.AlreadyApplied.Count > 0
+                        ? new Dictionary<string, object?> { ["alreadyApplied"] = outcome.AlreadyApplied.ToArray() }
+                        : null);
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the Graph directory-read secret id change"); }
+
+            var stored = outcome.After.GetValueOrDefault(ProtectedPrincipalService.GraphDirectoryReadSecretConfigKey) ?? "";
+            // aud-a41: the field takes the stored value only while it still holds what this save wrote.
+            ppGraphReadSecretIdBaseline = stored;
+            if (string.Equals(ppGraphReadSecretId.Trim(), secretId, StringComparison.Ordinal))
+                ppGraphReadSecretId = stored;
+            return null;
+        }
+        catch (Exception secretEx)
+        {
+            if (!ExchangeAdminWeb.Services.Storage.ConfigStoreBusy.IsBusy(secretEx))
+                Logger.LogError(secretEx, "The Graph directory-read secret id was not saved; the protection rules were");
+            return Audit.LogSettingsSaveException(Logger, currentUser, ip, GraphSecretSection, secretEx,
+                $"The protection rules were saved and are in effect, but the Graph Directory Read Credential (Delinea Secret ID) was not saved: {secretEx.Message} Save again to retry it.",
+                busy: $"The protection rules were saved and are in effect, but the Graph Directory Read Credential (Delinea Secret ID) was not saved: {SettingsSaveAudit.StoreBusyCause}. Save again to retry it.");
+        }
+    }
 
     /// <summary>Every rule as <c>Kind:value</c>, so a settings-change record lists what was added and removed.</summary>
     private static string[] RuleEntries(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalData? rules) =>

@@ -1735,7 +1735,9 @@ public sealed class ModuleCatalog
             // 1.2.4: the protected-principals pane flags each entry still stored by name ("not converted", with the last
             // resolve pass's reason), offers Resolve now, and says what a "not in AD" entry still does per kind
             // (docs/ProtectedPrincipalIdentifiers-Plan.md S2).
-            Version = "1.2.4",
+            // 1.2.5: the protected-principals pane gains the Graph Directory Read Credential (Delinea Secret ID) field, its
+            // help and its save (docs/ProtectedPrincipalIdentifiers-Plan.md S3).
+            Version = "1.2.5",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

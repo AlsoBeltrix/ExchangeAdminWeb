@@ -647,6 +647,15 @@ permission that could. Disabled by default and fail-closed.
     directory holds the grantee - and nothing is written. A removal is not checked and does not need it. With it
     configured, each check fetches it once (a bulk file once for the whole file), and the protected-principal
     resolve pass (see Protected Users / Excluded Users) once per pass
+  - **Needs the Graph Directory Read Credential** (Admin Settings, Protected principals, beside the Directory Read
+    Credential) for a synced mailbox - the Secret Server secret (Tenant ID, Application ID, Client Secret) of an app
+    registration holding the application permission `User.Read.All`. The protection check reads the mailbox's
+    on-premises SID (`onPremisesSecurityIdentifier`) from Microsoft Graph with it and checks the one Active Directory
+    account holding that SID, read at a global catalog, so a mailbox in another domain resolves and an account that
+    only carries the mailbox's address is never the one checked. Empty until an admin fills it, with no fallback:
+    while it is empty, or Graph cannot be read, every protection-checked change to a synced mailbox (Mailbox
+    Permissions, Calendar Permissions, Out of Office, Conference Rooms) is refused as unavailable. Cloud-only mailboxes
+    do not need it; a synced mailbox Graph reports no SID for is checked by its address and logged ("bound by address")
   - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
     refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient
     its filter matches only since then is not compared. One Exchange reports no member of is refused as incomplete,
