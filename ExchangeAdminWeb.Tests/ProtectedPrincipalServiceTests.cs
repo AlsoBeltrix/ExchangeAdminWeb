@@ -121,6 +121,26 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.Contains("cfo@contoso.com", service.LoadEffectiveConfig().config!.Users);
     }
 
+    /// <summary>
+    /// K.3: the check compares users by identifier only. Gives every legacy user row the service loaded a user_sid row
+    /// labelled with it - what db convert-identifiers writes - so these tests reach the comparison they pin: the targets
+    /// carry no SID, so each row is compared by its label (plan C.2's fallback).
+    /// </summary>
+    private static void ConvertUsers(ProtectedPrincipalService service)
+    {
+        var (cfg, _, error) = service.LoadEffectiveConfig();
+        Assert.Null(error);
+        var rid = 1000;
+        service.SaveConfig(new ProtectedPrincipalConfig
+        {
+            Users = cfg!.Users,
+            Groups = cfg.Groups,
+            OrganizationalUnits = cfg.OrganizationalUnits,
+            SamAccountNamePatterns = cfg.SamAccountNamePatterns,
+            UserIds = cfg.Users.Select(u => ProtectedPrincipalIdEntry.Format($"S-1-5-21-1000000000-1000000000-1000000000-{rid++}", u)).ToArray(),
+        });
+    }
+
     private static ResolvedDirectoryPrincipal MakePrincipal(
         string upn = "user@contoso.com",
         string? samAccountName = null,
@@ -171,6 +191,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         });
 
         var service = CreateService(protectedPrincipalsJson: json);
+        ConvertUsers(service);
         var principal = MakePrincipal(upn: "ceo@contoso.com");
 
         var result = await service.CheckAsync(principal);
@@ -194,6 +215,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         });
 
         var service = CreateService(protectedPrincipalsJson: json);
+        ConvertUsers(service);
         var principal = MakePrincipal(upn: "someone@contoso.com", primarySmtp: "boss@contoso.com");
 
         var result = await service.CheckAsync(principal);
@@ -216,6 +238,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         });
 
         var service = CreateService(protectedPrincipalsJson: json);
+        ConvertUsers(service);
         var principal = MakePrincipal(upn: "ceo@contoso.com");
 
         var result = await service.CheckAsync(principal);
@@ -253,7 +276,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
     // --- OU protected match ---
 
     [Fact]
-    public async Task Check_OuMatch_IsProtected()
+    public async Task Check_OuLegacyRow_IsNeverMatchedByItsDn_TheCheckRefusesNamingIt()
     {
         var json = JsonSerializer.Serialize(new
         {
@@ -271,8 +294,9 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var result = await service.CheckAsync(principal);
 
-        Assert.True(result.IsProtected);
-        Assert.Contains("OU:OU=Tier0,DC=ad,DC=contoso,DC=com", result.MatchedRules);
+        // K.3: a legacy OU row with no ou_guid companion is not compared by DN suffix; the check cannot answer and refuses.
+        Assert.True(result.CheckFailed, result.Reason);
+        Assert.Contains("protected OU 'OU=Tier0,DC=ad,DC=contoso,DC=com': not converted - run db convert-identifiers", result.Reason, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -376,7 +400,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
             ProtectedPrincipals = new
             {
                 Users = Array.Empty<string>(),
-                Groups = new[] { "Domain Admins" },
+                Groups = new[] { "S-1-5-21-1000000000-1000000000-1000000000-512" },
                 OrganizationalUnits = Array.Empty<string>(),
                 SamAccountNamePatterns = Array.Empty<string>()
             }
@@ -402,12 +426,13 @@ public class ProtectedPrincipalServiceTests : IDisposable
             {
                 Users = new[] { "admin@contoso.com" },
                 Groups = Array.Empty<string>(),
-                OrganizationalUnits = new[] { "OU=Tier0,DC=ad,DC=contoso,DC=com" },
+                OrganizationalUnits = Array.Empty<string>(),
                 SamAccountNamePatterns = new[] { "adm-*" }
             }
         });
 
         var service = CreateService(protectedPrincipalsJson: json);
+        ConvertUsers(service);
         var principal = MakePrincipal(upn: "normaluser@contoso.com", samAccountName: "normaluser", dn: "CN=Normal,OU=Users,DC=ad,DC=contoso,DC=com");
 
         var result = await service.CheckAsync(principal);
@@ -499,6 +524,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var configOverrides = new Dictionary<string, string?>();
         var service = CreateService(configOverrides, json);
+        ConvertUsers(service);
 
         var centralTarget = MakePrincipal(upn: "central-protected@contoso.com");
         var centralResult = await service.CheckAsync(centralTarget);
@@ -667,6 +693,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         });
 
         var service = CreateService(protectedPrincipalsJson: json);
+        ConvertUsers(service);
         var principal = MakePrincipal(samAccountName: "breakglass");
 
         var result = await service.CheckAsync(principal);

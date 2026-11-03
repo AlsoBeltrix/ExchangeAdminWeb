@@ -23,6 +23,12 @@ public sealed record MembershipRevalidationResult(
     /// </summary>
     public IReadOnlySet<AuthorizationGrant> Grants { get; init; } = NoGrants;
 
+    /// <summary>
+    /// sweep-c item 15. The fresh directory read failed or timed out and this verdict is the account's last recorded answer,
+    /// read within <see cref="CircuitMembershipRevalidator.FallbackWindow"/>, compared as a fresh one would be.
+    /// </summary>
+    public bool FromRecordedAnswer { get; init; }
+
     public bool IsValid => Reason is null;
 
     public static MembershipRevalidationResult Valid(string detail) => new(null, Array.Empty<string>(), detail);
@@ -71,9 +77,21 @@ public sealed record MembershipRevalidationResult(
 /// check, before the page is prerendered. Every successful directory read is recorded per account,
 /// and a page request may be confirmed by a recorded answer whose read started less than
 /// <see cref="CircuitRevalidationOptions.Interval"/> ago - the window an open circuit already has -
-/// but never refused by one: an answer that would refuse is read again. A read that fails forgets the
-/// account's answer, and every recorded answer sweeps out the ones that have expired (aud-a29j). The
-/// circuit's own checks never use a recorded answer; they read every time.
+/// but never refused by one: an answer that would refuse is read again. Every recorded answer sweeps out
+/// the ones that have expired (aud-a29j). The circuit's own checks never use a recorded answer in place
+/// of a read; they read every time.
+/// </para>
+/// <para>
+/// sweep-c item 15. One failed lookup no longer ends a session. When the fresh read fails, answers
+/// nothing or does not answer within <see cref="CircuitRevalidationOptions.LookupTimeout"/>, the
+/// account's last recorded answer is used if its read started within <see cref="FallbackWindow"/> -
+/// one interval plus two lookup timeouts, so the answer the circuit's own previous check recorded is
+/// still there when the next one fails, and two failed checks in a row find none. That answer is
+/// compared exactly as a fresh one: it confirms, or it refuses with its own reason - a removal the
+/// directory reported is never forgiven. Only with no such answer does the failure stand, and the
+/// session ends as before. Every fallback is counted (<see cref="FallbackCount"/>) and logged at
+/// Warning with the count. Before, a read that failed forgot the account's answer (aud-a29j), so one
+/// two-minute stall in the directory ended every tab that was checked during it.
 /// </para>
 /// <para>
 /// Throws only <see cref="OperationCanceledException"/>, and only for the caller's own token (the
@@ -95,15 +113,31 @@ public sealed class CircuitMembershipRevalidator
     // back is not kept for the app pool's life.
     private readonly ConcurrentDictionary<string, RecordedAnswer> _answers = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly ILogger _logger;
+    private long _fallbacks;
+
     public CircuitMembershipRevalidator(
         IOperatorMembershipDirectory directory,
         AuthorizationGroupInventory inventory,
-        CircuitRevalidationOptions options)
+        CircuitRevalidationOptions options,
+        ILogger<CircuitMembershipRevalidator>? logger = null)
     {
         _directory = directory;
         _inventory = inventory;
         _options = options;
+        _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
     }
+
+    /// <summary>
+    /// sweep-c item 15. How old a recorded answer may be and still stand in for a fresh read that failed: one interval plus
+    /// two lookup timeouts. The circuit's loop starts its next check one interval after the last one ended, a check takes
+    /// at most one lookup timeout, and the failure is known at most one more later - so the previous check's answer is
+    /// always within it, and an answer two checks old never is.
+    /// </summary>
+    internal TimeSpan FallbackWindow => _options.Interval + _options.LookupTimeout + _options.LookupTimeout;
+
+    /// <summary>sweep-c item 15. How many checks a recorded answer has stood in for since the app started.</summary>
+    internal long FallbackCount => Interlocked.Read(ref _fallbacks);
 
     /// <summary>
     /// The monotonic clock a recorded answer's age is measured on. A test sets its own; nothing else
@@ -146,7 +180,9 @@ public sealed class CircuitMembershipRevalidator
 
         // Off the caller's thread: the compared set reads SQLite and may translate names through
         // LSA, which can block, and the circuit-open check must not hold up a circuit's first render.
-        var check = Task.Run(() => RevalidateCoreAsync(user, captured, acceptRecordedAnswer, lookup.Token), CancellationToken.None);
+        // sweep-c item 15: what the check had established before it asked the directory, so a timeout here can fall back.
+        var state = new CheckState();
+        var check = Task.Run(() => RevalidateCoreAsync(user, captured, acceptRecordedAnswer, state, lookup.Token), CancellationToken.None);
         _ = check.ContinueWith(task =>
         {
             _ = task.Exception;
@@ -164,11 +200,11 @@ public sealed class CircuitMembershipRevalidator
         }
         catch (TimeoutException)
         {
-            return TimedOut();
+            return FallBackOrFail(state, TimedOut());
         }
         catch (OperationCanceledException)
         {
-            return TimedOut();
+            return FallBackOrFail(state, TimedOut());
         }
         catch (Exception ex)
         {
@@ -176,8 +212,59 @@ public sealed class CircuitMembershipRevalidator
         }
     }
 
+    /// <summary>
+    /// sweep-c item 15. The fresh read failed: the account's last recorded answer from within <see cref="FallbackWindow"/>,
+    /// compared as a fresh one would be, or - with none, or before the check reached the directory - the failure itself.
+    /// </summary>
+    /// <remarks>
+    /// Only a directory failure falls back: a check that failed before its read (no usable SID, an unreadable store, a
+    /// static grant the directory cannot attest to) never set <see cref="CheckState.Reading"/>. Whichever of the check and
+    /// its timeout gets here first counts and logs it; the other's verdict is the same and is not returned.
+    /// </remarks>
+    private MembershipRevalidationResult FallBackOrFail(CheckState state, MembershipRevalidationResult failure)
+    {
+        if (!state.Reading || state.UserSid is null || state.Held is null || state.Confirmed is null)
+            return failure;
+
+        if (!_answers.TryGetValue(state.UserSid, out var answer))
+            return failure;
+
+        var age = Clock.GetElapsedTime(answer.Started);
+        if (age >= FallbackWindow)
+            return failure;
+
+        var verdict = Compare(answer.Membership, state.Held, state.Confirmed);
+        var outcome = verdict with
+        {
+            Detail = $"{verdict.Detail} (From the answer read {age.TotalSeconds:0} s ago: the fresh lookup failed - {failure.Detail})",
+            FromRecordedAnswer = true,
+        };
+
+        if (Interlocked.Exchange(ref state.Settled, 1) == 0)
+        {
+            var count = Interlocked.Increment(ref _fallbacks);
+            _logger.LogWarning(
+                "The directory lookup for {Account} failed ({Failure}); its access was {Outcome} from the answer read {Age:0} s ago. {Count} lookup(s) have fallen back to a recorded answer since the app started",
+                state.AccountName ?? state.UserSid, failure.Detail, outcome.IsValid ? "confirmed" : "refused", age.TotalSeconds, count);
+        }
+
+        return outcome;
+    }
+
+    /// <summary>sweep-c item 15. What one check had established when it asked the directory.</summary>
+    private sealed class CheckState
+    {
+        public string? UserSid;
+        public string? AccountName;
+        public IReadOnlyList<string>? Held;
+        public IReadOnlySet<AuthorizationGrant>? Confirmed;
+        public volatile bool Reading;
+        public int Settled;
+    }
+
     private async Task<MembershipRevalidationResult> RevalidateCoreAsync(
-        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, bool acceptRecordedAnswer, CancellationToken cancellationToken)
+        ClaimsPrincipal user, IReadOnlySet<AuthorizationGrant> captured, bool acceptRecordedAnswer, CheckState state,
+        CancellationToken cancellationToken)
     {
         var userSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
         // kd-90: the name read once, beside the SID, as a string; nothing below reads the principal for it again.
@@ -250,10 +337,26 @@ public sealed class CircuitMembershipRevalidator
                 return fromRecorded;
         }
 
-        var membership = await ReadDirectoryAsync(userSid!, accountName, cancellationToken).ConfigureAwait(false);
+        // sweep-c item 15: from here a failure is the directory's, and may fall back to the account's recorded answer.
+        state.UserSid = userSid;
+        state.AccountName = accountName;
+        state.Held = held;
+        state.Confirmed = confirmed;
+        state.Reading = true;
+
+        OperatorDirectoryMembership? membership;
+        try
+        {
+            membership = await ReadDirectoryAsync(userSid!, accountName, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A cancellation is the timeout's or the caller's, and the caller's CheckAsync answers both.
+            return FallBackOrFail(state, MembershipRevalidationResult.LookupFailed($"The access re-check could not be completed: {ex.Message}"));
+        }
 
         if (membership?.GroupSids is null)
-            return MembershipRevalidationResult.LookupFailed("The directory lookup returned no answer.");
+            return FallBackOrFail(state, MembershipRevalidationResult.LookupFailed("The directory lookup returned no answer."));
 
         return Compare(membership, held, confirmed);
     }
@@ -283,30 +386,20 @@ public sealed class CircuitMembershipRevalidator
     }
 
     // One directory read, whoever asked for it. A successful answer is recorded for the page-request
-    // check (aud-a29g); a read that fails, answers nothing or is cancelled forgets the account's
-    // recorded answer - unless a read that started later recorded one meanwhile - so a directory that
-    // has stopped answering does not go on confirming pages from an old answer. The read's START is
-    // what is recorded: the answer is at least that fresh, and no fresher can be claimed for it.
+    // check (aud-a29g) and for the fallback (sweep-c item 15). The read's START is what is recorded: the
+    // answer is at least that fresh, and no fresher can be claimed for it. sweep-c item 15: a read that
+    // fails, answers nothing or is cancelled no longer forgets the account's answer (aud-a29j's rule) -
+    // the answer is what a failed read falls back to, and it expires on its own at FallbackWindow, so a
+    // directory that has stopped answering stops confirming anything one window after its last answer.
     private async Task<OperatorDirectoryMembership?> ReadDirectoryAsync(
         string userSid, string? accountName, CancellationToken cancellationToken)
     {
         var started = Clock.GetTimestamp();
-        OperatorDirectoryMembership? membership;
-        try
-        {
-            membership = await _directory
-                .GetMembershipAsync(userSid, SectionAccessDirectoryReading.NetBiosFromNTAccount(accountName), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            Forget(userSid, started);
-            throw;
-        }
+        var membership = await _directory
+            .GetMembershipAsync(userSid, SectionAccessDirectoryReading.NetBiosFromNTAccount(accountName), cancellationToken)
+            .ConfigureAwait(false);
 
-        if (membership?.GroupSids is null)
-            Forget(userSid, started);
-        else
+        if (membership?.GroupSids is not null)
             Record(userSid, membership, started);
 
         return membership;
@@ -320,10 +413,11 @@ public sealed class CircuitMembershipRevalidator
         // The sweep (aud-a29j). Here, where the dictionary grows and only after a directory read, so
         // one pass over the operators costs nothing beside the read; the page-request path, which reads
         // the dictionary on every page, stays a single lookup. Instance-guarded, like every removal
-        // here: an expired answer replaced by a newer one in the meantime is left alone.
+        // here: an expired answer replaced by a newer one in the meantime is left alone. sweep-c item 15:
+        // kept to the fallback window, the longest any answer is used.
         foreach (var entry in _answers)
         {
-            if (Clock.GetElapsedTime(entry.Value.Started) >= _options.Interval)
+            if (Clock.GetElapsedTime(entry.Value.Started) >= FallbackWindow)
                 _answers.TryRemove(entry);
         }
     }
@@ -331,22 +425,19 @@ public sealed class CircuitMembershipRevalidator
     /// <summary>The account SIDs with an answer held right now, for a test to see what is kept.</summary>
     internal IReadOnlyCollection<string> RecordedAccountSids => _answers.Keys.ToArray();
 
-    private void Forget(string userSid, long started)
-    {
-        if (_answers.TryGetValue(userSid, out var existing) && existing.Started <= started)
-            _answers.TryRemove(new KeyValuePair<string, RecordedAnswer>(userSid, existing));
-    }
-
-    // The account's recorded answer if its read started less than one interval ago, else nothing.
+    // The account's recorded answer if its read started less than one interval ago, else nothing - the page-request
+    // shortcut, which spares a read. An answer past the fallback window is removed here too.
     private OperatorDirectoryMembership? RecordedAnswerFor(string userSid)
     {
         if (!_answers.TryGetValue(userSid, out var answer))
             return null;
 
-        if (Clock.GetElapsedTime(answer.Started) < _options.Interval)
+        var age = Clock.GetElapsedTime(answer.Started);
+        if (age < _options.Interval)
             return answer.Membership;
 
-        _answers.TryRemove(new KeyValuePair<string, RecordedAnswer>(userSid, answer));
+        if (age >= FallbackWindow)
+            _answers.TryRemove(new KeyValuePair<string, RecordedAnswer>(userSid, answer));
         return null;
     }
 

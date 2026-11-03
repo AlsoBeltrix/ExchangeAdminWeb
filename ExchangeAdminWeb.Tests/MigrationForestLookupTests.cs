@@ -44,7 +44,7 @@ public sealed class MigrationForestLookupTests : IDisposable
     private Task<MigrationEligibilityResult> Check(string address = Address) =>
         _exchange.Service().CheckMigrationEligibilityAsync(address, MigrationDirection.ToCloud);
 
-    private static string Search(string address) => $"Get-ADUser -Server {Catalog} UserPrincipalName -eq '{address}'";
+    private static string Search(string address) => $"Get-ADUser -Server {Catalog} {ExchangeAdminWeb.Services.MigrationService.AddressFilter(address)}";
 
     // ---- the user: found in the forest, read in its own domain -----------------------------------
 
@@ -83,7 +83,7 @@ public sealed class MigrationForestLookupTests : IDisposable
         var result = await Check();
 
         Assert.Equal(MigrationStatus.Undetermined, result.Status);
-        Assert.Equal([Incomplete + $"no directory user in the forest has the user principal name {Address}"], result.IneligibilityReasons);
+        Assert.Equal([Incomplete + $"no directory user in the forest carries the address {Address} as its user principal name, mail or proxy address"], result.IneligibilityReasons);
     }
 
     // A DN that names no domain cannot be routed to one.
@@ -161,18 +161,68 @@ public sealed class MigrationForestLookupTests : IDisposable
         Assert.Equal(["Member of excluded group: Sales"], result.IneligibilityReasons);
     }
 
-    // A name two domains each hold names two groups: which one the setting means cannot be told, so the check cannot be
-    // completed - never "the first one found".
+    // A name two domains each hold names two groups: which one the setting means cannot be told - never "the first one
+    // found". sweep-c item 14: it refused every check (Undetermined); a member of either is excluded now, and the reason
+    // names the group, its domain and every domain holding the name.
     [Fact]
-    public async Task ANameTwoDomainsHold_CannotBeChecked()
+    public async Task ANameTwoDomainsHold_AMemberOfEither_IsExcluded_NamingTheGroupAndTheDomains()
     {
         _exchange.DirectoryGroups["Sales"] = new[] { SalesDn, SecondSalesDn };
         _exchange.DirectoryUsers[Address] = Users(DirectoryUserIn(Second, Address, SecondSalesDn));
 
         var result = await Check();
 
-        Assert.Equal(MigrationStatus.Undetermined, result.Status);
-        Assert.Equal([Incomplete + $"the excluded group 'Sales' resolved to 2 groups across the forest ({Host}, {Second})"], result.IneligibilityReasons);
+        Assert.Equal(MigrationStatus.Ineligible, result.Status);
+        Assert.Equal([$"Member of excluded group: Sales ({SecondSalesDn}, in {Second}; the excluded group name 'Sales' is held by 2 groups "
+            + $"across the forest ({Host}, {Second}); set it by DN or SID to name one)"], result.IneligibilityReasons);
+    }
+
+    // The control: a member of neither is in none of them - a complete answer - and is told of the shared name.
+    [Fact]
+    public async Task ANameTwoDomainsHold_AMemberOfNeither_PassesTheCheck_WithAWarningNamingTheDomains()
+    {
+        _exchange.DirectoryGroups["Sales"] = new[] { SalesDn, SecondSalesDn };
+        _exchange.DirectoryUsers[Address] = Users(DirectoryUserIn(Second, Address, StaffDn));
+
+        var result = await Check();
+
+        Assert.Equal([SizeStep], result.IneligibilityReasons);
+        Assert.Contains($"Not a member of any group named 'Sales', but the excluded group name 'Sales' is held by 2 groups across the forest ({Host}, {Second}); set it by DN or SID to name one.",
+            result.Warnings);
+    }
+
+    // ---- sweep-c item 14: the typed address may be the user's mail or a proxy address, not its UPN ----------------
+
+    [Theory]
+    [InlineData("mail")]
+    [InlineData("proxy address")]
+    public async Task AUserWhoseUpnIsNotTheAddress_IsFoundByItsMailOrProxyAddress(string carriedAs)
+    {
+        // A shared or resource mailbox's UPN often differs from its address: looked up by UPN alone it read "no directory
+        // user has the user principal name ...", and every such move was Undetermined.
+        const string upn = "svc-bob@fabrikam.local";
+        _exchange.DirectoryUsers[upn] = Users(DirectoryUserWithAddresses(Second, upn,
+            carriedAs == "mail" ? Address : "other@fabrikam.test",
+            carriedAs == "mail" ? [] : [$"SMTP:primary@fabrikam.test", $"smtp:{Address}"], SalesDn));
+
+        var result = await Check();
+
+        Assert.Equal(MigrationStatus.Ineligible, result.Status);
+        Assert.Equal(["Member of excluded group: Sales"], result.IneligibilityReasons);
+        Assert.Contains(Search(Address), _exchange.DirectoryCallList());
+    }
+
+    [Fact]
+    public async Task TheCheck_RunsInAWarmSession_TheModuleImportedOnceForSeveralChecks()
+    {
+        // Each check opened a runspace and imported the ActiveDirectory module before its first read.
+        _exchange.DirectoryUsers[Address] = Users(DirectoryUserIn(Second, Address, StaffDn));
+
+        await Check();
+        await Check();
+
+        Assert.Equal(1, _exchange.DirectorySessions.Opened);
+        Assert.Equal(1, _exchange.CallList().Count(call => call.StartsWith("Import-Module", StringComparison.Ordinal)));
     }
 
     // No domain holds it: each domain's own answer is named.
@@ -244,11 +294,13 @@ public sealed class MigrationForestLookupTests : IDisposable
 
         var bulk = await Bulk(_exchange.Service(), Address, Other);
 
-        Assert.All(bulk.EligibilityResults, row =>
-        {
-            Assert.Equal(MigrationStatus.Undetermined, row.Status);
-            Assert.Equal([Incomplete + "the forest's global catalog could not be found: the forest could not be contacted"], row.IneligibilityReasons);
-        });
+        Assert.All(bulk.EligibilityResults, row => Assert.Equal(MigrationStatus.Undetermined, row.Status));
+        // sweep-c item 14: the first row is told the failure; every later one is told it too, and that it is the run's one read.
+        Assert.Equal([Incomplete + "the forest's global catalog could not be found: the forest could not be contacted"],
+            bulk.EligibilityResults[0].IneligibilityReasons);
+        Assert.Equal([Incomplete + "the forest's global catalog could not be found: the forest could not be contacted"
+                + " (read once for this run, at the first row that needed it; a new check reads again)"],
+            bulk.EligibilityResults[1].IneligibilityReasons);
         Assert.Equal(1, _exchange.CallList().Count(call => call == "Get-ADForest"));
     }
 

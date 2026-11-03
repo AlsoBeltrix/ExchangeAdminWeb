@@ -73,6 +73,12 @@ public sealed record ExchangeGroupMember(
     string? RecipientTypeDetails,
     bool? IsDirSynced)
 {
+    /// <summary>
+    /// sweep-c item 18. The addresses of the cloud groups this member was reached through below the group that was read,
+    /// outermost first; empty for the group's own member. Explanation only: the self-grant refusal names the path with it.
+    /// </summary>
+    public IReadOnlyList<string> Via { get; init; } = [];
+
     /// <summary>Whether Exchange reports a group, by either kind it gave (<see cref="ExchangeRecipientKinds.NamesAGroup"/>).</summary>
     public bool IsGroup => ExchangeRecipientKinds.NamesAGroup(RecipientType, RecipientTypeDetails);
 }

@@ -23,7 +23,19 @@ internal sealed class SelfGrantRun
     private readonly ConcurrentDictionary<string, Lazy<Task<ProtectedGroupMembership.Result>>> _directoryMembership =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly ConcurrentDictionary<string, Lazy<Task<ProtectedGroupMembership.MembershipPath?>>> _membershipPaths =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private Lazy<Task<(PSCredential? Credential, string? Problem)>>? _credential;
+
+    /// <summary>
+    /// sweep-c item 18. How <paramref name="operatorDn"/> is in <paramref name="groupDn"/>, as <paramref name="trace"/> answers:
+    /// traced once per run, so a bulk file's rows refused for one group read the path once. Explanation only.
+    /// </summary>
+    internal Task<ProtectedGroupMembership.MembershipPath?> MembershipPathAsync(
+        string operatorDn, string groupDn, Func<Task<ProtectedGroupMembership.MembershipPath?>> trace) =>
+        _membershipPaths.GetOrAdd(Key(operatorDn, groupDn),
+            _ => new Lazy<Task<ProtectedGroupMembership.MembershipPath?>>(trace)).Value;
 
     /// <summary>Exchange's members of <paramref name="group"/>, as <paramref name="read"/> gives them: read once per run.</summary>
     internal Task<IReadOnlyList<ExchangeGroupMember>?> ExchangeMembersAsync(

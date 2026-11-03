@@ -439,6 +439,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
+        // K.3: the user row is compared by its user_sid row - here, a cloud-only target carrying no SID, by that row's label.
+        service.SaveConfig(new ProtectedPrincipalConfig { Users = ["vip.cloud@contoso.com"], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000-2000-3000-1199", "vip.cloud@contoso.com")] });
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
 
         var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
@@ -487,6 +489,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
+        // K.3: the user row is compared by its user_sid row - here, a cloud-only target carrying no SID, by that row's label.
+        service.SaveConfig(new ProtectedPrincipalConfig { Users = ["vip.cloud@contoso.com"], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000-2000-3000-1199", "vip.cloud@contoso.com")] });
         service.AdReturns("vip.cloud@contoso.com", ResolutionStatus.NotFound);
 
         var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.cloud@contoso.com");
@@ -884,6 +888,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         File.WriteAllText(Path.Combine(_tempDir, "config", "protected-principals.json"), json);
 
         var service = VipService();
+        // K.3: compared by the user_sid row db convert-identifiers wrote for it - the bound principal carries its SID.
+        service.SaveConfig(new ProtectedPrincipalConfig { Users = ["guid-vip"], UserIds = [ProtectedPrincipalIdEntry.Format(VipSid, "guid-vip")] });
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
 
         var (principal, status) = await service.ResolveExchangeTargetAsync("vip.alias@contoso.com");

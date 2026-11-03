@@ -174,6 +174,22 @@ internal sealed class MigrationStubExchange : IDisposable
 
     public string[] DirectoryCallList() => DirectoryCalls.Cast<string>().ToArray();
 
+    private DirectorySessionPool? _directorySessions;
+
+    /// <summary>
+    /// sweep-c item 14. The warm directory sessions the stub service's excluded-group check is lent: one pool for the whole
+    /// stand-in, as production's is one for the app, each session a <see cref="DirectoryStandIn"/> with its stub module imported
+    /// once when it opens.
+    /// </summary>
+    internal DirectorySessionPool DirectorySessions =>
+        LazyInitializer.EnsureInitialized(ref _directorySessions, () => new DirectorySessionPool(DirectoryStandIn));
+
+    /// <summary>sweep-c item 14. A directory user of <paramref name="domain"/> carrying a mail and proxy addresses of its own.</summary>
+    public static PSObject DirectoryUserWithAddresses(string domain, string userPrincipalName, string? mail, string[] proxyAddresses,
+        params string[] memberOf) =>
+        Row(("UserPrincipalName", userPrincipalName), ("Mail", mail), ("ProxyAddresses", proxyAddresses),
+            ("DistinguishedName", UserDn(domain, userPrincipalName)), ("memberOf", memberOf));
+
     /// <summary>aud-a23j. Saves the Migration module's excluded groups, as the comma-separated setting holds them.</summary>
     public void ExcludeGroups(params string[] groups) =>
         _moduleConfig.SaveModuleConfig("Migration", new Dictionary<string, string> { ["ExcludedADGroups"] = string.Join(",", groups) });
@@ -353,7 +369,7 @@ internal sealed class MigrationStubExchange : IDisposable
             exchange.Protection is null ? null! : exchange.ProtectionStandIn(),
             exchange.Protection is null ? null! : exchange.Servicers())
     {
-        internal override Runspace CreateDirectoryRunspace() => exchange.DirectoryStandIn();
+        internal override DirectorySessionPool DirectorySessions => exchange.DirectorySessions;
 
         // aud-a23o. The on-premises seams: no Delinea, no remote session.
         protected override void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3, CancellationToken cancellationToken = default) =>
@@ -572,19 +588,30 @@ internal sealed class MigrationStubExchange : IDisposable
         ("Get-ADForest", "", """
             [pscustomobject]@{ GlobalCatalogs = @($ForestCatalogs); Domains = @($ForestDomains) }
             """),
-        ("Get-ADUser", "[string] $Filter, [object] $Properties, [string] $Server, [string] $Identity", """
-            $null = $DirectoryCalls.Add("Get-ADUser -Server $Server $(if ($Identity) { $Identity } else { $Filter })")
+        ("Get-ADUser", "[string] $Filter, [string] $LDAPFilter, [object] $Properties, [string] $Server, [string] $Identity", """
+            $null = $DirectoryCalls.Add("Get-ADUser -Server $Server $(if ($Identity) { $Identity } elseif ($LDAPFilter) { $LDAPFilter } else { $Filter })")
             if ($Identity) {
                 foreach ($rows in $DirectoryUsers.Values) { foreach ($row in $rows) {
                     if ([string]$row.DistinguishedName -ieq $Identity -and (Get-StandInDomain ([string]$row.DistinguishedName)) -ieq $Server) { return $row }
                 } }
                 $PSCmdlet.WriteError($DirectoryNotFoundIn.Invoke($Identity, $Server)); return
             }
-            $upn = $null
-            if ($Filter -match '^UserPrincipalName -eq ''(.*)''$') { $upn = $Matches[1] -replace "''", "'" }
-            if ($null -eq $upn -or -not $DirectoryUsers.ContainsKey($upn)) { return }
             $scope = if ($Server) { $Server } else { [string]$ForestDomains[0] }
-            foreach ($row in $DirectoryUsers[$upn]) {
+            $rows = @()
+            if ($LDAPFilter -match '^\(\|\(userPrincipalName=(.*?)\)\(mail=(.*?)\)\(proxyAddresses=(.*?)\)\)$') {
+                # sweep-c item 14: each term of the filter as LDAP reads it - the UPN, the mail, a proxy address (without
+                # case) - over every user held.
+                $upnTerm = $Matches[1]; $mailTerm = $Matches[2]; $proxyTerm = $Matches[3]
+                $rows = @(foreach ($held in $DirectoryUsers.Values) { foreach ($row in $held) {
+                    if ([string]$row.UserPrincipalName -ieq $upnTerm -or ($null -ne $row.Mail -and [string]$row.Mail -ieq $mailTerm) -or @($row.ProxyAddresses | Where-Object { [string]$_ -ieq $proxyTerm }).Count -gt 0) { $row }
+                } })
+            } else {
+                $upn = $null
+                if ($Filter -match '^UserPrincipalName -eq ''(.*)''$') { $upn = $Matches[1] -replace "''", "'" }
+                if ($null -eq $upn -or -not $DirectoryUsers.ContainsKey($upn)) { return }
+                $rows = @($DirectoryUsers[$upn])
+            }
+            foreach ($row in $rows) {
                 if ($Server -like '*:3268') { [pscustomobject]@{ UserPrincipalName = $row.UserPrincipalName; DistinguishedName = $row.DistinguishedName } }
                 elseif ((Get-StandInDomain ([string]$row.DistinguishedName)) -ieq $scope) { $row }
             }
@@ -739,7 +766,7 @@ internal sealed class MigrationStubExchange : IDisposable
     private static string Stub(string name, string parameters, string answer, string? label = null) => $$"""
         [CmdletBinding()]
         param({{parameters}})
-        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
+        $switches = @($PSBoundParameters.Keys | Where-Object { $_ -notin 'Identity', 'BatchId', 'ResultSize', 'IncludeReport', 'ErrorAction', 'Confirm', 'Name', 'CSVData', 'TargetDeliveryDomain', 'AutoStart', 'AutoComplete', 'SenderAddress', 'Reason', 'Filter', 'LDAPFilter', 'Properties', 'SourceEndpoint', 'TargetEndpoint', 'TargetDatabases', 'NotificationEmails', 'Server' } | ForEach-Object { " -$_" }) -join ''
         $step = '{{label ?? name}}' + $switches
         $null = $Calls.Add(("$step $Identity").Trim())
         if ($null -ne $Behaviour -and $null -ne $Behaviour["Cancel $step"]) { $Behaviour["Cancel $step"].Cancel() }
@@ -815,6 +842,7 @@ internal sealed class MigrationStubExchange : IDisposable
     {
         foreach (var pool in _pools)
             pool.Dispose();
+        _directorySessions?.Dispose();
         try { Directory.Delete(_directory, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 

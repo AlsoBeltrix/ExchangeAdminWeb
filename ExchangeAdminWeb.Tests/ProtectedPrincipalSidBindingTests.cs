@@ -48,7 +48,7 @@ public sealed class ProtectedPrincipalSidBindingTests : IDisposable
     {
         var unrelated = _h.Forest.AddGroup("Unrelated", domainDn: SelfGrantDirectoryStandIn.OtherDomainDn,
             domainSid: FabrikamSid);
-        var validator = _h.ProtectedValidator(ExchangeKnowsTheSyncedTarget(), new ProtectedPrincipalConfig { Groups = [unrelated.Dn] });
+        var validator = _h.ProtectedValidator(ExchangeKnowsTheSyncedTarget(), new ProtectedPrincipalConfig { Groups = [unrelated.Sid!] });
 
         var validation = await validator.ValidateTargetMailboxAsync(Target, _h.Operator, "MailboxPermissions");
 
@@ -69,7 +69,7 @@ public sealed class ProtectedPrincipalSidBindingTests : IDisposable
         // domain holding it protects it. Bound by the address in the session's own domain, it was not found at all.
         var vip = _h.Forest.AddGroup("Fabrikam VIPs", domainDn: SelfGrantDirectoryStandIn.OtherDomainDn,
             domainSid: FabrikamSid, members: [_far]);
-        var validator = _h.ProtectedValidator(ExchangeKnowsTheSyncedTarget(), new ProtectedPrincipalConfig { Groups = [vip.Dn] });
+        var validator = _h.ProtectedValidator(ExchangeKnowsTheSyncedTarget(), new ProtectedPrincipalConfig { Groups = [vip.Sid!] });
 
         var validation = await validator.ValidateTargetMailboxAsync(Target, _h.Operator, "MailboxPermissions");
 

@@ -38,7 +38,7 @@ public sealed class ProtectionCheckTimingTests : IDisposable
         });
         _h.GraphSids["ext-" + Target] = $"{SelfGrantDirectoryStandIn.DomainSid}-3997";
         var other = _h.Forest.AddUser("other", upn: Other, mail: Other, proxies: [$"SMTP:{Other}"]);
-        _protectedGroupDn = _h.Forest.AddGroup("VIP Staff", members: [other]).Dn;
+        _protectedGroupDn = _h.Forest.AddGroup("VIP Staff", members: [other]).Sid!; // K.3: stored as the SID db convert-identifiers writes
     }
 
     public void Dispose() => _h.Dispose();
@@ -71,9 +71,10 @@ public sealed class ProtectionCheckTimingTests : IDisposable
         var result = await _h.ProtectedPrincipals!.CheckAsync(TargetPrincipal);
 
         Assert.False(result.CheckFailed, result.Reason);
-        // The target read, its token, and the one protected group's own read; one fetch.
+        // The target read, its token, and the one protected group's own read - by its SID, at the catalog, so the check's own
+        // discovery of the catalog too (K.3: a protected group is stored by SID); one fetch.
         var line = Line(_serviceLog.Information, "Protected-principal check", Target);
-        Assert.Equal("3", line.Groups["reads"].Value);
+        Assert.Equal("4", line.Groups["reads"].Value);
         Assert.Equal("1", line.Groups["fetches"].Value);
     }
 
@@ -87,7 +88,8 @@ public sealed class ProtectionCheckTimingTests : IDisposable
         // catalog's discovery (once per service) and the read by SID there, and the check's three reads; the one fetch they
         // share; and the one Graph read of the SID, not a directory read, counted on its own (docs/ProtectedPrincipalIdentifiers-Plan.md E).
         var line = Line(_serviceLog.Information.Concat(_validatorLog.Information), "Protected-principal check", Target);
-        Assert.Equal("6", line.Groups["reads"].Value);
+        // K.3: seven - the check's group read is by SID at the catalog, which the check's own directory discovers once more.
+        Assert.Equal("7", line.Groups["reads"].Value);
         Assert.Equal("1", line.Groups["fetches"].Value);
         Assert.Equal("1", line.Groups["sid"].Value);
         Assert.Equal(1, _h.GraphSidReads);
@@ -125,18 +127,19 @@ public sealed class ProtectionCheckTimingTests : IDisposable
         }
 
         var line = Line(_serviceLog.Information, "Protected-principal check", Target);
-        Assert.Equal("6", line.Groups["reads"].Value);
+        Assert.Equal("7", line.Groups["reads"].Value); // K.3: the group read by SID adds the check's own catalog discovery
         Assert.Equal("1", line.Groups["fetches"].Value);
         Assert.Equal("1", line.Groups["sid"].Value);
 
-        // A second check: the catalog the first discovered is kept, so it is one read fewer.
+        // A second check: the catalog the resolution discovered is kept, so it is one read fewer (the group check's own
+        // directory discovers it again: six).
         using (service.BeginCheck(Target))
         {
             var (again, _) = await service.ResolveExchangeTargetAsync(Target);
             Assert.False((await service.CheckAsync(again!)).CheckFailed);
         }
         var second = _serviceLog.Information.Last(l => l.StartsWith("Protected-principal check for ", StringComparison.Ordinal));
-        Assert.Contains("(5 directory reads, 1 credential fetches, 1 SID source reads from Graph in ", second, StringComparison.Ordinal);
+        Assert.Contains("(6 directory reads, 1 credential fetches, 1 SID source reads from Graph in ", second, StringComparison.Ordinal);
     }
 
     /// <summary>A logger that keeps the Information lines it is given, as rendered.</summary>

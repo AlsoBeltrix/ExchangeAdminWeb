@@ -119,7 +119,8 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     public void OuRule_RefusesATargetInsideAProtectedOu()
     {
         var service = CreateRealService();
-        service.SaveConfig(new ProtectedPrincipalConfig { OrganizationalUnits = ["OU=Tier0,DC=ad,DC=analog,DC=com"] });
+        // K.3: an OU is compared by its ou_guid row - here by that row's label, the write-target check being directory-free.
+        service.SaveConfig(new ProtectedPrincipalConfig { OrganizationalUnits = ["OU=Tier0,DC=ad,DC=analog,DC=com"], OuIds = [ProtectedPrincipalIdEntry.Format("0b5e3c2a-7d41-4f8e-9c6a-2e1f3d4b5a69", "OU=Tier0,DC=ad,DC=analog,DC=com")] });
 
         var result = service.CheckWriteTarget(Group(dn: "CN=SomeGroup,OU=Tier0,DC=ad,DC=analog,DC=com", guid: TargetGuid));
 
@@ -131,7 +132,8 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     public void UsersRule_DirectIdentityEntry_RefusesTheTarget()
     {
         var service = CreateRealService();
-        service.SaveConfig(new ProtectedPrincipalConfig { Users = [TargetDn] });
+        // K.3: a user is compared by its user_sid row; the target carries no SID here, so by that row's label.
+        service.SaveConfig(new ProtectedPrincipalConfig { Users = [TargetDn], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000000000-1000000000-1000000000-1105", TargetDn)] });
 
         var result = service.CheckWriteTarget(Group(dn: TargetDn, guid: TargetGuid));
 

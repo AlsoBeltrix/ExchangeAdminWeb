@@ -31,7 +31,7 @@ public sealed class WarmDirectorySessionTests : IDisposable
     {
         var search = new ADDirectorySearchService(NullLogger<ADDirectorySearchService>.Instance) { CreateCheckRunspace = _h.Forest.Open };
         _h.ProtectedValidator(ExchangeWriteHarness.ExchangeKnows("nobody@contoso.test", "nobody@contoso.test", Guid.NewGuid()),
-            new ProtectedPrincipalConfig { Groups = [_vip.Dn] }, search);
+            new ProtectedPrincipalConfig { Groups = [_vip.Sid!] }, search);
         return (_h.ProtectedPrincipals!, search);
     }
 

@@ -22,6 +22,13 @@ ASP.NET Core 10 Blazor Server application for Exchange Online administration, ma
 Check migration eligibility and create move batches between Exchange Online and on-premises Exchange.
 
 - Validates current mailbox location before eligibility decisions
+- **Excluded AD Groups** (Migration module config): a move to Exchange Online is refused for a direct member of a
+  configured group. The user is found at the forest's global catalog by the typed address - as their UPN, mail or an
+  smtp proxy address, one read - and read in their own domain for memberOf; each group is resolved in every domain. A
+  name held by groups in several domains excludes a member of any of them, naming the group and the domains (a member of
+  none passes, with a warning); enter the group's SID or objectGUID to name one. A check that cannot be completed is
+  Undetermined, never Eligible; in a bulk file a failed read is read once and repeated for each row, which says so. The
+  check runs in a warm directory session and logs its time (sweep-c item 14)
 - Checks on-prem mailbox and archive size before cloud migrations. The `CloudQuotaGB` limit applies to the primary mailbox and the archive separately; their combined size is not a criterion
 - Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
@@ -165,12 +172,11 @@ Each module has its own config page (linked in the sidebar) with:
 - **Configuration** — module-specific settings (config fields)
 - **Module Admins** — AD groups that can configure this module without global admin. A grant is stored as the group's SID
   and matched against the SIDs in the user's token. A grant stored by name, from before grants were stored as SIDs, grants
-  nothing. At every start the app looks each such name up once (`DOMAIN\name` in that domain, a bare name across the forest,
-  matched on sAMAccountName, common name, name or display name, groups only). Where the name matches exactly one group it
-  replaces the name with that group's SID, which grants from then on. Every name it cannot convert (no match, several
-  matches, a well-known group, or a directory it could not reach) is listed on the pane, marked *not converted*, with the
-  reason and a Remove beside it. **Resolve now** runs the same pass on demand. Each pass files one audit event listing
-  every grant it converted and every grant it left (`docs/ProtectedPrincipalIdentifiers-Plan.md` B.6).
+  nothing; it is listed on the pane marked *not converted - run db convert-identifiers*, with a Remove beside it. The
+  app's `db convert-identifiers` command (run by hand before the deploy - see Troubleshooting) looks each such name up
+  once (`DOMAIN\name` in that domain, a bare name across the forest, matched on sAMAccountName, common name, name or
+  display name, groups only) and replaces it with the SID of the one group it names, which grants from then on; it
+  refuses, writing nothing, while any name matches no group or several (`docs/ProtectedPrincipalIdentifiers-Plan.md` K).
 
 Changes are stored in the config database - the `module_enablement`, `section_access`, `module_config` and `module_admins` tables (`docs/ConfigDbOperations.md`) - and take effect immediately. The legacy `config/*.json` files are imported once and archived; a tab whose store cannot be read says which table, or which legacy file was not imported, and does not offer Save.
 Global admins see all module config links; module admins see only their delegated modules.
@@ -652,12 +658,14 @@ permission that could. Disabled by default and fail-closed.
   - Mailbox Permissions and Calendar Permissions check the grantee against Exchange Online and the on-premises
     directory, including every group that holds the operator - nested, through their primary group, or, for a group
     only Exchange Online holds, through its members. A check that cannot be completed refuses; it never clears a grant
+  - A grant to a group the operator is in is refused too - it would grant them - and the refusal and its audit row name
+    the group and how they are in it: directly, through the nested groups between (innermost first), or through their
+    primary group. When the membership is confirmed but the groups between cannot be read, the refusal says so
   - **Needs the Directory Read Credential** (Admin Settings, Protected principals) - the credential the
     protected-principal check reads with. While the check is on (Prevent Self-Grant, the default), every grant needs
     it: without it, every grant is refused as incomplete, naming the setting - to a person or to a group, whichever
     directory holds the grantee - and nothing is written. A removal is not checked and does not need it. With it
-    configured, each check fetches it once (a bulk file once for the whole file), and the protected-principal
-    resolve pass (see Protected Users / Excluded Users) once per pass
+    configured, each check fetches it once (a bulk file once for the whole file)
   - **Needs the Graph Directory Read Credential** (Admin Settings, Protected principals, beside the Directory Read
     Credential) for a synced mailbox - the Secret Server secret (Tenant ID, Application ID, Client Secret) of an app
     registration holding the application permission `User.Read.All`. The protection check reads the mailbox's
@@ -1063,8 +1071,14 @@ rendered (aud-a29g).
   keeps another, the session ends at its next check, although nothing changed in Active
   Directory. A grant added later is remembered from the first check after it appears. If the
   access settings cannot be read, the check fails closed and the session ends.
+- **One failed lookup does not end a session** (sweep-c item 15). When the directory read fails or
+  does not answer within 60 seconds, the account's last answer is used instead if it was read
+  within one interval plus two minutes - so the answer of the tab's previous check, or of a recent
+  page load - and is compared exactly as a fresh one: it confirms, or it refuses for its own reason.
+  Each such fallback is logged as a warning with a running count. Two failed checks in a row find
+  no answer that recent, and end the session.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
-  cannot be completed within 60 seconds (fail closed). The tab stops responding and shows
+  cannot be completed within 60 seconds with no recent answer to fall back to (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the
   operator has now. Each ended session writes one audit line (action `SessionRevalidation`,
   category `Authentication`).
@@ -1078,8 +1092,8 @@ rendered (aud-a29g).
   request gets a short "This page was not shown" page (HTTP 403) instead of the page - nothing of
   the page, its menu or its initialization runs - with the reason and a Reload link, and writes one
   audit line (trigger `PageRequest`, `path` the page asked for - path base and path, never the query
-  string, at most 256 characters; aud-a29i). If the check cannot be completed the page is refused (fail
-  closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
+  string, at most 256 characters; aud-a29i). If the check cannot be completed, and no recent answer
+  stands in for it as above, the page is refused (fail closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
   status frame shows it loading. The directory is not read for every page: an answer read for the
   same account within `RevalidationInterval` - by an earlier page request or by one of its open
   tabs' checks - confirms the request, while a refusal is always decided by a fresh read, so
@@ -1114,16 +1128,14 @@ companion row by name that an older build sharing the database keeps enforcing; 
 check compares a user by SID wherever the target's SID was read (another account given the same address is not
 protected in its place), a group by SID against the target's token, and an OU by the object GUIDs of the target's
 containers, so a renamed OU still protects the accounts beneath it. A user or OU is looked up in any domain of the
-forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. An entry added
-before identifiers were stored - or saved by an older build, whose save drops the identifier rows - is enforced by name,
-exactly as before, and marked **not converted** on the page. At every start, without delaying it, and on **Resolve now**
-in that pane, the app looks each such entry up once with the Directory Read Credential (one fetch for the whole pass):
-one that matches exactly one object gains its identifier row beside the name row, which is never changed; one that
-matches none or several, resolves to a built-in group, or could not be looked up is left as it is, with the reason on
-its badge. Each pass is audited (`ProtectedPrincipalIdentifierMigration`), listing what it converted and what it left.
-The **not in AD** badge says what such an entry still does: a user or OU entry matches only a target carrying that exact
-value, and a group entry that resolves to no group makes every protection check with no other match refuse the change
-(docs/ProtectedPrincipalIdentifiers-Plan.md).
+forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. The check never
+resolves or matches a stored name. An entry stored by name only - added before identifiers were stored, or left by an
+older build's save, which drops the identifier rows - makes every protection check that finds no other match refuse,
+naming the entry: "not converted - run db convert-identifiers". The pane counts such entries; the app's
+`db convert-identifiers` command gives each its identifier row (see Troubleshooting). A legacy group entry stored as a
+SID is compared by that SID. A protected group whose SID no group carries any more, or whose read fails, also refuses
+every check that finds no other match, and the refusal names the entry. The **not in AD** badge marks an entry stored by
+name that the directory says does not exist: remove it or replace it (docs/ProtectedPrincipalIdentifiers-Plan.md K).
 
 #### Protected principal servicing (authorised bypass)
 
@@ -1313,6 +1325,28 @@ exec@company.com,old-assistant@company.com
 Configure email notifications, group-based access control, self-grant prevention, protected user lists, and audit logging in `appsettings.json`.
 
 ## Troubleshooting
+
+### "Exchange refused the mailbox GUID identity ..."
+- Every Exchange change and the read-back before it name the mailbox by its Exchange mailbox GUID - the mailbox the
+  protection check validated, never the string typed (aud-a2d). That Exchange accepts this form for every cmdlet used
+  (Get-Mailbox, Add/Remove-MailboxPermission, Add/Remove-RecipientPermission, the calendar folder cmdlets,
+  Set-MailboxAutoReplyConfiguration, Set-Place, Add-DistributionGroupMember -Member) is checked at the first deployment
+- When Exchange answers "couldn't be found" for that GUID, the message begins with this text and names the cmdlet; the
+  application log has a Warning with the cmdlet and the GUID. Nothing was changed by that step. A Conference Rooms read
+  whose Get-Place returns nothing for the GUID logs a Warning too (its city, building and capacity read blank)
+- Report it with the cmdlet named: it is sweep item 13's check, not a problem with the mailbox
+
+### "... not converted - run db convert-identifiers"
+- A protected user, group or OU (Admin Settings, Protected principals) is stored by name only, and this build never matches
+  a stored name, so every protection check that finds no other match is refused, naming the entry. Module-admin grants
+  stored by name grant nothing and are listed on Module Configuration's Admins pane with the same text
+- Usual cause: the conversion was not run before this build was deployed, or prod's older build saved Admin Settings
+  since (an older build's save drops every identifier row)
+- Fix: run the app's `db convert-identifiers` command against the settings database, from an elevated shell on the deploy
+  host, as `docs/ConfigDbOperations.md` "Converting protected principals and module-admin grants to identifiers"
+  describes - on a copy first, then the live file. `db identifier-status` lists every row and exits 0 when nothing is
+  left stored by name. An entry the command cannot resolve to exactly one object is named by it; remove or re-pick that
+  entry and run it again
 
 ### "401 Unauthorized" when accessing the app
 - Verify Windows Authentication is enabled in IIS for the application

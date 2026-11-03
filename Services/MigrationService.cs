@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using System.Security.Claims;
 using System.Text;
 using CsvHelper;
@@ -273,15 +272,15 @@ public class MigrationService : ExchangeServiceBase
         return result;
     }
 
-    // aud-a23j. The Active Directory session the excluded-group check opens, as ExchangeServiceBase.CheckAdGroupMembership
-    // built it (that method is gone, aud-a23o; not the Exchange pool). Internal virtual as a test seam, the shape of GroupManagementService's: a test hands
-    // back a session whose Import-Module and AD reads are stand-ins, so the check runs for real with no directory.
-    internal virtual Runspace CreateDirectoryRunspace()
-    {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        return RunspaceFactory.CreateRunspace(iss);
-    }
+    // sweep-c item 14. The warm directory sessions the excluded-group check is lent: the protected-principal check's
+    // (DirectorySessionPool, kd-88) - the ActiveDirectory module already imported, kept open between checks - where every
+    // check opened a runspace and imported the module before its first read. Internal virtual as the test seam, the shape of
+    // GroupManagementService's: a test hands back sessions whose AD reads are stand-ins, so the check runs for real with no
+    // directory. The reads run as the app pool's identity, as they did in a session of its own; a session holds no identity.
+    internal virtual DirectorySessionPool DirectorySessions => _protectedPrincipals.DirectorySessions;
+
+    /// <summary>sweep-c item 14. The excluded-group check's name in the timing line (kd-88).</summary>
+    internal const string ExcludedGroupCheckName = "Excluded-group check";
 
     // aud-a23j. The excluded-group check of a move to Exchange Online, moved here from
     // ExchangeServiceBase.CheckAdGroupMembership. That matched each configured value as a SUBSTRING of the user's memberOf
@@ -290,43 +289,71 @@ public class MigrationService : ExchangeServiceBase
     // UPN. Here each configured value is RESOLVED to its group (Get-ADGroup -Identity: a DN, GUID, SID or sAMAccountName)
     // and that group's DN compared exactly, ignoring case as AD does, with the user's memberOf - the Constitution's "OU and
     // group checks must be based on resolved directory objects, not substring matches". Whatever keeps the check from
-    // completing - the module, the lookup, no user or several, no memberOf, a group that does not resolve to one - throws
-    // to the caller, which makes the verdict Undetermined. Membership is direct (memberOf), as before.
+    // completing - the module, the lookup, no user or several, no memberOf, a domain that cannot be asked - throws to the
+    // caller, which makes the verdict Undetermined. Membership is direct (memberOf), as before.
     //
-    // aud-a23r. Across the forest, not the host's domain: without -Server, Get-ADUser was answered by a domain controller of
-    // the host's own domain, so a user of any other domain read "no directory user has the user principal name ..." -
-    // Undetermined, a valid mailbox blocked. The user is found on the forest's global catalog (discovered at runtime from the
-    // host's own forest, nothing named - Invariant 7) and read again on its own domain for memberOf, which a catalog holds
-    // only partly for another domain's user; one found nowhere in the forest is still Undetermined. Each configured group is
-    // resolved in each domain of the forest and must be one group across it (ResolveExcludedGroup). The catalog, the
-    // domains and each group are read once per run and kept, failures too. ASSUMPTION, unverified (no live call): a -Filter
-    // search on the catalog port spans the forest's domains, as the repo measured an -LDAPFilter one doing
-    // (ADDirectorySearchService.ResolveGlobalCatalog); and the app-pool identity can read the catalog and a domain
-    // controller of each domain. Either wrong, and the check is Undetermined - visible, never Eligible.
+    // aud-a23r. Across the forest, not the host's domain: the user is found on the forest's global catalog (discovered at
+    // runtime from the host's own forest, nothing named - Invariant 7) and read again on its own domain for memberOf, which a
+    // catalog holds only partly for another domain's user; one found nowhere in the forest is still Undetermined. Each
+    // configured group is resolved in each domain of the forest (ResolveExcludedGroup). The catalog, the domains and each
+    // group are read once per run and kept, failures too. ASSUMPTION, unverified (no live call): an -LDAPFilter search on
+    // the catalog port spans the forest's domains, as the repo measured (ADDirectorySearchService.ResolveGlobalCatalog); and
+    // the app-pool identity can read the catalog and a domain controller of each domain. Either wrong, and the check is
+    // Undetermined - visible, never Eligible.
+    //
+    // sweep-c item 14. The user is the one directory user carrying the typed address - as its userPrincipalName, its mail or
+    // an smtp proxy address - in one catalog read: a mailbox whose UPN differs from its address (shared and resource
+    // mailboxes most often) read "no directory user has the user principal name ..." and every such move was Undetermined.
+    // A configured name two domains hold is no longer a refusal: the user is excluded if a member of either, and the result
+    // names the group, its domain and the domains holding the name (a warning when the user is in neither). The check runs
+    // in a warm session and is timed (DirectoryReadOperation.BeginCheck).
     private void CheckExcludedGroups(MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups, DirectoryLookupRun run)
     {
-        using var runspace = CreateDirectoryRunspace();
-        runspace.Open();
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
+        using var timing = DirectoryReadOperation.BeginCheck(_logger, ExcludedGroupCheckName, result.EmailAddress);
 
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ActiveDirectory")
-          .AddParameter("ErrorAction", "Stop");
-        DirectoryStep(ps, "the ActiveDirectory module could not be loaded");
+        DirectorySessionPool.DirectorySession session;
+        try
+        {
+            session = DirectorySessions.Lease(ProtectedPrincipalService.SessionWait);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new InvalidOperationException($"no directory session was free: {ex.Message.TrimEnd('.')}", ex);
+        }
+        catch (Exception ex) when (!IsCancellation(ex))
+        {
+            throw new InvalidOperationException($"the ActiveDirectory module could not be loaded: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
+        }
 
+        using (session)
+        {
+            try
+            {
+                CheckExcludedGroupsIn(session.PowerShell, result, excludedGroups, run);
+            }
+            catch
+            {
+                session.Fail(); // kd-88's rule: a session a read failed in is not lent again
+                throw;
+            }
+        }
+    }
+
+    private void CheckExcludedGroupsIn(PowerShell ps, MigrationEligibilityResult result, IReadOnlyList<string> excludedGroups, DirectoryLookupRun run)
+    {
         var catalog = (run.Catalog ??= DirectoryRead<string>.Of(() => ForestGlobalCatalog(ps))).Get();
 
+        var address = result.EmailAddress.Trim();
         ps.AddCommand("Get-ADUser")
-          .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress.Replace("'", "''")}'")
+          .AddParameter("LDAPFilter", AddressFilter(address))
           .AddParameter("Server", catalog)
           .AddParameter("ErrorAction", "Stop");
         var users = DirectoryStep(ps, "Get-ADUser failed");
         if (users.Count != 1)
         {
             throw new InvalidOperationException(users.Count == 0
-                ? $"no directory user in the forest has the user principal name {result.EmailAddress}"
-                : $"{users.Count} directory users in the forest have the user principal name {result.EmailAddress}");
+                ? $"no directory user in the forest carries the address {address} as its user principal name, mail or proxy address"
+                : $"{users.Count} directory users in the forest carry the address {address} as their user principal name, mail or proxy address ({string.Join("; ", users.Select(u => u.Properties["DistinguishedName"]?.Value?.ToString()?.Trim() ?? "no DN"))})");
         }
 
         var userDn = users[0].Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
@@ -347,16 +374,51 @@ public class MigrationService : ExchangeServiceBase
 
         foreach (var configured in excludedGroups)
         {
-            if (!run.Groups.TryGetValue(configured, out var group))
-                run.Groups[configured] = group = DirectoryRead<string>.Of(() => ResolveExcludedGroup(ps, configured, run));
+            if (!run.Groups.TryGetValue(configured, out var read))
+                run.Groups[configured] = read = DirectoryRead<IReadOnlyList<ExcludedGroup>>.Of(() => ResolveExcludedGroup(ps, configured, run));
 
-            if (memberOf.Contains(group.Get()))
+            var groups = read.Get();
+            var held = groups.FirstOrDefault(group => memberOf.Contains(group.Dn));
+            if (groups.Count == 1)
+            {
+                if (held is not null)
+                {
+                    result.Status = MigrationStatus.Ineligible;
+                    result.IneligibilityReasons.Add($"Member of excluded group: {configured}");
+                    _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", result.EmailAddress, configured);
+                }
+
+                continue;
+            }
+
+            // sweep-c item 14: one name, a group in each of several domains. Which one the setting means cannot be told, so a
+            // member of any is excluded (the fail-closed reading), and a member of none is in none of them - a complete answer.
+            var domains = string.Join(", ", groups.Select(group => group.Domain).Distinct(StringComparer.OrdinalIgnoreCase));
+            var ambiguity = $"the excluded group name '{configured}' is held by {groups.Count} groups across the forest ({domains}); set it by DN or SID to name one";
+            _logger.LogWarning("The excluded group name {Group} is held by {Count} groups across the forest ({Domains}) - a member of any is excluded",
+                configured, groups.Count, domains);
+            if (held is not null)
             {
                 result.Status = MigrationStatus.Ineligible;
-                result.IneligibilityReasons.Add($"Member of excluded group: {configured}");
-                _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", result.EmailAddress, configured);
+                result.IneligibilityReasons.Add($"Member of excluded group: {configured} ({held.Dn}, in {held.Domain}; {ambiguity})");
+                _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group} ({GroupDn})", result.EmailAddress, configured, held.Dn);
+            }
+            else
+            {
+                result.Warnings.Add($"Not a member of any group named '{configured}', but {ambiguity}.");
             }
         }
+    }
+
+    /// <summary>
+    /// sweep-c item 14. The catalog search for the user carrying <paramref name="address"/>: as its userPrincipalName, its
+    /// mail, or an smtp proxy address (proxyAddresses compares without case, so "smtp:" finds the primary "SMTP:" too). User
+    /// objects only (Get-ADUser), so a contact carrying the address is not a mailbox to move. Escaped for LDAP.
+    /// </summary>
+    internal static string AddressFilter(string address)
+    {
+        var value = ProtectedPrincipalService.EscapeLdapFilter(address.Trim());
+        return $"(|(userPrincipalName={value})(mail={value})(proxyAddresses=smtp:{value}))";
     }
 
     // aud-a23r. The forest's global catalog as "host:3268", from the host's own forest. AddScript with the projection inside
@@ -385,16 +447,19 @@ public class MigrationService : ExchangeServiceBase
         return domains.Count > 0 ? domains : throw new InvalidOperationException("the forest reported no domains");
     }
 
+    /// <summary>sweep-c item 14. One group a configured excluded-group value resolved to, and the domain that holds it.</summary>
+    private sealed record ExcludedGroup(string Domain, string Dn);
+
     // aud-a23r. A configured group resolved in each domain of the forest with Get-ADGroup -Identity (its sAMAccountName, SID
-    // or objectGUID - what the cmdlet takes): the AD module's not-found there, by structure, is "not in that domain", and
-    // exactly one group across the forest is the group. None, several - a name two domains use, which its SID or objectGUID
-    // tells apart - or a domain that could not be asked cannot be checked: another domain might hold a second group by that
-    // name. aud-a23j asked the host's domain alone. ASSUMPTION, unverified (no live call): "not in this domain" is
+    // or objectGUID - what the cmdlet takes): the AD module's not-found there, by structure, is "not in that domain". None,
+    // or a domain that could not be asked, cannot be checked: another domain might hold the group. sweep-c item 14: several
+    // - a name two domains use - is every one of them, each with its domain; the caller excludes a member of any and names
+    // them, where it used to refuse the check. ASSUMPTION, unverified (no live call): "not in this domain" is
     // ADIdentityNotFoundException under ObjectNotFound, the shape IsNotFound reads.
-    private static string ResolveExcludedGroup(PowerShell ps, string configured, DirectoryLookupRun run)
+    private static IReadOnlyList<ExcludedGroup> ResolveExcludedGroup(PowerShell ps, string configured, DirectoryLookupRun run)
     {
         var domains = (run.Domains ??= DirectoryRead<IReadOnlyList<string>>.Of(() => ForestDomains(ps))).Get();
-        var found = new List<(string Domain, string? Dn)>();
+        var found = new List<ExcludedGroup>();
         var absent = new List<string>();
         foreach (var domain in domains)
         {
@@ -402,6 +467,7 @@ public class MigrationService : ExchangeServiceBase
               .AddParameter("Identity", configured)
               .AddParameter("Server", domain)
               .AddParameter("ErrorAction", "Stop");
+            DirectoryReadOperation.CountRead();
             Collection<PSObject> groups;
             try
             {
@@ -420,38 +486,49 @@ public class MigrationService : ExchangeServiceBase
 
             if (groups.Count == 0)
                 absent.Add($"{domain}: no group was returned");
-            found.AddRange(groups.Select(group => (domain, group.Properties["DistinguishedName"]?.Value?.ToString()?.Trim())));
+            foreach (var group in groups)
+            {
+                var dn = group.Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
+                found.Add(string.IsNullOrEmpty(dn)
+                    ? throw new InvalidOperationException($"the excluded group '{configured}' was returned with no distinguished name by {domain}")
+                    : new ExcludedGroup(domain, dn));
+            }
         }
 
-        if (found.Count == 0)
-            throw new InvalidOperationException($"the excluded group '{configured}' could not be resolved in any domain of the forest ({string.Join("; ", absent)})");
-        if (found.Count > 1)
-        {
-            throw new InvalidOperationException(
-                $"the excluded group '{configured}' resolved to {found.Count} groups across the forest ({string.Join(", ", found.Select(f => f.Domain).Distinct(StringComparer.OrdinalIgnoreCase))})");
-        }
-
-        return string.IsNullOrEmpty(found[0].Dn)
-            ? throw new InvalidOperationException($"the excluded group '{configured}' was returned with no distinguished name")
-            : found[0].Dn!;
+        return found.Count > 0
+            ? found
+            : throw new InvalidOperationException($"the excluded group '{configured}' could not be resolved in any domain of the forest ({string.Join("; ", absent)})");
     }
 
-    // aud-a23r. What one check run learns of the forest: the catalog, the domains, each configured group's DN - or why one
-    // could not be read, kept too, so every row of a run is told the same and the directory is not asked again. A new run
-    // asks again, so a group put right in the directory is seen.
+    // aud-a23r. What one check run learns of the forest: the catalog, the domains, each configured group's groups - or why
+    // one could not be read, kept too, so every row of a run is told the same and the directory is not asked again. A new
+    // run asks again, so a group put right in the directory is seen.
     private sealed class DirectoryLookupRun
     {
         public DirectoryRead<string>? Catalog { get; set; }
 
         public DirectoryRead<IReadOnlyList<string>>? Domains { get; set; }
 
-        public Dictionary<string, DirectoryRead<string>> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, DirectoryRead<IReadOnlyList<ExcludedGroup>>> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    // aud-a23r. A read made once: its value, or why there is none. A cancellation is not kept; it escapes.
+    // aud-a23r. A read made once: its value, or why there is none. A cancellation is not kept; it escapes. sweep-c item 14:
+    // a failure handed out again says so - it was read once for this run, at the first row that needed it, and a new check
+    // reads again - so a bulk file's later rows are not read as failures of their own.
     private sealed record DirectoryRead<T>(T? Value, string? Failure) where T : class
     {
-        public T Get() => Value ?? throw new InvalidOperationException(Failure);
+        private int _uses;
+
+        public T Get()
+        {
+            if (Value is not null)
+                return Value;
+
+            var first = Interlocked.Increment(ref _uses) == 1;
+            throw new InvalidOperationException(first
+                ? Failure
+                : $"{Failure} (read once for this run, at the first row that needed it; a new check reads again)");
+        }
 
         public static DirectoryRead<T> Of(Func<T> read)
         {
@@ -467,9 +544,10 @@ public class MigrationService : ExchangeServiceBase
     }
 
     // aud-a23j. One step of the check under Stop, through the base's Invoke, which fails on an error and on HadErrors alike;
-    // a failure names the step, in the cmdlet's own words (ResolveFailure).
+    // a failure names the step, in the cmdlet's own words (ResolveFailure). kd-88: counted for the timing line.
     private static Collection<PSObject> DirectoryStep(PowerShell ps, string failure)
     {
+        DirectoryReadOperation.CountRead();
         try
         {
             return Invoke(ps);

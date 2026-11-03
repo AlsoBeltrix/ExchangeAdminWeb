@@ -380,8 +380,10 @@ public class PageRequestRevalidationTests
     }
 
     [Fact]
-    public async Task AFailedRead_ForgetsTheRecordedAnswer()
+    public async Task AFailedRead_FallsBackToTheRecordedAnswer_AndTheSessionIsKept()
     {
+        // sweep-c item 15. A read that failed forgot the account's answer, so one failed lookup ended the session. Now the
+        // answer read moments before stands in for it, and is counted.
         using var h = new Harness();
         h.Grant("MailboxPermissions", SectionGroupSid);
         h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
@@ -391,17 +393,138 @@ public class PageRequestRevalidationTests
 
         Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
 
-        // The directory stops answering; the tab's interval check finds out first.
-        using var provider = h.Provider(new CircuitRevocation());
-        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        // The directory stops answering; the tab's interval check finds out first, and keeps its session.
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+        Assert.True(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.False(revocation.IsRevoked);
+        Assert.Equal(1, h.Revalidator.FallbackCount);
 
-        // Inside the interval of the good answer - but it is forgotten, so this request needs a read of
-        // its own, and that read fails: refused.
+        // Inside the interval of the good answer, which was kept: the page is confirmed without a read.
+        h.Clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
+        _ = h.Directory.Received(2).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task AHungDirectory_WithAnAnswerFromTheLastCheck_KeepsTheSession()
+    {
+        // The 10-30 shape: ADWS held a call for two minutes. The tab's previous check, one interval ago, recorded an answer;
+        // this check's read never answers and times out - the session stays, from that answer.
+        using var h = new Harness(lookupTimeout: TimeSpan.FromMilliseconds(300));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var hung = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+            _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid)),
+            _ => hung.Task);
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        var kept = await provider.ValidateAsync(user, "Interval", Ct);
+
+        Assert.True(kept);
+        Assert.False(revocation.IsRevoked);
+        Assert.Equal(1, h.Revalidator.FallbackCount);
+    }
+
+    [Fact]
+    public async Task AHungDirectory_WithNoAnswerRecorded_EndsTheSession()
+    {
+        using var h = new Harness(lookupTimeout: TimeSpan.FromMilliseconds(300));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var hung = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(_ => hung.Task);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.False(await provider.ValidateAsync(Operator(SectionGroupSid, DomainUsersSid), "CircuitOpened", Ct));
+
+        Assert.Equal(CircuitRevocationReason.LookupFailed, revocation.Reason);
+        Assert.Equal(0, h.Revalidator.FallbackCount);
+    }
+
+    [Fact]
+    public async Task TwoFailedChecksInARow_EndTheSession()
+    {
+        // The window holds the previous check's answer, never one two checks old: a directory that stays down ends the
+        // session at its second failed check, as the interval bound means.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+            _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid)),
+            _ => throw new DirectoryUnavailableException("no domain controller answered"));
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True(await provider.ValidateAsync(user, "Interval", Ct));
+        h.Clock.Advance(h.Options.Interval);
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.LookupFailed, revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ARealDenial_StillEndsTheSessionAtOnce_WhateverWasRecorded()
+    {
+        // A fresh read that answers is the directory's word: an answer recorded before, which would confirm, never overrides it.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+            _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid)),
+            _ => Task.FromResult(Membership(enabled: true, DomainUsersSid)));
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(TimeSpan.FromSeconds(10));
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, revocation.Reason);
+        Assert.Equal(0, h.Revalidator.FallbackCount);
+    }
+
+    [Fact]
+    public async Task ARecordedDenial_IsNotForgiven_WhenTheNextReadFails()
+    {
+        // The fallback compares the recorded answer as a fresh one: a removal it carries refuses, with its own reason.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+            _ => Task.FromResult(Membership(enabled: true, DomainUsersSid)),
+            _ => throw new DirectoryUnavailableException("no domain controller answered"));
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, (await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).Reason);
         h.Clock.Advance(TimeSpan.FromSeconds(10));
         var verdict = await h.Revalidator.RevalidatePageRequestAsync(user, Ct);
 
-        Assert.Equal(CircuitRevocationReason.LookupFailed, verdict.Reason);
-        _ = h.Directory.Received(3).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+        Assert.Equal(CircuitRevocationReason.MembershipChanged, verdict.Reason);
+        Assert.True(verdict.FromRecordedAnswer);
+    }
+
+    [Fact]
+    public async Task AFailureBeforeTheDirectoryIsAsked_NeverFallsBack()
+    {
+        // Only the directory's failure is forgiven: a store that cannot be read is no answer about the account at all.
+        using var h = new Harness();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.DirectoryReturns(enabled: true, SectionGroupSid, DomainUsersSid);
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
+
+        h.DropTable("section_access");
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(0, h.Revalidator.FallbackCount);
     }
 
     [Fact]
@@ -460,7 +583,10 @@ public class PageRequestRevalidationTests
 
         // The early read fails after the later one answered: the later answer stays.
         slow.SetException(new DirectoryUnavailableException("no domain controller answered"));
-        Assert.Equal(CircuitRevocationReason.LookupFailed, (await early).Reason);
+        // sweep-c item 15: and the early read, failing, falls back to that later answer rather than refusing.
+        var earlyVerdict = await early;
+        Assert.True(earlyVerdict.IsValid);
+        Assert.True(earlyVerdict.FromRecordedAnswer);
 
         h.Clock.Advance(TimeSpan.FromSeconds(1));
         Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
@@ -478,8 +604,9 @@ public class PageRequestRevalidationTests
         Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Operator(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
         Assert.Equal(new[] { OperatorSid }, h.Revalidator.RecordedAccountSids);
 
-        // One interval after the operator's read started, a colleague's read is recorded.
-        h.Clock.Advance(h.Options.Interval);
+        // One fallback window after the operator's read started, a colleague's read is recorded.
+        // sweep-c item 15: answers are kept to the fallback window, the longest any is used.
+        h.Clock.Advance(h.Revalidator.FallbackWindow);
         Assert.True((await h.Revalidator.RevalidatePageRequestAsync(Colleague(SectionGroupSid, DomainUsersSid), Ct)).IsValid);
 
         Assert.Equal(new[] { ColleagueSid }, h.Revalidator.RecordedAccountSids);

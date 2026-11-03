@@ -76,15 +76,17 @@ internal static class ExchangeGroupMembers
             visited.Add(rootAddress);
 
         var members = new List<ExchangeGroupMember>();
-        var queue = new Queue<(string Identity, string? Kind)>();
-        queue.Enqueue((identity, root.RecipientTypeDetails));
+        // sweep-c item 18: each nested group carries the groups it was reached through, so a member says how it is in the root.
+        var queue = new Queue<(string Identity, string? Kind, IReadOnlyList<string> Via)>();
+        queue.Enqueue((identity, root.RecipientTypeDetails, []));
         var nested = 0;
         while (queue.Count > 0)
         {
-            var (next, kind) = queue.Dequeue();
+            var (next, kind, via) = queue.Dequeue();
+            var reachedThrough = string.Equals(next, identity, StringComparison.OrdinalIgnoreCase) ? via : [.. via, next];
             foreach (var row in MembersOf(ps, next, kind, invoke))
             {
-                var member = ToMember(row);
+                var member = ToMember(row) with { Via = reachedThrough };
                 members.Add(member);
                 if (!member.IsGroup)
                     continue;
@@ -103,7 +105,7 @@ internal static class ExchangeGroupMembers
                     continue;
                 if (++nested > MaxNestedGroups)
                     throw new ExchangeGroupNestingBoundException(identity, MaxNestedGroups);
-                queue.Enqueue((address, member.RecipientTypeDetails));
+                queue.Enqueue((address, member.RecipientTypeDetails, reachedThrough));
             }
         }
 

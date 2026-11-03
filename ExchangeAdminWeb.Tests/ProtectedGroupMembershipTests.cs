@@ -160,40 +160,39 @@ public class ProtectedGroupMembershipTests
         Assert.True(Evaluate(forest, odd, StaffA).Incomplete);
     }
 
-    // ----- Hole 3: the resolver -----
+    // ----- Hole 3: the resolver. K.3: names are resolved only by db convert-identifiers (ConfigDbIdentifierTests) -----
 
-    [Fact]
-    public void DomainQualifiedEntry_ResolvesInTheNamedDomain_NotAnother()
+    [Theory]
+    [InlineData(@"B\Privileged")]
+    [InlineData("Privileged")]
+    [InlineData("Protected VIPs")]
+    public void ANameEntry_IsNeverLookedUp_ItIsIncomplete_NotConverted(string name)
     {
-        // The finding: "B\Privileged" had its domain stripped and resolved as A\Privileged,
-        // which Tess is not in, so a target protected through B's group passed.
+        // Tess is in B\Privileged and in Protected VIPs: a lookup by name would have matched. The check does not look a name
+        // up at all - not in the named domain, not forest-wide - and cannot answer for it.
         var forest = Forest();
 
-        var result = Evaluate(forest, Tess, @"B\Privileged");
-
-        Assert.Equal([@"Group:B\Privileged"], result.Matches);
-        Assert.False(result.Incomplete);
-        Assert.Contains($"FindGroups SamAccountName Privileged {DomainB}", forest.Calls);
-    }
-
-    [Fact]
-    public void DomainQualifiedEntry_ForTheOtherDomain_SelectsThatDomainsGroup()
-    {
-        // The control for the test above: the same name, the other domain, a group Tess is not
-        // in. Proves the domain half SELECTS rather than being ignored either way.
-        var result = Evaluate(Forest(), Tess, @"A\Privileged");
-
-        Assert.Empty(result.Matches);
-        Assert.False(result.Incomplete);
-    }
-
-    [Fact]
-    public void DomainQualifiedEntry_NamingNoDomainOfTheForest_FailsClosed()
-    {
-        var result = Evaluate(Forest(), Tess, @"NOWHERE\Privileged");
+        var result = Evaluate(forest, Tess, name);
 
         Assert.Empty(result.Matches);
         Assert.True(result.Incomplete);
+        var problem = Assert.Single(result.Problems);
+        Assert.Equal(name, problem.Entry);
+        Assert.Equal(ProtectedGroupMembership.NotConverted, problem.Problem);
+        Assert.DoesNotContain(forest.Calls, c => c.Contains("SamAccountName", StringComparison.Ordinal) || c.Contains("CommonName", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ASidEntryNamingNoGroup_IsIncomplete_AndNamed()
+    {
+        // A deleted group's SID: sweep-c item 17's first build let it protect nobody; K.3 removed that branch - the check
+        // cannot answer for it, refuses, and names it until it is removed or re-picked.
+        var result = Evaluate(Forest(), Uma, $"{SidA}-9999", StaffA);
+
+        Assert.True(result.Incomplete);
+        var problem = Assert.Single(result.Problems);
+        Assert.Equal($"{SidA}-9999", problem.Entry);
+        Assert.Equal(ProtectedGroupMembership.NoSuchGroup, problem.Problem);
     }
 
     [Fact]
@@ -218,23 +217,14 @@ public class ProtectedGroupMembershipTests
     }
 
     [Fact]
-    public void BareName_SharedByTwoDomains_FailsClosed()
+    public void AnEntryForAGroupJustRead_ThatNamesNoGroup_IsStillIncomplete()
     {
-        // No domain named, so none is assumed. Resolving to whichever domain answered first is
-        // the same defect as stripping the domain half.
-        var result = Evaluate(Forest(), Tess, "Privileged");
+        // The self-grant check and the self-service deny trustees pass groups they have just read: no such group there means
+        // the read raced a change, and the answer stays "cannot tell".
+        var result = Evaluate(Forest(), Uma, "CN=Gone,OU=Groups,DC=a,DC=example");
 
-        Assert.Empty(result.Matches);
         Assert.True(result.Incomplete);
-    }
-
-    [Fact]
-    public void BareName_UniqueInTheForest_IsResolvedForestWide()
-    {
-        var forest = Forest();
-
-        Assert.Single(Evaluate(forest, Tess, "Protected VIPs").Matches);
-        Assert.Contains("FindGroups SamAccountName Protected VIPs forest", forest.Calls);
+        Assert.Equal(ProtectedGroupMembership.NoSuchGroup, Assert.Single(result.Problems).Problem);
     }
 
     [Fact]
@@ -669,7 +659,8 @@ public class ProtectedGroupMembershipTests
     public void AMatchElsewhere_StillProtects_WhenAnotherEntryCannotBeAnswered()
     {
         // Protected is the safe answer; an unresolvable entry must not cancel a real match.
-        var result = Evaluate(Forest(), Tess, "Privileged", StaffA);
+        // K.3: a name is never looked up by the check - it is incomplete, "not converted" - and still cannot cancel a real match.
+        var result = Evaluate(Forest(), Tess, @"NOWHERE\Privileged", StaffA);
 
         Assert.Equal(["Group:" + StaffA], result.Matches);
         Assert.True(result.Incomplete);
@@ -910,14 +901,14 @@ public class ProtectedGroupMembershipTests
         var code = ProgressScan.CodeView(File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Services", "ProtectedPrincipalService.cs")));
         var body = MethodBody(code,
-            "private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(",
+            "private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckTransitiveGroupMembership(",
             "internal static (string? TargetDn, bool Failed) SelectFallbackDn(");
 
         Assert.Contains("ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger)", body, StringComparison.Ordinal);
         // ppi-s1: the ou_guid comparison shares the session, so the evaluator's incompleteness is folded into one flag
         // that is what the method returns.
         Assert.Contains("incomplete |= outcome.Incomplete;", body, StringComparison.Ordinal);
-        Assert.Contains("return (matches, incomplete);", body, StringComparison.Ordinal);
+        Assert.Contains("return (matches, incomplete, problems);", body, StringComparison.Ordinal);
         // The per-group query that read "no rows" as "not a member" is gone from the service.
         Assert.DoesNotContain("inChainResult", body, StringComparison.Ordinal);
     }

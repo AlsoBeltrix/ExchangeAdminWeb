@@ -13,7 +13,6 @@
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
 @inject ProtectedPrincipalService ProtectedPrincipalService
-@inject ProtectedPrincipalIdentifierMigration IdentifierMigration
 @inject ModuleConfigService ModuleConfigSvc
 @inject ADDirectorySearchService ADSearch
 @inject IActivityProgress Progress
@@ -110,7 +109,7 @@
 
             <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.
                 A user, group or OU added here is stored by its directory identifier - a user's or group's SID, an OU's object GUID - and the protection check compares that identifier rather than the name wherever it knows the target's own: another account later given the same name or address is not protected in its place, and a renamed OU still protects the accounts beneath it. Hover over an entry to see its identifier.
-                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover was added before identifiers were stored, or by an older build of this app, and is still enforced by name, exactly as before; it is marked <em>not converted</em>. The resolve pass that runs at every start of this app - or <strong>Resolve now</strong> - looks each such entry up once and, when it matches exactly one directory object, stores that object's identifier beside it; an entry that matches none or several, or could not be looked up, is left as it is, with the reason on its badge.
+                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover is stored by name only - it was added before identifiers were stored, or an older build of this app saved this page, which drops every identifier. This build never matches a protected entry by its name: until such an entry is converted, every protection check that finds no other match is refused, naming the entry. Convert them with the app's <code>db convert-identifiers</code> command (README, Troubleshooting), or remove each and pick it again from the search.
                 A change Exchange makes to a synced mailbox is checked against the one Active Directory account holding the on-premises SID Microsoft Graph reports for it, read with the <strong>Graph Directory Read Credential</strong> below; until that is set, such changes are refused.</small></p>
 
             @if (ppLoadError != null)
@@ -120,20 +119,13 @@
 
             @if (ppLoaded && UnconvertedCount() > 0)
             {
-                @* docs/ProtectedPrincipalIdentifiers-Plan.md B.5: an entry still stored by name only is enforced exactly as before
-                   (decision D1) and flagged here until it is converted, re-picked or removed. *@
+                @* docs/ProtectedPrincipalIdentifiers-Plan.md K.3: an entry stored by name only is never matched by name; it makes
+                   every protection check with no other match refuse, naming it, until it is converted or re-picked. *@
                 <div class="alert alert-warning py-2 small">
-                    <strong>@UnconvertedCount() @(UnconvertedCount() == 1 ? "entry is" : "entries are") not converted</strong> to a directory identifier.
-                    These entries are still matched by name, as before. Re-pick each from the search, or press Resolve now.
-                    Hover over an entry's "not converted" badge for the reason the last resolve pass gave@(ppFlags.RanAt is { } ranAt ? $" (it ran {ranAt.ToLocalTime():g})" : "").
-                    <button class="btn btn-sm btn-outline-dark ms-2" type="button" @onclick="ResolveNowAsync" disabled="@(ppResolving || saving)"
-                            title="@ResolveNowTip">@(ppResolving ? "Resolving..." : "Resolve now")</button>
+                    <strong>@UnconvertedCount() @(UnconvertedCount() == 1 ? "entry is" : "entries are") not converted</strong> to a directory identifier,
+                    so every protection check that finds no other match is refused, naming @(UnconvertedCount() == 1 ? "it" : "them").
+                    Run <code>db convert-identifiers</code> against the settings database (README, Troubleshooting), or remove each entry with no identifier on hover and pick it again from the search.
                 </div>
-            }
-
-            @if (ppResolveResult != null)
-            {
-                <div class="alert @(ppResolveIsError ? "alert-danger" : "alert-info") py-2 small">@ppResolveResult</div>
             }
 
             <div class="row g-3">
@@ -163,7 +155,7 @@
                                 {
                                     var captured = u;
                                     <tr>
-                                        <td class="adm-val">@captured @StaleBadge(captured, "User") @NotConvertedBadge(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindUser, captured)</td>
+                                        <td class="adm-val">@captured @StaleBadge(captured, "User")</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppUsers, captured)">Remove</button>
                                         </td>
@@ -201,7 +193,7 @@
                                 {
                                     var captured = g;
                                     <tr>
-                                        <td class="adm-val">@captured @StaleBadge(captured, "Group") @NotConvertedBadge(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindGroup, captured)</td>
+                                        <td class="adm-val">@captured @StaleBadge(captured, "Group")</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppGroups, captured)">Remove</button>
                                         </td>
@@ -239,7 +231,7 @@
                                 {
                                     var captured = o;
                                     <tr>
-                                        <td class="adm-val">@captured @StaleBadge(captured, "OU") @NotConvertedBadge(ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindOu, captured)</td>
+                                        <td class="adm-val">@captured @StaleBadge(captured, "OU")</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppOus, captured)">Remove</button>
                                         </td>
@@ -555,7 +547,7 @@
     /// <summary>
     /// Removes an identifier row and the companion legacy row stored with it (docs/ProtectedPrincipalIdentifiers-Plan.md
     /// B.2), unless another identifier row still pairs with that companion. Removing only the identifier row would leave
-    /// the companion unpaired - an unmigrated row, enforced by name - so the entry would look removed and still protect.
+    /// the companion unpaired - an unmigrated row, which refuses every check - so the entry would look removed and still take effect.
     /// </summary>
     private void RemovePpId(List<string> ids, List<string> legacy, string row)
     {
@@ -1003,7 +995,6 @@
         ppRulesVersion = editing.Version;
         SnapshotProtectedRulesBaseline();
         ppLoaded = true;
-        ppFlags = IdentifierMigration.ReadFlags();
     }
 
     /// <summary>Loads the directory-read secret id, telling an unreadable store from an unset id (aud-a26k).</summary>
@@ -1105,9 +1096,9 @@
     /// would read as "your protection rules have been lost" across every row at once - alarming
     /// and false. Absence of a badge therefore means "not known to be stale", never "verified".
     ///
-    /// The hover says what the entry still does, per kind (docs/ProtectedPrincipalIdentifiers-Plan.md B.5). It used to say
-    /// every such entry "protects nothing", which is false for a Group: an entry that resolves to no group makes every
-    /// protection check that finds no other match fail closed, refusing the change.
+    /// The hover says what the entry does, per kind. Only entries stored by name only are swept, and since
+    /// docs/ProtectedPrincipalIdentifiers-Plan.md K.3 such an entry is never matched by name: it refuses every protection
+    /// check that finds no other match, naming it, and <c>db convert-identifiers</c> refuses it as "not found" too.
     /// </remarks>
     private MarkupString StaleBadge(string entry, string kind)
         => ppStaleEntries.Contains(entry)
@@ -1117,132 +1108,18 @@
 
     internal static string StaleTip(string kind) => kind switch
     {
-        "Group" => "Active Directory has no group matching this entry. It is not inert: every protection check that finds no "
-            + "other match cannot confirm the target is outside this group, so it fails closed and refuses the change. "
-            + "Remove it or replace it with a current one.",
         "GroupTarget" => "Active Directory has no group matching this entry. A group target protects the group as a write "
             + "target, so one that no longer exists protects nothing. Remove it or replace it with a current one.",
-        "OU" => "Active Directory has no OU at this DN. It is still matched by name: it protects only a target whose DN is at or "
-            + "beneath this DN. Remove it or replace it with a current one.",
-        _ => "Active Directory has no user matching this entry. It is still matched by name: it protects only a target that "
-            + "carries this exact value - a mailbox with this address, say. Remove it or replace it with a current one.",
+        _ => $"Active Directory has no {(kind == "OU" ? "OU at this DN" : kind == "Group" ? "group matching this entry" : "user matching this entry")}. "
+            + "The entry is stored by name only and is never matched by name, so every protection check that finds no other "
+            + "match is refused, naming it, and db convert-identifiers cannot convert it. Remove it or replace it with a current one.",
     };
 
-    // docs/ProtectedPrincipalIdentifiers-Plan.md B.4, B.5. The last resolve pass's flagged rows (display-only), whether a pass
-    // started from this page is running, and what it reported.
-    private ProtectedPrincipalMigrationFlags ppFlags = ProtectedPrincipalMigrationFlags.None;
-    private bool ppResolving;
-    private string? ppResolveResult;
-    private bool ppResolveIsError;
-
-    private const string ResolveNowTip =
-        "Looks each entry still stored by name up in Active Directory, once, with the directory-read credential, and stores "
-        + "its SID (a user or group) or object GUID (an OU) beside it. An entry that matches exactly one object is converted "
-        + "and compared by that identifier at once; one that matches none or several, or could not be looked up, is left "
-        + "as it is - still enforced by name - with its reason on its badge. The name row is never changed. The same pass "
-        + "runs at every start of the app; this runs it now.";
-
-    /// <summary>How many user, group and OU entries are enforced by name only: no identifier row pairs with them.</summary>
+    /// <summary>How many user, group and OU entries are stored by name only - no identifier row pairs with them - and so refuse every check that finds no other match.</summary>
     private int UnconvertedCount() =>
         ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds).Length
         + ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds).Length
         + ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds).Length;
-
-    /// <summary>
-    /// Marks an entry enforced by name only (B.5), with the reason the last resolve pass gave and what the entry does until
-    /// it is converted. Every unpaired row carries it, a reason or not: the badge is the row's state, the reason is history.
-    /// </summary>
-    private MarkupString NotConvertedBadge(string kind, string entry)
-        => new("<span class=\"badge bg-secondary ms-1\" title=\""
-            + System.Net.WebUtility.HtmlEncode(NotConvertedTip(kind, ppFlags.For(kind, entry), ppFlags.RanAt))
-            + "\">not converted</span>");
-
-    internal static string NotConvertedTip(string kind, ProtectedPrincipalFlaggedRow? flag, DateTimeOffset? ranAt)
-    {
-        var when = ranAt is { } at ? $" ({at.ToLocalTime():g})" : "";
-        var why = flag is null
-            ? "no resolve pass has looked at this entry yet."
-            : $"the last resolve pass{when} left it: {flag.Detail}.";
-        var does = kind switch
-        {
-            ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindGroup =>
-                "Until it is converted it is looked up by name on every protection check, exactly as before: while it resolves "
-                + "to exactly one group, that group's members are protected; while it does not - no such group, or several - "
-                + "every protection check that finds no other match fails closed and refuses the change.",
-            ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindOu =>
-                "Until it is converted it is matched by name, exactly as before: it protects every target whose DN is at or "
-                + "beneath this DN, and stops protecting them if the OU is renamed or moved.",
-            _ =>
-                "Until it is converted it is matched by name, exactly as before: it protects any target whose UPN, email "
-                + "address, sAMAccountName or DN equals this value.",
-        };
-        return $"Not converted to a directory identifier: {why} {does} Re-pick it from the search to store it by identifier, "
-            + "or press Resolve now.";
-    }
-
-    /// <summary>
-    /// Resolve now (B.3): runs the identifier pass the app runs at every start, here, and reloads the lists to show what it
-    /// converted. The pass writes only identifier rows beside the legacy rows, under the write lock.
-    /// </summary>
-    /// <remarks>
-    /// Refused while this tab has unsaved changes: the pass writes the stored rules and the page then reloads them, which
-    /// would drop those changes. Busy-guarded before the first await (the aud-a67 shape). Cancelled only through the
-    /// activity's own token, which the pass honours up to its write and never during it.
-    /// </remarks>
-    private async Task ResolveNowAsync()
-    {
-        if (ppResolving)
-        {
-            ppResolveResult = "A resolve pass started from this page is still running.";
-            ppResolveIsError = true;
-            return;
-        }
-
-        ppResolving = true;
-        ppResolveResult = null;
-        var ip = ClientInfo.GetIpForUser(currentUser);
-        try
-        {
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
-            if (!authResult.Succeeded)
-            {
-                ppResolveResult = "Authorization check failed.";
-                ppResolveIsError = true;
-                return;
-            }
-
-            if (dirty.IsSectionDirty(SecProtected))
-            {
-                ppResolveResult = "Save or discard the changes on this tab first: Resolve now writes to the stored rules and then "
-                    + "reloads them, which would lose the unsaved changes. Nothing was changed.";
-                ppResolveIsError = true;
-                return;
-            }
-
-            using var activity = Progress.Begin(
-                "Admin Settings",
-                "Resolving protected principals stored by name to directory identifiers",
-                ActivitySize.Unknown);
-
-            var result = await IdentifierMigration.RunAsync(currentUser, ip, activity.CancellationToken);
-
-            var failed = result.Status is ProtectedPrincipalMigrationStatus.StoreUnavailable
-                or ProtectedPrincipalMigrationStatus.DirectoryUnavailable
-                or ProtectedPrincipalMigrationStatus.AlreadyRunning
-                or ProtectedPrincipalMigrationStatus.Cancelled;
-            activity.Complete(!failed, result.Summary);
-            ppResolveResult = result.Summary;
-            ppResolveIsError = failed;
-
-            LoadProtectedPrincipals();
-            RecountProtected();
-        }
-        finally
-        {
-            ppResolving = false;
-        }
-    }
 
     /// <summary>
     /// Re-checks the entries already in the store and flags those that no longer resolve.
@@ -1262,7 +1139,7 @@
     private async Task SweepExistingEntriesAsync()
     {
         var targets = new List<(string Entry, string Kind)>();
-        // Only the rows enforced by name: legacy rows no identifier row pairs with. An identifier row and its companion
+        // Only the rows stored by name only: legacy rows no identifier row pairs with. An identifier row and its companion
         // are not swept, the Group Targets reasoning below - their identity is the identifier, so a lookup by name would
         // badge a renamed-but-still-effective entry "protects nothing" (docs/ProtectedPrincipalIdentifiers-Plan.md B.2).
         targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds).Select(u => (u, "User")));

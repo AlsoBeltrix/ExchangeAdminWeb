@@ -206,7 +206,9 @@ public sealed class ModuleCatalog
             // 1.6.9: a synced target mailbox is checked as the one account holding the on-premises SID Graph reports for it
             // (docs/ProtectedPrincipalIdentifiers-Plan.md S3), read at a global catalog - a mailbox in another domain resolves,
             // and the mailbox-GUID refusals no longer appear; until the Graph Directory Read Credential is set it is refused.
-            Version = "1.6.9",
+            // 1.6.10: a grant to a group the operator is in is still refused, but the refusal (and its audit row) names the
+            // group and how they are in it - directly, through nested groups, or through their primary group (sweep-c item 18).
+            Version = "1.6.10",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -277,7 +279,8 @@ public sealed class ModuleCatalog
             // once, nothing read or sent - the removal's only until it claims its send, so a removal the pool runs again after
             // Exchange's pre-flight answer still runs. A command already sent runs to its end.
             // 1.4.9: as Mailbox Permissions 1.6.9 - the target mailbox is bound by its on-premises SID (ppi S3).
-            Version = "1.4.9",
+            // 1.4.10: as Mailbox Permissions 1.6.10 - a self-grant refusal for a group names the group and the path (sweep-c item 18).
+            Version = "1.4.10",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -496,7 +499,10 @@ public sealed class ModuleCatalog
             // 1.26.1: both eligibility checks and both creates act on and record the address or file, direction,
             // ticket, batch name and auto choices submitted - read above their first await - and a second click
             // while the page is busy is ignored (kd-72).
-            Version = "1.26.1",
+            // 1.27.0: the excluded-group check finds the user by the typed address as UPN, mail or proxy address (one catalog
+            // read), excludes a member of any group a name shared by several domains names, says so, and runs in a warm session
+            // (sweep-c item 14).
+            Version = "1.27.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -518,7 +524,7 @@ public sealed class ModuleCatalog
                 new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases. Exchange distributes mailboxes across all listed databases in each move-back batch."),
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by migration eligibility checks", Required: false),
                 new("CloudQuotaGB", "Cloud Quota (GB)", "Max size for cloud migration, applied to the primary mailbox and the archive separately. Combined size is not checked.", DefaultValue: "99"),
-                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated groups whose direct members are excluded from cloud migration. Each value must name one group that Get-ADGroup -Identity resolves in exactly one domain of the forest: its sAMAccountName, SID or objectGUID. A distinguished name cannot be entered, because the setting is split at commas.", Required: false)
+                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated groups whose direct members are excluded from cloud migration. Each value is what Get-ADGroup -Identity resolves in a domain of the forest: its sAMAccountName, SID or objectGUID. A name held by groups in several domains excludes the members of each, and the check names the domains: enter its SID or objectGUID to name one. A distinguished name cannot be entered, because the setting is split at commas. The user is found by the address typed - as their UPN, mail or a proxy address.", Required: false)
             ]
         },
         new()
@@ -1741,7 +1747,10 @@ public sealed class ModuleCatalog
             // (docs/ProtectedPrincipalIdentifiers-Plan.md S2).
             // 1.2.5: the protected-principals pane gains the Graph Directory Read Credential (Delinea Secret ID) field, its
             // help and its save (docs/ProtectedPrincipalIdentifiers-Plan.md S3).
-            Version = "1.2.5",
+            // 1.2.6: Resolve now and the "not converted" badges are gone; the pane counts the entries stored by name only and
+            // says they refuse every check until db convert-identifiers converts them; the "not in AD" tip says the same
+            // (docs/ProtectedPrincipalIdentifiers-Plan.md K, S6).
+            Version = "1.2.6",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

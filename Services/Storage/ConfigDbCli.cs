@@ -4,7 +4,9 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// The app's <c>db</c> command-line mode: <c>dotnet ExchangeAdminWeb.dll db &lt;verb&gt; ...</c>
 /// (docs/ConfigDbToolInApp-Plan.md section 3.1). Replaces the ops scripts' use of sqlite3.exe.
 /// Exit codes are the contract the PowerShell side trusts: 0 ok, 1 usage, 2 failure; stdout is
-/// meaningful only after exit 0.
+/// meaningful only after exit 0. docs/ProtectedPrincipalIdentifiers-Plan.md K.3 adds two verbs an administrator runs by hand
+/// and no script calls - convert-identifiers and identifier-status (<see cref="ConfigDbIdentifiers"/>) - under the same
+/// contract: their report is on stdout after exit 0, and on stderr, ending in an error line, after exit 2.
 /// </summary>
 /// <remarks>
 /// Program.cs dispatches here before the bootstrap logger and before the web host builder, so this
@@ -24,6 +26,8 @@ public static class ConfigDbCli
         "  ExchangeAdminWeb db check <db>\n" +
         "  ExchangeAdminWeb db active-jobs <jobsdb>\n" +
         "  ExchangeAdminWeb db init <db>\n" +
+        "  ExchangeAdminWeb db convert-identifiers <db> [--plan]\n" +
+        "  ExchangeAdminWeb db identifier-status <db>\n" +
         "Exit codes: 0 ok, 1 usage, 2 failure.";
 
     /// <summary>
@@ -42,7 +46,17 @@ public static class ConfigDbCli
         return true;
     }
 
-    public static int Run(string[] verbArgs, TextWriter stdout, TextWriter stderr)
+    public static int Run(string[] verbArgs, TextWriter stdout, TextWriter stderr) =>
+        Run(verbArgs, stdout, stderr, InvokingUserIdentifierDirectory.Open);
+
+    /// <param name="verbArgs">The verb and its arguments.</param>
+    /// <param name="stdout">The report, after exit 0.</param>
+    /// <param name="stderr">Errors and usage.</param>
+    /// <param name="openDirectory">
+    /// The directory convert-identifiers reads, opened only when there is something to look up: in the app, Active Directory
+    /// as the invoking user (<see cref="InvokingUserIdentifierDirectory"/>); in tests, a stand-in.
+    /// </param>
+    internal static int Run(string[] verbArgs, TextWriter stdout, TextWriter stderr, Func<IProtectedPrincipalResolveDirectory> openDirectory)
     {
         if (verbArgs.Length == 0)
             return UsageError(stderr, "no verb given");
@@ -85,6 +99,16 @@ public static class ConfigDbCli
                     return UsageError(stderr, "init needs exactly one database path");
                 return Execute(stderr, () => stdout.WriteLine(ConfigDbMaintenance.Init(initPath)));
 
+            case "convert-identifiers":
+                if (!TryParseConvert(rest, out var convertPath, out var plan))
+                    return UsageError(stderr, "convert-identifiers needs exactly one database path, and optionally --plan");
+                return Guarded(stderr, () => ConfigDbIdentifiers.Convert(convertPath, plan, openDirectory, stdout, stderr));
+
+            case "identifier-status":
+                if (!TrySinglePath(rest, out var statusPath))
+                    return UsageError(stderr, "identifier-status needs exactly one database path");
+                return Guarded(stderr, () => ConfigDbIdentifiers.Status(statusPath, stdout, stderr));
+
             default:
                 return UsageError(stderr, $"unknown verb '{verb}'");
         }
@@ -126,6 +150,15 @@ public static class ConfigDbCli
         return true;
     }
 
+    private static bool TryParseConvert(string[] rest, out string path, out bool plan)
+    {
+        var flags = rest.Count(a => string.Equals(a, "--plan", StringComparison.Ordinal));
+        plan = flags == 1;
+        path = string.Empty;
+        return flags <= 1
+            && TrySinglePath(rest.Where(a => !string.Equals(a, "--plan", StringComparison.Ordinal)).ToArray(), out path);
+    }
+
     private static bool TrySinglePath(string[] rest, out string path)
     {
         path = string.Empty;
@@ -141,6 +174,20 @@ public static class ConfigDbCli
         {
             action();
             return ExitOk;
+        }
+        catch (Exception ex)
+        {
+            stderr.WriteLine($"error: {ex.Message}");
+            return ExitFailure;
+        }
+    }
+
+    // The identifier verbs write their own report and exit code; anything they did not expect is an error line and exit 2.
+    private static int Guarded(TextWriter stderr, Func<int> verb)
+    {
+        try
+        {
+            return verb();
         }
         catch (Exception ex)
         {

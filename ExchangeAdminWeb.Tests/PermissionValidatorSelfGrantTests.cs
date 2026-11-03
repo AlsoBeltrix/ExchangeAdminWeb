@@ -46,6 +46,19 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
     private const string SelfGrantRefusal = "Access denied: You cannot grant permissions to yourself.";
 
+    // sweep-c item 18: a grant to a group the operator is in still refuses, naming the group and how they are in it.
+    private static string MemberOf(string group) =>
+        $"Access denied: You are a member of the group '{group}', so a permission granted to that group is granted to you.";
+
+    private static string MemberThrough(string group, string path) =>
+        $"Access denied: You are a member of the group '{group}' through {path}, so a permission granted to that group is granted to you.";
+
+    private static string IsPrimaryGroup(string group) =>
+        $"Access denied: The group '{group}' is your primary group, so a permission granted to that group is granted to you.";
+
+    private static string MemberPathUnread(string group) =>
+        $"Access denied: You are a member of the group '{group}' (the groups that membership runs through could not be read), so a permission granted to that group is granted to you.";
+
     private readonly ExchangeWriteHarness _h = new();
     private readonly SelfGrantDirectoryStandIn.Entry _jdoe;
     private readonly SelfGrantDirectoryStandIn.Entry _other;
@@ -302,7 +315,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
 
-        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Equal(otherDomain && !universal ? MemberPathUnread("Mailbox Delegates") : MemberOf("Mailbox Delegates"), result);
         string[] seeds = [_jdoe.Dn, _h.Forest.DomainUsers.Dn];
         var decisive = (otherDomain, universal) switch
         {
@@ -322,7 +335,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, "Domain Users");
 
-        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Equal(IsPrimaryGroup("Domain Users"), result);
         Assert.Empty(_h.Forest.Errors);
     }
 
@@ -427,7 +440,12 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
 
-        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Equal(chain switch
+        {
+            "in their own domain" or "universal groups across domains" => MemberThrough("Mailbox Delegates", "'Inner Team'"),
+            // The only link is held by a domain-local group of another domain: the path is not on any link the trace reads.
+            _ => MemberPathUnread("Mailbox Delegates"),
+        }, result);
         Assert.Empty(_h.Forest.Errors);
     }
 
@@ -494,9 +512,79 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
 
-        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Equal(MemberOf(CloudGroup), result);
         await resolver.Received(1).ReadGroupMembersAsync(CloudGroup);
         Assert.Empty(_h.Forest.Errors);
+    }
+
+    // ---- sweep-c item 18: the refusal names the group and the path -------------------------------
+
+    public static TheoryData<string> MembershipPaths => ["direct", "nested", "their primary group", "through their primary group"];
+
+    [Theory]
+    [MemberData(nameof(MembershipPaths))]
+    public async Task AGroupRefusal_NamesTheGroupAndHowTheOperatorIsInIt_NotAsIfTheyHadNamedThemselves(string path)
+    {
+        // A grant to a group the operator is in still refuses - it would grant them - but the refusal said "You cannot grant
+        // permissions to yourself" for each of these, naming neither the group nor how they are in it.
+        var grantee = Delegates;
+        string expected;
+        switch (path)
+        {
+            case "direct":
+                _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [_other, _jdoe]);
+                expected = MemberOf("Mailbox Delegates");
+                break;
+            case "nested":
+                var first = _h.Forest.AddGroup("First Team", members: [_jdoe]);
+                var second = _h.Forest.AddGroup("Second Team", members: [first]);
+                _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [second]);
+                expected = MemberThrough("Mailbox Delegates", "'First Team', which is in 'Second Team'");
+                break;
+            case "their primary group":
+                grantee = "Domain Users";
+                expected = IsPrimaryGroup("Domain Users");
+                break;
+            default:
+                var staff = _h.Forest.AddGroup("All Staff", members: [_h.Forest.DomainUsers]);
+                _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [staff]);
+                expected = MemberThrough("Mailbox Delegates", "your primary group 'Domain Users', which is in 'All Staff'");
+                break;
+        }
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, grantee);
+
+        Assert.Equal(expected, result);
+        Assert.Empty(_h.Forest.Errors);
+    }
+
+    [Fact]
+    public async Task AGroupRefusal_WhosePathCannotBeRead_StillRefuses_NamingTheGroup()
+    {
+        // The path is explanation only: the evaluator found the membership, so a trace that cannot read the links changes the
+        // wording, never the answer.
+        var team = _h.Forest.AddGroup("Inner Team", members: [_jdoe]);
+        _h.Forest.AddGroup("Mailbox Delegates", mail: Delegates, members: [team]);
+        _h.Forest.Failures["Get-ADObject memberOf"] = "The server is not operational.";
+        var resolver = ExchangeKnowsTheTarget();
+        resolver.ResolveRecipientAsync(Delegates).Returns(GroupRecipient(Delegates));
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
+
+        Assert.Equal(MemberPathUnread("Mailbox Delegates"), result);
+    }
+
+    [Fact]
+    public async Task ACloudOnlyGroupRefusal_NamesTheCloudGroupsExchangeReadThrough_InnermostFirst()
+    {
+        var resolver = ExchangeHoldsTheCloudGroup(Person(Other, "ext-other"),
+            Person(Upn, "ext-jdoe") with { Via = ["outer-list@contoso.test", "inner-list@contoso.test"] });
+
+        var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
+
+        Assert.Equal(MemberThrough(CloudGroup, "'inner-list@contoso.test', which is in 'outer-list@contoso.test'"), result);
     }
 
     [Fact]
@@ -572,7 +660,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
 
-        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(operatorInside ? MemberThrough(CloudGroup, "'Hidden Team', which is in 'Synced Team'") : null, result);
         Assert.Empty(_h.Forest.Errors);
     }
 
@@ -615,7 +703,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Microsoft365Group);
 
-        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(operatorInside ? MemberOf(Microsoft365Group) : null, result);
         await resolver.Received(1).ReadGroupMembersAsync(Microsoft365Group);
         Assert.Empty(_h.Forest.Errors);
     }
@@ -643,7 +731,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, Delegates);
 
-        Assert.Equal(SelfGrantRefusal, result);
+        Assert.Equal(hidden == "a group nested in it" ? MemberThrough("Mailbox Delegates", "'Inner Team'") : MemberOf("Mailbox Delegates"), result);
         Assert.NotEmpty(_h.Forest.MembershipReads);
         Assert.All(_h.Forest.CallsAs.Where(read => read.Call.StartsWith("Get-ADGroup ", StringComparison.Ordinal)),
             read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
@@ -798,7 +886,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(principal, Delegates);
 
-        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(operatorInside ? MemberOf("Mailbox Delegates") : null, result);
         Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => LooksUpTheOperatorBy(read.Call, claimed)).As);
         Assert.Equal(1, _h.DirectoryReadFetches);
         Assert.Empty(_h.Forest.Errors);
@@ -842,7 +930,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, HiddenGroup);
 
-        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(operatorInside ? MemberOf(HiddenGroup) : null, result);
         Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(HiddenGroup)).As);
         Assert.NotEmpty(_h.Forest.MembershipReads);
         Assert.All(_h.Forest.MembershipReads, read => Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, read.As));
@@ -917,7 +1005,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, CloudGroup);
 
-        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(operatorInside ? MemberThrough(CloudGroup, "'Synced Team'") : null, result);
         Assert.Equal(ExchangeWriteHarness.DirectoryReadAccount, Assert.Single(_h.Forest.CallsAs, read => read.Call == GranteeLookup(synced, synced)).As);
         Assert.Empty(_h.Forest.Errors);
     }
@@ -974,7 +1062,7 @@ public sealed class PermissionValidatorSelfGrantTests : IDisposable
 
         var result = await _h.NothingProtectedValidator(resolver).ValidateSelfGrantAsync(Jdoe, DynamicGroup);
 
-        Assert.Equal(operatorInside ? SelfGrantRefusal : null, result);
+        Assert.Equal(operatorInside ? MemberOf(DynamicGroup) : null, result);
         Assert.Equal("Unlimited",
             ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-DynamicDistributionGroupMember")), "ResultSize")?.ToString());
         Assert.Empty(_h.Forest.Errors);
