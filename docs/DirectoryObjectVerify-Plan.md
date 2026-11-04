@@ -1,6 +1,6 @@
 # Verify stored directory objects - Plan
 
-Status: **Approved in principle 2026-11-04 ("approved, but do a review with codex as a sanity check"); under codex-commercial
+Status: **Approved 2026-11-04 (owner: "approved, but do a review with codex as a sanity check"; "clear to review. use up to 3 rounds for consensus."). Reviewed by codex-commercial in three rounds, consensus reached at revision 4 (section G). Implementation V1-V4 may begin.**
 review, up to three rounds to consensus ("clear to review. use up to 3 rounds for consensus."). Revision 3 after round 2
 (ACCEPTABLE WITH CHANGES, required changes R1-R5 and five citation defects, all adopted - section G).**
 Owner: Michael
@@ -39,7 +39,7 @@ Module Configuration's access groups, protection-servicer group and module admin
 settings that hold a directory object as text: Migration's excluded groups, Emergency Disable's lockdown OU, the two
 search-base settings (AD Attribute Editor, BitLocker Recovery), and Conference Rooms' eight group addresses, which are
 checked against Exchange rather than Active Directory. Each setting is checked by the same existence and type rule its
-module applies when it uses the value, so Verify never calls a setting wrong that the module accepts. What Verify proves
+module applies when it uses the value, so Verify never calls a setting wrong that the module accepts. The one addition is Conference Rooms, whose module today passes the eight addresses to Exchange without checking what kind of recipient they name; Verify checks that each is a group, which is what the settings are documented to hold. What Verify proves
 is that the referenced object exists and is the right kind, read with the app's own directory account; it does not
 prove that a module which reads with its own account or against its own server can reach it. Those limits are stated
 on the page.
@@ -159,7 +159,7 @@ group / OU / group target = `distinguishedName`. Comparison is OrdinalIgnoreCase
 - A5: the Migration module's lookup is split so both callers share it: new `MigrationService.TryResolveExcludedGroup`
   returns `Found(groups by domain)` / `NotFound(domains asked)` / `Unreadable(domain, reason)`; the existing
   `ResolveExcludedGroup` (`Services/MigrationService.cs:459-500`) becomes a thin caller that keeps throwing
-  `InvalidOperationException` on `NotFound` exactly as today (`:498`), so the module's refusal is unchanged. Verify maps
+  `InvalidOperationException` on `NotFound` exactly as today (`:498-500`), so the module's refusal is unchanged. Verify maps
   `Found` with one domain -> `Verified`, several -> `Ambiguous(domains)`, `NotFound` -> `Missing`, `Unreadable` ->
   `Unreadable`. Entries are split at commas as the module splits them (`:44`). The generic resolver is NOT used: it has no
   GUID branch (`Services/ProtectedPrincipalIdentifierResolver.cs:323`).
@@ -267,7 +267,7 @@ so another admin sees "Last verified <time> by <user>: ..." without pressing; fi
 | `NotConverted` convertible A4 | `ConvertModuleAdminGrant` | yes | no |
 | `NotConverted` none / `Ambiguous` A2-A4 | Replace via picker | yes | no |
 | `Ambiguous` A5 | edit the entry text (field focused) | remove that entry | display-only |
-| `Missing` A5-A8 | edit the text; A6/A7 get the OU browser already on the page (`ModuleConfig.razor:380-451`) | A5: that entry; A6-A8: clear the value | display-only |
+| `Missing` A5-A8 | edit the text; A6/A7 get the OU browser already on the page (`ModuleConfig.razor:380-451`) | **one entry at a time, by the module's own parsing (R3-1):** A5 removes that comma entry; A7's `DefaultSearchBase` removes that semicolon entry and keeps the others (`Services/ADAttributeEditorService.cs:2224-2229` splits at `;`; an EMPTY list passes every scope check at `:2232-2234`, so removing the last entry is confirmed with the warning "no search-base boundary will remain: the editor may then search the whole directory"); A6, A8 and BitLocker's single DN clear the one value | display-only |
 | `WrongClass` A1 / A8 | Replace via picker / edit the text | yes | display-only |
 | `Unreadable` | - | yes | no |
 
@@ -317,7 +317,9 @@ check, and the ignores printout; `docs/AdminModuleSpec.md` for the field types.
   Principals. Tests: every finding incl. user-without-UPN not drifting; batching; unreadable never verified or missing;
   foreign-forest DN unreadable; compare-and-swap refuses a stale list; remove+cleanup atomic; version mismatch refuses;
   an Ignore after the row was removed or replaced is refused, including on the retry (interleaving test); a revoked
-  authorization at the click refuses and audits as a refusal; success and refusal land in different audit rows.
+  authorization at the click refuses and audits as a refusal; success and refusal land in different audit rows; the
+  pane's ordinary Remove + Save path (`AdminSettings.razor:1515`, whole-store replacement) also deletes the removed
+  row's ignore entries.
 - **V2 - live-check effect.** B.4: rules, presence and ignores read in one transaction, resolution still runs for an
   ignored missing `group_sid` row and only its confirmed zero is suppressed, timing counter, banner text,
   `db identifier-status` printout, corrupt JSON = empty. Help: README Troubleshooting, run-book. Tests: ignored missing
@@ -335,7 +337,8 @@ check, and the ignores printout; `docs/AdminModuleSpec.md` for the field types.
   module's throw preserved; A6 via `Get-ADOrganizationalUnit` with not-found translation; A7 base read; A8 via the
   Conference Rooms session with not-found translation; reach disclosure in the badge hover. Help: field tips, README for
   the five modules, `docs/AdminModuleSpec.md`. Tests: a GUID entry in A5 verifies; absent in every domain is missing,
-  not unreadable, and the module still throws; a container at A6's DN is missing; the same DN at A7 verifies; Exchange
+  not unreadable, and the module still throws; a container at A6's DN is missing; the same DN at A7 verifies; removing
+  one missing DN from `missing;valid` leaves `valid` and removing the last entry needs the confirmation; Exchange
   not-found is missing and another exception unreadable; a module admin may act on A5-A8 and is refused on A3/A4.
 
 Each slice: full gates (`.agents/repo-guidance.md` Verification), non-vacuity proof per new test, finding record
@@ -371,5 +374,14 @@ Each slice: full gates (`.agents/repo-guidance.md` Verification), non-vacuity pr
   results - Migration's lookup extracted with its throw preserved, comma split kept, DN not an accepted form, section
   access resolved by its planner with its local-domain rule, OU not-found translated (A, B.1, B.2); R5 Verify proves
   existence with the shared credential, not module reach - exec summary and A6/A7 disclose it. Citation fixes: A5 DN,
-  `ResolveExcludedGroup` throws at `:498`, `ConvertToSids` is persistence, A6 no `-Server`, enforcement load is
+  `ResolveExcludedGroup` throws at `:500`, `ConvertToSids` is persistence, A6 no `-Server`, enforcement load is
   `LoadEffectiveConfig` `:541` not `:1421`.
+- **Round 3** - 2026-11-04, head `675f5995`, same harness and settings. Verdict: **ACCEPTABLE WITH CHANGES**, R1-R5 and
+  every round-2 citation fix confirmed addressed. One required change, adopted: A7 Remove works one semicolon entry at a
+  time by the module's own split and warns before the last entry goes, because an empty list passes every scope check
+  (`Services/ADAttributeEditorService.cs:2224-2234`) - C.2 row amended, V4 test added. Two advisable notes, adopted: the
+  exec summary now says the Conference Rooms group-type check is added verification, not an existing runtime rule
+  (`Services/ConferenceRoomService.cs:1105` takes the first recipient without checking its class); V1 gains a test that
+  the ordinary Remove and Save on Admin Settings (`AdminSettings.razor:1515`, whole-store replacement) also perform the
+  ignore cleanup of B.3. Citation fix: Migration's throw is at `:500`. **Consensus reached within the owner's three
+  rounds: the approach stands, every required change is in the plan, implementation may begin.**
