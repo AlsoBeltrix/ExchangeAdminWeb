@@ -5,6 +5,25 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-04 - Verify stored directory objects approved; codex-commercial review rounds for this plan
+
+Owner, verbatim: "let's add a 'Verify' function and button to all the places where there's a directory object stored.
+on the protected principals page, this will verify that the objects exist and still match. any inconsistencies get
+reported with options to fix, remove, or ignore, and the associated plumbing needed for those to work." Then:
+"approved, but do a review with codex as a sanity check if not already done." On the supervisor's question (the
+2026-10-26 ruling allows one codex-commercial review, saved for the end): "clear to review. use up to 3 rounds for
+consensus."
+
+- `docs/DirectoryObjectVerify-Plan.md` is Approved. Its exec summary binds the owner; sections A-G bind the agents.
+- The plan was reviewed by codex-commercial (`gpt-6-astra`, effort max, ChatGPT-subscription auth through
+  `C:\Users\mcoelho\.local\bin\codex-commercial.cmd`, read-only sandbox; stdin prompt, `--output-last-message`; the
+  `.cmd` wrapper must be used because the `.ps1` binds `-C`/`-s`/`-o` as its own parameter and drops piped stdin) in
+  three rounds, each ACCEPTABLE WITH CHANGES with shrinking scope; every required change was adopted (plan section G).
+- This spends codex-commercial rounds on a plan. Whether the 2026-10-26 "one review, saved for the end" defect review
+  of everything merged since 14 October still stands is NOT decided here; the supervisor asks it when that point comes.
+- The deleted-protected-group question of 2026-11-03 is answered by the plan (B.4): the row keeps refusing until an
+  admin Ignores it; an ignore suppresses only a confirmed "no such object" on each check, never a failed read.
+
 ### 2026-11-03 - Identifier conversion is a one-time command-line step, not a startup pass
 
 Owner, on the sweep-c item-17 build (a protected Groups entry naming several groups protects the members of each):
