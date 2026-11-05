@@ -8,6 +8,21 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-05 (later) - Verify slice V2 landed (an ignored missing group no longer refuses); V3 next
+
+**Master `b0c1b06e`** (merge of `fix/dov-v2`; worktree and branch gone). Plan B.4 as built: `ProtectedGroupMembership.Evaluate`
+takes the set of SIDs whose Missing finding is ignored; the token match and the lookup still run on every check and only a
+lookup that confirms zero groups is skipped (Debug line, `Result.Ignored`, ", N ignored missing groups" in the timing line);
+a failed read, several matches, or a found group are evaluated as before. The set is built in `ProtectedPrincipalService`
+from the ignore list read in the same transaction as the rules (per-rule-set table, never a second read); a legacy Group row
+stored as the same SID is excluded and still refuses. A non-ignored confirmed zero reads "no such group - run Verify on
+Admin Settings". README Verify paragraph and a new Troubleshooting entry, run-book line, pane tips. AdminSettings 1.3.1.
+Record dov-v2 (15 mutations caught). Supervisor's gates on master at `b0c1b06e`: Release build 0 errors (19 known
+warnings); xUnit 8515 passed, 0 failed; format, whitespace and ASCII clean. Not pushed. The deleted-group open question
+of 2026-11-03 is closed by this slice. Left for V4: the post-deploy "press Verify on each page" run-book sentence (plan D).
+
+**Next:** V3 (Module Configuration groups: Access, Protection servicer, Module Admins), then V4, one Opus agent at a time.
+
 ### 2026-11-05 - Verify slice V1 landed (engine, ignore list, Protected Principals pane); V2 next
 
 **Master `77ad7fcd`** (merge of `fix/dov-v1`; worktree and branch gone). `docs/DirectoryObjectVerify-Plan.md` (Approved
@@ -40,7 +55,7 @@ sweep-c-13/14/15/18), 17 rebuilt under K (sweep-c-17), 16 is a record for the ow
 (`.agents/review/findings/item-16-revalidation-decision.md`). Records ppi-s6. Supervisor's gates on master at `82a67e2f`:
 Release build 0 errors (19 known warnings); xUnit 8461 passed, 0 failed; format, whitespace and ASCII clean. Not pushed.
 
-**Open owner question (answered by the Verify plan B.4; lands in V2):** a `group_sid` row whose group has since been deleted. The directory definitively
+**Open owner question (closed by V2 at `b0c1b06e`, plan B.4):** a `group_sid` row whose group has since been deleted. The directory definitively
 answers "no such object" for the SID; under K as built that makes every check that finds no other match incomplete,
 naming the row - the item-17 outage shape for a deleted protected group. Then item 16 (keep session revalidation).
 
