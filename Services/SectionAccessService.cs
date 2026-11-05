@@ -131,6 +131,52 @@ public class SectionAccessService
         }
     }
 
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1, B.3 (slice V3). What a Verify press of a module's Access tab reads: the rows of
+    /// <paramref name="aliases"/>, the presence marker, the display names and the raw ignore list, in one read transaction.
+    /// Unreadable while the legacy file is not imported, as the save refuses then.
+    /// </summary>
+    internal ModuleGroupVerifySnapshot ReadForVerify(IReadOnlyCollection<string> aliases) =>
+        _legacyFileCorrupt ? ModuleGroupVerifySnapshot.Unreadable : _repository.ReadVerifySnapshot(aliases);
+
+    /// <summary>docs/DirectoryObjectVerify-Plan.md C.2. One Verify action's write, under this service's write lock.</summary>
+    internal ModuleGroupVerifyWriteOutcome ApplyVerifyWrite(Func<SectionAccessRepository, ModuleGroupVerifyWriteOutcome> write)
+    {
+        if (_legacyFileCorrupt)
+            return ModuleGroupVerifyWriteOutcome.Refused(VerifyWriteStatus.StoreUnreadable);
+
+        lock (_writeLock)
+        {
+            var outcome = write(_repository);
+            if (outcome.Status == VerifyWriteStatus.Written)
+                _logger.LogInformation("Section access changed by a Verify action");
+            return outcome;
+        }
+    }
+
+    /// <summary>The last Verify per store (plan C.1), display-only; empty when none is stored or it cannot be read.</summary>
+    internal Dictionary<string, VerifyLastEntry> ReadVerifyLast()
+    {
+        try
+        {
+            return VerifyLastEntry.ParseMap(_repository.ReadVerifyLast());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "The last-verified lines could not be read");
+            return new(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>Stores <paramref name="entry"/> as the last Verify of <paramref name="key"/> (plan C.1), keeping the others.</summary>
+    internal void WriteVerifyLast(string key, VerifyLastEntry entry) =>
+        _repository.UpdateVerifyLast(raw =>
+        {
+            var map = VerifyLastEntry.ParseMap(raw);
+            map[key] = entry;
+            return VerifyLastEntry.SerializeMap(map);
+        });
+
     public Dictionary<string, string[]> GetSectionAccess()
     {
         var (data, _) = ReadSectionAccess();

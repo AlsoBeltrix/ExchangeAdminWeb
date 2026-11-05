@@ -178,6 +178,31 @@ Each module has its own config page (linked in the sidebar) with:
   display name, groups only) and replaces it with the SID of the one group it names, which grants from then on; it
   refuses, writing nothing, while any name matches no group or several (`docs/ProtectedPrincipalIdentifiers-Plan.md` K).
 
+**Verify** (docs/DirectoryObjectVerify-Plan.md, slice V3). The **Section Access** tab (the module's access groups and its
+*Protected principal servicing* groups) and the **Module Admins** tab each have a Verify button, for global admins only. The
+page asks the directory nothing when it opens; pressing Verify asks Active Directory about every group stored on that tab -
+by SID at the global catalog, read with the Directory Read Credential - and marks each: **verified**; **missing** (the
+directory answered and holds no object with that SID); **name changed** (the display name shown is not the group's
+current sAMAccountName - cosmetic, the grant is by SID; module admins borrow the section-access display names);
+**not converted** (stored by name, so it grants nothing, with what that store's own lookup finds: one group, none, several,
+or no answer); **several objects**; **wrong type** (not a group, or not a usable group SID such as a well-known SID); **could
+not verify** (the directory could not be asked - never read as missing); or **ignored**. A grant stored by name is looked
+up by the rule its store has always used: on Section Access as the startup SID migration does (`DOMAIN\Name` in that
+domain, a bare name in this server's own domain), on Module Admins as `db convert-identifiers` does (`DOMAIN\name` in that
+domain, a bare name across the forest). The summary line reads "Verified N entries at <time>: M findings, K ignored, J
+could not be verified", and the last press of each tab is shown to the next admin. Beside each finding are its actions,
+each checked against the groups as Verify read them (a change since refuses: "run Verify again"), re-authorized at the
+click as a global admin - a module admin who is not one is refused, and the refusal is audited - and audited under
+`Verify:SectionAccess` or `Verify:ModuleAdmins`: **Rename** (store the group's current name as the display name of that SID,
+written at once), **Convert** (one grant, as the startup migration or `db convert-identifiers` would, written at once),
+**Replace...** (takes the grant out of the list; pick the replacement in the search below it and Save, which checks it as any
+added group is), **Remove now** (the grant and any ignore of it, written at once), and **Ignore** (keep the grant and stop the
+finding being reported until what Verify sees changes; never offered for a grant stored by name, one that is not a usable
+SID, or one that could not be verified). **An ignore on these tabs changes only what Verify reports, never who is granted
+anything**: section access, servicing and module-admin grants are matched against the SIDs in the user's token, and nothing
+that decides access reads the ignore list. Verify is not offered while the tab has unsaved changes, and the ordinary
+Remove and Save also deletes a removed grant's ignores.
+
 Changes are stored in the config database - the `module_enablement`, `section_access`, `module_config` and `module_admins` tables (`docs/ConfigDbOperations.md`) - and take effect immediately. The legacy `config/*.json` files are imported once and archived; a tab whose store cannot be read says which table, or which legacy file was not imported, and does not offer Save.
 Global admins see all module config links; module admins see only their delegated modules.
 
@@ -1180,6 +1205,8 @@ authorised them.
 - Fail-closed and inert by default. With no group configured — the shipped state — the capability
   does not exist anywhere
 - Membership in a servicing group for one module confers nothing in any other
+- The Access tab's **Verify** checks the servicing groups with the module's access groups (see Per-Module Config Pages); an
+  ignore there changes only what Verify reports, never who may service
 
 ### Audit Logging
 

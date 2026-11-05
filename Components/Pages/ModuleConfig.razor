@@ -18,6 +18,7 @@
 @inject ExchangeAdminWeb.Services.IOrganizationalUnitDirectory OUService
 @inject ILogger<ModuleConfig> Logger
 @inject IActivityProgress Progress
+@inject DirectoryObjectVerifier Verifier
 
 <PageTitle>Module Config — @(module?.DisplayName ?? ModuleId)</PageTitle>
 
@@ -140,6 +141,24 @@
             </div>
     }
 
+    @* docs/DirectoryObjectVerify-Plan.md C.1, C.2 (slice V3): a Verify finding's detail and its actions, under its grant, on the
+       Access tab (access and Protection servicer groups) and the Module Admins tab. A markup template, not a fragment in the
+       @code block, so the block still parses for the guards (RazorParseGate). *@
+    @{
+        RenderFragment<VerifyItemResult> groupVerifyRow = r =>
+            @<tr class="adm-verify">
+                <td colspan="4">
+                    <small class="text-muted me-2">@GroupVerifyBadgeParts(r, GroupVerifiedAt(r.Item.Store)).Tip</small>
+                    @foreach (var action in GroupVerifyActionsOf(r))
+                    {
+                        var a = action;
+                        <button class="btn btn-outline-secondary btn-sm py-0 me-1" type="button" title="@GroupVerifyActionTip(a, r)"
+                                disabled="@(!CanVerifyGroups(r.Item.Store))" @onclick="() => OnGroupVerifyActionAsync(a, r)">@GroupVerifyActionLabel(a)</button>
+                    }
+                </td>
+            </tr>;
+    }
+
     @* Section Access *@
     @if (isGlobalAdmin)
     {
@@ -163,6 +182,19 @@
                 }
 
                 <p class="text-muted mb-2"><small>Groups allowed to use this module, stored as SIDs. Search covers every domain in the forest.</small></p>
+
+                @* docs/DirectoryObjectVerify-Plan.md C.1 (slice V3): one Verify for the tab - the module's access groups and its
+                   Protection servicer groups below - asking the directory nothing until it is pressed. *@
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <button class="btn btn-outline-success btn-sm" type="button" title="@AccessVerifyButtonTip"
+                            @onclick="() => VerifyGroupsAsync(AccessStore)" disabled="@(!CanVerifyGroups(AccessStore))">@(groupVerifying ? "Verifying..." : "Verify")</button>
+                    <small class="text-muted">@GroupVerifySummaryText(AccessStore)</small>
+                </div>
+                <p class="text-muted mb-2"><small>@AccessVerifyPaneNote</small></p>
+                @if (!string.IsNullOrEmpty(accessVerifyMessage))
+                {
+                    <div class="alert @(accessVerifyIsError ? "alert-warning" : "alert-success") py-2 px-3 small">@accessVerifyMessage</div>
+                }
 
                 @* One row per grant, not chips. Chips wrap, so the block changed height per module
                    and nothing lined up; a row shows the domain, the group and the SID it actually
@@ -216,12 +248,13 @@
                                     var cg = group;
                                     <tr>
                                         <td class="adm-dom">@DomainOf(cg)</td>
-                                        <td class="adm-grp">@BareNameOf(cg)</td>
+                                        <td class="adm-grp">@BareNameOf(cg) @GroupVerifyBadge(AccessStore, capturedAlias, cg)</td>
                                         <td class="adm-sid">@cg</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemoveAccessGroup(capturedAlias, cg)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (GroupVerifyRowFor(AccessStore, capturedAlias, cg) is { } avr) { @groupVerifyRow(avr) }
                                 }
                                 <tr>
                                     <td colspan="4">
@@ -310,7 +343,7 @@
                                     <tr>
                                         <td class="adm-dom">@DomainOf(sgc)</td>
                                         <td class="adm-grp">
-                                            @BareNameOf(sgc)
+                                            @BareNameOf(sgc) @GroupVerifyBadge(AccessStore, servicerAlias, sgc)
                                             @if (ServicerGroupLacksDirectModuleAccess(sgc))
                                             {
                                                 <span class="badge bg-danger ms-1" style="font-size: 0.62rem;"
@@ -322,6 +355,7 @@
                                             <button class="adm-rm" type="button" @onclick="() => RemoveAccessGroup(servicerAlias, sgc)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (GroupVerifyRowFor(AccessStore, servicerAlias, sgc) is { } svr) { @groupVerifyRow(svr) }
                                 }
                                 <tr>
                                     <td colspan="4">
@@ -618,7 +652,19 @@
 
                 <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.
                     A grant is stored as the group's SID and matched against the SIDs in the signed-in user's token, so a same-named group in another domain never satisfies it.
-                    A grant stored by name - written before grants were stored as SIDs - grants nothing and is marked <em>not converted - run db convert-identifiers</em>. The app's <code>db convert-identifiers</code> command (README, Troubleshooting) replaces each such name that names exactly one group with that group's SID, which grants from then on; or remove it, and pick the group from the search.</small></p>
+                    A grant stored by name - written before grants were stored as SIDs - grants nothing and is marked <em>not converted - run db convert-identifiers</em>. The app's <code>db convert-identifiers</code> command (README, Troubleshooting) replaces each such name that names exactly one group with that group's SID, which grants from then on; <strong>Convert</strong> after pressing <strong>Verify</strong> below does the same for one grant; or remove it, and pick the group from the search.</small></p>
+
+                @* docs/DirectoryObjectVerify-Plan.md C.1 (slice V3): this tab's Verify. *@
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <button class="btn btn-outline-success btn-sm" type="button" title="@AdminsVerifyButtonTip"
+                            @onclick="() => VerifyGroupsAsync(AdminsStore)" disabled="@(!CanVerifyGroups(AdminsStore))">@(groupVerifying ? "Verifying..." : "Verify")</button>
+                    <small class="text-muted">@GroupVerifySummaryText(AdminsStore)</small>
+                </div>
+                <p class="text-muted mb-2"><small>@AdminsVerifyPaneNote</small></p>
+                @if (!string.IsNullOrEmpty(adminsVerifyMessage))
+                {
+                    <div class="alert @(adminsVerifyIsError ? "alert-warning" : "alert-success") py-2 px-3 small">@adminsVerifyMessage</div>
+                }
 
                 @if (moduleAdminsUnreadable)
                 {
@@ -650,7 +696,7 @@
                         {
                             var capturedGroup = group;
                             <tr>
-                                <td class="adm-grp" title="@capturedGroup">@DisplayNameFor(capturedGroup)@if (IsUnconvertedAdmin(capturedGroup))
+                                <td class="adm-grp" title="@capturedGroup">@DisplayNameFor(capturedGroup) @GroupVerifyBadge(AdminsStore, module.Id, capturedGroup)@if (IsUnconvertedAdmin(capturedGroup))
                                     {
                                         <br /><small class="text-muted">@NotConvertedAdminText</small>
                                     }</td>
@@ -659,6 +705,7 @@
                                             title="@(IsUnconvertedAdmin(capturedGroup) ? "Removes this grant stored by name when you save. It grants nothing now, so removing it takes no access away." : null)">Remove</button>
                                 </td>
                             </tr>
+                            @if (GroupVerifyRowFor(AdminsStore, module.Id, capturedGroup) is { } mvr) { @groupVerifyRow(mvr) }
                         }
                         <tr>
                             <td colspan="2">
@@ -1342,6 +1389,10 @@
             LoadAllowlist();
             InitOUBrowser();
         }
+
+        // docs/DirectoryObjectVerify-Plan.md C.1 (slice V3): a new load shows no earlier press - its rows were another load's -
+        // and the last press of each tab, display-only.
+        ResetGroupVerify();
     }
 
     private string GetConfigValue(string key, string defaultValue) =>
@@ -2359,6 +2410,414 @@
     private void HandleAdminKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter") AddModuleAdmin();
+    }
+
+    // ----- docs/DirectoryObjectVerify-Plan.md C.1, C.2 (slice V3): Verify on the Access and Module Admins tabs -----
+    //
+    // One button per tab: the Access tab's covers the module's access groups and its Protection servicer groups (both
+    // section_access rows), the Module Admins tab's the module's admin grants. Nothing here asks the directory until a global
+    // admin presses it. A press reads the tab's rows, their version, the display names and the ignore list in one read
+    // transaction, shows those rows, and marks each grant. Rename, Convert, Remove now and Ignore are direct, audited writes
+    // (ModuleGroupVerifyActions), each checking the version the grant was read with; Replace takes the grant out of the list and
+    // leaves the pick and the Save to the tab's ordinary path. None is offered while the tab holds unsaved edits.
+
+    private const string AccessStore = VerifyIgnoreList.SectionAccessStore;
+    private const string AdminsStore = VerifyIgnoreList.ModuleAdminsStore;
+
+    private VerifyReport? accessVerifyReport;
+    private VerifyReport? adminsVerifyReport;
+    private string? accessVerifyIgnoresRaw;
+    private string? adminsVerifyIgnoresRaw;
+    private bool groupVerifying;
+    private bool groupActing;
+    private string? accessVerifyMessage;
+    private bool accessVerifyIsError;
+    private string? adminsVerifyMessage;
+    private bool adminsVerifyIsError;
+    private VerifyLastEntry? accessVerifyLast;
+    private VerifyLastEntry? adminsVerifyLast;
+
+    // Known Failure Class 5: what each button does and what it does not.
+    internal const string AccessVerifyButtonTip =
+        "Ask Active Directory about every group stored on this tab - the module's access groups and its Protection servicer "
+        + "groups - and mark each with what it found. Reads only: nothing is changed until you press an action beside a group. "
+        + "Global admins only. Not offered while this tab has unsaved changes, or before section access is configured.";
+
+    internal const string AdminsVerifyButtonTip =
+        "Ask Active Directory about every module admin group stored for this module and mark each with what it found. Reads "
+        + "only: nothing is changed until you press an action beside a group. Global admins only. Not offered while this tab "
+        + "has unsaved changes.";
+
+    private const string GroupVerifyNoteCommon =
+        "Verify marks each group: verified; missing (the directory holds no group with this SID); name changed (the name shown "
+        + "is not the group's current name - cosmetic, the grant is by SID); not converted (stored by name, so it grants nothing "
+        + "until converted); several objects; wrong type (not a group, or not a usable group SID); could not verify (the "
+        + "directory could not be asked - never a sign the group is gone); or ignored. Beside each finding are its actions: "
+        + "Rename stores the current name; Convert stores the SID the name resolves to; Replace... takes the grant out of the "
+        + "list so you pick its replacement in the search and Save; Remove now deletes the grant and its ignores at once; Ignore "
+        + "keeps the grant and stops the finding being reported until what Verify sees changes. Every action is checked against "
+        + "the groups as Verify read them, re-checked as a global admin at the click, and audited. An ignore here changes only "
+        + "what Verify reports, never who is granted anything: these grants are matched against the SIDs in the user's token, "
+        + "and nothing that decides access reads the ignore list. A grant stored by name, or one that could not be verified, "
+        + "cannot be ignored. ";
+
+    internal const string AccessVerifyPaneNote = GroupVerifyNoteCommon
+        + "A group stored by name is looked up as the startup SID migration looks it up: DOMAIN\\Name in that domain, a bare "
+        + "name in this server's own domain, never across the forest.";
+
+    internal const string AdminsVerifyPaneNote = GroupVerifyNoteCommon
+        + "A grant stored by name is looked up as db convert-identifiers looks it up: DOMAIN\\name in that domain, a bare name "
+        + "across the forest. The names shown are the section-access display names of the same SIDs.";
+
+    /// <summary>The badge's text, Bootstrap class and hover for one finding on these tabs (help: Known Failure Class 5).</summary>
+    internal static (string Text, string Css, string Tip) GroupVerifyBadgeParts(VerifyItemResult r, string verifiedAt)
+    {
+        var f = r.Finding;
+        return f.Kind switch
+        {
+            VerifyFindingKind.Verified => ("verified", "text-bg-light text-muted border",
+                $"Verified at {verifiedAt}: a group with this SID exists, and its name is the one shown."),
+            VerifyFindingKind.Missing => ("missing", "bg-danger",
+                "Active Directory answered and holds no object with this SID, so the grant matches no one signed in after the "
+                + "group went. Replace it with the group it should name, Remove it, or Ignore it if you know why."),
+            VerifyFindingKind.LabelDrift => ("name changed", "bg-warning text-dark",
+                $"Shown as '{r.Item.Label}'; the group's current name is '{f.Detail}'. The grant is by SID and is unaffected; "
+                + "Rename stores the current name."),
+            VerifyFindingKind.NotConverted => ("not converted", "bg-warning text-dark",
+                "Stored by name, so it grants nothing until it is converted to its group's SID. The directory says: "
+                + $"{f.Resolution?.Detail ?? f.Detail}. Cannot be ignored."),
+            VerifyFindingKind.Ambiguous => ("several objects", "bg-warning text-dark",
+                $"More than one object answers for this SID: {f.Detail}. Replace it with the group it should name, or Remove it."),
+            VerifyFindingKind.WrongClass => ("wrong type", "bg-danger",
+                r.Item.Identifier is null
+                    ? $"This value is a {f.Detail}: it grants nothing at any gate. Remove it. Cannot be ignored."
+                    : $"The object with this SID is a {f.Detail}, not a group. Replace it or Remove it."),
+            VerifyFindingKind.Unreadable => ("could not verify", "bg-secondary",
+                $"The directory could not be asked about this group: {f.Detail}. This says nothing about the group; press Verify "
+                + "again later. Cannot be ignored."),
+            VerifyFindingKind.Ignored => ("ignored", "bg-secondary",
+                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}. Changes only "
+                + "what Verify reports. Reported again when what Verify sees changes; undone by Replace or Remove."),
+            _ => ("", "", ""),
+        };
+    }
+
+    /// <summary>What each action button does on these tabs (help: Known Failure Class 5).</summary>
+    internal static string GroupVerifyActionTip(VerifyAction action, VerifyItemResult r) => action switch
+    {
+        VerifyAction.Rename => $"Store '{r.Finding.Detail}' as this SID's display name, on every permission that grants it. The "
+            + "grant is unchanged. Written at once, without Save; audited.",
+        VerifyAction.Convert => $"Store this grant as its group's SID ({r.Finding.Resolution?.Identifier}), which grants from "
+            + "then on - what the conversion does, for this one grant. Written at once, without Save; audited.",
+        VerifyAction.Replace => "Take this grant out of the list, then pick the group it should name in the search below it and "
+            + "press Save: the replacement is checked and saved as any added group is, and the old grant's ignores go with it. "
+            + "Nothing changes until you save; audited.",
+        VerifyAction.Remove => "Delete this grant, and any ignore recorded for it. Written at once, without Save; audited.",
+        VerifyAction.Ignore => "Keep this grant, record that you have seen this finding, and stop reporting it until what Verify "
+            + "sees changes. It changes only what Verify reports, never who is granted anything. Audited.",
+        _ => "",
+    };
+
+    private static string GroupVerifyActionLabel(VerifyAction action) => action switch
+    {
+        VerifyAction.Replace => "Replace...",
+        VerifyAction.Remove => "Remove now",
+        _ => action.ToString(),
+    };
+
+    private ModuleGroupVerifyScope? GroupVerifyScope(string store) => module is null
+        ? null
+        : store == AccessStore
+            ? new ModuleGroupVerifyScope(AccessStore, module.Id, policyAliases.ToList())
+            : new ModuleGroupVerifyScope(AdminsStore, module.Id, []);
+
+    private ModuleGroupVerifyActions GroupVerifyActions() => new(SectionAccess, ModuleAdmin, AuthorizationService, Audit, Logger);
+
+    private VerifyReport? GroupVerifyReportOf(string store) => store == AccessStore ? accessVerifyReport : adminsVerifyReport;
+
+    private string GroupVerifiedAt(string store) => GroupVerifyReportOf(store)?.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "";
+
+    private void ResetGroupVerify()
+    {
+        accessVerifyReport = null;
+        adminsVerifyReport = null;
+        accessVerifyIgnoresRaw = null;
+        adminsVerifyIgnoresRaw = null;
+        accessVerifyMessage = null;
+        adminsVerifyMessage = null;
+        groupActing = false;
+        var actions = GroupVerifyActions();
+        accessVerifyLast = GroupVerifyScope(AccessStore) is { } access ? actions.LastVerified(access) : null;
+        adminsVerifyLast = GroupVerifyScope(AdminsStore) is { } admins ? actions.LastVerified(admins) : null;
+    }
+
+    private void SetGroupVerifyMessage(string store, string? message, bool isError)
+    {
+        if (store == AccessStore)
+        {
+            accessVerifyMessage = message;
+            accessVerifyIsError = isError;
+        }
+        else
+        {
+            adminsVerifyMessage = message;
+            adminsVerifyIsError = isError;
+        }
+    }
+
+    // Offered (the buttons) to a global admin only; the handlers check only that the tab is idle, so a direct invocation by
+    // anyone else reaches ModuleGroupVerifyActions, whose re-authorization refuses it and audits the refusal.
+    private bool CanVerifyGroups(string store) => isGlobalAdmin && GroupVerifyIdle(store);
+
+    private bool GroupVerifyIdle(string store) =>
+        module is not null && !saving && !groupVerifying && !groupActing
+        && (store == AccessStore
+            ? !sectionAccessCorrupt && !sectionAccessUnconfigured && !dirty.IsSectionDirty(SecAccess)
+            : !moduleAdminsUnreadable && !dirty.IsSectionDirty(SecAdmins));
+
+    private string GroupVerifySummaryText(string store)
+    {
+        if (groupVerifying)
+            return "Asking Active Directory about every stored group...";
+        if (store == AccessStore && sectionAccessUnconfigured)
+            return "Section access is not configured yet, so there is nothing stored to verify.";
+        if (dirty.IsSectionDirty(store == AccessStore ? SecAccess : SecAdmins))
+            return "Save or discard this tab's changes to verify.";
+        if (GroupVerifyReportOf(store) is { } report)
+            return report.Summary(GroupVerifiedAt(store))
+                + (report.StaleIgnores.Count > 0 ? $" {report.StaleIgnores.Count} recorded ignore(s) no longer match what Verify sees." : "");
+        if ((store == AccessStore ? accessVerifyLast : adminsVerifyLast) is { } last)
+            return $"Last verified {GroupVerifyLocalTime(last.At)} by {last.By}: {last.Total} entries, {last.Findings} findings, "
+                + $"{last.Ignored} ignored, {last.Unreadable} could not be verified.";
+        return "Not verified yet.";
+    }
+
+    private static string GroupVerifyLocalTime(string at) =>
+        DateTimeOffset.TryParse(at, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var t)
+            ? t.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+            : at;
+
+    private VerifyItemResult? GroupVerifyResultFor(string store, string rowKey, string storedValue) =>
+        GroupVerifyReportOf(store)?.Results.FirstOrDefault(r =>
+            string.Equals(r.Item.RowKey, rowKey, StringComparison.OrdinalIgnoreCase) && string.Equals(r.Item.StoredValue, storedValue, StringComparison.Ordinal));
+
+    /// <summary>The finding's badge beside a grant; nothing before a press, or for a grant the press did not read.</summary>
+    private MarkupString GroupVerifyBadge(string store, string rowKey, string storedValue)
+    {
+        if (GroupVerifyResultFor(store, rowKey, storedValue) is not { } r)
+            return new MarkupString("");
+
+        var (text, css, tip) = GroupVerifyBadgeParts(r, GroupVerifiedAt(store));
+        return new MarkupString($"<span class=\"badge {css} ms-1\" title=\"{System.Net.WebUtility.HtmlEncode(tip)}\">{System.Net.WebUtility.HtmlEncode(text)}</span>");
+    }
+
+    /// <summary>The finding under a grant, for the markup's groupVerifyRow template; null for a verified grant or before a press.</summary>
+    private VerifyItemResult? GroupVerifyRowFor(string store, string rowKey, string storedValue) =>
+        GroupVerifyResultFor(store, rowKey, storedValue) is { } r && r.Finding.Kind != VerifyFindingKind.Verified ? r : null;
+
+    private IReadOnlyList<VerifyAction> GroupVerifyActionsOf(VerifyItemResult r) => Verifier.AdapterFor(r.Item.Store).ActionsFor(r.Item, r.Finding);
+
+    // The tab shows the rows a press or an action read: the tab holds no unsaved edit then, so nothing is lost, and its
+    // baseline becomes what the store holds - so a later Save compares against the rows Verify read.
+    private void ShowGroupRows(string store, IReadOnlyList<ExchangeAdminWeb.Services.Storage.GroupGrantRow> rows, IReadOnlyDictionary<string, string>? displayNames)
+    {
+        if (module is null)
+            return;
+
+        if (store == AccessStore)
+        {
+            foreach (var alias in policyAliases)
+                accessState[alias] = rows.Where(r => string.Equals(r.RowKey, alias, StringComparison.OrdinalIgnoreCase)).Select(r => r.Value).ToList();
+            SnapshotAccessBaseline();
+            RecountAccess();
+        }
+        else
+        {
+            moduleAdminGroups = rows.Select(r => r.Value).ToList();
+            moduleAdminGroupsBaseline = new List<string>(moduleAdminGroups);
+            LoadUnconvertedAdmins(module.Id);
+            RecountAdmins();
+        }
+
+        if (displayNames is not null)
+            accessDisplayNames = new Dictionary<string, string>(displayNames, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The Verify press of one tab (plan C.1): the admin re-authorized as a global admin, the tab's rows, their version and the
+    /// ignore list read in one read transaction and shown, every grant looked up, the report shown, one audit row with the
+    /// counts, and the tab's last-verified line stored.
+    /// </summary>
+    private async Task VerifyGroupsAsync(string store)
+    {
+        if (!GroupVerifyIdle(store) || GroupVerifyScope(store) is not { } scope)
+        {
+            SetGroupVerifyMessage(store, dirty.IsSectionDirty(store == AccessStore ? SecAccess : SecAdmins)
+                ? "Save or discard this tab's changes before verifying: Verify shows the stored groups."
+                : null, true);
+            return;
+        }
+
+        var started = load;
+        groupVerifying = true;
+        SetGroupVerifyMessage(store, null, false);
+        await Task.Yield();
+
+        var ip = ClientInfo.GetIpForUser(currentUser);
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var actions = GroupVerifyActions();
+            if (!await actions.AuthorizePressAsync(authState.User, currentUser, ip, scope))
+            {
+                SetGroupVerifyMessage(store, "Only global admins can verify these groups. Nothing was verified.", true);
+                return;
+            }
+
+            var workset = await Task.Run(() => actions.ReadForVerify(scope));
+            if (workset is null || (store == AccessStore && !workset.Snapshot.Configured))
+            {
+                SetGroupVerifyMessage(store, "The stored groups could not be read, or section access is not configured, so nothing was verified.", true);
+                return;
+            }
+
+            var items = workset.Items;
+            using var activity = Progress.Begin(
+                "Module Configuration",
+                store == AccessStore
+                    ? "Verifying this module's access and servicer groups against Active Directory"
+                    : "Verifying this module's admin groups against Active Directory",
+                ActivitySize.Items(items.Count));
+            var report = await Verifier.VerifyAsync(items, workset.Ignores(Logger), CancellationToken.None);
+            activity.Report(items.Count);
+            activity.Complete(true, report.Summary(report.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm")));
+
+            // aud-a66: a page that moved to another module while the directory answered shows nothing of this one.
+            if (!Holds(started))
+                return;
+
+            // The tab's Add and Remove stay live while the directory answers: an edit made meanwhile is the admin's, so it is
+            // neither overwritten with the rows verified nor shown against a report of other rows.
+            if (dirty.IsSectionDirty(store == AccessStore ? SecAccess : SecAdmins))
+            {
+                SetGroupVerifyMessage(store, "This tab was edited while Verify ran, so its findings are not shown. Save or discard the edit and press Verify again.", true);
+                return;
+            }
+
+            ShowGroupRows(store, workset.Snapshot.Rows, workset.Snapshot.DisplayNames);
+            if (store == AccessStore)
+            {
+                accessVerifyReport = report;
+                accessVerifyIgnoresRaw = workset.IgnoresRaw;
+                accessVerifyLast = null;
+            }
+            else
+            {
+                adminsVerifyReport = report;
+                adminsVerifyIgnoresRaw = workset.IgnoresRaw;
+                adminsVerifyLast = null;
+            }
+            await Task.Run(() => actions.RecordPress(currentUser, ip, scope, report));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Verify of {Store} failed", store);
+            SetGroupVerifyMessage(store, $"Verify did not finish: {ex.Message}", true);
+        }
+        finally
+        {
+            groupVerifying = false;
+        }
+    }
+
+    /// <summary>
+    /// One action button (plan C.2). Replace is authorized, then takes the grant out of the tab's list for the admin to pick
+    /// its replacement and Save; every other action is a direct write through <see cref="ModuleGroupVerifyActions"/>, which
+    /// re-authorizes, writes and audits. A landed write shows the rows it left and rebases the other findings on them.
+    /// </summary>
+    private async Task OnGroupVerifyActionAsync(VerifyAction action, VerifyItemResult r)
+    {
+        var store = r.Item.Store;
+        if (!GroupVerifyIdle(store) || GroupVerifyReportOf(store) is not { } report || GroupVerifyScope(store) is not { } scope)
+        {
+            SetGroupVerifyMessage(store, "Not done: save or discard this tab's changes first, and wait for any other action to finish.", true);
+            return;
+        }
+
+        var started = load;
+        groupActing = true;
+        SetGroupVerifyMessage(store, null, false);
+        await Task.Yield();
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            var actions = GroupVerifyActions();
+            var ignoresRaw = store == AccessStore ? accessVerifyIgnoresRaw : adminsVerifyIgnoresRaw;
+
+            if (action == VerifyAction.Replace)
+            {
+                var authorized = await actions.AuthorizeReplaceAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding);
+                if (!Holds(started))
+                    return;
+                SetGroupVerifyMessage(store, authorized.Message, !authorized.Succeeded);
+                if (authorized.Succeeded)
+                {
+                    if (store == AccessStore)
+                        RemoveAccessGroup(policyAliases.First(a => string.Equals(a, r.Item.RowKey, StringComparison.OrdinalIgnoreCase)), r.Item.StoredValue);
+                    else
+                        RemoveModuleAdmin(r.Item.StoredValue);
+                }
+                return;
+            }
+
+            var result = action switch
+            {
+                VerifyAction.Rename => await actions.RenameAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding),
+                VerifyAction.Convert => await actions.ConvertAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding),
+                VerifyAction.Remove => await actions.RemoveAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding, ignoresRaw),
+                _ => await actions.IgnoreAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding, ignoresRaw),
+            };
+            if (!Holds(started))
+                return;
+
+            SetGroupVerifyMessage(store, result.Message, !result.Succeeded);
+            if (result.Succeeded && dirty.IsSectionDirty(store == AccessStore ? SecAccess : SecAdmins))
+            {
+                // Edited while the write ran: the edit is kept and the findings are not shown against it. A Save still writes
+                // only what was edited, decided against the store under its lock, as it does after any change made elsewhere.
+                SetGroupVerifyMessage(store, result.Message + " This tab was edited meanwhile; reload it to see what is stored.", false);
+                if (store == AccessStore)
+                    accessVerifyReport = null;
+                else
+                    adminsVerifyReport = null;
+            }
+            else if (result.Succeeded && result.Outcome is { After: { } after } outcome)
+            {
+                ShowGroupRows(store, after, outcome.AfterDisplayNames);
+                var rebased = ModuleGroupVerifyActions.Rebase(report, r, outcome);
+                if (store == AccessStore)
+                {
+                    accessVerifyReport = rebased;
+                    accessVerifyIgnoresRaw = outcome.AfterIgnores;
+                }
+                else
+                {
+                    adminsVerifyReport = rebased;
+                    adminsVerifyIgnoresRaw = outcome.AfterIgnores;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "A Verify {Action} on {Store} failed", action, store);
+            SetGroupVerifyMessage(store, $"Not done: {ex.Message}", true);
+        }
+        finally
+        {
+            if (Holds(started))
+                groupActing = false;
+        }
     }
 
     // --- AD Attribute Editor Allowlist ---

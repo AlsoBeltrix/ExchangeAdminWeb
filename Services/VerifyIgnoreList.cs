@@ -39,6 +39,19 @@ internal static class VerifyIgnoreList
     /// <summary>The store name of the Admin Settings protected principals (A1/A2).</summary>
     public const string ProtectedPrincipalsStore = "ProtectedPrincipals";
 
+    /// <summary>
+    /// The store name of Module Configuration's section access (A3): the Access pane's groups and the Protection servicer's,
+    /// both <c>section_access</c> rows. An entry's row key is the policy alias (<c>ProtectedServicer:&lt;ModuleId&gt;</c> for the
+    /// servicer). Its ignores change only what Verify reports (plan B.4): no authorization path reads the list.
+    /// </summary>
+    public const string SectionAccessStore = "SectionAccess";
+
+    /// <summary>
+    /// The store name of Module Configuration's module admins (A4), <c>module_admins</c> rows; an entry's row key is the module
+    /// id. Its ignores change only what Verify reports (plan B.4).
+    /// </summary>
+    public const string ModuleAdminsStore = "ModuleAdmins";
+
     /// <summary>What a <c>Missing</c> finding observes: the directory answered and holds no such object.</summary>
     public const string NotFoundObserved = "not found";
 

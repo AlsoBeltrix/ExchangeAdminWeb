@@ -56,7 +56,12 @@ internal enum VerifyResolutionKind
 }
 
 /// <summary>A not-converted row's resolution: its kind, why, and - convertible - the identifier kind and identifier.</summary>
-internal sealed record VerifyResolution(VerifyResolutionKind Kind, string Detail, string? IdKind = null, string? Identifier = null);
+/// <remarks>
+/// <see cref="Label"/> is the name a conversion stores beside the identifier where the store keeps one - a section-access
+/// group's display name (slice V3); null where the store keeps none.
+/// </remarks>
+internal sealed record VerifyResolution(
+    VerifyResolutionKind Kind, string Detail, string? IdKind = null, string? Identifier = null, string? Label = null);
 
 /// <summary>
 /// One stored row to verify (plan B.1): the store it lives in, its row key (the kind within the store), the object kind,
@@ -121,6 +126,13 @@ internal enum VerifyLookupKind
 
     /// <summary>By the adapter's own rule outside the directory session - another service, such as Exchange.</summary>
     OutsideDirectory,
+
+    /// <summary>
+    /// By the adapter's own resolver outside the directory session, answered as findings rather than objects - a rule whose
+    /// answer is a resolution (one group, none, several, or no answer), such as the section-access SID migration's lookup
+    /// (<see cref="IVerifyStoreAdapter.ResolveOutsideDirectoryAsync"/>; docs/DirectoryObjectVerify-Plan.md B.2, slice V3).
+    /// </summary>
+    ResolveOutsideDirectory,
 
     /// <summary>Not looked up: <see cref="VerifyLookup.Problem"/> says why, and the item is unreadable.</summary>
     None,
@@ -212,6 +224,15 @@ internal interface IVerifyStoreAdapter
     Task<IReadOnlyList<VerifyLookupResult>> LookUpOutsideDirectoryAsync(IReadOnlyList<VerifyItem> items, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<VerifyLookupResult>>(
             items.Select(_ => (VerifyLookupResult)new VerifyLookupResult.Unreadable("this store has no lookup outside the directory")).ToList());
+
+    /// <summary>
+    /// Findings for <paramref name="items"/> (all <see cref="VerifyLookupKind.ResolveOutsideDirectory"/>), one per item in order,
+    /// from the store's own resolver outside the directory session. A resolver that could not answer for an item must say so
+    /// (unreadable, or not converted with an unreadable resolution) - never verified or missing.
+    /// </summary>
+    Task<IReadOnlyList<VerifyFinding>> ResolveOutsideDirectoryAsync(IReadOnlyList<VerifyItem> items, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<VerifyFinding>>(
+            items.Select(_ => VerifyFinding.Unreadable("this store has no resolver outside the directory")).ToList());
 
     /// <summary>Whether <paramref name="finding"/> on <paramref name="item"/> may be ignored. Never asked for NotConverted or Unreadable.</summary>
     bool CanIgnore(VerifyItem item, VerifyFinding finding);
@@ -308,7 +329,8 @@ internal sealed class DirectoryObjectVerifier
         foreach (var p in planned.Where(p => p.Lookup.Kind == VerifyLookupKind.None))
             findings[p.Index] = VerifyFinding.Unreadable(p.Lookup.Problem ?? "the stored entry cannot be looked up");
 
-        var inSession = planned.Where(p => p.Lookup.Kind is not (VerifyLookupKind.None or VerifyLookupKind.OutsideDirectory)).ToList();
+        var inSession = planned.Where(p => p.Lookup.Kind is not
+            (VerifyLookupKind.None or VerifyLookupKind.OutsideDirectory or VerifyLookupKind.ResolveOutsideDirectory)).ToList();
         if (inSession.Count > 0)
         {
             var run = await _access.RunAsync(directory => ReadInSession(inSession, directory, cancellationToken), cancellationToken);
@@ -340,6 +362,24 @@ internal sealed class DirectoryObjectVerifier
                     ? Finish(batch[i], answers[i])
                     : VerifyFinding.Unreadable("the lookup did not answer for this entry");
             }
+        }
+
+        foreach (var group in planned.Where(p => p.Lookup.Kind == VerifyLookupKind.ResolveOutsideDirectory).GroupBy(p => p.Adapter))
+        {
+            var batch = group.ToList();
+            IReadOnlyList<VerifyFinding> resolved;
+            try
+            {
+                resolved = await group.Key.ResolveOutsideDirectoryAsync(batch.Select(p => p.Item).ToList(), cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "A Verify resolution outside the directory failed for store {Store}", group.Key.Store);
+                resolved = [];
+            }
+
+            for (var i = 0; i < batch.Count; i++)
+                findings[batch[i].Index] = resolved.Count == batch.Count ? resolved[i] : VerifyFinding.Unreadable("the lookup did not answer for this entry");
         }
 
         var results = new List<VerifyItemResult>(items.Count);

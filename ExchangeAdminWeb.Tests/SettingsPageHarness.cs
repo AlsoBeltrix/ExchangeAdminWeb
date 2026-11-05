@@ -155,6 +155,12 @@ internal sealed class SettingsPageHarness : IDisposable
     /// <summary>Module Configuration's directory: a stand-in that answers from the test and can hold a lookup (aud-a66).</summary>
     public StandInDirectory GroupDirectory { get; } = new();
 
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md (slice V3): Module Configuration's Verify engine. Unset, it reads over this harness's
+    /// protection service, which has no directory-read credential, so a press verifies no SID; a test sets its own stand-in.
+    /// </summary>
+    public DirectoryObjectVerifier? ModuleConfigVerifier { get; set; }
+
     /// <summary>The AdminSettings policy's answer; false refuses every save on these pages.</summary>
     public bool AdminAllowed { get; set; } = true;
 
@@ -209,6 +215,12 @@ internal sealed class SettingsPageHarness : IDisposable
             // (aud-a67 item 10, through IOrganizationalUnitDirectory). Nothing driven here reaches a directory.
             ["ADSearch"] = GroupDirectory,
             ["OUService"] = OrganizationalUnits,
+            ["Verifier"] = ModuleConfigVerifier ?? new DirectoryObjectVerifier(ProtectedPrincipals,
+                [
+                    new ProtectedPrincipalVerifyAdapter(),
+                    new ModuleGroupVerifyAdapter(VerifyIgnoreList.SectionAccessStore),
+                    new ModuleGroupVerifyAdapter(VerifyIgnoreList.ModuleAdminsStore),
+                ], NullLogger<DirectoryObjectVerifier>.Instance),
         });
         page.ModuleId = moduleId;
         Attach(page);
