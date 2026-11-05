@@ -24,8 +24,11 @@ public sealed class IdentifierConversionPageTests : IDisposable
         string.Join(' ', SettingsPageHarness.RenderedText((Microsoft.AspNetCore.Components.ComponentBase)page)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
+    // docs/DirectoryObjectVerify-Plan.md C.1 (slice V1): the count banner and the "not in AD" badge are replaced by Verify's
+    // badges. The pane still says what an entry stored by name does and how it is converted; the per-entry "not converted"
+    // badge and its hover are pinned in DirectoryObjectVerifyPageTests.
     [Fact]
-    public void TheProtectedPrincipalsPane_CountsEntriesStoredByName_AndSaysTheyRefuseUntilConverted()
+    public void TheProtectedPrincipalsPane_SaysEntriesStoredByNameRefuseUntilConverted_AndOffersVerify_WithNoBanner()
     {
         new ProtectedPrincipalRepository(TestConfigStore.Create(_h.Root)).Save(ProtectedPrincipalData.Empty with { Users = ["cfo@contoso.com"] });
         var page = _h.OpenAdminSettings();
@@ -33,23 +36,12 @@ public sealed class IdentifierConversionPageTests : IDisposable
 
         var text = Text(page);
 
-        Assert.Contains("1 entry is not converted to a directory identifier, so every protection check that finds no other match is refused", text);
+        Assert.Contains("every protection check that finds no other match is refused, naming the entry", text);
         Assert.Contains("db convert-identifiers", text);
+        Assert.DoesNotContain("entry is not converted to a directory identifier", text);
+        Assert.DoesNotContain("not in AD", text);
         Assert.DoesNotContain("Resolve now", text);
-    }
-
-    [Theory]
-    [InlineData("User")]
-    [InlineData("Group")]
-    [InlineData("OU")]
-    public void TheNotInAdTip_SaysAnEntryStoredByNameRefusesEveryCheck_NotThatItIsMatchedByName(string kind)
-    {
-        var tip = AdminSettingsPage.StaleTip(kind);
-
-        Assert.Contains("never matched by name", tip);
-        Assert.Contains("every protection check that finds no other match is refused", tip);
-        Assert.DoesNotContain("still matched by name", tip);
-        Assert.DoesNotContain("protects nobody", tip);
+        Assert.False(SettingsPageHarness.IsButtonDisabled(page, "Verify"));
     }
 
     [Fact]

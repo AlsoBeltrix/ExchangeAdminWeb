@@ -163,7 +163,9 @@ check or know about this step.
   conversion (`kind: legacy value -> identifier`). A second run finds nothing to do and says so.
 - `db identifier-status <db>` is read-only: one line per protected-principal row and module-admin grant -
   `converted`, `identifier` (an identifier row with no name row), `legacy` (a name row with no identifier),
-  `grant-sid`, `grant-name` - and exit 0 only when nothing is `legacy` or `grant-name`.
+  `grant-sid`, `grant-name` - and exit 0 only when nothing is `legacy` or `grant-name`. When the Verify ignore list
+  (`verify_ignores`, docs/DirectoryObjectVerify-Plan.md B.3) holds entries, the report ends with one `ignored ...` line per
+  entry and a count; a stored list that cannot be read is named (it ignores nothing).
 
 On exit 0 the report is on stdout; on exit 2 it is on stderr, ending in an `error:` line.
 

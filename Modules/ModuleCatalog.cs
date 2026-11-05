@@ -1750,7 +1750,10 @@ public sealed class ModuleCatalog
             // 1.2.6: Resolve now and the "not converted" badges are gone; the pane counts the entries stored by name only and
             // says they refuse every check until db convert-identifiers converts them; the "not in AD" tip says the same
             // (docs/ProtectedPrincipalIdentifiers-Plan.md K, S6).
-            Version = "1.2.6",
+            // 1.3.0: the protected-principals pane gains Verify - a badge per entry and the Rename, Convert, Replace, Remove now
+            // and Ignore actions, each a direct audited write - and loses the page-load sweep, its "not in AD" badge and the
+            // "not converted" count banner (docs/DirectoryObjectVerify-Plan.md, slice V1).
+            Version = "1.3.0",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

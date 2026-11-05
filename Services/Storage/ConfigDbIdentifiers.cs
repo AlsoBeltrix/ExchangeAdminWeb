@@ -92,9 +92,9 @@ internal static class ConfigDbIdentifiers
                         "The protected principals or module-admin grants changed while the lookups ran; nothing was written. Run this again.");
 
                 foreach (var conversion in rows)
-                    ProtectedPrincipalRepository.InsertIdentifierRow(connection, transaction, conversion);
+                    ConvertProtectedRow(connection, transaction, conversion);
                 foreach (var conversion in grants)
-                    ModuleAdminRepository.ReplaceNameWithSid(connection, transaction, conversion);
+                    ConvertModuleAdminGrant(connection, transaction, conversion);
             });
         }
         catch (Exception ex)
@@ -109,6 +109,22 @@ internal static class ConfigDbIdentifiers
         return ConfigDbCli.ExitOk;
     }
 
+    /// <summary>
+    /// The write of ONE protected-principal row's conversion, inside the caller's write transaction, which has read the row
+    /// under the write lock first: a NEW identifier row, <c>identifier|legacy value</c>, beside the legacy row, which is never
+    /// rewritten and becomes its companion (plan B.1). The whole-workset <see cref="Convert"/> writes every row with it, and the
+    /// Admin Settings Verify pane's Convert one row (docs/DirectoryObjectVerify-Plan.md C.2).
+    /// </summary>
+    internal static void ConvertProtectedRow(SqliteConnection connection, SqliteTransaction transaction, ProtectedPrincipalIdConversion conversion) =>
+        ProtectedPrincipalRepository.InsertIdentifierRow(connection, transaction, conversion);
+
+    /// <summary>
+    /// The write of ONE module-admin name grant's conversion, inside the caller's write transaction: the grant replaced in place
+    /// by the group's SID (plan B.6). The whole-workset <see cref="Convert"/> writes every grant with it.
+    /// </summary>
+    internal static void ConvertModuleAdminGrant(SqliteConnection connection, SqliteTransaction transaction, ModuleAdminSidConversion conversion) =>
+        ModuleAdminRepository.ReplaceNameWithSid(connection, transaction, conversion);
+
     /// <summary><c>db identifier-status</c>. Read-only. Returns the exit code: 2 while any row is <c>legacy</c> or <c>grant-name</c>.</summary>
     internal static int Status(string dbPath, TextWriter stdout, TextWriter stderr)
     {
@@ -118,10 +134,12 @@ internal static class ConfigDbIdentifiers
 
         ProtectedPrincipalData data;
         Dictionary<string, string[]> admins;
+        string? ignores;
         using (var connection = ConfigDbMaintenance.OpenReadOnly(path))
         {
             data = ProtectedPrincipalRepository.ReadRows(connection, null);
             admins = ModuleAdminRepository.ReadAll(connection, null);
+            ignores = AppSettingRepository.ReadValue(connection, null, VerifyIgnoreList.SettingKey);
         }
 
         var lines = new List<string>();
@@ -163,6 +181,7 @@ internal static class ConfigDbIdentifiers
         if (stillByName > 0)
         {
             lines.Add(summary);
+            lines.AddRange(IgnoreLines(ignores));
             return Fail(stderr, lines,
                 $"{stillByName} {(stillByName == 1 ? "entry is" : "entries are")} still stored by name; run db convert-identifiers");
         }
@@ -170,7 +189,31 @@ internal static class ConfigDbIdentifiers
         foreach (var line in lines)
             stdout.WriteLine(line);
         stdout.WriteLine(summary);
+        foreach (var line in IgnoreLines(ignores))
+            stdout.WriteLine(line);
         return ConfigDbCli.ExitOk;
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3: the Verify ignore list, read-only, at the end of the status report - one
+    /// <c>ignored</c> line per entry and a count, or one line saying the stored list cannot be read (it then ignores
+    /// nothing). Nothing when no list is stored or it is empty, so the report of a database without ignores is unchanged.
+    /// </summary>
+    private static IEnumerable<string> IgnoreLines(string? raw)
+    {
+        if (!VerifyIgnoreList.TryParse(raw, out var entries))
+        {
+            yield return $"verify ignores: the stored list ({VerifyIgnoreList.SettingKey}) cannot be read, so nothing is ignored";
+            yield break;
+        }
+
+        if (entries.Count == 0)
+            yield break;
+
+        foreach (var e in entries.OrderBy(e => e.Store, StringComparer.Ordinal).ThenBy(e => e.RowKey, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(e => e.IdentifierOrText, StringComparer.OrdinalIgnoreCase))
+            yield return $"ignored {e.Store} {e.RowKey}: {e.IdentifierOrText} - {e.Finding} ({e.Observed}) by {e.By} at {e.At}";
+        yield return $"{entries.Count} verify {(entries.Count == 1 ? "ignore" : "ignores")}";
     }
 
     private static IEnumerable<(string LegacyKind, string IdKind, string[] Legacy, string[] Ids)> Kinds(ProtectedPrincipalData data)

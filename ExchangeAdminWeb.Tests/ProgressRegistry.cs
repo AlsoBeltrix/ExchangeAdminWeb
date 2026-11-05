@@ -580,33 +580,28 @@ public static class ProgressRegistry
     /// through DelegatesTo is what the test then holds - each must really call the method it
     /// names, and the method it names carries its own entry.
     /// </para>
+    /// <para>
+    /// docs/DirectoryObjectVerify-Plan.md (slice V1) removed the post-render sweep and its once-only OnAfterRenderAsync gate:
+    /// the page asks the directory nothing on load. The Verify press and its Replace picker are the two new directory waits,
+    /// each with its own activity; the other Verify actions are store writes.
+    /// </para>
     /// </remarks>
     private static PageEntry AdminSettings => new()
     {
         Page = "AdminSettings.razor",
         Reports =
         [
-            new("SweepExistingEntriesAsync", "ADSearch.ValidateExists(",
-                "docs/ProgressCoverage-Plan.md's worst unreported READ, and the reason S4 names "
-                + "this page first. The sweep runs N serialized ADSearch.ValidateExists calls "
-                + "over every saved user, group and OU entry, and each one waits up to 30 "
-                + "seconds on ADDirectorySearchService's shared runspace lock before it even "
-                + "issues its Get-ADUser / Get-ADGroup / Get-ADOrganizationalUnit, so a page "
-                + "holding a few dozen entries can sit there for minutes. It ran from "
-                + "OnAfterRenderAsync with the status frame reading Idle from first paint. ONE "
-                + "call is named because there is only one remote call on the path: the Begin "
-                + "sits above the Task.Run that wraps the whole loop, which is also what forbids "
-                + "an activity opened per iteration inside it, and the single Complete is below "
-                + "the loop. The call sits inside a lambda, which is still the method's own code "
-                + "for condition 1 - verified on ConferenceRooms.SetupSingleRoom (bc9be8b) and "
-                + "re-confirmed by the S3 reviewer. ActivitySize.Items, not Unknown, because the "
-                + "entry count IS known at the Begin; Report is raised from the Task.Run worker "
-                + "thread, which GlobalProgress.razor marshals through InvokeAsync as "
-                + "IActivityProgress documents. Completed with success TRUE even when nothing is "
-                + "flagged: a sweep that ran finished, and the reviewer's 2026-10-08 ruling is "
-                + "that a lookup which finished reports success even in an empty state. No "
-                + "captured local - the Complete reads only stale.Count, a local returned from "
-                + "the Task.Run one statement above it with no await in between"),
+            new("VerifyProtectedAsync", "Verifier.VerifyAsync(",
+                "docs/DirectoryObjectVerify-Plan.md C.1: the Verify press, which replaced the page-load sweep. Every stored user, "
+                + "group, OU and group target is looked up in ONE directory session - batched global-catalog reads, the forest "
+                + "check, the conversion resolver for rows stored by name - so the one call named is the whole wait. The Begin "
+                + "is below the authorization re-check and the one-transaction store read, which are quick and local, and "
+                + "ActivitySize.Items because the entry count is known there; the Complete follows the call with the report's "
+                + "summary, success true because a press that ran finished whatever it found (the 2026-10-08 ruling)"),
+            new("ReplaceVerifiedAsync", "ADSearch.ValidateExists(",
+                "a Verify Replace: the picked object is checked against Active Directory exactly as an Add is (AddValidatedAsync's "
+                + "shape and its success rule - Unavailable is the only non-success), then written through the direct primitive "
+                + "after the Complete; that write is a store write, not named"),
             new("AddValidatedAsync", "ADSearch.ValidateExists(",
                 "the one directory path behind all four AddPp* handlers, which is why the "
                 + "activity is here and they are dispatchers. The Begin is deliberately NOT at "
@@ -631,11 +626,12 @@ public static class ProgressRegistry
         Exempt =
         [
             new("OnInitializedAsync", AuthPreambleOnly + ", plus " + ConfigStoreRead),
-            new("OnAfterRenderAsync",
-                "a once-only gate and nothing else: it tests three flags, latches ppSweepDone "
-                + "and calls the sweep. The work - and the wait - is SweepExistingEntriesAsync, "
-                + "which reports it",
-                "SweepExistingEntriesAsync"),
+            new("OnVerifyActionAsync",
+                ConfigStoreWrite + ": one Verify action button (docs/DirectoryObjectVerify-Plan.md C.2) - Replace only opens its "
+                + "picker (StartReplace); Rename, Convert, Remove now and Ignore each re-authorize and make one direct, audited "
+                + "write to the protection rules or the ignore list through ProtectedPrincipalVerifyActions, which reaches no "
+                + "directory"),
+            new("CancelReplace", LocalUiState + "; closes a Verify Replace picker"),
             new("AddPpUser",
                 "a one-line dispatcher; the directory lookup and its activity are in "
                 + "AddValidatedAsync",

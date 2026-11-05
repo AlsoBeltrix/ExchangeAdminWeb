@@ -71,6 +71,55 @@ public sealed class ProtectedPrincipalRepository
         }
     }
 
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3 (R2). The enforcement load: the rules, the presence marker AND the raw Verify
+    /// ignore list (<see cref="VerifyIgnoreList.SettingKey"/>, null when unset) in ONE read transaction, so an ignore and the
+    /// rules it is read with are one snapshot. False, everything safe-defaulted, when any of the three reads throws.
+    /// </summary>
+    public bool TryRead(out ProtectedPrincipalData data, out bool configured, out string? verifyIgnores)
+    {
+        try
+        {
+            (data, configured, verifyIgnores) = _store.ReadInTransaction((connection, transaction) =>
+            {
+                var lists = ReadLists(connection, transaction);
+                var present = ReadConfigured(connection, transaction);
+                var ignores = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey);
+                return (lists, present, ignores);
+            });
+            return true;
+        }
+        catch
+        {
+            data = ProtectedPrincipalData.Empty;
+            configured = false;
+            verifyIgnores = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1, B.3. What a Verify press reads: the rows, the presence marker and the raw ignore
+    /// list in one read transaction. An unreadable store is <see cref="ProtectedPrincipalSnapshot.Unreadable"/> with a null list.
+    /// </summary>
+    public (ProtectedPrincipalSnapshot Snapshot, string? VerifyIgnores) ReadVerifySnapshot()
+    {
+        try
+        {
+            return _store.ReadInTransaction((connection, transaction) =>
+            {
+                var snapshot = ReadSnapshot(connection, transaction);
+                return snapshot.Readable
+                    ? (snapshot, AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey))
+                    : (snapshot, (string?)null);
+            });
+        }
+        catch
+        {
+            return (ProtectedPrincipalSnapshot.Unreadable, null);
+        }
+    }
+
     /// <summary>True if a protected-principals config has been saved (presence marker set).</summary>
     public bool IsConfigured()
     {
@@ -137,6 +186,11 @@ public sealed class ProtectedPrincipalRepository
                 InsertAll(connection, transaction, replacement);
                 MarkPresent(connection, transaction);
 
+                // docs/DirectoryObjectVerify-Plan.md B.3, round-3 note: the page's ordinary Remove + Save replaces the whole
+                // store, so a removed row's Verify ignores go in this same transaction - never left to apply to a row that
+                // later comes back.
+                PruneVerifyIgnores(connection, transaction, replacement);
+
                 return new ProtectedPrincipalReplaceOutcome(true, before, ReadSnapshot(connection, transaction));
             });
         }
@@ -184,6 +238,336 @@ public sealed class ProtectedPrincipalRepository
     private sealed class NothingWritten(ProtectedPrincipalSnapshot before) : Exception
     {
         public ProtectedPrincipalSnapshot Before { get; } = before;
+    }
+
+    /// <summary>The stored <c>verify_last</c> value (plan C.1), or null; display-only.</summary>
+    internal string? ReadVerifyLast() => _store.Read(connection => AppSettingRepository.ReadValue(connection, null, VerifyIgnoreList.LastVerifiedKey));
+
+    /// <summary>
+    /// Writes <c>verify_last</c> as <paramref name="update"/> makes it from the stored value: a plain write, compared with
+    /// nothing a caller read - the value is display-only and authorizes nothing (plan C.1).
+    /// </summary>
+    internal void UpdateVerifyLast(Func<string?, string> update) =>
+        _store.Write((connection, transaction) =>
+        {
+            var raw = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.LastVerifiedKey);
+            AppSettingRepository.ReplaceIfEqual(connection, transaction, VerifyIgnoreList.LastVerifiedKey, raw, update(raw));
+        });
+
+    // ----- docs/DirectoryObjectVerify-Plan.md B.3, C.2: the Verify actions' write primitives -----
+    //
+    // Each runs in ONE write transaction (BEGIN IMMEDIATE, so nothing commits between its read and its write), refuses unless
+    // the rules are still the version the Verify item was read with and the row it acts on is still stored exactly as read,
+    // and - for Remove, Replace and Ignore - compare-and-swaps the ignore list against the value the caller read beside the
+    // item. A refusal writes nothing, not even the change token.
+
+    /// <summary>
+    /// Remove: deletes <paramref name="row"/> (an identifier row with its companion, unless another identifier row still pairs
+    /// with it) AND every Verify ignore that names it, in one transaction.
+    /// </summary>
+    public VerifyWriteOutcome RemoveWithCompanionAndIgnores(VerifyRowRef row, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(expectedVersion, casIgnores: true, expectedIgnores, null, snapshot =>
+        {
+            var lists = new RuleLists(snapshot.Data);
+            return lists.Remove(row) ? VerifyDecision.Rules(lists.ToData()) : VerifyDecision.Refuse(VerifyWriteStatus.RowChanged);
+        });
+
+    /// <summary>
+    /// Replace: <paramref name="row"/> leaves (with its companion) and <paramref name="newRow"/> - the picked object's
+    /// identifier row, or a target's <c>objectGUID|DN</c> - takes its place in the same kind, with
+    /// <paramref name="newCompanion"/> beside it; the old row's Verify ignores go in the same transaction.
+    /// </summary>
+    /// <remarks>A legacy row stored by name only (A2) is replaced by an identifier row of the kind it converts into.</remarks>
+    public VerifyWriteOutcome ReplaceWithCompanionAndIgnores(
+        VerifyRowRef row, string newRow, string? newCompanion, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(expectedVersion, casIgnores: true, expectedIgnores, null, snapshot =>
+        {
+            var lists = new RuleLists(snapshot.Data);
+            if (!lists.Remove(row))
+                return VerifyDecision.Refuse(VerifyWriteStatus.RowChanged);
+            lists.Add(row.Kind, newRow, newCompanion);
+            return VerifyDecision.Rules(lists.ToData());
+        });
+
+    /// <summary>
+    /// Rename (B.5): the identifier row of <paramref name="kind"/> carrying <paramref name="identifier"/> gets
+    /// <paramref name="newLabel"/>, and its legacy companion's value becomes <paramref name="newLabel"/> - one transaction, so
+    /// an older build sharing the database enforces the same object's current name.
+    /// </summary>
+    public VerifyWriteOutcome RewriteLabel(string kind, string identifier, string newLabel, string expectedVersion) =>
+        WriteVerify(expectedVersion, casIgnores: false, null, null, snapshot =>
+        {
+            var lists = new RuleLists(snapshot.Data);
+            return lists.RewriteLabel(kind, identifier, newLabel)
+                ? VerifyDecision.Rules(lists.ToData())
+                : VerifyDecision.Refuse(VerifyWriteStatus.RowChanged);
+        });
+
+    /// <summary>
+    /// Ignore (B.3, R2): adds <paramref name="entry"/> to the ignore list, after confirming under the write lock that
+    /// <paramref name="row"/> is still stored exactly as Verify read it. Changes no rule.
+    /// </summary>
+    public VerifyWriteOutcome AddVerifyIgnore(VerifyRowRef row, VerifyIgnoreEntry entry, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(expectedVersion, casIgnores: true, expectedIgnores, entry, snapshot =>
+            new RuleLists(snapshot.Data).Contains(row) ? VerifyDecision.Nothing : VerifyDecision.Refuse(VerifyWriteStatus.RowChanged));
+
+    /// <summary>
+    /// Convert (C.2): the one legacy row <paramref name="conversion"/> names gets its identifier row, through
+    /// <see cref="ConfigDbIdentifiers.ConvertProtectedRow"/> - the primitive <c>db convert-identifiers</c> writes with.
+    /// </summary>
+    internal VerifyWriteOutcome ConvertRow(ProtectedPrincipalIdConversion conversion, string expectedVersion) =>
+        WriteVerify(expectedVersion, casIgnores: false, null, null, snapshot =>
+            new RuleLists(snapshot.Data).IsUnpairedLegacy(conversion.LegacyKind, conversion.LegacyValue)
+                ? VerifyDecision.Raw((connection, transaction) => ConfigDbIdentifiers.ConvertProtectedRow(connection, transaction, conversion))
+                : VerifyDecision.Refuse(VerifyWriteStatus.RowChanged));
+
+    private VerifyWriteOutcome WriteVerify(
+        string expectedVersion, bool casIgnores, string? expectedIgnores, VerifyIgnoreEntry? addIgnore,
+        Func<ProtectedPrincipalSnapshot, VerifyDecision> decide)
+    {
+        try
+        {
+            return _store.Write((connection, transaction) =>
+            {
+                var before = ReadSnapshot(connection, transaction);
+                if (!before.Readable)
+                    throw new VerifyRefused(VerifyWriteStatus.StoreUnreadable, before);
+                if (!string.Equals(ProtectedPrincipalService.RulesVersion(before), expectedVersion, StringComparison.Ordinal))
+                    throw new VerifyRefused(VerifyWriteStatus.VersionChanged, before);
+
+                var decision = decide(before);
+                if (decision.Refusal is { } refusal)
+                    throw new VerifyRefused(refusal, before);
+
+                if (decision.NewRules is { } rules)
+                {
+                    using (var delete = connection.CreateCommand())
+                    {
+                        delete.Transaction = transaction;
+                        delete.CommandText = "DELETE FROM protected_principal;";
+                        delete.ExecuteNonQuery();
+                    }
+                    InsertAll(connection, transaction, rules);
+                    MarkPresent(connection, transaction);
+                }
+                decision.RawWrite?.Invoke(connection, transaction);
+
+                var after = ReadSnapshot(connection, transaction);
+                var ignoresAfter = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey);
+                if (casIgnores)
+                {
+                    // The list as the caller read it beside the item: a list changed since is refused, whole, and the caller
+                    // reads it again (B.3). A list that cannot be read is pruned of nothing, and is never added to.
+                    if (!string.Equals(ignoresAfter, expectedIgnores, StringComparison.Ordinal))
+                        throw new VerifyRefused(VerifyWriteStatus.IgnoresChanged, before);
+                    if (!VerifyIgnoreList.TryParse(expectedIgnores, out var entries))
+                    {
+                        if (addIgnore is not null)
+                            throw new VerifyRefused(VerifyWriteStatus.IgnoresUnreadable, before);
+                    }
+                    else
+                    {
+                        var kept = entries.Where(e => StillNamesARow(e, after.Data)).ToList();
+                        if (addIgnore is not null)
+                            kept.Add(addIgnore);
+                        if (kept.Count != entries.Count || addIgnore is not null)
+                        {
+                            var updated = VerifyIgnoreList.Serialize(kept);
+                            if (!AppSettingRepository.ReplaceIfEqual(connection, transaction, VerifyIgnoreList.SettingKey, expectedIgnores, updated))
+                                throw new VerifyRefused(VerifyWriteStatus.IgnoresChanged, before);
+                            ignoresAfter = updated;
+                        }
+                    }
+                }
+
+                return new VerifyWriteOutcome(
+                    VerifyWriteStatus.Written, before.Data, after.Data, ProtectedPrincipalService.RulesVersion(after), ignoresAfter);
+            });
+        }
+        catch (VerifyRefused refused)
+        {
+            return new VerifyWriteOutcome(refused.Status, refused.Before.Readable ? refused.Before.Data : null, null, null, null);
+        }
+    }
+
+    // Thrown out of a Verify write to roll it back - the store commits whenever the callback returns. Never leaves this class.
+    private sealed class VerifyRefused(VerifyWriteStatus status, ProtectedPrincipalSnapshot before) : Exception
+    {
+        public VerifyWriteStatus Status { get; } = status;
+        public ProtectedPrincipalSnapshot Before { get; } = before;
+    }
+
+    private sealed record VerifyDecision(
+        VerifyWriteStatus? Refusal, ProtectedPrincipalData? NewRules, Action<SqliteConnection, SqliteTransaction>? RawWrite)
+    {
+        public static VerifyDecision Nothing { get; } = new(null, null, null);
+        public static VerifyDecision Refuse(VerifyWriteStatus status) => new(status, null, null);
+        public static VerifyDecision Rules(ProtectedPrincipalData rules) => new(null, rules, null);
+        public static VerifyDecision Raw(Action<SqliteConnection, SqliteTransaction> write) => new(null, null, write);
+    }
+
+    /// <summary>
+    /// What identifies a stored row for the ignore list (B.3): an identifier row by its canonical identifier, a target by its
+    /// objectGUID (its DN when it carries none), any other row by its trimmed value. Null for a blank one.
+    /// </summary>
+    internal static string? RowIdentity(string kind, string? value)
+    {
+        var v = (value ?? string.Empty).Trim();
+        if (v.Length == 0)
+            return null;
+
+        switch (kind)
+        {
+            case KindUserSid or KindGroupSid:
+                var sidEntry = ProtectedPrincipalIdEntry.Parse(v);
+                return sidEntry is null ? null : ProtectedPrincipalIdEntry.CanonicalSid(sidEntry.Identifier) ?? sidEntry.Identifier;
+            case KindOuGuid:
+                var guidEntry = ProtectedPrincipalIdEntry.Parse(v);
+                return guidEntry is null ? null : ProtectedPrincipalIdEntry.CanonicalGuid(guidEntry.Identifier) ?? guidEntry.Identifier;
+            case KindGroupTarget:
+                var target = ProtectedGroupTargetEntry.Parse(v);
+                return ProtectedPrincipalIdEntry.CanonicalGuid(target.ObjectGuid) ?? target.ObjectGuid ?? target.DistinguishedName;
+            default:
+                return v;
+        }
+    }
+
+    // An ignore of another store, or one naming a row these rules still hold.
+    private static bool StillNamesARow(VerifyIgnoreEntry entry, ProtectedPrincipalData rules) =>
+        !string.Equals(entry.Store, VerifyIgnoreList.ProtectedPrincipalsStore, StringComparison.Ordinal)
+        || RuleLists.ValuesOf(rules, entry.RowKey).Any(v =>
+            string.Equals(RowIdentity(entry.RowKey, v), entry.IdentifierOrText.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    // The whole-store save's cleanup: entries naming a row the replacement no longer holds are dropped. A list that does not
+    // parse is left as it is - it ignores nothing, and rewriting it would lose what an admin may still repair.
+    private static void PruneVerifyIgnores(SqliteConnection connection, SqliteTransaction transaction, ProtectedPrincipalData replacement)
+    {
+        var raw = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey);
+        if (raw is null || !VerifyIgnoreList.TryParse(raw, out var entries))
+            return;
+
+        var kept = entries.Where(e => StillNamesARow(e, replacement)).ToList();
+        if (kept.Count != entries.Count)
+            AppSettingRepository.ReplaceIfEqual(connection, transaction, VerifyIgnoreList.SettingKey, raw, VerifyIgnoreList.Serialize(kept));
+    }
+
+    /// <summary>The eight kinds' rows as lists a Verify write edits, with the identifier/companion rules of the admin page.</summary>
+    private sealed class RuleLists
+    {
+        private readonly Dictionary<string, List<string>> _lists;
+
+        public RuleLists(ProtectedPrincipalData data) => _lists = new(StringComparer.Ordinal)
+        {
+            [KindUser] = [.. data.Users],
+            [KindGroup] = [.. data.Groups],
+            [KindOu] = [.. data.OrganizationalUnits],
+            [KindSamPattern] = [.. data.SamAccountNamePatterns],
+            [KindGroupTarget] = [.. data.GroupTargets],
+            [KindUserSid] = [.. data.UserIds],
+            [KindGroupSid] = [.. data.GroupIds],
+            [KindOuGuid] = [.. data.OuIds],
+        };
+
+        public static IEnumerable<string> ValuesOf(ProtectedPrincipalData data, string kind) => kind switch
+        {
+            KindUser => data.Users,
+            KindGroup => data.Groups,
+            KindOu => data.OrganizationalUnits,
+            KindSamPattern => data.SamAccountNamePatterns,
+            KindGroupTarget => data.GroupTargets,
+            KindUserSid => data.UserIds,
+            KindGroupSid => data.GroupIds,
+            KindOuGuid => data.OuIds,
+            _ => [],
+        };
+
+        private static string? LegacyKindOf(string idKind) => idKind switch
+        {
+            KindUserSid => KindUser,
+            KindGroupSid => KindGroup,
+            KindOuGuid => KindOu,
+            _ => null,
+        };
+
+        private List<string> Of(string kind) =>
+            _lists.TryGetValue(kind, out var list) ? list : throw new ArgumentOutOfRangeException(nameof(kind), kind, "Not a protected-principal kind.");
+
+        public bool Contains(VerifyRowRef row) => _lists.TryGetValue(row.Kind, out var list) && list.Contains(row.Value, StringComparer.Ordinal);
+
+        /// <summary>A legacy row stored exactly so, and no identifier row's companion.</summary>
+        public bool IsUnpairedLegacy(string legacyKind, string value)
+        {
+            var idKind = legacyKind switch { KindUser => KindUserSid, KindGroup => KindGroupSid, KindOu => KindOuGuid, _ => null };
+            return idKind is not null
+                   && Of(legacyKind).Contains(value, StringComparer.Ordinal)
+                   && !ProtectedPrincipalIdEntry.IsCompanion(value, Of(idKind));
+        }
+
+        public bool Remove(VerifyRowRef row)
+        {
+            if (!Contains(row))
+                return false;
+            if (LegacyKindOf(row.Kind) is { } legacy)
+                return ProtectedPrincipalIdEntry.RemoveWithCompanion(Of(row.Kind), Of(legacy), row.Value);
+            return Of(row.Kind).Remove(row.Value);
+        }
+
+        /// <summary>The replacement row in the kind <paramref name="kind"/> lives in, or - for a legacy row - converts into.</summary>
+        public void Add(string kind, string newRow, string? companion)
+        {
+            var idKind = kind switch { KindUser => KindUserSid, KindGroup => KindGroupSid, KindOu => KindOuGuid, _ => kind };
+            if (LegacyKindOf(idKind) is { } legacy)
+            {
+                ProtectedPrincipalIdEntry.AddWithCompanion(Of(idKind), Of(legacy), newRow, companion);
+                return;
+            }
+
+            if (idKind == KindGroupTarget)
+            {
+                // pgwt-6: one group, one target row - a row sharing the new row's GUID goes.
+                var guid = ProtectedGroupTargetEntry.Parse(newRow).ObjectGuid;
+                if (!string.IsNullOrEmpty(guid))
+                    Of(idKind).RemoveAll(x => string.Equals(ProtectedGroupTargetEntry.Parse(x).ObjectGuid, guid, StringComparison.OrdinalIgnoreCase));
+            }
+            if (!Of(idKind).Contains(newRow, StringComparer.OrdinalIgnoreCase))
+                Of(idKind).Add(newRow);
+        }
+
+        public bool RewriteLabel(string kind, string identifier, string newLabel)
+        {
+            var wanted = RowIdentity(kind, kind == KindGroupTarget ? identifier : ProtectedPrincipalIdEntry.Format(identifier, ""));
+            var row = Of(kind).FirstOrDefault(r => string.Equals(RowIdentity(kind, r), wanted, StringComparison.OrdinalIgnoreCase));
+            if (row is null || string.IsNullOrWhiteSpace(newLabel))
+                return false;
+
+            if (kind == KindGroupTarget)
+            {
+                var guid = ProtectedGroupTargetEntry.Parse(row).ObjectGuid;
+                if (string.IsNullOrEmpty(guid))
+                    return false;
+                Of(kind)[Of(kind).IndexOf(row)] = ProtectedGroupTargetEntry.Format(guid, newLabel.Trim());
+                return true;
+            }
+
+            var legacy = LegacyKindOf(kind);
+            var entry = ProtectedPrincipalIdEntry.Parse(row);
+            if (legacy is null || entry is null)
+                return false;
+
+            // The old row and its companion leave and the renamed row and its new companion arrive: AddWithCompanion's own
+            // rule, so a companion another row still pairs with stays.
+            ProtectedPrincipalIdEntry.RemoveWithCompanion(Of(kind), Of(legacy), row);
+            ProtectedPrincipalIdEntry.AddWithCompanion(Of(kind), Of(legacy), ProtectedPrincipalIdEntry.Format(entry.Identifier, newLabel), newLabel.Trim());
+            return true;
+        }
+
+        public ProtectedPrincipalData ToData() =>
+            new(Of(KindUser).ToArray(), Of(KindGroup).ToArray(), Of(KindOu).ToArray(), Of(KindSamPattern).ToArray(), Of(KindGroupTarget).ToArray())
+            {
+                UserIds = Of(KindUserSid).ToArray(),
+                GroupIds = Of(KindGroupSid).ToArray(),
+                OuIds = Of(KindOuGuid).ToArray(),
+            };
     }
 
     /// <summary>
@@ -367,3 +751,35 @@ public sealed record ProtectedPrincipalReplaceOutcome(
 /// verb read it, and the identifier row it adds beside it, the legacy value its label.
 /// </summary>
 public sealed record ProtectedPrincipalIdConversion(string LegacyKind, string LegacyValue, string IdKind, string Identifier);
+
+/// <summary>One stored protected-principal row a Verify action acts on: its kind and its value exactly as stored.</summary>
+public sealed record VerifyRowRef(string Kind, string Value);
+
+/// <summary>How a Verify action's write ended (docs/DirectoryObjectVerify-Plan.md B.3, C.2). Only <see cref="Written"/> wrote.</summary>
+public enum VerifyWriteStatus
+{
+    /// <summary>The write landed.</summary>
+    Written,
+
+    /// <summary>Nothing written: the rows could not be read under the lock.</summary>
+    StoreUnreadable,
+
+    /// <summary>Nothing written: the rules are no longer the version the Verify item was read with.</summary>
+    VersionChanged,
+
+    /// <summary>Nothing written: the row the action names is no longer stored as Verify read it.</summary>
+    RowChanged,
+
+    /// <summary>Nothing written: the ignore list changed since it was read beside the item.</summary>
+    IgnoresChanged,
+
+    /// <summary>Nothing written: the ignore list does not parse, so nothing may be added to it.</summary>
+    IgnoresUnreadable,
+}
+
+/// <summary>
+/// What a Verify write did: its status, the rules it found under the lock, and - written - the rules it left, their version
+/// and the ignore list as it left it, all read back before the commit.
+/// </summary>
+public sealed record VerifyWriteOutcome(
+    VerifyWriteStatus Status, ProtectedPrincipalData? Before, ProtectedPrincipalData? After, string? AfterVersion, string? AfterIgnores);

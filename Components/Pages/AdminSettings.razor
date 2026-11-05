@@ -16,6 +16,7 @@
 @inject ModuleConfigService ModuleConfigSvc
 @inject ADDirectorySearchService ADSearch
 @inject IActivityProgress Progress
+@inject DirectoryObjectVerifier Verifier
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -109,7 +110,7 @@
 
             <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.
                 A user, group or OU added here is stored by its directory identifier - a user's or group's SID, an OU's object GUID - and the protection check compares that identifier rather than the name wherever it knows the target's own: another account later given the same name or address is not protected in its place, and a renamed OU still protects the accounts beneath it. Hover over an entry to see its identifier.
-                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover is stored by name only - it was added before identifiers were stored, or an older build of this app saved this page, which drops every identifier. This build never matches a protected entry by its name: until such an entry is converted, every protection check that finds no other match is refused, naming the entry. Convert them with the app's <code>db convert-identifiers</code> command (README, Troubleshooting), or remove each and pick it again from the search.
+                Each entry is also stored by name for an older build of this app sharing the database; removing the entry removes both. An entry with no identifier on hover is stored by name only - it was added before identifiers were stored, or an older build of this app saved this page, which drops every identifier. This build never matches a protected entry by its name: until such an entry is converted, every protection check that finds no other match is refused, naming the entry. Convert them with the app's <code>db convert-identifiers</code> command (README, Troubleshooting), with <strong>Convert</strong> after pressing <strong>Verify</strong> below, or remove each and pick it again from the search.
                 A change Exchange makes to a synced mailbox is checked against the one Active Directory account holding the on-premises SID Microsoft Graph reports for it, read with the <strong>Graph Directory Read Credential</strong> below; until that is set, such changes are refused.</small></p>
 
             @if (ppLoadError != null)
@@ -117,15 +118,44 @@
                 <div class="alert alert-danger py-2">@ppLoadError</div>
             }
 
-            @if (ppLoaded && UnconvertedCount() > 0)
+            @* docs/DirectoryObjectVerify-Plan.md C.1. The Verify button and its summary replace the page-load sweep and the
+               "not converted" banner: the page asks the directory nothing until an admin presses it. *@
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <button class="btn btn-outline-success btn-sm" type="button" title="@VerifyButtonTip"
+                        @onclick="VerifyProtectedAsync" disabled="@(!CanVerify())">@(ppVerifying ? "Verifying..." : "Verify")</button>
+                <small class="text-muted">@VerifySummaryText()</small>
+            </div>
+            <p class="text-muted mb-2"><small>@VerifyPaneNote</small></p>
+            @if (!string.IsNullOrEmpty(ppVerifyMessage))
             {
-                @* docs/ProtectedPrincipalIdentifiers-Plan.md K.3: an entry stored by name only is never matched by name; it makes
-                   every protection check with no other match refuse, naming it, until it is converted or re-picked. *@
-                <div class="alert alert-warning py-2 small">
-                    <strong>@UnconvertedCount() @(UnconvertedCount() == 1 ? "entry is" : "entries are") not converted</strong> to a directory identifier,
-                    so every protection check that finds no other match is refused, naming @(UnconvertedCount() == 1 ? "it" : "them").
-                    Run <code>db convert-identifiers</code> against the settings database (README, Troubleshooting), or remove each entry with no identifier on hover and pick it again from the search.
-                </div>
+                <div class="alert @(ppVerifyIsError ? "alert-warning" : "alert-success") py-2 px-3 small">@ppVerifyMessage</div>
+            }
+
+            @* docs/DirectoryObjectVerify-Plan.md C.2: a finding's detail and its actions, under its entry. A markup template, not a
+               fragment in the @code block, so the block still parses for the guards (RazorParseGate). *@
+            @{
+                RenderFragment<VerifyItemResult> verifyRow = r =>
+                    @<tr class="adm-verify">
+                        <td colspan="2">
+                            <small class="text-muted me-2">@VerifyBadgeParts(r, VerifiedAt()).Tip</small>
+                            @foreach (var action in VerifyActionsOf(r))
+                            {
+                                var a = action;
+                                <button class="btn btn-outline-secondary btn-sm py-0 me-1" type="button" title="@VerifyActionTip(a, r)"
+                                        disabled="@(!CanVerify())" @onclick="() => OnVerifyActionAsync(a, r)">@VerifyActionLabel(a)</button>
+                            }
+                            @if (ReferenceEquals(ppReplaceTarget, r))
+                            {
+                                <div class="input-group input-group-sm mt-1">
+                                    <ADIdentityAutocomplete ObjectKind="@PickerKind(r.Item.Kind)" ReturnValueKind="@PickerValueKind(r.Item.Kind)"
+                                                            @bind-Value="ppReplaceValue" Placeholder="Pick the replacement..." Disabled="@(!CanVerify())" />
+                                    <button class="btn btn-outline-success" type="button" @onclick="ReplaceVerifiedAsync"
+                                            disabled="@(!CanVerify() || string.IsNullOrWhiteSpace(ppReplaceValue))">Replace</button>
+                                    <button class="btn btn-outline-secondary" type="button" @onclick="CancelReplace">Cancel</button>
+                                </div>
+                            }
+                        </td>
+                    </tr>;
             }
 
             <div class="row g-3">
@@ -145,21 +175,23 @@
                                 {
                                     var captured = u;
                                     <tr>
-                                        <td class="adm-val" title="@IdTip(captured, "objectSid")">@IdLabel(captured)</td>
+                                        <td class="adm-val" title="@IdTip(captured, "objectSid")">@IdLabel(captured) @VerifyBadge(KindUserSid, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePpId(ppUserIds, ppUsers, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindUserSid, captured) is { } vr) { @verifyRow(vr) }
                                 }
                                 @foreach (var u in ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds))
                                 {
                                     var captured = u;
                                     <tr>
-                                        <td class="adm-val">@captured @StaleBadge(captured, "User")</td>
+                                        <td class="adm-val">@captured @VerifyBadge(KindUser, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppUsers, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindUser, captured) is { } vr) { @verifyRow(vr) }
                                 }
                             </tbody>
                         </table>
@@ -183,21 +215,23 @@
                                 {
                                     var captured = g;
                                     <tr>
-                                        <td class="adm-val" title="@IdTip(captured, "objectSid")">@IdLabel(captured)</td>
+                                        <td class="adm-val" title="@IdTip(captured, "objectSid")">@IdLabel(captured) @VerifyBadge(KindGroupSid, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePpId(ppGroupIds, ppGroups, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindGroupSid, captured) is { } vr) { @verifyRow(vr) }
                                 }
                                 @foreach (var g in ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds))
                                 {
                                     var captured = g;
                                     <tr>
-                                        <td class="adm-val">@captured @StaleBadge(captured, "Group")</td>
+                                        <td class="adm-val">@captured @VerifyBadge(KindGroup, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppGroups, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindGroup, captured) is { } vr) { @verifyRow(vr) }
                                 }
                             </tbody>
                         </table>
@@ -221,21 +255,23 @@
                                 {
                                     var captured = o;
                                     <tr>
-                                        <td class="adm-val" title="@IdTip(captured, "objectGUID")">@IdLabel(captured)</td>
+                                        <td class="adm-val" title="@IdTip(captured, "objectGUID")">@IdLabel(captured) @VerifyBadge(KindOuGuid, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePpId(ppOuIds, ppOus, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindOuGuid, captured) is { } vr) { @verifyRow(vr) }
                                 }
                                 @foreach (var o in ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds))
                                 {
                                     var captured = o;
                                     <tr>
-                                        <td class="adm-val">@captured @StaleBadge(captured, "OU")</td>
+                                        <td class="adm-val">@captured @VerifyBadge(KindOu, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppOus, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindOu, captured) is { } vr) { @verifyRow(vr) }
                                 }
                             </tbody>
                         </table>
@@ -290,11 +326,12 @@
                                 {
                                     var captured = t;
                                     <tr>
-                                        <td class="adm-val">@TargetLabel(captured) @StaleBadge(captured, "GroupTarget")</td>
+                                        <td class="adm-val">@TargetLabel(captured) @VerifyBadge(KindGroupTarget, captured)</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemovePp(ppTargets, captured)">Remove</button>
                                         </td>
                                     </tr>
+                                    @if (VerifyRowFor(KindGroupTarget, captured) is { } vr) { @verifyRow(vr) }
                                 }
                             </tbody>
                         </table>
@@ -748,12 +785,6 @@
     private string? ppAddError;
     private bool ppValidating;
 
-    // Entries already in the store that AD says do not exist. Populated after first render, not
-    // during load - see SweepExistingEntriesAsync. Absence from this set is NOT a claim of
-    // validity: an entry whose lookup failed never enters it, deliberately.
-    private readonly HashSet<string> ppStaleEntries = new(StringComparer.OrdinalIgnoreCase);
-    private bool ppSweepDone;
-
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -773,19 +804,6 @@
         selectedLogLevel = ExtendedLog.CurrentLevel;
         LoadProtectedPrincipals();
         authChecked = true;
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        // Deferred to after first paint: the sweep serializes N directory lookups behind a lock
-        // that can block 30s each, which would stall the page if run during initialization.
-        // Guarded by ppSweepDone rather than firstRender alone - authChecked gates the whole
-        // markup, so the first render can complete before the lists exist.
-        if (ppSweepDone || !authChecked || ppLoadError != null)
-            return;
-
-        ppSweepDone = true;
-        await SweepExistingEntriesAsync();
     }
 
     private async Task SaveEnablement()
@@ -995,6 +1013,7 @@
         ppRulesVersion = editing.Version;
         SnapshotProtectedRulesBaseline();
         ppLoaded = true;
+        ppVerifyLast = ProtectedPrincipalService.ReadVerifyLast().GetValueOrDefault(VerifyIgnoreList.ProtectedPrincipalsStore);
     }
 
     /// <summary>Loads the directory-read secret id, telling an unreadable store from an unset id (aud-a26k).</summary>
@@ -1087,132 +1106,382 @@
         RecountProtected();
     }
 
-    /// <summary>
-    /// Marks a saved entry that Active Directory says does not exist. Renders nothing for an
-    /// entry that resolves, and nothing for one whose lookup could not run.
-    /// </summary>
-    /// <remarks>
-    /// The silence on an unreachable directory is deliberate. A warning shown during an outage
-    /// would read as "your protection rules have been lost" across every row at once - alarming
-    /// and false. Absence of a badge therefore means "not known to be stale", never "verified".
-    ///
-    /// The hover says what the entry does, per kind. Only entries stored by name only are swept, and since
-    /// docs/ProtectedPrincipalIdentifiers-Plan.md K.3 such an entry is never matched by name: it refuses every protection
-    /// check that finds no other match, naming it, and <c>db convert-identifiers</c> refuses it as "not found" too.
-    /// </remarks>
-    private MarkupString StaleBadge(string entry, string kind)
-        => ppStaleEntries.Contains(entry)
-            ? new MarkupString("<span class=\"badge bg-warning text-dark ms-1\" title=\""
-                + System.Net.WebUtility.HtmlEncode(StaleTip(kind)) + "\">not in AD</span>")
-            : new MarkupString("");
+    // ----- docs/DirectoryObjectVerify-Plan.md C.1, C.2: Verify and its actions -----
+    //
+    // The button replaces the page-load sweep: nothing here asks the directory until an admin presses it. A press reads the rules,
+    // their version and the ignore list in one read transaction, shows those rules, and marks each row with its finding. The
+    // actions are direct, audited writes (ProtectedPrincipalVerifyActions), each checking the version the row was read with; none
+    // goes through Save, so none is offered while this pane holds unsaved edits.
 
-    internal static string StaleTip(string kind) => kind switch
+    private const string KindUser = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindUser;
+    private const string KindGroup = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindGroup;
+    private const string KindOu = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindOu;
+    private const string KindUserSid = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindUserSid;
+    private const string KindGroupSid = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindGroupSid;
+    private const string KindOuGuid = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindOuGuid;
+    private const string KindGroupTarget = ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository.KindGroupTarget;
+
+    // The last press's report, the ignore list read beside it (what Remove, Replace and Ignore compare-and-swap against), the
+    // row whose Replace picker is open, and the last action's message.
+    private VerifyReport? ppVerifyReport;
+    private string? ppVerifyIgnoresRaw;
+    private bool ppVerifying;
+    private bool ppActing;
+    private string? ppVerifyMessage;
+    private bool ppVerifyIsError;
+    private VerifyItemResult? ppReplaceTarget;
+    private string ppReplaceValue = "";
+    private VerifyLastEntry? ppVerifyLast;
+
+    // Known Failure Class 5: what the button does and what it does not.
+    internal const string VerifyButtonTip =
+        "Ask Active Directory about every user, group, OU and group target stored here, read with the Directory Read Credential, "
+        + "and mark each entry with what it found. Reads only: nothing is changed until you press an action beside an entry. "
+        + "Patterns are not objects and are not verified. Not offered while this pane has unsaved changes.";
+
+    internal const string VerifyPaneNote =
+        "Verify marks each entry: verified; missing (the directory holds no such object); name changed (the object's current name "
+        + "is not the one stored); not converted (stored by name only); several objects; wrong type; could not verify (the "
+        + "directory could not be asked - never a sign the object is gone); or ignored. Beside each finding are its actions: "
+        + "Rename, Convert or Replace to fix it, Remove now to delete the entry, and Ignore to keep it and stop the finding being "
+        + "reported until what Verify sees changes. Each action is written at once, without Save, and audited. Verify proves the "
+        + "object exists and is the right kind as read with the Directory Read Credential. An entry not converted, or one that "
+        + "could not be verified, cannot be ignored. In this build an ignore changes only what Verify reports, not any protection check.";
+
+    /// <summary>The badge's text, Bootstrap class and hover for one finding (help: Known Failure Class 5).</summary>
+    internal static (string Text, string Css, string Tip) VerifyBadgeParts(VerifyItemResult r, string verifiedAt)
     {
-        "GroupTarget" => "Active Directory has no group matching this entry. A group target protects the group as a write "
-            + "target, so one that no longer exists protects nothing. Remove it or replace it with a current one.",
-        _ => $"Active Directory has no {(kind == "OU" ? "OU at this DN" : kind == "Group" ? "group matching this entry" : "user matching this entry")}. "
-            + "The entry is stored by name only and is never matched by name, so every protection check that finds no other "
-            + "match is refused, naming it, and db convert-identifiers cannot convert it. Remove it or replace it with a current one.",
+        var f = r.Finding;
+        return f.Kind switch
+        {
+            VerifyFindingKind.Verified => ("verified", "text-bg-light text-muted border",
+                $"Verified at {verifiedAt}: the object exists, is the right kind, and its name is the one stored."),
+            VerifyFindingKind.Missing => ("missing", "bg-danger",
+                "Active Directory answered and holds no object with this entry's identifier. The entry protects nothing. "
+                + "Replace it with the object it should name, Remove it, or Ignore it if you know why."),
+            VerifyFindingKind.LabelDrift => ("name changed", "bg-warning text-dark",
+                $"Stored as '{r.Item.Label}'; the object's current name is '{f.Detail}'. It still protects by its identifier. "
+                + "Rename stores the current name, which is also what an older build sharing the database, and the two "
+                + "fallbacks that compare names, match."),
+            VerifyFindingKind.NotConverted => ("not converted", "bg-warning text-dark",
+                "Stored by name only, so every protection check that finds no other match is refused, naming it, until it is "
+                + $"converted. The directory says: {f.Resolution?.Detail ?? f.Detail}. Cannot be ignored."),
+            VerifyFindingKind.Ambiguous => ("several objects", "bg-warning text-dark",
+                $"More than one object answers for this entry: {f.Detail}. Replace it with the one it should name, or Remove it."),
+            VerifyFindingKind.WrongClass => ("wrong type", "bg-danger",
+                $"The object with this identifier is a {f.Detail}, not what this list holds. Replace it or Remove it."),
+            VerifyFindingKind.Unreadable => ("could not verify", "bg-secondary",
+                $"The directory could not be asked about this entry: {f.Detail}. This says nothing about the object; press Verify "
+                + "again later. Cannot be ignored."),
+            VerifyFindingKind.Ignored => ("ignored", "bg-secondary",
+                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}. Reported again "
+                + "when what Verify sees changes; undone by Replace or Remove."),
+            _ => ("", "", ""),
+        };
+    }
+
+    /// <summary>What each action button does (help: Known Failure Class 5).</summary>
+    internal static string VerifyActionTip(VerifyAction action, VerifyItemResult r) => action switch
+    {
+        VerifyAction.Rename => $"Store '{r.Finding.Detail}' as this entry's name and as the name stored beside it for an older build. "
+            + "The identifier is unchanged. Written at once, without Save; audited.",
+        VerifyAction.Convert => $"Store this entry by its directory identifier ({r.Finding.Resolution?.Identifier}) beside its name - "
+            + "what db convert-identifiers does, for this one entry. Written at once, without Save; audited.",
+        VerifyAction.Replace => "Pick the object this entry should name; it replaces this entry in place, in the same list. "
+            + "Written at once, without Save; audited.",
+        VerifyAction.Remove => "Delete this entry, the name stored beside it for an older build, and any ignore recorded for it. "
+            + "Written at once, without Save; audited.",
+        VerifyAction.Ignore => "Keep this entry, record that you have seen this finding, and stop reporting it until what Verify "
+            + "sees changes. In this build it changes only what Verify reports. Audited.",
+        _ => "",
     };
 
-    /// <summary>How many user, group and OU entries are stored by name only - no identifier row pairs with them - and so refuse every check that finds no other match.</summary>
-    private int UnconvertedCount() =>
-        ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds).Length
-        + ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds).Length
-        + ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds).Length;
+    private static string VerifyActionLabel(VerifyAction action) => action switch
+    {
+        VerifyAction.Replace => "Replace...",
+        VerifyAction.Remove => "Remove now",
+        _ => action.ToString(),
+    };
+
+    private string VerifiedAt() => ppVerifyReport?.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "";
+
+    private VerifyItemResult? VerifyResultFor(string kind, string storedValue) =>
+        ppVerifyReport?.Results.FirstOrDefault(r =>
+            string.Equals(r.Item.RowKey, kind, StringComparison.Ordinal) && string.Equals(r.Item.StoredValue, storedValue, StringComparison.Ordinal));
+
+    /// <summary>The finding's badge beside an entry; nothing before a press, or for an entry the press did not read.</summary>
+    private MarkupString VerifyBadge(string kind, string storedValue)
+    {
+        if (VerifyResultFor(kind, storedValue) is not { } r)
+            return new MarkupString("");
+
+        var (text, css, tip) = VerifyBadgeParts(r, VerifiedAt());
+        return new MarkupString($"<span class=\"badge {css} ms-1\" title=\"{System.Net.WebUtility.HtmlEncode(tip)}\">{System.Net.WebUtility.HtmlEncode(text)}</span>");
+    }
+
+    private bool CanVerify() => ppLoaded && !saving && !ppValidating && !ppVerifying && !ppActing && !dirty.IsSectionDirty(SecProtected);
+
+    private string VerifySummaryText()
+    {
+        if (ppVerifying)
+            return "Asking Active Directory about every stored entry...";
+        if (dirty.IsSectionDirty(SecProtected))
+            return "Save or discard this pane's changes to verify.";
+        if (ppVerifyReport is { } report)
+            return report.Summary(VerifiedAt())
+                + (report.StaleIgnores.Count > 0 ? $" {report.StaleIgnores.Count} recorded ignore(s) no longer match what Verify sees." : "");
+        if (ppVerifyLast is { } last)
+            return $"Last verified {LocalTime(last.At)} by {last.By}: {last.Total} entries, {last.Findings} findings, {last.Ignored} ignored, "
+                + $"{last.Unreadable} could not be verified.";
+        return "Not verified yet.";
+    }
+
+    private static string LocalTime(string at) =>
+        DateTimeOffset.TryParse(at, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var t)
+            ? t.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+            : at;
+
+    /// <summary>The finding under an entry, for the markup's verifyRow template; null for a verified entry or before a press.</summary>
+    private VerifyItemResult? VerifyRowFor(string kind, string storedValue) =>
+        VerifyResultFor(kind, storedValue) is { } r && r.Finding.Kind != VerifyFindingKind.Verified ? r : null;
+
+    private IReadOnlyList<VerifyAction> VerifyActionsOf(VerifyItemResult r) => Verifier.AdapterFor(r.Item.Store).ActionsFor(r.Item, r.Finding);
+
+    private static string PickerKind(VerifyObjectKind kind) => kind switch
+    {
+        VerifyObjectKind.User => "User",
+        VerifyObjectKind.OrganizationalUnit => "OU",
+        _ => "Group",
+    };
+
+    private static string PickerValueKind(VerifyObjectKind kind) => kind == VerifyObjectKind.User ? "UPN" : "DN";
+
+    // The validator's kind for a replacement: a target canonicalises as GroupTarget over a Group lookup, as its Add does.
+    private static string ValidatorKind(VerifyObjectKind kind) => kind switch
+    {
+        VerifyObjectKind.User => "User",
+        VerifyObjectKind.OrganizationalUnit => "OU",
+        VerifyObjectKind.GroupTarget => "GroupTarget",
+        _ => "Group",
+    };
+
+    private ProtectedPrincipalVerifyActions VerifyActions() => new(ProtectedPrincipalService, AuthorizationService, Audit, Logger);
 
     /// <summary>
-    /// Re-checks the entries already in the store and flags those that no longer resolve.
-    /// Informational only: it never blocks Save and never removes a row.
+    /// The Verify press (plan C.1): the admin re-authorized, the rules, their version and the ignore list read in one read
+    /// transaction and shown, every entry looked up in one directory session, the report shown, one audit row with the counts,
+    /// and the last-verified line stored.
     /// </summary>
-    /// <remarks>
-    /// Runs from OnAfterRenderAsync rather than during load. Each lookup takes a shared lock that
-    /// can block for up to 30s, and the list is long enough that doing this inline would delay
-    /// first paint by minutes in the worst case. The rows render immediately; badges appear when
-    /// the sweep finishes.
-    ///
-    /// Patterns are not swept - they are wildcards with no directory object to correspond to.
-    ///
-    /// Not blocking Save is a requirement, not an oversight: a decommissioned group must stay
-    /// removable. Blocking would make the stale row permanent.
-    /// </remarks>
-    private async Task SweepExistingEntriesAsync()
+    private async Task VerifyProtectedAsync()
     {
-        var targets = new List<(string Entry, string Kind)>();
-        // Only the rows stored by name only: legacy rows no identifier row pairs with. An identifier row and its companion
-        // are not swept, the Group Targets reasoning below - their identity is the identifier, so a lookup by name would
-        // badge a renamed-but-still-effective entry "protects nothing" (docs/ProtectedPrincipalIdentifiers-Plan.md B.2).
-        targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppUsers, ppUserIds).Select(u => (u, "User")));
-        targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppGroups, ppGroupIds).Select(g => (g, "Group")));
-        targets.AddRange(ProtectedPrincipalIdEntry.Unpaired(ppOus, ppOuIds).Select(o => (o, "OU")));
-        // Group TARGETS are deliberately not swept (pgwt-6, the patterns precedent): their
-        // identity is the GUID, which keeps protecting across a rename or move - a DN lookup
-        // would badge a renamed-but-still-effective row "protects nothing" and invite the
-        // admin to remove real protection. A row for a genuinely deleted group protects
-        // nothing and harms nothing.
-
-        if (targets.Count == 0)
-            return;
-
-        // Opened ABOVE the Task.Run, which is the first thing here that waits on anything. The
-        // lookups are serialized and each one waits up to 30 seconds on the directory service's
-        // shared runspace lock, so this is the longest unattended wait anywhere on the page and
-        // it used to run with the status frame reading Idle from first paint onwards.
-        //
-        // Items rather than Unknown, deliberately: the number of saved entries IS known here, so
-        // "4 of 37" is honest and a bar that only wobbles for several minutes is not. Report is
-        // raised from the worker thread on purpose - Components/Shared/GlobalProgress.razor
-        // marshals every Changed through InvokeAsync, which is the contract IActivityProgress
-        // documents for exactly this case.
-        using var activity = Progress.Begin(
-            "Admin Settings",
-            "Re-checking saved protected principals against Active Directory",
-            ActivitySize.Items(targets.Count));
-
-        var stale = await Task.Run(() =>
+        if (!CanVerify())
         {
-            var found = new List<string>();
-            var done = 0;
-            foreach (var (entry, kind) in targets)
+            ppVerifyMessage = dirty.IsSectionDirty(SecProtected)
+                ? "Save or discard this pane's changes before verifying: Verify shows the stored rules."
+                : null;
+            ppVerifyIsError = true;
+            return;
+        }
+
+        ppVerifying = true;
+        ppVerifyMessage = null;
+        ppReplaceTarget = null;
+        await Task.Yield();
+
+        var ip = ClientInfo.GetIpForUser(currentUser);
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var actions = VerifyActions();
+            if (!await actions.AuthorizePressAsync(authState.User, currentUser, ip))
             {
-                try
-                {
-                    // ONLY an affirmative NotFound flags a row. Unavailable is skipped so an
-                    // outage cannot make every entry look broken at once.
-                    if (ProtectedPrincipalEntryValidator.ShouldFlagAsStale(
-                            ADSearch.ValidateExists(entry, kind).Outcome))
-                        found.Add(entry);
-                }
-                catch (Exception ex)
-                {
-                    // Same reasoning: a failed lookup is not evidence the entry is bad.
-                    Logger.LogWarning(ex, "Stale-entry sweep failed for a {Kind} entry", kind);
-                }
-
-                // Counted whatever the lookup answered: the operator is waiting on the lookup,
-                // not on its verdict, so a skipped-because-unavailable row still used the time.
-                activity.Report(++done);
+                ppVerifyMessage = "Authorization check failed. Nothing was verified.";
+                ppVerifyIsError = true;
+                return;
             }
-            return found;
-        });
 
-        // The badge pass is a no-op on an empty list, so it runs before the outcome is reported
-        // rather than behind an early return that would complete the activity twice.
-        foreach (var s in stale)
-            ppStaleEntries.Add(s);
+            var workset = await Task.Run(() => ProtectedPrincipalService.ReadForVerify());
+            if (workset is null)
+            {
+                ppVerifyMessage = "The protection rules could not be read, so nothing was verified. "
+                    + SettingsStoreText.ProtectedPrincipals(ProtectedPrincipalService.LegacyImportFailed, exclusionsUnreadable: false);
+                ppVerifyIsError = true;
+                return;
+            }
 
-        // A sweep that RAN finished, even when it flagged nothing: success is "did the work
-        // complete", not "did the operator get an answer they wanted" (reviewer ruling,
-        // `.agents/state.md` 2026-10-08). Said explicitly rather than left to the using, which
-        // records "This did not finish." for a sweep that did.
-        activity.Complete(true, stale.Count == 0
-            ? "No saved entry is missing from Active Directory."
-            : $"{stale.Count} saved entries no longer resolve in Active Directory.");
+            var items = workset.Items;
+            using var activity = Progress.Begin(
+                "Admin Settings",
+                "Verifying the stored protected principals against Active Directory",
+                ActivitySize.Items(items.Count));
+            var report = await Verifier.VerifyAsync(items, workset.Ignores(Logger), CancellationToken.None);
+            activity.Report(items.Count);
+            activity.Complete(true, report.Summary(report.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm")));
 
-        if (stale.Count == 0)
+            // The rows shown are the rows verified: the pane holds no unsaved edit, so showing the snapshot loses nothing.
+            ShowRules(workset.Rules);
+            SetRulesBaseline(workset.Rules);
+            ppRulesVersion = workset.Version;
+            RecountProtected();
+            ppVerifyReport = report;
+            ppVerifyIgnoresRaw = workset.IgnoresRaw;
+            await Task.Run(() => actions.RecordPress(currentUser, ip, report));
+            ppVerifyLast = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Verify of the protected principals failed");
+            ppVerifyMessage = $"Verify did not finish: {ex.Message}";
+            ppVerifyIsError = true;
+        }
+        finally
+        {
+            ppVerifying = false;
+        }
+    }
+
+    /// <summary>One action button: Replace opens its picker; every other action writes at once.</summary>
+    private async Task OnVerifyActionAsync(VerifyAction action, VerifyItemResult r)
+    {
+        switch (action)
+        {
+            case VerifyAction.Replace:
+                StartReplace(r);
+                break;
+            case VerifyAction.Rename:
+                await RunVerifyActionAsync(r, (a, user, ip) => a.RenameAsync(user, currentUser, ip, r.Item, r.Finding));
+                break;
+            case VerifyAction.Convert:
+                await RunVerifyActionAsync(r, (a, user, ip) => a.ConvertAsync(user, currentUser, ip, r.Item, r.Finding));
+                break;
+            case VerifyAction.Remove:
+                await RunVerifyActionAsync(r, (a, user, ip) => a.RemoveAsync(user, currentUser, ip, r.Item, r.Finding, ppVerifyIgnoresRaw));
+                break;
+            case VerifyAction.Ignore:
+                await RunVerifyActionAsync(r, (a, user, ip) => a.IgnoreAsync(user, currentUser, ip, r.Item, r.Finding, ppVerifyIgnoresRaw));
+                break;
+        }
+    }
+
+    private void StartReplace(VerifyItemResult r)
+    {
+        ppReplaceTarget = r;
+        ppReplaceValue = "";
+    }
+
+    private void CancelReplace()
+    {
+        ppReplaceTarget = null;
+        ppReplaceValue = "";
+    }
+
+    /// <summary>
+    /// Replace (plan C.2): the picked object is checked against Active Directory exactly as an Add is, and replaces the entry
+    /// in place through the direct primitive.
+    /// </summary>
+    private async Task ReplaceVerifiedAsync()
+    {
+        if (ppReplaceTarget is not { } r || string.IsNullOrWhiteSpace(ppReplaceValue) || !CanVerify())
             return;
 
-        await InvokeAsync(StateHasChanged);
+        var raw = ppReplaceValue.Trim();
+        var objectKind = ValidatorKind(r.Item.Kind);
+        ppActing = true;
+        ppVerifyMessage = null;
+
+        EntryValidationDecision decision;
+        try
+        {
+            using var activity = Progress.Begin("Admin Settings", "Checking the replacement against Active Directory", ActivitySize.Unknown);
+            DirectoryValidationResult result;
+            try
+            {
+                result = await Task.Run(() => ADSearch.ValidateExists(raw, objectKind == "GroupTarget" ? "Group" : objectKind));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Validation of a Verify replacement threw for {ObjectKind}", objectKind);
+                result = new DirectoryValidationResult(DirectoryLookupOutcome.Unavailable, null);
+            }
+
+            decision = ProtectedPrincipalEntryValidator.Decide(ExistingLabelsBesides(r.Item), raw, objectKind, result);
+            activity.Complete(result.Outcome != DirectoryLookupOutcome.Unavailable, decision.ErrorMessage ?? "Active Directory confirmed the replacement.");
+        }
+        finally
+        {
+            ppActing = false;
+        }
+
+        if (!decision.Accepted || decision.ValueToAdd is not { } newRow)
+        {
+            ppVerifyMessage = decision.ErrorMessage ?? "The replacement was not accepted. Nothing was changed.";
+            ppVerifyIsError = true;
+            return;
+        }
+
+        await RunVerifyActionAsync(r, (a, user, ip) =>
+            a.ReplaceAsync(user, currentUser, ip, r.Item, r.Finding, newRow, decision.CompanionValue, ppVerifyIgnoresRaw));
+    }
+
+    // The entries a replacement must not duplicate: the other rows of the list it lands in, by the label an Add compares.
+    private IReadOnlyCollection<string> ExistingLabelsBesides(VerifyItem item) => item.Kind switch
+    {
+        VerifyObjectKind.User => ppUserIds.Where(v => v != item.StoredValue).Select(IdLabel).ToList(),
+        VerifyObjectKind.Group => ppGroupIds.Where(v => v != item.StoredValue).Select(IdLabel).ToList(),
+        VerifyObjectKind.OrganizationalUnit => ppOuIds.Where(v => v != item.StoredValue).Select(IdLabel).ToList(),
+        _ => ppTargets.Where(v => v != item.StoredValue).ToList(),
+    };
+
+    /// <summary>
+    /// Runs one direct action: refused while this pane holds unsaved edits or another action runs; otherwise the admin's
+    /// current principal is handed to the action, which re-authorizes, writes and audits. A landed action shows the rows it
+    /// left and rebases the other findings on them (<see cref="ProtectedPrincipalVerifyActions.Rebase"/>).
+    /// </summary>
+    private async Task RunVerifyActionAsync(
+        VerifyItemResult r, Func<ProtectedPrincipalVerifyActions, System.Security.Claims.ClaimsPrincipal, string, Task<VerifyActionResult>> act)
+    {
+        if (!CanVerify() || ppVerifyReport is null)
+        {
+            ppVerifyMessage = "Not done: save or discard this pane's changes first, and wait for any other action to finish.";
+            ppVerifyIsError = true;
+            return;
+        }
+
+        ppActing = true;
+        ppVerifyMessage = null;
+        await Task.Yield();
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            var result = await act(VerifyActions(), authState.User, ip);
+            ppVerifyMessage = result.Message;
+            ppVerifyIsError = !result.Succeeded;
+            if (result.Succeeded && result.Outcome is { } outcome)
+            {
+                if (outcome.After is { } after)
+                {
+                    ShowRules(after);
+                    SetRulesBaseline(after);
+                    RecountProtected();
+                }
+                if (outcome.AfterVersion is { } version)
+                    ppRulesVersion = version;
+                ppVerifyIgnoresRaw = outcome.AfterIgnores;
+                ppVerifyReport = ProtectedPrincipalVerifyActions.Rebase(ppVerifyReport, r, outcome);
+                ppReplaceTarget = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "A Verify action on the protected principals failed");
+            ppVerifyMessage = $"Not done: {ex.Message}";
+            ppVerifyIsError = true;
+        }
+        finally
+        {
+            ppActing = false;
+        }
     }
 
     /// <summary>

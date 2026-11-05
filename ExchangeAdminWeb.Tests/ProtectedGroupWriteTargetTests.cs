@@ -432,11 +432,9 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         // string literal, keep reading the raw text.
         var code = ProgressScan.CodeView(page);
 
-        var sweepStart = code.IndexOf("private async Task SweepExistingEntriesAsync()", StringComparison.Ordinal);
-        Assert.True(sweepStart >= 0, "SweepExistingEntriesAsync not found - tripwire is stale.");
-        var sweepEnd = code.IndexOf("private async Task AddValidatedAsync(", sweepStart, StringComparison.Ordinal);
-        Assert.True(sweepEnd > sweepStart, "Could not bound the sweep - update the tripwire.");
-        Assert.DoesNotContain("ppTargets", code[sweepStart..sweepEnd], StringComparison.Ordinal);
+        // docs/DirectoryObjectVerify-Plan.md (slice V1) removed the sweep: no DN-keyed badge exists any more. Verify looks a
+        // target up by its GUID and reports a renamed one as "name changed", never "missing" (DirectoryObjectVerifierTests).
+        Assert.DoesNotContain("SweepExistingEntriesAsync", code, StringComparison.Ordinal);
 
         var addStart = code.IndexOf("private async Task AddValidatedAsync(", StringComparison.Ordinal);
         var addEnd = code.IndexOf("private async Task SaveProtectedPrincipals()", addStart, StringComparison.Ordinal);

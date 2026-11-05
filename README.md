@@ -1131,11 +1131,30 @@ containers, so a renamed OU still protects the accounts beneath it. A user or OU
 forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. The check never
 resolves or matches a stored name. An entry stored by name only - added before identifiers were stored, or left by an
 older build's save, which drops the identifier rows - makes every protection check that finds no other match refuse,
-naming the entry: "not converted - run db convert-identifiers". The pane counts such entries; the app's
-`db convert-identifiers` command gives each its identifier row (see Troubleshooting). A legacy group entry stored as a
-SID is compared by that SID. A protected group whose SID no group carries any more, or whose read fails, also refuses
-every check that finds no other match, and the refusal names the entry. The **not in AD** badge marks an entry stored by
-name that the directory says does not exist: remove it or replace it (docs/ProtectedPrincipalIdentifiers-Plan.md K).
+naming the entry: "not converted - run db convert-identifiers". The app's `db convert-identifiers` command gives each
+its identifier row (see Troubleshooting), and **Verify** below offers the same conversion for one entry. A legacy group
+entry stored as a SID is compared by that SID. A protected group whose SID no group carries any more, or whose read fails,
+also refuses every check that finds no other match, and the refusal names the entry.
+
+**Verify** (the button at the top of the pane; docs/DirectoryObjectVerify-Plan.md, slice V1). The page asks the directory
+nothing when it opens; pressing Verify asks Active Directory about every stored user, group, OU and group target, read
+with the Directory Read Credential in one session (batched global-catalog reads by SID and object GUID), and marks each
+entry: **verified**; **missing** (the directory answered and holds no such object); **name changed** (the object's current
+name - a user's UPN, else its mail; a group's, OU's or target's DN - is not the one stored; a user with neither is never
+flagged); **not converted** (stored by name only, with what the conversion's own lookup finds: one object, none, several,
+or no answer); **several objects**; **wrong type**; **could not verify** (the directory could not be asked, or the stored
+DN names a domain that is not in this forest - never read as missing); or **ignored**. The summary line reads "Verified N
+entries at <time>: M findings, K ignored, J could not be verified", and the last press is shown to the next admin. Beside
+each finding are its actions, each written at once (not at Save), checked against the rules as Verify read them (a change
+since refuses: "run Verify again"), re-authorized at the click and audited under `Verify:ProtectedPrincipals`:
+**Rename** (store the current name as the entry's label and as its companion for an older build - which also changes what
+the two name fallbacks match, a user compared by label when the target has no SID and an OU compared by DN suffix in the
+write-target check), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
+name; checked as an Add is), **Remove now** (the entry, its companion and any ignore of it), and **Ignore** (keep the entry
+and stop the finding being reported until what Verify sees changes; never offered for an entry not converted or one that
+could not be verified). In this build an ignore changes only what Verify reports, never a protection check. Verify is not
+offered while the pane has unsaved changes, and the ordinary Remove and Save also deletes a removed entry's ignores. The
+ignore list is the `verify_ignores` setting; `db identifier-status` prints it at the end of its report.
 
 #### Protected principal servicing (authorised bypass)
 
@@ -1347,6 +1366,8 @@ Configure email notifications, group-based access control, self-grant prevention
   describes - on a copy first, then the live file. `db identifier-status` lists every row and exits 0 when nothing is
   left stored by name. An entry the command cannot resolve to exactly one object is named by it; remove or re-pick that
   entry and run it again
+- For a few entries: press **Verify** on the Protected principals pane; an entry the lookup resolves to exactly one object
+  offers **Convert**, one it does not offers **Replace...** and **Remove now**
 
 ### "401 Unauthorized" when accessing the app
 - Verify Windows Authentication is enabled in IIS for the application

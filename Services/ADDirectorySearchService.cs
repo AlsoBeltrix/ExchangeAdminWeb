@@ -597,12 +597,23 @@ public sealed partial class ADDirectorySearchService : IOperatorDirectory, IGrou
         if (ps.HadErrors)
             throw new InvalidOperationException("The forest's crossRefs could not be read.");
 
-        if (partitions.Count == 0)
-            return null;
-        if (partitions.Count > 1)
-            throw new InvalidOperationException($"Domain '{dnsDomain}' matches {partitions.Count} crossRefs.");
+        return ForestDomainFromCrossRefs(dnsDomain, partitions.Select(p => p.Properties["dnsRoot"]?.Value).ToList());
+    }
 
-        return ExchangeAdminWeb.Authorization.SectionAccessDirectoryReading.UnwrapDnsRoot(partitions[0].Properties["dnsRoot"]?.Value)
+    /// <summary>
+    /// The forest-membership decision over the crossRefs a read for <paramref name="dnsDomain"/> returned (their
+    /// <c>dnsRoot</c> values): none is "not a domain of this forest" (null), one is that domain's DNS name, more than one or an
+    /// unusable value throws - a read that does not answer as one domain proves nothing. Shared by the OU validation above and
+    /// Verify's check of every stored DN (docs/DirectoryObjectVerify-Plan.md B.1, F6).
+    /// </summary>
+    internal static string? ForestDomainFromCrossRefs(string dnsDomain, IReadOnlyList<object?> dnsRoots)
+    {
+        if (dnsRoots.Count == 0)
+            return null;
+        if (dnsRoots.Count > 1)
+            throw new InvalidOperationException($"Domain '{dnsDomain}' matches {dnsRoots.Count} crossRefs.");
+
+        return ExchangeAdminWeb.Authorization.SectionAccessDirectoryReading.UnwrapDnsRoot(dnsRoots[0])
                ?? throw new InvalidOperationException($"Domain '{dnsDomain}' has no usable dnsRoot.");
     }
 
