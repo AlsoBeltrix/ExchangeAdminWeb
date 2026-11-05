@@ -177,6 +177,24 @@ public class ModuleAdminService
     }
 
     /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1, B.3 (slice V3). What a Verify press of <paramref name="moduleId"/>'s Module Admins
+    /// tab reads: its grants, the borrowed section-access display names and the raw ignore list, in one read transaction.
+    /// </summary>
+    internal ModuleGroupVerifySnapshot ReadForVerify(string moduleId) => _repository.ReadVerifySnapshot(moduleId);
+
+    /// <summary>docs/DirectoryObjectVerify-Plan.md C.2. One Verify action's write, under this service's write lock.</summary>
+    internal ModuleGroupVerifyWriteOutcome ApplyVerifyWrite(Func<ModuleAdminRepository, ModuleGroupVerifyWriteOutcome> write)
+    {
+        lock (_writeLock)
+        {
+            var outcome = write(_repository);
+            if (outcome.Status == VerifyWriteStatus.Written)
+                _logger.LogInformation("Module admins changed by a Verify action");
+            return outcome;
+        }
+    }
+
+    /// <summary>
     /// Every module's grants, or an empty map when the store cannot be read.
     /// </summary>
     /// <remarks>

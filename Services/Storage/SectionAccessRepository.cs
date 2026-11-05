@@ -188,6 +188,10 @@ public sealed class SectionAccessRepository
                 }
 
                 MarkPresent(connection, transaction);
+
+                // docs/DirectoryObjectVerify-Plan.md B.3 (slice V3): the Access pane's ordinary Remove + Save lands here, so a
+                // removed grant's Verify ignores go in this same transaction - never left to name a grant that is gone.
+                ModuleGroupVerifyStore.Prune(connection, transaction, VerifyIgnoreList.SectionAccessStore, ReadAllRows(connection, transaction));
                 return new SectionAccessReplaceOutcome(true, before);
             }, cancellationToken);
         }
@@ -217,7 +221,7 @@ public sealed class SectionAccessRepository
         public SectionAccessSnapshot Before { get; } = before;
     }
 
-    private static Dictionary<string, string> ReadDisplayNames(SqliteConnection connection, SqliteTransaction transaction)
+    internal static Dictionary<string, string> ReadDisplayNames(SqliteConnection connection, SqliteTransaction? transaction)
     {
         var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         using var read = connection.CreateCommand();
@@ -305,22 +309,29 @@ public sealed class SectionAccessRepository
         if (displayNames.Count == 0)
             return;
 
-        _store.Write((connection, transaction) =>
-        {
-            foreach (var (groupValue, name) in displayNames)
-            {
-                if (string.IsNullOrWhiteSpace(groupValue) || string.IsNullOrWhiteSpace(name))
-                    continue;
+        _store.Write((connection, transaction) => SaveDisplayNames(connection, transaction, displayNames));
+    }
 
-                using var update = connection.CreateCommand();
-                update.Transaction = transaction;
-                update.CommandText =
-                    "UPDATE section_access SET group_display_name = $name WHERE group_value = $group;";
-                update.Parameters.AddWithValue("$name", name);
-                update.Parameters.AddWithValue("$group", groupValue);
-                update.ExecuteNonQuery();
-            }
-        });
+    /// <summary>
+    /// The write of <see cref="SaveDisplayNames(IReadOnlyDictionary{string, string})"/> inside the caller's transaction: also the
+    /// Module Configuration Verify Rename (docs/DirectoryObjectVerify-Plan.md C.2, slice V3), which writes one SID's name inside
+    /// its version-checked transaction. Updates only; never inserts.
+    /// </summary>
+    internal static void SaveDisplayNames(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyDictionary<string, string> displayNames)
+    {
+        foreach (var (groupValue, name) in displayNames)
+        {
+            if (string.IsNullOrWhiteSpace(groupValue) || string.IsNullOrWhiteSpace(name))
+                continue;
+
+            using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText =
+                "UPDATE section_access SET group_display_name = $name WHERE group_value = $group;";
+            update.Parameters.AddWithValue("$name", name);
+            update.Parameters.AddWithValue("$group", groupValue);
+            update.ExecuteNonQuery();
+        }
     }
 
     /// <summary>
@@ -365,60 +376,181 @@ public sealed class SectionAccessRepository
     {
         ArgumentNullException.ThrowIfNull(conversions);
 
-        return _store.Write((connection, transaction) =>
+        return _store.Write((connection, transaction) => ConvertToSids(connection, transaction, conversions));
+    }
+
+    /// <summary>
+    /// The write of <see cref="ConvertToSids(IReadOnlyList{SidConversion})"/> inside the caller's write transaction, every row
+    /// re-checked there: also the Module Configuration Verify Convert (docs/DirectoryObjectVerify-Plan.md C.2, slice V3), which
+    /// converts one alias's one value inside its version-checked transaction.
+    /// </summary>
+    internal static SidConversionOutcome ConvertToSids(SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<SidConversion> conversions)
+    {
+        var converted = 0;
+        var alreadyConverted = 0;
+        var skipped = new List<SidConversion>();
+
+        foreach (var conversion in conversions)
         {
-            var converted = 0;
-            var alreadyConverted = 0;
-            var skipped = new List<SidConversion>();
+            if (string.IsNullOrWhiteSpace(conversion.PolicyAlias) || string.IsNullOrWhiteSpace(conversion.Sid))
+                continue;
 
-            foreach (var conversion in conversions)
+            // Compared against the table as it is now, under the lock - never the earlier read.
+            if (!RowExists(connection, transaction, conversion.PolicyAlias, conversion.Value))
             {
-                if (string.IsNullOrWhiteSpace(conversion.PolicyAlias) || string.IsNullOrWhiteSpace(conversion.Sid))
-                    continue;
-
-                // Compared against the table as it is now, under the lock - never the earlier read.
-                if (!RowExists(connection, transaction, conversion.PolicyAlias, conversion.Value))
-                {
-                    if (RowExists(connection, transaction, conversion.PolicyAlias, conversion.Sid))
-                        alreadyConverted++;
-                    else
-                        skipped.Add(conversion);
-                    continue;
-                }
-
-                using (var delete = connection.CreateCommand())
-                {
-                    delete.Transaction = transaction;
-                    delete.CommandText =
-                        "DELETE FROM section_access WHERE policy_alias = $alias AND group_value = $value;";
-                    delete.Parameters.AddWithValue("$alias", conversion.PolicyAlias);
-                    delete.Parameters.AddWithValue("$value", conversion.Value);
-                    delete.ExecuteNonQuery();
-                }
-
-                using (var insert = connection.CreateCommand())
-                {
-                    insert.Transaction = transaction;
-                    insert.CommandText =
-                        "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
-                        "VALUES ($alias, $group, $display) " +
-                        "ON CONFLICT(policy_alias, group_value) DO UPDATE SET " +
-                        "group_display_name = COALESCE(excluded.group_display_name, group_display_name);";
-                    insert.Parameters.AddWithValue("$alias", conversion.PolicyAlias);
-                    insert.Parameters.AddWithValue("$group", conversion.Sid);
-                    insert.Parameters.AddWithValue("$display", (object?)conversion.DisplayName ?? DBNull.Value);
-                    insert.ExecuteNonQuery();
-                }
-
-                converted++;
+                if (RowExists(connection, transaction, conversion.PolicyAlias, conversion.Sid))
+                    alreadyConverted++;
+                else
+                    skipped.Add(conversion);
+                continue;
             }
 
-            if (converted > 0)
-                MarkPresent(connection, transaction);
+            using (var delete = connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText =
+                    "DELETE FROM section_access WHERE policy_alias = $alias AND group_value = $value;";
+                delete.Parameters.AddWithValue("$alias", conversion.PolicyAlias);
+                delete.Parameters.AddWithValue("$value", conversion.Value);
+                delete.ExecuteNonQuery();
+            }
 
-            return new SidConversionOutcome(converted, alreadyConverted, skipped);
-        });
+            using (var insert = connection.CreateCommand())
+            {
+                insert.Transaction = transaction;
+                insert.CommandText =
+                    "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
+                    "VALUES ($alias, $group, $display) " +
+                    "ON CONFLICT(policy_alias, group_value) DO UPDATE SET " +
+                    "group_display_name = COALESCE(excluded.group_display_name, group_display_name);";
+                insert.Parameters.AddWithValue("$alias", conversion.PolicyAlias);
+                insert.Parameters.AddWithValue("$group", conversion.Sid);
+                insert.Parameters.AddWithValue("$display", (object?)conversion.DisplayName ?? DBNull.Value);
+                insert.ExecuteNonQuery();
+            }
+
+            converted++;
+        }
+
+        if (converted > 0)
+            MarkPresent(connection, transaction);
+
+        return new SidConversionOutcome(converted, alreadyConverted, skipped);
     }
+
+    // ----- docs/DirectoryObjectVerify-Plan.md B.3, C.2 (slice V3): the Access and Protection servicer panes' Verify -----
+
+    /// <summary>Every row of the table, as grants (row key = policy alias), inside <paramref name="transaction"/>.</summary>
+    internal static IReadOnlyList<GroupGrantRow> ReadAllRows(SqliteConnection connection, SqliteTransaction? transaction) =>
+        ReadAll(connection, transaction)
+            .SelectMany(kv => kv.Value.Select(v => new GroupGrantRow(kv.Key, v)))
+            .ToList();
+
+    private static (bool Configured, IReadOnlyList<GroupGrantRow> Rows) ReadScope(
+        SqliteConnection connection, SqliteTransaction? transaction, IReadOnlyCollection<string> aliases)
+    {
+        var wanted = new HashSet<string>(aliases, StringComparer.OrdinalIgnoreCase);
+        var rows = ReadAllRows(connection, transaction).Where(r => wanted.Contains(r.RowKey)).ToList();
+        return (ReadConfigured(connection, transaction), rows);
+    }
+
+    /// <summary>
+    /// What a Verify press of a module's Access tab reads (plan B.1, B.3): the rows of <paramref name="aliases"/> - the module's
+    /// policy aliases and its servicer key - the presence marker, every display name and the raw ignore list, in ONE read
+    /// transaction. Unreadable when any read fails.
+    /// </summary>
+    internal ModuleGroupVerifySnapshot ReadVerifySnapshot(IReadOnlyCollection<string> aliases)
+    {
+        try
+        {
+            return _store.ReadInTransaction((connection, transaction) =>
+            {
+                var (configured, rows) = ReadScope(connection, transaction, aliases);
+                return new ModuleGroupVerifySnapshot(true, configured, rows, ReadDisplayNames(connection, transaction),
+                    AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey));
+            });
+        }
+        catch
+        {
+            return ModuleGroupVerifySnapshot.Unreadable;
+        }
+    }
+
+    // A Verify write over the module's aliases: refused unless section access is configured - unconfigured, the gates read the
+    // appsettings fallback, not these rows - and unless the rows are the version the item was read with.
+    private ModuleGroupVerifyWriteOutcome WriteVerify(
+        IReadOnlyCollection<string> aliases, string expectedVersion, bool casIgnores, string? expectedIgnores, VerifyIgnoreEntry? addIgnore,
+        Func<SqliteConnection, SqliteTransaction, VerifyWriteStatus?> decide) =>
+        ModuleGroupVerifyStore.Write(
+            _store, VerifyIgnoreList.SectionAccessStore,
+            (connection, transaction) => ReadScope(connection, transaction, aliases),
+            (connection, transaction) => ReadAllRows(connection, transaction),
+            expectedVersion, casIgnores, expectedIgnores, addIgnore,
+            (connection, transaction, scope) => !scope.Configured ? VerifyWriteStatus.StoreUnreadable : decide(connection, transaction));
+
+    /// <summary>
+    /// Remove (C.2): deletes the one grant <paramref name="row"/> names AND every Verify ignore that names it, in one transaction.
+    /// </summary>
+    internal ModuleGroupVerifyWriteOutcome RemoveWithIgnores(
+        IReadOnlyCollection<string> aliases, GroupGrantRow row, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(aliases, expectedVersion, casIgnores: true, expectedIgnores, null, (connection, transaction) =>
+        {
+            if (!RowExists(connection, transaction, row.RowKey, row.Value))
+                return VerifyWriteStatus.RowChanged;
+
+            using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM section_access WHERE policy_alias = $alias AND group_value = $value;";
+            delete.Parameters.AddWithValue("$alias", row.RowKey);
+            delete.Parameters.AddWithValue("$value", row.Value);
+            delete.ExecuteNonQuery();
+            return null;
+        });
+
+    /// <summary>
+    /// Rename (C.2, LabelDrift): the display name stored for <paramref name="row"/>'s SID becomes <paramref name="newLabel"/>,
+    /// through <see cref="SaveDisplayNames(SqliteConnection, SqliteTransaction, IReadOnlyDictionary{string, string})"/> - for that
+    /// SID only, which updates it on every alias holding it. Refused unless the grant is still there and its stored name is still
+    /// <paramref name="expectedLabel"/>. Cosmetic: no authorization path reads a display name.
+    /// </summary>
+    internal ModuleGroupVerifyWriteOutcome RenameDisplayName(
+        IReadOnlyCollection<string> aliases, GroupGrantRow row, string expectedLabel, string newLabel, string expectedVersion) =>
+        WriteVerify(aliases, expectedVersion, casIgnores: false, null, null, (connection, transaction) =>
+        {
+            if (!RowExists(connection, transaction, row.RowKey, row.Value)
+                || !ReadDisplayNames(connection, transaction).TryGetValue(row.Value, out var stored)
+                || !string.Equals(stored.Trim(), expectedLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+                return VerifyWriteStatus.RowChanged;
+
+            SaveDisplayNames(connection, transaction, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [row.Value] = newLabel });
+            return null;
+        });
+
+    /// <summary>
+    /// Convert (C.2, NotConverted convertible): the one name grant <paramref name="conversion"/> names becomes the SID the
+    /// section-access resolver found, through <see cref="ConvertToSids(SqliteConnection, SqliteTransaction, IReadOnlyList{SidConversion})"/>
+    /// for exactly that alias and value. Refused unless it converted that one row.
+    /// </summary>
+    internal ModuleGroupVerifyWriteOutcome ConvertOne(IReadOnlyCollection<string> aliases, SidConversion conversion, string expectedVersion) =>
+        WriteVerify(aliases, expectedVersion, casIgnores: false, null, null, (connection, transaction) =>
+            ConvertToSids(connection, transaction, [conversion]).Converted == 1 ? null : VerifyWriteStatus.RowChanged);
+
+    /// <summary>Ignore (B.3, R2): adds <paramref name="entry"/> after confirming the grant is still stored as read. Changes no grant.</summary>
+    internal ModuleGroupVerifyWriteOutcome AddVerifyIgnore(
+        IReadOnlyCollection<string> aliases, GroupGrantRow row, VerifyIgnoreEntry entry, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(aliases, expectedVersion, casIgnores: true, expectedIgnores, entry, (connection, transaction) =>
+            RowExists(connection, transaction, row.RowKey, row.Value) ? null : VerifyWriteStatus.RowChanged);
+
+    /// <summary>The stored <c>verify_last</c> value (plan C.1), or null; display-only.</summary>
+    internal string? ReadVerifyLast() => _store.Read(connection => AppSettingRepository.ReadValue(connection, null, VerifyIgnoreList.LastVerifiedKey));
+
+    /// <summary>Writes <c>verify_last</c> as <paramref name="update"/> makes it from the stored value: display-only (plan C.1).</summary>
+    internal void UpdateVerifyLast(Func<string?, string> update) =>
+        _store.Write((connection, transaction) =>
+        {
+            var raw = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.LastVerifiedKey);
+            AppSettingRepository.ReplaceIfEqual(connection, transaction, VerifyIgnoreList.LastVerifiedKey, raw, update(raw));
+        });
 
     private static bool RowExists(SqliteConnection connection, SqliteTransaction transaction, string alias, string value)
     {

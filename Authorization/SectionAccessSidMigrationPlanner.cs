@@ -16,6 +16,13 @@ public sealed record RowMigrationResult(
     string? Failure)
 {
     public bool Converted => Failure is null;
+
+    /// <summary>
+    /// What the directory lookup found, when one ran: exactly one group, none, or several. Null when the value was not
+    /// looked up (already a SID, or a value that cannot be interpreted). The Module Configuration Verify press
+    /// (docs/DirectoryObjectVerify-Plan.md B.2, slice V3) reads it to tell "no such group" from "several groups".
+    /// </summary>
+    public GroupResolutionOutcome? Outcome { get; init; }
 }
 
 /// <summary>
@@ -130,11 +137,11 @@ public static class SectionAccessSidMigrationPlanner
         {
             case GroupResolutionOutcome.NotFound:
                 return Failed(parsed.Raw, "no group with that name exists in "
-                    + (parsed.NetBiosDomain is null ? "this domain" : parsed.NetBiosDomain));
+                    + (parsed.NetBiosDomain is null ? "this domain" : parsed.NetBiosDomain), GroupResolutionOutcome.NotFound);
 
             case GroupResolutionOutcome.Ambiguous:
                 return Failed(parsed.Raw,
-                    $"{matches!.Count} groups answer to that name, so it does not identify one group");
+                    $"{matches!.Count} groups answer to that name, so it does not identify one group", GroupResolutionOutcome.Ambiguous);
         }
 
         var match = matches![0];
@@ -147,11 +154,11 @@ public static class SectionAccessSidMigrationPlanner
             return Failed(parsed.Raw, $"resolved to a SID that is {rejection}");
 
         var display = string.IsNullOrWhiteSpace(match.DisplayName) ? parsed.Name! : match.DisplayName;
-        return new RowMigrationResult(string.Empty, parsed.Raw, match.Sid, display, null);
+        return new RowMigrationResult(string.Empty, parsed.Raw, match.Sid, display, null) { Outcome = GroupResolutionOutcome.Resolved };
     }
 
-    private static RowMigrationResult Failed(string raw, string reason)
-        => new(string.Empty, raw, null, null, reason);
+    private static RowMigrationResult Failed(string raw, string reason, GroupResolutionOutcome? outcome = null)
+        => new(string.Empty, raw, null, null, reason) { Outcome = outcome };
 
     /// <summary>
     /// The operator-facing explanation of a halt, naming every offending row. Written for a log a

@@ -2105,10 +2105,22 @@ public static class ProgressRegistry
                 + "the number of new grants is known, Report raised from the worker thread as "
                 + "GlobalProgress.razor marshals. Success is false only when the directory could "
                 + "not be asked: a refused grant is a check that ran"),
+            new("VerifyGroupsAsync", "Verifier.VerifyAsync(",
+                "docs/DirectoryObjectVerify-Plan.md C.1 (slice V3): the Verify press of the Access or Module Admins tab. Every "
+                + "stored grant is looked up through the one engine call - batched global-catalog reads by SID, and each store's "
+                + "own resolver for a grant stored by name - so the one call named is the whole wait. The Begin is below the "
+                + "authorization re-check and the one-transaction store read, which are quick and local, Items because the "
+                + "grant count is known there; the Complete follows the call with the report's summary, success true because a "
+                + "press that ran finished whatever it found (the 2026-10-08 ruling)"),
         ],
         Exempt =
         [
             new("OnParametersSetAsync", AuthPreambleOnly + ", plus " + ConfigStoreRead),
+            new("OnGroupVerifyActionAsync",
+                ConfigStoreWrite + ": one Verify action button (docs/DirectoryObjectVerify-Plan.md C.2, slice V3) - Replace only "
+                + "re-authorizes and takes the grant out of the tab's list for the ordinary save; Rename, Convert, Remove now and "
+                + "Ignore each re-authorize and make one direct, audited write to section access, the module admins or the ignore "
+                + "list through ModuleGroupVerifyActions, which reaches no directory"),
             new("SaveCurrentTabAsync", ConfigStoreWrite
                 + ". The access and module-admin saves first confirm the grants they ADD through "
                 + "ConfirmNewGroupGrantsAsync, which carries its own activity and Reported entry "

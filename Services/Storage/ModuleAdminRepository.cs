@@ -152,6 +152,11 @@ public sealed class ModuleAdminRepository
                 }
 
                 InsertGroups(connection, transaction, moduleId, inserts.ToArray());
+
+                // docs/DirectoryObjectVerify-Plan.md B.3 (slice V3): the Module Admins pane's ordinary Remove + Save lands here,
+                // so a removed grant's Verify ignores go in this same transaction.
+                if (deletes.Count > 0)
+                    ModuleGroupVerifyStore.Prune(connection, transaction, VerifyIgnoreList.ModuleAdminsStore, ReadAllRows(connection, transaction));
                 return new ModuleAdminChangeOutcome(
                     true, true, before, ReadModuleGroups(connection, transaction, moduleId), alreadyApplied);
             }, cancellationToken);
@@ -173,6 +178,110 @@ public sealed class ModuleAdminRepository
 
         public IReadOnlyList<string> AlreadyApplied { get; } = alreadyApplied;
     }
+
+    // ----- docs/DirectoryObjectVerify-Plan.md B.3, C.2 (slice V3): the Module Admins pane's Verify -----
+
+    /// <summary>Every module's grants, as rows (row key = module id), inside <paramref name="transaction"/>.</summary>
+    internal static IReadOnlyList<GroupGrantRow> ReadAllRows(SqliteConnection connection, SqliteTransaction? transaction) =>
+        ReadAll(connection, transaction)
+            .SelectMany(kv => kv.Value.Select(v => new GroupGrantRow(kv.Key, v)))
+            .ToList();
+
+    // The module's grants. module_admins has no presence marker: it is always "configured".
+    private static (bool Configured, IReadOnlyList<GroupGrantRow> Rows) ReadScope(SqliteConnection connection, SqliteTransaction? transaction, string moduleId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT admin_group FROM module_admins WHERE module_id = $id;";
+        command.Parameters.AddWithValue("$id", moduleId);
+        return (true, ReadGroups(command).Select(g => new GroupGrantRow(moduleId, g)).ToList());
+    }
+
+    /// <summary>
+    /// What a Verify press of a module's Module Admins tab reads (plan B.1, B.3): the module's grants, the section-access display
+    /// names the pane borrows, and the raw ignore list, in ONE read transaction. Unreadable when any read fails.
+    /// </summary>
+    internal ModuleGroupVerifySnapshot ReadVerifySnapshot(string moduleId)
+    {
+        try
+        {
+            return _store.ReadInTransaction((connection, transaction) =>
+            {
+                var (configured, rows) = ReadScope(connection, transaction, moduleId);
+                return new ModuleGroupVerifySnapshot(true, configured, rows, SectionAccessRepository.ReadDisplayNames(connection, transaction),
+                    AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey));
+            });
+        }
+        catch
+        {
+            return ModuleGroupVerifySnapshot.Unreadable;
+        }
+    }
+
+    private ModuleGroupVerifyWriteOutcome WriteVerify(
+        string moduleId, string expectedVersion, bool casIgnores, string? expectedIgnores, VerifyIgnoreEntry? addIgnore,
+        Func<SqliteConnection, SqliteTransaction, VerifyWriteStatus?> decide) =>
+        ModuleGroupVerifyStore.Write(
+            _store, VerifyIgnoreList.ModuleAdminsStore,
+            (connection, transaction) => ReadScope(connection, transaction, moduleId),
+            (connection, transaction) => ReadAllRows(connection, transaction),
+            expectedVersion, casIgnores, expectedIgnores, addIgnore,
+            (connection, transaction, _) => decide(connection, transaction));
+
+    /// <summary>Remove (C.2): deletes the one grant AND every Verify ignore that names it, in one transaction.</summary>
+    internal ModuleGroupVerifyWriteOutcome RemoveWithIgnores(string moduleId, string group, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(moduleId, expectedVersion, casIgnores: true, expectedIgnores, null, (connection, transaction) =>
+        {
+            if (!RowExists(connection, transaction, moduleId, group))
+                return VerifyWriteStatus.RowChanged;
+
+            using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM module_admins WHERE module_id = $id AND admin_group = $group;";
+            delete.Parameters.AddWithValue("$id", moduleId);
+            delete.Parameters.AddWithValue("$group", group);
+            delete.ExecuteNonQuery();
+            return null;
+        });
+
+    /// <summary>
+    /// Rename (C.2, LabelDrift): module admins borrow section-access display names, so the name stored for the grant's SID in
+    /// <c>section_access</c> becomes <paramref name="newLabel"/>, through <see cref="SectionAccessRepository.SaveDisplayNames(SqliteConnection, SqliteTransaction, IReadOnlyDictionary{string, string})"/>
+    /// for that SID only. Refused unless the grant is still there and the stored name is still <paramref name="expectedLabel"/>.
+    /// </summary>
+    internal ModuleGroupVerifyWriteOutcome RenameDisplayName(
+        string moduleId, string group, string expectedLabel, string newLabel, string expectedVersion) =>
+        WriteVerify(moduleId, expectedVersion, casIgnores: false, null, null, (connection, transaction) =>
+        {
+            if (!RowExists(connection, transaction, moduleId, group)
+                || !SectionAccessRepository.ReadDisplayNames(connection, transaction).TryGetValue(group, out var stored)
+                || !string.Equals(stored.Trim(), expectedLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+                return VerifyWriteStatus.RowChanged;
+
+            SectionAccessRepository.SaveDisplayNames(connection, transaction,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [group] = newLabel });
+            return null;
+        });
+
+    /// <summary>
+    /// Convert (C.2, NotConverted convertible): the one name grant becomes its group's SID through
+    /// <see cref="ConfigDbIdentifiers.ConvertModuleAdminGrant"/> - the primitive <c>db convert-identifiers</c> writes with.
+    /// </summary>
+    internal ModuleGroupVerifyWriteOutcome ConvertOne(ModuleAdminSidConversion conversion, string expectedVersion) =>
+        WriteVerify(conversion.ModuleId, expectedVersion, casIgnores: false, null, null, (connection, transaction) =>
+        {
+            if (!RowExists(connection, transaction, conversion.ModuleId, conversion.Name))
+                return VerifyWriteStatus.RowChanged;
+
+            ConfigDbIdentifiers.ConvertModuleAdminGrant(connection, transaction, conversion);
+            return null;
+        });
+
+    /// <summary>Ignore (B.3, R2): adds <paramref name="entry"/> after confirming the grant is still stored as read. Changes no grant.</summary>
+    internal ModuleGroupVerifyWriteOutcome AddVerifyIgnore(
+        string moduleId, string group, VerifyIgnoreEntry entry, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(moduleId, expectedVersion, casIgnores: true, expectedIgnores, entry, (connection, transaction) =>
+            RowExists(connection, transaction, moduleId, group) ? null : VerifyWriteStatus.RowChanged);
 
     private static bool RowExists(SqliteConnection connection, SqliteTransaction transaction, string moduleId, string group)
     {
