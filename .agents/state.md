@@ -8,6 +8,22 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-05 (V3) - Verify on the Module Configuration group panes landed; V4 next
+
+**Master `7c15250a`** (merge of `fix/dov-v3`; worktree and branch gone). `Services/ModuleGroupVerifyAdapter.cs`,
+`ModuleGroupVerifyActions.cs`, `Storage/ModuleGroupVerifyStore.cs`: section-access, servicer and module-admin grants verified
+by SID at the catalog in the press's warm session; legacy names by each store's existing rule (A3 planner in the host's
+domain through the migration's own directory, A4 forest-wide); one Verify button per tab (Access covers servicer);
+Rename, Convert, Replace (picker + save), Remove now, Ignore (display-only) with global-admin re-authorization at the click,
+refusals audited under `Verify:<Store>`; ignores pruned on the tabs' ordinary saves. Engine gained a `ResolveOutsideDirectory`
+lookup kind. Module Configuration rides the base version (2.36.0, unchanged). Record dov-v3 (29 mutations caught; commits
+carry an Opus trailer). Supervisor's gates on master at `7c15250a`: Release build 0 errors (19 known warnings); xUnit 8563
+passed, 0 failed; format, whitespace and ASCII clean. Not pushed. Watch item: the implementer saw one load-flaky failure of
+`MessageTraceSubmittedValueTests.AKeystrokeLanding...` ("finished without yielding") that passed on re-run; it did not
+recur in the supervisor's run.
+
+**Next:** V4 (text settings A5-A8 and the post-deploy "press Verify on each page" run-book sentence), the last Verify slice.
+
 ### 2026-11-05 (later) - Verify slice V2 landed (an ignored missing group no longer refuses); V3 next
 
 **Master `b0c1b06e`** (merge of `fix/dov-v2`; worktree and branch gone). Plan B.4 as built: `ProtectedGroupMembership.Evaluate`
