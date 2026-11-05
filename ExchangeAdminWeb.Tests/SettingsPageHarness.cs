@@ -32,8 +32,9 @@ namespace ExchangeAdminWeb.Tests;
 /// constructed, its injected services set by reflection, its setup lifecycle method run and its
 /// handlers invoked on a renderer's dispatcher. The pages are subclassed only to render nothing -
 /// a do-nothing render is what lets the two enablement saves call StateHasChanged before they
-/// reload - and, on Admin Settings, to skip the post-render sweep, which would ask the directory
-/// about every saved protected principal. Everything a save touches is the shipped code: real
+/// reload - and, on Admin Settings, to do nothing after a render (the post-render sweep that asked
+/// the directory about every saved protected principal is gone; Verify is pressed, never run on
+/// load). Everything a save touches is the shipped code: real
 /// stores over one temp SQLite file (each behind a switch that can fail its reads or writes), the
 /// real services over them and the real audit writer. Authorization is a substitute the test sets.
 /// </remarks>
@@ -257,6 +258,10 @@ internal sealed class SettingsPageHarness : IDisposable
             ["ProtectedPrincipalService"] = ProtectedPrincipals,
             ["ModuleConfigSvc"] = ModuleConfig,
             ["Progress"] = Progress,
+            // docs/DirectoryObjectVerify-Plan.md: the Verify engine over this harness's protection service, which has no
+            // directory-read credential, so a press here verifies nothing and every entry is "could not verify".
+            ["Verifier"] = new DirectoryObjectVerifier(
+                ProtectedPrincipals, [new ProtectedPrincipalVerifyAdapter()], NullLogger<DirectoryObjectVerifier>.Instance),
         });
         Attach(page);
         Setup(page, typeof(AdminSettingsPage), "OnInitializedAsync");
@@ -363,6 +368,28 @@ internal sealed class SettingsPageHarness : IDisposable
         }
 
         throw new InvalidOperationException($"no button labelled '{label}' is rendered - this harness is stale");
+    }
+
+    /// <summary>The label of every button <paramref name="page"/> renders, in order (docs/DirectoryObjectVerify-Plan.md C.2).</summary>
+    public static IReadOnlyList<string> ButtonLabels(ComponentBase page)
+    {
+        var frames = Frames(page);
+        var labels = new List<string>();
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames[i];
+            if (frame.FrameType != RenderTreeFrameType.Element || frame.ElementName != "button")
+                continue;
+
+            var end = i + frame.ElementSubtreeLength;
+            labels.Add(string.Concat(frames.Skip(i + 1).Take(end - i - 1).Select(f => f.FrameType switch
+            {
+                RenderTreeFrameType.Text => f.TextContent,
+                RenderTreeFrameType.Markup => f.MarkupContent,
+                _ => "",
+            })).Trim());
+        }
+        return labels;
     }
 
     /// <summary>
@@ -532,7 +559,8 @@ internal sealed class SettingsPageHarness : IDisposable
                 base.BuildRenderTree(builder);
         }
 
-        // The page's own sweep asks the directory about every saved entry. Never here.
+        // Nothing after a render: the page's post-render sweep is gone (docs/DirectoryObjectVerify-Plan.md, slice V1), and this
+        // stays so a later one can never ask the directory from here.
         protected override Task OnAfterRenderAsync(bool firstRender) => Task.CompletedTask;
     }
 

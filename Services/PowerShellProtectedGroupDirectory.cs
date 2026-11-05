@@ -234,6 +234,80 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     }
 
     /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1. The objects <paramref name="ldapFilter"/> matches - an equality filter on objectSid,
+    /// objectGUID or distinguishedName terms - on <paramref name="server"/>, or the forest's global catalog when null, with the
+    /// attributes Verify compares. A row without its DN is a failed read, never a missing object.
+    /// </summary>
+    internal IReadOnlyList<VerifyDirectoryObject> FindVerifyObjects(string ldapFilter, string? server)
+    {
+        var found = new List<VerifyDirectoryObject>();
+        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        {
+            ["LDAPFilter"] = ldapFilter,
+            ["Server"] = server ?? GlobalCatalog(),
+            ["Properties"] = new[] { "objectSid", "objectGUID", "objectClass", "userPrincipalName", "mail", "distinguishedName", "sAMAccountName" },
+        }))
+        {
+            var dn = (row is null ? null : Text(row, "DistinguishedName"))
+                     ?? throw new InvalidOperationException("The directory returned an object without a readable DN.");
+            found.Add(new VerifyDirectoryObject(
+                DistinguishedName: dn,
+                ObjectSid: Text(row!, "objectSid"),
+                ObjectGuid: Text(row!, "ObjectGUID"),
+                ObjectClass: Text(row!, "ObjectClass"),
+                UserPrincipalName: Text(row!, "userPrincipalName"),
+                Mail: Text(row!, "mail"),
+                SamAccountName: Text(row!, "sAMAccountName")));
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1 (F6). The DNS name of the domain of this forest that <paramref name="dnsDomain"/>
+    /// names, from the forest's CN=Partitions crossRefs - the check <see cref="ADDirectorySearchService"/> makes for an OU's
+    /// domain - or null when the forest has no such domain. Throws when the read fails or names more than one.
+    /// </summary>
+    internal string? ForestDomainServer(string dnsDomain)
+    {
+        var rootDse = Run("Get-ADRootDSE", new Dictionary<string, object>());
+        var configNc = rootDse.Count == 1 ? Text(rootDse[0], "configurationNamingContext") : null;
+        if (string.IsNullOrWhiteSpace(configNc))
+            throw new InvalidOperationException("Could not read the forest's configuration naming context.");
+
+        var partitions = Run("Get-ADObject", new Dictionary<string, object>
+        {
+            ["SearchBase"] = $"CN=Partitions,{configNc}",
+            ["LDAPFilter"] = ProtectedGroupMembership.DomainCrossRefFilter(dnsDomain),
+            ["Properties"] = new[] { "nETBIOSName", "dnsRoot" },
+        });
+
+        return ADDirectorySearchService.ForestDomainFromCrossRefs(
+            dnsDomain, partitions.Where(p => p is not null).Select(p => p.Properties["dnsRoot"]?.Value).ToList());
+    }
+
+    /// <summary>
+    /// The user-class objects <paramref name="ldapFilter"/> matches on <paramref name="server"/> (a domain controller of that
+    /// domain, or - null - the global catalog): the resolver's user lookup for Verify's not-converted rows, read with the
+    /// directory-read credential in the press's one session.
+    /// </summary>
+    internal IReadOnlyList<DirectoryUserObject> FindUsers(string ldapFilter, string? server)
+    {
+        var users = new List<DirectoryUserObject>();
+        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        {
+            ["LDAPFilter"] = ldapFilter,
+            ["Server"] = server ?? GlobalCatalog(),
+            ["Properties"] = new[] { "objectSid" },
+        }))
+        {
+            var dn = (row is null ? null : Text(row, "DistinguishedName"))
+                     ?? throw new InvalidOperationException("The directory returned an object without a readable DN.");
+            users.Add(new DirectoryUserObject(dn, Text(row!, "objectSid")));
+        }
+        return users;
+    }
+
+    /// <summary>
     /// The forest's global catalog, <c>host:3268</c>, discovered from the host's own forest.
     /// </summary>
     /// <remarks>

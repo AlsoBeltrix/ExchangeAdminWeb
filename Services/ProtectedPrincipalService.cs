@@ -201,7 +201,7 @@ public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? Disti
     }
 }
 
-public class ProtectedPrincipalService
+public class ProtectedPrincipalService : IVerifyDirectoryAccess
 {
     private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
@@ -573,7 +573,9 @@ public class ProtectedPrincipalService
 
         // Read the four lists + configured flag in one guarded operation. A read failure (DB
         // integrity / partial schema damage) fails closed, never silently empty.
-        if (!_repository.TryRead(out var data, out var configured))
+        // docs/DirectoryObjectVerify-Plan.md B.3 (R2): the Verify ignore list is read in the same read transaction and cached
+        // with the rules, so the two are always one snapshot. A list that does not parse is empty - nothing ignored - and logged.
+        if (!_repository.TryRead(out var data, out var configured, out var ignoresRaw))
         {
             _logger.LogError("Protected-principals store unreadable - failing closed");
             lock (_cacheLock) { _configCorrupt = true; }
@@ -581,16 +583,35 @@ public class ProtectedPrincipalService
         }
 
         ProtectedPrincipalConfig? config = configured ? ProtectedPrincipalConfig.FromData(data) : null;
+        var ignores = VerifyIgnoreList.ParseOrEmpty(ignoresRaw, _logger);
 
         lock (_cacheLock)
         {
             _cachedConfig = config;
+            _cachedIgnores = ignores;
             _configLoadedAt = DateTime.UtcNow;
             _configCorrupt = false;
             _loadedToken = token;
         }
 
         return (config, legacyExclusions, null);
+    }
+
+    // docs/DirectoryObjectVerify-Plan.md B.3: the Verify ignore list read with _cachedConfig, in the same read transaction.
+    private IReadOnlyList<VerifyIgnoreEntry> _cachedIgnores = [];
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3. The rules and the Verify ignore list from ONE load - the same read transaction,
+    /// cached together under the change token. Slice V1 loads and exposes the list; the protection check does not consult it
+    /// yet (B.4 is slice V2). An error is <see cref="LoadEffectiveConfig"/>'s, and the list is then empty.
+    /// </summary>
+    internal (ProtectedPrincipalConfig? Config, IReadOnlyList<VerifyIgnoreEntry> Ignores, string? Error) LoadEffectiveConfigAndIgnores()
+    {
+        lock (_cacheLock)
+        {
+            var (config, _, error) = LoadEffectiveConfig();
+            return error is null ? (config, _cachedIgnores, null) : (null, [], error);
+        }
     }
 
     public enum ResolutionStatus { Resolved, NotFound, Ambiguous, Unavailable }
@@ -1071,7 +1092,7 @@ public class ProtectedPrincipalService
             ObjectSid: wanted), ResolutionStatus.Resolved, null);
     }
 
-    private static bool IsUserObject(string? objectClass) =>
+    internal static bool IsUserObject(string? objectClass) =>
         string.Equals(objectClass, "user", StringComparison.OrdinalIgnoreCase)
         || string.Equals(objectClass, "inetOrgPerson", StringComparison.OrdinalIgnoreCase);
 
@@ -1156,6 +1177,139 @@ public class ProtectedPrincipalService
             session.Fail();
             throw;
         }
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1. Runs a Verify press's directory reads - every one of them - in ONE warm session
+    /// of this service's pool, with the directory-read credential fetched once for the operation the caller began. Not ran,
+    /// with the reason, when the reads cannot start: no credential configured, a credential that could not be fetched or
+    /// recently failed, the throttle, no session. A read that throws inside <paramref name="reads"/> is the caller's to
+    /// catch; the session it ran in is failed afterwards, so a session a failed read may have broken is not lent again.
+    /// </summary>
+    internal async Task<VerifyDirectoryRun<T>> RunVerifyReadsAsync<T>(Func<IVerifyDirectory, T> reads, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(reads);
+        if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
+            return VerifyDirectoryRun<T>.NotRun("the directory-read credential failed moments ago");
+
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId == null)
+            return VerifyDirectoryRun<T>.NotRun("the Directory Read Credential (Delinea Secret ID) is not configured");
+
+        var creds = await DirectoryReadSecretAsync(secretId.Value);
+        if (creds == null)
+        {
+            _lastCredentialFailure = DateTime.UtcNow;
+            return VerifyDirectoryRun<T>.NotRun("the directory-read credential could not be retrieved");
+        }
+
+        try
+        {
+            if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
+                return VerifyDirectoryRun<T>.NotRun("the directory was busy (throttle timeout)");
+
+            try
+            {
+                return await Task.Run(() =>
+                {
+                    using var session = DirectorySessions.Lease(SessionWait);
+                    var directory = new VerifySessionDirectory(new PowerShellProtectedGroupDirectory(
+                        session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain),
+                        Volatile.Read(ref _globalCatalog)));
+                    try
+                    {
+                        var result = reads(directory);
+                        Volatile.Write(ref _globalCatalog, directory.Inner.KnownGlobalCatalog);
+                        return VerifyDirectoryRun<T>.Ran(result);
+                    }
+                    finally
+                    {
+                        if (directory.Faulted)
+                        {
+                            session.Fail();
+                            Volatile.Write(ref _globalCatalog, null);
+                        }
+                    }
+                }, cancellationToken);
+            }
+            finally
+            {
+                _adThrottle.Release();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The Verify directory session could not be used");
+            return VerifyDirectoryRun<T>.NotRun($"the directory could not be read: {ex.Message}");
+        }
+    }
+
+    Task<VerifyDirectoryRun<T>> IVerifyDirectoryAccess.RunAsync<T>(Func<IVerifyDirectory, T> reads, CancellationToken cancellationToken) =>
+        RunVerifyReadsAsync(reads, cancellationToken);
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1, B.3. What a Verify press of the protected principals reads: the rows, their
+    /// version (<see cref="RulesVersion"/>) and the raw ignore list, from ONE read transaction. Null when the rules cannot be
+    /// read (or a legacy file was not imported), which the page reports and verifies nothing.
+    /// </summary>
+    internal ProtectedPrincipalVerifyWorkset? ReadForVerify()
+    {
+        if (_legacyFileCorrupt)
+            return null;
+
+        var (snapshot, ignores) = _repository.ReadVerifySnapshot();
+        if (!snapshot.Readable)
+            return null;
+
+        return new ProtectedPrincipalVerifyWorkset(
+            snapshot.Configured ? snapshot.Data : ProtectedPrincipalData.Empty, RulesVersion(snapshot), ignores);
+    }
+
+    /// <summary>The last Verify per store (plan C.1), display-only; empty when none is stored or it cannot be read.</summary>
+    internal Dictionary<string, VerifyLastEntry> ReadVerifyLast()
+    {
+        try
+        {
+            return VerifyLastEntry.ParseMap(_repository.ReadVerifyLast());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "The last-verified lines could not be read");
+            return new(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>Stores <paramref name="entry"/> as the last Verify of <paramref name="store"/> (plan C.1), keeping the other stores'.</summary>
+    internal void WriteVerifyLast(string store, VerifyLastEntry entry) =>
+        _repository.UpdateVerifyLast(raw =>
+        {
+            var map = VerifyLastEntry.ParseMap(raw);
+            map[store] = entry;
+            return VerifyLastEntry.SerializeMap(map);
+        });
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md C.2. One Verify action's write, through <paramref name="write"/> on this service's
+    /// repository; the rules' cache is dropped when it landed. Refused as unreadable, writing nothing, while a legacy file the
+    /// import refused keeps the store fail-closed.
+    /// </summary>
+    internal VerifyWriteOutcome ApplyVerifyWrite(Func<ProtectedPrincipalRepository, VerifyWriteOutcome> write)
+    {
+        ArgumentNullException.ThrowIfNull(write);
+        if (_legacyFileCorrupt)
+            return new VerifyWriteOutcome(VerifyWriteStatus.StoreUnreadable, null, null, null, null);
+
+        var outcome = write(_repository);
+        if (outcome.Status == VerifyWriteStatus.Written)
+        {
+            InvalidateCache();
+            _logger.LogInformation("Protected-principals changed by a Verify action and cache invalidated");
+        }
+        return outcome;
     }
 
     /// <summary>

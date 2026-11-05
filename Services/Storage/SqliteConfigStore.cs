@@ -26,6 +26,21 @@ public sealed class SqliteConfigStore : IConfigStore
         return read(connection);
     }
 
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3 (R2). One deferred read transaction: every statement <paramref name="read"/> runs
+    /// sees the database as of its first read, so rules and the rows read beside them cannot straddle another writer's commit.
+    /// Takes no write lock and bumps nothing; the transaction is committed (a read commits nothing) or, on a throw, disposed.
+    /// </summary>
+    public T ReadInTransaction<T>(Func<SqliteConnection, SqliteTransaction?, T> read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        using var connection = _factory.Open();
+        using var transaction = connection.BeginTransaction(deferred: true);
+        var result = read(connection, transaction);
+        transaction.Commit();
+        return result;
+    }
+
     public T Write<T>(Func<SqliteConnection, SqliteTransaction, T> write) => Write(write, CancellationToken.None);
 
     /// <summary>

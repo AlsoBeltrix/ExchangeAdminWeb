@@ -338,6 +338,12 @@ try
     // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: where the protection check reads a synced recipient's on-premises SID.
     builder.Services.AddSingleton<IOnPremisesSidSource, GraphOnPremisesSidSource>();
     builder.Services.AddSingleton<ProtectedPrincipalService>();
+    // docs/DirectoryObjectVerify-Plan.md B.1: the Verify engine, reading in the protection service's warm sessions with its
+    // directory-read credential, and one adapter per store (slice V1: the protected principals).
+    builder.Services.AddSingleton(sp => new DirectoryObjectVerifier(
+        sp.GetRequiredService<ProtectedPrincipalService>(),
+        [new ProtectedPrincipalVerifyAdapter()],
+        sp.GetRequiredService<ILogger<DirectoryObjectVerifier>>()));
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddScoped<BlockedSenderProtectionGate>();
     // SINGLETON, deliberately. PermissionValidator and M365GroupManagementService are singletons

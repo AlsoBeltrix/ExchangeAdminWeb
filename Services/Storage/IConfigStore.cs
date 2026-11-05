@@ -30,6 +30,15 @@ public interface IConfigStore
     T Read<T>(Func<SqliteConnection, T> read);
 
     /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3 (R2). A read whose statements all see one snapshot: <see cref="Read"/> opens a
+    /// connection with no transaction, so two of its statements can straddle another writer's commit.
+    /// <see cref="SqliteConfigStore"/> runs <paramref name="read"/> inside one deferred <c>BEGIN ... COMMIT</c> and hands it
+    /// that transaction. This default, for the stand-ins that implement only <see cref="Read"/>, reads through it with no
+    /// transaction.
+    /// </summary>
+    T ReadInTransaction<T>(Func<SqliteConnection, SqliteTransaction?, T> read) => Read(connection => read(connection, null));
+
+    /// <summary>
     /// Runs a write inside a transaction. The change token is bumped and the transaction
     /// committed only if <paramref name="write"/> returns without throwing; any exception rolls
     /// the whole unit (write + token bump) back. Returns the callback's result.

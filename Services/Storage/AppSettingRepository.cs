@@ -57,6 +57,39 @@ public sealed class AppSettingRepository
         });
     }
 
+    /// <summary>
+    /// The value for <paramref name="key"/> on <paramref name="connection"/>, inside <paramref name="transaction"/> when one is
+    /// given; null if unset. For a caller that reads a setting in the same transaction as its own rows
+    /// (docs/DirectoryObjectVerify-Plan.md B.3). Throws when the read fails.
+    /// </summary>
+    internal static string? ReadValue(SqliteConnection connection, SqliteTransaction? transaction, string key)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT value FROM app_setting WHERE key = $key;";
+        command.Parameters.AddWithValue("$key", key);
+        var raw = command.ExecuteScalar();
+        return raw is null or DBNull ? null : Convert.ToString(raw);
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3. Compare-and-swap, inside the caller's write transaction: sets
+    /// <paramref name="key"/> to <paramref name="newValue"/> only while it still holds exactly <paramref name="expectedValue"/>
+    /// (null: the key is absent), and returns false - writing nothing - otherwise. <see cref="Set"/> upserts blind and is never
+    /// used for a key that is authorization state.
+    /// </summary>
+    public static bool ReplaceIfEqual(
+        SqliteConnection connection, SqliteTransaction transaction, string key, string? expectedValue, string newValue)
+    {
+        ArgumentNullException.ThrowIfNull(newValue);
+        var current = ReadValue(connection, transaction, key);
+        if (!string.Equals(current, expectedValue, StringComparison.Ordinal))
+            return false;
+
+        Upsert(connection, transaction, key, newValue);
+        return true;
+    }
+
     private static void Upsert(SqliteConnection connection, SqliteTransaction transaction, string key, string value)
     {
         using var command = connection.CreateCommand();
