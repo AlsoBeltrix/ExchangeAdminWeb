@@ -8,6 +8,25 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-05 - Verify slice V1 landed (engine, ignore list, Protected Principals pane); V2 next
+
+**Master `77ad7fcd`** (merge of `fix/dov-v1`; worktree and branch gone). `docs/DirectoryObjectVerify-Plan.md` (Approved
+2026-11-04) slice V1: `Services/DirectoryObjectVerifier.cs` with `IVerifyStoreAdapter` and the A1/A2 adapter (one operation,
+one warm session with the directory-read credential, catalog lookups in chunks of 50, forest check on every stored DN,
+unreadable never Verified or Missing); `verify_ignores` with compare-and-swap, read with the rules in one transaction, pruned
+on Remove/Replace/ordinary save; Rename, Replace, Convert (`ConvertProtectedRow`, shared with the CLI), Remove now, Ignore -
+version-checked, re-authorized at the click, success and refusal audited apart; Verify button, badges, `verify_last` and
+help replace the page-load sweep and the not-converted banner; `db identifier-status` prints the ignore list. AdminSettings
+1.3.0. Record dov-v1 (28 guard proofs). Departures the implementer recorded: forest check applied before any lookup (an
+out-of-forest DN is unreadable with Remove its only action); a `user_sid` row's identifier the catalog lacks reads Missing
+(assumption: another forest's user reads as missing; display-only); `ShouldFlagAsStale` and its 4 tests deleted with the
+sweep. Supervisor's gates on master at `77ad7fcd`: Release build 0 errors (19 known warnings); xUnit 8488 passed, 0 failed;
+format, whitespace and ASCII clean. Not pushed. The PowerShell session reads (`FindVerifyObjects`, `ForestDomainServer`)
+were not run against a forest; the Verify press is on the deploy check list.
+
+**Next:** V2 (live-check effect of an ignore, plan B.4 and E "V2"), then V3, V4, one Opus agent at a time. The
+deleted-group open question below is answered by the plan (B.4) and closes when V2 lands.
+
 ### 2026-11-03 (later) - sweep items 13-18 and S6 landed; the identifier conversion is a one-time owner-run db verb
 
 **Master `82a67e2f`** (merge of `fix/sweep-c`; worktree and branch gone). Owner rulings, `.agents/decisions.md` 2026-11-03
@@ -21,7 +40,7 @@ sweep-c-13/14/15/18), 17 rebuilt under K (sweep-c-17), 16 is a record for the ow
 (`.agents/review/findings/item-16-revalidation-decision.md`). Records ppi-s6. Supervisor's gates on master at `82a67e2f`:
 Release build 0 errors (19 known warnings); xUnit 8461 passed, 0 failed; format, whitespace and ASCII clean. Not pushed.
 
-**Open owner question (ask alone, next):** a `group_sid` row whose group has since been deleted. The directory definitively
+**Open owner question (answered by the Verify plan B.4; lands in V2):** a `group_sid` row whose group has since been deleted. The directory definitively
 answers "no such object" for the SID; under K as built that makes every check that finds no other match incomplete,
 naming the row - the item-17 outage shape for a deleted protected group. Then item 16 (keep session revalidation).
 
