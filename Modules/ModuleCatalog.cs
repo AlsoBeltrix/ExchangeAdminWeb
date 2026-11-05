@@ -1753,7 +1753,10 @@ public sealed class ModuleCatalog
             // 1.3.0: the protected-principals pane gains Verify - a badge per entry and the Rename, Convert, Replace, Remove now
             // and Ignore actions, each a direct audited write - and loses the page-load sweep, its "not in AD" badge and the
             // "not converted" count banner (docs/DirectoryObjectVerify-Plan.md, slice V1).
-            Version = "1.3.0",
+            // 1.3.1: an Ignore of a protected group found missing stops that group refusing writes while the directory
+            // confirms it is gone, still looked up on every check; a non-ignored one's refusal says "run Verify on Admin
+            // Settings"; the pane note and the Ignore and missing tips say so (docs/DirectoryObjectVerify-Plan.md B.4, slice V2).
+            Version = "1.3.1",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

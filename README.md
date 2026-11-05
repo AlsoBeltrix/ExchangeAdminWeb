@@ -1152,7 +1152,12 @@ the two name fallbacks match, a user compared by label when the target has no SI
 write-target check), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
 name; checked as an Add is), **Remove now** (the entry, its companion and any ignore of it), and **Ignore** (keep the entry
 and stop the finding being reported until what Verify sees changes; never offered for an entry not converted or one that
-could not be verified). In this build an ignore changes only what Verify reports, never a protection check. Verify is not
+could not be verified). One ignore changes a protection check (slice V2, docs/DirectoryObjectVerify-Plan.md B.4): a
+protected group ignored as **missing** stops refusing writes while the directory confirms it is gone. The check still
+looks the group up on every write; a group restored with the same SID is found and protects again at once, and the
+ignore then shows as no longer matching on the next Verify; a lookup that fails or a domain that cannot be read still
+refuses. Every other ignore - a missing user or OU, a changed name, a wrong type, several objects - changes only what
+Verify reports. Verify is not
 offered while the pane has unsaved changes, and the ordinary Remove and Save also deletes a removed entry's ignores. The
 ignore list is the `verify_ignores` setting; `db identifier-status` prints it at the end of its report.
 
@@ -1368,6 +1373,15 @@ Configure email notifications, group-based access control, self-grant prevention
   entry and run it again
 - For a few entries: press **Verify** on the Protected principals pane; an entry the lookup resolves to exactly one object
   offers **Convert**, one it does not offers **Replace...** and **Remove now**
+
+### "... protected group '...': no such group - run Verify on Admin Settings"
+- A protected group (Admin Settings, Protected principals) is stored by its SID and the directory confirms no group
+  carries that SID any more - usually the group was deleted. The check cannot say the target is not in it, so every
+  protection check that finds no other match is refused, naming the entry
+- Fix: press **Verify** on the Protected principals pane. The entry shows as **missing**; choose **Replace...** (pick
+  the group it should name), **Remove now**, or **Ignore** (keep it; the check then stops refusing on it while the
+  directory confirms it is gone - it is still looked up on every check, so a restored group protects again at once, and
+  a lookup that fails still refuses)
 
 ### "401 Unauthorized" when accessing the app
 - Verify Windows Authentication is enabled in IIS for the application

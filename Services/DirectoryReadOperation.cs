@@ -32,7 +32,9 @@ namespace ExchangeAdminWeb.Services;
 /// took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)" - the directory reads made and the
 /// credential fetches started while it ran, its nested work included. A check that read a synced recipient's on-premises SID
 /// (docs/ProtectedPrincipalIdentifiers-Plan.md E) adds ", {SidReads} SID source reads from {SidSource} in {SidMs} ms" inside the
-/// parentheses: that read is not a directory read, so it is counted and timed on its own. A check begun inside one of the same name is part of
+/// parentheses: that read is not a directory read, so it is counted and timed on its own. A check that skipped a protected group the
+/// directory confirmed is gone and an admin ignored as missing on Verify (docs/DirectoryObjectVerify-Plan.md B.4) adds
+/// ", {Ignored} ignored missing groups" last inside the parentheses. A check begun inside one of the same name is part of
 /// it and logs nothing of its own, so a protected-principal check that reaches the service's own check logs once.
 /// </para>
 /// </remarks>
@@ -52,6 +54,7 @@ public sealed class DirectoryReadOperation : IDisposable
     private int _sidReads;
     private long _sidMs;
     private string? _sidSource;
+    private int _ignored;
     private int _disposed;
 
     private DirectoryReadOperation(DirectoryReadOperation? outer, bool joined, bool ownsSecrets,
@@ -124,6 +127,19 @@ public sealed class DirectoryReadOperation : IDisposable
         }
     }
 
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.4. <paramref name="count"/> protected groups the directory confirmed are gone that
+    /// an admin ignored as missing on Verify, skipped by the check rather than refusing it - counted for every check the flow
+    /// is in. The lookup that confirmed each is a directory read and is counted as one already.
+    /// </summary>
+    internal static void CountIgnored(int count)
+    {
+        if (count <= 0)
+            return;
+        for (var node = Ambient.Value; node is not null; node = node._outer)
+            Interlocked.Add(ref node._ignored, count);
+    }
+
     private static void CountFetch()
     {
         for (var node = Ambient.Value; node is not null; node = node._outer)
@@ -174,10 +190,25 @@ public sealed class DirectoryReadOperation : IDisposable
         {
             var elapsedMs = (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds;
             var sidReads = Volatile.Read(ref _sidReads);
-            if (sidReads == 0)
+            var ignored = Volatile.Read(ref _ignored);
+            if (sidReads == 0 && ignored == 0)
             {
                 _logger.LogInformation("{Check} for {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches)",
                     _check, _target, elapsedMs, Volatile.Read(ref _reads), Volatile.Read(ref _fetches));
+            }
+            else if (sidReads == 0)
+            {
+                // docs/DirectoryObjectVerify-Plan.md B.4: an ignored missing group skipped is visible on the same line.
+                _logger.LogInformation("{Check} for {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches, "
+                    + "{Ignored} ignored missing groups)",
+                    _check, _target, elapsedMs, Volatile.Read(ref _reads), Volatile.Read(ref _fetches), ignored);
+            }
+            else if (ignored > 0)
+            {
+                _logger.LogInformation("{Check} for {Target} took {ElapsedMs} ms ({Reads} directory reads, {Fetches} credential fetches, "
+                    + "{SidReads} SID source reads from {SidSource} in {SidMs} ms, {Ignored} ignored missing groups)",
+                    _check, _target, elapsedMs, Volatile.Read(ref _reads), Volatile.Read(ref _fetches),
+                    sidReads, Volatile.Read(ref _sidSource), Interlocked.Read(ref _sidMs), ignored);
             }
             else
             {

@@ -420,7 +420,10 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             var ouIds = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid).Ids;
             if (groupEntries.Count > 0 || ouIds.Count > 0)
             {
-                var groupResult = await CheckGroupMembershipAsync(groupEntries, groupLabels, ouIds, target, notConverted, matchedRules.Count > 0);
+                // docs/DirectoryObjectVerify-Plan.md B.4: the group_sid rows an admin ignored as missing on Verify, from the list
+                // read with these very rules. Each is still looked up; only the directory's "no such group" stops refusing.
+                var ignoredMissing = IgnoredMissingGroups(cfg, IgnoresReadWith(cfg));
+                var groupResult = await CheckGroupMembershipAsync(groupEntries, groupLabels, ignoredMissing, ouIds, target, notConverted, matchedRules.Count > 0);
                 if (groupResult.checkFailed)
                     return ProtectedPrincipalResult.Failed(groupResult.failReason ?? "Group membership check failed.");
                 matchedRules.AddRange(groupResult.matches);
@@ -588,7 +591,8 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         lock (_cacheLock)
         {
             _cachedConfig = config;
-            _cachedIgnores = ignores;
+            if (config is not null)
+                _ignoresByConfig.AddOrUpdate(config, ignores);
             _configLoadedAt = DateTime.UtcNow;
             _configCorrupt = false;
             _loadedToken = token;
@@ -597,21 +601,27 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         return (config, legacyExclusions, null);
     }
 
-    // docs/DirectoryObjectVerify-Plan.md B.3: the Verify ignore list read with _cachedConfig, in the same read transaction.
-    private IReadOnlyList<VerifyIgnoreEntry> _cachedIgnores = [];
+    // docs/DirectoryObjectVerify-Plan.md B.3: the Verify ignore list each loaded rule set was read with, in the same read
+    // transaction - keyed by the rule set itself, so a check holding one set can only ever be handed that set's list, never one
+    // a later load read beside other rules.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<ProtectedPrincipalConfig, IReadOnlyList<VerifyIgnoreEntry>> _ignoresByConfig = new();
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.3. The Verify ignore list read in the same transaction as <paramref name="config"/>.
+    /// Empty for a rule set this service did not load itself (a test's stand-in), and for none: nothing is ignored.
+    /// </summary>
+    internal IReadOnlyList<VerifyIgnoreEntry> IgnoresReadWith(ProtectedPrincipalConfig? config) =>
+        config is not null && _ignoresByConfig.TryGetValue(config, out var ignores) ? ignores : [];
 
     /// <summary>
     /// docs/DirectoryObjectVerify-Plan.md B.3. The rules and the Verify ignore list from ONE load - the same read transaction,
-    /// cached together under the change token. Slice V1 loads and exposes the list; the protection check does not consult it
-    /// yet (B.4 is slice V2). An error is <see cref="LoadEffectiveConfig"/>'s, and the list is then empty.
+    /// cached together under the change token. The protection check consults the list for one thing only (B.4,
+    /// <see cref="IgnoredMissingGroups"/>). An error is <see cref="LoadEffectiveConfig"/>'s, and the list is then empty.
     /// </summary>
     internal (ProtectedPrincipalConfig? Config, IReadOnlyList<VerifyIgnoreEntry> Ignores, string? Error) LoadEffectiveConfigAndIgnores()
     {
-        lock (_cacheLock)
-        {
-            var (config, _, error) = LoadEffectiveConfig();
-            return error is null ? (config, _cachedIgnores, null) : (null, [], error);
-        }
+        var (config, _, error) = LoadEffectiveConfig();
+        return error is null ? (config, IgnoresReadWith(config), null) : (null, [], error);
     }
 
     public enum ResolutionStatus { Resolved, NotFound, Ambiguous, Unavailable }
@@ -1860,6 +1870,34 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         return problems;
     }
 
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.4. The SIDs of the <c>group_sid</c> rows a Verify ignore covers as missing - store
+    /// <see cref="VerifyIgnoreList.ProtectedPrincipalsStore"/>, row key <c>group_sid</c>, the row's identifier, finding
+    /// <c>Missing</c>, observed <see cref="VerifyIgnoreList.NotFoundObserved"/>: the keys Verify writes the ignore with. Nothing
+    /// else an ignore names changes enforcement. A legacy row is never among them - one stored by name is not converted and fails
+    /// closed until it is, and a legacy Group row stored as a SID is not a <c>group_sid</c> row: a SID such a row also carries
+    /// is left out, so the legacy row's refusal stands.
+    /// </summary>
+    internal static HashSet<string> IgnoredMissingGroups(ProtectedPrincipalConfig cfg, IReadOnlyList<VerifyIgnoreEntry> ignores)
+    {
+        var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (ignores.Count == 0)
+            return ignored;
+
+        var (legacy, _, ids) = RowsToEvaluate(cfg.Groups, cfg.GroupIds, ProtectedPrincipalIdEntry.CanonicalSid);
+        var legacySids = new HashSet<string>(legacy.Where(IsLegacySidGroupRow).Select(v => v.Trim()), StringComparer.OrdinalIgnoreCase);
+        var missing = nameof(VerifyFindingKind.Missing);
+        foreach (var id in ids)
+        {
+            if (legacySids.Contains(id.Identifier))
+                continue;
+            if (ignores.Any(e => VerifyIgnoreList.Matches(e, VerifyIgnoreList.ProtectedPrincipalsStore,
+                    ProtectedPrincipalRepository.KindGroupSid, id.Identifier, missing, VerifyIgnoreList.NotFoundObserved)))
+                ignored.Add(id.Identifier);
+        }
+        return ignored;
+    }
+
     // A legacy Group row stored as a SID: compared by that SID, as a group_sid row is (K.3 point 3).
     private static bool IsLegacySidGroupRow(string value) =>
         ProtectedGroupEntry.Parse(value).Kind == ProtectedGroupEntryKind.Sid;
@@ -1973,7 +2011,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         string.Equals(targetDn, ou, StringComparison.OrdinalIgnoreCase);
 
     private async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckGroupMembershipAsync(
-        IReadOnlyList<string> groupEntries, IReadOnlyDictionary<string, string> groupLabels,
+        IReadOnlyList<string> groupEntries, IReadOnlyDictionary<string, string> groupLabels, IReadOnlySet<string> ignoredMissing,
         IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         IReadOnlyList<string> notConverted, bool otherRuleMatched)
     {
@@ -2005,7 +2043,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             try
             {
                 var (groupMatches, expansionHadErrors, problems) = await Task.Run(() =>
-                    CheckGroupsInWarmSession(groupEntries, groupLabels, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    CheckGroupsInWarmSession(groupEntries, groupLabels, ignoredMissing, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
                 matches.AddRange(groupMatches);
 
                 // Fail closed: if expansion had errors and no matches were found,
@@ -2046,7 +2084,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// or whose answer was incomplete, is thrown away rather than lent again.
     /// </summary>
     private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckGroupsInWarmSession(
-        IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels,
+        IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels, IReadOnlySet<string> ignoredMissing,
         IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
@@ -2054,7 +2092,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         try
         {
             var outcome = CheckTransitiveGroupMembership(
-                session.PowerShell, protectedGroups, groupLabels, ouIds, target, username, password, domain);
+                session.PowerShell, protectedGroups, groupLabels, ignoredMissing, ouIds, target, username, password, domain);
             if (outcome.expansionHadErrors)
                 session.Fail();
             return outcome;
@@ -2067,7 +2105,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     }
 
     private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckTransitiveGroupMembership(
-        PowerShell ps, IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels,
+        PowerShell ps, IReadOnlyList<string> protectedGroups, IReadOnlyDictionary<string, string> groupLabels, IReadOnlySet<string> ignoredMissing,
         IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
@@ -2122,7 +2160,10 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         {
             // SIDs only (K.3 point 3); whatever stays unanswered - a SID no group carries any more, a read that failed - is
             // named by its row's label (sweep-c item 17's banner).
-            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger);
+            // docs/DirectoryObjectVerify-Plan.md B.4: an ignored missing group is still looked up; only its confirmed zero is
+            // skipped, and counted on the check's timing line.
+            var outcome = ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger, ignoredMissing);
+            DirectoryReadOperation.CountIgnored(outcome.Ignored);
             matches.AddRange(LabelGroupMatches(outcome, groupLabels));
             incomplete |= outcome.Incomplete;
             problems.AddRange(LabelGroupProblems(outcome, groupLabels));
@@ -2143,12 +2184,21 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
 
     /// <summary>
     /// sweep-c item 17. Each cause of an incomplete group answer, its entry named by its row's label as the page names it.
+    /// docs/DirectoryObjectVerify-Plan.md B.4: a group the directory confirms is gone also names the cure,
+    /// <see cref="NoSuchGroupCure"/>, as a row stored by name names <c>db convert-identifiers</c>.
     /// </summary>
     internal static IEnumerable<string> LabelGroupProblems(
         ProtectedGroupMembership.Result outcome, IReadOnlyDictionary<string, string> groupLabels) =>
         outcome.Problems.Select(p => p.Entry is null
             ? p.Problem
-            : $"protected group '{(groupLabels.TryGetValue(p.Entry, out var label) ? label : p.Entry)}': {p.Problem}");
+            : $"protected group '{(groupLabels.TryGetValue(p.Entry, out var label) ? label : p.Entry)}': {p.Problem}"
+              + (p.Problem == ProtectedGroupMembership.NoSuchGroup ? NoSuchGroupCure : string.Empty));
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.4. What a refusal adds for a protected group the directory confirms is gone: Verify
+    /// on Admin Settings offers Replace, Remove and Ignore for it.
+    /// </summary>
+    internal const string NoSuchGroupCure = " - run Verify on Admin Settings";
 
     /// <summary>
     /// sweep-c item 17. The refusal for a check that could not be completed and found no match: what could not be answered,
