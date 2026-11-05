@@ -463,8 +463,8 @@ Rapidly disable a compromised user account across on-prem AD and Entra ID with s
 - **Lockdown OU** (`LockdownOuDn`, optional): the OU a disabled account is moved into; blank makes the step unavailable.
   The field offers the OU browser. **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A6,
   slice V4) checks it as the step does, with `Get-ADOrganizationalUnit`: an OU is **verified**; nothing there, or a
-  container that is not an OU, is **missing**, because the step refuses both. Verify reads with the app's directory
-  account, so it proves the OU exists, not that this module's own account can reach it
+  container that is not an OU, is **missing**, because the step refuses both. Verify reads with the Directory Read
+  Credential, so it proves the OU exists, not that this module's own account can reach it
 - **Requires:** AD Delinea secret for account disable and Graph Delinea secret for session revocation
 - Section access key: `EmergencyDisable`
 
@@ -625,7 +625,7 @@ Disabled by default and fail-closed, because a recovery key decrypts a whole dis
 - **Active Directory Search Base** (optional): one DN that live searches start at; the field offers the OU browser.
   **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A7, slice V4) reads it at its DN in its
   own domain: any object there - an OU, a container or a domain root - is **verified**, nothing is **missing**. Verify reads
-  with the app's directory account, so it proves the object exists, not that this module's own account, against its
+  with the Directory Read Credential, so it proves the object exists, not that this module's own account, against its
   configured server, can reach it
 - Section access key: `BitLockerRecovery`
 - Full operator and maintainer notes: `docs/BitLockerRecovery.md`

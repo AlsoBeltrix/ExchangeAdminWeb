@@ -119,12 +119,12 @@ public sealed class ModuleConfigVerifyStoreTests : IDisposable
     [Fact]
     public async Task RemovingAnExcludedGroup_TakesExactlyTheOneCommaEntry_KeepingTheOthersAsStored()
     {
-        Seed("Migration", "ExcludedADGroups", "Sales, Nobody ,Staff,Nobody2");
+        Seed("Migration", "ExcludedADGroups", "Sales , Nobody ,Staff,Nobody2");
 
         var result = await RemoveAsync(Workset("Migration"), "ExcludedADGroups", "Nobody");
 
         Assert.True(result.Succeeded, result.Message);
-        Assert.Equal("Sales,Staff,Nobody2", Stored("Migration", "ExcludedADGroups"));
+        Assert.Equal("Sales ,Staff,Nobody2", Stored("Migration", "ExcludedADGroups"));
     }
 
     [Theory]
