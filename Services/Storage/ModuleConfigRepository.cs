@@ -109,6 +109,7 @@ public sealed class ModuleConfigRepository
             var before = ReadModule(connection, moduleId, transaction);
             MarkPresent(connection, transaction, moduleId);
             InsertValues(connection, transaction, moduleId, values);
+            PruneVerifyIgnores(connection, transaction, values.Keys);
             return new ModuleConfigUpdate(before, ReadModule(connection, moduleId, transaction));
         });
     }
@@ -143,6 +144,7 @@ public sealed class ModuleConfigRepository
                 var values = decide(before) ?? throw new NothingWritten(before);
                 MarkPresent(connection, transaction, moduleId);
                 InsertValues(connection, transaction, moduleId, values);
+                PruneVerifyIgnores(connection, transaction, values.Keys);
                 return new ModuleConfigConditionalUpdate(true, before, ReadModule(connection, moduleId, transaction));
             }, cancellationToken);
         }
@@ -251,6 +253,121 @@ public sealed class ModuleConfigRepository
         });
     }
 
+    // ----- docs/DirectoryObjectVerify-Plan.md B.3, C.2 (slice V4): Verify of the settings that hold a directory object -----
+
+    /// <summary>
+    /// What a Verify press of <paramref name="moduleId"/>'s config pane reads, in ONE read transaction: the values of its
+    /// verified settings (<see cref="ModuleConfigVerifyAdapter.SettingsOf"/>) and the raw ignore list. Unreadable when the
+    /// module's config cannot be read.
+    /// </summary>
+    internal ModuleConfigVerifySnapshot ReadVerifySnapshot(string moduleId)
+    {
+        try
+        {
+            return _store.ReadInTransaction((connection, transaction) => new ModuleConfigVerifySnapshot(
+                true,
+                VerifiedRows(moduleId, ReadModule(connection, moduleId, transaction)).ToDictionary(r => r.RowKey, r => r.Value, StringComparer.OrdinalIgnoreCase),
+                AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey)));
+        }
+        catch
+        {
+            return ModuleConfigVerifySnapshot.Unreadable;
+        }
+    }
+
+    /// <summary>
+    /// Remove (C.2, R3-1): <paramref name="entry"/> taken out of setting <paramref name="key"/> by the module's own parsing -
+    /// one comma or semicolon entry, the others kept as stored; a single value cleared - AND every ignore that no longer names
+    /// an entry, in one transaction, refused unless the pane's verified values are still the version Verify read and the entry
+    /// is still there. A list setting whose empty value widens the module (<see cref="ConfigVerifySetting.WarnBeforeLastEntry"/>)
+    /// loses its last entry only with <paramref name="lastEntryConfirmed"/>.
+    /// </summary>
+    internal ModuleGroupVerifyWriteOutcome RemoveVerifyEntry(
+        string moduleId, string key, string entry, bool lastEntryConfirmed, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(moduleId, expectedVersion, casIgnores: true, expectedIgnores, null, (connection, transaction, values) =>
+        {
+            if (VerifiedSetting(moduleId, key) is not { } setting)
+                return VerifyWriteStatus.RowChanged;
+
+            var raw = values.GetValueOrDefault(key);
+            if (!setting.EntriesOf(raw).Contains(entry.Trim(), StringComparer.OrdinalIgnoreCase))
+                return VerifyWriteStatus.RowChanged;
+
+            var updated = setting.WithoutEntry(raw, entry);
+            if (setting.WarnBeforeLastEntry && setting.EntriesOf(updated).Count == 0 && !lastEntryConfirmed)
+                return VerifyWriteStatus.RowChanged;
+
+            MarkPresent(connection, transaction, moduleId);
+            InsertValues(connection, transaction, moduleId, new Dictionary<string, string> { [setting.Key] = updated });
+            return null;
+        });
+
+    /// <summary>Ignore (C.2, display-only): records the finding after checking, under the lock, that the entry is still stored.</summary>
+    internal ModuleGroupVerifyWriteOutcome AddVerifyIgnore(
+        string moduleId, string key, string entry, VerifyIgnoreEntry ignore, string expectedVersion, string? expectedIgnores) =>
+        WriteVerify(moduleId, expectedVersion, casIgnores: true, expectedIgnores, ignore, (_, _, values) =>
+            VerifiedSetting(moduleId, key) is { } setting
+            && setting.EntriesOf(values.GetValueOrDefault(key)).Contains(entry.Trim(), StringComparer.OrdinalIgnoreCase)
+                ? null
+                : VerifyWriteStatus.RowChanged);
+
+    /// <summary>The stored <c>verify_last</c> map, raw (plan C.1, display-only).</summary>
+    internal string? ReadVerifyLast() => _store.Read(connection => AppSettingRepository.ReadValue(connection, null, VerifyIgnoreList.LastVerifiedKey));
+
+    /// <summary>Writes <c>verify_last</c> as <paramref name="update"/> makes it from the stored value: display-only (plan C.1).</summary>
+    internal void UpdateVerifyLast(Func<string?, string> update) =>
+        _store.Write((connection, transaction) =>
+        {
+            var raw = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.LastVerifiedKey);
+            AppSettingRepository.ReplaceIfEqual(connection, transaction, VerifyIgnoreList.LastVerifiedKey, raw, update(raw));
+        });
+
+    private ModuleGroupVerifyWriteOutcome WriteVerify(
+        string moduleId, string expectedVersion, bool casIgnores, string? expectedIgnores, VerifyIgnoreEntry? addIgnore,
+        Func<SqliteConnection, SqliteTransaction, Dictionary<string, string>, VerifyWriteStatus?> decide) =>
+        ModuleGroupVerifyStore.Write(
+            _store, VerifyIgnoreList.ConfigStore,
+            (connection, transaction) => (true, VerifiedRows(moduleId, ReadModule(connection, moduleId, transaction))),
+            AllVerifiedEntries,
+            expectedVersion, casIgnores, expectedIgnores, addIgnore,
+            (connection, transaction, _) => decide(connection, transaction, ReadModule(connection, moduleId, transaction)),
+            EntryIdentity);
+
+    private static ConfigVerifySetting? VerifiedSetting(string moduleId, string key) =>
+        ModuleConfigVerifyAdapter.SettingsOf(moduleId).FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.OrdinalIgnoreCase));
+
+    // What an ignore of a text setting names: one entry, trimmed.
+    private static string EntryIdentity(string entry) => entry.Trim();
+
+    // A pane's verified values as rows, for the version: each verified setting the module stores, with its value exactly as stored.
+    internal static IReadOnlyList<GroupGrantRow> VerifiedRows(string moduleId, IReadOnlyDictionary<string, string> values) =>
+        ModuleConfigVerifyAdapter.SettingsOf(moduleId)
+            .Where(s => values.ContainsKey(s.Key))
+            .Select(s => new GroupGrantRow(s.Key, values[s.Key] ?? ""))
+            .ToList();
+
+    // Every entry of every verified setting of every module, as the ignore list names them: what the prune keeps ignores of.
+    private static IReadOnlyList<GroupGrantRow> AllVerifiedEntries(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var rows = new List<GroupGrantRow>();
+        foreach (var byModule in ModuleConfigVerifyAdapter.Settings.GroupBy(s => s.ModuleId, StringComparer.OrdinalIgnoreCase))
+        {
+            var values = ReadModule(connection, byModule.Key, transaction);
+            foreach (var setting in byModule)
+                rows.AddRange(setting.EntriesOf(values.GetValueOrDefault(setting.Key)).Select(e => new GroupGrantRow(setting.Key, e)));
+        }
+        return rows;
+    }
+
+    // B.3, the ordinary save's cleanup: a save that wrote a verified setting drops, in its own transaction, the Verify ignores of
+    // entries no setting holds any more. A save of no verified setting leaves the list alone.
+    private static void PruneVerifyIgnores(SqliteConnection connection, SqliteTransaction transaction, IEnumerable<string> writtenKeys)
+    {
+        if (!writtenKeys.Any(k => ModuleConfigVerifyAdapter.SettingFor(k) is not null))
+            return;
+        ModuleGroupVerifyStore.Prune(connection, transaction, VerifyIgnoreList.ConfigStore, AllVerifiedEntries(connection, transaction), EntryIdentity);
+    }
+
     private static void MarkPresent(SqliteConnection connection, SqliteTransaction transaction, string moduleId)
     {
         using var command = connection.CreateCommand();
@@ -318,3 +435,20 @@ public sealed record ModuleConfigUpdate(Dictionary<string, string> Before, Dicti
 /// </summary>
 public sealed record ModuleConfigConditionalUpdate(
     bool Written, Dictionary<string, string>? Before, Dictionary<string, string>? After);
+
+/// <summary>
+/// What a Verify press of one module's config pane reads (docs/DirectoryObjectVerify-Plan.md B.1, B.3, slice V4), in ONE read
+/// transaction: the values of its verified settings exactly as stored, and the raw ignore list.
+/// </summary>
+internal sealed record ModuleConfigVerifySnapshot(bool Readable, IReadOnlyDictionary<string, string> Values, string? IgnoresRaw)
+{
+    /// <summary>The version of <see cref="Values"/>, which every Verify write checks.</summary>
+    public string Version => VersionOf(Values);
+
+    /// <summary>A stable version of a pane's verified values: their order does not matter, their exact text does.</summary>
+    public static string VersionOf(IReadOnlyDictionary<string, string> values) =>
+        ModuleGroupVerifyStore.VersionOf(true, values.Select(kv => new GroupGrantRow(kv.Key, kv.Value)));
+
+    public static ModuleConfigVerifySnapshot Unreadable { get; } =
+        new(false, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), null);
+}

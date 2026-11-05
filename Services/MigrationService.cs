@@ -435,8 +435,9 @@ public class MigrationService : ExchangeServiceBase
     }
 
     // aud-a23r. The forest's domain names, projected inside PowerShell for the reasons ADDirectorySearchService's
-    // GetForestDomains gives; blank entries dropped. None is no answer.
-    private static IReadOnlyList<string> ForestDomains(PowerShell ps)
+    // GetForestDomains gives; blank entries dropped. None is no answer. docs/DirectoryObjectVerify-Plan.md B.2 (slice V4):
+    // internal, so Verify asks the forest for its domains as this module does.
+    internal static IReadOnlyList<string> ForestDomains(PowerShell ps)
     {
         ps.AddScript("(Get-ADForest -ErrorAction Stop).Domains");
         var domains = DirectoryStep(ps, "the forest's domains could not be read")
@@ -448,7 +449,26 @@ public class MigrationService : ExchangeServiceBase
     }
 
     /// <summary>sweep-c item 14. One group a configured excluded-group value resolved to, and the domain that holds it.</summary>
-    private sealed record ExcludedGroup(string Domain, string Dn);
+    internal sealed record ExcludedGroup(string Domain, string Dn);
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2 (slice V4). What <see cref="TryResolveExcludedGroup"/> found for one configured
+    /// excluded-group value, as a typed answer rather than a throw: the groups it names (one per domain that holds it), none in
+    /// any domain of the forest, or a domain that could not be asked.
+    /// </summary>
+    internal abstract record ExcludedGroupResolution
+    {
+        private ExcludedGroupResolution() { }
+
+        /// <summary>At least one domain holds a group by this value; several is a name two domains use.</summary>
+        public sealed record Found(IReadOnlyList<ExcludedGroup> Groups) : ExcludedGroupResolution;
+
+        /// <summary>Every domain was asked and answered that it holds no such group; <see cref="Absent"/> is each domain's answer.</summary>
+        public sealed record NotFound(IReadOnlyList<string> Absent) : ExcludedGroupResolution;
+
+        /// <summary>A domain could not be asked, or answered with a group it could not identify: nothing is known.</summary>
+        public sealed record Unreadable(string Domain, string Reason, Exception? Cause) : ExcludedGroupResolution;
+    }
 
     // aud-a23r. A configured group resolved in each domain of the forest with Get-ADGroup -Identity (its sAMAccountName, SID
     // or objectGUID - what the cmdlet takes): the AD module's not-found there, by structure, is "not in that domain". None,
@@ -456,9 +476,29 @@ public class MigrationService : ExchangeServiceBase
     // - a name two domains use - is every one of them, each with its domain; the caller excludes a member of any and names
     // them, where it used to refuse the check. ASSUMPTION, unverified (no live call): "not in this domain" is
     // ADIdentityNotFoundException under ObjectNotFound, the shape IsNotFound reads.
+    // docs/DirectoryObjectVerify-Plan.md B.2 (slice V4): a thin caller of TryResolveExcludedGroup, which Verify shares, throwing
+    // exactly as before on none and on a domain that could not be asked.
     private static IReadOnlyList<ExcludedGroup> ResolveExcludedGroup(PowerShell ps, string configured, DirectoryLookupRun run)
     {
         var domains = (run.Domains ??= DirectoryRead<IReadOnlyList<string>>.Of(() => ForestDomains(ps))).Get();
+        return TryResolveExcludedGroup(ps, configured, domains) switch
+        {
+            ExcludedGroupResolution.Found found => found.Groups,
+            ExcludedGroupResolution.NotFound none => throw new InvalidOperationException(
+                $"the excluded group '{configured}' could not be resolved in any domain of the forest ({string.Join("; ", none.Absent)})"),
+            ExcludedGroupResolution.Unreadable unreadable => throw new InvalidOperationException(unreadable.Reason, unreadable.Cause),
+            _ => throw new InvalidOperationException($"the excluded group '{configured}' could not be resolved"),
+        };
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2 (slice V4). The module's own lookup of one configured excluded-group value, in
+    /// each of <paramref name="domains"/> in turn - the one rule the eligibility check (through <see cref="ResolveExcludedGroup"/>)
+    /// and Verify both use. The AD module's not-found in a domain is that domain's answer; any other failure, or a group
+    /// returned without its distinguished name, stops the lookup there as unreadable. A cancellation escapes.
+    /// </summary>
+    internal static ExcludedGroupResolution TryResolveExcludedGroup(PowerShell ps, string configured, IReadOnlyList<string> domains)
+    {
         var found = new List<ExcludedGroup>();
         var absent = new List<string>();
         foreach (var domain in domains)
@@ -480,7 +520,7 @@ public class MigrationService : ExchangeServiceBase
             }
             catch (Exception ex) when (!IsCancellation(ex))
             {
-                throw new InvalidOperationException(
+                return new ExcludedGroupResolution.Unreadable(domain,
                     $"the excluded group '{configured}' could not be resolved in {domain}: {ResolveFailure(ex).primary.TrimEnd('.')}", ex);
             }
 
@@ -489,15 +529,14 @@ public class MigrationService : ExchangeServiceBase
             foreach (var group in groups)
             {
                 var dn = group.Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
-                found.Add(string.IsNullOrEmpty(dn)
-                    ? throw new InvalidOperationException($"the excluded group '{configured}' was returned with no distinguished name by {domain}")
-                    : new ExcludedGroup(domain, dn));
+                if (string.IsNullOrEmpty(dn))
+                    return new ExcludedGroupResolution.Unreadable(domain,
+                        $"the excluded group '{configured}' was returned with no distinguished name by {domain}", null);
+                found.Add(new ExcludedGroup(domain, dn));
             }
         }
 
-        return found.Count > 0
-            ? found
-            : throw new InvalidOperationException($"the excluded group '{configured}' could not be resolved in any domain of the forest ({string.Join("; ", absent)})");
+        return found.Count > 0 ? new ExcludedGroupResolution.Found(found) : new ExcludedGroupResolution.NotFound(absent);
     }
 
     // aud-a23r. What one check run learns of the forest: the catalog, the domains, each configured group's groups - or why

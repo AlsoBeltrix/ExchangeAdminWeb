@@ -263,6 +263,66 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     }
 
     /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1, B.2, A6 (slice V4). Whether an organizational unit is at <paramref name="dn"/>:
+    /// <c>Get-ADOrganizationalUnit -Identity</c>, the Emergency Disable module's own precondition, read on
+    /// <paramref name="server"/> (a domain controller of the DN's own domain) with the directory-read credential. True when it
+    /// returns the OU; false when the AD module answers that there is no such object (<see cref="IsConfirmedAbsence"/>) - its
+    /// answer, too, for a container at that DN that is not an OU, which the module refuses as it refuses a missing one. Any
+    /// other failure, and an answer that is not exactly one object, throws: unreadable, never missing.
+    /// </summary>
+    internal bool OrganizationalUnitExists(string dn, string server)
+    {
+        Collection<PSObject> rows;
+        try
+        {
+            rows = Run("Get-ADOrganizationalUnit", new Dictionary<string, object>
+            {
+                ["Identity"] = dn,
+                ["Server"] = server,
+            });
+        }
+        catch (Exception ex) when (IsConfirmedAbsence(ex, dn))
+        {
+            return false;
+        }
+
+        return rows.Count == 1 && rows[0] is not null
+            ? true
+            : throw new InvalidOperationException($"Get-ADOrganizationalUnit returned {rows.Count} objects for '{dn}'; expected one.");
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1 (R4). Whether a failed read by identity was the AD module saying there is no such
+    /// object - <c>ADIdentityNotFoundException</c>, under the <c>ObjectNotFound</c> category - and nothing else: the shape the
+    /// Migration module reads for its own Get-ADGroup lookup (<see cref="ExchangeServiceBase.IsNotFound"/>). Never a missing
+    /// cmdlet, never a refusal or a timeout.
+    /// </summary>
+    internal static bool IsConfirmedAbsence(Exception ex, string identity) => ExchangeServiceBase.IsNotFound(ex, identity);
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2, A5 (slice V4). The forest's domains, asked as the Migration module asks
+    /// (<see cref="MigrationService.ForestDomains"/>): in this session, under its own identity, as that module's check runs.
+    /// </summary>
+    internal IReadOnlyList<string> ForestDomainNames()
+    {
+        _ps.Commands.Clear();
+        _ps.Streams.Error.Clear();
+        return MigrationService.ForestDomains(_ps);
+    }
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2, A5 (slice V4). One excluded-group value through the Migration module's own
+    /// per-domain lookup (<see cref="MigrationService.TryResolveExcludedGroup"/>), in this session, under its own identity - the
+    /// lookup and the identity that module's check uses in the same warm sessions, so Verify answers what the module would.
+    /// </summary>
+    internal MigrationService.ExcludedGroupResolution ResolveExcludedGroup(string configured, IReadOnlyList<string> domains)
+    {
+        _ps.Commands.Clear();
+        _ps.Streams.Error.Clear();
+        return MigrationService.TryResolveExcludedGroup(_ps, configured, domains);
+    }
+
+    /// <summary>
     /// docs/DirectoryObjectVerify-Plan.md B.1 (F6). The DNS name of the domain of this forest that <paramref name="dnsDomain"/>
     /// names, from the forest's CN=Partitions crossRefs - the check <see cref="ADDirectorySearchService"/> makes for an OU's
     /// domain - or null when the forest has no such domain. Throws when the read fails or names more than one.

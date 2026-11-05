@@ -29,6 +29,11 @@ Check migration eligibility and create move batches between Exchange Online and 
   none passes, with a warning); enter the group's SID or objectGUID to name one. A check that cannot be completed is
   Undetermined, never Eligible; in a bulk file a failed read is read once and repeated for each row, which says so. The
   check runs in a warm directory session and logs its time (sweep-c item 14)
+- **Verify** on the module's Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A5, slice V4) checks each
+  comma entry of Excluded AD Groups exactly as the eligibility check resolves it - `Get-ADGroup -Identity` in each domain of
+  the forest, the lookup both share: **verified** (one group), **missing** (no domain holds it - the check could not be
+  completed for anyone while it is set), **several objects** (groups in several domains; the check excludes the members of
+  each), or **could not verify**. **Remove now** takes that one comma entry out and keeps the others
 - Checks on-prem mailbox and archive size before cloud migrations. The `CloudQuotaGB` limit applies to the primary mailbox and the archive separately; their combined size is not a criterion
 - Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
@@ -202,6 +207,15 @@ SID, or one that could not be verified). **An ignore on these tabs changes only 
 anything**: section access, servicing and module-admin grants are matched against the SIDs in the user's token, and nothing
 that decides access reads the ignore list. Verify is not offered while the tab has unsaved changes, and the ordinary
 Remove and Save also deletes a removed grant's ignores.
+
+The **Configuration** pane of Migration, Emergency Disable, AD Attribute Editor, BitLocker Recovery and Conference Rooms has
+its own **Verify** (slice V4) for the settings that hold a directory object as text - each entry of a list on its own, each
+checked by the rule its module applies when it uses it (see each module's section). It is offered to global admins and to
+that module's module admins - the page's own gate, re-checked at every click - and audited under `Verify:Config`. Its
+actions: **Edit...** (opens the field, with the OU browser for a DN; change it and Save), **Remove now** (that one entry,
+by the module's own parsing, keeping the others), and **Ignore** (changes only what Verify reports). Fields of the new
+types `SearchBase` (any container) and `RecipientGroup` (an Exchange group) and the list `AdGroup` field are text boxes;
+`OU` and `SearchBase` fields offer the OU browser. The ordinary Save drops the ignores of entries it removed.
 
 Changes are stored in the config database - the `module_enablement`, `section_access`, `module_config` and `module_admins` tables (`docs/ConfigDbOperations.md`) - and take effect immediately. The legacy `config/*.json` files are imported once and archived; a tab whose store cannot be read says which table, or which legacy file was not imported, and does not offer Save.
 Global admins see all module config links; module admins see only their delegated modules.
@@ -390,7 +404,11 @@ View and edit allowlisted Active Directory attributes for on-premises user accou
   `docs/ConfigDbOperations.md`, with both application pools stopped). A legacy
   `config/ad-editable-attributes.json` is imported once and archived; one the import refuses is
   left in place and named, with its reason, on the Module Configuration page
-- Optional search base boundary restrictions
+- Optional search base boundary restrictions (`DefaultSearchBase`, semicolon-separated; empty means no boundary). On the
+  Module Configuration pane the field offers the OU browser, and **Verify** (docs/DirectoryObjectVerify-Plan.md A7, slice V4)
+  reads each entry at its DN in its own domain: an OU, a container or a domain root is **verified**, nothing there is
+  **missing**. **Remove now** takes that one semicolon entry out and keeps the others; removing the last one asks for a
+  confirmation, because no search-base boundary will remain: the editor may then search the whole directory
 - Uses Delinea credentials for Active Directory operations
 - Section access keys: `ADAttributeEditor`, `ADAttributeEditorLevel1`, `ADAttributeEditorLevel2`, `ADAttributeEditorLevel3`
 
@@ -417,6 +435,11 @@ Room mailbox metadata configuration and booking policy management.
   - **Executive** — Exec VP/admin groups, 1080-day window
 - CSV bulk upload for multi-room setup
 - Room list management (add/remove rooms from room lists)
+- **Group settings** (the arbiter, coordinator, admin, VP, CEO, exception and ADGT groups) are Exchange group addresses.
+  **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A8, slice V4) looks each up through this
+  module's Exchange session (`Get-Recipient`): one recipient that is a group is **verified**, Exchange's not-found is
+  **missing**, any other kind of recipient is **wrong type** (a check Verify adds: the module passes the address on as it
+  is), any other failure **could not verify**. Verify only reads, and adds no protected-principal check
 - **Leaving the page** during a single-room setup cancels it at its next step before Set-Place - the room read, the room
   list's resolution, a preflight's Active Directory step, or the wait for a free Exchange Online connection: nothing is
   written, and it is filed `Cancelled`, "Cancelled by the operator. Nothing was written.". Once Set-Place is sent the setup
@@ -437,6 +460,11 @@ Rapidly disable a compromised user account across on-prem AD and Entra ID with s
 
 - Disables the AD account and revokes Entra ID sessions in a single workflow
 - Security team notification on every disable action
+- **Lockdown OU** (`LockdownOuDn`, optional): the OU a disabled account is moved into; blank makes the step unavailable.
+  The field offers the OU browser. **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A6,
+  slice V4) checks it as the step does, with `Get-ADOrganizationalUnit`: an OU is **verified**; nothing there, or a
+  container that is not an OU, is **missing**, because the step refuses both. Verify reads with the app's directory
+  account, so it proves the OU exists, not that this module's own account can reach it
 - **Requires:** AD Delinea secret for account disable and Graph Delinea secret for session revocation
 - Section access key: `EmergencyDisable`
 
@@ -594,6 +622,11 @@ Disabled by default and fail-closed, because a recovery key decrypts a whole dis
   AD fallback additionally needs a module-specific Delinea secret for an account
   that can read `msFVE-RecoveryPassword`, plus the ActiveDirectory PowerShell
   module on the web server
+- **Active Directory Search Base** (optional): one DN that live searches start at; the field offers the OU browser.
+  **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A7, slice V4) reads it at its DN in its
+  own domain: any object there - an OU, a container or a domain root - is **verified**, nothing is **missing**. Verify reads
+  with the app's directory account, so it proves the object exists, not that this module's own account, against its
+  configured server, can reach it
 - Section access key: `BitLockerRecovery`
 - Full operator and maintainer notes: `docs/BitLockerRecovery.md`
 

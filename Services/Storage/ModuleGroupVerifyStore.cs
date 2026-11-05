@@ -66,24 +66,28 @@ internal static class ModuleGroupVerifyStore
         SectionAccessGroupIdentity.Parse(value) is { Kind: StoredGroupValueKind.Sid, Sid: { } sid } ? sid : value.Trim();
 
     // An ignore of another store, or one naming a grant the store still holds.
-    private static bool StillNamesARow(VerifyIgnoreEntry entry, string store, IReadOnlyList<GroupGrantRow> allRows) =>
+    // slice V4: identityOf says what an ignore entry names in a row - RowIdentity for a group grant, the trimmed entry for a
+    // text setting (ModuleConfigRepository).
+    private static bool StillNamesARow(VerifyIgnoreEntry entry, string store, IReadOnlyList<GroupGrantRow> allRows, Func<string, string> identityOf) =>
         !string.Equals(entry.Store, store, StringComparison.Ordinal)
         || allRows.Any(r =>
             string.Equals(r.RowKey, entry.RowKey, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(RowIdentity(r.Value), entry.IdentifierOrText.Trim(), StringComparison.OrdinalIgnoreCase));
+            && string.Equals(identityOf(r.Value), entry.IdentifierOrText.Trim(), StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// The ordinary saves' cleanup (B.3, round-3 note): inside the save's own transaction, after its writes, the ignore entries
     /// of <paramref name="store"/> naming a grant the store no longer holds are dropped. A list that does not parse is left as it
     /// is - it ignores nothing, and rewriting it would lose what an admin may still repair.
     /// </summary>
-    internal static void Prune(SqliteConnection connection, SqliteTransaction transaction, string store, IReadOnlyList<GroupGrantRow> allRows)
+    internal static void Prune(
+        SqliteConnection connection, SqliteTransaction transaction, string store, IReadOnlyList<GroupGrantRow> allRows,
+        Func<string, string>? identityOf = null)
     {
         var raw = AppSettingRepository.ReadValue(connection, transaction, VerifyIgnoreList.SettingKey);
         if (raw is null || !VerifyIgnoreList.TryParse(raw, out var entries))
             return;
 
-        var kept = entries.Where(e => StillNamesARow(e, store, allRows)).ToList();
+        var kept = entries.Where(e => StillNamesARow(e, store, allRows, identityOf ?? RowIdentity)).ToList();
         if (kept.Count != entries.Count)
             AppSettingRepository.ReplaceIfEqual(connection, transaction, VerifyIgnoreList.SettingKey, raw, VerifyIgnoreList.Serialize(kept));
     }
@@ -104,7 +108,8 @@ internal static class ModuleGroupVerifyStore
         bool casIgnores,
         string? expectedIgnores,
         VerifyIgnoreEntry? addIgnore,
-        Func<SqliteConnection, SqliteTransaction, (bool Configured, IReadOnlyList<GroupGrantRow> Rows), VerifyWriteStatus?> decide)
+        Func<SqliteConnection, SqliteTransaction, (bool Configured, IReadOnlyList<GroupGrantRow> Rows), VerifyWriteStatus?> decide,
+        Func<string, string>? identityOf = null)
     {
         try
         {
@@ -144,7 +149,7 @@ internal static class ModuleGroupVerifyStore
                     else
                     {
                         var allRows = readAllRows(connection, transaction);
-                        var kept = entries.Where(e => StillNamesARow(e, store, allRows)).ToList();
+                        var kept = entries.Where(e => StillNamesARow(e, store, allRows, identityOf ?? RowIdentity)).ToList();
                         if (addIgnore is not null)
                             kept.Add(addIgnore);
                         if (kept.Count != entries.Count || addIgnore is not null)

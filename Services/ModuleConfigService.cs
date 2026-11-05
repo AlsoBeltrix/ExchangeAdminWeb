@@ -234,6 +234,51 @@ public class ModuleConfigService
     }
 
     /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.1, B.3 (slice V4). What a Verify press of <paramref name="moduleId"/>'s config pane
+    /// reads: its verified settings' values and the raw ignore list, in one read transaction.
+    /// </summary>
+    internal ModuleConfigVerifySnapshot ReadForVerify(string moduleId) => _repository.ReadVerifySnapshot(moduleId);
+
+    /// <summary>docs/DirectoryObjectVerify-Plan.md C.2. One Verify action's write, under this service's write lock.</summary>
+    internal ModuleGroupVerifyWriteOutcome ApplyVerifyWrite(string moduleId, Func<ModuleConfigRepository, ModuleGroupVerifyWriteOutcome> write)
+    {
+        ModuleGroupVerifyWriteOutcome outcome;
+        lock (_writeLock)
+        {
+            outcome = write(_repository);
+            if (outcome.Status == VerifyWriteStatus.Written)
+                ReportSafely(logger => logger.LogInformation("Module config for {Module} changed by a Verify action", moduleId));
+        }
+
+        if (outcome.Status == VerifyWriteStatus.Written)
+            ConfigSaved?.Invoke(moduleId);
+        return outcome;
+    }
+
+    /// <summary>The last Verify per pane (plan C.1), display-only; empty when none is stored or it cannot be read.</summary>
+    internal Dictionary<string, VerifyLastEntry> ReadVerifyLast()
+    {
+        try
+        {
+            return VerifyLastEntry.ParseMap(_repository.ReadVerifyLast());
+        }
+        catch (Exception ex)
+        {
+            ReportSafely(logger => logger.LogDebug(ex, "The last-verified lines could not be read"));
+            return new(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>Stores <paramref name="entry"/> as the last Verify of <paramref name="key"/> (plan C.1), keeping the others.</summary>
+    internal void WriteVerifyLast(string key, VerifyLastEntry entry) =>
+        _repository.UpdateVerifyLast(raw =>
+        {
+            var map = VerifyLastEntry.ParseMap(raw);
+            map[key] = entry;
+            return VerifyLastEntry.SerializeMap(map);
+        });
+
+    /// <summary>
     /// One-time remap of the renamed Graph credential key: for every catalog module that declares
     /// a <c>GraphDelineaSecretId</c> ConfigField, move a value stranded under the old
     /// <c>DelineaSecretId</c> key to the new key (and drop the stale row). Catalog-driven so it is

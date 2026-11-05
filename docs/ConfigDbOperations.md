@@ -196,6 +196,12 @@ $copy = "D:\backups\exchangeadmin.identifiers-test.$(Get-Date -Format yyyyMMdd-H
 # 3. Then the dev deploy (tools/deploy-pipeline.ps1 -Dev).
 ```
 
+**After the deploy, press Verify on each page** (docs/DirectoryObjectVerify-Plan.md D) - the post-deploy check that every
+stored directory object still names what it should: Admin Settings, **Protected principals**; Module Configuration, the
+**Access** and **Module Admins** tabs of each module; and the **Configuration** pane of Migration, Emergency Disable, AD
+Attribute Editor, BitLocker Recovery and Conference Rooms. Each press only reads. Act on what it finds there - Fix, Edit,
+Remove or Ignore - and run `db identifier-status` again afterwards to see the ignores it recorded.
+
 **The one constraint:** between the live conversion and the prod deploy, do **not** save Admin Settings' Protected
 principals pane on prod's older build. Its save rewrites the whole table and drops every identifier row, which makes
 every protection check on the new build refuse until the conversion is run again. If it happens, run step 2 again;

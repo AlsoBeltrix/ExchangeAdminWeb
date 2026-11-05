@@ -66,6 +66,55 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     private const string CeoRoomResponse = "This is an executive only room.";
 
     // -------------------------------------------------------------------------
+    // Verify (docs/DirectoryObjectVerify-Plan.md A8, B.1, slice V4)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The Verify read of the module's group settings (A8): one <c>Get-Recipient -Identity</c> per address, in this module's
+    /// pooled Exchange session. Each answers found - its recipients, with their type; none when Exchange answered that there is
+    /// no such object (<see cref="ExchangeServiceBase.ReadUnlessNotFound"/>, the base's not-found translation) - or unreadable,
+    /// for any other failure. Reads only: nothing here writes, and no protected-principal check applies to this module (Known
+    /// Failure Class 3).
+    /// </summary>
+    internal Task<IReadOnlyList<VerifyLookupResult>> LookUpRecipientsForVerifyAsync(IReadOnlyList<string> addresses, CancellationToken cancellationToken) =>
+        RunPooledReadAsync((ps, tracker) =>
+        {
+            var answers = new List<VerifyLookupResult>(addresses.Count);
+            foreach (var address in addresses)
+                answers.Add(ReadRecipientForVerify(ps, tracker, address));
+            return (IReadOnlyList<VerifyLookupResult>)answers;
+        }, cancellationToken, allowRetry: true);
+
+    // One address: Exchange's not-found is a confirmed absence (no rows); every other failure is unreadable, never missing.
+    private static VerifyLookupResult ReadRecipientForVerify(PowerShell ps, ConnectionErrorTracker tracker, string address)
+    {
+        ps.AddCommand("Get-Recipient")
+          .AddParameter("Identity", address)
+          .AddParameter("ErrorAction", "Stop");
+        System.Collections.ObjectModel.Collection<PSObject> rows;
+        try
+        {
+            rows = ReadUnlessNotFound(ps, tracker);
+        }
+        catch (Exception ex) when (!IsCancellation(ex))
+        {
+            return new VerifyLookupResult.Unreadable($"Get-Recipient failed: {ResolveFailure(ex).primary.TrimEnd('.')}");
+        }
+
+        return new VerifyLookupResult.Found(rows.Where(r => r is not null).Select(r =>
+        {
+            var type = r.Properties["RecipientType"]?.Value?.ToString()?.Trim();
+            var primary = r.Properties["PrimarySmtpAddress"]?.Value?.ToString()?.Trim();
+            var name = r.Properties["DistinguishedName"]?.Value?.ToString()?.Trim();
+            return new VerifyDirectoryObject(
+                DistinguishedName: string.IsNullOrEmpty(name) ? primary ?? address : name,
+                ObjectSid: null, ObjectGuid: null,
+                ObjectClass: string.IsNullOrEmpty(type) ? null : type,
+                UserPrincipalName: null, Mail: primary, SamAccountName: null);
+        }).ToList());
+    }
+
+    // -------------------------------------------------------------------------
     // Resolve / Preview
     // -------------------------------------------------------------------------
 

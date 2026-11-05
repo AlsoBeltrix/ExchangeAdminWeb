@@ -157,6 +157,31 @@
                     }
                 </td>
             </tr>;
+
+        // docs/DirectoryObjectVerify-Plan.md C.1-C.3 (slice V4): under a verified config setting, each entry the last press read
+        // with its badge, and under a finding its detail and its actions.
+        RenderFragment<string> configVerifyEntries = key =>
+            @<div class="mt-1">
+                @foreach (var result in ConfigVerifyResultsFor(key))
+                {
+                    var cr = result;
+                    <div class="small mb-1">
+                        <span class="text-break">@cr.Item.StoredValue</span> @ConfigVerifyBadge(cr)
+                        @if (cr.Finding.Kind != VerifyFindingKind.Verified)
+                        {
+                            <div class="ms-2">
+                                <small class="text-muted me-2">@ConfigVerifyBadgeParts(cr, ConfigVerifiedAt()).Tip</small>
+                                @foreach (var action in ConfigVerifyActionsOf(cr))
+                                {
+                                    var a = action;
+                                    <button class="btn btn-outline-secondary btn-sm py-0 me-1" type="button" title="@ConfigVerifyActionTip(a, cr)"
+                                            disabled="@(!ConfigVerifyIdle())" @onclick="() => OnConfigVerifyActionAsync(a, cr)">@ConfigVerifyActionLabel(a)</button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>;
     }
 
     @* Section Access *@
@@ -402,6 +427,31 @@
                         <small><strong>Delinea Secret Server:</strong> Enter the Secret ID for this module's credentials. For Graph modules, use the "ADI - Azure App Registration" template (fields: Tenant ID, Application ID, Client Secret). For AD modules, use a template with Username, Password, and Domain fields.</small>
                     </div>
                 }
+                @* docs/DirectoryObjectVerify-Plan.md C.1, C.3 (slice V4): one Verify for the pane's settings that hold a directory
+                   object as text, asking nothing until it is pressed. Offered to whoever may configure this module - a global
+                   admin or its module admin, the page's own gate - and re-checked at every click. *@
+                @if (ConfigVerifySettings().Count > 0)
+                {
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button class="btn btn-outline-success btn-sm" type="button" title="@ConfigVerifyButtonTip"
+                                @onclick="VerifyConfigAsync" disabled="@(!ConfigVerifyIdle())">@(configVerifying ? "Verifying..." : "Verify")</button>
+                        <small class="text-muted">@ConfigVerifySummaryText()</small>
+                    </div>
+                    <p class="text-muted mb-2"><small>@ConfigVerifyPaneNote(module.Id)</small></p>
+                    @if (!string.IsNullOrEmpty(configVerifyMessage))
+                    {
+                        <div class="alert @(configVerifyIsError ? "alert-warning" : "alert-success") py-2 px-3 small">@configVerifyMessage</div>
+                    }
+                    @if (configVerifyPendingRemove is { } pendingRemove)
+                    {
+                        <div class="alert alert-danger py-2 px-3 small">
+                            Removing '@pendingRemove.Item.StoredValue' leaves @pendingRemove.Item.RowKey empty: @ModuleConfigVerifyActions.LastEntryWarning.
+                            <button class="btn btn-danger btn-sm py-0 ms-2" type="button" disabled="@(!ConfigVerifyIdle())"
+                                    @onclick="ConfirmConfigVerifyRemoveAsync">Remove the last search base</button>
+                            <button class="btn btn-outline-secondary btn-sm py-0 ms-1" type="button" @onclick="CancelConfigVerifyRemove">Cancel</button>
+                        </div>
+                    }
+                }
                 <div class="row g-3">
                     @foreach (var field in module.ConfigFields)
                     {
@@ -411,8 +461,10 @@
                                 @field.Label
                                 @if (field.Required) { <span class="text-danger">*</span> }
                             </label>
-                            @if (capturedKey == "DefaultSearchBase" && module.Id == "ADAttributeEditor")
+                            @if (field.FieldType is ConfigFieldType.OU or ConfigFieldType.SearchBase)
                             {
+                                @* C.3: an OU or a search base - text, with the OU browser offered. A search base may also be a
+                                   container or a domain root, typed in. *@
                                 <div class="input-group">
                                     <input type="text"
                                            class="form-control"
@@ -422,9 +474,9 @@
                                     @if (ouBrowseAvailable)
                                     {
                                         <button class="btn btn-outline-secondary" type="button"
-                                                @onclick="ToggleOUBrowser" disabled="@ouLoading">
+                                                @onclick="() => ToggleOUBrowserFor(capturedKey)" disabled="@ouLoading">
                                             @* No spinner: the OU load reports to the status bar. *@
-                                            @(showOUBrowser ? "Close" : "Browse OUs")
+                                            @(showOUBrowser && ouBrowserKey == capturedKey ? "Close" : "Browse OUs")
                                         </button>
                                     }
                                 </div>
@@ -433,11 +485,11 @@
                                     <div class="form-text">@field.Description</div>
                                 }
 
-                                @if (showOUBrowser)
+                                @if (showOUBrowser && ouBrowserKey == capturedKey)
                                 {
                                     <div class="card mt-2 border-secondary">
                                         <div class="card-header py-2 d-flex justify-content-between align-items-center">
-                                            <small class="fw-semibold">Select Organizational Units</small>
+                                            <small class="fw-semibold">@(field.ListSeparator is null ? "Select an Organizational Unit" : "Select Organizational Units")</small>
                                             <div>
                                                 <button class="btn btn-sm btn-outline-secondary me-1" @onclick="RefreshOUs" disabled="@ouLoading">
                                                     Refresh
@@ -483,7 +535,7 @@
                                     </div>
                                 }
                             }
-                            else if (field.FieldType == ConfigFieldType.AdGroup)
+                            else if (field.FieldType == ConfigFieldType.AdGroup && field.ListSeparator is null)
                             {
                                 <ADGroupAutocomplete Value="@GetConfigValue(field.Key, field.DefaultValue)"
                                                      ValueChanged="(v) => SetConfigValue(capturedKey, v)"
@@ -522,6 +574,13 @@
                                 {
                                     <div class="form-text">@field.Description</div>
                                 }
+                            }
+                            @* C.3 (slice V4): a list of groups (comma-separated), a recipient group and any other text field are a text
+                               box; a list is never given the one-value group search, whose pick would replace the whole list. *@
+                            @if (ModuleConfigVerifyAdapter.SettingFor(capturedKey) is { } verifiedSetting && ConfigVerifySettings().Contains(verifiedSetting))
+                            {
+                                <div class="form-text">@ConfigVerifyFieldTip(verifiedSetting)</div>
+                                @configVerifyEntries(capturedKey)
                             }
                         </div>
                     }
@@ -1385,14 +1444,17 @@
         }
 
         if (module.Id == "ADAttributeEditor")
-        {
             LoadAllowlist();
+
+        // C.3 (slice V4): every module with an OU or search-base setting offers the OU browser - AD Attribute Editor, Emergency
+        // Disable, BitLocker Recovery.
+        if (module.ConfigFields.Any(f => f.FieldType is ConfigFieldType.OU or ConfigFieldType.SearchBase))
             InitOUBrowser();
-        }
 
         // docs/DirectoryObjectVerify-Plan.md C.1 (slice V3): a new load shows no earlier press - its rows were another load's -
         // and the last press of each tab, display-only.
         ResetGroupVerify();
+        ResetConfigVerify();
     }
 
     private string GetConfigValue(string key, string defaultValue) =>
@@ -2820,6 +2882,376 @@
         }
     }
 
+    // ----- docs/DirectoryObjectVerify-Plan.md A5-A8, C.1-C.3 (slice V4): Verify on the config pane -----
+    //
+    // One button for the pane's settings that hold a directory object as text: Migration's excluded groups, Emergency Disable's
+    // lockdown OU, the AD Attribute Editor and BitLocker Recovery search bases, the Conference Rooms group addresses. Nothing
+    // asks the directory or Exchange until it is pressed. A press reads the verified settings and the ignore list in one read
+    // transaction and marks each entry; Remove now and Ignore are direct, audited writes (ModuleConfigVerifyActions), each
+    // checking the version the values were read with; Edit... opens the field and leaves the change and the Save to the pane's
+    // ordinary path. None is offered while the pane holds unsaved edits. Offered to whoever may configure the module - a global
+    // admin or its module admin - and re-authorized at every click.
+
+    private VerifyReport? configVerifyReport;
+    private string? configVerifyIgnoresRaw;
+    private IReadOnlyDictionary<string, string> configVerifyValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private bool configVerifying;
+    private bool configActing;
+    private string? configVerifyMessage;
+    private bool configVerifyIsError;
+    private VerifyLastEntry? configVerifyLast;
+    private VerifyItemResult? configVerifyPendingRemove;
+
+    // Known Failure Class 5: what the button does and what it does not.
+    internal const string ConfigVerifyButtonTip =
+        "Check every setting on this pane that names a directory object - each entry of a list on its own - by the rule this "
+        + "module applies when it uses it, and mark each with what was found. Reads only: nothing is changed until you press an "
+        + "action beside an entry. Not offered while this pane has unsaved changes.";
+
+    /// <summary>The pane note: the badges, the actions, and this module's rule (help: Known Failure Class 5).</summary>
+    internal static string ConfigVerifyPaneNote(string moduleId)
+    {
+        const string common =
+            "Verify marks each entry: verified; missing (the directory, or Exchange, answered and holds no such object); several "
+            + "objects; wrong type; could not verify (it could not be asked - never a sign the object is gone); or ignored. Beside "
+            + "each finding are its actions: Edit... opens the field so you change the entry and Save; Remove now takes that one "
+            + "entry out of the setting at once, keeping the others; Ignore keeps it and stops the finding being reported until what "
+            + "Verify sees changes. Every action is checked against the settings as Verify read them, re-checked at the click (a "
+            + "global admin or this module's admin), and audited. An ignore changes only what Verify reports: the module never "
+            + "reads it. ";
+        return common + moduleId switch
+        {
+            "Migration" => "Each excluded group is looked up as the eligibility check looks it up: Get-ADGroup -Identity in each "
+                + "domain of this forest. A name held by groups in several domains is reported as several objects; the check "
+                + "excludes the members of each.",
+            "EmergencyDisable" => "The lockdown OU is looked up as the lockdown step does, with Get-ADOrganizationalUnit: an OU only. "
+                + "A container that is not an OU is reported missing, because the step refuses it. " + ModuleConfigVerifyAdapter.ReachDisclosure,
+            "ADAttributeEditor" => "Each search base is read at its DN in its own domain: an OU, a container or a domain root is "
+                + "verified. Removing the last one asks you to confirm: " + ModuleConfigVerifyActions.LastEntryWarning + ".",
+            "BitLockerRecovery" => "The search base is read at its DN in its own domain: an OU, a container or a domain root is "
+                + "verified. " + ModuleConfigVerifyAdapter.ReachDisclosure,
+            "ConferenceRooms" => "Each group address is looked up in Exchange through this module's session (Get-Recipient): one "
+                + "recipient that is a group is verified; any other kind of recipient is the wrong type. Verify only reads; this "
+                + "module runs no protected-principal check, and Verify adds none.",
+            _ => "",
+        };
+    }
+
+    /// <summary>The field tip of a verified setting (help: Known Failure Class 5, plan C.3).</summary>
+    internal static string ConfigVerifyFieldTip(ConfigVerifySetting setting) => setting.Rule switch
+    {
+        ConfigVerifyRule.ExcludedGroup => "Verify checks each comma-separated group as the eligibility check resolves it, in every domain of the forest.",
+        ConfigVerifyRule.OrganizationalUnit => "An OU only, never another container. Verify checks it with Get-ADOrganizationalUnit, as the lockdown step does; Browse OUs picks one.",
+        ConfigVerifyRule.SearchBase => setting.Separator is null
+            ? "Any container a search can start at: an OU, a container or a domain root. Verify reads it at its DN; Browse OUs picks one."
+            : "Any containers a search can start at, separated by semicolons. Verify reads each at its DN; Browse OUs picks several. Empty means no boundary.",
+        _ => "The address of an Exchange group. Verify looks it up in Exchange and checks that it is a group.",
+    };
+
+    /// <summary>The badge's text, Bootstrap class and hover for one finding on the config pane (help: Known Failure Class 5).</summary>
+    internal static (string Text, string Css, string Tip) ConfigVerifyBadgeParts(VerifyItemResult r, string verifiedAt)
+    {
+        var f = r.Finding;
+        var setting = ModuleConfigVerifyAdapter.SettingFor(r.Item.RowKey);
+        var what = setting?.Rule switch
+        {
+            ConfigVerifyRule.ExcludedGroup => "group",
+            ConfigVerifyRule.OrganizationalUnit => "organizational unit",
+            ConfigVerifyRule.SearchBase => "search base",
+            _ => "Exchange group",
+        };
+        var reach = setting?.ReachDisclosed == true ? " " + ModuleConfigVerifyAdapter.ReachDisclosure : "";
+        var (text, css, tip) = f.Kind switch
+        {
+            VerifyFindingKind.Verified => ("verified", "text-bg-light text-muted border",
+                $"Verified at {verifiedAt}: the {what} exists and is the right type."),
+            VerifyFindingKind.Missing => ("missing", "bg-danger", setting?.Rule switch
+            {
+                ConfigVerifyRule.ExcludedGroup => "No domain of this forest holds a group by this value, so the eligibility check cannot be completed for anyone while it is set.",
+                ConfigVerifyRule.OrganizationalUnit => "No organizational unit is at this DN (a container that is not an OU counts as none), so the lockdown step refuses to move an account.",
+                ConfigVerifyRule.SearchBase => "No object is at this DN, so a search based there finds nothing.",
+                _ => "Exchange answered that no recipient has this address.",
+            } + " Edit it, Remove it, or Ignore it if you know why."),
+            VerifyFindingKind.Ambiguous => ("several objects", "bg-warning text-dark",
+                $"More than one object answers for this entry: {f.Detail}. Enter one by its SID or objectGUID, or Remove it."),
+            VerifyFindingKind.WrongClass => ("wrong type", "bg-danger",
+                $"This address is a {f.Detail}, not a group. Edit it or Remove it."),
+            VerifyFindingKind.Unreadable => ("could not verify", "bg-secondary",
+                $"This entry could not be checked: {f.Detail}. This says nothing about the {what}; press Verify again later. Cannot be ignored."),
+            VerifyFindingKind.Ignored => ("ignored", "bg-secondary",
+                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}. Changes only what "
+                + "Verify reports. Reported again when what Verify sees changes; undone by Edit or Remove."),
+            _ => ("", "", ""),
+        };
+        return (text, css, tip.Length > 0 ? tip + reach : tip);
+    }
+
+    /// <summary>What each action button does on the config pane (help: Known Failure Class 5).</summary>
+    internal static string ConfigVerifyActionTip(VerifyAction action, VerifyItemResult r) => action switch
+    {
+        VerifyAction.Replace => "Open this setting for editing (with the OU browser for a DN): change the entry and press Save, "
+            + "which writes it as any edit is written and drops the ignores of entries that are gone. Nothing changes until you "
+            + "save; the click is audited if refused.",
+        VerifyAction.Remove => ModuleConfigVerifyAdapter.SettingFor(r.Item.RowKey)?.Separator is null
+            ? "Clear this setting, and any ignore recorded for it. Written at once, without Save; audited."
+            : "Take this one entry out of the setting, keeping the others, and any ignore recorded for it. Written at once, "
+                + "without Save; audited.",
+        VerifyAction.Ignore => "Keep this entry, record that you have seen this finding, and stop reporting it until what Verify "
+            + "sees changes. It changes only what Verify reports; the module never reads it. Audited.",
+        _ => "",
+    };
+
+    private static string ConfigVerifyActionLabel(VerifyAction action) => action switch
+    {
+        VerifyAction.Replace => "Edit...",
+        VerifyAction.Remove => "Remove now",
+        _ => action.ToString(),
+    };
+
+    private IReadOnlyList<ConfigVerifySetting> ConfigVerifySettings() =>
+        module is null ? [] : ModuleConfigVerifyAdapter.SettingsOf(module.Id);
+
+    private ModuleConfigVerifyScope? ConfigVerifyScope() => module is null ? null : new ModuleConfigVerifyScope(module.Id);
+
+    private ModuleConfigVerifyActions ConfigVerifyActions() => new(ModuleConfigSvc, ModuleAdmin, AuthorizationService, Audit, Logger);
+
+    private string ConfigVerifiedAt() => configVerifyReport?.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "";
+
+    private void ResetConfigVerify()
+    {
+        configVerifyReport = null;
+        configVerifyIgnoresRaw = null;
+        configVerifyValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        configVerifyMessage = null;
+        configVerifyPendingRemove = null;
+        configActing = false;
+        configVerifyLast = ConfigVerifySettings().Count > 0 && ConfigVerifyScope() is { } scope ? ConfigVerifyActions().LastVerified(scope) : null;
+    }
+
+    // The handlers check only that the pane is idle, so a direct invocation by someone the page's gate would not admit reaches
+    // ModuleConfigVerifyActions, whose re-authorization refuses it and audits the refusal.
+    private bool ConfigVerifyIdle() =>
+        module is not null && ConfigVerifySettings().Count > 0 && !saving && !configVerifying && !configActing
+        && !moduleConfigCorrupt && !dirty.IsSectionDirty(SecConfig);
+
+    private string ConfigVerifySummaryText()
+    {
+        if (configVerifying)
+            return "Checking every stored entry...";
+        if (dirty.IsSectionDirty(SecConfig))
+            return "Save or discard this pane's changes to verify.";
+        if (configVerifyReport is { } report)
+            return report.Summary(ConfigVerifiedAt())
+                + (report.StaleIgnores.Count > 0 ? $" {report.StaleIgnores.Count} recorded ignore(s) no longer match what Verify sees." : "");
+        if (configVerifyLast is { } last)
+            return $"Last verified {GroupVerifyLocalTime(last.At)} by {last.By}: {last.Total} entries, {last.Findings} findings, "
+                + $"{last.Ignored} ignored, {last.Unreadable} could not be verified.";
+        return "Not verified yet.";
+    }
+
+    private IEnumerable<VerifyItemResult> ConfigVerifyResultsFor(string key) =>
+        configVerifyReport?.Results.Where(r => string.Equals(r.Item.RowKey, key, StringComparison.OrdinalIgnoreCase)) ?? [];
+
+    private MarkupString ConfigVerifyBadge(VerifyItemResult r)
+    {
+        var (text, css, tip) = ConfigVerifyBadgeParts(r, ConfigVerifiedAt());
+        return new MarkupString($"<span class=\"badge {css} ms-1\" title=\"{System.Net.WebUtility.HtmlEncode(tip)}\">{System.Net.WebUtility.HtmlEncode(text)}</span>");
+    }
+
+    private IReadOnlyList<VerifyAction> ConfigVerifyActionsOf(VerifyItemResult r) => Verifier.AdapterFor(r.Item.Store).ActionsFor(r.Item, r.Finding);
+
+    // The pane shows the values a press or an action read: it holds no unsaved edit then, so nothing is lost, and its baseline
+    // becomes what the store holds - so a later Save compares against the values Verify read.
+    private void ShowConfigValues(IReadOnlyDictionary<string, string> values)
+    {
+        foreach (var setting in ConfigVerifySettings())
+        {
+            if (values.TryGetValue(setting.Key, out var value))
+            {
+                currentConfigState[setting.Key] = value;
+                configBaseline[setting.Key] = value;
+            }
+        }
+        configVerifyValues = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
+        RecountConfig();
+    }
+
+    /// <summary>
+    /// The Verify press of the config pane (plan C.1): re-authorized as the page's gate, the verified settings and the ignore
+    /// list read in one read transaction and shown, every entry checked, the report shown, one audit row with the counts, and
+    /// the pane's last-verified line stored.
+    /// </summary>
+    private async Task VerifyConfigAsync()
+    {
+        if (!ConfigVerifyIdle() || ConfigVerifyScope() is not { } scope)
+        {
+            configVerifyMessage = dirty.IsSectionDirty(SecConfig)
+                ? "Save or discard this pane's changes before verifying: Verify shows the stored settings."
+                : null;
+            configVerifyIsError = true;
+            return;
+        }
+
+        var started = load;
+        configVerifying = true;
+        configVerifyMessage = null;
+        configVerifyPendingRemove = null;
+        await Task.Yield();
+
+        var ip = ClientInfo.GetIpForUser(currentUser);
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var actions = ConfigVerifyActions();
+            if (!await actions.AuthorizePressAsync(authState.User, currentUser, ip, scope))
+            {
+                configVerifyMessage = "Only global admins and this module's admins can verify these settings. Nothing was verified.";
+                configVerifyIsError = true;
+                return;
+            }
+
+            var workset = await Task.Run(() => actions.ReadForVerify(scope));
+            if (workset is null)
+            {
+                configVerifyMessage = "This module's settings could not be read, so nothing was verified.";
+                configVerifyIsError = true;
+                return;
+            }
+
+            var items = workset.Items;
+            using var activity = Progress.Begin(
+                "Module Configuration", "Verifying this module's directory settings", ActivitySize.Items(items.Count));
+            var report = await Verifier.VerifyAsync(items, workset.Ignores(Logger), CancellationToken.None);
+            activity.Report(items.Count);
+            activity.Complete(true, report.Summary(report.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm")));
+
+            // aud-a66: a page that moved to another module while the lookups answered shows nothing of this one.
+            if (!Holds(started))
+                return;
+
+            // The fields stay live while Verify runs: an edit made meanwhile is the admin's, so it is neither overwritten with
+            // the values verified nor shown against a report of other values.
+            if (dirty.IsSectionDirty(SecConfig))
+            {
+                configVerifyMessage = "This pane was edited while Verify ran, so its findings are not shown. Save or discard the edit and press Verify again.";
+                configVerifyIsError = true;
+                return;
+            }
+
+            ShowConfigValues(workset.Snapshot.Values);
+            configVerifyReport = report;
+            configVerifyIgnoresRaw = workset.IgnoresRaw;
+            configVerifyLast = null;
+            await Task.Run(() => actions.RecordPress(currentUser, ip, scope, report));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Verify of the config pane failed");
+            configVerifyMessage = $"Verify did not finish: {ex.Message}";
+            configVerifyIsError = true;
+        }
+        finally
+        {
+            configVerifying = false;
+        }
+    }
+
+    /// <summary>
+    /// One action button (plan C.2). Edit... is authorized, then opens the field (and the OU browser for a DN) for the admin to
+    /// change and Save; Remove now and Ignore are direct writes through <see cref="ModuleConfigVerifyActions"/>, which
+    /// re-authorizes, writes and audits. Removing the last AD Attribute Editor search base first asks for a confirmation.
+    /// </summary>
+    private Task OnConfigVerifyActionAsync(VerifyAction action, VerifyItemResult r) => RunConfigVerifyActionAsync(action, r, confirmed: false);
+
+    /// <summary>The confirmation of a pending last-entry removal (plan C.2): the same Remove, confirmed.</summary>
+    private Task ConfirmConfigVerifyRemoveAsync() =>
+        configVerifyPendingRemove is { } pending ? RunConfigVerifyActionAsync(VerifyAction.Remove, pending, confirmed: true) : Task.CompletedTask;
+
+    private void CancelConfigVerifyRemove()
+    {
+        configVerifyPendingRemove = null;
+        configVerifyMessage = "Not removed. Nothing was changed.";
+        configVerifyIsError = false;
+    }
+
+    private async Task RunConfigVerifyActionAsync(VerifyAction action, VerifyItemResult r, bool confirmed)
+    {
+        if (!ConfigVerifyIdle() || configVerifyReport is not { } report || ConfigVerifyScope() is not { } scope)
+        {
+            configVerifyMessage = "Not done: save or discard this pane's changes first, and wait for any other action to finish.";
+            configVerifyIsError = true;
+            return;
+        }
+
+        var started = load;
+        configActing = true;
+        configVerifyMessage = null;
+        configVerifyPendingRemove = null;
+        await Task.Yield();
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            var actions = ConfigVerifyActions();
+
+            if (action == VerifyAction.Replace)
+            {
+                var authorized = await actions.AuthorizeEditAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding);
+                if (!Holds(started))
+                    return;
+                configVerifyMessage = authorized.Message;
+                configVerifyIsError = !authorized.Succeeded;
+                if (authorized.Succeeded
+                    && module?.ConfigFields.FirstOrDefault(f => string.Equals(f.Key, r.Item.RowKey, StringComparison.OrdinalIgnoreCase)) is { } field
+                    && field.FieldType is ConfigFieldType.OU or ConfigFieldType.SearchBase && ouBrowseAvailable
+                    && !(showOUBrowser && ouBrowserKey == field.Key))
+                {
+                    configActing = false;
+                    await ToggleOUBrowserFor(field.Key);
+                }
+                return;
+            }
+
+            var result = action == VerifyAction.Remove
+                ? await actions.RemoveAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding, configVerifyIgnoresRaw,
+                    configVerifyValues.GetValueOrDefault(r.Item.RowKey), confirmed)
+                : await actions.IgnoreAsync(authState.User, currentUser, ip, scope, r.Item, r.Finding, configVerifyIgnoresRaw);
+            if (!Holds(started))
+                return;
+
+            configVerifyMessage = result.Message;
+            configVerifyIsError = !result.Succeeded;
+            if (result.NeedsConfirmation)
+            {
+                configVerifyPendingRemove = r;
+            }
+            else if (result.Succeeded && dirty.IsSectionDirty(SecConfig))
+            {
+                // Edited while the write ran: the edit is kept and the findings are not shown against it. A Save still writes only
+                // the keys edited, decided against the store under its lock, as after any change made elsewhere.
+                configVerifyMessage = result.Message + " This pane was edited meanwhile; reload it to see what is stored.";
+                configVerifyReport = null;
+            }
+            else if (result.Succeeded && result.Outcome is { After: { } after } outcome)
+            {
+                ShowConfigValues(after.ToDictionary(row => row.RowKey, row => row.Value, StringComparer.OrdinalIgnoreCase));
+                configVerifyReport = ModuleConfigVerifyActions.Rebase(report, r, outcome);
+                configVerifyIgnoresRaw = outcome.AfterIgnores;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "A Verify {Action} on the config pane failed", action);
+            configVerifyMessage = $"Not done: {ex.Message}";
+            configVerifyIsError = true;
+        }
+        finally
+        {
+            if (Holds(started))
+                configActing = false;
+        }
+    }
+
     // --- AD Attribute Editor Allowlist ---
 
     private List<AllowlistRow> allowlistAttributes = new();
@@ -3034,6 +3466,10 @@
 
     private bool ouBrowseAvailable;
     private bool showOUBrowser;
+
+    // C.3 (slice V4): the setting the browser is open for - AD Attribute Editor's semicolon list, or a single DN (Emergency
+    // Disable's lockdown OU, BitLocker's search base), where one OU is picked.
+    private string ouBrowserKey = "DefaultSearchBase";
     private bool ouLoading;
     private List<OUEntry> ouAllEntries = new();
     private List<OUEntry> ouFilteredEntries = new();
@@ -3053,6 +3489,24 @@
         ouFilteredEntries = new();
         ouSelectedDNs = new(StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>C.3 (slice V4): the browser for <paramref name="key"/>; open for another setting, it moves to this one.</summary>
+    private async Task ToggleOUBrowserFor(string key)
+    {
+        if (showOUBrowser && !string.Equals(ouBrowserKey, key, StringComparison.OrdinalIgnoreCase))
+        {
+            ouBrowserKey = key;
+            SyncSelectedFromConfig();
+            return;
+        }
+
+        ouBrowserKey = key;
+        await ToggleOUBrowser();
+    }
+
+    // Whether the browser's setting holds a list (picks several) or one DN (picks one).
+    private char? OUBrowserSeparator() =>
+        module?.ConfigFields.FirstOrDefault(f => string.Equals(f.Key, ouBrowserKey, StringComparison.OrdinalIgnoreCase))?.ListSeparator;
 
     private async Task ToggleOUBrowser()
     {
@@ -3154,10 +3608,12 @@
     private void SyncSelectedFromConfig()
     {
         ouSelectedDNs.Clear();
-        var currentValue = GetConfigValue("DefaultSearchBase", "");
+        var currentValue = GetConfigValue(ouBrowserKey, "");
         if (!string.IsNullOrWhiteSpace(currentValue))
         {
-            var dns = currentValue.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var dns = OUBrowserSeparator() is { } separator
+                ? currentValue.Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [currentValue.Trim()];
             foreach (var dn in dns)
                 ouSelectedDNs.Add(dn);
         }
@@ -3169,6 +3625,8 @@
         // ApplySelectedOUs writes DefaultSearchBase, so this reflects committed values only -
         // closing the browser without applying now correctly leaves the section clean.
         RecountConfig();
+        if (isChecked && OUBrowserSeparator() is null)
+            ouSelectedDNs.Clear(); // one DN: a tick replaces the last
         if (isChecked)
             ouSelectedDNs.Add(dn);
         else
@@ -3177,8 +3635,10 @@
 
     private void ApplySelectedOUs()
     {
-        var value = string.Join(";", ouSelectedDNs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase));
-        SetConfigValue("DefaultSearchBase", value);
+        var value = OUBrowserSeparator() is { } separator
+            ? string.Join(separator, ouSelectedDNs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
+            : ouSelectedDNs.FirstOrDefault() ?? "";
+        SetConfigValue(ouBrowserKey, value);
         showOUBrowser = false;
     }
 

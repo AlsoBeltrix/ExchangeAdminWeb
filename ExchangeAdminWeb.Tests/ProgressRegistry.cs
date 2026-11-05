@@ -2112,10 +2112,25 @@ public static class ProgressRegistry
                 + "authorization re-check and the one-transaction store read, which are quick and local, Items because the "
                 + "grant count is known there; the Complete follows the call with the report's summary, success true because a "
                 + "press that ran finished whatever it found (the 2026-10-08 ruling)"),
+            new("VerifyConfigAsync", "Verifier.VerifyAsync(",
+                "docs/DirectoryObjectVerify-Plan.md C.1 (slice V4): the Verify press of the config pane. Every stored entry of the "
+                + "pane's directory settings is checked through the one engine call - the module's own lookups in one directory "
+                + "session, and Conference Rooms' addresses through that module's Exchange session - so the one call named is the "
+                + "whole wait. The Begin is below the authorization re-check and the one-transaction store read, Items because the "
+                + "entry count is known there; the Complete follows the call with the report's summary (the 2026-10-08 ruling)"),
         ],
         Exempt =
         [
             new("OnParametersSetAsync", AuthPreambleOnly + ", plus " + ConfigStoreRead),
+            new("OnConfigVerifyActionAsync",
+                ConfigStoreWrite + ": one config-pane Verify action button (docs/DirectoryObjectVerify-Plan.md C.2, slice V4) - Edit... "
+                + "only re-authorizes and opens the field (and, for a DN, the OU browser, whose directory read is LoadOUsAsync); "
+                + "Remove now and Ignore each re-authorize and make one direct, audited write to the module's config or the ignore "
+                + "list through ModuleConfigVerifyActions, which reaches no directory"),
+            new("ConfirmConfigVerifyRemoveAsync",
+                ConfigStoreWrite + ": the confirmed Remove now of the last AD Attribute Editor search base, the same write as "
+                + "OnConfigVerifyActionAsync's"),
+            new("CancelConfigVerifyRemove", LocalUiState + "; withdraws the pending confirmation, writes nothing"),
             new("OnGroupVerifyActionAsync",
                 ConfigStoreWrite + ": one Verify action button (docs/DirectoryObjectVerify-Plan.md C.2, slice V3) - Replace only "
                 + "re-authorizes and takes the grant out of the tab's list for the ordinary save; Rename, Convert, Remove now and "
@@ -2154,6 +2169,7 @@ public static class ProgressRegistry
             new("UpdateAttrChoices", AllowlistRowEdit),
             new("ApplySelectedOUs", LocalUiState),
             new("ToggleOUBrowser", "the directory read is LoadOUsAsync", "LoadOUsAsync"),
+            new("ToggleOUBrowserFor", "the OU browser for one setting (slice V4); opens it through ToggleOUBrowser, whose directory read is LoadOUsAsync", "ToggleOUBrowser"),
             new("RefreshOUs", "drops the cache; the directory read is LoadOUsAsync", "LoadOUsAsync"),
         ],
     };
