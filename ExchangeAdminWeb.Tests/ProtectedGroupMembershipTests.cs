@@ -904,7 +904,8 @@ public class ProtectedGroupMembershipTests
             "private (List<string> matches, bool expansionHadErrors, IReadOnlyList<string> problems) CheckTransitiveGroupMembership(",
             "internal static (string? TargetDn, bool Failed) SelectFallbackDn(");
 
-        Assert.Contains("ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger)", body, StringComparison.Ordinal);
+        // docs/DirectoryObjectVerify-Plan.md B.4: the call also hands over the ignored missing group_sid rows.
+        Assert.Contains("ProtectedGroupMembership.Evaluate(protectedGroups, targetDn, directory, _logger, ignoredMissing)", body, StringComparison.Ordinal);
         // ppi-s1: the ou_guid comparison shares the session, so the evaluator's incompleteness is folded into one flag
         // that is what the method returns.
         Assert.Contains("incomplete |= outcome.Incomplete;", body, StringComparison.Ordinal);

@@ -165,7 +165,10 @@ check or know about this step.
   `converted`, `identifier` (an identifier row with no name row), `legacy` (a name row with no identifier),
   `grant-sid`, `grant-name` - and exit 0 only when nothing is `legacy` or `grant-name`. When the Verify ignore list
   (`verify_ignores`, docs/DirectoryObjectVerify-Plan.md B.3) holds entries, the report ends with one `ignored ...` line per
-  entry and a count; a stored list that cannot be read is named (it ignores nothing).
+  entry and a count; a stored list that cannot be read is named (it ignores nothing). Only an
+  `ignored ProtectedPrincipals group_sid: ... - Missing (not found)` line changes enforcement: that protected group stops
+  refusing writes while the directory confirms it is gone, and is still looked up on every check
+  (docs/DirectoryObjectVerify-Plan.md B.4); every other line changes only what Verify reports.
 
 On exit 0 the report is on stdout; on exit 2 it is on stderr, ending in an `error:` line.
 

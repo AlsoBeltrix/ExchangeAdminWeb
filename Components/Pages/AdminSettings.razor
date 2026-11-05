@@ -1146,7 +1146,10 @@
         + "Rename, Convert or Replace to fix it, Remove now to delete the entry, and Ignore to keep it and stop the finding being "
         + "reported until what Verify sees changes. Each action is written at once, without Save, and audited. Verify proves the "
         + "object exists and is the right kind as read with the Directory Read Credential. An entry not converted, or one that "
-        + "could not be verified, cannot be ignored. In this build an ignore changes only what Verify reports, not any protection check.";
+        + "could not be verified, cannot be ignored. One ignore changes a protection check: a protected group the directory "
+        + "confirms is gone stops refusing writes once it is ignored as missing. The check still looks the group up every time, "
+        + "so a restored group protects again at once and a lookup that fails still refuses. Every other ignore changes only what "
+        + "Verify reports.";
 
     /// <summary>The badge's text, Bootstrap class and hover for one finding (help: Known Failure Class 5).</summary>
     internal static (string Text, string Css, string Tip) VerifyBadgeParts(VerifyItemResult r, string verifiedAt)
@@ -1158,6 +1161,9 @@
                 $"Verified at {verifiedAt}: the object exists, is the right kind, and its name is the one stored."),
             VerifyFindingKind.Missing => ("missing", "bg-danger",
                 "Active Directory answered and holds no object with this entry's identifier. The entry protects nothing. "
+                + (r.Item.RowKey == KindGroupSid
+                    ? "A missing protected group also refuses every write whose check finds no other match, naming it. "
+                    : "")
                 + "Replace it with the object it should name, Remove it, or Ignore it if you know why."),
             VerifyFindingKind.LabelDrift => ("name changed", "bg-warning text-dark",
                 $"Stored as '{r.Item.Label}'; the object's current name is '{f.Detail}'. It still protects by its identifier. "
@@ -1192,9 +1198,20 @@
         VerifyAction.Remove => "Delete this entry, the name stored beside it for an older build, and any ignore recorded for it. "
             + "Written at once, without Save; audited.",
         VerifyAction.Ignore => "Keep this entry, record that you have seen this finding, and stop reporting it until what Verify "
-            + "sees changes. In this build it changes only what Verify reports. Audited.",
+            + "sees changes. "
+            + (IgnoreAffectsProtection(r)
+                ? "This one affects protection: while the directory confirms this group is gone, it stops refusing writes. Every "
+                    + "check still looks the group up, so a restored group protects again at once, and a lookup that fails still "
+                    + "refuses. Audited."
+                : "It changes only what Verify reports, not any protection check. Audited."),
         _ => "",
     };
+
+    // docs/DirectoryObjectVerify-Plan.md B.4: the one ignore that changes enforcement - a protected group_sid row found missing.
+    internal static bool IgnoreAffectsProtection(VerifyItemResult r) =>
+        r.Item.Store == VerifyIgnoreList.ProtectedPrincipalsStore
+        && r.Item.RowKey == KindGroupSid
+        && r.Finding.Kind == VerifyFindingKind.Missing;
 
     private static string VerifyActionLabel(VerifyAction action) => action switch
     {

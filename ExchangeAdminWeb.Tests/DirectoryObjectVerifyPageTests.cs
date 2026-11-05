@@ -116,4 +116,30 @@ public sealed class DirectoryObjectVerifyPageTests : IDisposable
             Assert.True(AdminSettingsPage.VerifyActionTip(action, new VerifyItemResult(item, VerifyFinding.LabelDrift("CN=New"))).Contains("audited", StringComparison.OrdinalIgnoreCase), action.ToString());
         Assert.Contains("Reads only", AdminSettingsPage.VerifyButtonTip);
     }
+
+    [Fact]
+    public void TheIgnoreTip_SaysAMissingGroupsIgnoreAffectsProtection_AndEveryOtherIsDisplayOnly()
+    {
+        // docs/DirectoryObjectVerify-Plan.md B.4 (slice V2): one ignore changes enforcement, and its help says so.
+        var group = new VerifyItem("ProtectedPrincipals", "group_sid", VerifyObjectKind.Group, GroupSid, GroupDn, GroupRow, "v");
+        var user = new VerifyItem("ProtectedPrincipals", "user_sid", VerifyObjectKind.User, GroupSid, "u@example.test", "row", "v");
+
+        var groupMissing = AdminSettingsPage.VerifyActionTip(VerifyAction.Ignore, new VerifyItemResult(group, VerifyFinding.Missing()));
+        Assert.Contains("affects protection", groupMissing, StringComparison.Ordinal);
+        Assert.Contains("restored group protects again", groupMissing, StringComparison.Ordinal);
+        Assert.Contains("refuses every write", AdminSettingsPage.VerifyBadgeParts(new VerifyItemResult(group, VerifyFinding.Missing()), "t").Tip, StringComparison.Ordinal);
+
+        foreach (var other in new[]
+                 {
+                     new VerifyItemResult(group, VerifyFinding.LabelDrift("CN=New")),
+                     new VerifyItemResult(group, VerifyFinding.WrongClass("user")),
+                     new VerifyItemResult(user, VerifyFinding.Missing()),
+                 })
+        {
+            var tip = AdminSettingsPage.VerifyActionTip(VerifyAction.Ignore, other);
+            Assert.DoesNotContain("affects protection", tip, StringComparison.Ordinal);
+            Assert.Contains("only what Verify reports", tip, StringComparison.Ordinal);
+        }
+        Assert.Contains("One ignore changes a protection check", AdminSettingsPage.VerifyPaneNote, StringComparison.Ordinal);
+    }
 }

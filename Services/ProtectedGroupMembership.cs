@@ -214,7 +214,10 @@ internal interface IProtectedGroupDirectory
 ///
 /// Fail closed throughout: a read that fails, a lookup that matches nothing or several, a domain that cannot be determined, a
 /// token without the primary group - each marks the answer incomplete, naming the entry (<see cref="Result.Problems"/>), and
-/// the caller refuses an incomplete answer that found no match. A match found elsewhere still protects.
+/// the caller refuses an incomplete answer that found no match. A match found elsewhere still protects. The one exception
+/// (docs/DirectoryObjectVerify-Plan.md B.4): a SID entry the caller names in <c>ignoredWhenAbsent</c> - a protected group an
+/// admin ignored as missing on Verify - is skipped when, and only when, its lookup on this very evaluation answers "no such
+/// group"; the lookup always runs.
 ///
 /// docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3: entries are SIDs - a <c>group_sid</c> row, a legacy row stored as a
 /// SID - or a DN the caller has just read from the directory (the self-grant check, the self-service deny trustees). A name -
@@ -237,6 +240,12 @@ internal static class ProtectedGroupMembership
         /// reads), so a refusal names the entry rather than "expansion errors".
         /// </summary>
         public IReadOnlyList<EntryProblem> Problems { get; init; } = [];
+
+        /// <summary>
+        /// docs/DirectoryObjectVerify-Plan.md B.4. How many entries the directory confirmed hold no group and an admin's Verify
+        /// ignore covered: skipped, not incomplete. Zero for every caller that passes no ignores.
+        /// </summary>
+        public int Ignored { get; init; }
     }
 
     /// <summary>
@@ -269,11 +278,19 @@ internal static class ProtectedGroupMembership
     /// <param name="targetDn">The target's DN.</param>
     /// <param name="directory">The reads.</param>
     /// <param name="logger">Where each entry the evaluation cannot use is named.</param>
+    /// <param name="ignoredWhenAbsent">
+    /// docs/DirectoryObjectVerify-Plan.md B.4. SID entries - only the protected-principal check's <c>group_sid</c> rows an admin
+    /// ignored as missing on Verify - whose confirmed-zero answer is skipped rather than incomplete. The entry is still looked
+    /// up on every evaluation: a group the lookup finds is evaluated exactly as without the ignore, and a lookup that fails, a
+    /// domain that cannot be read, or several matches stay incomplete. Only the directory's definite "no such group" changes
+    /// meaning. Null for every other caller.
+    /// </param>
     internal static Result Evaluate(
         IReadOnlyList<string> protectedGroups,
         string targetDn,
         IProtectedGroupDirectory directory,
-        ILogger logger)
+        ILogger logger,
+        IReadOnlySet<string>? ignoredWhenAbsent = null)
     {
         var matches = new List<string>();
         var problems = new List<EntryProblem>();
@@ -309,6 +326,7 @@ internal static class ProtectedGroupMembership
             return new(matches, true) { Problems = [new(null, "the target's groups could not be read in full")] };
 
         var incomplete = false;
+        var ignored = 0;
         var matched = new HashSet<string>(StringComparer.Ordinal);
         var unanswered = new List<(string Raw, DirectoryGroup Group, string Server)>();
         foreach (var raw in entries)
@@ -333,6 +351,18 @@ internal static class ProtectedGroupMembership
                         "Protected group {ProtectedGroup} could not be resolved ({Problem}) - check incomplete",
                         raw, problem);
                     Incomplete(raw, problem!);
+                    continue;
+                }
+
+                // docs/DirectoryObjectVerify-Plan.md B.4. The directory answered and holds no group with this SID: for an entry
+                // an admin ignored as missing on Verify, that definite answer is skipped, not incomplete. The lookup above ran
+                // all the same - a group it finds (restored, same SID) is evaluated below as if it had never been ignored.
+                if (candidates.Count == 0 && entry.Kind == ProtectedGroupEntryKind.Sid && ignoredWhenAbsent?.Contains(raw) == true)
+                {
+                    logger.LogDebug(
+                        "Protected group {ProtectedGroup} names no directory group and is ignored as missing on Verify - skipped",
+                        raw);
+                    ignored++;
                     continue;
                 }
 
@@ -398,7 +428,7 @@ internal static class ProtectedGroupMembership
                 "Protected-group check could not read the groups {TargetDn} is in from their member links - check incomplete",
                 targetDn);
             problems.Add(new(null, "the groups the target is in could not be read from their member links"));
-            return new(matches, true) { Problems = problems };
+            return new(matches, true) { Problems = problems, Ignored = ignored };
         }
 
         foreach (var (raw, group, groupServer) in unanswered)
@@ -450,7 +480,7 @@ internal static class ProtectedGroupMembership
             problems.Add(new(raw, why));
         }
 
-        Result Answer() => new(matches, incomplete) { Problems = problems };
+        Result Answer() => new(matches, incomplete) { Problems = problems, Ignored = ignored };
     }
 
     /// <summary>
