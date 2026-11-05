@@ -84,7 +84,46 @@ decision `.agents/decisions.md` 2026-11-04.
 
 ## Guard proof
 
-See "Non-vacuity" below: each mutation applied, the solution built, the named tests run and seen to fail, the file restored.
+Each mutation applied to the code at `5714e8f6`, the solution built, the named tests run and seen to fail, the file
+restored (scripted; tree clean afterwards). 28 mutations, 28 caught.
+
+| Mutation | Failing tests |
+|---|---|
+| User with neither UPN nor mail gets sAMAccountName as canonical label | `EveryFindingOfAnIdentifierRow_...` |
+| Batch size 200 | `IdentifierLookups_AreBatchedInFifties_...` |
+| A failed batch read as not found | `ABatchWhoseReadFails_IsUnreadable_...` |
+| No forest-membership refusal | `ADnOfADomainOutsideTheForest_IsUnreadable_NeverMissing_...` |
+| No session read as missing | `ASessionThatCannotBeHad_...`, `TheProtectionServicesOwnSession_WithNoDirectoryReadCredential_...`, `APress_WithNoDirectoryReadCredential_...` |
+| `ReplaceIfEqual` swaps blind | `ReplaceIfEqual_RefusesAStaleExpectedValue_...` |
+| A changed ignore list does not roll the rules back | `Remove_TakesTheRowItsCompanionAndItsIgnores_InOneTransaction_...` |
+| Remove/Replace keep the removed row's ignores | `Remove_TakesTheRow...`, `AReplace_PutsThePickedObjectInTheRowsPlace_...` |
+| No version check | `EveryDirectPrimitive_RefusesWhen...` (5), `AnIgnoreAfterTheRowWasRemovedOrReplaced_...` (2), `ASuccessAndARefusal_LandInDifferentAuditRows` |
+| No version check and no row check on Ignore | `AnIgnoreAfterTheRowWasRemovedOrReplaced_...` (2), `AnIgnoreWhoseListChanged_IsRetriedOnce_AndTheRetryRefusesWhenTheRowWentInBetween` |
+| Retry reuses the stale list | `AnIgnoreWhoseListChanged_IsRetriedOnce_AndLandsBesideTheOtherAdminsEntry` |
+| No authorization at the click | `ARevokedAuthorization_AtTheClick_...` |
+| A refused write not audited | `AnIgnoreAfterTheRowWas...` (2), `ASuccessAndARefusal_...` |
+| Ordinary whole-store save keeps the removed row's ignores | `ThePanesOrdinaryRemoveAndSave_DeletesTheRemovedRowsIgnoreEntries` |
+| An action the finding does not offer is not refused | `AnIgnoreOfARowStoredByName_IsRefused_EvenWhenAskedForDirectly` |
+| Engine ignores any non-verified finding | `ARowStoredByName_IsNotConverted_..._AndIsNeverIgnored` |
+| Status prints no ignores | `IdentifierStatus_PrintsTheIgnoreList_...` |
+| Enforcement load drops the list | `TheEnforcementLoad_ReadsTheIgnoreListWithTheRules_...` |
+| Rename leaves the companion | `Rename_RewritesTheIdentifierRowsLabel_AndItsCompanion_...` |
+| `ConvertProtectedRow` writes nothing | `Convert_WritesTheIdentifierRow...`, and the CLI's own `ARealRun_AddsEachIdentifierBesideItsLegacyRow_...`, `Status_AfterAConversion_IsExitZero_OnStdout` |
+| Verify offered while the pane is dirty | `Verify_IsNotOffered_WhileThePaneHasUnsavedChanges_...` |
+| A convertible row offers Ignore | `EachFinding_ShowsItsBadgeAndHelp_AndOnlyTheActionsItOffers_...` |
+| GUID filter by text, not stored bytes | `TheBatchedFilters_...` |
+| Replace drops the companion | `AReplace_PutsThePicked...` |
+| Ignore tip says nothing of audit | `EveryBadgeAndAction_CarriesItsHelp` |
+| Several matches read as none | `ARowStoredByName_IsNotConverted_...` |
+| A forest that cannot be asked read as in forest | `AForestThatCannotBeAskedAboutADomain_MakesItsRowsUnreadable` |
+| Rebase keeps the stale version | `AReplace_PutsThePicked...` |
+
+Not separately proven: the corrupt-list half of `TheEnforcementLoad_...` (empty is the parser's default; V2 owns the
+per-path corrupt-list tests); `TheProtectedPrincipalsPane_SaysEntriesStoredByNameRefuseUntilConverted_AndOffersVerify_WithNoBanner`
+(a rewritten pin of removed markup). Tests changed because they pinned what V1 removes: two `IdentifierConversionPageTests`
+(banner, "not in AD" tip) merged into one; `ProtectedGroupWriteTargetTests.AdminPage_TargetRows_AreNotSwept_AndDedupeByGuid`
+lost its sweep half; four `ShouldFlagAsStale` tests deleted with the method; the `ProgressRegistry` AdminSettings entries.
+Also: the Verify row template lives in the pane markup, not the `@code` block (RazorParseGateTests refuses a fragment there).
 
 ## Gates
 
