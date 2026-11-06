@@ -5,6 +5,24 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-06 - Three pending owner questions settled (sweep items 16 and 33; end-of-work review)
+
+Asked one at a time with context, action, consequence and recommendation; the owner answered each by number.
+
+- **Item 16, session revalidation: keep it.** Owner: "Q1 keep it. what's the interval? sounds like a security hole."
+  The interval is the revocation window: default `00:05:00` (`Authentication:RevalidationInterval`, bounds 30 s to
+  1 h), plus the sweep-c item-15 fallback of one interval plus two minutes when a lookup fails. This closes the
+  aud-a29b option-1 question the 2026-10-21 go left open: the choice is now the owner's, recorded here.
+- **Item 33, Self-Service Groups honours rights held through a group: keep, condition met.** Owner: "as long as this
+  doesn't meaningfully impact the time to validate keep". Verified: the caller's group SIDs come from the sign-in
+  token's claims (`GroupMembershipChecker.ExtractGroupClaims`), not from a directory read; the DACL evaluation is
+  in memory over the same ACL read the module already made. The only added read is the resource-domain deny check,
+  made only when a Deny trustee the token cannot decide is present. No meaningful change to validation time.
+- **End-of-work codex-commercial defect review: run it, kept reasonable.** Owner: "codex-commercial budget is no
+  longer an issue, but keep reviews reasonable." One defect review per merged group over the range since 8557a15a,
+  authorization and write paths first; findings fixed on branches; CRITICAL-only verification rounds per the
+  2026-08-31 rule. Not a line-by-line audit of a hundred commits.
+
 ### 2026-11-04 - Verify stored directory objects approved; codex-commercial review rounds for this plan
 
 Owner, verbatim: "let's add a 'Verify' function and button to all the places where there's a directory object stored.

@@ -27,8 +27,8 @@ Configuration Access and Module Admins for one module, and the config pane of Mi
 Editor, BitLocker Recovery and Conference Rooms; confirm a Conference Rooms address reads Verified (recipient group types
 unverified against live Exchange).
 
-**Next:** remaining sweep MEDIUM items 19-45 in groups, item 12 code half, kd-94's shape if needed; then the owner's two
-pending questions (item 16; whether the end-of-work codex-commercial review still stands) and the one dev deploy.
+**Next:** remaining sweep MEDIUM items 19-45 in groups, item 12 code half, kd-94's shape if needed; then the
+codex-commercial defect reviews per merged group (owner 2026-11-06, decisions.md) and the one dev deploy.
 
 ### 2026-11-05 (V3) - Verify on the Module Configuration group panes landed; V4 next
 
