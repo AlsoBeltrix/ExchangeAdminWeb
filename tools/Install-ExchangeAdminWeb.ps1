@@ -1096,8 +1096,16 @@ try {
     # refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
     # with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
     # cannot run reports success over an unusable instance. The backup reuses this staging folder.
-    Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
+    # Sweep item 12: the same call refuses a staging folder that anyone but the administrators,
+    # SYSTEM, TrustedInstaller or the account running this script can change, since the tool runs
+    # elevated from it. A plan reports what the real run would decide, from the folder staging
+    # would inherit its permissions from.
+    Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll'), in a folder only administrators can change" {
         Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
+    }
+    if ($PlanOnly) {
+        $configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
+        Write-Plan $configDbToolPlan.AclSummary
     }
 
     # A36. An upgrade mirrors new binaries over an existing instance, and those binaries may

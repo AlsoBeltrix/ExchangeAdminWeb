@@ -711,6 +711,8 @@ $appsettingsBackupSuffix = "pre-shared.$timestamp.bak"
 # Every backup, copy and integrity check here runs the app's db mode from the deployed dev
 # build, through the .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md).
 $configDbToolPlan = Resolve-ConfigDbTool -AppPath $DevPublishPath -PlanOnly
+# Sweep item 12: whether a real run would refuse to run the tool, elevated, from the dev folder.
+if ($PlanOnly) { Write-Plan $configDbToolPlan.AclSummary }
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb shared config database cutover" -ForegroundColor Magenta

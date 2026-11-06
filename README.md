@@ -954,6 +954,12 @@ The deploy/install scripts will:
 - Grant app pool write access to audit log folder
 - Restart the application pool
 
+Every script that takes the verified config-database backup runs the app's own `db` mode
+elevated from the publish or staging folder, and refuses to when anyone but the administrators,
+SYSTEM, TrustedInstaller or the account running it can change that folder's code (it names the
+grant; a plan prints the verdict instead). See `docs/ConfigDbOperations.md`, "Who can change the
+app folder", for what is checked and how to narrow a folder.
+
 **Default URL:** `http://yourserver/ExchangeAdminWeb`
 
 #### Shared config database (dev and prod on one server)

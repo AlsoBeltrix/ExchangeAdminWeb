@@ -2,8 +2,14 @@
 Shared helper for the Pester suites that drive the app's db mode (docs/ConfigDbToolInApp-Plan.md
 section 3.3). Dot-source it inside BeforeAll.
 
-Get-BuiltApp returns the build output folder that holds ExchangeAdminWeb.dll: bin/Release/<tfm>/
+Get-BuiltApp returns a folder holding the build output with ExchangeAdminWeb.dll: bin/Release/<tfm>/
 first, then bin/Debug/<tfm>/. When neither exists it builds the app once, in Release.
+
+Sweep item 12: the scripts refuse to run the db tool from a folder that anyone but the administrators,
+SYSTEM, TrustedInstaller and the current account can change (tools/ToolFolderAcl.psm1). A checkout's
+bin folder inherits whatever its drive grants - on the dev host, Authenticated Users Modify - so the
+suites run the tool from a copy instead: a folder under the temp directory with inheritance removed and
+only those principals granted (Get-TightAppCopy). The copy is refreshed when the build changes.
 
 The suites never use the sqlite3 shell. Databases are created with the tool's own `init` verb and
 filled through Microsoft.Data.Sqlite loaded from the same build output, so the engine that writes a
@@ -12,12 +18,49 @@ fixture is the engine the app ships.
 
 $script:BuiltAppTfm = 'net10.0-windows10.0.17763.0'
 
+function Initialize-TightTestFolder {
+    # A new, empty folder whose permissions pass tools/ToolFolderAcl.psm1: inheritance removed, and
+    # only SYSTEM, the administrators and the current account granted full control.
+    param([Parameter(Mandatory)][string]$Path)
+
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${me}:(OI)(CI)F" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls failed (exit $LASTEXITCODE) narrowing the test folder $Path." }
+    return $Path
+}
+
+function Get-TightAppCopy {
+    # The build output at $Source, copied into a Initialize-TightTestFolder under the temp directory. One
+    # folder per source folder, reused while the build in it is unchanged.
+    param([Parameter(Mandatory)][string]$Source)
+
+    $dll = Get-Item -LiteralPath (Join-Path $Source 'ExchangeAdminWeb.dll')
+    $stamp = "$Source|$($dll.LastWriteTimeUtc.Ticks)|$($dll.Length)"
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $key = -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Source.ToLowerInvariant())) | Select-Object -First 8 | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $sha.Dispose()
+    }
+    $dest = Join-Path ([System.IO.Path]::GetTempPath()) "eaw-builtapp-$key"
+    $marker = Join-Path $dest 'eaw-builtapp.stamp'
+    if ((Test-Path -LiteralPath $marker -PathType Leaf) -and ((Get-Content -LiteralPath $marker -Raw).Trim() -eq $stamp)) {
+        return $dest
+    }
+    if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+    Initialize-TightTestFolder -Path $dest | Out-Null
+    Copy-Item -Path (Join-Path $Source '*') -Destination $dest -Recurse -Force
+    Set-Content -LiteralPath $marker -Value $stamp -Encoding ascii
+    return $dest
+}
+
 function Get-BuiltApp {
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     foreach ($configuration in 'Release', 'Debug') {
         $dir = Join-Path $repoRoot "bin\$configuration\$script:BuiltAppTfm"
         if (Test-Path -LiteralPath (Join-Path $dir 'ExchangeAdminWeb.dll') -PathType Leaf) {
-            return $dir
+            return (Get-TightAppCopy -Source $dir)
         }
     }
 
@@ -33,7 +76,7 @@ function Get-BuiltApp {
     if (-not (Test-Path -LiteralPath (Join-Path $dir 'ExchangeAdminWeb.dll') -PathType Leaf)) {
         throw "The build succeeded but $dir holds no ExchangeAdminWeb.dll."
     }
-    return $dir
+    return (Get-TightAppCopy -Source $dir)
 }
 
 function Get-TestDotnetHost {
@@ -150,13 +193,14 @@ function New-CorruptTestDb {
 function Copy-BuiltApp {
     # A runnable copy of the build output for a suite that needs the app inside a fake publish
     # folder: every top-level file plus the win-x64 native SQLite engine. The other runtimes and
-    # the satellite folders are not needed to run db mode.
+    # the satellite folders are not needed to run db mode. Narrowed like Get-BuiltApp's copy, so the
+    # scripts' app-folder check (sweep item 12) lets the tool run from it.
     param(
         [Parameter(Mandatory)][string]$AppPath,
         [Parameter(Mandatory)][string]$Destination
     )
 
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Initialize-TightTestFolder -Path $Destination | Out-Null
     Get-ChildItem -LiteralPath $AppPath -File | Copy-Item -Destination $Destination
     $native = Join-Path $AppPath 'runtimes\win-x64'
     $nativeDest = Join-Path $Destination 'runtimes'

@@ -412,6 +412,8 @@ if ($Apply) {
 } else {
     $configDbToolPlan = Resolve-ConfigDbTool -AppPath $dev -PlanOnly
     Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup via $($configDbToolPlan.Summary) backup"
+    # Sweep item 12: whether the real run would refuse to run the tool from the dev folder.
+    Write-Plan $configDbToolPlan.AclSummary
 }
 
 # aud-a38b: outside the try below, on purpose. A pool that cannot be confirmed stopped throws

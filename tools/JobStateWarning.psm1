@@ -29,11 +29,16 @@
 
 Set-StrictMode -Version Latest
 
+# Who may change the code in the app folder the tool runs from (sweep item 12): the check
+# SqliteConfigBackup makes before its backups, from the one module that holds it.
+Import-Module (Join-Path $PSScriptRoot 'ToolFolderAcl.psm1')
+
 function Get-ConfigDbToolForJobs {
     # Private. The same Program Files host and app assembly SqliteConfigBackup resolves, kept
     # local so this module stays importable on its own. $null means "cannot check": a missing
     # file, or an app older than the db mode (2.34.0), which would try to start rather than
-    # answer, so it is never run.
+    # answer, so it is never run. 'Refused' means the app folder can be changed by someone other
+    # than the administrators (sweep item 12); the warning saying so has been written.
     param([Parameter(Mandatory)][string]$AppPath)
 
     $programFiles = $env:ProgramFiles
@@ -45,6 +50,20 @@ function Get-ConfigDbToolForJobs {
     $info = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($assembly)
     $version = New-Object System.Version -ArgumentList $info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart
     if ($version -lt [version]'2.34.0') { return $null }
+    # Sweep item 12: the tool runs elevated, so it is never run from a folder anyone but the
+    # administrators, SYSTEM, TrustedInstaller or the account running the script can change. The
+    # check is ToolFolderAcl's, the one the backup makes; here, as for every other reason the
+    # tool cannot run, it is a warning and the job check is skipped (this module never blocks).
+    try {
+        $exposure = @(Get-ToolFolderWriteExposure -Path $AppPath)
+    } catch {
+        Write-Warning "The app's db tool in $AppPath is not run: the folder's permissions cannot be read ($($_.Exception.Message)), so it cannot be shown that only administrators can change the code there. Cannot check for active bulk jobs before recycle."
+        return 'Refused'
+    }
+    if ($exposure.Count -gt 0) {
+        Write-Warning "The app's db tool in $AppPath is not run: principals other than the administrators, SYSTEM, TrustedInstaller and the account running this script can change the code there - $(Format-ToolFolderWriteExposure $exposure). Cannot check for active bulk jobs before recycle."
+        return 'Refused'
+    }
     return @{ Host = $dotnetHost; Assembly = $assembly }
 }
 
@@ -74,8 +93,11 @@ function Get-ActiveBulkJobs {
     }
 
     $tool = Get-ConfigDbToolForJobs -AppPath $AppPath
-    if (-not $tool) {
-        Write-Warning "The app's db tool was not found (the .NET host under Program Files, or an ExchangeAdminWeb.dll of version 2.34.0 or later in $AppPath); cannot check for active bulk jobs before recycle."
+    if ($tool -isnot [hashtable]) {
+        # 'Refused': the folder check has said why already (sweep item 12).
+        if (-not $tool) {
+            Write-Warning "The app's db tool was not found (the .NET host under Program Files, or an ExchangeAdminWeb.dll of version 2.34.0 or later in $AppPath); cannot check for active bulk jobs before recycle."
+        }
         return @()
     }
 
