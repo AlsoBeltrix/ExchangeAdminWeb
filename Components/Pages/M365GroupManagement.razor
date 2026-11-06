@@ -125,7 +125,7 @@
 
                             <h6>Members (@members.Count)</h6>
                             <div class="input-group input-group-sm mb-2">
-                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
+                                <input type="text" class="form-control" placeholder="UPN, email or alias address to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddMember"
                                         disabled="@(IsBusy || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
                                     @* No spinner: the member write reports to the bar. *@
@@ -167,7 +167,7 @@
 
                             <h6 class="mt-3">Owners (@(owners?.Count ?? 0))</h6>
                             <div class="input-group input-group-sm mb-2">
-                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
+                                <input type="text" class="form-control" placeholder="UPN, email or alias address to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddOwner"
                                         disabled="@(IsBusy || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
                                     @* No spinner: the member write reports to the bar. *@

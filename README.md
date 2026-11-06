@@ -363,7 +363,12 @@ Create, modify, and delete Microsoft 365 groups via Graph API.
 - A ticket number is required before any create, update, delete or member/owner change runs:
   a blank one, or one ServiceNow rejects where that integration is enabled, is refused with an
   audited denial and nothing is sent to Graph
-- **Requires:** Graph app registration with `Group.ReadWrite.All` permission
+- A member or owner is added by user principal name, object id, or address. An address that is
+  not a UPN - a guest's own address, or a member's alias - is looked up by `mail` and
+  `proxyAddresses` and must match exactly one user: none reads "not found" naming the address,
+  several refuse with the count (sweep-d item 30)
+- **Requires:** Graph app registration with `Group.ReadWrite.All` permission, and
+  `User.Read.All` to resolve a typed name or address to its object id
 - Section access key: `M365GroupManagement`
 
 ### Comms-10k (`/comms-10k`)

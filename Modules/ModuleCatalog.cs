@@ -830,7 +830,7 @@ public sealed class ModuleCatalog
                 "Open the module and create, rename, delete Microsoft 365 groups and change their members and owners through Graph; deleting a group is the destructive action here.",
                 FailClosed: true),
             ConfigFields = [
-                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All, and User.Read.All to resolve a typed UPN or email to its object id)")
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All, and User.Read.All to resolve a typed UPN or address - a guest's address or an alias, by mail or proxy address - to its object id)")
             ]
         },
         new()
