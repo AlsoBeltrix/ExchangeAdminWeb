@@ -113,10 +113,24 @@ public class CalendarPermissionService : ExchangeServiceBase
                     {
                         Invoke(ps, add);
                     }
+                    catch (Exception addFailure) when (!OutcomeUnknown(addFailure, add))
+                    {
+                        // Sweep-f item 25: Exchange's refusal of the Add, said as the Add's, after the Set's "no entry".
+                        throw new InvalidOperationException(
+                            $"Add-MailboxFolderPermission failed for {user} on {calendarPath}, after Set-MailboxFolderPermission answered that the user holds no entry there: {ResolveFailure(addFailure).primary.Trim().TrimEnd('.')}.", addFailure);
+                    }
                     finally
                     {
                         Carry(add, tracker);
                     }
+                }
+                catch (Exception setFailure) when (!OutcomeUnknown(setFailure, set))
+                {
+                    // Sweep-f item 25. Any other refusal of the Set is its own answer, reported as the Set's, in Exchange's words:
+                    // no Add is sent (it would meet the same refusal, or hide it). It read as the bare error text, nothing saying
+                    // which command refused or that no entry was added.
+                    throw new InvalidOperationException(
+                        $"Set-MailboxFolderPermission failed for {user} on {calendarPath}: {ResolveFailure(setFailure).primary.Trim().TrimEnd('.')}. No entry was added: Exchange did not answer that the user holds none.", setFailure);
                 }
                 finally
                 {
@@ -235,21 +249,37 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// identifier anywhere in the chain (labelled assumption, not probed: Exchange Online says "There is no existing
     /// permission entry found for user" and names <c>UserNotFoundInPermissionEntryException</c>).
     /// </summary>
+    /// <remarks>
+    /// Sweep-f item 25. Matched on the error class, not on one sentence: the exception type's name
+    /// (<c>UserNotFoundInPermissionEntryException</c>) wherever it appears - the exception itself or one it wraps, the error
+    /// record's exception and its fully qualified error id, and the "|type|message" prefix the EXO V3 module puts on a REST
+    /// error's text - and the wordings "no existing permission entry" and "no permission entry" (Exchange's sentence, and a
+    /// rewording that drops "existing"), in the message, the error record's text (its details when it carries any) and
+    /// every captured error. Case-insensitive. Never matched: Add's own "An existing permission entry was found for user" (the
+    /// opposite answer), or any other refusal - that is the Set's own answer, and an Add would meet it too.
+    /// </remarks>
     internal static bool NamesNoPermissionEntry(Exception ex)
     {
-        for (var e = ex; e is not null; e = e.InnerException)
+        for (var (e, depth) = (ex, 0); e is not null && depth < 16; e = e.InnerException, depth++)
         {
-            if (Says(e.Message) || (e.Data[PsErrorsDataKey] is string[] errors && errors.Any(Says)))
+            if (Says(e.Message) || Says(e.GetType().Name) || (e.Data[PsErrorsDataKey] is string[] errors && errors.Any(Says)))
                 return true;
             if ((e as IContainsErrorRecord)?.ErrorRecord is { } record
-                && (Says(record.ToString()) || record.FullyQualifiedErrorId?.Contains("UserNotFoundInPermissionEntry", StringComparison.OrdinalIgnoreCase) == true))
+                && (Says(record.ToString())
+                    || Says(record.FullyQualifiedErrorId)
+                    || Says(record.Exception?.GetType().Name)
+                    || (record.Exception is { } inner && !ReferenceEquals(inner, e) && NamesNoPermissionEntry(inner))))
                 return true;
         }
 
         return false;
-
-        static bool Says(string? text) => text?.Contains("no existing permission entry", StringComparison.OrdinalIgnoreCase) == true;
     }
+
+    private static readonly string[] NoPermissionEntryMarks =
+        ["UserNotFoundInPermissionEntry", "no existing permission entry", "no permission entry"];
+
+    private static bool Says(string? text) =>
+        text is not null && NoPermissionEntryMarks.Any(mark => text.Contains(mark, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>aud-a70 (14). The right a calendar write's <see cref="PermissionResult.UnconfirmedRights"/> names: its one folder permission.</summary>
     internal const string CalendarRight = "Calendar";

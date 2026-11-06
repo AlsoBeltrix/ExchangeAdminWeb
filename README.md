@@ -14,6 +14,7 @@ ASP.NET Core 10 Blazor Server application for Exchange Online administration, ma
 - Set calendar sharing permissions (Owner, Editor, Reviewer, Limited Details, etc.)
 - Remove calendar permissions
 - Automatic calendar folder detection (supports international/localized folder names)
+- A grant sets the user's existing entry, and adds one only when Exchange answers that the user holds none (read from the error's type, identifier or wording, not one sentence). Any other refusal is reported as the Set's, in Exchange's words, with nothing added; an Add that Exchange refuses is reported as the Add's
 - Single operations and bulk CSV upload support
 - On-premises mailbox support for authorized power users (see below)
 

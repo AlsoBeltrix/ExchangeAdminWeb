@@ -293,6 +293,62 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
         Assert.False(result.Success);
         Assert.False(result.Unconfirmed);
         Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
+        // Sweep-f item 25: said as the Set's refusal, in Exchange's words, and that nothing was added.
+        Assert.StartsWith("Set-MailboxFolderPermission failed for ", result.Message, StringComparison.Ordinal);
+        Assert.Contains("The user isn't valid for this folder", result.Message, StringComparison.Ordinal);
+        Assert.Contains("No entry was added", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACloudCalendarAdd_ExchangeRefusesAfterTheSetsNoEntry_IsSaidAsTheAddsRefusal()
+    {
+        _h.Failures["Set-MailboxFolderPermission"] = NoEntry;
+        _h.Failures["Add-MailboxFolderPermission"] = "The user isn't valid for this folder.";
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.False(result.Success);
+        Assert.False(result.Unconfirmed);
+        Assert.StartsWith("Add-MailboxFolderPermission failed for ", result.Message, StringComparison.Ordinal);
+        Assert.Contains("answered that the user holds no entry", result.Message, StringComparison.Ordinal);
+        Assert.Contains("The user isn't valid for this folder", result.Message, StringComparison.Ordinal);
+    }
+
+    // Sweep-f item 25. The fallback follows the "no entry" error class in each shape it reaches the app in, not one sentence.
+    [Theory]
+    [InlineData("|Microsoft.Exchange.Management.StoreTasks.UserNotFoundInPermissionEntryException|There is no existing permission entry found for user: jdoe.")]
+    [InlineData("|Microsoft.Exchange.Management.StoreTasks.UserNotFoundInPermissionEntryException|The operation failed.")]
+    [InlineData("There is no permission entry found for user jdoe.")]
+    public async Task ACloudCalendarSet_AnsweredNoEntryInAnotherShape_AddsOne(string answer)
+    {
+        _h.Failures["Set-MailboxFolderPermission"] = answer;
+
+        var result = await Cloud("SetCalendarPermission", _h.Pool);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Single(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    private sealed class UserNotFoundInPermissionEntryException(string message) : Exception(message);
+
+    [Fact]
+    public void TheNoEntryClass_IsReadFromTheErrorRecord_AndTheExceptionType_NotOnlyTheWords()
+    {
+        // The identifier alone.
+        var byId = new ErrorRecord(new InvalidOperationException("The operation failed."),
+            "[Server=X] 1A2B,Microsoft.Exchange.Management.StoreTasks.UserNotFoundInPermissionEntryException", ErrorCategory.NotSpecified, null);
+        Assert.True(CalendarPermissionService.NamesNoPermissionEntry(new RuntimeException("wrapped", null, byId)));
+        // The record's exception, by its type.
+        var byReason = new ErrorRecord(new UserNotFoundInPermissionEntryException("The operation failed."), "SomeId", ErrorCategory.ObjectNotFound, null);
+        Assert.True(CalendarPermissionService.NamesNoPermissionEntry(new RuntimeException("wrapped", null, byReason)));
+        // The exception's own type, wrapped.
+        Assert.True(CalendarPermissionService.NamesNoPermissionEntry(new InvalidOperationException("wrapped", new UserNotFoundInPermissionEntryException("The operation failed."))));
+        // A record whose words are elsewhere: its details.
+        var byDetails = new ErrorRecord(new InvalidOperationException("The operation failed."), "SomeId", ErrorCategory.NotSpecified, null)
+        {
+            ErrorDetails = new ErrorDetails("There is no existing permission entry found for user: jdoe."),
+        };
+        Assert.True(CalendarPermissionService.NamesNoPermissionEntry(new RuntimeException("wrapped", null, byDetails)));
     }
 
     [Fact]
@@ -331,6 +387,11 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
     [InlineData("THERE IS NO EXISTING PERMISSION ENTRY FOUND FOR USER: JDOE.", true)]
     [InlineData("The user isn't valid for this folder.", false)]
     [InlineData("the session to Exchange Online was lost", false)]
+    // Sweep-f item 25: the class by its type name or a rewording; never Add's opposite answer.
+    [InlineData("|Microsoft.Exchange.Management.StoreTasks.UserNotFoundInPermissionEntryException|The operation failed.", true)]
+    [InlineData("There is no permission entry found for user jdoe.", true)]
+    [InlineData("An existing permission entry was found for user: jdoe.", false)]
+    [InlineData("|Microsoft.Exchange.Management.StoreTasks.UserAlreadyExistsInPermissionEntryException|An existing permission entry was found for user: jdoe.", false)]
     public void OnlyExchangesNoEntryAnswer_NamesNoPermissionEntry(string message, bool named)
     {
         var failure = new InvalidOperationException("raw-text-kd43");

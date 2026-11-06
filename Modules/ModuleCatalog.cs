@@ -283,7 +283,8 @@ public sealed class ModuleCatalog
             // 1.4.12: on-premises grants and removals send one command per Invoke-Command (the endpoint is no-language): the
             // folder read from the mailbox, then Set, then Add only on "no entry"; a language-mode refusal is not a dead
             // session (sweep-f item 23).
-            Version = "1.4.12",
+            // 1.4.13: the cloud Set falls back to Add on the no-entry error class (type, identifier, wordings), and any other refusal is said as the Set's or the Add's (sweep-f item 25).
+            Version = "1.4.13",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
