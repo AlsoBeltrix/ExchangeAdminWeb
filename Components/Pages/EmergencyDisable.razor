@@ -30,7 +30,7 @@
 
 <div class="container-fluid">
     <div class="alert alert-danger py-2 mb-3">
-        <small><strong>High-Impact Operation:</strong> Disabling an account revokes all sessions, resets the password, and blocks sign-in across AD and Entra ID. This action is audited.@(SecurityRecipientConfigured ? " The security team is notified immediately." : " NO security-team recipient is configured, so NO notification will be sent - tell them yourself.")</small>
+        <small><strong>High-Impact Operation:</strong> Disabling an account revokes all sessions, resets the password, and blocks sign-in across AD and Entra ID. This action is audited.@(SecurityRecipientConfigured ? " The security team and the administrators are notified immediately." : " NO security-team recipient is configured, so the security team will NOT be notified - tell them yourself. The administrators are still notified.")</small>
     </div>
     <h1 class="mb-4">Emergency Disable<ModuleVersion /></h1>
 
@@ -289,7 +289,7 @@
     // discovered afterwards - and the sentence AFTER the operation comes from
     // SecurityNotificationText, which is single-sourced with the service that decides it.
     private bool SecurityRecipientConfigured =>
-        !string.IsNullOrWhiteSpace(ModuleConfig.GetValue("EmergencyDisable", "NotifySecurityTeam"));
+        EmailService.SplitAddresses(ModuleConfig.GetValue("EmergencyDisable", "NotifySecurityTeam")).Count > 0;
 
     private async Task OnSearchKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
     {

@@ -60,6 +60,25 @@ public class EmailService
         _appName = config["Application:Name"] ?? "Exchange Admin";
     }
 
+    /// <summary>
+    /// sweep-d item 32. A recipient list as an operator types one: comma- or semicolon-separated, each address trimmed,
+    /// blanks dropped, an address named twice kept once (case-insensitively). Every list this service sends to is split
+    /// here, so a semicolon list - the separator Outlook itself uses - is never one malformed address that fails to send.
+    /// </summary>
+    public static IReadOnlyList<string> SplitAddresses(string? list) =>
+        (list ?? string.Empty)
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>
+    /// sweep-d item 32. The administrators' addresses (<c>Email:AdminNotificationEmail</c>), split as every send splits
+    /// them. Empty when none is configured.
+    /// </summary>
+    public virtual IReadOnlyList<string> AdminRecipients => SplitAddresses(_adminEmail);
+
     public virtual async Task SendAdminNotificationAsync(
         string performedBy,
         string ipAddress,
@@ -117,12 +136,8 @@ public class EmailService
 </body>
 </html>";
 
-        // Support multiple admin emails (comma-separated)
-        var adminEmails = _adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(e => e.Trim())
-            .Where(e => !string.IsNullOrWhiteSpace(e));
-
-        foreach (var email in adminEmails)
+        // Several admin addresses, comma- or semicolon-separated (sweep-d item 32).
+        foreach (var email in SplitAddresses(_adminEmail))
         {
             await SendEmailAsync(email, subject, body);
         }
@@ -172,11 +187,7 @@ public class EmailService
         IReadOnlyDictionary<string, string> details,
         string? errorDetail = null)
     {
-        var addresses = (recipients ?? string.Empty)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(e => e.Trim())
-            .Where(e => !string.IsNullOrWhiteSpace(e))
-            .ToList();
+        var addresses = SplitAddresses(recipients);
 
         if (addresses.Count == 0)
             return NotificationDispatch.NoRecipient;

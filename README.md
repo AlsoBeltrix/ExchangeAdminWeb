@@ -477,7 +477,10 @@ Room mailbox metadata configuration and booking policy management.
 Rapidly disable a compromised user account across on-prem AD and Entra ID with session revocation.
 
 - Disables the AD account and revokes Entra ID sessions in a single workflow
-- Security team notification on every disable action
+- Notice on every disable action to the security team (`NotifySecurityTeam`) and to the administrators
+  (`Email:AdminNotificationEmail`), both, one mail per address (sweep-d item 32). Either list may be comma- or
+  semicolon-separated. A blank `NotifySecurityTeam` still warns, on the page and in the result, that the security team
+  is not notified; the administrators are
 - **Lockdown OU** (`LockdownOuDn`, optional): the OU a disabled account is moved into; blank makes the step unavailable.
   The field offers the OU browser. **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A6,
   slice V4) checks it as the step does, with `Get-ADOrganizationalUnit`: an OU is **verified**; nothing there, or a

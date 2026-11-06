@@ -1286,7 +1286,7 @@ public sealed class ModuleCatalog
             // with nothing visible in it is refused as a blank one is (kd-45).
             // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
             // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
-            Version = "1.7.1",
+            Version = "1.7.2",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1296,7 +1296,7 @@ public sealed class ModuleCatalog
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
                 new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
-                new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions"),
+                new("NotifySecurityTeam", "Security Team Email", "Email address(es) for immediate notification on disable actions, comma- or semicolon-separated. The administrators (Email:AdminNotificationEmail) are notified as well; blank notifies the administrators only"),
                 // Optional on purpose. Required: true would flip IsModuleConfigured to false for
                 // every existing install (Services/ModuleConfigService.cs). Blank means the
                 // lockdown step is unavailable, not that a disable fails.

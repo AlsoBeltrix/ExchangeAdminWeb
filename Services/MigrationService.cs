@@ -57,10 +57,8 @@ public class MigrationService : ExchangeServiceBase
         _servicers = servicers;
 
         var adminEmail = config["Email:AdminNotificationEmail"] ?? "";
-        _adminNotificationEmails = adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(e => e.Trim())
-            .Where(e => !string.IsNullOrWhiteSpace(e))
-            .ToArray();
+        // Comma- or semicolon-separated, split as EmailService splits every list (sweep-d item 32).
+        _adminNotificationEmails = EmailService.SplitAddresses(adminEmail).ToArray();
     }
 
     // aud-a23r. One check is one run of the excluded-group check's directory reads (DirectoryLookupRun); a bulk file is one
