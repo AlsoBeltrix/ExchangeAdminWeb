@@ -8,6 +8,18 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (reviews A-D) - codex-commercial defect reviews of everything merged since the dev build
+
+Four read-only reviews (codex-commercial, gpt-6-astra, xhigh; prompts and reports in `.agents/review/rev-{a,b,c,d}.*`,
+gitignored; findings committed as records): A `8557a15a..5c4c2970` (kd-88 family) 3 findings; B `5c4c2970..82a67e2f`
+(identifiers, sweep-c) 5; C `82a67e2f..fe3b86b8` (Verify) 3; D `fe3b86b8..de53b714` (sweep-d/e/f, Comms order) 2.
+Thirteen records `rev-a1..a3`, `rev-b1..b5`, `rev-c1..c3`, `rev-d1..d2`, index rows `[ ]`. Highest HIGH, no CRITICAL, so
+no owner-gated verification round applies (2026-08-31 rule). The HIGH ones are all on the protected-principal path:
+a token miss past a distribution group read as a confirmed negative (a1); the credential cache's sliding expiry (a2);
+no empty SearchBase on global-catalog queries, in three places (a3, b1, c1); label fallback when a caller omits the SID
+(b2); OU rules by DN label for group targets (b3); Graph-unanswered falling through to address resolution (b4).
+Next slice `fix/rev-abc` fixes all thirteen (brief drafted), one Opus agent, after sweep-g lands. sweep-g gets its own
+review (E) when merged.
 ### 2026-11-06 (sweep-f) - sweep items 23, 25, 26, 27 landed; item 24 widening is an owner question
 
 Merged `fix/sweep-f` into master at `de53b714` (`--no-ff`, cherry 0, worktree and branch removed; one index-row
@@ -78,7 +90,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** scripts 34-39 with item 12 code half (sweep-g, in flight),
+**Next:** sweep-g (scripts 34-39, item 12 code half; in flight), then fix slice rev-abc for the thirteen review findings, review E of sweep-g,
 then the codex-commercial reviews; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
