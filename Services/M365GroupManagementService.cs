@@ -66,7 +66,7 @@ public class M365GroupManagementService
         }
     }
 
-    public async Task<List<M365Group>> SearchGroupsAsync(string searchTerm)
+    public virtual async Task<List<M365Group>> SearchGroupsAsync(string searchTerm)
     {
         var client = await GetGraphClientAsync();
         var groups = new List<M365Group>();
@@ -91,7 +91,7 @@ public class M365GroupManagementService
         return groups.OrderBy(g => g.DisplayName).ToList();
     }
 
-    public async Task<M365Group?> GetGroupDetailsAsync(string groupId)
+    public virtual async Task<M365Group?> GetGroupDetailsAsync(string groupId)
     {
         var client = await GetGraphClientAsync();
         using var doc = await client.GetAsync($"/groups/{Uri.EscapeDataString(groupId)}?$select=id,displayName,mail,description,visibility,groupTypes,mailEnabled,securityEnabled,createdDateTime");
@@ -151,12 +151,12 @@ public class M365GroupManagementService
         return new M365GroupResult { Success = true, Message = $"Deleted '{displayName}'." };
     }
 
-    public async Task<List<M365GroupMember>> GetMembersAsync(string groupId)
+    public virtual async Task<List<M365GroupMember>> GetMembersAsync(string groupId)
     {
         return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/members?$select=id,displayName,mail,userPrincipalName&$top=999");
     }
 
-    public async Task<List<M365GroupMember>> GetOwnersAsync(string groupId)
+    public virtual async Task<List<M365GroupMember>> GetOwnersAsync(string groupId)
     {
         return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=id,displayName,mail,userPrincipalName&$top=999");
     }
@@ -292,6 +292,13 @@ public class M365GroupManagementService
     /// not pay for a lookup. Anything else is resolved through <c>/users/{identity}</c>, which
     /// accepts a UPN - that is the one Graph route that takes the shape a person types.
     ///
+    /// sweep-d item 30: a guest's address, or a member's alias, is not a UPN, so that route says
+    /// 404 for a person who exists. On a 404 for an address, the user is looked up by
+    /// <c>mail</c> or by <c>proxyAddresses</c> (an advanced query: ConsistencyLevel eventual and
+    /// $count), and exactly one match is required - none is "not found" naming the address, more
+    /// than one refuses naming the count, because picking one would add a person the operator did
+    /// not name. A 403 from either lookup keeps its "Not permitted to look up" message.
+    ///
     /// Refuses rather than guessing. An identity that does not resolve is the operator's to
     /// correct, and the message says which part failed instead of blaming app permissions the
     /// way the old failure did.
@@ -311,8 +318,10 @@ public class M365GroupManagementService
             // consented exactly as documented fails here with a 403 and no clue why. The
             // message names the permission rather than leaving an admin to guess.
             if (status == System.Net.HttpStatusCode.Forbidden)
-                return (null, $"Not permitted to look up '{identity}'. The Graph app registration "
-                            + "needs User.Read.All to resolve a name to a directory object.");
+                return (null, NotPermittedToLookUp(identity));
+
+            if (status == System.Net.HttpStatusCode.NotFound && trimmed.Contains('@'))
+                return await ResolveByAddressAsync(client, identity, trimmed);
 
             return (null, status == System.Net.HttpStatusCode.NotFound
                 ? $"'{identity}' was not found in the directory."
@@ -326,6 +335,70 @@ public class M365GroupManagementService
             ? (null, $"The directory returned no object id for '{identity}'.")
             : (id, "");
     }
+
+    private static string NotPermittedToLookUp(string identity) =>
+        $"Not permitted to look up '{identity}'. The Graph app registration "
+        + "needs User.Read.All to resolve a name to a directory object.";
+
+    /// <summary>
+    /// sweep-d item 30. The user whose <c>mail</c> or one of whose <c>proxyAddresses</c> is
+    /// <paramref name="address"/>, or the reason there is not exactly one.
+    /// </summary>
+    internal static async Task<(string? objectId, string error)> ResolveByAddressAsync(
+        GraphTokenClient client, string identity, string address)
+    {
+        // OData string literal: a single quote is doubled. proxyAddresses compare case-insensitively,
+        // so 'smtp:' matches the primary SMTP: entry as well as an alias.
+        var literal = address.Replace("'", "''", StringComparison.Ordinal);
+        var filter = $"mail eq '{literal}' or proxyAddresses/any(p:p eq 'smtp:{literal}')";
+        var (doc, status) = await client.GetWithStatusAsync(
+            $"/users?$filter={Uri.EscapeDataString(filter)}&$select=id&$count=true&$top=10",
+            new Dictionary<string, string> { ["ConsistencyLevel"] = "eventual" });
+
+        if (doc == null)
+        {
+            if (status == System.Net.HttpStatusCode.Forbidden)
+                return (null, NotPermittedToLookUp(identity));
+
+            return (null, status == System.Net.HttpStatusCode.NotFound
+                ? NotFoundByAnyAddress(identity)
+                : $"Could not look up '{identity}' by mail or proxy address: {(int)status} {status}.");
+        }
+
+        using var found = doc;
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (found.RootElement.TryGetProperty("value", out var value) && value.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var user in value.EnumerateArray())
+            {
+                var id = user.TryGetProperty("id", out var prop) ? prop.GetString() : null;
+                if (string.IsNullOrWhiteSpace(id))
+                    return (null, $"The directory returned a match with no object id for '{identity}'.");
+                ids.Add(id);
+            }
+        }
+        else
+        {
+            return (null, $"Could not look up '{identity}' by mail or proxy address: the directory's answer could not be read.");
+        }
+
+        // The count is the directory's, when it gives one: $top caps the list, not the matches.
+        var count = found.RootElement.TryGetProperty("@odata.count", out var counted) && counted.TryGetInt32(out var n)
+            ? Math.Max(n, ids.Count)
+            : ids.Count;
+
+        if (count == 0)
+            return (null, NotFoundByAnyAddress(identity));
+
+        if (count > 1)
+            return (null, $"'{identity}' matches {count} directory users by mail or proxy address, so it does not "
+                        + "name one person. Enter the user principal name of the one you mean.");
+
+        return (ids.Single(), "");
+    }
+
+    private static string NotFoundByAnyAddress(string identity) =>
+        $"'{identity}' was not found in the directory as a user principal name, a mail address or a proxy address.";
 
     private async Task<M365GroupResult> RemoveDirectoryObjectAsync(string groupId, string relationship, string objectId, string identityForCheck, ClaimsPrincipal? actingUser)
     {

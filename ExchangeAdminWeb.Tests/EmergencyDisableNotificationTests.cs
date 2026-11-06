@@ -164,6 +164,89 @@ public class EmergencyDisableNotificationTests : IDisposable
         Assert.Contains("if (notification != SecurityNotificationOutcome.Sent)", body, StringComparison.Ordinal);
     }
 
+    // ----- sweep-d item 32: the administrators are sent the notice again, as well as the security team -----
+
+    [Fact]
+    public async Task TheSecurityTeamAndTheAdministrators_BothReceiveTheNotice()
+    {
+        var service = CreateService(SecurityTeam);
+        _email.AdminRecipients.Returns([AdminList]);
+        Dispatch(new NotificationDispatch(1, 1, null));
+
+        var outcome = await Notify(service);
+
+        Assert.Equal(SecurityNotificationOutcome.Sent, outcome);
+        Assert.Equal([AdminList, SecurityTeam], Recipients());
+    }
+
+    [Fact]
+    public async Task AnAddressInBothLists_GetsOneMail()
+    {
+        var service = CreateService($"{SecurityTeam}; ir@contoso.com");
+        _email.AdminRecipients.Returns([AdminList, SecurityTeam.ToUpperInvariant()]);
+        Dispatch(new NotificationDispatch(1, 1, null));
+
+        await Notify(service);
+
+        Assert.Equal([AdminList, $"{SecurityTeam};ir@contoso.com"], Recipients());
+    }
+
+    [Fact]
+    public async Task ABlankSetting_StillWarnsThatTheSecurityTeamWasNotNotified_ButNotifiesTheAdministrators()
+    {
+        var service = CreateService(null);
+        _email.AdminRecipients.Returns([AdminList]);
+        Dispatch(new NotificationDispatch(1, 1, null));
+
+        var outcome = await Notify(service);
+
+        Assert.Equal(SecurityNotificationOutcome.NotConfigured, outcome);
+        Assert.Equal([AdminList], Recipients());
+    }
+
+    [Fact]
+    public async Task ASettingOfSeparatorsOnly_IsNotConfigured()
+    {
+        var service = CreateService(" ; , ");
+        _email.AdminRecipients.Returns([AdminList]);
+        Dispatch(new NotificationDispatch(1, 1, null));
+
+        Assert.Equal(SecurityNotificationOutcome.NotConfigured, await Notify(service));
+        Assert.Equal([AdminList], Recipients());
+    }
+
+    [Fact]
+    public async Task ASemicolonList_IsEverySecurityAddress_NotOneMalformedOne()
+    {
+        var service = CreateService("soc@contoso.com;ir@contoso.com");
+        Dispatch(new NotificationDispatch(2, 2, null));
+
+        Assert.Equal(SecurityNotificationOutcome.Sent, await Notify(service));
+        Assert.Equal(["soc@contoso.com;ir@contoso.com"], Recipients());
+    }
+
+    [Fact]
+    public async Task AnAdministratorDeliveryFailure_DoesNotChangeWhatIsSaidAboutTheSecurityTeam()
+    {
+        var service = CreateService(SecurityTeam);
+        _email.AdminRecipients.Returns([AdminList]);
+        _email.SendModuleNotificationAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<string?>())
+            .Returns(call => Task.FromResult(call.ArgAt<string>(0) == AdminList
+                ? new NotificationDispatch(1, 0, "smtp refused")
+                : new NotificationDispatch(1, 1, null)));
+
+        Assert.Equal(SecurityNotificationOutcome.Sent, await Notify(service));
+    }
+
+    private List<string> Recipients() =>
+        _email.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(EmailService.SendModuleNotificationAsync))
+            .Select(call => (string)call.GetArguments()[0]!)
+            .ToList();
+
     private void Dispatch(NotificationDispatch result) =>
         _email.SendModuleNotificationAsync(
                 Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),

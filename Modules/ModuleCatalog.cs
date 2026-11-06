@@ -794,7 +794,7 @@ public sealed class ModuleCatalog
             // - the shared TicketPresence rule (kd-48).
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
-            Version = "2.16.1",
+            Version = "2.16.2",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -823,14 +823,14 @@ public sealed class ModuleCatalog
             // TicketPresence rule (kd-24).
             // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "1.9.0",
+            Version = "1.9.1",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
                 "Open the module and create, rename, delete Microsoft 365 groups and change their members and owners through Graph; deleting a group is the destructive action here.",
                 FailClosed: true),
             ConfigFields = [
-                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All, and User.Read.All to resolve a typed UPN or email to its object id)")
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All, and User.Read.All to resolve a typed UPN or address - a guest's address or an alias, by mail or proxy address - to its object id)")
             ]
         },
         new()
@@ -898,7 +898,7 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.19",
+            Version = "1.4.20",
             MainPermission = new(
                 "Access",
                 "Comms10k",
@@ -1058,7 +1058,7 @@ public sealed class ModuleCatalog
             // can trigger the save.
             // 1.2.1: the module card and the Access permission say one thing each again; the employee-ID detail
             // lives in the settings' own hints and the README (owner, 2026-10-30).
-            Version = "1.2.1",
+            Version = "1.2.2",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
@@ -1286,7 +1286,7 @@ public sealed class ModuleCatalog
             // with nothing visible in it is refused as a blank one is (kd-45).
             // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
             // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
-            Version = "1.7.1",
+            Version = "1.7.2",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1296,7 +1296,7 @@ public sealed class ModuleCatalog
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
                 new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
-                new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions"),
+                new("NotifySecurityTeam", "Security Team Email", "Email address(es) for immediate notification on disable actions, comma- or semicolon-separated. The administrators (Email:AdminNotificationEmail) are notified as well; blank notifies the administrators only"),
                 // Optional on purpose. Required: true would flip IsModuleConfigured to false for
                 // every existing install (Services/ModuleConfigService.cs). Blank means the
                 // lockdown step is unavailable, not that a disable fails.
@@ -1545,7 +1545,7 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.18",
+            Version = "1.6.19",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",

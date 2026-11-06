@@ -281,8 +281,13 @@ tactical account; resetting a Global Administrator is the module's normal operat
 - A send failure after the write discards the password rather than showing it, logs at Critical
   and audits `CloudPasswordReset_DeliveryFailed`. Running the reset again issues a new one.
 - A saved employee ID is audited as `CloudPasswordReset_EmployeeIdSet` with its own administrator
-  alert, and every event of the module carries `employeeIdFill`, `employeeIdFillValue` and
+  alert, sent once the password write that follows the save has completed (after the reset's own
+  alert), and every event of the module carries `employeeIdFill`, `employeeIdFillValue` and
   `employeeIdFillSource`.
+- The Graph client built from the module's Delinea record is kept for five minutes from the read,
+  so a preflight and its confirm - the account re-read, the employee-ID save and the password
+  write - make one Secret Server read and use one Graph token (sweep-d item 29). A rotated secret
+  is picked up within five minutes.
 - **Requires:** its own Graph app registration with `User.Read.All`,
   `User-PasswordProfile.ReadWrite.All` and `RoleManagement.Read.Directory`, and its own Delinea
   record. Ships disabled. Filling in an employee ID also needs the registration to be allowed to
@@ -358,7 +363,12 @@ Create, modify, and delete Microsoft 365 groups via Graph API.
 - A ticket number is required before any create, update, delete or member/owner change runs:
   a blank one, or one ServiceNow rejects where that integration is enabled, is refused with an
   audited denial and nothing is sent to Graph
-- **Requires:** Graph app registration with `Group.ReadWrite.All` permission
+- A member or owner is added by user principal name, object id, or address. An address that is
+  not a UPN - a guest's own address, or a member's alias - is looked up by `mail` and
+  `proxyAddresses` and must match exactly one user: none reads "not found" naming the address,
+  several refuse with the count (sweep-d item 30)
+- **Requires:** Graph app registration with `Group.ReadWrite.All` permission, and
+  `User.Read.All` to resolve a typed name or address to its object id
 - Section access key: `M365GroupManagement`
 
 ### Comms-10k (`/comms-10k`)
@@ -368,16 +378,24 @@ Dedicated bulk member replacement for broadcast distribution lists.
 - CSV upload of new member list
 - Resolves all entries before applying changes
 - Confirmation step stating the number of members the list will be set to. Not an
-  add/remove diff: the write never reads the prior membership, so no removal count
-  exists to show
-- **Clear, then fill, then read back.** The directory refuses a single-operation swap at
-  this module's size, so the write empties the `member` attribute, adds the resolved list
-  in batches of 2,000, and reports from a read-back of what the group actually holds --
-  never from which batches were believed to have run. **This gives up atomicity:** the
-  list is briefly empty and then partial during the sequence (about eight seconds at ten
-  thousand members), and a failure in that window leaves it incomplete. The module reports
-  that state explicitly rather than as a generic failure, and re-running the same CSV
-  repairs it. **Replaces are not serialised** (owner ruling 2026-09-30): two run at the
+  add/remove diff: the current membership is read only by the job, immediately before it
+  writes, so no removal count exists at confirmation time (the job's log records it)
+- **Add first, then remove, then read back** (sweep-d item 19). The directory refuses a
+  single-operation swap at this module's size, so the job reads the current `member`
+  attribute, adds the file's members who are not already on the list in batches of 2,000,
+  and only after every add has succeeded removes, in batches, the members the file does not
+  name. Members on the list and in the file are not written at all. It reports from a
+  read-back of what the group actually holds -- never from which batches were believed to
+  have run. **The list is never emptied:** if an add fails the run stops before any removal,
+  so everyone who was on the list is still on it (when the read-back shows the list exactly
+  as it was, the job reports "refused before any change" and names the failed batch and the
+  error); if a removal fails, everyone the file names is on the list along with some it does
+  not. Either way the module reports the state explicitly, and re-running the same CSV
+  repairs it. The cost: a full swap to a disjoint list takes about 53 seconds at ten
+  thousand members (the list briefly holds both), against seconds when most members stay.
+  Access is checked once, immediately before the first write, and the run then goes to
+  completion; a permission removed mid-run applies to the next run (sweep-d item 20).
+  **Replaces are not serialised** (owner ruling 2026-09-30): two run at the
   same time on the same group can interleave and leave the list holding neither uploaded
   file. Each run's read-back compares against its own list, so an interleaved run reports
   as incomplete rather than claiming success, and re-running one file on its own repairs it
@@ -390,7 +408,7 @@ Dedicated bulk member replacement for broadcast distribution lists.
   job may contain failures or no recorded stages. Missing AD credentials do not hide history;
   current Comms-10k permission and enablement still gate access.
 - Request cancellation of your queued/running jobs or delete your finished job records.
-  Cancellation cannot undo or abort an in-flight clear/refill. Deleting a record retains its
+  Cancellation cannot undo or abort an in-flight add/remove. Deleting a record retains its
   audit history; job controls are scoped to your full signed-in identity and are audited.
 - Section access key: `Comms10k`
 
@@ -459,7 +477,10 @@ Room mailbox metadata configuration and booking policy management.
 Rapidly disable a compromised user account across on-prem AD and Entra ID with session revocation.
 
 - Disables the AD account and revokes Entra ID sessions in a single workflow
-- Security team notification on every disable action
+- Notice on every disable action to the security team (`NotifySecurityTeam`) and to the administrators
+  (`Email:AdminNotificationEmail`), both, one mail per address (sweep-d item 32). Either list may be comma- or
+  semicolon-separated. A blank `NotifySecurityTeam` still warns, on the page and in the result, that the security team
+  is not notified; the administrators are
 - **Lockdown OU** (`LockdownOuDn`, optional): the OU a disabled account is moved into; blank makes the step unavailable.
   The field offers the OU browser. **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A6,
   slice V4) checks it as the step does, with `Get-ADOrganizationalUnit`: an OU is **verified**; nothing there, or a
@@ -694,7 +715,10 @@ permission that could. Disabled by default and fail-closed.
 - Discovery sources, device type, category, vendor and model come from a second call: one constant
   `DeviceInfo` advanced hunting query on Microsoft Graph. Its failure never takes the page down --
   those five columns read `(unavailable)` with the reason named above the table, never merely
-  blank
+  blank. A `429` (the tenant's hunting quota) is waited out once per load when Microsoft Graph's
+  `Retry-After` asks for a minute or less; a second `429`, or one with no or a longer
+  `Retry-After`, stops the hunting there and the reason says how many devices were not queried
+  (sweep-d item 31). `401` and `403` stop it at once, as before
 - The detail panel renders from the row the list already returned. The module never calls
   get-machine-by-id, which Microsoft documents only under `Machine.ReadWrite.All`
 - Results can be downloaded as CSV (27 columns: device identity and DNS name, OS, health,

@@ -103,7 +103,7 @@ public class GroupManagementService
         }
     }
 
-    public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
+    public virtual async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
     {
         // aud-a2y. The refusal names why there is no credential, from the lookup's own answer: it told the operator to
         // check the secret ID when the ID was set and Delinea returned nothing, or the module's config could not be read.
@@ -358,7 +358,7 @@ public class GroupManagementService
         }));
     }
 
-    public async Task<TargetProtectionCheck> CheckTargetProtectionAsync(
+    public virtual async Task<TargetProtectionCheck> CheckTargetProtectionAsync(
         string groupIdentity, string? samAccountName, ClaimsPrincipal? actingUser)
     {
         var creds = await GetCredentialsAsync("on-prem AD protected-target check");
@@ -387,7 +387,7 @@ public class GroupManagementService
         return new(gate.ServicedNote is not null, null, gate.ServicedNote);
     }
 
-    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, ClaimsPrincipal? actingUser, string? samAccountName = null)
+    public virtual async Task<GroupMemberList> GetMembersAsync(string groupIdentity, ClaimsPrincipal? actingUser, string? samAccountName = null)
     {
         var creds = await GetCredentialsAsync("on-prem AD group membership lookup");
         if (creds is null)
@@ -601,7 +601,7 @@ public class GroupManagementService
     /// gmn-3): group search is forest-wide, so two domains can hold same-named groups and only
     /// the DN distinguishes them. Typed input passes null and goes through the exact class-aware
     /// resolver with its exactly-one refusal.</param>
-    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberDn = null)
+    public virtual async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberDn = null)
     {
         // kd-88: the add's two protection gates - the typed identity's below, the resolved principal's after it - are one
         // protected-principal check: one directory-read credential fetch, one timing line.
@@ -778,7 +778,7 @@ public class GroupManagementService
     /// <param name="memberDnHint">The listed member's DN, when known (gmn-8): the GUID stays
     /// the identity key, the DN only routes the lookup to the owning domain's server - a
     /// foreign-domain member's partition does not exist on the local domain's DCs.</param>
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberObjectGuid = null, string? memberDnHint = null)
+    public virtual async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberObjectGuid = null, string? memberDnHint = null)
     {
         // lst-1: a listed row whose immutable identity could not be resolved is INERT. The page
         // sends the row's ObjectGuid verbatim, so a blank (non-null) GUID means exactly that

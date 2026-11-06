@@ -267,6 +267,32 @@ public class CloudPasswordResetService
     // Graph. Production never sets it, and every operation builds its client from the module's own secret as before.
     internal Func<GraphTokenClient>? GraphClientForTests { get; init; }
 
+    /// <summary>
+    /// sweep-d item 29. A test seam for the Secret Server read alone, so a test can count the vault reads a reset makes
+    /// while the client is still built, kept and reused exactly as in production. Production never sets it.
+    /// </summary>
+    internal Func<int, Task<Dictionary<string, string>?>>? SecretFieldsForTests { get; init; }
+
+    /// <summary>
+    /// sweep-d item 29 (the 2026-10-30 near-instant ruling: one credential fetch per operation). How long the Graph client
+    /// built from the module's secret is kept after it was read: five minutes, the length of the window the directory-read
+    /// credentials already use (<see cref="DelineaService.DefaultCredentialWindow"/>, kd-88), but measured from the read
+    /// rather than sliding, so a rotated or revoked secret is picked up within five minutes however busy the module is. A reset used to build a new
+    /// client - one Secret Server read and one token - for each of the account re-read, the employee-ID save and the
+    /// password write, and the preflight read before them: four vault reads and four tokens, about 11-16 s. Within the
+    /// window they share one client, so one read and one token; the client keeps its own token until it is near expiry.
+    /// Zero keeps none.
+    /// </summary>
+    internal TimeSpan GraphClientWindow { get; init; } = DelineaService.DefaultCredentialWindow;
+
+    /// <summary>The clock <see cref="GraphClientWindow"/> is measured on; a test sets its own.</summary>
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    // In this process's memory only, never written anywhere; keyed by the Secret ID it was built from, so a changed
+    // GraphDelineaSecretId is fetched afresh and the old client lapses. A read that fails keeps nothing.
+    private readonly SemaphoreSlim _graphClientLock = new(1, 1);
+    private (int SecretId, GraphTokenClient Client, long FetchedAt)? _keptGraphClient;
+
     private async Task<GraphTokenClient?> GetGraphClientAsync()
     {
         if (GraphClientForTests is { } standIn)
@@ -279,25 +305,47 @@ public class CloudPasswordResetService
             return null;
         }
 
-        var fields = await _delinea.GetSecretFieldsAsync(secretId);
-        if (fields == null)
+        await _graphClientLock.WaitAsync();
+        try
         {
-            // No secret detail in the message: the Constitution forbids logging PAM responses.
-            _logger.LogError("CloudPasswordReset could not read its Graph secret from Secret Server");
-            return null;
+            var now = Clock.GetTimestamp();
+            if (_keptGraphClient is { } kept && kept.SecretId == secretId
+                && Clock.GetElapsedTime(kept.FetchedAt, now) < GraphClientWindow)
+            {
+                return kept.Client;
+            }
+
+            _keptGraphClient = null;
+
+            var fields = SecretFieldsForTests is { } read
+                ? await read(secretId)
+                : await _delinea.GetSecretFieldsAsync(secretId);
+            if (fields == null)
+            {
+                // No secret detail in the message: the Constitution forbids logging PAM responses.
+                _logger.LogError("CloudPasswordReset could not read its Graph secret from Secret Server");
+                return null;
+            }
+
+            var tenantId = fields.GetValueOrDefault("Tenant ID") ?? "";
+            var clientId = fields.GetValueOrDefault("Application ID") ?? "";
+            var clientSecret = fields.GetValueOrDefault("Client Secret") ?? "";
+
+            if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+            {
+                _logger.LogError("CloudPasswordReset Graph secret is missing one of Tenant ID, Application ID or Client Secret");
+                return null;
+            }
+
+            var client = new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
+            if (GraphClientWindow > TimeSpan.Zero)
+                _keptGraphClient = (secretId, client, now);
+            return client;
         }
-
-        var tenantId = fields.GetValueOrDefault("Tenant ID") ?? "";
-        var clientId = fields.GetValueOrDefault("Application ID") ?? "";
-        var clientSecret = fields.GetValueOrDefault("Client Secret") ?? "";
-
-        if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+        finally
         {
-            _logger.LogError("CloudPasswordReset Graph secret is missing one of Tenant ID, Application ID or Client Secret");
-            return null;
+            _graphClientLock.Release();
         }
-
-        return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
     /// <summary>

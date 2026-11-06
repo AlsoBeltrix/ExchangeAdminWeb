@@ -232,7 +232,7 @@ public sealed partial class Comms10kRefusalTests
     [InlineData("refused", "Nothing was written. Fix the file.", "failed stages")]
     [InlineData("partial", "Partly applied. Acknowledged adds: 37. Final membership: 37.", "partial or unconfirmed")]
     [InlineData("unknown", "Could not confirm. Members written: UNKNOWN. Final membership: UNKNOWN.", "partial or unconfirmed")]
-    [InlineData("interrupted", "Interrupted by application restart.", "group may be empty or partial")]
+    [InlineData("interrupted", "Interrupted by application restart.", "group may hold a mix of the old and new members")]
     [InlineData("payload", "Job payload could not be read.", "without recorded stages")]
     [InlineData("success", "Replaced and verified. Acknowledged adds: 1. Final membership: 1.", "directory outcome and counts")]
     public async Task C5RecordedOutcomesRemainVisibleWithoutServiceCredentials(string outcome, string message, string expectedSummary)

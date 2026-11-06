@@ -169,9 +169,9 @@ public sealed class GroupManagementTargetGateTests : IDisposable
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Services", "GroupManagementService.cs"));
-        var start = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var start = text.IndexOf("public virtual async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "GetMembersAsync signature not found - tripwire is stale.");
-        var end = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
+        var end = text.IndexOf("public virtual async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
         var body = text[start..end];
 
@@ -235,10 +235,10 @@ public sealed class GroupManagementTargetGateTests : IDisposable
             // The write is the member-attribute set (2026-09-03), pinned by the parameter that
             // carries the gated snapshot's member DN - the cmdlets that resolved -Members
             // themselves could not reach a cross-domain member.
-            ("public async Task<PermissionResult> AddMemberAsync(",
-             "public async Task<PermissionResult> RemoveMemberAsync(",
+            ("public virtual async Task<PermissionResult> AddMemberAsync(",
+             "public virtual async Task<PermissionResult> RemoveMemberAsync(",
              "AddParameter(\"Add\", BuildMemberAttributeWrite(candidateDn))"),
-            ("public async Task<PermissionResult> RemoveMemberAsync(",
+            ("public virtual async Task<PermissionResult> RemoveMemberAsync(",
              "// --- Helpers ---",
              "AddParameter(\"Remove\", BuildMemberAttributeWrite(memberDnResolved))"),
         })

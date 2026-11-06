@@ -104,7 +104,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
         Assert.Equal([PersonGuid], directory.Actual);
-        Assert.Equal(["clear", "add"], directory.Writes);
+        Assert.Equal(["add", "remove"], directory.Writes);
         fixture.AssertAudit(null, Comms10kOutcome.Succeeded, true);
         fixture.AssertNotification(row.Message!, Comms10kOutcome.Succeeded, true);
     }
@@ -140,7 +140,7 @@ public sealed partial class Comms10kRefusalTests
     [InlineData("target-reread", true)]
     [InlineData("primary", false)]
     [InlineData("primary", true)]
-    public async Task C2TheFinalClearGateFollowsAllPreparation(string phase, bool disableModule)
+    public async Task C2TheWriteGateFollowsAllPreparation(string phase, bool disableModule)
     {
         using var fixture = new Fixture();
         var directory = new C2Directory();
@@ -160,29 +160,32 @@ public sealed partial class Comms10kRefusalTests
         Assert.Contains("primary", directory.Calls);
     }
 
+    // sweep-d item 20: a revocation after the first write no longer stops the run halfway. The
+    // run completes and the list ends as the file; the revocation applies to the next run.
     [Theory]
-    [InlineData("clear", false, false)]
-    [InlineData("clear", true, false)]
-    [InlineData("clear", false, true)]
-    [InlineData("clear-retry", false, false)]
-    [InlineData("between-batches", true, false)]
-    [InlineData("add-retry", false, false)]
-    public async Task C2AfterAnyClearAttemptRevocationStopsWritesAndReportsReadback(
-        string boundary, bool disableModule, bool failReadback)
+    [InlineData("first-add", false)]
+    [InlineData("first-add", true)]
+    [InlineData("between-batches", true)]
+    [InlineData("add-retry", false)]
+    [InlineData("remove", false)]
+    public async Task C2ARevocationAfterTheFirstWriteDoesNotLeaveAHalfReplacedList(string boundary, bool disableModule)
     {
         using var fixture = new Fixture();
         var directory = new C2Directory(boundary == "between-batches" ? 2001 : 1)
         {
-            FailReadback = failReadback,
-            FailClearOnce = boundary == "clear-retry",
             FailAddOnce = boundary == "add-retry",
         };
         fixture.Service.ReplaceState = directory.State;
         fixture.Service.Candidates = directory.Rows.Select(row => Candidate(row.Guid, row.Dn, row.Address)).ToArray();
+        var revoked = false;
         directory.OnStep = step =>
         {
-            if ((boundary is "clear" or "clear-retry" && step == "clear")
-                || (boundary is "between-batches" or "add-retry" && step == "add")) C2Revoke(fixture, disableModule);
+            if (revoked) return;
+            if ((boundary != "remove" && step == "add") || (boundary == "remove" && step == "remove"))
+            {
+                revoked = true;
+                C2Revoke(fixture, disableModule);
+            }
         };
         var job = C2Job(C2Snapshot(), directory.Rows);
         var processor = fixture.Processor(fixture.Service);
@@ -192,42 +195,57 @@ public sealed partial class Comms10kRefusalTests
         await processor.OnJobCompletedAsync(job);
 
         var result = Assert.IsType<Comms10kUpdateResult>(fixture.Service.LastResult);
-        Assert.Equal(BulkJobRowStatus.Partial, row.Status);
-        Assert.Equal(failReadback ? Comms10kOutcome.CouldNotConfirm : Comms10kOutcome.PartlyApplied, result.Outcome);
-        Assert.Equal(directory.Rows.Count, result.MembersRequested);
-        Assert.Null(result.MembersWritten);
-        Assert.Equal(failReadback ? (int?)null : boundary == "between-batches" ? 2000 : boundary == "clear-retry" ? 1 : 0, result.FinalCount);
-        Assert.Equal(1, directory.Writes.Count(write => write == "clear"));
-        Assert.Equal(boundary is "between-batches" or "add-retry" ? 1 : 0, directory.Writes.Count(write => write == "add"));
-        Assert.Equal(1, directory.Calls.Count(call => call == "readback"));
-        Assert.Contains(disableModule ? C2Disabled : C2GroupDenied, row.Message, StringComparison.Ordinal);
-        fixture.AssertAudit(row.Message, result.Outcome);
-        fixture.AssertNotification(row.Message!, result.Outcome);
+        Assert.True(revoked);
+        Assert.Equal(BulkJobRowStatus.Success, row.Status);
+        Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
+        Assert.Equal(directory.Rows.Count, result.FinalCount);
+        Assert.Equal(directory.Rows.Count, result.MembersWritten);
+        Assert.True(directory.Actual.SetEquals(directory.Rows.Select(r => r.Guid)));
+        Assert.Equal(boundary == "between-batches" ? 2 : 1, directory.Writes.Count(write => write == "add") - (boundary == "add-retry" ? 1 : 0));
+        Assert.Equal(1, directory.Writes.Count(write => write == "remove"));
+        Assert.True(directory.Writes.LastIndexOf("add") < directory.Writes.IndexOf("remove"));
+        fixture.AssertAudit(null, result.Outcome, true);
+        fixture.AssertNotification(row.Message!, result.Outcome, true);
     }
 
     [Fact]
-    public async Task C2ReadbackCanConfirmTheApprovedPrimarySetAfterAuthorizationStopsAdds()
+    public async Task C2TheServiceConsultsAuthorizationExactlyOnce_AfterPreparation_BeforeTheFirstWrite()
     {
         using var fixture = new Fixture();
-        var directory = new C2Directory { Primaries = [PersonGuid] };
+        var directory = new C2Directory(2001);
         fixture.Service.ReplaceState = directory.State;
-        directory.OnStep = step => { if (step == "clear") C2Revoke(fixture, true); };
-        var processor = fixture.Processor(fixture.Service);
-        var job = Job();
-        await processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        var members = directory.Rows.Select(row => new Comms10kAddressResolver.ResolvedMember(row.Guid, row.Dn)).ToArray();
 
-        var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        var result = await fixture.Service.ExecuteReplaceAsync(members, "EXAMPLE\\operator", () =>
+        {
+            directory.Record("authorization");
+            return null;
+        });
 
-        var result = Assert.IsType<Comms10kUpdateResult>(fixture.Service.LastResult);
         Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
-        Assert.Equal(BulkJobRowStatus.Success, row.Status);
-        Assert.Equal(1, result.FinalCount);
-        Assert.Null(result.MembersWritten);
-        Assert.Equal(["clear"], directory.Writes);
-        Assert.Contains(C2Disabled, row.Message, StringComparison.Ordinal);
-        fixture.AssertAudit(null, result.Outcome, true);
-        fixture.AssertNotification(row.Message!, result.Outcome, true);
+        Assert.Equal(1, directory.Calls.Count(call => call == "authorization"));
+        var gate = directory.Calls.IndexOf("authorization");
+        Assert.True(gate > directory.Calls.IndexOf("primary"));
+        Assert.True(gate < directory.Calls.IndexOf("add"));
+        Assert.Equal(["add", "add", "remove"], directory.Writes);
+    }
+
+    [Fact]
+    public async Task C2ADenialAtTheSingleCheckRefusesWithTheListUntouched()
+    {
+        using var fixture = new Fixture();
+        var directory = new C2Directory();
+        fixture.Service.ReplaceState = directory.State;
+        var members = directory.Rows.Select(row => new Comms10kAddressResolver.ResolvedMember(row.Guid, row.Dn)).ToArray();
+        var before = directory.Actual.ToArray();
+
+        var result = await fixture.Service.ExecuteReplaceAsync(members, "EXAMPLE\\operator", () => C2Disabled);
+
+        Assert.Equal(Comms10kOutcome.RefusedBeforeAnyChange, result.Outcome);
+        Assert.Contains(C2Disabled, result.Message, StringComparison.Ordinal);
+        Assert.Empty(directory.Writes);
+        Assert.Equal(before, directory.Actual);
+        Assert.DoesNotContain("readback", directory.Calls);
     }
 
     [Theory]
@@ -247,7 +265,7 @@ public sealed partial class Comms10kRefusalTests
         var error = Assert.Throws<InvalidOperationException>(() =>
         {
             if (add) Comms10kService.AddMemberBatch(ps, credential, target, [PersonGuid], denied);
-            else Comms10kService.ClearMembers(ps, credential, target, denied);
+            else Comms10kService.RemoveMemberBatch(ps, credential, target, [OtherGuid], denied);
         });
         Assert.Equal(C2Disabled, error.Message);
         Assert.Empty(ps.Commands.Commands);
@@ -463,22 +481,20 @@ public sealed partial class Comms10kRefusalTests
         public List<string> Calls { get; } = [];
         public List<string> Writes { get; } = [];
         public Action<string>? OnStep { get; set; }
-        public bool FailClearOnce { get; set; }
         public bool FailAddOnce { get; set; }
         public bool FailReadback { get; set; }
         public void Record(string step) { Calls.Add(step); OnStep?.Invoke(step); }
         public void Read(bool membership)
         {
-            var readback = Writes.Contains("clear");
+            var readback = Writes.Count > 0;
             Record(readback ? "readback" : membership ? "preflight-membership" : "target-reread");
             if (readback && FailReadback) throw new InvalidOperationException("Read-back unavailable.");
         }
-        public void Clear()
+        public void Remove(string[] values)
         {
-            Writes.Add("clear");
-            Record("clear");
-            if (FailClearOnce) { FailClearOnce = false; throw new AdException(); }
-            Actual.Clear();
+            Writes.Add("remove");
+            Record("remove");
+            Actual.ExceptWith(values.Select(value => Guid.Parse(value[6..^1])));
         }
         public void Add(string[] values)
         {
@@ -505,8 +521,8 @@ public sealed partial class Comms10kRefusalTests
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Set-ADGroup", """
                 [CmdletBinding()]
-                param($Identity, [string] $Clear, [hashtable] $Add, [pscredential] $Credential)
-                if ($PSBoundParameters.ContainsKey('Clear')) { $global:C2Directory.Clear() }
+                param($Identity, [hashtable] $Remove, [hashtable] $Add, [pscredential] $Credential)
+                if ($PSBoundParameters.ContainsKey('Remove')) { $global:C2Directory.Remove([string[]] $Remove['member']) }
                 else { $global:C2Directory.Add([string[]] $Add['member']) }
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Get-ADObject", """

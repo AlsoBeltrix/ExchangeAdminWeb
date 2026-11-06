@@ -125,7 +125,7 @@
 
                             <h6>Members (@members.Count)</h6>
                             <div class="input-group input-group-sm mb-2">
-                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
+                                <input type="text" class="form-control" placeholder="UPN, email or alias address to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddMember"
                                         disabled="@(IsBusy || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
                                     @* No spinner: the member write reports to the bar. *@
@@ -167,7 +167,7 @@
 
                             <h6 class="mt-3">Owners (@(owners?.Count ?? 0))</h6>
                             <div class="input-group input-group-sm mb-2">
-                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
+                                <input type="text" class="form-control" placeholder="UPN, email or alias address to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddOwner"
                                         disabled="@(IsBusy || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
                                     @* No spinner: the member write reports to the bar. *@
@@ -335,6 +335,13 @@
     // Add and Remove buttons act on the header group.
     private bool IsBusy => isSearching || isLoadingDetails || isOperating || isMemberOp;
 
+    // sweep-d item 22, the kd-19 Self-Service Groups shape. Which load may publish into the selection
+    // (selectedGroup, members, owners). SelectGroup takes the next value, and SearchGroups and a successful
+    // DeleteGroup - the other writers of selectedGroup - advance it, so a details load or a post-write reload
+    // publishes only while the group it was started for is still the one shown. A late answer for a group the
+    // operator has left must not switch the header back to it: the next member operation reads selectedGroup.
+    private int selectionToken;
+
     private string searchTerm = "";
     private bool hasSearched;
     private List<M365Group> groups = new();
@@ -394,6 +401,8 @@
 
         isSearching = true;
         searchError = null;
+        // sweep-d item 22: a details load or reload still running for the group being left must not publish.
+        selectionToken++;
         selectedGroup = null;
         members = null;
         owners = null;
@@ -428,6 +437,16 @@
 
     private async Task SelectGroup(M365Group group)
     {
+        // sweep-d item 22. Refused while the page is busy, which is what every View button's
+        // disabled="@IsBusy" says - but that attribute is one round trip stale, so a second View inside
+        // it reached here while the first group's details were loading, and the first load's late
+        // answer switched the header back to the first group under the second group's tables. The
+        // next Add or Remove then acted on the first group. isLoadingDetails is raised below before
+        // the first await, so this also refuses a second View while the first loads.
+        if (IsBusy)
+            return;
+
+        var token = ++selectionToken;
         isLoadingDetails = true;
         refreshError = null;
         selectedGroup = group;
@@ -439,33 +458,55 @@
         using var detailActivity = Progress.Begin(
             "M365 Group Management", $"Loading {group.DisplayName}", ActivitySize.Unknown);
 
+        // This load's own outcome, for the activity. The page's fields get it only while the token is
+        // still current - only while this load's group is still the one shown.
+        var loaded = false;
         try
         {
+            // Every publish is compared with the token AFTER its await (sweep-d item 22): a Search or
+            // a Delete while this was suspended has replaced the selection, and a late answer must
+            // not put the group it was loading back on screen.
             var details = await GroupService.GetGroupDetailsAsync(group.Id);
+            if (token != selectionToken)
+                return;
             if (details != null)
                 selectedGroup = details;
 
-            members = await GroupService.GetMembersAsync(group.Id);
-            owners = await GroupService.GetOwnersAsync(group.Id);
+            var loadedMembers = await GroupService.GetMembersAsync(group.Id);
+            if (token != selectionToken)
+                return;
+            members = loadedMembers;
+
+            var loadedOwners = await GroupService.GetOwnersAsync(group.Id);
+            if (token != selectionToken)
+                return;
+            owners = loadedOwners;
+            loaded = true;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to load group details for {GroupId}", group.Id);
-            searchError = $"Failed to load details: {ex.Message}";
 
-            // Review of aud-a17. The owners read runs after the members read, so a failure
-            // there left members populated and owners null - and null rendered as
-            // "Owners (0)" / "No owners", which is a claim about the group, not about the
-            // read. Both are cleared so the panel cannot assert something nobody checked.
-            members = null;
-            owners = null;
+            if (token == selectionToken)
+            {
+                searchError = $"Failed to load details: {ex.Message}";
+
+                // Review of aud-a17. The owners read runs after the members read, so a failure
+                // there left members populated and owners null - and null rendered as
+                // "Owners (0)" / "No owners", which is a claim about the group, not about the
+                // read. Both are cleared so the panel cannot assert something nobody checked.
+                members = null;
+                owners = null;
+            }
         }
         finally
         {
+            // Unconditional, and safe to be: the guard above admits one load at a time, and nothing
+            // else raises this flag, so no newer load can be holding it when this one lowers it.
             isLoadingDetails = false;
 
             // Both, not either: "members loaded but owners did not" is not a success.
-            detailActivity.Complete(members != null && owners != null);
+            detailActivity.Complete(loaded);
         }
     }
 
@@ -642,6 +683,8 @@
             {
                 showForm = false;
                 editingGroup = null;
+                // sweep-d item 22: the deleted group's late reload must not publish.
+                selectionToken++;
                 selectedGroup = null;
                 members = null;
                 owners = null;
@@ -708,6 +751,8 @@
         // selectedGroup.DisplayName escapes the handler. There is no ErrorBoundary in this app, so
         // that does not show the operator an error, it takes the page away from them.
         var group = selectedGroup;
+        // sweep-d item 22: the selection this operation's reload may publish into.
+        var selection = selectionToken;
         if (group == null) return;
 
         // Below the early return by construction: isMemberOp is a member of IsBusy, and a raise
@@ -769,17 +814,29 @@
                 // replaced the result, wrote a SECOND audit row saying the operation failed and
                 // sent a second notification saying the same - while the change stayed applied.
                 // An operator told it failed retries work that already succeeded.
+                //
+                // sweep-d item 22: published only while this group is still the one shown. A Search
+                // during the write has replaced it, and this group's lists under another header would
+                // be the next Remove's target list.
                 try
                 {
-                    members = await GroupService.GetMembersAsync(group.Id);
-                    owners = await GroupService.GetOwnersAsync(group.Id);
+                    var reloadedMembers = await GroupService.GetMembersAsync(group.Id);
+                    var reloadedOwners = await GroupService.GetOwnersAsync(group.Id);
+                    if (selection == selectionToken)
+                    {
+                        members = reloadedMembers;
+                        owners = reloadedOwners;
+                    }
                 }
                 catch (Exception refreshEx)
                 {
                     Logger.LogWarning(refreshEx, "Reload after {Action} failed; the change itself succeeded", action);
-                    members = null;
-                    owners = null;
-                    refreshError = "The change was applied. The group lists could not be reloaded, so what is shown below may be out of date.";
+                    if (selection == selectionToken)
+                    {
+                        members = null;
+                        owners = null;
+                        refreshError = "The change was applied. The group lists could not be reloaded, so what is shown below may be out of date.";
+                    }
                 }
             }
         }

@@ -29,13 +29,31 @@ public sealed class GraphTokenClient
     /// GET that surfaces the HTTP status so callers can distinguish "empty result"
     /// from "request failed" (403/404/429/5xx). Document is null on non-success.
     /// </summary>
-    public async Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(string endpoint, CancellationToken cancellationToken = default)
+    public Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(string endpoint, CancellationToken cancellationToken = default) =>
+        GetWithStatusAsync(endpoint, headers: null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="GetWithStatusAsync(string, CancellationToken)"/> with extra request headers - for an advanced
+    /// query, which needs <c>ConsistencyLevel: eventual</c> (sweep-d item 30). The Authorization header is this
+    /// client's own and cannot be replaced from here.
+    /// </summary>
+    public async Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(
+        string endpoint, IReadOnlyDictionary<string, string>? headers, CancellationToken cancellationToken = default)
     {
         if (!TryResolveRequestUri(endpoint, out var uri))
             return (null, System.Net.HttpStatusCode.BadRequest);
 
         var token = await GetAccessTokenAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (headers is not null)
+        {
+            foreach (var (name, value) in headers)
+            {
+                if (string.Equals(name, "Authorization", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("The Authorization header is the client's own.", nameof(headers));
+                request.Headers.TryAddWithoutValidation(name, value);
+            }
+        }
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await _httpClient.SendAsync(request, cancellationToken);

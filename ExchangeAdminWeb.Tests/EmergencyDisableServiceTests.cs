@@ -120,7 +120,7 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.7.0: the mandatory ticket is judged by the shared TicketPresence rule, so one with nothing
         // visible in it is refused as a blank one is (kd-45).
         // 1.7.1: the account, ticket and lockdown choice are read above the disable's yield (kd-72).
-        Assert.Equal("1.7.1", module.Version);
+        Assert.Equal("1.7.2", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

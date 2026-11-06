@@ -2212,7 +2212,7 @@ public class DefenderEndpointDeviceServiceTests
         // consumes one response and batches 1 and 3 consume two each.
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));          // b1 posture
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));          // b1 observer
-        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}")); // b2
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.ServiceUnavailable, "{}")); // b2
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));          // b3 posture
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m3"))));          // b3 observer
 
@@ -2259,7 +2259,7 @@ public class DefenderEndpointDeviceServiceTests
         devices.Responses.Add(() => Ok(MachinesPage(2)));
 
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m1"))));
-        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.ServiceUnavailable, "{}"));
 
         var result = await service.ListDevicesAsync();
 
@@ -2374,7 +2374,7 @@ public class DefenderEndpointDeviceServiceTests
         devices.Responses.Add(() => Ok(MachinesPage(2)));
 
         // Batch 1: posture fails, so its observer request is skipped entirely.
-        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.TooManyRequests, "{}"));
+        hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.ServiceUnavailable, "{}"));
         // Batch 2: posture answers, observer fails.
         hunting.Responses.Add(() => Ok(HuntingResults(HuntingRow("m2"))));
         hunting.Responses.Add(() => StubHandler.Json(HttpStatusCode.BadRequest, "{}"));

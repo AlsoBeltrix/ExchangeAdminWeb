@@ -1153,11 +1153,6 @@ public class EmergencyDisableService
         try
         {
             var notifyEmail = _moduleConfig.GetValue("EmergencyDisable", "NotifySecurityTeam");
-            if (string.IsNullOrWhiteSpace(notifyEmail))
-            {
-                _logger.LogWarning("EmergencyDisable NotifySecurityTeam email not configured, skipping notification");
-                return SecurityNotificationOutcome.NotConfigured;
-            }
 
             var stepDetails = new Dictionary<string, string>
             {
@@ -1174,19 +1169,47 @@ public class EmergencyDisableService
                 stepDetails[step.Step] = step.Status + (step.Detail != null ? $" - {step.Detail}" : "");
             }
 
-            // The configured address is the RECIPIENT. It used to be read only as an on/off
-            // switch, and the mail then went to Email:AdminNotificationEmail - so a site that
-            // pointed this module at its security team still had the notices land with the
-            // general administrators.
+            var errorDetail = success ? null : "One or more steps failed. Manual follow-up required.";
+
+            // sweep-d item 32: BOTH recipient sets, never either. A27 made the configured address the
+            // recipient (it had been read only as an on/off switch, with the mail going to the
+            // administrators), and in doing so the administrators stopped receiving the notice at all.
+            // They are sent it again, separately, so the outcome below stays about the security team
+            // alone and an address in both lists gets one mail.
+            var securityTeam = EmailService.SplitAddresses(notifyEmail);
+            var administrators = _email.AdminRecipients
+                .Where(admin => !securityTeam.Contains(admin, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            if (administrators.Count > 0)
+            {
+                var adminDispatch = await _email.SendModuleNotificationAsync(
+                    string.Join(";", administrators), performedBy, ip, "EmergencyDisable", success, ticket, stepDetails, errorDetail);
+                if (!adminDispatch.AllDelivered)
+                    _logger.LogWarning(
+                        "EmergencyDisable notice for {Target}: {Delivered} of {Requested} administrator address(es) received it",
+                        target.UserPrincipalName, adminDispatch.Delivered, adminDispatch.Requested);
+            }
+            else if (securityTeam.Count == 0)
+            {
+                _logger.LogWarning("EmergencyDisable notice for {Target}: no administrator address is configured (Email:AdminNotificationEmail)",
+                    target.UserPrincipalName);
+            }
+
+            if (securityTeam.Count == 0)
+            {
+                _logger.LogWarning("EmergencyDisable NotifySecurityTeam email not configured; the security team was not notified");
+                return SecurityNotificationOutcome.NotConfigured;
+            }
+
             var dispatch = await _email.SendModuleNotificationAsync(
-                notifyEmail,
+                string.Join(";", securityTeam),
                 performedBy,
                 ip,
                 "EmergencyDisable",
                 success,
                 ticket,
                 stepDetails,
-                success ? null : "One or more steps failed. Manual follow-up required.");
+                errorDetail);
 
             if (dispatch.AllDelivered)
                 return SecurityNotificationOutcome.Sent;

@@ -32,9 +32,9 @@ public sealed class ProtectionCheckCallSiteTests
         { "Services/GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string member,",
             "_protectedPrincipals.BeginCheck(member)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(member)" },
         // S4b Group Management: the add's and the removal's two gates - the typed identity's and the resolved principal's.
-        { "Services/GroupManagementService.cs", "public async Task<PermissionResult> AddMemberAsync(",
+        { "Services/GroupManagementService.cs", "public virtual async Task<PermissionResult> AddMemberAsync(",
             "_protectedPrincipals.BeginCheck(member)", "CheckProtectedAsync(member, actingUser)" },
-        { "Services/GroupManagementService.cs", "public async Task<PermissionResult> RemoveMemberAsync(",
+        { "Services/GroupManagementService.cs", "public virtual async Task<PermissionResult> RemoveMemberAsync(",
             "_protectedPrincipals.BeginCheck(member)", "CheckProtectedAsync(member, actingUser)" },
         // S4c Group Management page: a confirmed batch's members, one operation.
         { "Components/Pages/GroupManagement.razor", "private async Task RemoveSelectedAsync()",

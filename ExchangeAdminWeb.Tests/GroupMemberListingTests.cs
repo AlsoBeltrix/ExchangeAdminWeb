@@ -123,7 +123,7 @@ public class GroupMemberListingTests
             "Services", "GroupManagementService.cs"));
 
         // The service guard sits at the top of RemoveMemberAsync, BEFORE any resolution.
-        var start = service.IndexOf("public async Task<PermissionResult> RemoveMemberAsync(", StringComparison.Ordinal);
+        var start = service.IndexOf("public virtual async Task<PermissionResult> RemoveMemberAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "RemoveMemberAsync signature not found - tripwire is stale.");
         var end = service.IndexOf("// --- Helpers ---", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound RemoveMemberAsync - update the tripwire.");
@@ -150,9 +150,9 @@ public class GroupMemberListingTests
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Services", "GroupManagementService.cs"));
-        var start = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var start = text.IndexOf("public virtual async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "GetMembersAsync signature not found - tripwire is stale.");
-        var end = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
+        var end = text.IndexOf("public virtual async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
         var body = text[start..end];
 
@@ -189,8 +189,8 @@ public class GroupMemberListingTests
     {
         var admin = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Services", "GroupManagementService.cs"));
-        var aStart = admin.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
-        var aEnd = admin.IndexOf("public async Task<PermissionResult> AddMemberAsync(", aStart, StringComparison.Ordinal);
+        var aStart = admin.IndexOf("public virtual async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var aEnd = admin.IndexOf("public virtual async Task<PermissionResult> AddMemberAsync(", aStart, StringComparison.Ordinal);
         Assert.True(aStart >= 0 && aEnd > aStart, "Could not bound GetMembersAsync - update the tripwire.");
         var aBody = admin[aStart..aEnd];
         Assert.Contains("(primaryGroupID={rid})", aBody, StringComparison.Ordinal);

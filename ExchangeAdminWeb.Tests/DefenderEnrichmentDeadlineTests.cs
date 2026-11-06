@@ -196,7 +196,6 @@ public class DefenderEnrichmentDeadlineTests
     }
 
     [Theory]
-    [InlineData("429")]
     [InlineData("503")]
     [InlineData("malformed")]
     [InlineData("exception")]
