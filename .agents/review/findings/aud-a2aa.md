@@ -1,7 +1,7 @@
 # aud-a2aa: every Ambiguous protection result is reported as "matches multiple AD users", which is often wrong
 
 **Severity**: LOW - diagnostic text. `Services/ConferenceRoomProtectionGate.cs` about 149: since aud-a2b/a2c an `Ambiguous` result can come from groups, lists or mixed object kinds, but the operator text always says "matches multiple AD users".
-**Status**: In progress - admitted 2026-10-23 evening from the aud-a2e agent's hand-back; inside the released scope
+**Status**: Closed; merged `3bfdc1af`, codex cr-batch-10 clean (index row). Earlier text: In progress - admitted 2026-10-23 evening from the aud-a2e agent's hand-back; inside the released scope
 **Branch**: `fix/a2e` (worktree `D:\source\ExchangeAdminWeb-wt\a2e`), continuing from `170b182f`
 **Commit**: -
 **Reviewer**: implementer (aud-a2e agent, candidate; not yet confirmed by the supervisor)

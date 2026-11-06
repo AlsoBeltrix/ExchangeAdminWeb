@@ -8,6 +8,16 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (item 45) - record drift fixed; two Constitution sentences corrected for owner confirmation
+
+Sweep item 45 done directly on master as records (`.agents/review/findings/sweep-45.md`): finding status lines for
+aud-a2ab/a2z/a2aa/a2ac/kd-66 match their index rows; aud-a2ad has an index row and a merged status; the live-assumptions
+list names aud-a2ac/a2ad and Recipient Lookup A4. `docs/ProjectConstitution.md` line 80 now carries the kd-44
+exception (unconfirmed outcome notifies administrators only, ruling 2026-10-27) and line 95 now says a cloud-only
+principal cannot be protected by this app (structural, since protected rows are on-premises identifiers), replacing the
+2026-07 "protected by address" sentence. **Owner to confirm both Constitution edits on return**; they record rulings
+and an approved plan, not new policy.
+
 ### 2026-11-06 (comms10k-order) - Comms-10k write order back to clear-then-add
 
 Merged `fix/comms10k-order` into master at `0d3fcac8` (`--no-ff`, cherry 0, worktree and branch removed) on the
@@ -47,7 +57,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** items 23-27 (sweep-f, in flight), scripts 34-39 with item 12 code half, records 45,
+**Next:** items 23-27 (sweep-f, in flight), scripts 34-39 with item 12 code half,
 then the codex-commercial reviews; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
@@ -404,6 +414,7 @@ Labelled live assumptions, each named in its record and proven only in productio
 - `aud-a23h`, `aud-a23n`, `aud-a23r`, `aud-a23j`, `aud-a23o`, `aud-a54`, `aud-a55`: Exchange
   not-found shapes and `Get-MigrationUser` status values.
 - `aud-a43`: no UPN claim under Negotiate.
+- `aud-a2ac`, `aud-a2ad` (Conference Rooms room-list lookup) and Recipient Lookup A4 (`docs/RecipientLookupAccuracy-Plan.md`): rest on the Exchange not-found recogniser that kd-89 restored (sweep item 2).
 
 **Held LOW backlog:** released 2026-10-23 evening; see the REOPENED paragraph above. No index row reads "held by
 the 2026-10-23 stopping rule" any more.

@@ -1,7 +1,7 @@
 # aud-a2z: the synced room list's re-read checks objectGUID and DN but not that mail still carries the list address
 
 **Severity**: LOW - correctness only. `Services/ConferenceRoomService.cs` about 2770 (after aud-a2e): the group re-read before the on-prem add confirms objectGUID and DN but not that `mail` still holds the room-list address, so with a lagging global catalog a room can be added to a group that no longer carries the list.
-**Status**: In progress - admitted 2026-10-23 evening from the aud-a2e agent's hand-back; inside the released scope
+**Status**: Closed; merged `3bfdc1af`, codex cr-batch-10 clean (index row). Earlier text: In progress - admitted 2026-10-23 evening from the aud-a2e agent's hand-back; inside the released scope
 **Branch**: `fix/a2e` (worktree `D:\source\ExchangeAdminWeb-wt\a2e`), continuing from `fefb3e6a`
 **Commit**: -
 **Reviewer**: implementer (aud-a2e agent, candidate; not yet confirmed by the supervisor)

@@ -77,7 +77,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 
 - Every mutating action (any create, write, delete, or change to a user, mailbox, group, identity state, access state, password, token/session state, or directory attribute) must send an administrator notification via `EmailService`.
 - A read module classified as a security-response surface must send an administrator alert. Whether a given read counts is a deployment classification, not an automatic property of touching directory data: this app's reads expose only data already visible in AD / the address book and all of them audit, so they are classified non-alerting (audit is sufficient) unless a module is purpose-built for security response. (See `.agents/decisions.md` 2026-06-30 for the current per-module classification and the deferred read-alerting work.)
-- Any change to a user's permissions or access must additionally notify the affected user, not only administrators.
+- Any change to a user's permissions or access must additionally notify the affected user, not only administrators. **Exception (owner ruling 2026-10-27, kd-44, `.agents/decisions.md`):** a change whose outcome could not be confirmed notifies administrators only; the affected user is told when the outcome is known.
 - Notification is in addition to the mandatory audit event, never a substitute for it.
 - Notification failure must not change or mask the backend operation result. Catch notification exceptions and log them separately.
 
@@ -92,7 +92,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 - OU and group checks must be based on resolved directory objects, not substring matches.
 - Mutations against directory principals should bind to immutable identifiers such as GUID/DN and re-read before write when practical.
 - Never bypass protected-principal checks in privileged modules unless the bypass is narrowly scoped, documented, and either required for compensation cleanup or carried by a named owner ruling recorded in `.agents/decisions.md` and listed as a scoped exception above. "Compensation cleanup" is not to be stretched to cover a ruling; a ruling is named as one.
-- **A cloud-only principal must be protected by address, never by group membership.** Group, OU and SamAccountName-pattern rules are evaluated from an on-premises distinguished name. A recipient that exists only in Exchange Online has no such object and cannot be a member of an on-premises group, so those three rule types can never match it — this is a structural limit, not an implementation gap. Protecting such a principal requires an entry in the protected **user** rows. Whoever adds a cloud-only mailbox to the protected set must verify this; a group rule that appears to cover it does not.
+- **A cloud-only principal cannot be protected by this app.** Protected users, groups and OUs are stored as on-premises identifiers (SID or objectGUID, `docs/ProtectedPrincipalIdentifiers-Plan.md`), and the check reads the target's on-premises SID (ruling 2026-11-03). A recipient that exists only in Exchange Online has no on-premises object, so no protected row can name it and no rule can match it; the entry validator refuses such an entry with that reason. This is a structural limit, not an implementation gap. The earlier sentence here ("protected by address, never by group membership") described a name-matched design that no longer exists; corrected 2026-11-06 under sweep item 45 (aud-a2e conflict), to be confirmed by the owner.
 
 ### Module System
 

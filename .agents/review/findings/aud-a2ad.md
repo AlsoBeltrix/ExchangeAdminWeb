@@ -7,7 +7,7 @@ are, ONCE AGAIN, OUT OF SCOPE FOR THIS MODULE. DO NOT BRING ME ANYTHING ABOUT PR
 REMOVE ALL OF THAT ILLEGALLY ADDED BULLSHIT AND LIMIT TO FIXING FUCKING ISSUES." And on room-list creation:
 "functionality CANNOT change. this is a top tier module and the stakeholders fought hard to get it where it was."
 There is NO scoped exception and NO check before the add (the earlier shape of this record is superseded).
-**Status**: Verified on branch; awaiting merge - UNREVIEWED until the single final codex-commercial review (approved by
+**Status**: Merged to master at `56cc4153` (2026-10-26); awaiting the end-of-work codex-commercial defect review (owner 2026-11-06). Earlier text: Verified on branch; awaiting merge - UNREVIEWED until the single final codex-commercial review (approved by
 owner ruling; the step 2 slice of the close-out plan in `.agents/state.md`)
 **Branch**: `fix/a2ad` (worktree `D:\source\ExchangeAdminWeb-wt\a2ad`, from master at `20e6b507`)
 **Commit**: `c22cecc5` (code, tests, docs, catalog); `86fdbde9` (this record); aud-a2z reinstated, with this record's
