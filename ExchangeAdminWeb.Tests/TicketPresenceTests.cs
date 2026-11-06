@@ -14,9 +14,9 @@ public class TicketPresenceTests
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("\t")]
-    [InlineData("́")] // marks that draw nothing alone
-    [InlineData("́̂")]
-    [InlineData("")] // private use
+    [InlineData("\u0301")] // marks that draw nothing alone
+    [InlineData("\u0301\u0302")]
+    [InlineData("\uE000")] // private use
     public void ATicketWithNothingVisibleInIt_IsMissing(string? ticket)
     {
         Assert.False(TicketPresence.IsPresent(ticket));
@@ -37,16 +37,16 @@ public class TicketPresenceTests
     [InlineData("INC\u00000042")]
     [InlineData("INC0042\u0007")]
     [InlineData("\u007F")]
-    [InlineData("​")] // kd-48: format characters - zero-width space, bidi marks, BOM, isolates
-    [InlineData("‎")]
-    [InlineData("‏")]
-    [InlineData("﻿")]
-    [InlineData("‮")]
-    [InlineData("⁦")]
-    [InlineData("​ ‏")]
-    [InlineData("INC0042​")] // a format character inside a real ticket refuses it too
-    [InlineData("INC‮0042")]
-    [InlineData("INC­0042")] // a soft hyphen
+    [InlineData("\u200B")] // kd-48: format characters - zero-width space, bidi marks, BOM, isolates
+    [InlineData("\u200E")]
+    [InlineData("\u200F")]
+    [InlineData("\uFEFF")]
+    [InlineData("\u202E")]
+    [InlineData("\u2066")]
+    [InlineData("\u200B \u200F")]
+    [InlineData("INC0042\u200B")] // a format character inside a real ticket refuses it too
+    [InlineData("INC\u202E0042")]
+    [InlineData("INC\u00AD0042")] // a soft hyphen
     public void ATicketCarryingAnInvisibleCharacter_IsNotPresent_AndSaysSo(string ticket)
     {
         Assert.False(TicketPresence.IsPresent(ticket));
@@ -76,9 +76,9 @@ public class TicketPresenceTests
     [InlineData("REQ1234567")]
     [InlineData("CHG 0042")]
     [InlineData("INC-0042/2")]
-    [InlineData("ÉTÉ-42")] // kd-48: letters beyond ASCII are visible
-    [InlineData("é")] // a combining mark after its base
-    [InlineData("INC😀")] // a surrogate pair is one character
+    [InlineData("\u00C9T\u00C9-42")] // kd-48: letters beyond ASCII are visible
+    [InlineData("e\u0301")] // a combining mark after its base
+    [InlineData("INC\uD83D\uDE00")] // a surrogate pair is one character
     public void ATicketAPersonTyped_IsPresent_PunctuationAndSpacesIncluded(string ticket)
     {
         // Validation off means any typed ticket is plain audit metadata (decision 2026-08-31), so
@@ -92,8 +92,8 @@ public class TicketPresenceTests
     [InlineData(" INC0042 ", true)]
     [InlineData("INC0042\n", true)] // trimmed as the checks trim it: the newline goes
     [InlineData("\tINC0042", true)]
-    [InlineData("INC0042​", false)] // a zero-width space is not trimmed
-    [InlineData("﻿INC0042", false)]
+    [InlineData("INC0042\u200B", false)] // a zero-width space is not trimmed
+    [InlineData("\uFEFFINC0042", false)]
     [InlineData("   ", false)]
     [InlineData(null, false)]
     public void ATicketAsTyped_IsJudgedTrimmed_AsTheCheckBehindTheButtonJudgesIt(string? typed, bool present)
@@ -105,8 +105,8 @@ public class TicketPresenceTests
     }
 
     [Theory]
-    [InlineData("INC0042​", true)]
-    [InlineData(" ­ ", true)]
+    [InlineData("INC0042\u200B", true)]
+    [InlineData(" \u00AD ", true)]
     [InlineData("   ", false)]
     [InlineData("INC0042", false)]
     [InlineData(null, false)]
