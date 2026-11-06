@@ -92,8 +92,38 @@ public sealed class MigrationApproveConfirmationTests : IDisposable
 
     // ---- part 2: the batch's state is read before any write ----------------------------------------
 
-    private static string NotCompletable(string status) =>
-        $"{Address} was not approved: approving it completes its migration batch {Address}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.";
+    private static string NotCompletable(string status) => status.EndsWith("WithErrors", StringComparison.OrdinalIgnoreCase)
+        ? WithErrors(status)
+        : $"{Address} was not approved: approving it completes its migration batch {Address}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.";
+
+    // Sweep-f item 24: a batch whose status says it holds errors is refused in those words, with what to do first.
+    private static string WithErrors(string status) =>
+        $"{Address} was not approved: its migration batch {Address} is {status}, so the batch holds errors. Approving it completes the batch, and a batch with errors is not completed here: fix or remove the errors its mailbox report names, then approve again. Nothing was changed.";
+
+    [Theory]
+    [InlineData("SyncedWithErrors")]
+    [InlineData("CompletedWithErrors")]
+    [InlineData("syncedwitherrors")]
+    public async Task ABatchThatHoldsErrors_IsRefusedSayingSo_BeforeAnyWrite(string status)
+    {
+        _exchange.Batches[Address] = Batch(Address, status: status);
+
+        var result = await _exchange.Service().ApproveMigrationUserAsync(Address);
+
+        Assert.False(result.Success);
+        Assert.Equal(WithErrors(status), result.Message);
+        Assert.Contains("holds errors", result.Message, StringComparison.Ordinal);
+        Assert.Equal([$"Get-MigrationBatch {Address}"], _exchange.CallList());
+    }
+
+    // Sweep-f item 24: the rule did not widen - a batch at exactly Synced still runs every step; the planner still says no to
+    // a batch with errors.
+    [Fact]
+    public void TheCompleteRule_IsStillExactlySynced()
+    {
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, "Synced"));
+        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, "SyncedWithErrors"));
+    }
 
     // The finding (aud-a23n), and aud-a23r's: a batch named for the mailbox, in a state the batch Complete action does not
     // complete a batch from, is refused naming the state, with the read the only call. aud-a23n refused a list of six, so

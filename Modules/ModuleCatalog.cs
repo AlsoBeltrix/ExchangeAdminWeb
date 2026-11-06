@@ -506,7 +506,8 @@ public sealed class ModuleCatalog
             // read), excludes a member of any group a name shared by several domains names, says so, and runs in a warm session
             // (sweep-c item 14).
             // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.27.1",
+            // 1.27.2: Approve's refusal for a batch of its own that holds errors (SyncedWithErrors, CompletedWithErrors) says so and what to do first; the rule (exactly Synced) is unchanged (sweep-f item 24).
+            Version = "1.27.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

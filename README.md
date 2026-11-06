@@ -44,6 +44,7 @@ Check migration eligibility and create move batches between Exchange Online and 
 - **Batch actions report what was QUEUED, not what is finished.** `Remove-MigrationBatch` and `Start-MigrationBatch` return when Exchange accepts the request; the batch then sits at `Removing` or `Starting` until Exchange completes it, so the row stays visible for a while. Batches Exchange accepted are unticked automatically; ones it refused stay ticked so they can be retried
 - The ticket field for a single-batch or single-user action appears directly beneath that row, not at the top of the table
 - The per-user `Report` button is available on every user row, not only rows that already look broken
+- **Approve** on a mailbox in a batch of its own completes that batch, so it runs only when the batch is exactly `Synced`. A batch at `SyncedWithErrors` or `CompletedWithErrors` is refused saying the batch holds errors and to fix or remove them first (owner ruling 2026-09-25); nothing is changed
 - Migration Status results can be downloaded as CSV (`BatchName,Status,Direction,Created,Started,Completed,Total,Synced,Finalized,Failed,TargetEndpoint`)
 - Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
 
