@@ -1265,6 +1265,24 @@ authorised them.
 - The Access tab's **Verify** checks the servicing groups with the module's access groups (see Per-Module Config Pages); an
   ignore there changes only what Verify reports, never who may service
 
+### Ticket numbers
+
+Where a page asks for a ticket number, the ticket must hold at least one visible character; leading and trailing
+spaces are trimmed, spaces inside it are kept. A ticket that holds an invisible character - a zero-width space,
+byte-order mark, soft hyphen, bidi mark or control character, usually carried in by a paste - is refused as that
+("Ticket number contains an invisible character ... Retype the ticket number by hand"), not as a missing ticket:
+the message shows under the ticket box and the page's submit buttons stay disabled until it is retyped. Nothing is
+stripped, so the ticket the audit records is the one typed. Each page's buttons are enabled by the same rule as the
+check behind them (`TicketPresence`).
+
+Each ticket-gated action checks the ticket again behind its button, before anything is written: presence by this
+rule, then ServiceNow where that integration is enabled (BitLocker Recovery and Cloud Password Reset: where their
+`ValidateTickets` switch is on), and a refusal is recorded in the audit log. AD Attribute
+Editor saves, Blocked Senders unblocks, Licensing Updates applies, Out of Office changes, Event Log undos and
+Migration's batch and mailbox actions record theirs with `refusedAt` `TicketValidation` and `mutationAttempted`
+`false`. Account Lockout Remediation is the exception: its service still checks presence alone, with
+`string.IsNullOrWhiteSpace`.
+
 ### Audit Logging
 
 All operations are logged as JSON Lines (.jsonl). Business audit records and diagnostic operation trace records are separate files:
@@ -1295,7 +1313,44 @@ share one root: see [Shared log root](#shared-log-root-dev-and-prod-on-one-serve
 - ConferenceRooms: `target`, `properties`, `policyTemplate`
 - DhcpAuthorization: `target`, `operation`
 
-Null fields are omitted. `error` appears only on failure.
+Null fields are omitted. `error` appears on every result but `Success`.
+
+**`result` - the closed list of values (for Splunk searches).** Every audit record's `result` is one of:
+
+| Value | Meaning |
+|---|---|
+| `Success` | The operation succeeded. |
+| `Failed` | The operation failed or was refused. A refusal is a `Failed` row too; see the conventions below to tell one from a write that failed. |
+| `Undetermined` | Whether the change was made could not be confirmed - the command was sent and the session failed before Exchange or the directory answered (Mailbox and Calendar Permissions, Migration actions, a stalled Blocked Senders unblock), or a Migration eligibility check could not decide. The change may have landed. |
+| `Cancelled` | The operator cancelled - a change stopped before its write was sent (nothing written; a Conference Rooms bulk job's row stopped by the job's cancel included), or a read cancelled (Message Analysis, Recipient Lookup). |
+| `Ineligible` | Migration eligibility checks only (`CheckMigrationEligibility`): the check found the mailbox not eligible. |
+
+A search for `result="Failed"` therefore misses changes filed `Undetermined` that may have landed, and cancels. Search
+`result!="Success"` for everything that did not plainly succeed. `error` carries the reason on every value but `Success`.
+
+**How a refusal is recorded - the current conventions.** A refusal (the operation was stopped before its write) is
+filed `Failed`, but its shape differs by page. The shapes in use today:
+
+1. A `*_Refused` action with the refusal fields `refusedAt` (the step that refused, e.g. `TicketValidation`,
+   `Authorization`) and `mutationAttempted` `false` - for example `ADAttributeEdit_Refused`.
+2. The operation's own action with the refusal fields - for example `MfaReset_Execute`, `DHCP_Deauthorize`, the
+   Mailbox and Calendar Permissions changes' own actions, `LicensingUpdates_Update` with target `(bulk) N rows`, the
+   module's own undo action for an Event Log undo.
+3. A `*_Denied` action with `error` only and no refusal fields - for example `UnblockSender_Denied`,
+   `OutOfOffice_Denied`, `Add_Denied`/`Remove_Denied` on Mailbox Permissions, `SetCalendar_Denied`/`RemoveCalendar_Denied`
+   (authorization and protected-principal refusals). Since sweep-e item 41 the ticket refusals on Blocked Senders and Out
+   of Office use the same `*_Denied` action with the refusal fields added.
+4. A `{action}_Denied` action with `mutationAttempted` `false` - Migration's authorization denials (with `targetCount`
+   and `targets` for a bulk run); its ticket refusals (sweep-e item 41) add `refusedAt` `TicketValidation`.
+5. The operation's own action, `Failed`, with the reason in `error` and no refusal fields - authorization refusals on
+   DHCP Authorization, Named Locations, M365 Groups, AD Group Management, Self-Service Groups, MFA Reset, Intune Devices
+   and Risky Users.
+6. The outcome in the action name - `_PARTIAL` (some rights applied) and `_UNCONFIRMED` (administrator notification of
+   an `Undetermined` change) on Mailbox Permissions.
+
+To find every refusal, search for `refusedAt=*` OR `action="*_Denied"` OR `action="*_Refused"`; shape 5 is told apart
+from a failed write only by its `error` text. Unifying these shapes would change what existing Splunk searches match,
+so it is left as it is pending an owner decision.
 
 **Operation trace records:** Each audit transaction writes structured trace events with the same `operationId`:
 - `operation.start` — transaction accepted by the logging pipeline
@@ -1385,6 +1440,11 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 - Set `NotifyUsersOnPermissionGrant: true` to enable
 - Sent when permissions are granted or removed
 - Friendly email with mailbox details and security notice
+- A bulk CSV run (Mailbox or Calendar Permissions) sends each affected person one mail after the run, not one per row:
+  the trustee gets one mail listing every mailbox or calendar the run changed for them, and each owner one mail listing
+  every user whose access to their mailbox or calendar changed. A person with a single change gets the same mail a
+  single change sends. A row Exchange answers as changing nothing (the right already in place, already absent, or the
+  calendar entry already at that level) is shown as "No change" in the run's results and mails nobody.
 
 **Boolean settings:** `Email:SmtpUseSsl`, `Email:NotifyUsersOnPermissionGrant` and `ServiceNow:Enabled`
 take `true` or `false`, in any case. Left out or blank, each is `false`. A value that is neither -
@@ -1394,9 +1454,8 @@ corrected it is read as:
   text. A relay that does not offer TLS on connect then refuses the mail, and each failure is logged.
 - `ServiceNow:Enabled`: `true`, so a mistyped value never passes every ticket unchecked. Without a
   reachable ServiceNow instance, each ticket's check then fails.
-- `Email:NotifyUsersOnPermissionGrant`: `false`, as when it is left out, and the Home page then does
-  not say that users are notified. Until a follow-up lands, the Mailbox Permissions and Calendar
-  Permissions pages still fail to render on such a value.
+- `Email:NotifyUsersOnPermissionGrant`: `false`, as when it is left out, and the Home, Mailbox
+  Permissions and Calendar Permissions pages then do not say that users are notified.
 
 Before, such a value stopped the Home page, and every page that sends mail or checks a ticket.
 

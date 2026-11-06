@@ -106,6 +106,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(AttributeEditorHarness.Operator()));
         SetProperty(page, "AuthStateProvider", authState);
         SetProperty(page, "AuthorizationService", _authorization);
+        SetProperty(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         SetProperty(page, "ClientInfo", new ClientInfoService { IpAddress = Ip });
         SetProperty(page, "Progress", progress ?? _progress);
         SetProperty(page, "Logger", logger ?? NullLogger<Page>.Instance);
@@ -151,6 +152,49 @@ public sealed class EventLogUndoRefusalTests : IDisposable
 
     private static string Text(JsonElement record, string property) =>
         record.GetProperty(property).GetString() ?? "";
+
+    // Sweep item 41. The undo's ticket was its only gate's to judge - Confirm's markup, and a blank-ticket return here that left
+    // no record. It is now checked behind the button - presence by the shared rule, then ServiceNow where enabled - before the
+    // authorization re-check, and the refusal is the module's own refused-undo record, refusedAt TicketValidation.
+    public static TheoryData<string> UnusableTickets => ["", "   ", "CHG" + (char)0x200B + "0300"];
+
+    [Theory]
+    [MemberData(nameof(UnusableTickets))]
+    public async Task AnUndoWithNoUsableTicket_LeavesOneRefusalRecord_BeforeTheAuthorizationCheck(string ticket)
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        SetField(page, "undoTicket", ticket);
+
+        await ExecuteUndo(page);
+
+        var shown = Field<string?>(page, "undoError");
+        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), shown);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEditor_Undo", Text(record, "action"));
+        Assert.Equal("TicketValidation", Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal(shown, Text(record, "error"));
+        Assert.Empty(_authorization.ReceivedCalls());
+        Assert.Equal(0, _h.Service.SessionsOpened);
+    }
+
+    [Fact]
+    public async Task AnUndoWithATicketServiceNowRejects_LeavesOneRefusalRecord_BeforeTheAuthorizationCheck()
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await ExecuteUndo(page);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("TicketValidation", Text(record, "refusedAt"));
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", Text(record, "error"));
+        Assert.Single(requests);
+        Assert.Empty(_authorization.ReceivedCalls());
+    }
 
     [Theory]
     [InlineData("EventLog")]

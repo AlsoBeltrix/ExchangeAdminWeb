@@ -395,6 +395,147 @@ public class EmailService
     }
 
     /// <summary>
+    /// Sweep item 21. One mail to the trustee of a bulk permission run, listing every mailbox or calendar the run changed
+    /// their access to, where the run used to send one <see cref="SendUserNotificationAsync"/> per row. Gated by the same
+    /// <c>NotifyUsersOnPermissionGrant</c> switch. <paramref name="changes"/> pairs how each target is named to the trustee
+    /// (a calendar as "<c>address (Calendar)</c>") with the permission that changed.
+    /// </summary>
+    public virtual async Task SendUserDigestNotificationAsync(
+        string userEmail,
+        IReadOnlyList<(string Target, string Permission)> changes,
+        string performedBy,
+        bool isGrant)
+    {
+        if (!_notifyUsers)
+        {
+            _logger.LogDebug("User notifications disabled, skipping notification to {Email}", userEmail);
+            return;
+        }
+
+        var subject = isGrant ? "Mailbox Access Granted" : "Mailbox Access Removed";
+        var headerText = isGrant ? "Mailbox Access Granted" : "Mailbox Access Removed";
+        var headerColor = isGrant ? "#0078d4" : "#dc3545";
+        var actionWord = isGrant ? "granted" : "removed";
+        var anyFullAccess = changes.Any(c => c.Permission.Contains("FullAccess", StringComparison.Ordinal));
+
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+        var rows = string.Concat(changes.Select(c => $"<tr><td>{h(c.Target)}</td><td>{h(c.Permission)}</td></tr>"));
+        var body = $@"<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: {headerColor}; color: white; padding: 20px; border-radius: 5px 5px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; }}
+        .footer {{ background: #f0f0f0; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; color: #666; }}
+        .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 3px; }}
+        .details {{ background: white; padding: 10px; margin: 10px 0; border-left: 3px solid {headerColor}; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        th, td {{ text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; }}
+    </style>
+</head>
+<body>
+    <div class=""container"">
+        <div class=""header"">
+            <h2>{h(headerText)}</h2>
+        </div>
+        <div class=""content"">
+            <p>Hello,</p>
+            <p>Your access to the following {changes.Count} mailboxes and calendars has been {actionWord}:</p>
+            <div class=""details"">
+                <table><tr><th>Mailbox</th><th>Permission</th></tr>{rows}</table>
+                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {h(performedBy)}<br>
+                <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}
+            </div>
+            {(isGrant && anyFullAccess ? "<p>A mailbox with Full Access may automatically appear in your Outlook if AutoMapping is enabled.</p>" : "")}
+            {(!isGrant && anyFullAccess ? "<p>If a mailbox was previously auto-mapped to your Outlook, it may take up to 24 hours to disappear, or you may need to restart Outlook.</p>" : "")}
+            <div class=""warning"">
+                <strong>Important:</strong> If you were unaware of this change or did not request this {(isGrant ? "access" : "removal")}, please contact the IT Service Desk immediately.
+            </div>
+        </div>
+        <div class=""footer"">
+            <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+            <p>&copy; {DateTime.Now.Year} Your organization. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>";
+
+        await SendEmailAsync(userEmail, subject, body);
+    }
+
+    /// <summary>
+    /// Sweep item 21. One mail to the owner of a mailbox or calendar a bulk permission run changed, listing every user whose
+    /// access to it the run granted or removed, where the run used to send one <see cref="SendOwnerNotificationAsync"/> per
+    /// row. Gated by the same <c>NotifyUsersOnPermissionGrant</c> switch. A permission naming "Calendar" makes it a calendar
+    /// notice, as <see cref="SendOwnerNotificationAsync"/> decides.
+    /// </summary>
+    public virtual async Task SendOwnerDigestNotificationAsync(
+        string ownerEmail,
+        IReadOnlyList<(string User, string Permission)> changes,
+        string performedBy,
+        bool isGrant)
+    {
+        if (!_notifyUsers)
+        {
+            _logger.LogDebug("User notifications disabled, skipping notification to {Email}", ownerEmail);
+            return;
+        }
+
+        var isCalendar = changes.Any(c => c.Permission.Contains("Calendar", StringComparison.Ordinal));
+        var resource = isCalendar ? "Calendar" : "Mailbox";
+        var subject = isGrant ? $"Access to Your {resource} Has Been Granted" : $"Access to Your {resource} Has Been Removed";
+        var headerText = isGrant ? $"{resource} Access Granted" : $"{resource} Access Removed";
+        var headerColor = isGrant ? "#ffc107" : "#28a745";
+        var actionWord = isGrant ? "granted access to" : "removed from";
+
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+        var rows = string.Concat(changes.Select(c => $"<tr><td>{h(c.User)}</td><td>{h(c.Permission)}</td></tr>"));
+        var body = $@"<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: {headerColor}; color: white; padding: 20px; border-radius: 5px 5px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; }}
+        .footer {{ background: #f0f0f0; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; color: #666; }}
+        .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 3px; }}
+        .details {{ background: white; padding: 10px; margin: 10px 0; border-left: 3px solid {headerColor}; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        th, td {{ text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; }}
+    </style>
+</head>
+<body>
+    <div class=""container"">
+        <div class=""header"">
+            <h2>{h(headerText)}</h2>
+        </div>
+        <div class=""content"">
+            <p>Hello,</p>
+            <p>The following {changes.Count} users have been {actionWord} your {resource.ToLowerInvariant()}:</p>
+            <div class=""details"">
+                <table><tr><th>User</th><th>Permission</th></tr>{rows}</table>
+                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {h(performedBy)}<br>
+                <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}
+            </div>
+            <div class=""warning"">
+                <strong>Security Notice:</strong> If you did not authorize this change or have concerns about this access, please contact the IT Service Desk immediately.
+            </div>
+        </div>
+        <div class=""footer"">
+            <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+            <p>&copy; {DateTime.Now.Year} Your organization. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>";
+
+        await SendEmailAsync(ownerEmail, subject, body);
+    }
+
+    /// <summary>
     /// Tells the mailbox owner what an administrator did to their auto-reply: enabled, scheduled
     /// (with its window) or disabled. Gated by the same <c>NotifyUsersOnPermissionGrant</c> switch
     /// as the other affected-user notifications, and virtual so it is test-seamable like them.

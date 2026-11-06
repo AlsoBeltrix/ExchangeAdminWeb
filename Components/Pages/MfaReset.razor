@@ -59,7 +59,7 @@
 
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                     </div>
                 </div>
             </div>
@@ -102,7 +102,7 @@
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <strong>Authentication Methods for @listedUpn</strong>
                         <button class="btn btn-danger btn-sm" @onclick="ConfirmReset"
-                                disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                                disabled="@(isLoading || !TicketPresence.IsPresentAsTyped(ticketNumber))">
                             Reset All Methods
                         </button>
                     </div>
@@ -288,6 +288,11 @@
 
     private async Task ExecuteReset()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // kd-46. Captured at handler entry, ABOVE the raise and above the yield below, which is a real
         // yield back to the message loop: the ticket box binds on oninput and its disabled attribute
         // reaches the browser one round trip late, so a keystroke landing in that window used to change

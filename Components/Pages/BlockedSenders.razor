@@ -111,7 +111,7 @@
                     <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
                     <input id="ticketNumber" class="form-control" type="text"
                            placeholder="INC0001234 or REQ0005678"
-                           @bind="ticketNumber" @bind:event="oninput" />
+                           @bind="ticketNumber" @bind:event="oninput" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                     <div class="form-text">Service request or incident ticket number</div>
                 </div>
                 <div class="mb-3">
@@ -120,7 +120,7 @@
                            placeholder="Why this sender is being unblocked"
                            @bind="reason" />
                 </div>
-                <button class="btn btn-danger me-2" @onclick="ConfirmUnblock" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                <button class="btn btn-danger me-2" @onclick="ConfirmUnblock" disabled="@(isLoading || !TicketPresence.IsPresentAsTyped(ticketNumber))">
                                         Confirm Unblock
                 </button>
                 <button class="btn btn-secondary" @onclick="CancelUnblock" disabled="@isLoading">Cancel</button>
@@ -142,6 +142,9 @@
 
     private string? confirmAddress;
     private string ticketNumber = string.Empty;
+
+    // Sweep item 41: an [Inject] property, not an @inject directive, so no markup line moves.
+    [Inject] private ServiceNowService ServiceNow { get; set; } = default!;
     private string reason = string.Empty;
 
     protected override async Task OnInitializedAsync()
@@ -374,6 +377,30 @@
         try
         {
             activity.Step("checking whether this sender may be unblocked");
+
+            // Sweep item 41. The ticket, checked here behind the button, which was its only gate: presence by the shared rule
+            // (kd-24), then ServiceNow where that integration is enabled - a dormant ServiceNow passes every ticket, a blank one
+            // included (kd-18). Refused before anything is read or written, and recorded as this page's other refusals are.
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                var ticketRefusal = $"Ticket validation failed: {ticketValidation.Message}";
+                try
+                {
+                    Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
+                        "BlockedSenders", address, success: false, ticketNumber: ticket,
+                        errorDetail: ticketRefusal,
+                        extra: new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false });
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit for the ticket refusal of the unblock of {Address}", address);
+                }
+                result = PermissionResult.Fail(ticketRefusal);
+                isLoading = false;
+                return;
+            }
+
 
             // Re-check authorization immediately before the write: a user removed from the
             // section group (or whose module was disabled) mid-session must not keep mutating.

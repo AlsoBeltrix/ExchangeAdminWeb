@@ -123,7 +123,7 @@ public static class ClickGateRegistry
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
-        ExpectedLineCount = 4446,
+        ExpectedLineCount = 4474,
 
         Predicates =
         [
@@ -481,7 +481,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DhcpAuthorization => new()
     {
         Page = "DhcpAuthorization.razor",
-        ExpectedLineCount = 456,
+        ExpectedLineCount = 467,
 
         Predicates =
         [
@@ -593,7 +593,7 @@ public static class ClickGateRegistry
                 + "offered, and a mechanical rewrite to the bare predicate would delete it"),
 
             new AnnotatedControl(82, "@onclick=\"() => RemoveServer(server)\"",
-                ["string.IsNullOrWhiteSpace(ticketNumber)"],
+                ["!TicketPresence.IsPresentAsTyped(ticketNumber)"],
                 RendersOnlyWhen:
                 "only while confirmRemove == server. RemoveServer re-checks the ticket itself, so "
                 + "this clause is not the sole enforcement the way IntuneDevices 403 was, but it is "
@@ -603,7 +603,7 @@ public static class ClickGateRegistry
                 [
                     "string.IsNullOrWhiteSpace(newDnsName)",
                     "string.IsNullOrWhiteSpace(newIpAddress)",
-                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "always. Three form-validity clauses that IsBusy is OR-ed in front of, never "
@@ -741,7 +741,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 657,
+        ExpectedLineCount = 662,
 
         Predicates =
         [
@@ -888,7 +888,7 @@ public static class ClickGateRegistry
                 + "isolation cannot tell they are two controls rather than one moved line"),
 
             new AnnotatedControl(196, "@onclick=\"() => DeleteLocation(editingLocation)\"",
-                ["string.IsNullOrWhiteSpace(formTicketNumber)"],
+                ["!TicketPresence.IsPresentAsTyped(formTicketNumber)"],
                 RendersOnlyWhen:
                 "only while confirmDelete == editingLocation.Id. DeleteLocation re-checks the "
                 + "ticket since kd-7, so like DhcpAuthorization 82 this clause is no longer the only "
@@ -898,7 +898,7 @@ public static class ClickGateRegistry
             new AnnotatedControl(205, "@onclick=\"SaveLocation\"",
                 [
                     "string.IsNullOrWhiteSpace(formDisplayName)",
-                    "string.IsNullOrWhiteSpace(formTicketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(formTicketNumber)",
                 ],
                 RendersOnlyWhen:
                 "always, while the form is open. Two form-validity clauses that IsBusy is OR-ed in "
@@ -1133,7 +1133,7 @@ public static class ClickGateRegistry
     private static PageGateEntry MailboxPermissions => new()
     {
         Page = "MailboxPermissions.razor",
-        ExpectedLineCount = 828,
+        ExpectedLineCount = 838,
 
         // One flag, one page-wide predicate, and that was checked rather than assumed: Revision 1
         // found a single predicate provably wrong on two OTHER pages. This page has one view. The
@@ -1317,7 +1317,7 @@ public static class ClickGateRegistry
                 + "clause is the only enforcement - the IntuneDevices 403 shape"),
 
             new AnnotatedControl(138, "@onclick=\"ProcessBulk\"",
-                ["csvFile is null", "string.IsNullOrWhiteSpace(bulkTicketNumber)"],
+                ["csvFile is null", "!TicketPresence.IsPresentAsTyped(bulkTicketNumber)"],
                 RendersOnlyWhen:
                 "only while tabIndex == 2. ProcessBulk re-checks the file itself - that null check "
                 + "is what the registered RaiseAfterEarlyReturn below is about - but it does NOT "
@@ -1534,7 +1534,7 @@ public static class ClickGateRegistry
     private static PageGateEntry CalendarPermissions => new()
     {
         Page = "CalendarPermissions.razor",
-        ExpectedLineCount = 782,
+        ExpectedLineCount = 792,
 
         // One flag, one page-wide predicate, on the twin's reasoning re-checked against this file
         // rather than copied: the tab strip, the single-mailbox form, the bulk form, the on-prem
@@ -1708,7 +1708,7 @@ public static class ClickGateRegistry
                 + "enforcement - the IntuneDevices 403 shape"),
 
             new AnnotatedControl(137, "@onclick=\"ProcessBulk\"",
-                ["csvFile is null", "string.IsNullOrWhiteSpace(bulkTicketNumber)"],
+                ["csvFile is null", "!TicketPresence.IsPresentAsTyped(bulkTicketNumber)"],
                 RendersOnlyWhen:
                 "only while tabIndex == 2. ProcessBulk re-checks the file itself - that null check "
                 + "is what the registered RaiseAfterEarlyReturn below is about - but it does NOT "
@@ -1930,6 +1930,11 @@ public static class ClickGateRegistry
     /// the exact harm every ForbiddenGuardSite below exists to prevent. Choosing between those two is
     /// an owner decision, so no handler guard was added and ExactlyOneGuard is empty, as it is on
     /// pages 1 and 2 for the same structural reason.
+    /// Sweep item 42 (2026-11-06): the Confirm lambda read confirmAction.Value at the click, so that stale second Confirm
+    /// threw - the handler clears confirmAction as it starts - and ended the circuit. The lambda now hands the nullable
+    /// over and ExecuteActionAsync ignores, as its first statement, a Confirm with nothing staged or one arriving while
+    /// actingDeviceId is set. That guard names the handler's own flag only, not ActionsDisabled, so a click landing during
+    /// a detail read is not swallowed and the owner decision above stays open; ExactlyOneGuard stays empty.
     /// </para>
     /// <para>
     /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page AFTER the
@@ -1943,7 +1948,7 @@ public static class ClickGateRegistry
     private static PageGateEntry IntuneDevices => new()
     {
         Page = "IntuneDevices.razor",
-        ExpectedLineCount = 1685,
+        ExpectedLineCount = 1693,
 
         // Kept as ActionsDisabled rather than renamed to IsBusy, which is what the four pages before
         // it call their predicate. The name was already on the page and is quoted by
@@ -2153,9 +2158,9 @@ public static class ClickGateRegistry
 
         AnnotatedControls =
         [
-            new AnnotatedControl(402, "@onclick=\"() => ExecuteActionAsync(device, confirmAction.Value)\"",
+            new AnnotatedControl(402, "@onclick=\"() => ExecuteActionAsync(device, confirmAction)\"",
                 [
-                    "string.IsNullOrWhiteSpace(actionTicket)",
+                    "!TicketPresence.IsPresentAsTyped(actionTicket)",
                     "!WipeNameConfirmed(device, confirmAction.Value)",
                 ],
                 RendersOnlyWhen:
@@ -2323,7 +2328,7 @@ public static class ClickGateRegistry
     /// in this suite is a containment test over the tag text, so a tag holding the rest of the file
     /// passes all of them for the wrong reason. Three consequences landed on this entry. The
     /// per-row Remove is registered under AnnotatedControls with its three non-busy clauses -
-    /// string.IsNullOrWhiteSpace(ticketNumber), string.IsNullOrEmpty(member.ObjectGuid) and
+    /// !TicketPresence.IsPresentAsTyped(ticketNumber), string.IsNullOrEmpty(member.ObjectGuid) and
     /// member.IsPrimaryMember. The last two are lst-1 and the primary-group rule, and together they
     /// are CanRemove at 737, which the select-all and per-row checkboxes registered under
     /// DomSyncedControls both depend on; a rewrite dropping them here would leave a row's checkbox
@@ -2353,7 +2358,7 @@ public static class ClickGateRegistry
         // well below every registered control (the lowest is 315), so no line key moved -
         // only the count. Verified by running the ClickGate suite after the edit. kd-18 and kd-24
         // the same.
-        ExpectedLineCount = 1216,
+        ExpectedLineCount = 1226,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces
@@ -2634,7 +2639,7 @@ public static class ClickGateRegistry
             new AnnotatedControl(118, "@onclick=\"AddMember\"",
                 [
                     "string.IsNullOrWhiteSpace(newMember)",
-                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "inside the manage card, inside the answered-and-allowed protection branch, inside "
@@ -2650,15 +2655,15 @@ public static class ClickGateRegistry
                 + "holds canManageOnPrem. The clause stops an empty paste being resolved"),
 
             // Both clauses are anchored with "|| " for the same reason as 274 below: the title at
-            // 143 explains both refusals in prose naming the same two expressions - "@(string.
-            // IsNullOrWhiteSpace(ticketNumber) ? ..." and "(ResolvedCount == 0 ? ...". Registered
+            // 143 explains both refusals in prose naming the same two expressions - "@(!TicketPresence.
+            // IsPresentAsTyped(ticketNumber) ? ..." and "(ResolvedCount == 0 ? ...". Registered
             // bare, either would have kept passing after being deleted from the disabled attribute.
             // The "|| " occurs only in the gate, and it says something the bare clause does not:
             // this condition is OR-ed alongside the predicate, never the whole of the gate.
             new AnnotatedControl(141, "@onclick=\"AddResolvedAsync\"",
                 [
                     "|| ResolvedCount == 0",
-                    "|| string.IsNullOrWhiteSpace(ticketNumber)",
+                    "|| !TicketPresence.IsPresentAsTyped(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "inside the bulk add panel, as Resolve above it. ResolvedCount == 0 is the only thing "
@@ -2672,7 +2677,7 @@ public static class ClickGateRegistry
             new AnnotatedControl(190, "@onclick=\"() => showRemoveConfirm = true\"",
                 [
                     "|| SelectedCount == 0",
-                    "|| string.IsNullOrWhiteSpace(ticketNumber)",
+                    "|| !TicketPresence.IsPresentAsTyped(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "inside the manage card's member table region and only while canManageOnPrem. This "
@@ -2698,7 +2703,7 @@ public static class ClickGateRegistry
             // a duplicate and not a house style.
             new AnnotatedControl(274, "@onclick=\"() => RemoveMember(member)\"",
                 [
-                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(ticketNumber)",
                     "|| string.IsNullOrEmpty(member.ObjectGuid)",
                     "|| member.IsPrimaryMember",
                 ],
@@ -2934,7 +2939,7 @@ public static class ClickGateRegistry
     private static PageGateEntry M365GroupManagement => new()
     {
         Page = "M365GroupManagement.razor",
-        ExpectedLineCount = 899,
+        ExpectedLineCount = 904,
 
         Predicates =
         [
@@ -3223,7 +3228,7 @@ public static class ClickGateRegistry
             new AnnotatedControl(129, "@onclick=\"AddMember\"",
                 [
                     "string.IsNullOrWhiteSpace(addMemberIdentity)",
-                    "string.IsNullOrWhiteSpace(memberTicketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(memberTicketNumber)",
                 ],
                 RendersOnlyWhen:
                 "only inside the member/owner panel, so only while selectedGroup != null && members "
@@ -3231,7 +3236,7 @@ public static class ClickGateRegistry
                 + "identity, and the service takes no ticket at all"),
 
             new AnnotatedControl(149, "@onclick=\"() => RemoveMember(m)\"",
-                ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
+                ["!TicketPresence.IsPresentAsTyped(memberTicketNumber)"],
                 RendersOnlyWhen:
                 "once per member row, inside the member panel, and then only while "
                 + "confirmRemoveMember == m.Id. RunMemberOpAsync re-checks the ticket (kd-7); "
@@ -3240,13 +3245,13 @@ public static class ClickGateRegistry
             new AnnotatedControl(171, "@onclick=\"AddOwner\"",
                 [
                     "string.IsNullOrWhiteSpace(addOwnerIdentity)",
-                    "string.IsNullOrWhiteSpace(memberTicketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(memberTicketNumber)",
                 ],
                 RendersOnlyWhen:
                 "as AddMember at 124, on the owners half of the same panel"),
 
             new AnnotatedControl(191, "@onclick=\"() => RemoveOwner(o)\"",
-                ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
+                ["!TicketPresence.IsPresentAsTyped(memberTicketNumber)"],
                 RendersOnlyWhen:
                 "once per owner row, only while confirmRemoveOwner == o.Id. Same footing as 149, "
                 + "on the half where removing the last row leaves a group nobody owns"),
@@ -3265,7 +3270,7 @@ public static class ClickGateRegistry
                 + "gated and helpfully 'fix' it"),
 
             new AnnotatedControl(291, "@onclick=\"() => DeleteGroup(editingGroup)\"",
-                ["string.IsNullOrWhiteSpace(formTicketNumber)"],
+                ["!TicketPresence.IsPresentAsTyped(formTicketNumber)"],
                 RendersOnlyWhen:
                 "only while showForm && editingGroup != null && confirmDelete == editingGroup.Id. "
                 + "DeleteGroup re-checks the ticket since kd-7; this clause is the click gate's half "
@@ -3274,7 +3279,7 @@ public static class ClickGateRegistry
             new AnnotatedControl(300, "@onclick=\"SaveGroup\"",
                 [
                     "string.IsNullOrWhiteSpace(formDisplayName)",
-                    "string.IsNullOrWhiteSpace(formTicketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(formTicketNumber)",
                     "(editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname))",
                 ],
                 RendersOnlyWhen:
@@ -3549,7 +3554,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1838,
+        ExpectedLineCount = 1848,
 
         Predicates =
         [
@@ -3927,7 +3932,7 @@ public static class ClickGateRegistry
             new AnnotatedControl(125, "@onclick=\"SetupSingleRoom\"",
                 [
                     "string.IsNullOrWhiteSpace(roomEmail)",
-                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "always, while the Room Finder tab is open. The roomEmail clause IS the only "
@@ -3937,7 +3942,7 @@ public static class ClickGateRegistry
                 + "but it is still a precondition and not a busy condition"),
 
             new AnnotatedControl(158, "@onclick=\"ApplyFinderCsv\"",
-                ["string.IsNullOrWhiteSpace(csvFinderTicket)"],
+                ["!TicketPresence.IsPresentAsTyped(csvFinderTicket)"],
                 RendersOnlyWhen:
                 "only while finderPreview.Count > 0 && !finderApplied - the staged triple. That "
                 + "reachability is the whole reason finderPreview and finderApplied are registered "
@@ -3949,7 +3954,7 @@ public static class ClickGateRegistry
                 [
                     "string.IsNullOrWhiteSpace(typeRoomEmail)",
                     "string.IsNullOrWhiteSpace(selectedRoomType)",
-                    "string.IsNullOrWhiteSpace(typeTicketNumber)",
+                    "!TicketPresence.IsPresentAsTyped(typeTicketNumber)",
                 ],
                 RendersOnlyWhen:
                 "always, while the Room Type tab is open. typeRoomEmail is the sole enforcement, as "
@@ -3957,7 +3962,7 @@ public static class ClickGateRegistry
                 + "the awaits, so that one is belt and braces"),
 
             new AnnotatedControl(339, "@onclick=\"ApplyTypeCsv\"",
-                ["string.IsNullOrWhiteSpace(csvTypeTicket)"],
+                ["!TicketPresence.IsPresentAsTyped(csvTypeTicket)"],
                 RendersOnlyWhen:
                 "only while typePreview.Count > 0 && !typeApplied - the second staged triple, same "
                 + "shape as 158"),

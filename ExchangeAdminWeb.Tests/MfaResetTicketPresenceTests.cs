@@ -71,7 +71,7 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
 
         await Reset(page);
 
-        AssertRefused(page, ticket, "Ticket validation failed: Ticket number is required");
+        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket));
     }
 
     [Fact]

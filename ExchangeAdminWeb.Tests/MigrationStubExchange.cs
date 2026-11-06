@@ -795,6 +795,7 @@ internal sealed class MigrationStubExchange : IDisposable
         Set(page, "Email", new EmailService(_config, NullLogger<EmailService>.Instance));
         Set(page, "AuthStateProvider", auth);
         Set(page, "AuthorizationService", authorization);
+        Set(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         Set(page, "ReportStore", new MigrationReportStore(Environment));
         Set(page, "Logger", NullLogger<Migration>.Instance);
         Set(page, "Progress", new ExchangeAdminWeb.Services.Progress.ActivityProgressService());

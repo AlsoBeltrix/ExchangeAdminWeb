@@ -40,11 +40,42 @@ public static class TicketPresence
     /// </summary>
     public const string RequiredMessage = "Ticket number is required";
 
+    /// <summary>
+    /// Sweep item 40. The words a ticket is refused with when it holds something that is never part of a ticket - a control
+    /// or Unicode format character, or an unpaired surrogate - where it holds a visible character too or nothing but such
+    /// characters. It used to be refused as <see cref="RequiredMessage"/>, so an operator who could see a ticket in the box
+    /// (a pasted ticket carrying a zero-width space, byte-order mark, soft hyphen or bidi mark) was told none had been given.
+    /// Nothing is stripped: the ticket the audit records is the one the operator typed, so the operator is asked to retype it.
+    /// </summary>
+    public const string InvisibleCharacterMessage =
+        "Ticket number contains an invisible character (a zero-width space, byte-order mark, soft hyphen, bidi mark or control character, usually carried in by a paste). Retype the ticket number by hand";
+
     /// <summary>True when <paramref name="ticket"/> is a ticket at all; see the class remarks.</summary>
-    public static bool IsPresent([NotNullWhen(true)] string? ticket)
+    public static bool IsPresent([NotNullWhen(true)] string? ticket) => Problem(ticket) is null;
+
+    /// <summary>
+    /// Sweep item 40. <see cref="IsPresent"/> for a ticket as the operator typed it, trimmed as every check in front of a
+    /// write trims it before it judges and records it - what a submit button's enabled state is decided by, so the button
+    /// and the check behind it agree: a button is enabled only for a ticket that check will take as present.
+    /// </summary>
+    public static bool IsPresentAsTyped(string? typed) => IsPresent(typed?.Trim());
+
+    /// <summary>
+    /// Sweep item 40. Whether a ticket as typed is refused for an invisible character (<see cref="InvisibleCharacterMessage"/>)
+    /// - what a page shows beside its ticket box, so a button disabled for it says why.
+    /// </summary>
+    public static bool HasInvisibleCharacterAsTyped(string? typed) =>
+        Problem(typed?.Trim()) is InvisibleCharacterMessage;
+
+    /// <summary>
+    /// Sweep item 40. Why <paramref name="ticket"/> is not a ticket: null when it is one, <see cref="RequiredMessage"/> when it
+    /// holds nothing but white space - or nothing visible, with nothing in it that is never part of a ticket - and
+    /// <see cref="InvisibleCharacterMessage"/> when it holds a control or format character or an unpaired surrogate.
+    /// </summary>
+    public static string? Problem(string? ticket)
     {
-        if (string.IsNullOrEmpty(ticket))
-            return false;
+        if (string.IsNullOrWhiteSpace(ticket))
+            return RequiredMessage;
 
         var visible = false;
         var rest = ticket.AsSpan();
@@ -52,19 +83,31 @@ public static class TicketPresence
         {
             // An unpaired surrogate is not text at all.
             if (Rune.DecodeFromUtf16(rest, out var rune, out var consumed) != OperationStatus.Done)
-                return false;
+                return InvisibleCharacterMessage;
             rest = rest[consumed..];
 
             var category = Rune.GetUnicodeCategory(rune);
             if (category is UnicodeCategory.Control or UnicodeCategory.Format)
-                return false;
+                return InvisibleCharacterMessage;
 
             if (!Rune.IsWhiteSpace(rune) && !DrawsNothingAlone(category))
                 visible = true;
         }
 
-        return visible;
+        return visible ? null : RequiredMessage;
     }
+
+    /// <summary>
+    /// Sweep item 40. <see cref="Problem"/> in a caller's own words for a missing ticket: null when present,
+    /// <paramref name="whenMissing"/> when none was given, and <see cref="InvisibleCharacterMessage"/> with a full stop when
+    /// it holds an invisible character - for the checks that refuse a missing ticket in words of their own.
+    /// </summary>
+    public static string? Describe(string? ticket, string whenMissing) => Problem(ticket) switch
+    {
+        null => null,
+        InvisibleCharacterMessage => InvisibleCharacterMessage + ".",
+        _ => whenMissing,
+    };
 
     private static bool DrawsNothingAlone(UnicodeCategory category) => category is
         UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark or
@@ -72,8 +115,9 @@ public static class TicketPresence
 
     /// <summary>
     /// The refusal for a missing ticket, as a ServiceNow result, or null when one was given - for the
-    /// pages whose check is <c>Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket)</c>.
+    /// pages whose check is <c>Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket)</c>. Sweep item 40: its
+    /// message is <see cref="Problem"/>'s - an invisible character is said as that, not as a missing ticket.
     /// </summary>
     public static TicketValidationResult? Refusal(string? ticket) =>
-        IsPresent(ticket) ? null : new TicketValidationResult { IsValid = false, Message = RequiredMessage };
+        Problem(ticket) is { } problem ? new TicketValidationResult { IsValid = false, Message = problem } : null;
 }

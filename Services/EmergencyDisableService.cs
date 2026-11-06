@@ -183,14 +183,15 @@ public class EmergencyDisableService
 
         var steps = new List<DisableStepResult>();
 
+        // Sweep item 40: an invisible character is said as that, not as a missing ticket.
         if (!TicketPresence.IsPresent(ticket))
         {
-            const string msg = "Ticket number is required for emergency disable operations.";
+            var ticketRefusal = TicketPresence.Describe(ticket, "Ticket number is required for emergency disable operations.")!;
             _operationTrace.Step("TicketValidation", "Failed");
-            steps.Add(new DisableStepResult("TicketValidation", "FAILED", msg));
-            opScope.Complete(false, msg);
-            LogRefusal(target, performedBy, ip, ticket, "TicketValidation", msg);
-            return new EmergencyDisableResult(false, msg, null, steps);
+            steps.Add(new DisableStepResult("TicketValidation", "FAILED", ticketRefusal));
+            opScope.Complete(false, ticketRefusal);
+            LogRefusal(target, performedBy, ip, ticket, "TicketValidation", ticketRefusal);
+            return new EmergencyDisableResult(false, ticketRefusal, null, steps);
         }
 
         ticket = ticket.Trim();

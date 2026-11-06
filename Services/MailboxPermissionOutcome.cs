@@ -11,11 +11,16 @@ namespace ExchangeAdminWeb.Services;
 /// aud-a70 (14). The right's command was sent and its session failed before Exchange answered: whether it took is unknown.
 /// False for a right Exchange refused - it answered - and for one that never reached Exchange.
 /// </param>
-public sealed record RightOutcome(string Right, string? Error, bool Unconfirmed = false)
+/// <param name="Unchanged">
+/// Sweep item 21. The right succeeded and Exchange warned that it changed nothing: already in place for a grant, already
+/// absent for a removal (<see cref="ExchangeNoChangeWarning"/>). Still a success, still in the applied rights; a bulk run
+/// tells nobody of it.
+/// </param>
+public sealed record RightOutcome(string Right, string? Error, bool Unconfirmed = false, bool Unchanged = false)
 {
     public bool Succeeded => Error is null;
 
-    public static RightOutcome Ok(string right) => new(right, null);
+    public static RightOutcome Ok(string right, bool unchanged = false) => new(right, null, Unchanged: unchanged);
     public static RightOutcome Failed(string right, string error) => new(right, error);
 
     /// <summary>aud-a70 (14). Sent, and its session failed before Exchange answered (<see cref="Unconfirmed"/>).</summary>
@@ -51,6 +56,10 @@ public static class MailboxPermissionOutcome
     /// <param name="onPrem">Selects the on-premises wording and drops the OWA link.</param>
     public static PermissionResult ForGrant(
         string targetMailbox, string user, IReadOnlyList<RightOutcome> outcomes, bool onPrem = false)
+        => WithUnchanged(BuildGrant(targetMailbox, user, outcomes, onPrem), outcomes);
+
+    private static PermissionResult BuildGrant(
+        string targetMailbox, string user, IReadOnlyList<RightOutcome> outcomes, bool onPrem)
     {
         var (granted, failed, unconfirmed) = Split(outcomes);
         var where = onPrem ? " (on-premises)" : "";
@@ -103,6 +112,17 @@ public static class MailboxPermissionOutcome
     /// </summary>
     public static PermissionResult ForRevoke(
         string targetMailbox, string user, IReadOnlyList<RightOutcome> outcomes, bool onPrem = false)
+        => WithUnchanged(BuildRevoke(targetMailbox, user, outcomes, onPrem), outcomes);
+
+    /// <summary>
+    /// Sweep item 21. The rights Exchange answered as changing nothing, named on the result as
+    /// <see cref="PermissionResult.UnchangedRights"/>. The message and every other field are as they were.
+    /// </summary>
+    private static PermissionResult WithUnchanged(PermissionResult result, IReadOnlyList<RightOutcome> outcomes) =>
+        result.WithUnchangedRights(outcomes.Where(o => o.Succeeded && o.Unchanged).Select(o => o.Right).ToList());
+
+    private static PermissionResult BuildRevoke(
+        string targetMailbox, string user, IReadOnlyList<RightOutcome> outcomes, bool onPrem)
     {
         var (removed, failed, unconfirmed) = Split(outcomes);
         var where = onPrem ? " (on-premises)" : "";

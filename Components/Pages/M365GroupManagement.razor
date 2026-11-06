@@ -120,14 +120,14 @@
                         <div class="border-top p-3">
                             <div class="mb-3">
                                 <label class="form-label fw-semibold mb-1"><small>Ticket Number (required for member/owner changes)</small></label>
-                                <input type="text" class="form-control form-control-sm" @bind="memberTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                                <input type="text" class="form-control form-control-sm" @bind="memberTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(memberTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                             </div>
 
                             <h6>Members (@members.Count)</h6>
                             <div class="input-group input-group-sm mb-2">
                                 <input type="text" class="form-control" placeholder="UPN, email or alias address to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddMember"
-                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
+                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(addMemberIdentity) || !TicketPresence.IsPresentAsTyped(memberTicketNumber))">
                                     @* No spinner: the member write reports to the bar. *@
                                     Add
                                 </button>
@@ -146,7 +146,7 @@
                                                     <td>
                                                         @if (confirmRemoveMember == m.Id)
                                                         {
-                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveMember(m)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
+                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveMember(m)" disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(memberTicketNumber))">Confirm</button>
                                                             <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmRemoveMember = null" disabled="@isMemberOp">×</button>
                                                         }
                                                         else
@@ -169,7 +169,7 @@
                             <div class="input-group input-group-sm mb-2">
                                 <input type="text" class="form-control" placeholder="UPN, email or alias address to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddOwner"
-                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
+                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(addOwnerIdentity) || !TicketPresence.IsPresentAsTyped(memberTicketNumber))">
                                     @* No spinner: the member write reports to the bar. *@
                                     Add
                                 </button>
@@ -188,7 +188,7 @@
                                                     <td>
                                                         @if (confirmRemoveOwner == o.Id)
                                                         {
-                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveOwner(o)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
+                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveOwner(o)" disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(memberTicketNumber))">Confirm</button>
                                                             <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmRemoveOwner = null" disabled="@isMemberOp">×</button>
                                                         }
                                                         else
@@ -279,7 +279,7 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="formTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                            <input type="text" class="form-control" @bind="formTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(formTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
 
                         <div class="d-flex justify-content-between align-items-center">
@@ -288,7 +288,7 @@
                                 {
                                     @if (confirmDelete == editingGroup.Id)
                                     {
-                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteGroup(editingGroup)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
+                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteGroup(editingGroup)" disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(formTicketNumber))">Confirm Delete</button>
                                         <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmDelete = null" disabled="@isOperating">Cancel</button>
                                     }
                                     else
@@ -298,7 +298,7 @@
                                 }
                             </div>
                             <button class="btn btn-primary" @onclick="SaveGroup"
-                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber) || (editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname)))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || !TicketPresence.IsPresentAsTyped(formTicketNumber) || (editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname)))">
                                 @* No spinner: the group write reports to the bar. *@
                                 @(editingGroup != null ? "Update" : "Create")
                             </button>
@@ -543,6 +543,11 @@
 
     private async Task SaveGroup()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isOperating) return;
+
         // Every one of these was read live below the awaits, and editingGroup is the sharp one:
         // it decides Update versus Create, supplies the id the write targets and the id in the
         // audit row. The Cancel at 216 nulls it - which is why that control is gated rather than
@@ -870,8 +875,8 @@
     /// </remarks>
     private async Task<string?> TicketRefusalAsync(string ticket)
     {
-        if (!TicketPresence.IsPresent(ticket))
-            return "A ticket number is required.";
+        if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing) // sweep item 40: an invisible character said as that
+            return missing;
 
         var validation = await ServiceNow.ValidateTicketAsync(ticket);
         return validation.IsValid ? null : $"Ticket validation failed: {validation.Message}";

@@ -516,12 +516,14 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     [Theory]
     [InlineData("runspace")]
     [InlineData("import")]
-    [InlineData("credential")]
     [InlineData("object read")]
     [InlineData("write")]
     [InlineData("read-back")]
     public async Task AFailureAtEachStepOfTheCityStateAndCountryWrite_NamesThatStep(string failing)
     {
+        // Sweep item 28: the row's AD steps share one directory session, so the write opens a runspace and imports the module
+        // only when the session's runspace is no longer open - here closed at Set-Place - and prepares no credential of its
+        // own: the row's one lookup and credential, made at the preflight (TheRowsAdStepsShareOneLookupOneRunspaceAndOneImport).
         // Each step of the write fails in turn - after Set-Place, so the preflight's own steps pass. Every one is a failed,
         // partial row with nothing written, and its message and its log line name the step that failed. The four before
         // the write say the attributes were not written and are not told in the write's words; the write keeps its own.
@@ -532,9 +534,8 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         var service = new Service(_h, logger);
         switch (failing)
         {
-            case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; break;
-            case "import": _h.ImportModuleFailureAfterSetPlace = Injected; break;
-            case "credential": service.IncompleteCredentialFor = "Set-ADUser synced attributes"; break;
+            case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; _h.AtSetPlace = _h.CloseDirectoryRunspaces; break;
+            case "import": _h.ImportModuleFailureAfterSetPlace = Injected; _h.AtSetPlace = _h.CloseDirectoryRunspaces; break;
             case "object read": _h.ObjectReadFailureAfterSetPlace = Injected; break;
             case "write": _h.Failures["Set-ADUser"] = Injected; break;
             default: _h.AttributeReadBackFailure = Injected; break;
@@ -555,14 +556,13 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         {
             "runspace" => ("opening the directory runspace failed: ", "opening the directory runspace failed"),
             "import" => ("importing the ActiveDirectory module failed: ", "importing the ActiveDirectory module failed"),
-            "credential" => ("preparing the module's AD credential failed: ", "preparing the module's AD credential failed"),
             "object read" => ("reading the AD object failed: ", "reading the AD object failed"),
             "write" => ("Failed to write City/State/Country on the AD object: ", "Set-ADUser City/State/Country write failed"),
             _ => ($"reading l, st, co back from {RoomDomain} failed: ", $"could not be confirmed from {RoomDomain}"),
         };
         Assert.Contains(message, step.Error, StringComparison.Ordinal);
         Assert.Contains(logger.Entries, e => e.Level >= LogLevel.Warning && e.Message.Contains(logged, StringComparison.Ordinal));
-        if (failing is "runspace" or "import" or "credential" or "object read")
+        if (failing is "runspace" or "import" or "object read")
         {
             Assert.StartsWith($"City/State/Country were not written on the AD object {CheckedObject}: ", step.Error, StringComparison.Ordinal);
             Assert.DoesNotContain("Failed to write", step.Error, StringComparison.Ordinal);
@@ -781,7 +781,11 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         if (path == "preflight")
             _h.ImportModuleFailure = Injected;
         else
+        {
+            // Sweep item 28: the add imports again only into a runspace opened again - the row's closed at Set-Place.
             _h.ImportModuleFailureAfterSetPlace = Injected;
+            _h.AtSetPlace = _h.CloseDirectoryRunspaces;
+        }
         var logger = new CapturingLogger();
 
         var result = await Finder(new Service(_h, logger), Room());
@@ -810,8 +814,8 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     public async Task AnErrorTheImportReportsWithoutThrowing_IsNotTakenForAnyStepsError()
     {
         // Under -ErrorAction Stop an error a cmdlet writes is thrown, so one the import reports without a throw - the
-        // stand-in's own -ErrorAction Continue - is not the import's. A row that opens all four directory runspaces - the
-        // City/State/Country preflight and write, the synced list's preflight and add - completes, the reported text
+        // stand-in's own -ErrorAction Continue - is not the import's. A row that takes all four AD steps - the City/State/Country
+        // preflight and write, the synced list's preflight and add, on one runspace since sweep item 28 - completes, the reported text
         // nowhere: no check takes it for the import's error, and the record is gone before the read after the import,
         // whose own error check would take it for that read's.
         const string Reported = "A non-terminating error the import reported and carried on past.";
@@ -1517,6 +1521,79 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         }, reason);
     }
 
+    // ---- sweep item 28: one credential lookup and one directory session per row ----
+
+    [Fact]
+    public async Task TheRowsAdStepsShareOneLookupOneRunspaceAndOneImport()
+    {
+        // All four AD paths in one row - the City/State/Country preflight and write, the synced list's preflight and add.
+        // They used to make four lookups and open, import and prepare four runspaces; the row makes one of each.
+        SyncedListTakingTheRoomOnPrem();
+        var service = new Service(_h);
+
+        var result = await Finder(service, Room(), city: "Dublin");
+
+        Assert.True(result.Success, result.Message);
+        Assert.Single(_h.CallsTo("Set-ADUser"));
+        Assert.Single(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal([$"Set-ADUser preflight for {Typed}"], service.CredentialPurposes);
+        Assert.Equal(1, _h.DirectoryRunspacesOpened);
+    }
+
+    [Fact]
+    public async Task EachRowHasASessionOfItsOwn()
+    {
+        // Nothing outlives the row: a second row looks the credential up and opens a runspace again.
+        var service = new Service(_h);
+
+        Assert.True((await Finder(service, Room(), city: "Dublin")).Success);
+        Assert.True((await Finder(service, Room(), city: "Dublin")).Success);
+
+        Assert.Equal(2, service.CredentialRequests);
+        Assert.Equal(2, _h.DirectoryRunspacesOpened);
+    }
+
+    [Theory]
+    [InlineData("City/State/Country write")]
+    [InlineData("on-prem room-list add")]
+    public async Task TheRowsWrites_AskForNoCredentialOfTheirOwn(string path)
+    {
+        // A lookup for a write's purpose would return none; it is never made. The row's one lookup, its first preflight's,
+        // serves the write after Set-Place, so the row completes.
+        var cityStateAndCountry = path.StartsWith("City/State/Country", StringComparison.Ordinal);
+        if (!cityStateAndCountry)
+            SyncedListTakingTheRoomOnPrem();
+        var service = new Service(_h) { NoCredentialFor = cityStateAndCountry ? "Set-ADUser synced attributes" : "membership add" };
+
+        var result = await Finder(service, Room(), city: cityStateAndCountry ? "Dublin" : "");
+
+        Assert.True(result.Success, result.Message);
+        Assert.Single(_h.CallsTo(cityStateAndCountry ? "Set-ADUser" : "Set-ADGroup"));
+        Assert.Equal([cityStateAndCountry ? $"Set-ADUser preflight for {Typed}" : $"on-prem room-list membership preflight for {Typed}"],
+            service.CredentialPurposes);
+    }
+
+    [Fact]
+    public async Task AnAddMadeOnItsOwn_WhoseLookupReturnsNone_IsRefused()
+    {
+        // Outside a row the add has a session of its own and its lookup is that session's first: a lookup returning none is
+        // refused in the add's words, as before, nothing written on-prem.
+        SyncedListTakingTheRoomOnPrem();
+        var logger = new CapturingLogger();
+        var service = new Service(_h, logger) { NoCredentialFor = "membership add" };
+        var list = new ConferenceRoomService.RoomListTarget(List, Exists: true, IsLegacy: false, IsDirSynced: true,
+            ExchangeWriteHarness.DefaultListAddress, ExchangeWriteHarness.DefaultListGuid);
+
+        var result = await service.AddToRoomListAsync(Room(), "room1@contoso.test", Typed, list);
+
+        const string Refusal = "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.";
+        Assert.False(result.Success);
+        Assert.Equal(Refusal, Assert.Single(result.Steps, s => !s.Success).Error);
+        Assert.Empty(_h.CallsTo("Set-ADGroup"));
+        Assert.Equal([$"on-prem room-list membership add for {Typed}"], service.CredentialPurposes);
+        Assert.Equal(0, _h.DirectoryRunspacesOpened);
+    }
+
     [Fact]
     public async Task TheOnPremAddsRefusalOfARoomWithNoDirectoryObject_IsLoggedOnce()
     {
@@ -1593,10 +1670,9 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
     }
 
     [Theory]
+    // Sweep item 28: the preflights only; see ACredentialThatCouldNotBeRead_IsRefusedWithoutSendingTheOperatorToSetTheId.
     [InlineData("City/State/Country preflight")]
-    [InlineData("City/State/Country write")]
     [InlineData("on-prem room-list preflight")]
-    [InlineData("on-prem room-list add")]
     public async Task ACredentialTheLookupDoesNotReturn_IsLoggedOnce_NamingTheRoomTheListAndThePurpose(string path)
     {
         // The module's credential lookup returning none for one path's purpose only, on each of the four. Refused as before -
@@ -1879,14 +1955,13 @@ public sealed class ConferenceRoomWriteIdentityTests : IDisposable
         "The on-prem AD credential for Conference Rooms could not be read: the module's configuration could not be read, so neither could its AD Delinea Secret ID (the application log records it)";
 
     [Theory]
+    // Sweep item 28: the writes' own lookups are not made in a row - the row's one lookup, the first preflight's, serves
+    // them (TheRowsWrites_AskForNoCredentialOfTheirOwn); the add's refusal as its own first lookup is
+    // AnAddMadeOnItsOwn_WhoseLookupReturnsNone_IsRefused.
     [InlineData("City/State/Country preflight", ModuleCredentialFailure.NotReturned)]
-    [InlineData("City/State/Country write", ModuleCredentialFailure.NotReturned)]
     [InlineData("on-prem room-list preflight", ModuleCredentialFailure.NotReturned)]
-    [InlineData("on-prem room-list add", ModuleCredentialFailure.NotReturned)]
     [InlineData("City/State/Country preflight", ModuleCredentialFailure.ConfigUnreadable)]
-    [InlineData("City/State/Country write", ModuleCredentialFailure.ConfigUnreadable)]
     [InlineData("on-prem room-list preflight", ModuleCredentialFailure.ConfigUnreadable)]
-    [InlineData("on-prem room-list add", ModuleCredentialFailure.ConfigUnreadable)]
     public async Task ACredentialThatCouldNotBeRead_IsRefusedWithoutSendingTheOperatorToSetTheId(string path, ModuleCredentialFailure failure)
     {
         // The lookup returning none for one path's purpose only, with the reason the credential service gives. Refused as

@@ -65,6 +65,7 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
         authState.GetAuthenticationStateAsync().Returns(new AuthenticationState(AttributeEditorHarness.Operator()));
         SetProperty(page, "AuthStateProvider", authState);
         SetProperty(page, "AuthorizationService", _authorization);
+        SetProperty(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         SetProperty(page, "Email", _h.Email);
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
         SetField(page, "currentUser", Operator);
@@ -112,6 +113,52 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
     }
 
     // ---- refusals the page makes itself --------------------------------------------------------
+
+    // Sweep item 41. The ticket was gated only by the Save button's markup, and SaveAsync has no ticket step: it is now checked
+    // behind the button - presence by the shared rule, then ServiceNow where enabled - before the authorization re-check.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("CHG\u200B0200")]
+    public async Task ASaveWithNoUsableTicket_IsRefusedAndRecorded_BeforeTheAuthorizationCheck(string ticket)
+    {
+        var alex = _h.Ad.AddAlex();
+        var page = PageShowing(alex, Title());
+        SetField(page, "ticketNumber", ticket);
+
+        await ConfirmSave(page);
+
+        var shown = Shown(page);
+        Assert.False(shown.Success);
+        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), shown.Message);
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal("ADAttributeEdit_Refused", Text(record, "action"));
+        Assert.Equal("TicketValidation", Text(record, "refusedAt"));
+        Assert.False(record.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal(shown.Message, Text(record, "error"));
+        Assert.Empty(_authorization.ReceivedCalls());
+        Assert.Equal(0, _h.Service.SessionsOpened);
+        Assert.Empty(_h.Ad.Sets);
+    }
+
+    [Fact]
+    public async Task ASaveWithATicketServiceNowRejects_IsRefusedAndRecorded_BeforeTheAuthorizationCheck()
+    {
+        var alex = _h.Ad.AddAlex();
+        var page = PageShowing(alex, Title());
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await ConfirmSave(page);
+
+        var shown = Shown(page);
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", shown.Message);
+        AssertRefusal(Assert.Single(_h.AuditEvents()), "TicketValidation", alex.Upn, shown.Message);
+        Assert.Single(requests);
+        Assert.Empty(_authorization.ReceivedCalls());
+        Assert.Empty(_h.Ad.Sets);
+    }
+
 
     [Fact]
     public async Task AnAuthorizationRefusal_LeavesOneRefusalRecord_AndOpensNoDirectorySession()

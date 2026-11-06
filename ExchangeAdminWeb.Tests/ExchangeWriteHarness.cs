@@ -38,7 +38,43 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public ExoConnectionPool Pool { get; }
 
     /// <summary>Every stand-in call in order: a Hashtable of its bound parameters plus <c>__Command</c>.</summary>
-    public IList Calls { get; } = ArrayList.Synchronized(new ArrayList());
+    public IList Calls { get; }
+
+    /// <summary>
+    /// Sweep item 28. Run as a <c>Set-Place</c> call is recorded - after the row's last look at its cancel and before any AD
+    /// write: where a test cancels after Set-Place, or closes the directory runspaces (<see cref="CloseDirectoryRunspaces"/>)
+    /// so a row's one directory session finds its runspace no longer open and opens another, which is how a test reaches the
+    /// runspace and import steps of the City/State/Country write and the on-prem room-list add.
+    /// </summary>
+    public Action? AtSetPlace { get; set; }
+
+    /// <summary>Sweep item 28. Closes every directory runspace this harness has opened.</summary>
+    public void CloseDirectoryRunspaces()
+    {
+        lock (_directoryRunspaces)
+        {
+            foreach (var runspace in _directoryRunspaces)
+                runspace.Close();
+        }
+    }
+
+    /// <summary>Sweep item 28. How many directory runspaces this harness has opened.</summary>
+    public int DirectoryRunspacesOpened => Volatile.Read(ref _directoryRunspacesOpened);
+
+    private int _directoryRunspacesOpened;
+    private readonly List<Runspace> _directoryRunspaces = [];
+
+    /// <summary>The call list: every call recorded, and a Set-Place call running <see cref="AtSetPlace"/>.</summary>
+    private sealed class CallList(ExchangeWriteHarness harness) : ArrayList
+    {
+        public override int Add(object? value)
+        {
+            var index = base.Add(value);
+            if (value is Hashtable { } call && call["__Command"] as string == "Set-Place")
+                harness.AtSetPlace?.Invoke();
+            return index;
+        }
+    }
 
     /// <summary>
     /// What the stand-in reads answer, keyed by any identity that resolves to the entry - the GUID,
@@ -61,6 +97,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// <c>SilentlyContinue</c>, PowerShell suppresses the throw and the stand-in carries on and answers.
     /// </remarks>
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Sweep item 21. Command name to warning text: that stand-in records its call, then writes the text as a warning and
+    /// carries on - as Exchange answers a permission write that changed nothing.
+    /// </summary>
+    public Hashtable Warnings { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// aud-a70 (14). On-premises commands whose session breaks once they are sent: the stand-in Invoke-Command runs a script
@@ -454,6 +496,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
 
     public ExchangeWriteHarness()
     {
+        Calls = ArrayList.Synchronized(new CallList(this));
         Directory.CreateDirectory(Dir);
         Config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -776,6 +819,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         var rs = RunspaceFactory.CreateRunspace();
         rs.Open();
         Define(rs, DirectoryStandIns);
+        Interlocked.Increment(ref _directoryRunspacesOpened);
+        lock (_directoryRunspaces)
+            _directoryRunspaces.Add(rs);
         return rs;
     }
 
@@ -802,6 +848,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Mailboxes", Mailboxes);
         rs.SessionStateProxy.SetVariable("DirectoryObjects", DirectoryObjects);
         rs.SessionStateProxy.SetVariable("Failures", Failures);
+        rs.SessionStateProxy.SetVariable("Warnings", Warnings);
         rs.SessionStateProxy.SetVariable("OnPremTransportFailures", OnPremTransportFailures);
         rs.SessionStateProxy.SetVariable("FailuresAfterSetPlace", FailuresAfterSetPlace);
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
@@ -867,6 +914,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [void]$global:Calls.Add($row)
             $failure = $global:Failures[$Command]
             if ($failure) { throw $failure }
+            $warning = $global:Warnings[$Command]
+            if ($warning) { Write-Warning $warning }
         }
         # Not found is a non-terminating error, as on the real cmdlets: -ErrorAction Stop makes it
         # throw, -ErrorAction Ignore swallows it.

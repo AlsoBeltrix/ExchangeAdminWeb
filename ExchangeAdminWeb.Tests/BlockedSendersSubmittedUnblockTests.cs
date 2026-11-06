@@ -84,6 +84,45 @@ public sealed class BlockedSendersSubmittedUnblockTests : IDisposable
         Assert.Single(_authorization.ReceivedCalls());
     }
 
+    // Sweep item 41. The unblock's ticket was gated only by the Confirm button's markup: it is now checked behind the button -
+    // presence by the shared rule, then ServiceNow where enabled - before the authorization re-check, and the refusal is
+    // recorded as this page's other refusals are, with the refusal fields.
+    public static TheoryData<string> UnusableTickets => ["", "   ", "INC" + (char)0x200B + "0001"];
+
+    [Theory]
+    [MemberData(nameof(UnusableTickets))]
+    public async Task AnUnblockWithNoUsableTicket_IsRefusedAndRecorded_BeforeTheAuthorizationCheck(string ticket)
+    {
+        var page = PageFor();
+        SetField(page, "ticketNumber", ticket);
+
+        await Call(page, "ConfirmUnblock");
+
+        var row = Assert.Single(AuditRows(_temp.Path));
+        Assert.Equal("UnblockSender_Denied", Text(row, "action"));
+        Assert.Equal("TicketValidation", Text(row, "refusedAt"));
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), Text(row, "error"));
+        Assert.Empty(_authorization.ReceivedCalls());
+        Assert.False(Field<bool>(page, "isLoading"));
+    }
+
+    [Fact]
+    public async Task AnUnblockWithATicketServiceNowRejects_IsRefusedAndRecorded_BeforeTheAuthorizationCheck()
+    {
+        var page = PageFor();
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        Set(page, "ServiceNow", serviceNow);
+
+        await Call(page, "ConfirmUnblock");
+
+        var row = Assert.Single(AuditRows(_temp.Path));
+        Assert.Equal("TicketValidation", Text(row, "refusedAt"));
+        Assert.Equal($"Ticket validation failed: Ticket {TicketA} not found in ServiceNow", Text(row, "error"));
+        Assert.Single(requests);
+        Assert.Empty(_authorization.ReceivedCalls());
+    }
+
     private Page PageFor()
     {
         var page = new Page();
@@ -94,6 +133,7 @@ public sealed class BlockedSendersSubmittedUnblockTests : IDisposable
         Set(page, "Audit", _audit);
         Set(page, "AuthStateProvider", auth);
         Set(page, "AuthorizationService", _authorization);
+        Set(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         Set(page, "Logger", NullLogger<Page>.Instance);
         SetField(page, "currentUser", @"CONTOSO\operator");
         SetField(page, "clientIpAddress", "10.0.0.5");

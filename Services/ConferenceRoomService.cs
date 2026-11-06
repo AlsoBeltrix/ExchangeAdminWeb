@@ -584,6 +584,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     {
         var result = new RoomOperationResult { Email = roomEmail };
 
+        // Sweep item 28. The row's Active Directory work - its four AD paths - shares one credential lookup and one directory
+        // runspace, disposed when the row ends, where each path used to look the credential up and open, import and prepare a
+        // runspace of its own.
+        using var directory = new ConferenceRoomDirectorySession();
+
         // aud-a2v. The row's own three refusals, before its preflights, are logged as its paths' are (aud-a2t, aud-a2u): once,
         // at Warning, where the row refuses, naming the room as typed and the refusal. They reached only the result and the
         // audit. Nothing is written before any of them - the room's read is the only call - so the line says so. Here, not in
@@ -646,7 +651,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // already committed Set-Place - the partial-apply defect from the 2026-06-17 review.
         // aud-a2q. It also proves the server the write is to use - the object read through it - and
         // hands it over, so the write goes nowhere the preflight did not reach the object.
-        var (adPreflightError, adServer) = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion, cancellationToken);
+        var (adPreflightError, adServer) = await PreflightSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion, directory, cancellationToken);
         if (adPreflightError != null)
         {
             result.Success = false;
@@ -680,7 +685,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 return result;
             }
 
-            var listPreflightError = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList, cancellationToken);
+            var listPreflightError = await PreflightRoomListAsync(room, roomInfo.Email, roomEmail, roomList, directory, cancellationToken);
             if (listPreflightError != null)
             {
                 result.Success = false;
@@ -750,7 +755,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // Step 2: Set-ADUser (on-prem AD) - City/State/Country are dir-synced AD attributes
         // that EXO Set-User rejects. Written on the on-prem object instead (the bug fix).
         _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: room.DirectoryObjectGuid ?? roomEmail);
-        var (adError, adWritten, adConfirmed) = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion, adServer);
+        var (adError, adWritten, adConfirmed) = await SetSyncedAttributesViaAdAsync(room, roomEmail, city, state, countryOrRegion, adServer, directory);
         // aud-a2g. The object Set-ADUser wrote, if it wrote one - recorded now, so a later step
         // failing cannot hide it, and only from the write itself, so a row that wrote nothing in
         // Active Directory cannot claim it did.
@@ -806,7 +811,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // resolved and proven before the writes (aud-a2f), not looked up again.
         if (roomList is not null)
         {
-            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, roomList);
+            var listResult = await AddToRoomListAsync(room, roomInfo.Email, roomEmail, roomList, directory);
             result.WrittenDirectoryObject ??= listResult.WrittenDirectoryObject; // the on-prem add's (aud-a2g)
             // aud-a2n. Why, if the list add confirmed a membership it is not known to have written, no
             // object is named for it: the audit records this in its place.
@@ -857,13 +862,20 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// </param>
     /// <param name="roomEmail">The operator's input, for the result only.</param>
     /// <param name="list">The room list resolved, and its on-prem add proven, before any write (aud-a2f).</param>
+    /// <param name="directory">
+    /// Sweep item 28. The row's directory session - its one credential lookup and directory runspace - which the on-prem add
+    /// shares with the row's other AD steps. Null (a call made outside a row) gives the add a session of its own.
+    /// </param>
     /// <remarks>
     /// Internal, not private, for the tests (aud-a2p): its message reaches no result the row returns - the row
     /// replaces a success's - so only a direct call can pin it.
     /// </remarks>
     internal async Task<RoomOperationResult> AddToRoomListAsync(
-        ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list)
+        ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, ConferenceRoomDirectorySession? directory = null)
     {
+        // Sweep item 28: the row's directory session; a call made outside a row (the tests) has one of its own.
+        using var own = directory is null ? new ConferenceRoomDirectorySession() : null;
+        directory ??= own!;
         var result = new RoomOperationResult { Email = roomEmail };
         var (roomListName, exists, isLegacy) = (list.Name, list.Exists, list.IsLegacy);
         // aud-a2q. Whether the cloud add's membership read found the room already on the list, so its success says what
@@ -972,7 +984,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                     }
 
                     _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Set-ADGroup", target: room.DirectoryObjectGuid ?? roomEmail);
-                    var (adError, adWritten, adConfirmed) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName, list.PrimarySmtpAddress);
+                    var (adError, adWritten, adConfirmed) = await AddToRoomListViaAdAsync(room, roomEmail, roomListName, list.PrimarySmtpAddress, directory);
                     if (adError == null)
                     {
                         result.Success = true;
@@ -1708,8 +1720,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // virtual: a test seam (aud-a2d) so the Active Directory steps can be driven against an
-    // in-process runspace of stand-ins. No behaviour change: this is the runspace the three AD
-    // steps below opened for themselves.
+    // in-process runspace of stand-ins. No behaviour change: this is the runspace the AD steps
+    // below opened for themselves - since sweep item 28 once per row, by its directory session.
     protected virtual Runspace OpenDirectoryRunspace()
     {
         var iss = InitialSessionState.CreateDefault();
@@ -1769,8 +1781,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // same - values in place this row is not known to have written (aud-a2q); and (the failure
     // message for the row, null, null) otherwise - the object is reported only by a write known to
     // have happened (aud-a2g). It writes through the server the preflight below proved (aud-a2q).
-    // Runs in its own AD runspace, as the Comms-10k service's directory reads do, not through
-    // the EXO pool.
+    // Runs in an AD runspace, as the Comms-10k service's directory reads do, not through
+    // the EXO pool - since sweep item 28 the row's one directory session (ConferenceRoomDirectorySession).
     //
     // aud-a2d. The object is the one ConferenceRoomBinder bound the room's mailbox to - the one
     // account in the forest holding the on-premises SID Microsoft Graph reports for the room
@@ -1797,7 +1809,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // cannot use there - passed, Set-Place committed, and the routed write failed: the partial this
     // guard exists to prevent (aud-a2f). So the object is read again, by its objectGUID, through that
     // server, and the write is handed the server this read proved instead of deriving its own.
-    private async Task<(string? error, string? server)> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, CancellationToken cancellationToken)
+    private async Task<(string? error, string? server)> PreflightSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, ConferenceRoomDirectorySession directory, CancellationToken cancellationToken)
     {
         Dictionary<string, object> attrs;
         try
@@ -1837,7 +1849,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // aud-a2x. And the refusal opens with why there is none (DirectoryCredentialRefusal), so an ID that is set is not
         // asked for again; for no ID its words are as before. The three paths below take the same clause.
         var purpose = $"Set-ADUser preflight for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose, cancellationToken); // kd-59: before Set-Place, so the page's cancel ends the row here
+        var lookup = await directory.LookupAsync(() => LookupDirectoryCredentialAsync(purpose, cancellationToken)); // sweep item 28: the row's one lookup
+        // kd-59: before Set-Place, so the page's cancel ends the row here
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -1856,19 +1869,17 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             try
             {
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
-                using var runspace = OpenDirectoryRunspace();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
+                var ps = directory.Pipeline(OpenDirectoryRunspace); // sweep item 28: the row's one runspace, cleared for this step
 
                 // psl-8. The shared import (ActiveDirectoryModuleImport), which this file used to keep a private copy of
                 // (aud-a2r's): its throw is the step's error, named by the step, and it leaves no record in the stream for
                 // the object read's own HadErrors check (ConfirmDirectoryObject) to take. The other three paths import so too.
                 step = "importing the ActiveDirectory module";
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
-                ActiveDirectoryModuleImport.Import(ps);
+                directory.EnsureImported(ActiveDirectoryModuleImport.Import); // sweep item 28: once per row
 
                 step = "preparing the module's AD credential";
-                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var credential = directory.Credential(() => CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
                 step = "reading the AD object";
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
                 var objectError = ConfirmDirectoryObject(ps, objectGuid, roomEmail, credential, out var roomDn);
@@ -1920,7 +1931,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         });
     }
 
-    private async Task<(string? error, string? written, string? confirmed)> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, string? server)
+    private async Task<(string? error, string? written, string? confirmed)> SetSyncedAttributesViaAdAsync(ValidatedMailbox room, string roomEmail, string city, string state, string countryOrRegion, string? server, ConferenceRoomDirectorySession directory)
     {
         // aud-a2u. The two refusals below, unlike the preflight's, are not logged: nothing reaches them. The row runs this
         // only after the preflight passed on the same room and the same fields, and BuildSyncedUserAttributes is pure, so
@@ -1942,10 +1953,12 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (room.DirectoryObjectGuid is not { } objectGuid)
             return (NoDirectoryObject(roomEmail, "City/State/Country could not be written"), null, null);
 
-        // aud-a2v. As the preflight's, in this write's words - after Set-Place, inside the row's partial. Reached when this
-        // lookup returns none though the preflight's returned one: each asks the PAM provider again.
+        // aud-a2v. As the preflight's, in this write's words - after Set-Place, inside the row's partial. Sweep item 28: in a row
+        // this is the row's one lookup, already answered by the preflight's, which refused the row had it returned none - so
+        // a row does not reach this refusal. Kept so that a session whose first lookup this is still refuses.
         var purpose = $"Set-ADUser synced attributes for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose, CancellationToken.None); // kd-59: after Set-Place - no cancel here, or the room is left half-configured
+        var lookup = await directory.LookupAsync(() => LookupDirectoryCredentialAsync(purpose, CancellationToken.None)); // sweep item 28: the row's one lookup
+        // kd-59: after Set-Place - no cancel here, or the room is left half-configured
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -1965,15 +1978,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             var step = "opening the directory runspace";
             try
             {
-                using var runspace = OpenDirectoryRunspace();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
+                var ps = directory.Pipeline(OpenDirectoryRunspace); // sweep item 28: the row's one runspace, cleared for this step
 
                 step = "importing the ActiveDirectory module";
-                ActiveDirectoryModuleImport.Import(ps);
+                directory.EnsureImported(ActiveDirectoryModuleImport.Import); // sweep item 28: once per row
 
                 step = "preparing the module's AD credential";
-                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var credential = directory.Credential(() => CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
 
                 // aud-a2d's read of the object before writing, unchanged. Not the route: the server is the
                 // one the preflight proved (aud-a2q), and this read's DN is not consulted, so the write
@@ -2098,7 +2109,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Returns the refusal, or null. (A genuine failure of the membership write after a passing
     // preflight - missing write-members delegation, say - remains the inherent two-system residual.)
     // roomPrimary is the address Exchange returned for the validated room: the membership test's key.
-    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, CancellationToken cancellationToken)
+    private async Task<string?> PreflightRoomListAsync(ValidatedMailbox room, string roomPrimary, string roomEmail, RoomListTarget list, ConferenceRoomDirectorySession directory, CancellationToken cancellationToken)
     {
         if (!list.Exists)
             return null;
@@ -2145,7 +2156,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // refusal is built without its " Nothing was written.", as the three above, and the message is unchanged - but for
         // its opening clause, which since aud-a2x says why the lookup returned none, as the City/State/Country preflight's.
         var purpose = $"on-prem room-list membership preflight for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose, cancellationToken); // kd-59: before Set-Place, as the City/State/Country preflight's
+        var lookup = await directory.LookupAsync(() => LookupDirectoryCredentialAsync(purpose, cancellationToken)); // sweep item 28: the row's one lookup
+        // kd-59: before Set-Place, as the City/State/Country preflight's
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -2166,16 +2178,14 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             try
             {
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
-                using var runspace = OpenDirectoryRunspace();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
+                var ps = directory.Pipeline(OpenDirectoryRunspace); // sweep item 28: the row's one runspace, cleared for this step
 
                 step = "importing the ActiveDirectory module";
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 A8 (E7): a look before each directory step
-                ActiveDirectoryModuleImport.Import(ps);
+                directory.EnsureImported(ActiveDirectoryModuleImport.Import); // sweep item 28: once per row
 
                 step = "preparing the module's AD credential";
-                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var credential = directory.Credential(() => CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
 
                 // The two objects the on-prem add names - the room's proven object and the list's
                 // group - each read here exactly as the add will read them, without writing.
@@ -2246,7 +2256,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // mailbox to, by objectGUID - not a userPrincipalName match of the typed string. aud-a2k. The group
     // is found by listAddress, the primary SMTP address Exchange reported for the list before any
     // write - the address the preflight found it by.
-    private async Task<(string? error, string? written, string? confirmed)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName, string? listAddress)
+    private async Task<(string? error, string? written, string? confirmed)> AddToRoomListViaAdAsync(ValidatedMailbox room, string roomEmail, string roomListName, string? listAddress, ConferenceRoomDirectorySession directory)
     {
         if (room.DirectoryObjectGuid is not { } roomGuid)
         {
@@ -2258,11 +2268,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return (refusal, null, null);
         }
 
-        // aud-a2v. As the preflight's, in the add's words - after Set-Place, inside the row's partial. Reached when this lookup
-        // returns none though the preflight's returned one, or when the preflight asked for none - the room on the list in
-        // Exchange then - and the cloud add no longer finds it there.
+        // aud-a2v. As the preflight's, in the add's words - after Set-Place, inside the row's partial. Sweep item 28: in a row
+        // this is the row's one lookup, so it is reached only when no earlier step asked - no City/State/Country, the
+        // preflight asking for none (the room on the list in Exchange then) and the cloud add no longer finding it there - or
+        // when the add is called outside a row, with a session of its own.
         var purpose = $"on-prem room-list membership add for {roomEmail}";
-        var lookup = await LookupDirectoryCredentialAsync(purpose, CancellationToken.None); // kd-59: after Set-Place, as the City/State/Country write's
+        var lookup = await directory.LookupAsync(() => LookupDirectoryCredentialAsync(purpose, CancellationToken.None)); // sweep item 28: the row's one lookup
+        // kd-59: after Set-Place, as the City/State/Country write's
         var creds = lookup.Credentials;
         if (creds is null)
         {
@@ -2282,15 +2294,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             var step = "opening the directory runspace";
             try
             {
-                using var runspace = OpenDirectoryRunspace();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
+                var ps = directory.Pipeline(OpenDirectoryRunspace); // sweep item 28: the row's one runspace, cleared for this step
 
                 step = "importing the ActiveDirectory module";
-                ActiveDirectoryModuleImport.Import(ps);
+                directory.EnsureImported(ActiveDirectoryModuleImport.Import); // sweep item 28: once per row
 
                 step = "preparing the module's AD credential";
-                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var credential = directory.Credential(() => CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
 
                 // BOTH objects by immutable GUID, fail-closed, before any write - so the wrong
                 // member is never added to the wrong group. The room's is the validated one.
@@ -2727,7 +2737,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // membership write that searched one domain is this finding. AddScript with the projection
     // inside PowerShell, not AddCommand and a property read: GlobalCatalogs read off the returned
     // object comes back empty in a fresh runspace (measured; ADDirectorySearchService.
-    // ResolveGlobalCatalog). Not cached - each preflight and add opens its own runspace. Returns
+    // ResolveGlobalCatalog). Not cached - read by each preflight and add, on the row's one runspace (sweep item 28). Returns
     // the endpoint, or null and the reason.
     private static (string? endpoint, string? error) ResolveForestGlobalCatalog(PowerShell ps, PSCredential credential)
     {

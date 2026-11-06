@@ -19,7 +19,7 @@
 
 <div class="container-fluid">
     <div class="alert alert-info py-2 mb-3">
-        <small>All permission changes are logged for audit purposes.@if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false")){<text> Affected users will receive email notifications when permissions are granted or removed.</text>}</small>
+        <small>All permission changes are logged for audit purposes.@if (ConfigBoolean.Read(Config, "Email:NotifyUsersOnPermissionGrant", whenBlank: false, whenNotBoolean: false, Logger)){<text> Affected users will receive email notifications when permissions are granted or removed; a bulk upload sends each person one email for the whole file, and none for a row Exchange reports as no change.</text>}</small>
     </div>
     <h1 class="mb-4">Mailbox Permissions<ModuleVersion /></h1>
 
@@ -73,7 +73,7 @@
                             <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
                             <input id="ticketNumber" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" />
+                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                             <div class="form-text">Service request or incident ticket number</div>
                         </div>
 
@@ -126,7 +126,7 @@
                             <label class="form-label fw-semibold" for="bulkTicket">Ticket Number (applies to all rows) <span class="text-danger">*</span></label>
                             <input id="bulkTicket" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" />
+                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(bulkTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
 
                         <div class="mb-3">
@@ -135,7 +135,7 @@
                             <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
                         </div>
 
-                        <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(IsBusy || csvFile is null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
+                        <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(IsBusy || csvFile is null || !TicketPresence.IsPresentAsTyped(bulkTicketNumber))">
                             @* No spinner: the write reports to the status bar
                                (owner ruling 2026-10-02). isLoading still gates
                                the button - that is the click gate, not progress,
@@ -255,7 +255,7 @@
     private bool IsFormValid =>
         !string.IsNullOrWhiteSpace(targetMailbox) &&
         !string.IsNullOrWhiteSpace(affectedUser) &&
-        !string.IsNullOrWhiteSpace(ticketNumber) &&
+        TicketPresence.IsPresentAsTyped(ticketNumber) &&
         (grantFullAccess || grantSendAs);
 
     protected override async Task OnInitializedAsync()
@@ -349,6 +349,11 @@
 
     private async Task SubmitSingle()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // Captured above the first await, and above the try, because every one of these fields has
         // a live control behind it. The controls now carry disabled on IsBusy, but the browser's
         // copy of that attribute is one round trip stale, and on the two autocompletes it does not
@@ -555,6 +560,11 @@
 
     private async Task ProcessBulk()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // Two separate reasons for the shape of this opening, and they pull in opposite directions.
         //
         // The captures: csvFile, bulkIsAdd and bulkTicketNumber each have a live control behind them

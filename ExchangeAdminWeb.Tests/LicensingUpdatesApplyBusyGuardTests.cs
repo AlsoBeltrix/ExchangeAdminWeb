@@ -78,6 +78,62 @@ public sealed class LicensingUpdatesApplyBusyGuardTests : IDisposable
         Assert.Equal(2, AdminNotifications().Count);
     }
 
+    // Sweep item 41. The apply's ticket was gated only by the Apply button's markup, and ApplyCsvAsync has no ticket step: it is
+    // now checked behind the button - presence by the shared rule, then ServiceNow where enabled - and a refusal is recorded
+    // under the run's per-row action with the refusal fields, before the authorization re-check, the progress frame and the
+    // apply.
+    public static TheoryData<string> UnusableTickets => ["", "   ", "INC" + (char)0x200B + "0001"];
+
+    [Theory]
+    [MemberData(nameof(UnusableTickets))]
+    public async Task AnApplyWithNoUsableTicket_IsRefusedAndRecorded_AndNothingRuns(string ticket)
+    {
+        var (page, authorization) = PageWithAudit();
+        SetField(page, "ticketNumber", ticket);
+
+        await Call(page, "RunApply");
+
+        var expected = "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket);
+        Assert.Equal((false, expected), Field<(bool, string)?>(page, "operationResult"));
+        var row = Assert.Single(AuditRows(_temp.Path));
+        Assert.Equal("LicensingUpdates_Update", Text(row, "action"));
+        Assert.Equal("(bulk) 1 rows", Text(row, "target"));
+        Assert.Equal("TicketValidation", Text(row, "refusedAt"));
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal(expected, Text(row, "error"));
+        Assert.Empty(authorization.ReceivedCalls());
+        Assert.Empty(_progress.Handles);
+        Assert.Empty(AdminNotifications());
+        Assert.False(Field<bool>(page, "isProcessing"));
+    }
+
+    [Fact]
+    public async Task AnApplyWithATicketServiceNowRejects_IsRefusedAndRecorded_AndNothingRuns()
+    {
+        var (page, authorization) = PageWithAudit();
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        Set(page, "ServiceNow", serviceNow);
+
+        await Call(page, "RunApply");
+
+        var row = Assert.Single(AuditRows(_temp.Path));
+        Assert.Equal("Ticket validation failed: Ticket INC0001 not found in ServiceNow", Text(row, "error"));
+        Assert.Single(requests);
+        Assert.Empty(authorization.ReceivedCalls());
+        Assert.Empty(_progress.Handles);
+    }
+
+    private (Page Page, IAuthorizationService Authorization) PageWithAudit()
+    {
+        var page = PageFor();
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Audit:LogRoot"] = _temp.Path }).Build();
+        var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
+        Set(page, "Audit", new AuditService(log, new OperationTraceService(config, log)));
+        var authorization = Authorization();
+        Set(page, "AuthorizationService", authorization);
+        return (page, authorization);
+    }
+
     private List<NSubstitute.Core.ICall> AdminNotifications() =>
         _email.ReceivedCalls().Where(call => call.GetMethodInfo().Name == nameof(EmailService.SendAdminNotificationAsync)).ToList();
 
@@ -89,6 +145,7 @@ public sealed class LicensingUpdatesApplyBusyGuardTests : IDisposable
         Set(page, "Email", _email);
         Set(page, "AuthStateProvider", Authentication());
         Set(page, "AuthorizationService", Authorization());
+        Set(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         Set(page, "Logger", NullLogger<Page>.Instance);
         SetField(page, "currentUser", @"CONTOSO\operator");
         SetField(page, "clientIpAddress", "10.0.0.5");

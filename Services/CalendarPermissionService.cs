@@ -46,6 +46,7 @@ public class CalendarPermissionService : ExchangeServiceBase
         string? resolvedMailbox = null;
         ConnectionErrorTracker? attempt = null;
         var cancelledBeforeTheSet = false; // kd-81: the look inside the call saw the operator's cancel
+        var setChangedNothing = false; // sweep item 21: Exchange warned the Set changed nothing
 
         // aud-a76. RunAsync makes every failure of the operation a result, so the one throw that leaves is the pool's - its
         // borrow, before the mark below - and it leaves as a PermissionWriteNotSubmittedException: nothing was sent. kd-81: and
@@ -89,7 +90,12 @@ public class CalendarPermissionService : ExchangeServiceBase
                 var set = new ConnectionErrorTracker();
                 try
                 {
+                    // Sweep item 21: a Set at the level the entry already holds is answered with Exchange's "no settings
+                    // ... have been modified" warning and no error. Read from a warning stream cleared for this Set alone;
+                    // an Add after a refused Set is a change, so only the Set's own answer is read.
+                    ps.Streams.Warning.Clear();
                     Invoke(ps, set);
+                    setChangedNothing = ExchangeNoChangeWarning.SaysNothingChanged(ps);
                 }
                 catch (Exception setFailure) when (!OutcomeUnknown(setFailure, set) && NamesNoPermissionEntry(setFailure))
                 {
@@ -125,7 +131,7 @@ public class CalendarPermissionService : ExchangeServiceBase
             // sent - not as the failed Set RunAsync would have made of a throw in its call.
             if (cancelledBeforeTheSet)
                 throw new OperationCanceledException(cancellationToken);
-            return setResult;
+            return setResult.Success && setChangedNothing ? setResult.WithUnchangedRights([CalendarRight]) : setResult;
         });
         return Unanswered(result, submission, attempt, $"Whether {user} was granted {accessRight} on the calendar of {resolvedMailbox ?? targetMailbox} could not be confirmed");
     }
@@ -303,6 +309,9 @@ public class CalendarPermissionService : ExchangeServiceBase
         // kd-88. One operation for the whole file, as the Mailbox Permissions loop has: one directory-read credential fetch.
         using var directoryRead = DirectoryReadOperation.Begin();
 
+        // Sweep item 21. One mail per affected person, sent after the loop (owner ruling 2026-11-03).
+        var digest = new PermissionChangeDigest();
+
         foreach (var row in records)
         {
             try
@@ -426,10 +435,12 @@ public class CalendarPermissionService : ExchangeServiceBase
                 // action rather than the access that changed. The single-target paths say
                 // "Calendar <level>" and "Calendar Access"; this now says the same, and
                 // permType is left alone so the audit and the table are unchanged.
+                // Sweep item 21: recorded here and sent once per person after the loop, and nothing for a Set Exchange
+                // answered as changing nothing (the entry already at that level).
                 var notifyPermType = isSet ? $"Calendar {row.AccessRight}" : "Calendar Access";
-                await PermissionChangeNotifier.NotifyAffectedAsync(
-                    email, result.Success ? [notifyPermType] : [], $"{row.Target} (Calendar)",
-                    row.Target, row.User, currentUser, isSet, _logger);
+                var changedNothing = result.UnchangedRights is { Count: > 0 };
+                digest.Record(result.Success && !changedNothing ? [notifyPermType] : [], $"{row.Target} (Calendar)",
+                    row.Target, row.User);
 
                 if (result.Success)
                 {
@@ -440,7 +451,9 @@ public class CalendarPermissionService : ExchangeServiceBase
                         User = row.User,
                         Permission = permType,
                         Status = "SUCCESS",
-                        Message = result.Message
+                        Message = changedNothing
+                            ? $"No change: {row.User} already had {row.AccessRight} on the calendar of {row.Target} (Exchange reported nothing to set)."
+                            : result.Message
                     });
                 }
                 else
@@ -473,6 +486,9 @@ public class CalendarPermissionService : ExchangeServiceBase
                 });
             }
         }
+
+        // Sweep item 21: after every row, one mail per trustee and one per owner. Never throws for a failed send.
+        await digest.SendAsync(email, currentUser, isSet, _logger);
 
         return new BulkOperationResult
         {

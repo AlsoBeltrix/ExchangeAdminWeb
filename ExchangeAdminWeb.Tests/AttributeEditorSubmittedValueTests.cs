@@ -116,6 +116,7 @@ public sealed class AttributeEditorSubmittedValueTests : IDisposable
         Set(page, "Servicers", _h.Servicers);
         Set(page, "AuthStateProvider", authState);
         Set(page, "AuthorizationService", _authorization);
+        Set(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         Set(page, "Email", _h.Email);
         Set(page, "Logger", NullLogger<Page>.Instance);
         SetField(page, "currentUser", @"EXAMPLE\operator");

@@ -1,24 +1,13 @@
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
-/// Tells the people a permission change actually affected - the trustee and the owner of the
-/// mailbox or calendar - that it happened.
+/// The administrator notification of a permission change whose outcome is unknown. A bulk run's notices to the people it
+/// affected - the trustee and the owner of the mailbox or calendar - are <see cref="PermissionChangeDigest"/>'s.
 /// </summary>
 /// <remarks>
-/// Audit finding A24. A bulk run wrote a per-row audit record and sent the operator's
-/// administrators one summary, and told the affected people nothing. The owner ruling is
-/// explicit that mailbox and calendar permission changes notify the affected user; the bulk
-/// path was simply never wired to do it, so uploading a CSV was a way to change fifty
-/// people's access without any of them hearing about it.
-///
-/// Shared by the mailbox and calendar processors because the decision is identical and the
-/// wording is not: a calendar notice names the target as "<c>someone@example.com
-/// (Calendar)</c>" to the trustee while the owner notice uses the bare address.
-///
-/// Both sends are attempted independently. One failing must not suppress the other, and
-/// neither may fail the row: the permission is already applied and already audited, so a
-/// mail server being down cannot be allowed to turn an applied change into a reported
-/// failure, nor to abandon the rest of the CSV.
+/// Audit finding A24 wired the bulk runs to tell the trustee and the owner (the owner ruling is explicit that mailbox and
+/// calendar permission changes notify the affected user). Sweep item 21 moved that notice from here (once per applied row,
+/// from inside the loop) to <see cref="PermissionChangeDigest"/>: one mail per affected person after the loop.
 /// </remarks>
 public static class PermissionChangeNotifier
 {
@@ -54,49 +43,88 @@ public static class PermissionChangeNotifier
             logger.LogWarning(ex, "The administrator notification for {Target} could not be sent; the change stands", target);
         }
     }
+}
 
-    /// <summary>
-    /// Notifies the trustee and the owner, if anything was applied.
-    /// </summary>
-    /// <param name="appliedRights">
-    /// What actually landed. Empty means nothing did, and nobody is told - which is the whole
-    /// gate. Callers with a single right pass it only when the operation succeeded; callers
-    /// with several pass <c>PermissionResult.AppliedRights</c>, so a partial notifies on the
-    /// part that took (audit finding A23).
-    /// </param>
-    /// <param name="trusteeLabel">How the target is named TO THE TRUSTEE.</param>
+/// <summary>
+/// Sweep item 21. What a bulk permission run tells the people it affected: one mail per person, after the loop.
+/// </summary>
+/// <remarks>
+/// The A24 fix notified the trustee and the owner from inside the loop, once per applied row, so a 200-row file could send
+/// 400 mails one after another and a trustee granted fifty mailboxes got fifty. The owner's ruling of 2026-11-03
+/// (<c>.agents/decisions.md</c>, "Bulk-run notifications"): one digest per affected person after the loop, and no mail for a
+/// row Exchange treated as a no-op. Each row's changed rights are recorded as the row completes; <see cref="SendAsync"/>
+/// sends, per trustee, one mail listing every mailbox or calendar granted or removed to them in the run, and per owner one
+/// mail listing every change on their mailbox or calendar. A person with a single change gets the same mail a single-row
+/// change sends. Addresses are grouped case-insensitively. Every send is attempted on its own: one failing does not
+/// suppress another, and none can change a row's outcome - each row is already applied and audited.
+/// </remarks>
+public sealed class PermissionChangeDigest
+{
+    private readonly Dictionary<string, List<(string Target, string Permission)>> _byTrustee = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<(string User, string Permission)>> _byOwner = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _trusteeOrder = [];
+    private readonly List<string> _ownerOrder = [];
+
+    /// <summary>Records one row's change. Nothing changed (<paramref name="changedRights"/> empty) records nothing.</summary>
+    /// <param name="changedRights">What the row changed: applied, and not answered by Exchange as a no-op.</param>
+    /// <param name="trusteeLabel">How the target is named to the trustee.</param>
     /// <param name="ownerTarget">The mailbox or calendar owner's address.</param>
-    public static async Task NotifyAffectedAsync(
-        EmailService email,
-        IReadOnlyList<string> appliedRights,
-        string trusteeLabel,
-        string ownerTarget,
-        string user,
-        string performedBy,
-        bool isGrant,
-        ILogger logger)
+    /// <param name="user">The trustee.</param>
+    public void Record(IReadOnlyList<string> changedRights, string trusteeLabel, string ownerTarget, string user)
     {
-        if (appliedRights.Count == 0)
+        if (changedRights.Count == 0)
             return;
 
-        var permType = string.Join("+", appliedRights);
+        var permType = string.Join("+", changedRights);
 
-        try
+        if (!_byTrustee.TryGetValue(user, out var granted))
         {
-            await email.SendUserNotificationAsync(user, trusteeLabel, performedBy, permType, isGrant);
+            _byTrustee[user] = granted = [];
+            _trusteeOrder.Add(user);
         }
-        catch (Exception ex)
+        granted.Add((trusteeLabel, permType));
+
+        if (!_byOwner.TryGetValue(ownerTarget, out var onTheirs))
         {
-            logger.LogError(ex, "Failed to notify {User} of a permission change on {Target}", user, ownerTarget);
+            _byOwner[ownerTarget] = onTheirs = [];
+            _ownerOrder.Add(ownerTarget);
+        }
+        onTheirs.Add((user, permType));
+    }
+
+    /// <summary>Sends one mail per trustee and one per owner recorded. Never throws for a failed send.</summary>
+    public async Task SendAsync(EmailService email, string performedBy, bool isGrant, ILogger logger)
+    {
+        foreach (var user in _trusteeOrder)
+        {
+            var changes = _byTrustee[user];
+            try
+            {
+                if (changes.Count == 1)
+                    await email.SendUserNotificationAsync(user, changes[0].Target, performedBy, changes[0].Permission, isGrant);
+                else
+                    await email.SendUserDigestNotificationAsync(user, changes, performedBy, isGrant);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to notify {User} of {Count} permission change(s) in a bulk run", user, changes.Count);
+            }
         }
 
-        try
+        foreach (var owner in _ownerOrder)
         {
-            await email.SendOwnerNotificationAsync(ownerTarget, user, performedBy, permType, isGrant);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to notify the owner of {Target} of a permission change", ownerTarget);
+            var changes = _byOwner[owner];
+            try
+            {
+                if (changes.Count == 1)
+                    await email.SendOwnerNotificationAsync(owner, changes[0].User, performedBy, changes[0].Permission, isGrant);
+                else
+                    await email.SendOwnerDigestNotificationAsync(owner, changes, performedBy, isGrant);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to notify the owner of {Target} of {Count} permission change(s) in a bulk run", owner, changes.Count);
+            }
         }
     }
 }

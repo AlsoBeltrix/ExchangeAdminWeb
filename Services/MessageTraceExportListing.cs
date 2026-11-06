@@ -172,8 +172,8 @@ public class MessageTraceExportListing
     /// </summary>
     public async Task<MessageTraceExportDownloadResult> TryDownloadAsync(string jobId, string? ticket)
     {
-        if (!TicketPresence.IsPresent(ticket))
-            return new MessageTraceExportDownloadResult { Error = TicketRequiredMessage };
+        if (TicketPresence.Describe(ticket?.Trim(), TicketRequiredMessage) is { } missing) // sweep item 40: an invisible character said as that
+            return new MessageTraceExportDownloadResult { Error = missing };
 
         var item = Resolve(jobId);
         if (item is null)

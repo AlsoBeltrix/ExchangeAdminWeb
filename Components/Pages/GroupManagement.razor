@@ -98,7 +98,7 @@
                     {
                         <div class="row g-2 mb-3">
                             <div class="col-auto">
-                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" style="width: 140px;" />
+                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" style="width: 140px;" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                             </div>
                             <div class="col">
                                 <div class="input-group input-group-sm">
@@ -115,7 +115,7 @@
                                                                 Placeholder="Search for a user or group"
                                                                 Disabled="@IsBusy" />
                                     </div>
-                                    <button class="btn btn-success" @onclick="AddMember" disabled="@(IsBusy || string.IsNullOrWhiteSpace(newMember) || string.IsNullOrWhiteSpace(ticketNumber))">Add</button>
+                                    <button class="btn btn-success" @onclick="AddMember" disabled="@(IsBusy || string.IsNullOrWhiteSpace(newMember) || !TicketPresence.IsPresentAsTyped(ticketNumber))">Add</button>
                                 </div>
                             </div>
                         </div>
@@ -139,8 +139,8 @@
                                                 Resolve
                                             </button>
                                             <button class="btn btn-success btn-sm" @onclick="AddResolvedAsync"
-                                                    disabled="@(IsBusy || ResolvedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
-                                                    title="@(string.IsNullOrWhiteSpace(ticketNumber) ? "Enter a ticket number first." : (ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null))">
+                                                    disabled="@(IsBusy || ResolvedCount == 0 || !TicketPresence.IsPresentAsTyped(ticketNumber))"
+                                                    title="@(!TicketPresence.IsPresentAsTyped(ticketNumber) ? "Enter a ticket number first." : (ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null))">
                                                 @* No spinner: the bulk add reports to the bar. *@
                                                 Add resolved (@ResolvedCount)
                                             </button>
@@ -188,8 +188,8 @@
                            audit are per row; one refusal never hides another (Known Failure Class 2). *@
                         <div class="d-flex align-items-center gap-2 mb-2">
                             <button class="btn btn-outline-danger btn-sm" @onclick="() => showRemoveConfirm = true"
-                                    disabled="@(IsBusy || SelectedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
-                                    title="@(string.IsNullOrWhiteSpace(ticketNumber) ? "Enter a ticket number first." : (SelectedCount == 0 ? "Tick one or more members first." : null))">Remove selected (@SelectedCount)</button>
+                                    disabled="@(IsBusy || SelectedCount == 0 || !TicketPresence.IsPresentAsTyped(ticketNumber))"
+                                    title="@(!TicketPresence.IsPresentAsTyped(ticketNumber) ? "Enter a ticket number first." : (SelectedCount == 0 ? "Tick one or more members first." : null))">Remove selected (@SelectedCount)</button>
                             <small class="text-muted">Tick members below and remove them in one confirmed batch. Each member is checked and written on its own, so one refusal never hides another.</small>
                         </div>
                         @if (showRemoveConfirm && SelectedCount > 0)
@@ -272,7 +272,7 @@
                                                    domain and is INERT - the service refuses it too; this removes the
                                                    affordance so the refusal is not the operator's first hint. *@
                                                 <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
-                                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(ticketNumber) || string.IsNullOrEmpty(member.ObjectGuid) || member.IsPrimaryMember)"
+                                                        disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(ticketNumber) || string.IsNullOrEmpty(member.ObjectGuid) || member.IsPrimaryMember)"
                                                         title="@(member.IsPrimaryMember ? "This is the member's primary group; primary-group membership cannot be removed here." : (string.IsNullOrEmpty(member.ObjectGuid) ? "This member could not be resolved in its own domain, so it cannot be removed here." : null))">Remove</button>
                                             }
                                         </td>
@@ -573,6 +573,11 @@
 
     private async Task AddMember()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // gmn-7: snapshot everything this handler acts on BEFORE the first await. Group
         // navigation stays live while awaits run, so the write must use the group and member
         // the operation was initiated with, never whatever the page points at afterwards.
@@ -710,6 +715,11 @@
 
     private async Task RemoveMember(GroupMemberInfo listed)
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // Key the removal on the immutable objectGUID (nesting plan S5b): a listed GROUP has an
         // empty Email, and a display identity can drift between the list render and the write.
         var member = string.IsNullOrWhiteSpace(listed.Email) ? listed.DisplayName : listed.Email;

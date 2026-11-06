@@ -49,6 +49,21 @@ public class PermissionResult
     public bool Unconfirmed => UnconfirmedRights is { Count: > 0 };
 
     /// <summary>
+    /// Sweep item 21. The entries of <see cref="AppliedRights"/> Exchange answered with a warning that nothing changed - the
+    /// right already in place for a grant, already absent for a removal, the folder permission already at the level set
+    /// (<c>ExchangeNoChangeWarning</c>). They stay in <see cref="AppliedRights"/>, so every reader of that field is unchanged;
+    /// a bulk run reads this to tell nobody of them. Null or empty when every applied right changed something, or when
+    /// Exchange gave no such warning.
+    /// </summary>
+    public IReadOnlyList<string>? UnchangedRights { get; init; }
+
+    /// <summary>
+    /// Sweep item 21. The applied rights that changed something: <see cref="AppliedRights"/> less <see cref="UnchangedRights"/>.
+    /// </summary>
+    public IReadOnlyList<string> ChangedRights =>
+        (AppliedRights ?? []).Where(r => UnchangedRights?.Contains(r, StringComparer.OrdinalIgnoreCase) != true).ToList();
+
+    /// <summary>
     /// False when the operation succeeded without changing anything. See
     /// <see cref="NoChange"/>.
     /// </summary>
@@ -109,6 +124,7 @@ public class PermissionResult
                 UnverifiedTargets = UnverifiedTargets,
                 AppliedRights = AppliedRights,
                 UnconfirmedRights = UnconfirmedRights,
+                UnchangedRights = UnchangedRights,
                 Changed = Changed,
                 ServicedNote = servicedNote,
             };
@@ -126,7 +142,28 @@ public class PermissionResult
         UnverifiedTargets = UnverifiedTargets,
         AppliedRights = AppliedRights,
         UnconfirmedRights = UnconfirmedRights,
+        UnchangedRights = UnchangedRights,
         Changed = Changed,
         ServicedNote = ServicedNote,
     };
+
+    /// <summary>
+    /// Sweep item 21. The same result naming <paramref name="unchangedRights"/> as <see cref="UnchangedRights"/>, every other
+    /// field carried as it is (<c>PermissionResultCopyTests</c>). Returns this result when there are none.
+    /// </summary>
+    public PermissionResult WithUnchangedRights(IReadOnlyList<string> unchangedRights) => unchangedRights.Count == 0
+        ? this
+        : new()
+        {
+            Success = Success,
+            Message = Message,
+            Detail = Detail,
+            ExcludedTargets = ExcludedTargets,
+            UnverifiedTargets = UnverifiedTargets,
+            AppliedRights = AppliedRights,
+            UnconfirmedRights = UnconfirmedRights,
+            UnchangedRights = unchangedRights,
+            Changed = Changed,
+            ServicedNote = ServicedNote,
+        };
 }
