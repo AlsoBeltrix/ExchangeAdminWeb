@@ -433,7 +433,7 @@
                 {
                     <div class="mb-3">
                         <label class="form-label">Ticket Number <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" placeholder="Required" />
+                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" placeholder="Required" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(undoTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                     </div>
                 }
             }
@@ -453,7 +453,7 @@
             </button>
             @if (undoPreview.CanUndo && undoSuccess == null)
             {
-                <button class="btn btn-warning btn-sm" @onclick="ExecuteUndo" disabled="@(undoExecuting || string.IsNullOrWhiteSpace(undoTicket))">
+                <button class="btn btn-warning btn-sm" @onclick="ExecuteUndo" disabled="@(undoExecuting || !TicketPresence.IsPresentAsTyped(undoTicket))">
                     @* No spinner: the undo reports to the status bar. *@
                     Confirm Undo
                 </button>

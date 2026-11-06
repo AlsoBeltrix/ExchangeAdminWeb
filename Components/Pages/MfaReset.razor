@@ -59,7 +59,7 @@
 
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                     </div>
                 </div>
             </div>
@@ -102,7 +102,7 @@
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <strong>Authentication Methods for @listedUpn</strong>
                         <button class="btn btn-danger btn-sm" @onclick="ConfirmReset"
-                                disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                                disabled="@(isLoading || !TicketPresence.IsPresentAsTyped(ticketNumber))">
                             Reset All Methods
                         </button>
                     </div>

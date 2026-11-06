@@ -120,10 +120,10 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
                         <button class="btn btn-primary" @onclick="SetupSingleRoom"
-                                disabled="@(IsBusy || string.IsNullOrWhiteSpace(roomEmail) || string.IsNullOrWhiteSpace(ticketNumber))">
+                                disabled="@(IsBusy || string.IsNullOrWhiteSpace(roomEmail) || !TicketPresence.IsPresentAsTyped(ticketNumber))">
                             @* No spinner: the single-room write reports to the bar. *@
                             Setup Room
                         </button>
@@ -137,7 +137,7 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(csvFinderTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
@@ -149,14 +149,14 @@
                             <div class="alert alert-info py-2">
                                 <strong>@finderPreview.Count room(s)</strong> parsed. Review the preview below, then click Apply.
                             </div>
-                            @if (string.IsNullOrWhiteSpace(csvFinderTicket))
+                            @if (!TicketPresence.IsPresentAsTyped(csvFinderTicket))
                             {
                                 <div class="alert alert-warning py-2">
                                     <small>Enter a <strong>Ticket Number</strong> above to enable Apply Changes.</small>
                                 </div>
                             }
                             <button class="btn btn-success" @onclick="ApplyFinderCsv"
-                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(csvFinderTicket))">
+                                    disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(csvFinderTicket))">
                                 @* No spinner: the CSV apply reports to the bar. *@
                                 Apply Changes
                             </button>
@@ -307,10 +307,10 @@
                         }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(typeTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
                         <button class="btn btn-primary" @onclick="SetSingleRoomType"
-                                disabled="@(IsBusy || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">
+                                disabled="@(IsBusy || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || !TicketPresence.IsPresentAsTyped(typeTicketNumber))">
                             @* No spinner: the single-room write reports to the bar. *@
                             Set Type
                         </button>
@@ -324,7 +324,7 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(csvTypeTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
@@ -337,7 +337,7 @@
                                 <strong>@typePreview.Count room(s)</strong> parsed. Review the preview below, then click Apply.
                             </div>
                             <button class="btn btn-success" @onclick="ApplyTypeCsv"
-                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(csvTypeTicket))">
+                                    disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(csvTypeTicket))">
                                 @* No spinner: the CSV apply reports to the bar. *@
                                 Apply Changes
                             </button>

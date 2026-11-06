@@ -184,7 +184,7 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@IsBusy" />
+                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(formTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         </div>
 
                         <div class="d-flex justify-content-between align-items-center">
@@ -193,7 +193,7 @@
                                 {
                                     @if (confirmDelete == editingLocation.Id)
                                     {
-                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(editingLocation)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
+                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(editingLocation)" disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(formTicketNumber))">Confirm Delete</button>
                                         <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmDelete = null" disabled="@isOperating">Cancel</button>
                                     }
                                     else
@@ -203,7 +203,7 @@
                                 }
                             </div>
                             <button class="btn btn-primary" @onclick="SaveLocation"
-                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || !TicketPresence.IsPresentAsTyped(formTicketNumber))">
                                 @* No spinner: the save reports to the status bar. *@
                                 @(editingLocation != null ? "Update" : "Create")
                             </button>
@@ -630,8 +630,8 @@
     /// </remarks>
     private async Task<string?> TicketRefusalAsync(string ticket)
     {
-        if (!TicketPresence.IsPresent(ticket))
-            return "A ticket number is required.";
+        if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing) // sweep item 40: an invisible character said as that
+            return missing;
 
         var validation = await ServiceNow.ValidateTicketAsync(ticket);
         return validation.IsValid ? null : $"Ticket validation failed: {validation.Message}";

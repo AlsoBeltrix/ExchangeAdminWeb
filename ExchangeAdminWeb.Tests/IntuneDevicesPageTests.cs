@@ -210,7 +210,7 @@ public class IntuneDevicesPageTests
         // also refuses a ticket with nothing visible in it.
         var body = MethodBody("ExecuteActionAsync");
 
-        var presenceIndex = body.IndexOf("TicketPresence.IsPresent(ticket)", StringComparison.Ordinal);
+        var presenceIndex = body.IndexOf("TicketPresence.Describe(ticket, ", StringComparison.Ordinal);
         var validateIndex = body.IndexOf("ServiceNow.ValidateTicketAsync(ticket)", StringComparison.Ordinal);
 
         Assert.True(presenceIndex >= 0, "ExecuteActionAsync does not require a ticket to be present.");

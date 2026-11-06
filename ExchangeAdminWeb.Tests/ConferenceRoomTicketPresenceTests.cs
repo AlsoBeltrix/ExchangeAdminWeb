@@ -88,7 +88,7 @@ public sealed class ConferenceRoomTicketPresenceTests : IDisposable
 
         await Run(page, write);
 
-        AssertRefused(page, write, ticket, "Ticket validation failed: Ticket number is required");
+        AssertRefused(page, write, ticket, "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket));
     }
 
     [Theory]

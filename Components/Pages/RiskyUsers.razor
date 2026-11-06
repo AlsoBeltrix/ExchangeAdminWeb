@@ -335,12 +335,12 @@
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="riskyUsersTicket">Ticket number (required)</label>
                                                     <input id="riskyUsersTicket" class="form-control form-control-sm" @bind="actionTicket"
-                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" />
+                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(actionTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                                                 </div>
                                                 <div class="col-md-8">
                                                     <button class="btn btn-danger btn-sm me-2"
                                                             @onclick="() => ExecuteActionAsync(user, confirmAction.Value)"
-                                                            disabled="@(actingUserId != null || string.IsNullOrWhiteSpace(actionTicket))">
+                                                            disabled="@(actingUserId != null || !TicketPresence.IsPresentAsTyped(actionTicket))">
                                                         @ActionLabel(confirmAction.Value)
                                                     </button>
                                                     <button class="btn btn-secondary btn-sm" @onclick="CancelAction"
@@ -877,9 +877,10 @@
             // 2. Ticket, mandatory. Presence is checked separately from validation because the
             //    ServiceNow client passes every ticket while the integration is dormant, so
             //    validation alone would admit a blank ticket on a deployment without it (AC14).
-            if (!TicketPresence.IsPresent(ticket))
+            // Sweep item 40: an invisible character is said as that, not as a missing ticket.
+            if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing)
             {
-                Refuse("A ticket number is required.", "Ticket number missing");
+                Refuse(missing, "Ticket number missing");
                 return;
             }
 

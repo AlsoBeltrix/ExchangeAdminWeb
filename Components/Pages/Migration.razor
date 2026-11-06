@@ -60,11 +60,11 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required /> @if (TicketPresence.HasInvisibleCharacterAsTyped(singleTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                     </div>
                 </div>
 
-                <button class="btn btn-primary" @onclick="CheckSingleEligibility" disabled="@(IsBusy || string.IsNullOrWhiteSpace(singleEmail) || string.IsNullOrWhiteSpace(singleTicketNumber))">
+                <button class="btn btn-primary" @onclick="CheckSingleEligibility" disabled="@(IsBusy || string.IsNullOrWhiteSpace(singleEmail) || !TicketPresence.IsPresentAsTyped(singleTicketNumber))">
                     @if (isLoading)
                     {
                         @* spinner removed: reported to the status bar *@
@@ -234,11 +234,11 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required /> @if (TicketPresence.HasInvisibleCharacterAsTyped(bulkTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                     </div>
                 </div>
 
-                <button class="btn btn-primary" @onclick="CheckBulkEligibility" disabled="@(IsBusy || csvFile == null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
+                <button class="btn btn-primary" @onclick="CheckBulkEligibility" disabled="@(IsBusy || csvFile == null || !TicketPresence.IsPresentAsTyped(bulkTicketNumber))">
                     @if (isLoading)
                     {
                         @* spinner removed: reported to the status bar *@
@@ -1489,7 +1489,7 @@
         <div class="input-group input-group-sm" style="width: 220px;">
             <input type="text" class="form-control" placeholder="Ticket # (required)"
                    @bind="pendingActionTicket" @bind:event="oninput"
-                   @onkeydown="HandleConfirmKeyDown" disabled="@IsBusy" />
+                   @onkeydown="HandleConfirmKeyDown" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(pendingActionTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
         </div>
         @if (ScheduleTimeIsRequired)
         {
@@ -1511,7 +1511,7 @@
             <span class="text-muted small">@ScheduleTimePreview</span>
         }
         <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
-                disabled="@(IsBusy || string.IsNullOrWhiteSpace(pendingActionTicket)
+                disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(pendingActionTicket)
                             || (ScheduleTimeIsRequired && PendingScheduleUtc == null))">
             @if (actionInProgress != null)
             {

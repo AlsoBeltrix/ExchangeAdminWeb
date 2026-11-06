@@ -502,7 +502,8 @@ public sealed class ModuleCatalog
             // 1.27.0: the excluded-group check finds the user by the typed address as UPN, mail or proxy address (one catalog
             // read), excludes a member of any group a name shared by several domains names, says so, and runs in a warm session
             // (sweep-c item 14).
-            Version = "1.27.0",
+            // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.27.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -602,7 +603,8 @@ public sealed class ModuleCatalog
             // Exchange Online connection or for the on-premises server, as the on-premises session opens, at its connect and
             // between its reads (kd-58, CancellationDepth A10) - "Cancelled by the operator", filed Cancelled - where each
             // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
-            Version = "1.8.7",
+            // 1.8.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.8.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -691,7 +693,8 @@ public sealed class ModuleCatalog
             // bar reading Idle, on a page whose Check Status tab reported correctly.
             // 1.1.4: as Mailbox Permissions 1.6.9 - its protection check (ValidateTargetMailboxAsync) binds a synced mailbox
             // by its on-premises SID (ppi S3).
-            Version = "1.1.4",
+            // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.1.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -726,7 +729,8 @@ public sealed class ModuleCatalog
             // 1.5.3: an unblock cancelled during the checks before it starts nothing, and a cancel made before the
             // Exchange Online call claims the send stops that call from sending - each filed Cancelled, nothing changed
             // (kd-76). A cancel after the send still leaves the outcome Undetermined.
-            Version = "1.5.3",
+            // 1.5.4: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.5.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -794,7 +798,8 @@ public sealed class ModuleCatalog
             // - the shared TicketPresence rule (kd-48).
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
-            Version = "2.16.2",
+            // 2.16.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "2.16.3",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -823,7 +828,8 @@ public sealed class ModuleCatalog
             // TicketPresence rule (kd-24).
             // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "1.9.1",
+            // 1.9.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.9.2",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -1015,7 +1021,8 @@ public sealed class ModuleCatalog
             // than after the yield, so a keystroke in that window cannot change what is recorded (kd-46).
             // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
             // before, and a second submit during a listing is ignored (kd-72).
-            Version = "1.6.1",
+            // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.6.2",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -1250,7 +1257,8 @@ public sealed class ModuleCatalog
             // TicketPresence rule (kd-24).
             // 1.6.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "1.6.0",
+            // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.6.1",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1288,7 +1296,8 @@ public sealed class ModuleCatalog
             // with nothing visible in it is refused as a blank one is (kd-45).
             // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
             // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
-            Version = "1.7.2",
+            // 1.7.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.7.3",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1373,7 +1382,8 @@ public sealed class ModuleCatalog
             // with nothing visible in it is refused as a blank one is (kd-45).
             // 1.6.1: a lookup and a list query read the user and the filter they were submitted with, above
             // their yield, and a second submit during one is ignored (kd-72).
-            Version = "1.6.1",
+            // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.6.2",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1412,7 +1422,8 @@ public sealed class ModuleCatalog
             // - the shared TicketPresence rule (kd-48).
             // 1.9.0: a deauthorize refused for its ticket records the ticket as submitted and says where
             // it refused and that nothing was attempted, as authorize already did (kd-49).
-            Version = "1.9.0",
+            // 1.9.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.9.1",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
@@ -1444,7 +1455,8 @@ public sealed class ModuleCatalog
             // in it - tickets this module used to accept. No code of its own changed (kd-50).
             // 1.3.1: a search runs on, labels and audits the name, recovery value, ticket and live-AD choice it
             // was submitted with - read above its paint yield - and a second submit during one is ignored (kd-72).
-            Version = "1.3.1",
+            // 1.3.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.3.2",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
@@ -1594,7 +1606,8 @@ public sealed class ModuleCatalog
             // any write - not only by the confirm button's disabled state (kd-4).
             // 1.6.0: a device action's ticket presence is the shared TicketPresence rule, so a ticket
             // with nothing visible in it is refused as a blank one is (kd-45).
-            Version = "1.6.0",
+            // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.6.1",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
@@ -1669,7 +1682,8 @@ public sealed class ModuleCatalog
             // second click during one is ignored (kd-72).
             // 1.1.7: a second click on Apply during an apply is ignored, so a double click no longer runs a second bulk
             // licence change over the same rows (kd-74).
-            Version = "1.1.7",
+            // 1.1.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.1.8",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1707,7 +1721,8 @@ public sealed class ModuleCatalog
             // above their yield - and a second submit during either is ignored (kd-72).
             // 1.7.5: an allowlist save the Module Configuration page stops waiting for - it moved to another module - writes
             // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
-            Version = "1.7.5",
+            // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.7.6",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
@@ -1785,7 +1800,8 @@ public sealed class ModuleCatalog
             // filed under a category the filter does not list can be found only under All (kd-65).
             // 1.5.1: the Result filter offers Cancelled, the result a cancel is filed under since kd-57 -
             // such a row could be found only under All (kd-71).
-            Version = "1.5.1",
+            // 1.5.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            Version = "1.5.2",
             MainPermission = new(
                 "Access",
                 "EventLog",

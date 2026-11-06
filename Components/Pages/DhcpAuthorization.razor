@@ -79,7 +79,7 @@
                                             <td>
                                                 @if (confirmRemove == server)
                                                 {
-                                                    <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveServer(server)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(ticketNumber))">Yes</button>
+                                                    <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveServer(server)" disabled="@(IsBusy || !TicketPresence.IsPresentAsTyped(ticketNumber))">Yes</button>
                                                     <button class="btn btn-secondary btn-sm" @onclick="() => confirmRemove = null">No</button>
                                                 }
                                                 else
@@ -115,11 +115,11 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                         <small class="text-muted">Required for both authorize and deauthorize operations.</small>
                     </div>
                     <button class="btn btn-primary" @onclick="AuthorizeServer"
-                            disabled="@(IsBusy || string.IsNullOrWhiteSpace(newDnsName) || string.IsNullOrWhiteSpace(newIpAddress) || string.IsNullOrWhiteSpace(ticketNumber))">
+                            disabled="@(IsBusy || string.IsNullOrWhiteSpace(newDnsName) || string.IsNullOrWhiteSpace(newIpAddress) || !TicketPresence.IsPresentAsTyped(ticketNumber))">
                         @* No spinner here either - the authorize and deauthorize writes both report to the frame now. The disabled state stays; that is refusal, not reporting. *@
                         Authorize
                     </button>
@@ -384,9 +384,10 @@
 
         try
         {
-            if (!TicketPresence.IsPresent(ticket))
+            // Sweep item 40: an invisible character is said as that, not as a missing ticket.
+            if (TicketPresence.Describe(ticket, "A ticket number is required for deauthorization. Enter one in the Authorize form.") is { } missing)
             {
-                operationResult = new DhcpOperationResult { Success = false, Message = "A ticket number is required for deauthorization. Enter one in the Authorize form." };
+                operationResult = new DhcpOperationResult { Success = false, Message = missing };
                 // kd-49: the ticket as submitted, not an empty string - a row that drops it cannot say what
                 // was sent - and the aud-a28 refusal fields, so this is told apart from a write that failed.
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticket, "Ticket number not provided", new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize missing ticket"); }

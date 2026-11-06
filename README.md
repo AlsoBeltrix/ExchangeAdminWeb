@@ -1265,6 +1265,16 @@ authorised them.
 - The Access tab's **Verify** checks the servicing groups with the module's access groups (see Per-Module Config Pages); an
   ignore there changes only what Verify reports, never who may service
 
+### Ticket numbers
+
+Where a page asks for a ticket number, the ticket must hold at least one visible character; leading and trailing
+spaces are trimmed, spaces inside it are kept. A ticket that holds an invisible character - a zero-width space,
+byte-order mark, soft hyphen, bidi mark or control character, usually carried in by a paste - is refused as that
+("Ticket number contains an invisible character ... Retype the ticket number by hand"), not as a missing ticket:
+the message shows under the ticket box and the page's submit buttons stay disabled until it is retyped. Nothing is
+stripped, so the ticket the audit records is the one typed. Each page's buttons are enabled by the same rule as the
+check behind them (`TicketPresence`).
+
 ### Audit Logging
 
 All operations are logged as JSON Lines (.jsonl). Business audit records and diagnostic operation trace records are separate files:

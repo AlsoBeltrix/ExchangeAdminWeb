@@ -1791,7 +1791,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     /// <summary>The banner of a ticket refused at its presence check.</summary>
-    private const string NoTicket = "Ticket validation failed: Ticket number is required. Nothing was written.";
+    private static string NoTicket(string? ticket) => $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}. Nothing was written."; // sweep item 40
 
     /// <summary>
     /// <paramref name="page"/>'s <c>ProcessBulk</c> over a one-row grant file to someone else - the ticket a test gives, its mail,
@@ -1846,8 +1846,8 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (result, warnings) = await Submit(page, ExchangeNamesTheAliasAsTheOperator(), _h.Audit, grantee: Other, ticket: ticket);
 
         Assert.False(result.Success);
-        Assert.Equal(NoTicket, result.Message);
-        AssertTheRefusalRow(Assert.Single(_h.AuditRows()), page == MailboxPage ? "AddFullAccess" : "SetCalendar", NoTicket, "TicketValidation");
+        Assert.Equal(NoTicket(ticket), result.Message);
+        AssertTheRefusalRow(Assert.Single(_h.AuditRows()), page == MailboxPage ? "AddFullAccess" : "SetCalendar", NoTicket(ticket), "TicketValidation");
         Assert.Empty(warnings);
         Assert.Empty(_h.Calls);
     }
@@ -1873,9 +1873,9 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         var (result, bulk, warnings, file) = await ProcessBulkGrant(page, ticket);
 
         Assert.Null(bulk);
-        Assert.Equal(NoTicket, Assert.IsType<PermissionResult>(result).Message);
+        Assert.Equal(NoTicket(ticket), Assert.IsType<PermissionResult>(result).Message);
         var record = Assert.Single(_h.AuditRows());
-        AssertTheRefusalRow(record, page == MailboxPage ? "BulkAdd" : "BulkSetCalendar", NoTicket, "TicketValidation");
+        AssertTheRefusalRow(record, page == MailboxPage ? "BulkAdd" : "BulkSetCalendar", NoTicket(ticket), "TicketValidation");
         Assert.Equal("Bulk", Text(record, "target"));
         Assert.Equal("grants.csv", Text(record, "affectedUser"));
         file.DidNotReceive().OpenReadStream(Arg.Any<long>(), Arg.Any<CancellationToken>());

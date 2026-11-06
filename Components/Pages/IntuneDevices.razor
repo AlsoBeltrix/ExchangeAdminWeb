@@ -386,7 +386,7 @@
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="intuneDeviceTicket">Ticket number (required)</label>
                                                     <input id="intuneDeviceTicket" class="form-control form-control-sm" @bind="actionTicket"
-                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@ActionsDisabled" />
+                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@ActionsDisabled" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(actionTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
                                                 </div>
                                                 @* Wipe alone requires typing the device name: retire is recoverable by
                                                    re-enrolling, a wipe destroys the machine's contents. *@
@@ -401,7 +401,7 @@
                                                 <div class="col-md-4">
                                                     <button class="btn btn-danger btn-sm me-2"
                                                             @onclick="() => ExecuteActionAsync(device, confirmAction.Value)"
-                                                            disabled="@(ActionsDisabled || string.IsNullOrWhiteSpace(actionTicket) || !WipeNameConfirmed(device, confirmAction.Value))">
+                                                            disabled="@(ActionsDisabled || !TicketPresence.IsPresentAsTyped(actionTicket) || !WipeNameConfirmed(device, confirmAction.Value))">
                                                         @ActionLabel(confirmAction.Value)
                                                     </button>
                                                     <button class="btn btn-secondary btn-sm" @onclick="CancelAction"
@@ -1030,9 +1030,10 @@
             // 2. Ticket, mandatory. Presence is checked separately from validation because the
             //    ServiceNow client passes every ticket while the integration is dormant, so
             //    validation alone would admit a blank ticket on a deployment without it.
-            if (!TicketPresence.IsPresent(ticket))
+            // Sweep item 40: an invisible character is said as that, not as a missing ticket.
+            if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing)
             {
-                Refuse("A ticket number is required.", "Ticket number missing");
+                Refuse(missing, "Ticket number missing");
                 return;
             }
 
