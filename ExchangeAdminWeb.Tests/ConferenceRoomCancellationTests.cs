@@ -167,8 +167,8 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         Assert.Empty(_h.Writes);
     }
 
-    // kd-73 (2), the gap kd-59 left: a cancel landing once the last preflight's credential has come back - here the room-list
-    // preflight's, the second of two - while its directory reads run, which took no token. Before, nothing looked at the
+    // kd-73 (2), the gap kd-59 left: a cancel landing once the row's credential has come back - since sweep item 28 the row's one
+    // lookup, the City/State/Country preflight's, with the room-list preflight still to run - while the directory reads run, which took no token. Before, nothing looked at the
     // token again and the row went on to Set-Place. The check just before Set-Place ended it there, nothing written; since
     // kd-58 A8 the directory steps' own looks end it sooner, as ConferenceRoomSetupCancellationTests shows.
     [Fact]
@@ -180,7 +180,7 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
         using var cancel = new CancellationTokenSource();
         var service = new Service(_h, _credentials.Service)
         {
-            AfterLookupFor = "on-prem room-list membership preflight",
+            AfterLookupFor = "Set-ADUser preflight",
             AfterLookup = cancel.Cancel,
         };
 
@@ -287,7 +287,8 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
             AfterLookupFor = "on-prem room-list membership preflight",
             AfterLookupAsync = async () => holding.SetResult(await HoldEveryPoolConnection()),
         };
-        var page = BuildPage(service, progress, city: "Dublin");
+        // Sweep item 28: no City/State/Country, so the room-list preflight's lookup is the row's one, after its last pool read.
+        var page = BuildPage(service, progress, city: "");
 
         var run = SetupSingleRoom(page);
         var held = await holding.Task.WaitAsync(Bound, TestContext.Current.CancellationToken);
@@ -354,17 +355,15 @@ public sealed class ConferenceRoomCancellationTests : IDisposable
     }
 
     // The deliberate limit: once Set-Place has committed, a cancel does not stop the row half-way - the room would be left
-    // half-configured, the partial the preflights exist to prevent. The row finishes as it always did.
+    // half-configured, the partial the preflights exist to prevent. The row finishes as it always did. Sweep item 28: the cancel
+    // as Set-Place is recorded - the write no longer looks its own credential up.
     [Fact]
     public async Task ACancelAfterSetPlace_LetsTheRowFinish_RatherThanLeaveTheRoomHalfConfigured()
     {
         _credentials.WaitsAtSecretRequest = int.MaxValue;
         using var cancel = new CancellationTokenSource();
-        var service = new Service(_h, _credentials.Service)
-        {
-            BeforeLookupFor = "Set-ADUser synced attributes",
-            BeforeLookup = cancel.Cancel,
-        };
+        var service = new Service(_h, _credentials.Service);
+        _h.AtSetPlace = cancel.Cancel;
 
         var result = await Apply(service, cancel.Token, city: "Dublin").WaitAsync(Bound, TestContext.Current.CancellationToken);
 

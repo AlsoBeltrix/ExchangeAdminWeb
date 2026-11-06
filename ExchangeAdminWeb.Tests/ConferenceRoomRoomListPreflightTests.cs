@@ -1497,7 +1497,6 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     [Theory]
     [InlineData("runspace")]
     [InlineData("import")]
-    [InlineData("credential")]
     [InlineData("room object read")]
     [InlineData("catalog")]
     [InlineData("group search")]
@@ -1507,6 +1506,9 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     [InlineData("read-back")]
     public async Task AFailureAtEachStepOfTheOnPremRoomListAdd_NamesThatStep(string failing)
     {
+        // Sweep item 28: the row's AD steps share one directory session, so the add opens a runspace and imports the module
+        // only when the session's runspace is no longer open - here closed at Set-Place - and prepares no credential of its
+        // own (ConferenceRoomWriteIdentityTests.TheRowsAdStepsShareOneLookupOneRunspaceAndOneImport).
         // Each step of the add fails in turn - after Set-Place, so the preflight's own steps pass. Each is a failed, partial
         // row naming nothing written, and its message names the step that failed: the steps before the write in the catch's
         // words, logged naming the step and never Set-ADGroup, no write made; the catalog in the resolver's own refusal; the
@@ -1516,9 +1518,8 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         var service = new Service(_h, logger);
         switch (failing)
         {
-            case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; break;
-            case "import": _h.ImportModuleFailureAfterSetPlace = Injected; break;
-            case "credential": service.IncompleteCredentialFor = "membership add"; break;
+            case "runspace": _h.DirectoryRunspaceFailureAfterSetPlace = Injected; _h.AtSetPlace = _h.CloseDirectoryRunspaces; break;
+            case "import": _h.ImportModuleFailureAfterSetPlace = Injected; _h.AtSetPlace = _h.CloseDirectoryRunspaces; break;
             case "room object read": _h.ObjectReadFailureAfterSetPlace = Injected; break;
             case "catalog": _h.FailuresAfterSetPlace["Get-ADForest"] = Injected; break;
             case "group search": _h.FailuresAfterSetPlace["Get-ADGroup"] = Injected; break;

@@ -38,7 +38,43 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public ExoConnectionPool Pool { get; }
 
     /// <summary>Every stand-in call in order: a Hashtable of its bound parameters plus <c>__Command</c>.</summary>
-    public IList Calls { get; } = ArrayList.Synchronized(new ArrayList());
+    public IList Calls { get; }
+
+    /// <summary>
+    /// Sweep item 28. Run as a <c>Set-Place</c> call is recorded - after the row's last look at its cancel and before any AD
+    /// write: where a test cancels after Set-Place, or closes the directory runspaces (<see cref="CloseDirectoryRunspaces"/>)
+    /// so a row's one directory session finds its runspace no longer open and opens another, which is how a test reaches the
+    /// runspace and import steps of the City/State/Country write and the on-prem room-list add.
+    /// </summary>
+    public Action? AtSetPlace { get; set; }
+
+    /// <summary>Sweep item 28. Closes every directory runspace this harness has opened.</summary>
+    public void CloseDirectoryRunspaces()
+    {
+        lock (_directoryRunspaces)
+        {
+            foreach (var runspace in _directoryRunspaces)
+                runspace.Close();
+        }
+    }
+
+    /// <summary>Sweep item 28. How many directory runspaces this harness has opened.</summary>
+    public int DirectoryRunspacesOpened => Volatile.Read(ref _directoryRunspacesOpened);
+
+    private int _directoryRunspacesOpened;
+    private readonly List<Runspace> _directoryRunspaces = [];
+
+    /// <summary>The call list: every call recorded, and a Set-Place call running <see cref="AtSetPlace"/>.</summary>
+    private sealed class CallList(ExchangeWriteHarness harness) : ArrayList
+    {
+        public override int Add(object? value)
+        {
+            var index = base.Add(value);
+            if (value is Hashtable { } call && call["__Command"] as string == "Set-Place")
+                harness.AtSetPlace?.Invoke();
+            return index;
+        }
+    }
 
     /// <summary>
     /// What the stand-in reads answer, keyed by any identity that resolves to the entry - the GUID,
@@ -460,6 +496,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
 
     public ExchangeWriteHarness()
     {
+        Calls = ArrayList.Synchronized(new CallList(this));
         Directory.CreateDirectory(Dir);
         Config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -782,6 +819,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
         var rs = RunspaceFactory.CreateRunspace();
         rs.Open();
         Define(rs, DirectoryStandIns);
+        Interlocked.Increment(ref _directoryRunspacesOpened);
+        lock (_directoryRunspaces)
+            _directoryRunspaces.Add(rs);
         return rs;
     }
 

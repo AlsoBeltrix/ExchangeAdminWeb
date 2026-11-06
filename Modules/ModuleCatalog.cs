@@ -1206,7 +1206,9 @@ public sealed class ModuleCatalog
             // gone: ConferenceRoomBinder binds each write to the room Exchange names (RoomMailbox / RemoteRoomMailbox only) and,
             // for a synced room, to the account holding its on-premises SID, and checks no rules; a protected room is written.
             // The servicing option is withdrawn from Module Configuration and the audit's protectedPrincipalServiced extra goes.
-            Version = "2.20.0",
+            // 2.20.1: sweep item 28 - a Room Finder row looks the AD credential up once and opens, imports and prepares one
+            // directory runspace for all its AD steps (the two preflights, the City/State/Country write, the on-prem room-list add).
+            Version = "2.20.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

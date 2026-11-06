@@ -123,19 +123,16 @@ public sealed class ConferenceRoomBulkCancellationTests : IDisposable
         Assert.Equal("The service stopped before this row was written. Nothing was written.", row.GetProperty("error").GetString());
     }
 
-    // kd-59's rule, kept: once Set-Place is sent the row runs on. The operator cancels as the row's City/State/Country write
-    // fetches its credential, after Set-Place: the row finishes - Set-ADUser written - and is recorded as a row outcome, as
+    // kd-59's rule, kept: once Set-Place is sent the row runs on. The operator cancels as the row's Set-Place is recorded (sweep
+    // item 28: the City/State/Country write no longer fetches a credential of its own, where this test used to cancel): the row finishes - Set-ADUser written - and is recorded as a row outcome, as
     // today, and the job stops before its second row.
     [Fact]
     public async Task TheOperatorsCancel_AfterARowsSetPlace_LetsTheRowFinish_AndStopsBeforeTheNext()
     {
         _credentials.WaitsAtSecretRequest = int.MaxValue;
         BulkJobService? runner = null;
-        var service = new Service(_h, _credentials.Service)
-        {
-            BeforeLookupFor = "Set-ADUser synced attributes",
-            BeforeLookup = () => Assert.True(runner!.CancelJob(JobId)),
-        };
+        var service = new Service(_h, _credentials.Service);
+        _h.AtSetPlace = () => Assert.True(runner!.CancelJob(JobId));
         runner = Runner(service);
         _jobs.Insert(FinderJob(rows: 2));
 
