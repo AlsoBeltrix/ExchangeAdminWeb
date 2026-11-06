@@ -187,7 +187,7 @@ public class Comms10kReplaceSequenceTests
         // after every preparation read and before ExecuteSequence; no write carries a gate.
         var body = StripComments(MemberBody(ServiceSource(), "private Comms10kUpdateResult PerformReplace("));
 
-        Assert.Equal(1, Regex.Matches(body, Regex.Escape("authorizationDenial()")).Count);
+        Assert.Single(Regex.Matches(body, Regex.Escape("authorizationDenial()")));
         var gate = body.IndexOf("authorizationDenial()", StringComparison.Ordinal);
         Assert.True(gate > body.IndexOf("ReadCurrentMembers(", StringComparison.Ordinal));
         Assert.True(gate < body.IndexOf("Comms10kReplaceWriter.ExecuteSequence(", StringComparison.Ordinal));
