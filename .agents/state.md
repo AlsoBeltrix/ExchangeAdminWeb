@@ -8,6 +8,36 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (sweep-e) - sweep items 21, 28, 40, 41, 42, 43 and 44 (docs half) landed; weekend goal set
+
+Merged `fix/sweep-e` into master at `39544c0a` (`--no-ff`, cherry 0, worktree and branch removed) on the agent's guard
+proof (records `.agents/review/findings/sweep-e-*.md`). Master gates: 8762 xUnit, 19 warnings, format, diff-check and
+ASCII clean. Versions: MailboxPermissions 1.6.11, CalendarPermissions 1.4.11, ConferenceRooms 2.20.1, AdminBulkJobs
+1.2.3, plus 16 module patch bumps for the ticket rule (item 40); base stays 2.36.0.
+
+Worth knowing: item 21 bulk runs now send one digest per trustee and per owner after the loop, and a row Exchange
+answers with a no-change warning is shown "No change" and mails nobody (warning wording assumed, harmless if wrong).
+Item 28 is per row, not per job. Item 44 changed no audit action or result value: the README documents the closed
+`result` list and six refusal shapes; the convention question is open for the owner (`sweep-e-44.md`). Account Lockout
+Remediation's ticket check (IsNullOrWhiteSpace, no ServiceNow) was outside item 41's list and is recorded, not fixed.
+The README Comms-10k field note "clear-then-fill never reads the prior membership" is stale since sweep-d item 19 and
+becomes true again with the revert slice; that slice fixes it.
+
+Deploy check list additions: bulk-grant FullAccess to a user who already has it (expect "No change", no mail); a 3-row
+CSV for one trustee (expect one mail); one synced-list Room Finder row with City/State/Country (one credential purpose
+logged, time against the old 25-30 s); paste a ticket with a zero-width space (message under the box, button disabled);
+show the Splunk owner the README result and refusal-convention section.
+
+Owner, 2026-11-06, leaving for the weekend: a `/goal` stop hook keeps this session working unattended with this
+authority: merge agent branches on guard proof after green gates; dispatch, one Opus 5.5 agent at a time, the Comms-10k
+clear-then-add revert, items 23-27, scripts 34-39, records 45, item 12 code half; then codex-commercial defect reviews
+per merged group (reasonable scope, authorization and write paths first) with findings fixed and merged. No deploy, no
+push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
+action here, then wait.
+
+**Next:** Comms-10k revert slice (in flight), then items 23-27, scripts 34-39 with item 12 code half, records 45,
+then the codex-commercial reviews; the one dev deploy waits for the owner.
+
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
 
 Merged `fix/sweep-d` into master at `c06b07b0` (`--no-ff`, cherry 0, worktree and branch removed) on the agent's
@@ -29,8 +59,7 @@ Owner rulings 2026-11-06 (decisions.md): item 16 keep revalidation (5-minute win
 rights (no validation-time cost, verified); end-of-work codex-commercial defect reviews run per merged group, kept
 reasonable.
 
-**Next:** remaining sweep groups 21/28/40-44, 23-27, scripts 34-39, records 45, item 12 code half, kd-94's shape if
-needed; then the codex-commercial reviews and the one dev deploy.
+**Next:** see the sweep-e entry above.
 
 ### 2026-11-06 - Verify plan Implemented (V1-V4 landed); back to the sweep
 
