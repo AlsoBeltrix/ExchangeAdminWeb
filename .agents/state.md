@@ -8,6 +8,18 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (comms10k-order) - Comms-10k write order back to clear-then-add
+
+Merged `fix/comms10k-order` into master at `0d3fcac8` (`--no-ff`, cherry 0, worktree and branch removed) on the
+agent's guard proof (record `.agents/review/findings/comms10k-order.md`). Master gates: 8757 xUnit (seven item-19
+writer tests removed, two added), 19 warnings, format, diff-check and ASCII clean. Comms10k 1.4.21.
+
+Restored: clear, then add every file member as `<GUID=...>` in 2,000 batches, as `docs/Comms10kBulkResolveScale-Plan.md`
+approved. Kept from sweep-d: a failed add after the clear names the batch and error; item 20's single authorization
+check now sits immediately before the clear. Removed: the pre-write membership read, the remove set and `-Remove`.
+Deploy check: the scratch-group `-Remove <GUID=...>` step is withdrawn (form no longer used); the module's own
+clear-then-add run on a scratch group stays as the end-to-end check.
+
 ### 2026-11-06 (sweep-e) - sweep items 21, 28, 40, 41, 42, 43 and 44 (docs half) landed; weekend goal set
 
 Merged `fix/sweep-e` into master at `39544c0a` (`--no-ff`, cherry 0, worktree and branch removed) on the agent's guard
@@ -35,7 +47,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** Comms-10k revert slice (in flight), then items 23-27, scripts 34-39 with item 12 code half, records 45,
+**Next:** items 23-27 (sweep-f, in flight), scripts 34-39 with item 12 code half, records 45,
 then the codex-commercial reviews; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
