@@ -135,7 +135,7 @@ public class Comms10kReplaceSequenceTests
     // ----- S4: the re-read, and where the point of no return is ---------------------------------
 
     [Fact]
-    public void TheTargetIsReReadByGuid_ImmediatelyBeforeTheClear()
+    public void TheTargetIsReReadByGuid_ImmediatelyBeforeTheFirstWrite()
     {
         // The Constitution requires a re-read before write where practical, and here it is one
         // cheap query that also proves the object still exists. A failure here is still
@@ -160,20 +160,23 @@ public class Comms10kReplaceSequenceTests
         // the module is bound to for every command; the returned DN is descriptive only.
         var body = MemberBody(ServiceSource(), "private Comms10kUpdateResult PerformReplace(");
 
-        Assert.Contains("ClearMembers(ps, credential, confirmed,", body, StringComparison.Ordinal);
+        Assert.Contains("ReadCurrentMembers(ps, credential, confirmed)", body, StringComparison.Ordinal);
         Assert.Contains("AddMemberBatch(ps, credential, confirmed, batch,", body, StringComparison.Ordinal);
+        Assert.Contains("RemoveMemberBatch(ps, credential, confirmed, batch,", body, StringComparison.Ordinal);
+        Assert.Contains("RemoveMemberValueBatch(ps, credential, confirmed, batch,", body, StringComparison.Ordinal);
         Assert.Contains("ReadBackMembers(ps, credential, confirmed)", body, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void TheClearAndEveryAddAreRetried_ButTheReadBackIsNot()
+    public void EveryAddAndRemoveIsRetried_ButTheReadBackIsNot()
     {
         // Retry is per write OPERATION. The read-back is not a write; retrying it would only
         // delay the could-not-confirm answer the operator needs.
         var body = MemberBody(ServiceSource(), "private Comms10kUpdateResult PerformReplace(");
 
-        Assert.Contains("clear: () => WithRetry(", body, StringComparison.Ordinal);
         Assert.Contains("addBatch: batch => WithRetry(", body, StringComparison.Ordinal);
+        Assert.Contains("removeBatch: batch => WithRetry(", body, StringComparison.Ordinal);
+        Assert.Contains("removeByDnBatch: batch => WithRetry(", body, StringComparison.Ordinal);
         Assert.Contains("readBack: () => ReadBackMembers(", body, StringComparison.Ordinal);
     }
 

@@ -403,15 +403,14 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// Resolve, re-read, then clear-then-fill with a read-back.
+    /// Resolve, re-read, then add-first (add, then remove) with a read-back.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>Replaces are NOT serialised.</b> Owner ruling 2026-09-30
     /// (<c>.agents/decisions.md</c>): the serialisation this sequence was first built with was
     /// never asked for and is removed. Two replaces of the same group running at once can
-    /// interleave a clear with the other run's batches and leave the list holding neither
-    /// uploaded file. That risk is accepted, not overlooked. What catches it is the read-back:
+    /// interleave their adds and removes and leave the list holding neither uploaded file. That risk is accepted, not overlooked. What catches it is the read-back:
     /// each run compares the final membership against its own uploaded list, so an interleaved
     /// run reports <c>PartlyApplied</c> with the observed count rather than claiming success,
     /// and re-running one CSV on its own repairs the list.
@@ -441,8 +440,8 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// The write itself. Everything that can refuse does so BEFORE the clear command is issued;
-    /// from the clear onwards the outcome comes from the read-back and nothing else.
+    /// The write itself. Everything that can refuse does so BEFORE the first write is issued;
+    /// from the first write onwards the outcome comes from the read-back and nothing else.
     /// </summary>
     /// <remarks>
     /// <b>One runspace for the whole sequence, and the steps are passed to
@@ -457,7 +456,7 @@ public class Comms10kService
         string group, Comms10kTarget target, IReadOnlyList<Guid> memberGuids,
         (string username, string password, string domain) creds, Func<string?> authorizationDenial)
     {
-        var clearDispatched = false;
+        var writeDispatched = false;
         try
         {
             using var runspace = CreateReplaceRunspace();
@@ -486,35 +485,54 @@ public class Comms10kService
                     $"The target group could not be re-read immediately before the write: {ex.Message}");
             }
 
-            // A member-attribute clear cannot remove primary-group membership. Enforce the
+            // A member-attribute write cannot remove primary-group membership. Enforce the
             // approved set before dispatch, rather than declaring post-write extras acceptable.
-            var primaries = ReadPrimaryMemberGuids(ps, credential, confirmed);
+            // The same read gives the current member attribute the add-first plan is built from.
+            Comms10kReplaceWriter.CurrentMembership current;
+            IReadOnlyList<Guid> primaries;
+            try
+            {
+                (current, primaries) = ReadCurrentMembers(ps, credential, confirmed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Comms10k could not read the current membership of {Group} before the write", group);
+                return Refused(group, memberGuids,
+                    $"The current membership could not be read immediately before the write: {ex.Message}");
+            }
             if (primaries.Except(memberGuids).Any())
                 return Refused(group, memberGuids,
                     "The group has primary-group members outside the approved set. They cannot be removed by this operation. Correct the membership and validate again.");
 
-            void RequireAuthorization()
+            var plan = Comms10kReplaceWriter.Plan(memberGuids, current);
+            _logger.LogInformation(
+                "Comms10k replace of {Group}: {Current} current members, {Add} to add, {Remove} to remove ({Unidentified} by their stored value)",
+                group, current.Members.Count + current.UnidentifiedDns.Count, plan.ToAdd.Count,
+                plan.ToRemove.Count + plan.ToRemoveByDn.Count, plan.ToRemoveByDn.Count);
+
+            // Immediately before Invoke. Merely entering the delegate does not establish that any
+            // mutation has been dispatched.
+            void MarkDispatched()
             {
                 if (authorizationDenial() is { } denial)
                     throw new InvalidOperationException(denial);
+                writeDispatched = true;
             }
 
             return Comms10kReplaceWriter.ExecuteSequence(
                 group,
                 memberGuids,
-                clear: () => WithRetry("clear", () => ClearMembers(ps, credential, confirmed, beforeDispatch: () =>
-                {
-                    RequireAuthorization();
-                    // Immediately before Invoke, after the gate. Merely entering the delegate
-                    // does not establish that any mutation has been dispatched.
-                    clearDispatched = true;
-                })),
+                current,
                 addBatch: batch => WithRetry("add batch", () => AddMemberBatch(ps, credential, confirmed, batch,
-                    beforeDispatch: RequireAuthorization)),
+                    beforeDispatch: MarkDispatched)),
+                removeBatch: batch => WithRetry("remove batch", () => RemoveMemberBatch(ps, credential, confirmed, batch,
+                    beforeDispatch: MarkDispatched)),
+                removeByDnBatch: batch => WithRetry("remove batch", () => RemoveMemberValueBatch(ps, credential, confirmed, batch,
+                    beforeDispatch: MarkDispatched)),
                 readBack: () => ReadBackMembers(ps, credential, confirmed),
-                clearWasDispatched: () => clearDispatched);
+                writeWasDispatched: () => writeDispatched);
         }
-        catch (Exception ex) when (!clearDispatched)
+        catch (Exception ex) when (!writeDispatched)
         {
             _logger.LogError(ex, "Comms10k write preparation failed for {Group} before any change", group);
             return Refused(group, memberGuids,
@@ -534,8 +552,7 @@ public class Comms10kService
     /// Runs one directory write, retrying only a transient failure, and logging every attempt.
     /// </summary>
     /// <remarks>
-    /// Per OPERATION, never per run: re-running the clear after batches have landed would wipe
-    /// them. Every attempt logs, because <c>ADException</c> is a broad base type and a permanent
+    /// Per OPERATION, never per run: one add or remove batch. Every attempt logs, because <c>ADException</c> is a broad base type and a permanent
     /// fault being retried three times must be visible rather than inferred.
     /// </remarks>
     private void WithRetry(string what, Action operation) =>
@@ -572,18 +589,43 @@ public class Comms10kService
         }
     }
 
-    /// <summary>Empties the group's <c>member</c> attribute. One operation, whatever the size.</summary>
-    internal static void ClearMembers(PowerShell ps, PSCredential credential, Comms10kTarget target, Action? beforeDispatch = null)
+    /// <summary>
+    /// Removes one batch of members the file does not name, by objectGUID.
+    /// <c>-Remove</c> on a member already absent is a silent no-op, which is what makes a retry safe.
+    /// </summary>
+    internal static void RemoveMemberBatch(
+        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<Guid> batch, Action? beforeDispatch = null)
+    {
+        if (batch.Count == 0 || batch.Contains(Guid.Empty))
+            throw new ArgumentException("Every member removal requires a nonempty ObjectGUID.", nameof(batch));
+        RemoveMemberValues(ps, credential, target, batch.Select(guid => $"<GUID={guid:D}>").ToArray(), beforeDispatch);
+    }
+
+    /// <summary>
+    /// Removes one batch of member values the host's directory could not map to an object, by
+    /// the exact value the pre-write read returned. Only values read from this group's own
+    /// <c>member</c> attribute seconds earlier reach here (<see cref="ReadCurrentMembers"/>).
+    /// </summary>
+    internal static void RemoveMemberValueBatch(
+        PowerShell ps, PSCredential credential, Comms10kTarget target, IReadOnlyList<string> batch, Action? beforeDispatch = null)
+    {
+        if (batch.Count == 0 || batch.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Every member removal requires a stored member value.", nameof(batch));
+        RemoveMemberValues(ps, credential, target, batch.ToArray(), beforeDispatch);
+    }
+
+    private static void RemoveMemberValues(
+        PowerShell ps, PSCredential credential, Comms10kTarget target, string[] values, Action? beforeDispatch)
     {
         var identity = PinnedIdentity(target.ObjectGuid);
         ps.Streams.Error.Clear();
         ps.AddCommand("Set-ADGroup")
           .AddParameter("Identity", identity)
-          .AddParameter("Clear", "member")
+          .AddParameter("Remove", new System.Collections.Hashtable { { "member", values } })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         InvokeAndClear(ps, beforeDispatch);
-        ThrowIfErrors(ps, "the group could not be cleared");
+        ThrowIfErrors(ps, "a batch of members could not be removed");
     }
 
     /// <summary>Adds one batch. <c>-Add</c> on a member already present is a silent no-op, which is what makes a retry safe.</summary>
@@ -617,6 +659,31 @@ public class Comms10kService
         PowerShell ps, PSCredential credential, Comms10kTarget target)
     {
         var group = ReadMembershipGroup(ps, credential, target);
+        var dns = MemberValues(group);
+
+        return new Comms10kReplaceWriter.ReadBack(
+            ReadMemberGuids(ps, credential, dns), ReadPrimaryMemberGuids(ps, credential, group));
+    }
+
+    /// <summary>
+    /// The membership immediately before the write: the <c>member</c> attribute mapped to
+    /// objectGUIDs, and the primary-group members. Unlike the read-back, a value the host's
+    /// directory cannot map is kept, not fatal: it is listed for removal by its exact value
+    /// (see <see cref="Comms10kReplaceWriter.CurrentMembership"/>). An ambiguous mapping is still
+    /// fatal - it refuses before any change.
+    /// </summary>
+    internal static (Comms10kReplaceWriter.CurrentMembership Current, IReadOnlyList<Guid> Primaries) ReadCurrentMembers(
+        PowerShell ps, PSCredential credential, Comms10kTarget target)
+    {
+        var group = ReadMembershipGroup(ps, credential, target);
+        var dns = MemberValues(group);
+        var mapped = MapMemberGuids(ps, credential, dns, out var unidentified);
+        return (new Comms10kReplaceWriter.CurrentMembership(mapped, unidentified),
+            ReadPrimaryMemberGuids(ps, credential, group));
+    }
+
+    private static List<string> MemberValues(PSObject group)
+    {
         var dns = new List<string>();
         var value = group.Properties["member"]?.Value;
         if (value is string single)
@@ -632,9 +699,7 @@ public class Comms10kService
         }
         else if (value is not null)
             throw new InvalidOperationException("The member attribute was unreadable.");
-
-        return new Comms10kReplaceWriter.ReadBack(
-            ReadMemberGuids(ps, credential, dns), ReadPrimaryMemberGuids(ps, credential, group));
+        return dns;
     }
 
     internal static IReadOnlyList<Guid> ReadPrimaryMemberGuids(
@@ -680,6 +745,16 @@ public class Comms10kService
 
     private static IReadOnlyList<Guid> ReadMemberGuids(PowerShell ps, PSCredential credential, IReadOnlyList<string> dns)
     {
+        var identities = MapMemberGuids(ps, credential, dns, out var unidentified);
+        if (unidentified.Count > 0)
+            throw new InvalidOperationException("Not every observed member could be mapped to an ObjectGUID.");
+        return identities;
+    }
+
+    private static IReadOnlyList<Guid> MapMemberGuids(
+        PowerShell ps, PSCredential credential, IReadOnlyList<string> dns, out IReadOnlyList<string> unidentified)
+    {
+        var missing = new List<string>();
         var identities = new HashSet<Guid>();
         foreach (var batch in Comms10kMemberResolver.Batch(dns.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()))
         {
@@ -703,10 +778,10 @@ public class Comms10kService
                     throw new InvalidOperationException("A member identity mapping was missing, unexpected or ambiguous.");
                 mapped[dn] = guid;
             }
-            if (mapped.Count != requested.Count)
-                throw new InvalidOperationException("Not every observed member could be mapped to an ObjectGUID.");
+            missing.AddRange(batch.Where(dn => !mapped.ContainsKey(dn)));
             identities.UnionWith(mapped.Values);
         }
+        unidentified = missing;
         return identities.ToArray();
     }
 
@@ -774,7 +849,7 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// A refusal that happened before the clear was issued, so the membership is untouched. It
+    /// A refusal that happened before any write was issued, so the membership is untouched. It
     /// routes through the one procedure that derives outcomes rather than building a result by
     /// hand - deciding outcomes at the error site is the habit that produced three rounds of
     /// contradictions in this plan.
