@@ -8,6 +8,27 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (sweep-f) - sweep items 23, 25, 26, 27 landed; item 24 widening is an owner question
+
+Merged `fix/sweep-f` into master at `de53b714` (`--no-ff`, cherry 0, worktree and branch removed; one index-row
+conflict resolved by keeping both sides) on the agent's guard proof (records `.agents/review/findings/sweep-f-2*.md`).
+Master gates: 8810 xUnit, 19 warnings, format, diff-check and ASCII clean. Versions: CalendarPermissions 1.4.13,
+Migration 1.27.3, RecipientLookup 1.8.3, OutOfOffice 1.1.6, ADAttributeEditor 1.7.7; base stays 2.36.0.
+
+Item 24, not widened: Microsoft documents Complete-MigrationBatch from Synced or SyncedWithErrors, but the 2026-09-25
+decision ("a migration batch with errors is not completable") and aud-a23r (HIGH) hold approval to exactly Synced.
+The refusal now says the batch holds errors and what to do. **Owner question (ask one at a time, with item 44's):**
+should a single-user batch be approved and completed from SyncedWithErrors? Read-only check that shows whether it
+blocks anyone today: `Get-MigrationUser -ResultSize Unlimited | ? Status -eq NeedsApproval | % { Get-MigrationBatch
+-Identity $_.BatchId } | select Identity,Status`.
+
+Deploy check list additions (each in its record): on-prem calendar grant/change/remove on a test mailbox with no
+"could not be confirmed" and no `_UNCONFIRMED` mail, including a non-English calendar name; cloud Reviewer grant to a
+user with no entry succeeds, and an unresolvable user's refusal begins "Set-MailboxFolderPermission failed for"; an
+auto-reply scheduled from a non-UTC browser reads back the typed clock in OWA and Get-MailboxAutoReplyConfiguration;
+an attribute-editor save of one extensionAttribute and one msExchRecipientDisplayType shows Undo, no "was not
+confirmed", and a "pinned to domain controller" log line.
+
 ### 2026-11-06 (item 45) - record drift fixed; two Constitution sentences corrected for owner confirmation
 
 Sweep item 45 done directly on master as records (`.agents/review/findings/sweep-45.md`): finding status lines for
@@ -57,7 +78,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** items 23-27 (sweep-f, in flight), scripts 34-39 with item 12 code half,
+**Next:** scripts 34-39 with item 12 code half (sweep-g, in flight),
 then the codex-commercial reviews; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
