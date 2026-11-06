@@ -603,8 +603,15 @@ public class CloudPasswordResetFillPageSourceTests
 
         // Unconditionally, on whatever the save returned.
         Assert.Contains("AuditReset(upn, ticket, \"CloudPasswordReset_EmployeeIdSet\",", afterSave, StringComparison.Ordinal);
-        Assert.Contains("await NotifyEmployeeIdSaveAsync(upn, ticket, save);", afterSave, StringComparison.Ordinal);
-        Assert.DoesNotMatch(new Regex(@"\bif\s*\("), afterSave[..IndexOf(afterSave, "NotifyEmployeeIdSaveAsync(")]);
+        Assert.Contains("saveToAlert = save;", afterSave, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"\bif\s*\("), afterSave[..IndexOf(afterSave, "saveToAlert = save;")]);
+
+        // sweep-d item 29: the alert itself is sent from the handler's finally - after the password write, on every
+        // path the save reached - and nowhere else.
+        var finallyBlock = body[body.LastIndexOf("finally", StringComparison.Ordinal)..];
+        Assert.Contains("if (saveToAlert is not null)\n                await NotifyEmployeeIdSaveAsync(upn, ticket, saveToAlert);",
+            finallyBlock.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        Assert.Equal(1, body.Split("await NotifyEmployeeIdSaveAsync(").Length - 1);
 
         var page = Page();
         foreach (var builder in new[]

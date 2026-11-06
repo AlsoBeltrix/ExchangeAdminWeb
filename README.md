@@ -281,8 +281,13 @@ tactical account; resetting a Global Administrator is the module's normal operat
 - A send failure after the write discards the password rather than showing it, logs at Critical
   and audits `CloudPasswordReset_DeliveryFailed`. Running the reset again issues a new one.
 - A saved employee ID is audited as `CloudPasswordReset_EmployeeIdSet` with its own administrator
-  alert, and every event of the module carries `employeeIdFill`, `employeeIdFillValue` and
+  alert, sent once the password write that follows the save has completed (after the reset's own
+  alert), and every event of the module carries `employeeIdFill`, `employeeIdFillValue` and
   `employeeIdFillSource`.
+- The Graph client built from the module's Delinea record is kept for five minutes from the read,
+  so a preflight and its confirm - the account re-read, the employee-ID save and the password
+  write - make one Secret Server read and use one Graph token (sweep-d item 29). A rotated secret
+  is picked up within five minutes.
 - **Requires:** its own Graph app registration with `User.Read.All`,
   `User-PasswordProfile.ReadWrite.All` and `RoleManagement.Read.Directory`, and its own Delinea
   record. Ships disabled. Filling in an employee ID also needs the registration to be allowed to

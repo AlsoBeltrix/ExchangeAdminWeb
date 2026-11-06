@@ -29,10 +29,25 @@ internal sealed class CloudPasswordResetHarness : IDisposable
     /// the save, the reset - lands there with no secret configured. Off, a call that needs Graph finds no secret and
     /// sends nothing, which is what the save's own tests rely on.
     /// </param>
+    /// <param name="throughVault">
+    /// sweep-d item 29. Configure a Graph secret id and answer the Secret Server read through the service's
+    /// <c>SecretFieldsForTests</c> seam, counting reads in <see cref="VaultReads"/>, so the service builds, keeps and
+    /// reuses its own Graph client over <see cref="Graph"/>. Exclusive with <paramref name="standInGraph"/>.
+    /// </param>
+    /// <param name="clock">The clock the kept client's window is measured on, when <paramref name="throughVault"/>.</param>
     public CloudPasswordResetHarness(
         StandInForest forest, IReadOnlyDictionary<string, string>? moduleConfig = null, bool corruptConfig = false,
-        bool standInGraph = false)
+        bool standInGraph = false, bool throughVault = false, TimeProvider? clock = null)
     {
+        if (throughVault)
+        {
+            var withSecret = new Dictionary<string, string>(moduleConfig ?? new Dictionary<string, string>())
+            {
+                ["GraphDelineaSecretId"] = "4242",
+            };
+            moduleConfig = withSecret;
+        }
+
         Forest = forest;
         Tickets.ValidateAsync(Arg.Any<string>(), Arg.Any<string?>())
             .Returns(Task.FromResult(new TicketGateResult(TicketGateOutcome.Accepted, null)));
@@ -67,6 +82,8 @@ internal sealed class CloudPasswordResetHarness : IDisposable
             Log, ModuleConfig, delinea, httpClientFactory, forest.Service(), Tickets, new PasswordGenerator())
         {
             GraphClientForTests = standInGraph ? GraphClient : null,
+            SecretFieldsForTests = throughVault ? ReadVaultAsync : null,
+            Clock = clock ?? TimeProvider.System,
         };
 
         Environment = env;
@@ -93,6 +110,23 @@ internal sealed class CloudPasswordResetHarness : IDisposable
 
     public GraphRecorder Graph { get; } = new();
 
+    /// <summary>sweep-d item 29: Secret Server reads made through the service's seam.</summary>
+    public int VaultReads => Volatile.Read(ref _vaultReads);
+
+    private int _vaultReads;
+
+    private Task<Dictionary<string, string>?> ReadVaultAsync(int secretId)
+    {
+        Assert.Equal(4242, secretId);
+        Interlocked.Increment(ref _vaultReads);
+        return Task.FromResult<Dictionary<string, string>?>(new Dictionary<string, string>
+        {
+            ["Tenant ID"] = "tenant",
+            ["Application ID"] = "client",
+            ["Client Secret"] = "secret",
+        });
+    }
+
     public CapturingLogger Log { get; } = new();
 
     public CloudPasswordResetService Service { get; }
@@ -109,6 +143,11 @@ internal sealed class CloudPasswordResetHarness : IDisposable
 
         public List<Request> Requests { get; } = [];
 
+        /// <summary>sweep-d item 29: token requests answered, one per Graph client that fetched one.</summary>
+        public int TokenRequests => Volatile.Read(ref _tokenRequests);
+
+        private int _tokenRequests;
+
         /// <summary>How Graph answers the recorded request; a test may throw from here to stand for one lost in flight.</summary>
         public Func<Request, HttpResponseMessage> Respond { get; set; } = _ => new HttpResponseMessage(HttpStatusCode.NoContent);
 
@@ -116,6 +155,7 @@ internal sealed class CloudPasswordResetHarness : IDisposable
         {
             if (request.RequestUri!.Host == "login.microsoftonline.com")
             {
+                Interlocked.Increment(ref _tokenRequests);
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("""{"access_token":"test-token","expires_in":3600}"""),

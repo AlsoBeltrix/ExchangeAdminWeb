@@ -49,9 +49,16 @@ internal sealed class CloudPasswordResetPageRun : IDisposable
     private readonly TempDir _logs = new();
     private int _resetChecks;
 
-    public CloudPasswordResetPageRun(StandInForest forest, IReadOnlyDictionary<string, string>? moduleConfig = null)
+    /// <param name="throughVault">
+    /// sweep-d item 29: reach Graph through the service's own kept client, built from a counted Secret Server read,
+    /// rather than through the stand-in client seam.
+    /// </param>
+    public CloudPasswordResetPageRun(
+        StandInForest forest, IReadOnlyDictionary<string, string>? moduleConfig = null, bool throughVault = false,
+        TimeProvider? clock = null)
     {
-        Backend = new CloudPasswordResetHarness(forest, moduleConfig ?? FillOn, standInGraph: true);
+        Backend = new CloudPasswordResetHarness(
+            forest, moduleConfig ?? FillOn, standInGraph: !throughVault, throughVault: throughVault, clock: clock);
         Backend.Graph.Respond = AnswerGraph;
 
         var config = new ConfigurationBuilder()

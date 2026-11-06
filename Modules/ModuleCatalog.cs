@@ -1058,7 +1058,7 @@ public sealed class ModuleCatalog
             // can trigger the save.
             // 1.2.1: the module card and the Access permission say one thing each again; the employee-ID detail
             // lives in the settings' own hints and the README (owner, 2026-10-30).
-            Version = "1.2.1",
+            Version = "1.2.2",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
