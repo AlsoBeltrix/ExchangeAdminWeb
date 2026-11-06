@@ -1777,3 +1777,132 @@ Describe 'cdt-54: Get-AppPoolOtherApplication lists what else a stop of the pool
         }
     }
 }
+
+Describe 'sweep item 34: an unreadable IIS node refuses only when it could reach the folder' {
+
+    # The serving-pool check read every site, application and virtual directory on the server and
+    # refused on any oddity anywhere: another team's application with a missing root virtual directory,
+    # a site name holding both quote characters, or one read error refused every deploy, promotion and
+    # install stop. Now a node that cannot be read refuses only when its own path is at, inside or
+    # above the folder, or cannot be placed, or it runs under the named pool; any other is a warning.
+    # Driven through the default probe with stand-ins for the three IIS reads, several sites at once.
+
+    BeforeAll {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { $script:S34Sites }
+            function script:Get-WebApplication {
+                [CmdletBinding()]
+                param([string]$Site)
+                if ($script:S34AppErrors.ContainsKey($Site)) { throw $script:S34AppErrors[$Site] }
+                if ($script:S34Apps.ContainsKey($Site)) { $script:S34Apps[$Site] }
+            }
+            function script:Get-WebConfiguration {
+                [CmdletBinding()]
+                param([string]$PSPath, [string]$Filter)
+                $null = $PSPath
+                if ($script:S34DirErrors.ContainsKey($Filter)) { Write-Error $script:S34DirErrors[$Filter] }
+                if ($script:S34Dirs.ContainsKey($Filter)) { $script:S34Dirs[$Filter] }
+            }
+        }
+
+        function Get-S34Site { param([string]$Name, [string]$Pool, [string]$Path) [pscustomobject]@{ name = $Name; applicationPool = $Pool; physicalPath = $Path } }
+        function Get-S34App { param([string]$Path, [string]$Pool, [string]$Physical) [pscustomobject]@{ path = $Path; applicationPool = $Pool; PhysicalPath = $Physical } }
+        function Get-S34DirFilter { param([string]$Site, [string]$App) "/system.applicationHost/sites/site[@name='$Site']/application[@path='$App']/virtualDirectory" }
+        function Get-S34Root { param([string]$Physical) [pscustomobject]@{ path = '/'; physicalPath = $Physical } }
+
+        # The instance: site Web at D:\sites, application /App at D:\sites\App under ProdPool. Each
+        # case adds other sites to it.
+        function Initialize-S34Server {
+            param([object[]]$Sites, [hashtable]$Apps = @{}, [hashtable]$Dirs = @{}, [hashtable]$AppErrors = @{}, [hashtable]$DirErrors = @{})
+            $allApps = @{ 'Web' = @(Get-S34App -Path '/App' -Pool 'ProdPool' -Physical 'D:\sites\App') }
+            foreach ($k in $Apps.Keys) { $allApps[$k] = $Apps[$k] }
+            $allDirs = @{ (Get-S34DirFilter 'Web' '/') = @(Get-S34Root 'D:\sites'); (Get-S34DirFilter 'Web' '/App') = @(Get-S34Root 'D:\sites\App') }
+            foreach ($k in $Dirs.Keys) { $allDirs[$k] = $Dirs[$k] }
+            $allSites = @(Get-S34Site -Name 'Web' -Pool 'SitePool' -Path 'D:\sites') + @($Sites)
+            InModuleScope AppPoolControl -Parameters @{ S = $allSites; A = $allApps; D = $allDirs; AE = $AppErrors; DE = $DirErrors } {
+                param($S, $A, $D, $AE, $DE)
+                $script:S34Sites = $S
+                $script:S34Apps = $A
+                $script:S34Dirs = $D
+                $script:S34AppErrors = $AE
+                $script:S34DirErrors = $DE
+            }
+        }
+
+        function Invoke-S34Check {
+            $warnings = $null
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -WarningVariable warnings 3>$null)
+            [pscustomobject]@{ Result = $result; Warnings = @($warnings) }
+        }
+    }
+
+    AfterAll {
+        InModuleScope AppPoolControl {
+            Remove-Item -Path 'function:Get-Website', 'function:Get-WebApplication', 'function:Get-WebConfiguration' -ErrorAction SilentlyContinue
+            Remove-Variable -Name S34Sites, S34Apps, S34Dirs, S34AppErrors, S34DirErrors -Scope Script -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'passes, and warns naming it, when another site elsewhere has an application without a root virtual directory' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Tools' -Pool 'OtherPool' -Physical 'D:\other\Tools') } -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') }
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike "*Other/Tools at 'D:\other\Tools' under 'OtherPool': its virtual directories cannot be read: IIS listed no root virtual directory for Other/Tools*"
+        ($run.Warnings -join ' ') | Should -BeLike '*do not stop this run*'
+    }
+
+    It 'passes, and warns, when another site elsewhere has a name holding both quote characters' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name "Bob's `"Web`"" -Pool 'OtherPool' -Path 'D:\other')
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike '*holds both quote characters*'
+    }
+
+    It 'passes, and warns, when the applications of another site elsewhere cannot be listed' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -AppErrors @{ 'Other' = 'Access denied' }
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike "*Other/ at 'D:\other' under 'OtherPool': its applications cannot be read: Access denied*"
+    }
+
+    It 'passes, and warns, when a virtual-directory read elsewhere reports an error' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') } -DirErrors @{ (Get-S34DirFilter 'Other' '/') = 'The configuration section cannot be read' }
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike '*The configuration section cannot be read*'
+    }
+
+    It 'refuses when the unreadable node runs under the named pool, wherever its files are' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Jobs' -Pool 'ProdPool' -Physical 'D:\other\Jobs') } -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve 'D:\sites\App'*Other/Jobs at 'D:\other\Jobs' under 'ProdPool'*"
+    }
+
+    It 'refuses when the unreadable node is above the folder' {
+        Initialize-S34Server -Sites @() -DirErrors @{ (Get-S34DirFilter 'Web' '/') = 'The configuration section cannot be read' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve*Web/ at 'D:\sites' under 'SitePool'*cannot be read*"
+    }
+
+    It 'refuses when the unreadable node is inside the folder' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\sites\App\nested') -AppErrors @{ 'Other' = 'Access denied' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Other/ at 'D:\sites\App\nested'*Access denied*"
+    }
+
+    It 'refuses when the unreadable node has no path that can be placed' {
+        # A site object missing its physicalPath: strict mode throws reading it, and nothing says where it is.
+        Initialize-S34Server -Sites @([pscustomobject]@{ name = 'Odd'; applicationPool = 'OtherPool' })
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage '*Odd/*the site itself cannot be read*'
+    }
+
+    It 'cdt-61 holds: another application at the folder under another pool still refuses, with an unreadable site elsewhere' {
+        Initialize-S34Server -Sites @((Get-S34Site -Name 'Twin' -Pool 'TwinPool' -Path 'D:\twin'), (Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other')) `
+            -Apps @{ 'Twin' = @(Get-S34App -Path '/Copy' -Pool 'TwinPool' -Physical 'D:\sites\App') } `
+            -Dirs @{ (Get-S34DirFilter 'Twin' '/') = @(Get-S34Root 'D:\twin'); (Get-S34DirFilter 'Twin' '/Copy') = @(Get-S34Root 'D:\sites\App') } `
+            -AppErrors @{ 'Other' = 'Access denied' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*served by an app pool other than 'ProdPool'*Twin/Copy runs under 'TwinPool'*"
+    }
+
+    It 'still refuses when the site list itself cannot be read: then nothing can be placed' {
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe { throw 'IIS is not answering' } } |
+            Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*IIS is not answering*'
+    }
+}

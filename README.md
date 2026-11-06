@@ -960,6 +960,13 @@ SYSTEM, TrustedInstaller or the account running it can change that folder's code
 grant; a plan prints the verdict instead). See `docs/ConfigDbOperations.md`, "Who can change the
 app folder", for what is checked and how to narrow a folder.
 
+Before each pool stop the scripts ask IIS which pool serves the folder about to be replaced
+(`Assert-AppPoolServesPath` in `tools\AppPoolControl.psm1`) and refuse unless it is the named
+pool alone. A site, application or virtual directory IIS cannot read refuses only when it could
+reach that folder - its own path at, inside or above it, a path that cannot be placed, or the
+named pool. One elsewhere on the server (another team's site with a missing root virtual
+directory, say) is named in a warning and does not stop the run.
+
 **Default URL:** `http://yourserver/ExchangeAdminWeb`
 
 #### Shared config database (dev and prod on one server)

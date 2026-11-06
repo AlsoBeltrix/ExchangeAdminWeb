@@ -477,6 +477,17 @@ function Assert-AppPoolServesPath {
         aud-a38k. The same choice words the refusals: under Refuse they say what the mirror would do
         to files still being served; under Allow, that nothing will be stopped.
 
+        Sweep item 34 (sweep-g). Every node IIS lists is still read, but a node that cannot be read,
+        or reads oddly, refuses only when it could reach the folder: its own path at, inside or above
+        the folder (by lexical or final path), or no path that can be placed, or the named pool as
+        its pool. Such a node is one this check exists to see. Any other - another team's site with a
+        missing root virtual directory, a name holding both quote characters, a read error - is named
+        in a warning and does not stop the run: the warning says that its unread applications or
+        virtual directories were not seen. Before, any one of them anywhere on the server refused
+        every deploy, promotion and install stop (the cdt-61 class). A Get-Website that fails still
+        refuses: then nothing can be placed. Another node at the folder under another pool still
+        refuses (aud-a38c, cdt-61).
+
     .OUTPUTS
         What IIS serves at or inside the folder (Location, ApplicationPool, PhysicalPath) when the
         rule the caller named holds - with Refuse, only what is at the folder. Throws otherwise.
@@ -511,26 +522,62 @@ function Assert-AppPoolServesPath {
         # Every application has a root virtual directory, so a listing without one is a read that
         # missed and is thrown, not taken for "nothing else"; a read that reports an error throws
         # too (-ErrorAction Stop). Under this module's strict mode a missing property throws as
-        # well, and every such throw is a refusal below, not a pass.
+        # well.
+        #
+        # Sweep item 34: a read that fails for one site or application no longer ends the probe.
+        # It yields an issue node in its place - the node whose children could not be read, with
+        # the path and pool already known for it and an Issue saying what failed - and the probe
+        # goes on with the next. The function decides below whether that node could reach the
+        # folder (refuse) or lies elsewhere (warn). Get-Website itself failing still throws, and
+        # refuses.
         [scriptblock]$ApplicationsProbe = {
             foreach ($site in @(Get-Website)) {
-                [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
-                $owners = @([pscustomobject]@{ Path = '/'; ApplicationPool = $site.applicationPool })
-                foreach ($app in @(Get-WebApplication -Site $site.name)) {
-                    [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
-                    $owners += [pscustomobject]@{ Path = $app.path; ApplicationPool = $app.applicationPool }
+                $siteName = $null
+                $sitePool = $null
+                $sitePath = $null
+                try {
+                    $siteName = [string]$site.name
+                    $sitePool = [string]$site.applicationPool
+                    $sitePath = [string]$site.physicalPath
+                } catch {
+                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "the site itself cannot be read: $($_.Exception.Message)" }
+                    continue
                 }
-                $siteXPath = "/system.applicationHost/sites/site[@name=$(ConvertTo-IisXPathLiteral $site.name)]"
+                [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath }
+                $owners = @([pscustomobject]@{ Path = '/'; ApplicationPool = $sitePool; PhysicalPath = $sitePath })
+                try {
+                    foreach ($app in @(Get-WebApplication -Site $siteName -ErrorAction Stop)) {
+                        [pscustomobject]@{ Location = "$siteName$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
+                        $owners += [pscustomobject]@{ Path = [string]$app.path; ApplicationPool = [string]$app.applicationPool; PhysicalPath = [string]$app.PhysicalPath }
+                    }
+                } catch {
+                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "its applications cannot be read: $($_.Exception.Message)" }
+                    continue
+                }
+                try {
+                    $siteXPath = "/system.applicationHost/sites/site[@name=$(ConvertTo-IisXPathLiteral $siteName)]"
+                } catch {
+                    foreach ($owner in $owners) {
+                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)" }
+                    }
+                    continue
+                }
                 foreach ($owner in $owners) {
-                    $filter = "$siteXPath/application[@path=$(ConvertTo-IisXPathLiteral $owner.Path)]/virtualDirectory"
-                    $directories = @(Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filter -ErrorAction Stop)
-                    if (@($directories | Where-Object { $_.path -eq '/' }).Count -eq 0) {
-                        throw "IIS listed no root virtual directory for $($site.name)$($owner.Path), so its other virtual directories cannot be shown to have been read."
+                    try {
+                        $filter = "$siteXPath/application[@path=$(ConvertTo-IisXPathLiteral $owner.Path)]/virtualDirectory"
+                        $directories = @(Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filter -ErrorAction Stop)
+                        if (@($directories | Where-Object { $_.path -eq '/' }).Count -eq 0) {
+                            throw "IIS listed no root virtual directory for $siteName$($owner.Path), so its other virtual directories cannot be shown to have been read."
+                        }
+                        $found = @(foreach ($directory in $directories) {
+                                if ($directory.path -eq '/') { continue }
+                                [pscustomobject]@{ Location = "$siteName$($owner.Path.TrimEnd('/'))$($directory.path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $directory.physicalPath }
+                            })
+                    } catch {
+                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)" }
+                        continue
                     }
-                    foreach ($directory in $directories) {
-                        if ($directory.path -eq '/') { continue }
-                        [pscustomobject]@{ Location = "$($site.name)$($owner.Path.TrimEnd('/'))$($directory.path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $directory.physicalPath }
-                    }
+                    $found
                 }
             }
         }
@@ -570,6 +617,34 @@ function Assert-AppPoolServesPath {
         $applications = @(& $ApplicationsProbe)
     } catch {
         throw "Cannot read the IIS sites and applications, so it cannot be confirmed that app pool '$Name' is what serves '$PhysicalPath': $($_.Exception.Message)"
+    }
+
+    # Sweep item 34. The nodes the probe could not read, and whether each could reach the folder: at
+    # it, inside it or above it, by lexical or final path; or with no path that can be placed; or
+    # under the named pool. Those refuse, as every unreadable node used to. The rest are elsewhere:
+    # they are named in a warning and the run goes on.
+    $issues = @($applications | Where-Object { $null -ne $_.PSObject.Properties['Issue'] })
+    $applications = @($applications | Where-Object { $null -eq $_.PSObject.Properties['Issue'] })
+    $couldReach = {
+        param($Node)
+        if ([string]::Equals([string]$Node.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        $lexical = ConvertTo-ComparablePhysicalPath $Node.PhysicalPath
+        if (-not $lexical) { return $true }
+        if ((Test-PhysicalPathInside $lexical $target) -or (Test-PhysicalPathInside $target $lexical)) { return $true }
+        if ($null -eq $targetFinal) { return $false }
+        $final = & $finalOf $lexical
+        return ($null -ne $final -and ((Test-PhysicalPathInside $final $targetFinal) -or (Test-PhysicalPathInside $targetFinal $final)))
+    }
+    $describeIssue = { param($Node) "$($Node.Location) at '$($Node.PhysicalPath)' under '$($Node.ApplicationPool)': $($Node.Issue)" }
+    $blocking = @($issues | Where-Object { & $couldReach $_ })
+    if ($blocking.Count -gt 0) {
+        $named = @($blocking | ForEach-Object { & $describeIssue $_ }) -join '; '
+        throw "Cannot read the IIS sites and applications that could serve '$PhysicalPath', so it cannot be confirmed that app pool '$Name' is what serves it: $named"
+    }
+    $unreadElsewhere = @($issues | Where-Object { -not (& $couldReach $_) })
+    if ($unreadElsewhere.Count -gt 0) {
+        $named = @($unreadElsewhere | ForEach-Object { & $describeIssue $_ }) -join '; '
+        Write-Warning "IIS could not fully read $($unreadElsewhere.Count) node(s) whose own folders and pools are neither '$PhysicalPath', inside or above it, nor '$Name', so they do not stop this run: $named. Their unread applications or virtual directories were not seen; one pointing into '$PhysicalPath' would not be either. Fix them in IIS to have them checked."
     }
 
     $inside = @($applications | Where-Object { & $isInFolder $_ })
