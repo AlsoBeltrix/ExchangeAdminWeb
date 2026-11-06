@@ -147,6 +147,7 @@ public sealed class BlockedSendersServicedUnblockAuditTests : IDisposable
         Set(page, "Audit", _exchange.Audit);
         Set(page, "AuthStateProvider", auth);
         Set(page, "AuthorizationService", authorization);
+        Set(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         Set(page, "OperationTrace", _exchange.Trace);
         Set(page, "Logger", NullLogger<Page>.Instance);
         // Email stays unset: the page's admin notification is caught and logged when it cannot be sent.

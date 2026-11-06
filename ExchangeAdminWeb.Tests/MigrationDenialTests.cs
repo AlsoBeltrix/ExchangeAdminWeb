@@ -327,4 +327,96 @@ public sealed class MigrationDenialTests : IDisposable
         IneligibleUsers = 1,
         EligibilityResults = [new MigrationEligibilityResult { EmailAddress = Address, Status = MigrationStatus.Ineligible }],
     };
+
+    // ---- sweep item 41: the ticket, checked by the action the confirm bar runs ----------------------------------------
+    // The confirm bar's own check was the only gate for every batch and mailbox action, and it returned unrecorded. Each
+    // executor now checks the ticket first - presence by the shared rule, then ServiceNow where enabled - and records a
+    // refusal as its "_Denied" row, refusedAt TicketValidation, nothing attempted.
+
+    public static TheoryData<string, string> HandlersAndUnusableTickets()
+    {
+        var data = new TheoryData<string, string>();
+        foreach (var handler in new[] { "ExecuteBatchAction", "ExecuteUserAction", "ExecuteBulkBatchAction", "ExecuteBulkMailboxAction" })
+            foreach (var ticket in new[] { "", "   ", "INC\u200B0042" })
+                data.Add(handler, ticket);
+        return data;
+    }
+
+    private static async Task<bool> RunHandler(RenderableMigration page, string handler, string ticket)
+    {
+        var ran = false;
+        Func<Task<PermissionResult>> single = () => { ran = true; return Task.FromResult(PermissionResult.Ok()); };
+        Func<string, Task<PermissionResult>> each = _ => { ran = true; return Task.FromResult(PermissionResult.Ok()); };
+        switch (handler)
+        {
+            case "ExecuteBatchAction": await Call(page, handler, single, "CompleteMigrationBatch", Batch, ticket); break;
+            case "ExecuteUserAction": await Call(page, handler, single, "ApproveMigrationUser", Address, ticket); break;
+            case "ExecuteBulkBatchAction":
+                await Call(page, handler, (IReadOnlyList<string>)[Batch], (IReadOnlyList<MigrationBatchSkip>)[], each, "StopMigrationBatch", "Migration_StopSelected", "Queued stop of", ticket);
+                break;
+            default:
+                await Call(page, handler, new MigrationUserActionPlan([Address], []), each, "StopMigrationUser", "Migration_PauseMailboxes", "Queued pause of", ticket);
+                break;
+        }
+        return ran;
+    }
+
+    private JsonElement OneTicketRefusal()
+    {
+        var row = Assert.Single(_exchange.AuditEvents());
+        Assert.EndsWith("_Denied", row.GetProperty("action").GetString(), StringComparison.Ordinal);
+        Assert.Equal("Failed", row.GetProperty("result").GetString());
+        Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        return row;
+    }
+
+    [Theory]
+    [MemberData(nameof(HandlersAndUnusableTickets))]
+    public async Task AnActionWithNoUsableTicket_IsRefused_RecordedAsDenied_AndNothingRuns(string handler, string ticket)
+    {
+        var page = Page(deny: null);
+
+        Assert.False(await RunHandler(page, handler, ticket));
+
+        var expected = $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}; nothing was done.";
+        var shown = Assert.IsType<PermissionResult>(Field("batchActionResult").GetValue(page));
+        Assert.Equal((false, expected), (shown.Success, shown.Message));
+        Assert.Equal(expected, OneTicketRefusal().GetProperty("error").GetString() + "; nothing was done.");
+        Assert.Equal((false, expected), Outcome());
+    }
+
+    [Theory]
+    [InlineData("ExecuteBatchAction")]
+    [InlineData("ExecuteUserAction")]
+    [InlineData("ExecuteBulkBatchAction")]
+    [InlineData("ExecuteBulkMailboxAction")]
+    public async Task AnActionWithATicketServiceNowRejects_IsRefused_AndNothingRuns(string handler)
+    {
+        var page = Page(deny: null);
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        Set(page, "ServiceNow", serviceNow);
+
+        Assert.False(await RunHandler(page, handler, Ticket));
+
+        Assert.Single(requests);
+        var row = OneTicketRefusal();
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", row.GetProperty("error").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+    }
+
+    [Fact]
+    public async Task AConfirmWithABlankTicket_ReachesTheActionsRecordedRefusal_NotASilentReturn()
+    {
+        // The confirm bar returned on a blank ticket with nothing shown or recorded. Its button and Enter stay off for one, so
+        // only a raced click gets here - and that click is now refused by the action, recorded.
+        var page = Page(deny: null);
+        typeof(ExchangeAdminWeb.Components.Pages.Migration).GetMethod("CompleteBatch", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(page, [Batch]);
+        Field("pendingActionTicket").SetValue(page, "");
+
+        await Call(page, "ConfirmPendingAction");
+
+        Assert.Equal("CompleteMigrationBatch_Denied", OneTicketRefusal().GetProperty("action").GetString());
+    }
 }

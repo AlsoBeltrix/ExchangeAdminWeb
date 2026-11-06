@@ -502,7 +502,7 @@ public sealed class ModuleCatalog
             // 1.27.0: the excluded-group check finds the user by the typed address as UPN, mail or proxy address (one catalog
             // read), excludes a member of any group a name shared by several domains names, says so, and runs in a warm session
             // (sweep-c item 14).
-            // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             Version = "1.27.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
@@ -693,7 +693,7 @@ public sealed class ModuleCatalog
             // bar reading Idle, on a page whose Check Status tab reported correctly.
             // 1.1.4: as Mailbox Permissions 1.6.9 - its protection check (ValidateTargetMailboxAsync) binds a synced mailbox
             // by its on-premises SID (ppi S3).
-            // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             Version = "1.1.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
@@ -729,7 +729,7 @@ public sealed class ModuleCatalog
             // 1.5.3: an unblock cancelled during the checks before it starts nothing, and a cancel made before the
             // Exchange Online call claims the send stops that call from sending - each filed Cancelled, nothing changed
             // (kd-76). A cancel after the send still leaves the outcome Undetermined.
-            // 1.5.4: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            // 1.5.4: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             Version = "1.5.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
@@ -1682,7 +1682,7 @@ public sealed class ModuleCatalog
             // second click during one is ignored (kd-72).
             // 1.1.7: a second click on Apply during an apply is ignored, so a double click no longer runs a second bulk
             // licence change over the same rows (kd-74).
-            // 1.1.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            // 1.1.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             Version = "1.1.8",
             MainPermission = new(
                 "Access",
@@ -1721,7 +1721,7 @@ public sealed class ModuleCatalog
             // above their yield - and a second submit during either is ignored (kd-72).
             // 1.7.5: an allowlist save the Module Configuration page stops waiting for - it moved to another module - writes
             // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
-            // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             Version = "1.7.6",
             MainPermission = new(
                 "Access",
@@ -1800,7 +1800,7 @@ public sealed class ModuleCatalog
             // filed under a category the filter does not list can be found only under All (kd-65).
             // 1.5.1: the Result filter offers Cancelled, the result a cancel is filed under since kd-57 -
             // such a row could be found only under All (kd-71).
-            // 1.5.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
+            // 1.5.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             Version = "1.5.2",
             MainPermission = new(
                 "Access",

@@ -1275,6 +1275,14 @@ the message shows under the ticket box and the page's submit buttons stay disabl
 stripped, so the ticket the audit records is the one typed. Each page's buttons are enabled by the same rule as the
 check behind them (`TicketPresence`).
 
+Each ticket-gated action checks the ticket again behind its button, before anything is written: presence by this
+rule, then ServiceNow where that integration is enabled (BitLocker Recovery and Cloud Password Reset: where their
+`ValidateTickets` switch is on), and a refusal is recorded in the audit log. AD Attribute
+Editor saves, Blocked Senders unblocks, Licensing Updates applies, Out of Office changes, Event Log undos and
+Migration's batch and mailbox actions record theirs with `refusedAt` `TicketValidation` and `mutationAttempted`
+`false`. Account Lockout Remediation is the exception: its service still checks presence alone, with
+`string.IsNullOrWhiteSpace`.
+
 ### Audit Logging
 
 All operations are logged as JSON Lines (.jsonl). Business audit records and diagnostic operation trace records are separate files:

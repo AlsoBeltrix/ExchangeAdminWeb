@@ -235,6 +235,9 @@
     private LicensePreviewResult? previewResult;
     private LicenseBulkResult? applyResult;
     private string ticketNumber = "";
+
+    // Sweep item 41: an [Inject] property, not an @inject directive, so no markup line moves.
+    [Inject] private ServiceNowService ServiceNow { get; set; } = default!;
     private (bool success, string message)? operationResult;
 
     protected override async Task OnInitializedAsync()
@@ -372,6 +375,24 @@
 
         try
         {
+            // Sweep item 41. The ticket, checked here behind the button, which was its only gate (ApplyCsvAsync has no ticket
+            // step): presence by the shared rule (kd-24), then ServiceNow where that integration is enabled - a dormant
+            // ServiceNow passes every ticket, a blank one included (kd-18). Refused before anything is written, and recorded
+            // under the run's per-row action, its refusal fields saying nothing was attempted.
+            var ticketValidation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                operationResult = (false, $"Ticket validation failed: {ticketValidation.Message}");
+                try
+                {
+                    Audit.LogModuleAction(currentUser, clientIpAddress, "LicensingUpdates_Update", "LicensingUpdates",
+                        $"(bulk) {preview.Rows.Count} rows", false, ticket, operationResult.Value.message,
+                        new Dictionary<string, object?> { ["refusedAt"] = "TicketValidation", ["mutationAttempted"] = false });
+                }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for the ticket refusal of a licensing apply"); }
+                return;
+            }
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "LicensingUpdates");
             if (!authCheck.Succeeded)

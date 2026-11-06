@@ -126,6 +126,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         SetProperty(page, "Validator", Validator(config, env, moduleConfig, trace));
         SetProperty(page, "AuthStateProvider", Authentication(holdFirstCall: holdAt == "auth"));
         SetProperty(page, "AuthorizationService", Authorization(authorized));
+        SetProperty(page, "ServiceNow", TestServiceNow.Dormant()); // sweep item 41: the page checks its ticket with ServiceNow
         SetProperty(page, "Logger", NullLogger<Page>.Instance);
         // aud-a7e: what the first interactive render does - ask the browser for its zone. The schedule
         // fields are set after it, because the read re-bases them to the browser's clock.
@@ -501,6 +502,43 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Equal(Mailbox, row.GetProperty("target").GetString());
         Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.False(GetField<bool>(page, "isSetting"), "A refusal must not leave the form disabled.");
+    }
+
+    // Sweep item 41. The ticket was gated only by the Set button's markup: it is now checked behind the button - presence by
+    // the shared rule, then ServiceNow where enabled - before the target check, and the refusal is recorded as this page's
+    // other refusals are, with the refusal fields. Nothing is read or written.
+    public static TheoryData<string> UnusableTickets => ["", "   ", "INC" + (char)0x200B + "0001"];
+
+    [Theory]
+    [MemberData(nameof(UnusableTickets))]
+    public async Task ASetWithNoUsableTicket_IsRefusedAndRecorded_AndNothingIsWritten(string ticket)
+    {
+        var (page, _) = BuildPage("write");
+        SetField(page, "ticketNumber", ticket);
+
+        await SetOof(page);
+
+        Assert.Empty(_setCalls);
+        var row = SingleRow(AuditRows(), "OutOfOffice_Denied");
+        Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
+        Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
+        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), row.GetProperty("error").GetString());
+        Assert.False(GetField<bool>(page, "isSetting"), "A refusal must not leave the form disabled.");
+    }
+
+    [Fact]
+    public async Task ASetWithATicketServiceNowRejects_IsRefusedAndRecorded_AndNothingIsWritten()
+    {
+        var (page, _) = BuildPage("write");
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await SetOof(page);
+
+        Assert.Empty(_setCalls);
+        var row = SingleRow(AuditRows(), "OutOfOffice_Denied");
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", row.GetProperty("error").GetString());
+        Assert.Single(requests);
     }
 
     [Fact]

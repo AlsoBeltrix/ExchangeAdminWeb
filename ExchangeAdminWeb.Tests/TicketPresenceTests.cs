@@ -161,12 +161,9 @@ public class TicketPresenceTests
             var text = File.ReadAllText(path);
             foreach (var variable in TicketVariables)
             {
-                foreach (var line in text.Split('\n').Where(l => l.Contains($"IsNullOrWhiteSpace({variable})", StringComparison.Ordinal)))
-                {
-                    Assert.False(line.Contains("disabled=", StringComparison.Ordinal) || line.Contains("title=", StringComparison.Ordinal)
-                        || line.Contains("@if", StringComparison.Ordinal),
-                        $"{name}: a control is gated on string.IsNullOrWhiteSpace({variable}): {line.Trim()}");
-                }
+                // Sweep item 41: nor is any handler - the undo's and Migration's confirm returned on it, unrecorded.
+                Assert.False(text.Contains($"IsNullOrWhiteSpace({variable})", StringComparison.Ordinal),
+                    $"{name}: the ticket {variable} is judged by string.IsNullOrWhiteSpace, not by TicketPresence.");
                 if (!text.Contains($"IsPresentAsTyped({variable})", StringComparison.Ordinal))
                     continue;
                 gated++;

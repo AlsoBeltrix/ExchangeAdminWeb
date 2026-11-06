@@ -1707,6 +1707,9 @@
     // Per-action ticket confirmation
     private string pendingActionTicket = "";
 
+    // Sweep item 41: an [Inject] property, not an @inject directive (see the note on the other [Inject] property).
+    [Inject] private ServiceNowService ServiceNow { get; set; } = default!;
+
     // WHICH batch Actions menu is open - "left", "right", or none. A bool served one
     // placement; the menu now renders in both panes and a bool would open both at once.
     // Deliberately NOT part of IsBusy: it is a menu, not an operation.
@@ -3309,7 +3312,7 @@
     // several rows away once a skipped row is annotated between them.
     private async Task HandleConfirmKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(pendingActionTicket))
+        if (e.Key == "Enter" && TicketPresence.IsPresentAsTyped(pendingActionTicket)) // sweep item 40: the Confirm button's own rule
             await ConfirmPendingAction();
     }
 
@@ -3330,7 +3333,10 @@
 
     private async Task ConfirmPendingAction()
     {
-        if (pendingActionCallback == null || string.IsNullOrWhiteSpace(pendingActionTicket)) return;
+        // Sweep item 41: the ticket is not judged here, where a refusal returned unrecorded - the action it confirms refuses a
+        // missing or rejected ticket itself, recorded (TicketRefusalAsync). Confirm and Enter are enabled only for a ticket
+        // that is present (TicketPresence.IsPresentAsTyped), so this is reached with one only through a raced click.
+        if (pendingActionCallback == null) return;
 
         // R13. Confirm is disabled without a valid time, but Enter arrives here through
         // HandleConfirmKeyDown, which never reads that disabled state. Re-checked rather than
@@ -3348,6 +3354,20 @@
         await callback(ticket);
     }
 
+    /// <summary>
+    /// Sweep item 41. The ticket a staged batch or mailbox action was confirmed with, checked by each executor before anything
+    /// else: presence by the shared rule (kd-24), then ServiceNow where that integration is enabled - a dormant ServiceNow
+    /// passes every ticket, a blank one included (kd-18). The confirm bar was the only gate, and its refusal was not recorded.
+    /// Null when the ticket is accepted; otherwise the refusal, recorded as this page's denials are (the "_Denied" row).
+    /// </summary>
+    private async Task<string?> TicketRefusalAsync(string auditAction, string target, string ticket, IReadOnlyList<string>? targets = null)
+    {
+        var validation = TicketPresence.Refusal(ticket) ?? await ServiceNow.ValidateTicketAsync(ticket);
+        return validation.IsValid
+            ? null
+            : MigrationService.RecordTicketRefusal(Audit, Logger, currentUser, clientIpAddress, auditAction, target, ticket, validation.Message, targets);
+    }
+
     private async Task ExecuteBatchAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
     {
         // Set before the first await - see CreateSingleMigrationBatch for why.
@@ -3359,6 +3379,8 @@
         string? actionFailure = "Nothing was done."; // aud-a23m: the write's outcome for its activity, which completed true on every path
         try
         {
+            if (await TicketRefusalAsync(auditAction, target, ticket) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(actionFailure = ticketRefused); return; } // sweep item 41
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
@@ -3423,6 +3445,8 @@
         string? actionFailure = "Nothing was done."; // aud-a23m: the write's outcome for its activity, which completed true on every path
         try
         {
+            if (await TicketRefusalAsync(auditAction, target, ticket) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(actionFailure = ticketRefused); return; } // sweep item 41
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(actionFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {target}", target, ticket, "MigrationManage")); return; } // aud-a23q: a denial is shown, audited as the bulk executors' "_Denied" row (RecordDenial), and ends the activity with its text; it returned in silence
@@ -3620,6 +3644,8 @@
 
         try
         {
+            if (await TicketRefusalAsync(auditAction, $"{batchNames.Count} batch(es)", ticket, batchNames) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(bulkFailure = ticketRefused); return; } // sweep item 41
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, running, $"{batchNames.Count} batch(es)", ticket, "MigrationManage", batchNames)); return; } // aud-a68: through RecordDenial, as the single actions' and the creates' denials are - the same "_Denied" row, now with mutationAttempted false - and the run named in the banner and the activity, which said "Authorization denied." kd-17: its target is what the run would have acted on, the confirm bar's "N batch(es)" with the names in targets, where it was the notification action
@@ -3775,6 +3801,8 @@
 
         try
         {
+            if (await TicketRefusalAsync(auditAction, $"{plan.Eligible.Count} mailbox(es)", ticket, plan.Eligible) is { } ticketRefused) { batchActionResult = PermissionResult.Fail(bulkFailure = ticketRefused); return; } // sweep item 41
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
                 { batchActionResult = PermissionResult.Fail(bulkFailure = MigrationService.RecordDenial(Audit, Logger, currentUser, clientIpAddress, auditAction, $"{auditAction} on {plan.Eligible.Count} mailbox(es)", $"{plan.Eligible.Count} mailbox(es)", ticket, "MigrationManage", plan.Eligible)); return; } // aud-a68: the same, for the mailbox run; kd-17: and the same target, "N mailbox(es)" with the addresses in targets

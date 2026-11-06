@@ -1130,6 +1130,37 @@ https://admin.exchange.microsoft.com/#/migration";
         return $"Not authorized to {description}; nothing was done.";
     }
 
+    /// <summary>
+    /// Sweep item 41. A staged batch or mailbox action refused for its ticket - missing, carrying an invisible character, or
+    /// rejected by ServiceNow - recorded as <see cref="RecordDenial"/> records an authorization denial: the "_Denied" row, its
+    /// target and targets as that row names them, nothing attempted, and the step that refused (refusedAt TicketValidation).
+    /// Returns what the operator is shown. Never throws: a failed audit write is logged.
+    /// </summary>
+    internal static string RecordTicketRefusal(AuditService audit, ILogger logger, string actor, string ipAddress,
+        string auditAction, string target, string ticket, string reason, IReadOnlyList<string>? targets = null)
+    {
+        var refusal = $"Ticket validation failed: {reason.Trim().TrimEnd('.')}";
+        try
+        {
+            var extra = new Dictionary<string, object?> { ["mutationAttempted"] = false, ["refusedAt"] = "TicketValidation" };
+            if (targets is not null)
+            {
+                extra["targetCount"] = targets.Count;
+                extra["targets"] = targets.Take(DeniedTargetsRecorded).ToArray();
+                extra["targetsTruncated"] = targets.Count > DeniedTargetsRecorded;
+            }
+            audit.LogMigrationAction(actor, ipAddress, $"{auditAction}_Denied", target, false, ticket,
+                errorDetail: refusal,
+                extra: extra);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to write audit for {Action} ticket refusal", auditAction);
+        }
+
+        return $"{refusal}; nothing was done.";
+    }
+
     // aud-a23q. Why a create's guard stopped it, in the guard's own order: no check yet; a check that is not Eligible (or no
     // eligible row); no ticket. It returned with nothing shown. Not audited: nothing was attempted (the bulk executors'
     // "nothing to do" rule). NotNullWhen tells the page's null analysis what its inline test did: past the guard, the check
