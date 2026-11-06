@@ -1840,7 +1840,8 @@ public sealed class ModuleCatalog
             // 1.2.2: a cancel or a removal whose job list cannot be reloaded afterwards - the jobs database failing that
             // read - keeps its banner, with "The job list could not be refreshed." after it, keeps its audit row and goes
             // no further; before, the reload's error reached the circuit (kd-86).
-            Version = "1.2.2",
+            // 1.2.3: sweep-e item 42 - a second Cancel or Remove click while one runs is ignored, and both row buttons are disabled meanwhile.
+            Version = "1.2.3",
             // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy

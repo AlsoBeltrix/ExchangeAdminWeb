@@ -345,6 +345,11 @@
 
     private async Task SubmitSingle()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         var isSet = tabIndex == 0;
         var target = targetMailbox.Trim();
         var user = affectedUser.Trim();
@@ -532,6 +537,11 @@
 
     private async Task ProcessBulk()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         var file = csvFile;
         if (file is null) return;
 

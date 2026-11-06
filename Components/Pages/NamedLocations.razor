@@ -341,6 +341,11 @@
 
     private async Task SaveLocation()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isOperating) return;
+
         isOperating = true;
         operationResult = null;
 

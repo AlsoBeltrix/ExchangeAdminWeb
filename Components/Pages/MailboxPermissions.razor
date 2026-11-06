@@ -349,6 +349,11 @@
 
     private async Task SubmitSingle()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // Captured above the first await, and above the try, because every one of these fields has
         // a live control behind it. The controls now carry disabled on IsBusy, but the browser's
         // copy of that attribute is one round trip stale, and on the two autocompletes it does not
@@ -555,6 +560,11 @@
 
     private async Task ProcessBulk()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // Two separate reasons for the shape of this opening, and they pull in opposite directions.
         //
         // The captures: csvFile, bulkIsAdd and bulkTicketNumber each have a live control behind them

@@ -58,13 +58,13 @@ public sealed class ProtectionCheckCallSiteTests
         { "Services/AccountLockoutRemediationService.cs", "private async Task<AccountLogoffResult> RunLogoffAsync(",
             "DirectoryReadOperation.Begin()", "await GuardTargetUsersAsync(" },
         // S12 Intune Devices: the device's primary user - resolved and checked, or checked unresolved.
-        { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction action)",
+        { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction? confirmed)",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S13 MFA Reset: the user's resolution and its check, or the unresolved check.
         { "Components/Pages/MfaReset.razor", "private async Task ExecuteReset()",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S14 Risky Users: the user's resolution and its check, or the unresolved check.
-        { "Components/Pages/RiskyUsers.razor", "private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction action)",
+        { "Components/Pages/RiskyUsers.razor", "private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction? confirmed)",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S15 Licensing Updates: a batch's rows, one operation.
         { "Services/LicensingUpdatesService.cs", "servicedNotesByUpn)> EvaluateProtectionAsync(",

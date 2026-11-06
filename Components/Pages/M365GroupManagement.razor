@@ -543,6 +543,11 @@
 
     private async Task SaveGroup()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isOperating) return;
+
         // Every one of these was read live below the awaits, and editingGroup is the sharp one:
         // it decides Update versus Create, supplies the id the write targets and the id in the
         // audit row. The Cancel at 216 nulls it - which is why that control is gated rather than

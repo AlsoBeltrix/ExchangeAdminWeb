@@ -284,6 +284,11 @@
 
     private async Task AuthorizeServer()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isOperating) return;
+
         // Snapshot at handler entry, above the raise and above every await. The gate narrows the
         // window in which the form can change under this handler; it cannot close it, because the
         // browser's copy of a disabled attribute is one round trip stale. Only the capture closes
@@ -371,6 +376,11 @@
 
     private async Task RemoveServer(DhcpServerEntry server)
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isOperating) return;
+
         // Snapshot at handler entry, for the same reason as AuthorizeServer: the ticket input is
         // gated but the browser's copy of that attribute is a round trip stale, and the catch below
         // audits this value after several awaits. The server being deauthorized is already a

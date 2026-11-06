@@ -38,8 +38,8 @@ public class AdminBulkJobsRevocationTests
     }
 
     [Theory]
-    [InlineData("private async Task CancelJob(BulkJob job)", "BulkJobs.CancelJob(")]
-    [InlineData("private async Task RemoveJob(BulkJob job)", "BulkJobs.DeleteJob(")]
+    [InlineData("private async Task CancelJobCore(BulkJob job)", "BulkJobs.CancelJob(")] // sweep item 42: the handler behind the busy guard
+    [InlineData("private async Task RemoveJobCore(BulkJob job)", "BulkJobs.DeleteJob(")] // sweep item 42: the handler behind the busy guard
     public void NoJobIsTouchedBeforeAccessIsRecheckedAtTheMoment(string signature, string mutation)
     {
         var body = Handler(signature);

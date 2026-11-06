@@ -85,7 +85,7 @@
                                     <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleDetails(job.Id)">
                                         @(detailsJobId == job.Id ? "Hide" : "Details")
                                     </button>
-                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job)">
+                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job)" disabled="@isActing">
                                         @(job.Status == BulkJobStatus.Queued ? "Remove" : "Cancel")
                                     </button>
                                 </td>
@@ -115,7 +115,7 @@
                                     <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleDetails(job.Id)">
                                         @(detailsJobId == job.Id ? "Hide" : "Details")
                                     </button>
-                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job)"
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job)" disabled="@isActing"
                                             title="Remove this job from the list for everyone. The audit record is kept.">
                                         Remove
                                     </button>
@@ -307,6 +307,9 @@
     /// still clicking after their access was removed is worth a record, and a mutating action
     /// that refuses without one looks identical to a bug.
     /// </remarks>
+    // Sweep item 42: a cancel or a removal is running; both row buttons are disabled meanwhile.
+    private bool isActing;
+
     private async Task<bool> StillAuthorized(string action, BulkJob job)
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -320,7 +323,25 @@
         return false;
     }
 
+    // Sweep item 42 (kd-72's shape). A second click while a cancel or a removal runs is ignored, not run beside it: both
+    // buttons are disabled while one runs, but the browser's copy of that is one round trip stale, and a second click ran
+    // the same action again - a second store write and a second audit row. Raised before the first await, lowered in the
+    // finally, whatever the action does.
     private async Task CancelJob(BulkJob job)
+    {
+        if (isActing) return;
+        isActing = true;
+        try
+        {
+            await CancelJobCore(job);
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task CancelJobCore(BulkJob job)
     {
         if (!await StillAuthorized("AdminBulkJobs_CancelJob", job))
             return;
@@ -374,7 +395,25 @@
         }
     }
 
+    // Sweep item 42 (kd-72's shape). A second click while a cancel or a removal runs is ignored, not run beside it: both
+    // buttons are disabled while one runs, but the browser's copy of that is one round trip stale, and a second click ran
+    // the same action again - a second store write and a second audit row. Raised before the first await, lowered in the
+    // finally, whatever the action does.
     private async Task RemoveJob(BulkJob job)
+    {
+        if (isActing) return;
+        isActing = true;
+        try
+        {
+            await RemoveJobCore(job);
+        }
+        finally
+        {
+            isActing = false;
+        }
+    }
+
+    private async Task RemoveJobCore(BulkJob job)
     {
         if (!await StillAuthorized("AdminBulkJobs_RemoveJob", job))
             return;

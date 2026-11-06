@@ -481,7 +481,7 @@ public static class ClickGateRegistry
     private static PageGateEntry DhcpAuthorization => new()
     {
         Page = "DhcpAuthorization.razor",
-        ExpectedLineCount = 457,
+        ExpectedLineCount = 467,
 
         Predicates =
         [
@@ -741,7 +741,7 @@ public static class ClickGateRegistry
     private static PageGateEntry NamedLocations => new()
     {
         Page = "NamedLocations.razor",
-        ExpectedLineCount = 657,
+        ExpectedLineCount = 662,
 
         Predicates =
         [
@@ -1133,7 +1133,7 @@ public static class ClickGateRegistry
     private static PageGateEntry MailboxPermissions => new()
     {
         Page = "MailboxPermissions.razor",
-        ExpectedLineCount = 828,
+        ExpectedLineCount = 838,
 
         // One flag, one page-wide predicate, and that was checked rather than assumed: Revision 1
         // found a single predicate provably wrong on two OTHER pages. This page has one view. The
@@ -1534,7 +1534,7 @@ public static class ClickGateRegistry
     private static PageGateEntry CalendarPermissions => new()
     {
         Page = "CalendarPermissions.razor",
-        ExpectedLineCount = 782,
+        ExpectedLineCount = 792,
 
         // One flag, one page-wide predicate, on the twin's reasoning re-checked against this file
         // rather than copied: the tab strip, the single-mailbox form, the bulk form, the on-prem
@@ -1930,6 +1930,11 @@ public static class ClickGateRegistry
     /// the exact harm every ForbiddenGuardSite below exists to prevent. Choosing between those two is
     /// an owner decision, so no handler guard was added and ExactlyOneGuard is empty, as it is on
     /// pages 1 and 2 for the same structural reason.
+    /// Sweep item 42 (2026-11-06): the Confirm lambda read confirmAction.Value at the click, so that stale second Confirm
+    /// threw - the handler clears confirmAction as it starts - and ended the circuit. The lambda now hands the nullable
+    /// over and ExecuteActionAsync ignores, as its first statement, a Confirm with nothing staged or one arriving while
+    /// actingDeviceId is set. That guard names the handler's own flag only, not ActionsDisabled, so a click landing during
+    /// a detail read is not swallowed and the owner decision above stays open; ExactlyOneGuard stays empty.
     /// </para>
     /// <para>
     /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page AFTER the
@@ -1943,7 +1948,7 @@ public static class ClickGateRegistry
     private static PageGateEntry IntuneDevices => new()
     {
         Page = "IntuneDevices.razor",
-        ExpectedLineCount = 1686,
+        ExpectedLineCount = 1693,
 
         // Kept as ActionsDisabled rather than renamed to IsBusy, which is what the four pages before
         // it call their predicate. The name was already on the page and is quoted by
@@ -2153,7 +2158,7 @@ public static class ClickGateRegistry
 
         AnnotatedControls =
         [
-            new AnnotatedControl(402, "@onclick=\"() => ExecuteActionAsync(device, confirmAction.Value)\"",
+            new AnnotatedControl(402, "@onclick=\"() => ExecuteActionAsync(device, confirmAction)\"",
                 [
                     "!TicketPresence.IsPresentAsTyped(actionTicket)",
                     "!WipeNameConfirmed(device, confirmAction.Value)",
@@ -2353,7 +2358,7 @@ public static class ClickGateRegistry
         // well below every registered control (the lowest is 315), so no line key moved -
         // only the count. Verified by running the ClickGate suite after the edit. kd-18 and kd-24
         // the same.
-        ExpectedLineCount = 1216,
+        ExpectedLineCount = 1226,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces
@@ -2934,7 +2939,7 @@ public static class ClickGateRegistry
     private static PageGateEntry M365GroupManagement => new()
     {
         Page = "M365GroupManagement.razor",
-        ExpectedLineCount = 899,
+        ExpectedLineCount = 904,
 
         Predicates =
         [
@@ -3549,7 +3554,7 @@ public static class ClickGateRegistry
     private static PageGateEntry ConferenceRooms => new()
     {
         Page = "ConferenceRooms.razor",
-        ExpectedLineCount = 1838,
+        ExpectedLineCount = 1848,
 
         Predicates =
         [

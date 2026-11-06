@@ -339,7 +339,7 @@
                                                 </div>
                                                 <div class="col-md-8">
                                                     <button class="btn btn-danger btn-sm me-2"
-                                                            @onclick="() => ExecuteActionAsync(user, confirmAction.Value)"
+                                                            @onclick="() => ExecuteActionAsync(user, confirmAction)"
                                                             disabled="@(actingUserId != null || !TicketPresence.IsPresentAsTyped(actionTicket))">
                                                         @ActionLabel(confirmAction.Value)
                                                     </button>
@@ -823,8 +823,15 @@
     /// only way to record a failure here is Refuse, which audits as it refuses - so a refusal path
     /// added later cannot forget the audit record.
     /// </remarks>
-    private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction action)
+    private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction? confirmed)
     {
+        // Sweep item 42. The Confirm button's lambda read confirmAction.Value at the click, so a second Confirm the browser sent
+        // before the re-render - this handler clears confirmAction as it starts - threw there and ended the circuit. It hands
+        // the nullable over, and a Confirm with nothing staged, or one arriving while an action runs, is ignored: the first
+        // click's action runs alone, as the disabled button intended.
+        if (confirmed is not { } action || actingUserId != null)
+            return;
+
         // Bound before the first await: a slow action must attach its verdict to the row it was
         // started from, not to whichever row the operator opened while it was in flight.
         var userId = user.Id;

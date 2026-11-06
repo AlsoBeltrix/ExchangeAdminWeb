@@ -547,7 +547,17 @@ public class RiskyUsersPageTests
         // Code view, not raw (prog-8 sweep): a comment containing "return;" inflates the census
         // and a comment naming Refuse( satisfies an exit that has none.
         var body = MethodBody("ExecuteActionAsync");
-        var gate = ProgressScan.CodeView(body)[..WriteIndex(body)];
+        var view = ProgressScan.CodeView(body)[..WriteIndex(body)];
+
+        // Sweep item 42: the one exit that is not a refusal, by design - the entry guard that ignores a Confirm with nothing
+        // staged, or a second one while an action runs (the stale lambda used to throw and end the circuit). It is the
+        // handler's first statement, above its first await, and the census below starts after it.
+        const string EntryGuard = "if (confirmed is not { } action || actingUserId != null)";
+        var guardAt = view.IndexOf(EntryGuard, StringComparison.Ordinal);
+        Assert.True(guardAt >= 0, "ExecuteActionAsync no longer ignores a stale or second Confirm on entry.");
+        Assert.True(guardAt < view.IndexOf("await ", StringComparison.Ordinal), "the entry guard must precede the first await.");
+        var guardReturn = view.IndexOf("return;", guardAt, StringComparison.Ordinal);
+        var gate = view[(guardReturn + "return;".Length)..];
 
         var returns = Regex.Matches(gate, @"\breturn;");
         Assert.Equal(9, returns.Count);

@@ -1297,6 +1297,11 @@
     // re-checks the captured auth snapshot and binds each row's room.
     private async Task ApplyFinderCsv()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isCsvProcessing) return;
+
         // Captured at handler entry, above the first await AND above the try, because the catch has
         // to be able to read them: as a local inside the try, ticket is out of scope in the catch,
         // which is exactly why the catch used to re-read csvFinderTicket live. The ticket validated
@@ -1643,6 +1648,11 @@
     // Finder paths.
     private async Task ApplyTypeCsv()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isCsvProcessing) return;
+
         // The same three captures as ApplyFinderCsv, for the same three reasons: the catch needs the
         // ticket in scope so it stops re-reading the live field, and HandleTypeCsvUpload replaces
         // both payload lists.

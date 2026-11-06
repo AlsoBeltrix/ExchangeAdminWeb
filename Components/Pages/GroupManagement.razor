@@ -573,6 +573,11 @@
 
     private async Task AddMember()
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // gmn-7: snapshot everything this handler acts on BEFORE the first await. Group
         // navigation stays live while awaits run, so the write must use the group and member
         // the operation was initiated with, never whatever the page points at afterwards.
@@ -710,6 +715,11 @@
 
     private async Task RemoveMember(GroupMemberInfo listed)
     {
+        // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
+        // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
+        // first await and lowered in the finally, as it was.
+        if (isLoading) return;
+
         // Key the removal on the immutable objectGUID (nesting plan S5b): a listed GROUP has an
         // empty Email, and a display identity can drift between the list render and the write.
         var member = string.IsNullOrWhiteSpace(listed.Email) ? listed.DisplayName : listed.Email;
