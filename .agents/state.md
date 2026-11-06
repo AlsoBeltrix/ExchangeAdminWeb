@@ -91,7 +91,7 @@ push, no config or host change, no owner decision (item 44 convention included).
 action here, then wait.
 
 **Next:** sweep-g (scripts 34-39, item 12 code half; in flight), then fix slice rev-abc for the thirteen review findings, review E of sweep-g,
-then the codex-commercial reviews; the one dev deploy waits for the owner.
+then master gates and the final state entry; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
 
