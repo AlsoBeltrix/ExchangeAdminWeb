@@ -364,9 +364,10 @@ public sealed record OutOfOfficeRequest(
     /// <see cref="OffsetAt"/> reads it: the two instants of an hour the clocks repeat show the same clock
     /// time and differ only in it.
     /// <para>
-    /// aud-a23g. Local is shown as Unspecified is. It converted through this server's zone, so the clock the
-    /// reporting module carried was read as this server's - nothing proves it is, so the label it got could
-    /// name the wrong instant. One rule for every page that shows a reported time.
+    /// aud-a23g. Local is shown as Unspecified is. Sweep-f item 26: a reported time no longer arrives here as Local -
+    /// <see cref="ReportedTime.Read"/> turns one into the Utc instant it names, because the remoting layer's deserializer
+    /// makes a Local time only by converting an offset-bearing one into this process's zone - so only a value the app
+    /// holds itself (<see cref="ReportedTime.Of"/>) can still be Local here, and it is labelled. One rule for every page.
     /// </para>
     /// </remarks>
     public static string ShowReported(DateTime reported, TimeZoneInfo zone)

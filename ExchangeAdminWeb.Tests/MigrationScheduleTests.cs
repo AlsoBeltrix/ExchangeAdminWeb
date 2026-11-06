@@ -59,6 +59,19 @@ public class MigrationScheduleTests
     }
 
     [Fact]
+    public void ALocalCompleteAfterFromTheReader_IsTheScheduleItNames()
+    {
+        // Sweep-f item 26. A day ahead, of Kind Local as the remoting layer's deserializer makes one: the instant it names.
+        var local = DateTime.UtcNow.AddDays(1).ToLocalTime();
+        var batch = Batch(local);
+
+        Assert.Equal(local.ToUniversalTime(), batch.ScheduledCompletionUtc);
+        Assert.Equal(DateTimeKind.Utc, batch.ScheduledCompletionUtc!.Value.Kind);
+        Assert.False(batch.CompleteAfterZoneNotReported);
+        Assert.True(batch.AutoComplete);
+    }
+
+    [Fact]
     public void TheFlagAndTheTimeCannotDisagree()
     {
         // AutoComplete is DERIVED from CompleteAfter rather than stored beside it. Two fields set
@@ -78,9 +91,10 @@ public class MigrationScheduleTests
         }
     }
 
+    // Sweep-f item 26: Local is no longer here - the reader turns a Local time into the instant it names
+    // (ReportedTimeBoundaryTests, and ALocalCompleteAfterFromTheReader_IsTheScheduleItNames below).
     [Theory]
     [InlineData(DateTimeKind.Unspecified)]
-    [InlineData(DateTimeKind.Local)]
     public void ACompleteAfterThatNamesNoZone_IsNotASchedule_AndSaysSo(DateTimeKind kind)
     {
         // aud-a23g. This was ALocalTimeIsComparedInUtcRatherThanAsWritten, which took "Exchange returns local

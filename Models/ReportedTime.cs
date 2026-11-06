@@ -26,8 +26,10 @@ public sealed record ReportedTime
     }
 
     /// <summary>
-    /// The time, when it could be read. Its Kind says whether it names an instant (aud-a7f) - since aud-a23g,
-    /// only Kind Utc does: Local claims this server's zone, which nothing here proves of a reported time.
+    /// The time, when it could be read. Its Kind says whether it names an instant (aud-a7f): Kind Utc does, Unspecified
+    /// does not. Sweep-f item 26: <see cref="Read"/> turns a Local time into the Utc instant it names
+    /// (<see cref="AtTheBoundary"/>), so a Local one reaches here only through <see cref="Of"/>, and is still shown as
+    /// naming no zone (aud-a23g's rule for a value whose source is not the remoting layer).
     /// </summary>
     public DateTime? Time { get; }
 
@@ -99,10 +101,9 @@ public sealed record ReportedTime
     /// the instants it would be read as some zone's clock, which is the guess aud-a7f refused to print, so such
     /// times stand apart, after the instants and before an unreadable one.
     /// <para>
-    /// aud-a23g. Local went to UTC through this server's zone, which reads the clock the reporting module
-    /// carried as this server's. Nothing proves it is (an assumption the finding record labels; no live call
-    /// was made), so a Local time stands with the Unspecified ones: shown and ordered by the clock it carries,
-    /// given no instant.
+    /// aud-a23g. A Local time stands with the Unspecified ones: shown and ordered by the clock it carries, given no
+    /// instant. Sweep-f item 26: <see cref="Read"/> turns a reported Local time into its Utc instant
+    /// (<see cref="AtTheBoundary"/>), so this holds only for a Local value made with <see cref="Of"/>.
     /// </para>
     /// </remarks>
     public static IComparer<ReportedTime?> Order(bool ascending) => ascending ? AscendingOrder : DescendingOrder;
@@ -132,7 +133,8 @@ public sealed record ReportedTime
 
     /// <summary>
     /// The one reader for a reported time: null when nothing was reported. A <c>PSObject</c> is read as
-    /// what it wraps; a <see cref="DateTime"/> as is; a <see cref="DateTimeOffset"/> as its instant, of
+    /// what it wraps; a <see cref="DateTime"/> as is, but one of Kind Local as its instant (sweep-f item 26,
+    /// <see cref="AtTheBoundary"/>); a <see cref="DateTimeOffset"/> as its instant, of
     /// Kind Utc; a string only in an ISO 8601 form, which with <c>Z</c> or an offset is that instant (Kind
     /// Utc) and with neither names no zone (Kind Unspecified). Anything else is not readable.
     /// </summary>
@@ -149,7 +151,7 @@ public sealed record ReportedTime
             case null:
                 return null;
             case DateTime time:
-                return new(time, null, null);
+                return new(AtTheBoundary(time), null, null);
             case DateTimeOffset instant:
                 return new(instant.UtcDateTime, null, null);
             case string text when DateTime.TryParseExact(text, IsoForms, System.Globalization.CultureInfo.InvariantCulture,
@@ -161,6 +163,24 @@ public sealed record ReportedTime
                 return new(null, typeName, shownText);
         }
     }
+
+    /// <summary>
+    /// Sweep-f item 26. A reported time of Kind Local, as the instant it names, of Kind Utc; any other Kind as it is.
+    /// </summary>
+    /// <remarks>
+    /// aud-a23g showed a Local time as naming no zone, because nothing here proved the clock it carried was this server's.
+    /// The remoting layer proves it: PowerShell's CliXml deserializer (every on-premises Invoke-Command result, and any
+    /// module that hands results over as deserialized objects) reads a serialized time that carries an offset and makes it
+    /// Kind Local by converting it into THIS process's zone - so a Local value from it is this server's clock for the
+    /// instant the sender wrote, and <c>ToUniversalTime()</c>, through the same zone, gives that instant back
+    /// (<c>ReportedTimeBoundaryTests</c> round-trips a time written at another zone's offset). With every time named Local
+    /// "(time zone not reported)", Migration, Recipient Lookup and Check Status labelled nearly every time.
+    /// ASSUMPTION, not probed: that the Exchange Online module's own readers, where they are not CliXml, keep .NET's
+    /// contract that Local means this machine's zone (an offset-bearing value converted, never a foreign clock merely
+    /// marked Local). A time of Kind Unspecified names no zone and is still shown with that label; nothing guesses it.
+    /// </remarks>
+    internal static DateTime AtTheBoundary(DateTime time) =>
+        time.Kind == DateTimeKind.Local ? time.ToUniversalTime() : time;
 
     /// <summary>
     /// What a reported value is beneath its <c>PSObject</c> wrappers, unwrapped one at a time; null when

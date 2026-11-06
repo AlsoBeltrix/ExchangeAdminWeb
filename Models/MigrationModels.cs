@@ -150,10 +150,10 @@ public class MigrationBatchInfo
     /// say this null is not an answer.
     /// </summary>
     /// <remarks>
-    /// aud-a23g. Only a time of Kind Utc names an instant here. One of Kind Unspecified names no zone,
-    /// and one of Kind Local claims this server's, which nothing proves of a time another system
-    /// reported; <c>ToUniversalTime()</c> read either as this server's clock - a guess that could call a
-    /// batch scheduled for a moment nobody set, or not scheduled when it is.
+    /// aud-a23g. Only a time of Kind Utc names an instant here. One of Kind Unspecified names no zone;
+    /// <c>ToUniversalTime()</c> would read it as this server's clock - a guess that could call a batch
+    /// scheduled for a moment nobody set, or not scheduled when it is. Sweep-f item 26: a reported Local
+    /// time arrives as Utc (<see cref="ReportedTime.Read"/>), the instant the deserializer converted.
     /// </remarks>
     public DateTime? ScheduledCompletionUtc =>
         CompleteAfter?.Time is { Kind: DateTimeKind.Utc } when && when > DateTime.UtcNow

@@ -1496,6 +1496,13 @@ Configure email notifications, group-based access control, self-grant prevention
 
 ## Troubleshooting
 
+### "... (time zone not reported)" after a time
+- Migration, Recipient Lookup and Out of Office Check Status show each time Exchange reports in the browser's zone (in
+  UTC on Migration), with the zone and its offset. A time that arrives naming its instant - in UTC, with an offset, or as
+  the remoting layer hands one over (converted into this server's zone) - is shown that way
+- Only a time that names no zone at all is shown as its bare clock with "(time zone not reported)": nothing says which
+  zone's clock it is, so the app does not guess. If every time reads that way, report it with the page and the field
+
 ### "Exchange refused the mailbox GUID identity ..."
 - Every Exchange change and the read-back before it name the mailbox by its Exchange mailbox GUID - the mailbox the
   protection check validated, never the string typed (aud-a2d). That Exchange accepts this form for every cmdlet used

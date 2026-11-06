@@ -508,7 +508,8 @@ public sealed class ModuleCatalog
             // (sweep-c item 14).
             // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.27.2: Approve's refusal for a batch of its own that holds errors (SyncedWithErrors, CompletedWithErrors) says so and what to do first; the rule (exactly Synced) is unchanged (sweep-f item 24).
-            Version = "1.27.2",
+            // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
+            Version = "1.27.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -672,7 +673,8 @@ public sealed class ModuleCatalog
             // waits for the on-premises server (up to two minutes), as its session opens, between connect attempts or between
             // its reads ends the lookup there - "Cancelled by the operator" - where it waited and connected first; a read
             // already sent finishes first.
-            Version = "1.8.2",
+            // 1.8.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
+            Version = "1.8.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -699,7 +701,8 @@ public sealed class ModuleCatalog
             // 1.1.4: as Mailbox Permissions 1.6.9 - its protection check (ValidateTargetMailboxAsync) binds a synced mailbox
             // by its on-premises SID (ppi S3).
             // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.1.5",
+            // 1.1.6: Check Status - a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
+            Version = "1.1.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

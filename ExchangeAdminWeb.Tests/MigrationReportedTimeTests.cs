@@ -221,8 +221,8 @@ public sealed class MigrationReportedTimeTests : IDisposable
     // read as its instant and shown as the Kind-Utc DateTime of that instant is: in the header, the
     // mailbox row and the CSV. The offset handed over (+05:30) is not this server's, so a reading that
     // kept the reported wall clock would show other times. aud-a23e: shown in UTC, labelled UTC, where it
-    // was the server's clock. aud-a23g: a Kind-Local DateTime, once the control here, names no zone this app
-    // can trust - ATimeOfKindLocal_IsShownAsReported_AndGivenNoZone.
+    // was the server's clock. Sweep-f item 26: a Kind-Local DateTime is the instant it names too -
+    // ATimeOfKindLocal_IsShownAsTheInstantItNames.
     [Theory]
     [InlineData("DateTimeOffset")]
     [InlineData("PSObject wrapping a DateTimeOffset")]
@@ -457,10 +457,10 @@ public sealed class MigrationReportedTimeTests : IDisposable
     }
 
     // aud-a23e, amended by aud-a23g. Times that name an instant - Kind Utc, which a DateTimeOffset is read as -
-    // compare as instants; a time of Kind Unspecified names no zone, and since aud-a23g nor does one of Kind Local,
-    // so those come after the instants, ordered by their clocks - both directions, in both of the page's time
-    // sorts. The Local clock falls between the two Unspecified ones: a sort that took it for an instant would put
-    // it before both, and a sort by raw DateTime misplaces the Unspecified ones on any host.
+    // compare as instants, and since sweep-f item 26 so does one of Kind Local (read as the instant it names, an hour
+    // after the Utc one here); a time of Kind Unspecified names no zone, so those come after the instants, ordered by
+    // their clocks - both directions, in both of the page's time sorts. A sort by raw DateTime misplaces the
+    // Unspecified ones on any host.
     [Theory]
     [InlineData("Created", true)]
     [InlineData("Created", false)]
@@ -473,13 +473,13 @@ public sealed class MigrationReportedTimeTests : IDisposable
         [
             ("utc", utcInstant),
             ("offset", new DateTimeOffset(utcInstant.AddHours(-2)).ToOffset(TimeSpan.FromHours(5.5))),
-            ("local", utcInstant.ToLocalTime()),
+            ("local", utcInstant.AddHours(1).ToLocalTime()),
             ("unzoned-early", DateTime.SpecifyKind(utcInstant.AddDays(-2), DateTimeKind.Unspecified)),
             ("unzoned-late", DateTime.SpecifyKind(utcInstant.AddDays(2), DateTimeKind.Unspecified)),
         ];
         List<string> expected = ascending
-            ? ["offset", "utc", "unzoned-early", "local", "unzoned-late"]
-            : ["utc", "offset", "unzoned-late", "local", "unzoned-early"];
+            ? ["offset", "utc", "local", "unzoned-early", "unzoned-late"]
+            : ["local", "utc", "offset", "unzoned-late", "unzoned-early"];
 
         List<string> order;
         if (column == "Created")
@@ -502,16 +502,12 @@ public sealed class MigrationReportedTimeTests : IDisposable
 
     // ---- aud-a23g -----------------------------------------------------------------------------
 
-    /// <summary>aud-a23g. A time that names no zone, as the page and the CSV show one: its clock, and that it names none.</summary>
-    private static string AsReported(DateTime clock) =>
-        clock.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " (time zone not reported)";
-
-    // aud-a23g, part 7: a time of Kind Local was converted through this server's zone, as if the clock it carries were
-    // this server's. Nothing proves that of a time the module reported, so it names no zone this app can trust: on all
-    // five reads it is shown as reported, said to name none, never labelled UTC - and as a CompleteAfter it is set to
-    // finalise but is no schedule. Expected from the value itself, so the test holds on a host in any zone.
+    // aud-a23g, part 7, superseded by sweep-f item 26: a time of Kind Local is what the remoting layer's deserializer makes
+    // of a time written with an offset - this server's clock for that instant (ReportedTimeBoundaryTests) - so on all five
+    // reads it is the instant it names: shown in UTC and labelled so, and as a CompleteAfter a schedule. Expected from the
+    // value itself, so the test holds on a host in any zone.
     [Fact]
-    public async Task ATimeOfKindLocal_IsShownAsReported_AndGivenNoZone()
+    public async Task ATimeOfKindLocal_IsShownAsTheInstantItNames()
     {
         var completeAfterUtc = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(30).Date.AddHours(22), DateTimeKind.Utc);
         ReportBatch(Batch, CreatedUtc.ToLocalTime(), StartedUtc.ToLocalTime(), CompletedUtc.ToLocalTime(), completeAfterUtc.ToLocalTime());
@@ -522,26 +518,25 @@ public sealed class MigrationReportedTimeTests : IDisposable
         var rendered = await OpenBatchRendered(service, batch);
         var csv = Migration.BuildCsv([batch], []);
 
-        Assert.Contains($"Created:</strong> {AsReported(CreatedUtc.ToLocalTime())}", rendered, StringComparison.Ordinal);
-        Assert.Contains($"Started:</strong> {AsReported(StartedUtc.ToLocalTime())}", rendered, StringComparison.Ordinal);
-        Assert.Contains($"Completed:</strong> {AsReported(CompletedUtc.ToLocalTime())}", rendered, StringComparison.Ordinal);
-        Assert.Contains(AsReported(LastSyncUtc.ToLocalTime()), rendered, StringComparison.Ordinal);
-        Assert.Contains($"{AsReported(CreatedUtc.ToLocalTime())},{AsReported(StartedUtc.ToLocalTime())},{AsReported(CompletedUtc.ToLocalTime())}",
-            csv, StringComparison.Ordinal);
-        Assert.DoesNotContain("UTC", rendered, StringComparison.Ordinal);
-        Assert.DoesNotContain("UTC", csv, StringComparison.Ordinal);
+        Assert.Contains($"Created:</strong> {Utc(CreatedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains($"Started:</strong> {Utc(StartedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains($"Completed:</strong> {Utc(CompletedUtc)}", rendered, StringComparison.Ordinal);
+        Assert.Contains(Utc(LastSyncUtc), rendered, StringComparison.Ordinal);
+        Assert.Contains($"\"{Utc(CreatedUtc)}\",\"{Utc(StartedUtc)}\",\"{Utc(CompletedUtc)}\"", csv, StringComparison.Ordinal);
+        Assert.DoesNotContain("time zone not reported", rendered, StringComparison.Ordinal);
+        Assert.DoesNotContain("time zone not reported", csv, StringComparison.Ordinal);
         Assert.True(batch.AutoComplete);
         Assert.False(batch.CompleteAfterUnreadable);
-        Assert.True(batch.CompleteAfterZoneNotReported);
-        Assert.Null(batch.ScheduledCompletionUtc);
+        Assert.False(batch.CompleteAfterZoneNotReported);
+        Assert.Equal(completeAfterUtc, batch.ScheduledCompletionUtc);
     }
 
     // aud-a23g, part 4: a CompleteAfter that names no zone was read as this server's local time, so the model stated a
     // schedule it did not know. Through the real read: the batch is set to finalise, the schedule is null, and the
     // result says the zone was not reported - neither "not scheduled" nor unreadable.
+    // Sweep-f item 26: of Kind Unspecified only; a Local one is the instant it names (ATimeOfKindLocal_IsShownAsTheInstantItNames).
     [Theory]
     [InlineData(DateTimeKind.Unspecified)]
-    [InlineData(DateTimeKind.Local)]
     public async Task ACompleteAfterThatNamesNoZone_IsAutoCompleting_ButNotASchedule(DateTimeKind kind)
     {
         // A month ahead: a reading in any zone would call it a schedule.
