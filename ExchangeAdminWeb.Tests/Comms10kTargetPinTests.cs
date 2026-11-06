@@ -27,7 +27,7 @@ public class Comms10kTargetPinTests
     [Theory]
     [InlineData("lookup")]
     [InlineData("preview")]
-    [InlineData("remove")]
+    [InlineData("clear")]
     [InlineData("add")]
     [InlineData("readback")]
     public void EveryGroupCommandCarriesTheApprovedGuidEvenWhenTheDnChanges(string operation)
@@ -77,7 +77,7 @@ public class Comms10kTargetPinTests
 
     [Theory]
     [InlineData("lookup")]
-    [InlineData("remove")]
+    [InlineData("clear")]
     [InlineData("add")]
     [InlineData("readback")]
     public void AnUnpinnedTargetIsRefusedBeforeAnyCommandIsInvoked(string operation)
@@ -128,7 +128,7 @@ public class Comms10kTargetPinTests
                 """));
             state.Commands.Add(new SessionStateFunctionEntry("Set-ADGroup", """
                 [CmdletBinding()]
-                param($Identity, [hashtable] $Remove, [hashtable] $Add, [pscredential] $Credential)
+                param($Identity, [string] $Clear, [hashtable] $Add, [pscredential] $Credential)
                 $global:C1Identities.Add([string] $Identity)
                 if ($Add) {
                     foreach ($dn in $Add['member']) { $global:C1AddedMembers.Add([string] $dn) }
@@ -167,8 +167,8 @@ public class Comms10kTargetPinTests
                 case "preview":
                     Comms10kService.ReadMemberDns(PowerShell, _credential);
                     break;
-                case "remove":
-                    Comms10kService.RemoveMemberBatch(PowerShell, _credential, target, [MemberGuid]);
+                case "clear":
+                    Comms10kService.ClearMembers(PowerShell, _credential, target);
                     break;
                 case "add":
                     Comms10kService.AddMemberBatch(PowerShell, _credential, target, [MemberGuid]);

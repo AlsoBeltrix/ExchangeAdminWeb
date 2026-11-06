@@ -11,10 +11,10 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// TWO ROWS, ONE PER STAGE. One member is deliberately NOT one row, and that is the whole design
 /// decision here (docs/GlobalProgressSystem-Plan.md S3, option a).
 ///
-/// The runner aggregates rows into "9,998 of 10,000 succeeded". For a whole-list replace that is
-/// a lie waiting to happen: the operation is not 10,000 independent writes, it is one replace
-/// (add the file's new members, then remove the ones it does not name), and a failure partway
-/// leaves the list not matching the file rather than 99.98% correct. Reporting it per member would tell an operator the thing went
+/// The runner aggregates rows into "9,998 of 10,000 succeeded". For a clear-then-refill write
+/// that is a lie waiting to happen: the operation is not 10,000 independent writes, it is one
+/// write that empties the list and refills it, and a failure partway leaves the list broken
+/// rather than 99.98% correct. Reporting it per member would tell an operator the thing went
 /// almost perfectly about a run that left a company-wide broadcast list incomplete.
 ///
 /// So the rows are the STAGES, the per-member truth lives in the operation's own five-outcome
@@ -22,7 +22,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// wrong.
 ///
 /// The outcome contract retains its legacy succeeded-with-exceptions value, but an unapproved
-/// primary-group member now refuses before the write or mismatches after it. The outcomes worth
+/// primary-group member now refuses before clear or mismatches after clear. The outcomes worth
 /// an operator's attention are "partly
 /// applied" and "could not confirm", because those are the ones saying the list may be broken -
 /// see docs/Comms10kBulkResolveScale-Plan.md.
@@ -168,7 +168,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         if (_resolvedMembers is null || _resolvedMembers.Count == 0)
         {
             // The resolve stage failed and the runner still reached this row. Refuse rather than
-            // writing: an empty or stale set here would empty the broadcast list.
+            // writing: an empty or stale set here would CLEAR the broadcast list.
             return Refuse(job, payload, "Addresses were not resolved, so nothing was written.");
         }
 
@@ -181,7 +181,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         catch (Exception ex)
         {
             // The service converts known preparation failures to refusals. An arbitrary
-            // exception here cannot prove that no write was dispatched.
+            // exception here cannot prove that clear was never dispatched.
             _logger.LogError(ex, "Comms10k replace failed with an unconfirmed write state for job {JobId}", job.Id);
             result = new Comms10kUpdateResult
             {
@@ -214,7 +214,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     }
 
     // Re-read the live stores on every call: at each stage, and once more by the service after
-    // asynchronous write preparation, immediately before the first write (never between batches,
+    // asynchronous write preparation, immediately before the clear (never between batches,
     // sweep-d item 20). This checks configuration, not Windows-token membership refresh.
     private string? AuthorizationDenial(BulkJob job)
     {
@@ -303,7 +303,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
             ?? (job.Status == BulkJobStatus.Interrupted ? "Interrupted" : $"No replace result recorded ({job.Status})");
         var detail = _result?.Message ?? job.Message ?? "No detail was recorded.";
         if (_result is null && job.Status == BulkJobStatus.Interrupted)
-            detail += " The replace was interrupted without a recorded result. The group may hold a mix of the old and new members. Check the group directly before deciding how to recover.";
+            detail += " The replace was interrupted without a recorded result. The group may be empty or partial. Check the group directly before deciding how to recover.";
 
         try
         {
@@ -321,8 +321,9 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
                     ["Detail"] = detail,
                     ["Members requested"] = _result?.MembersRequested?.ToString() ?? "UNKNOWN - resolved set unavailable",
                     ["Members written (acknowledged adds)"] = _result?.MembersWritten?.ToString() ?? "UNKNOWN - write completion not confirmed",
-                    // Write acknowledgement and observed final membership are separate
-                    // evidence; the removal count is in the service log, not here.
+                    // Never a removal count: clear-then-fill does not read the prior
+                    // membership. Write acknowledgement and observed final membership are
+                    // separate evidence, and neither establishes what left.
                     ["Final membership"] = _result?.FinalCount?.ToString() ?? "UNKNOWN - no confirmed read-back",
                 },
                 _result?.Success == true ? null : detail);

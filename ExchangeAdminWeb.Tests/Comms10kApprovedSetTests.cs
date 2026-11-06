@@ -155,7 +155,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         Assert.Empty(directory.Added);
-        Assert.DoesNotContain("add", directory.Calls);
+        Assert.DoesNotContain("clear", directory.Calls);
         Assert.Contains(mode == "extra" ? "cannot be removed" : "unreadable-sid" == mode ? "SID was unreadable" : mode == "unreadable" ? "primary unavailable" : "invalid ObjectGUID",
             row.Message, StringComparison.Ordinal);
         fixture.AssertAudit(row.Message, Comms10kOutcome.RefusedBeforeAnyChange);
@@ -181,7 +181,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
         Assert.Equal([$"<GUID={PersonGuid:D}>"], directory.Added);
         Assert.Equal(1, fixture.Service.ReplaceRunspaces);
-        Assert.True(directory.Calls.IndexOf("primary") < directory.Calls.IndexOf("add"));
+        Assert.True(directory.Calls.IndexOf("primary") < directory.Calls.IndexOf("clear"));
         Assert.Equal(2, directory.Calls.Count(call => call == "primary"));
         Assert.Equal(1, directory.MappingQueries);
         fixture.AssertAudit(null, Comms10kOutcome.Succeeded, success: true);
@@ -208,7 +208,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Partial, row.Status);
         Assert.Contains("COULD NOT CONFIRM", row.Message, StringComparison.Ordinal);
         Assert.Contains("Read-back failure:", row.Message, StringComparison.Ordinal);
-        Assert.Contains("add", directory.Calls);
+        Assert.Contains("clear", directory.Calls);
         fixture.AssertAudit(row.Message, Comms10kOutcome.CouldNotConfirm);
         fixture.AssertNotification(row.Message!, Comms10kOutcome.CouldNotConfirm);
     }
@@ -244,7 +244,7 @@ public sealed partial class Comms10kRefusalTests
 
         if (mode == "concurrent-primary")
         {
-            var adds = directory.Calls.Count(call => call == "add");
+            var clears = directory.Calls.Count(call => call == "clear");
             var nextAttempt = fixture.Processor(fixture.Service);
             var nextJob = Job();
             Assert.Equal(BulkJobRowStatus.Success, (await nextAttempt.ProcessRowAsync(nextJob, 0, CancellationToken.None)).Status);
@@ -252,7 +252,7 @@ public sealed partial class Comms10kRefusalTests
             Assert.Equal(BulkJobRowStatus.Failed, refused.Status);
             Assert.Contains("primary-group members outside the approved set", refused.Message, StringComparison.Ordinal);
             Assert.Contains("cannot be removed by this operation", refused.Message, StringComparison.Ordinal);
-            Assert.Equal(adds, directory.Calls.Count(call => call == "add"));
+            Assert.Equal(clears, directory.Calls.Count(call => call == "clear"));
         }
     }
 
@@ -411,7 +411,7 @@ public sealed partial class Comms10kRefusalTests
                 param($Identity, [string[]] $Properties, [pscredential] $Credential)
                 $global:C4Directory.Calls.Add('group')
                 $members = @()
-                if ($global:C4Directory.Calls.Contains('add')) {
+                if ($global:C4Directory.Calls.Contains('clear')) {
                     $members = @($global:C4Directory.Rows | ForEach-Object { $_.Dn })
                     if ($global:C4Mode -eq 'blank-member') { $members = @('') }
                 }
@@ -421,8 +421,8 @@ public sealed partial class Comms10kRefusalTests
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Set-ADGroup", """
                 [CmdletBinding()]
-                param($Identity, [hashtable] $Remove, [hashtable] $Add, [pscredential] $Credential)
-                if ($PSBoundParameters.ContainsKey('Remove')) { $global:C4Directory.Calls.Add('remove') }
+                param($Identity, [string] $Clear, [hashtable] $Add, [pscredential] $Credential)
+                if ($PSBoundParameters.ContainsKey('Clear')) { $global:C4Directory.Calls.Add('clear') }
                 else {
                     $global:C4Directory.Calls.Add('add')
                     $global:C4Directory.BatchSizes.Add($Add['member'].Count)
@@ -440,7 +440,7 @@ public sealed partial class Comms10kRefusalTests
                     if ($global:C4Mode -eq 'missing-guid') { [pscustomobject]@{ DistinguishedName = 'CN=Primary,DC=x' }; return }
                     if ($global:C4Mode -eq 'invalid-guid') { [pscustomobject]@{ ObjectGUID = 'not-a-guid' }; return }
                     if ($global:C4Mode -eq 'subset') { [pscustomobject]@{ ObjectGUID = $global:C4Directory.Rows[0].Guid } }
-                    if ($global:C4Mode -eq 'extra' -or ($global:C4Mode -eq 'concurrent-primary' -and $global:C4Directory.Calls.Contains('add'))) {
+                    if ($global:C4Mode -eq 'extra' -or ($global:C4Mode -eq 'concurrent-primary' -and $global:C4Directory.Calls.Contains('clear'))) {
                         [pscustomobject]@{ ObjectGUID = $global:C4OtherGuid }
                     }
                     return

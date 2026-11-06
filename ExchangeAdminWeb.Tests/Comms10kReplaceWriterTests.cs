@@ -5,7 +5,7 @@ using AdServerDownException = Microsoft.ActiveDirectory.Management.ADServerDownE
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// The Comms-10k add-first write (docs/Comms10kBulkResolveScale-Plan.md S4, tests 10-15
+/// The Comms-10k clear-then-fill write (docs/Comms10kBulkResolveScale-Plan.md S4, tests 10-15
 /// and 20): batching, the outcome procedure, and transient-failure classification.
 /// </summary>
 /// <remarks>
@@ -47,127 +47,25 @@ public class Comms10kReplaceWriterTests
         Assert.All(batches, b => Assert.NotEmpty(b));
     }
 
-    // ----- sweep-d item 19: add first, remove only after every add succeeded -----------------
+    // ----- test 11: the clear is issued once, and before every add ------------------------------
 
     [Fact]
-    public void EveryAddBatchRunsBeforeAnyRemoval_AndNothingIsEverCleared()
+    public void TheClearIsIssuedExactlyOnceAndBeforeEveryAdd()
     {
-        // Asserted on call ORDER. The list must never be emptied before the new membership is
-        // proven writable, so every add precedes every removal.
+        // Asserted on call ORDER. A second clear partway through would wipe what had already
+        // been written, and a count alone would not catch it.
         var calls = new List<string>();
         var target = Dns(5000);
-        var current = Current(Others(4500));
 
-        Execute(target, current, calls);
+        Comms10kReplaceWriter.ExecuteSequence(
+            Group, target,
+            clear: () => calls.Add("clear"),
+            addBatch: b => calls.Add($"add:{b.Count}"),
+            readBack: () => Matching(target));
 
-        Assert.Equal(new[] { "add:2000", "add:2000", "add:1000", "remove:2000", "remove:2000", "remove:500" }, calls);
-    }
-
-    [Fact]
-    public void AFailedAdd_StopsTheRun_BeforeAnyRemoval_AndNamesTheBatchAndTheError()
-    {
-        var calls = new List<string>();
-        var target = Dns(5000);
-        var before = Others(300);
-        var current = Current(before);
-
-        var result = Execute(target, current, calls, failAdd: 2,
-            readBack: () => new Comms10kReplaceWriter.ReadBack(before.Concat(target.Take(2000)).ToList(), Array.Empty<Guid>()));
-
-        Assert.Equal(new[] { "add:2000", "add:2000!" }, calls);
-        Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
-        Assert.Null(result.MembersWritten);
-        Assert.Contains("Add batch 2 of 3 (2,000 members) failed: the directory refused the GUID form", result.Message, StringComparison.Ordinal);
-        Assert.Contains("nobody who was on the list before was removed", result.Message, StringComparison.Ordinal);
-        Assert.Contains("still on it", result.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AFirstAddRefused_WithTheListReadBackUnchanged_IsRefusedBeforeAnyChange_NotAnEmptyList()
-    {
-        // The sweep's case: ADWS refuses the <GUID=...> form on the very first batch. Clear-first
-        // left the list empty here; add-first leaves it exactly as it was, and says so.
-        var calls = new List<string>();
-        var before = Others(300);
-        var current = Current(before);
-
-        var result = Execute(Dns(10), current, calls, failAdd: 1,
-            readBack: () => new Comms10kReplaceWriter.ReadBack(before, Array.Empty<Guid>()));
-
-        Assert.Equal(new[] { "add:10!" }, calls);
-        Assert.Equal(Comms10kOutcome.RefusedBeforeAnyChange, result.Outcome);
-        Assert.False(result.Success);
-        Assert.Equal(0, result.MembersWritten);
-        Assert.Equal(300, result.FinalCount);
-        Assert.Contains("not modified", result.Message, StringComparison.Ordinal);
-        Assert.Contains("Add batch 1 of 1 (10 members) failed", result.Message, StringComparison.Ordinal);
-        Assert.Contains("exactly as it was (300 members)", result.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AFailedRemove_LeavesEveryFileMember_AndReportsTheExtras()
-    {
-        var calls = new List<string>();
-        var target = Dns(100);
-        var before = Others(50);
-
-        var result = Execute(target, Current(before), calls, failRemove: 1,
-            readBack: () => new Comms10kReplaceWriter.ReadBack(target.Concat(before).ToList(), Array.Empty<Guid>()));
-
-        Assert.Equal(new[] { "add:100", "remove:50!" }, calls);
-        Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
-        Assert.Equal(100, result.MembersWritten);
-        Assert.Contains("Remove batch 1 of 1 failed", result.Message, StringComparison.Ordinal);
-        Assert.Contains("every member the file names is on it, and 50 member(s) the file does not name are still on it", result.Message, StringComparison.Ordinal);
-        Assert.Contains("Every add succeeded", result.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AMemberBothPresentAndInTheFile_IsNeitherAddedNorRemoved_AndTheFinalMembershipIsTheFile()
-    {
-        // The overlap the add-first order must handle explicitly: neither set may contain it.
-        var target = Dns(10);
-        var stale = Others(3);
-        var current = Current(target.Take(4).Concat(stale).ToList());
-        var directory = new HashSet<Guid>(current.Members);
-
-        var result = Comms10kReplaceWriter.ExecuteSequence(
-            Group, target, current,
-            addBatch: b => { Assert.DoesNotContain(b, directory.Contains); directory.UnionWith(b); },
-            removeBatch: b => { Assert.All(b, g => Assert.DoesNotContain(g, target)); directory.ExceptWith(b); },
-            removeByDnBatch: _ => throw new InvalidOperationException("none expected"),
-            readBack: () => new Comms10kReplaceWriter.ReadBack(directory.ToList(), Array.Empty<Guid>()));
-
-        var plan = Comms10kReplaceWriter.Plan(target, current);
-        Assert.Equal(target.Skip(4), plan.ToAdd);
-        Assert.Equal(stale, plan.ToRemove);
-        Assert.True(directory.SetEquals(target));
-        Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
-        Assert.Equal(10, result.MembersWritten);
-    }
-
-    [Fact]
-    public void UnidentifiedCurrentValues_AreRemovedByValue_AfterTheGuidRemovals()
-    {
-        var calls = new List<string>();
-        var target = Dns(5);
-        var current = new Comms10kReplaceWriter.CurrentMembership(Others(2), ["CN=Elsewhere,DC=other,DC=test"]);
-
-        Execute(target, current, calls);
-
-        Assert.Equal(new[] { "add:5", "remove:2", "remove-dn:1" }, calls);
-    }
-
-    [Fact]
-    public void AnUnchangedList_WritesNothing_AndSucceedsOnTheReadBack()
-    {
-        var calls = new List<string>();
-        var target = Dns(20);
-
-        var result = Execute(target, Current(target), calls, dispatched: () => false);
-
-        Assert.Empty(calls);
-        Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
+        Assert.Equal("clear", calls[0]);
+        Assert.Single(calls, c => c == "clear");
+        Assert.Equal(new[] { "clear", "add:2000", "add:2000", "add:1000" }, calls);
     }
 
     // ----- tests 12 and 14: the procedure, and the attempted-or-not dividing line ---------------
@@ -178,7 +76,7 @@ public class Comms10kReplaceWriterTests
         var readBacks = 0;
 
         var result = Comms10kReplaceWriter.Derive(
-            Group, Dns(10), refusalBeforeWrite: "the lock could not be acquired.",
+            Group, Dns(10), refusalBeforeClear: "the lock could not be acquired.",
             observed: null, readBackError: null, writeError: null);
 
         Assert.Equal(Comms10kOutcome.RefusedBeforeAnyChange, result.Outcome);
@@ -190,55 +88,80 @@ public class Comms10kReplaceWriterTests
     }
 
     [Fact]
-    public void EveryPostWritePathAttemptsTheReadBack_IncludingOneWhereAnAddBatchThrew()
+    public void EveryPostClearPathAttemptsTheReadBack_IncludingOneWhereAnAddBatchThrew()
     {
         // The whole reason the read-back is outside the write's try block.
         var readBacks = 0;
         var target = Dns(3000);
 
         Comms10kReplaceWriter.ExecuteSequence(
-            Group, target, Current([]),
+            Group, target,
+            clear: () => { },
             addBatch: _ => throw new InvalidOperationException("the directory refused the batch"),
-            removeBatch: _ => { },
-            removeByDnBatch: _ => { },
             readBack: () => { readBacks++; return Matching(target); });
 
         Assert.Equal(1, readBacks);
     }
 
     [Fact]
-    public void ARemoveThatThrew_StillAttemptsTheReadBack()
+    public void AClearThatThrew_StillAttemptsTheReadBack()
     {
-        // From the moment a write is ISSUED, its effect is unknown - a timeout proves neither
-        // that it applied nor that it did not - so the read-back is what settles it.
+        // From the moment the clear is ISSUED, its effect is unknown - a timeout proves neither
+        // that it cleared nor that it did not - so the read-back is what settles it.
         var readBacks = 0;
         var target = Dns(10);
 
         Comms10kReplaceWriter.ExecuteSequence(
-            Group, target, Current(Others(3)),
+            Group, target,
+            clear: () => throw new InvalidOperationException("timed out"),
             addBatch: _ => { },
-            removeBatch: _ => throw new InvalidOperationException("timed out"),
-            removeByDnBatch: _ => { },
             readBack: () => { readBacks++; return Matching(target); });
 
         Assert.Equal(1, readBacks);
     }
 
     [Fact]
-    public void AFailureBeforeAnyWriteWasDispatched_RefusesWithoutAReadBack()
+    public void AFailureBeforeTheClearWasDispatched_RefusesWithoutAReadBack()
     {
         var readBacks = 0;
+        var adds = 0;
 
         var result = Comms10kReplaceWriter.ExecuteSequence(
-            Group, Dns(10), Current([]),
-            addBatch: _ => throw new ArgumentException("no dispatch"),
-            removeBatch: _ => { },
-            removeByDnBatch: _ => { },
+            Group, Dns(10),
+            clear: () => throw new ArgumentException("no dispatch"),
+            addBatch: _ => adds++,
             readBack: () => { readBacks++; return Matching(Dns(10)); },
-            writeWasDispatched: () => false);
+            clearWasDispatched: () => false);
 
         Assert.Equal(0, readBacks);
+        Assert.Equal(0, adds);
         Assert.Equal(Comms10kOutcome.RefusedBeforeAnyChange, result.Outcome);
+    }
+
+    [Fact]
+    public void AFailedAddBatchAfterTheClear_StopsTheRun_IsPartlyApplied_AndNamesTheBatchAndTheError()
+    {
+        // sweep-d item 19's reporting, kept by the 2026-11-06 ruling: after the clear, a failed add
+        // batch stops the run, the read-back reports what landed, and the message names the batch.
+        var calls = new List<string>();
+        var target = Dns(5000);
+
+        var result = Comms10kReplaceWriter.ExecuteSequence(
+            Group, target,
+            clear: () => calls.Add("clear"),
+            addBatch: b =>
+            {
+                calls.Add($"add:{b.Count}");
+                if (calls.Count == 3) throw new InvalidOperationException("the directory refused the batch");
+            },
+            readBack: () => new Comms10kReplaceWriter.ReadBack(target.Take(2000).ToList(), Array.Empty<Guid>()));
+
+        Assert.Equal(new[] { "clear", "add:2000", "add:2000" }, calls);
+        Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
+        Assert.Equal(2000, result.FinalCount);
+        Assert.Null(result.MembersWritten);
+        Assert.Contains("Add batch 2 of 3 (2,000 members) failed: the directory refused the batch", result.Message, StringComparison.Ordinal);
+        Assert.Contains("INCOMPLETE", result.Message, StringComparison.Ordinal);
     }
 
     // ----- test 13: outcomes come from the read-back and nothing else ---------------------------
@@ -247,7 +170,7 @@ public class Comms10kReplaceWriterTests
     public void ReadBackFails_IsCouldNotConfirm_AndReportsNoFinalCount()
     {
         var result = Comms10kReplaceWriter.Derive(
-            Group, Dns(10), refusalBeforeWrite: null,
+            Group, Dns(10), refusalBeforeClear: null,
             observed: null, readBackError: "the server did not respond", writeError: null);
 
         Assert.Equal(Comms10kOutcome.CouldNotConfirm, result.Outcome);
@@ -266,7 +189,7 @@ public class Comms10kReplaceWriterTests
         var target = Dns(20);
 
         var result = Comms10kReplaceWriter.Derive(
-            Group, target, refusalBeforeWrite: null,
+            Group, target, refusalBeforeClear: null,
             observed: Matching(target), readBackError: null,
             writeError: "a batch of members could not be added: transient fault");
 
@@ -280,7 +203,7 @@ public class Comms10kReplaceWriterTests
     {
         // The corner the earlier per-error-site rules kept getting wrong.
         var result = Comms10kReplaceWriter.Derive(
-            Group, Dns(20), refusalBeforeWrite: null,
+            Group, Dns(20), refusalBeforeClear: null,
             observed: null, readBackError: "the group could not be read",
             writeError: "a batch of members could not be added");
 
@@ -294,7 +217,7 @@ public class Comms10kReplaceWriterTests
         var observed = new Comms10kReplaceWriter.ReadBack(Dns(37), Array.Empty<Guid>());
 
         var result = Comms10kReplaceWriter.Derive(
-            Group, target, refusalBeforeWrite: null, observed, readBackError: null, writeError: null);
+            Group, target, refusalBeforeClear: null, observed, readBackError: null, writeError: null);
 
         Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
         Assert.False(result.Success);
@@ -316,7 +239,7 @@ public class Comms10kReplaceWriterTests
         var observed = new Comms10kReplaceWriter.ReadBack(target, primary);
 
         var result = Comms10kReplaceWriter.Derive(
-            Group, target, refusalBeforeWrite: null, observed, readBackError: null, writeError: null);
+            Group, target, refusalBeforeClear: null, observed, readBackError: null, writeError: null);
 
         Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
         Assert.False(result.Success);
@@ -332,7 +255,7 @@ public class Comms10kReplaceWriterTests
         var observed = new Comms10kReplaceWriter.ReadBack(target, new[] { target[0] });
 
         var result = Comms10kReplaceWriter.Derive(
-            Group, target, refusalBeforeWrite: null, observed, readBackError: null, writeError: null);
+            Group, target, refusalBeforeClear: null, observed, readBackError: null, writeError: null);
 
         Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
         Assert.Empty(result.UnremovableMembers);
@@ -459,15 +382,17 @@ public class Comms10kReplaceWriterTests
     }
 
     [Fact]
-    public void ARetriedAddBatchIsRetriedAlone_AndNoRemovalRunsUntilItSucceeds()
+    public void ARetriedAddBatchNeverReIssuesTheClear()
     {
-        // Retry is per OPERATION, never per run.
+        // Retry is per OPERATION, never per run. Re-running the clear after batches have landed
+        // would wipe them, which is strictly worse than the failure it is recovering from.
         var calls = new List<string>();
         var target = Dns(4000);
         var addAttempts = 0;
 
         Comms10kReplaceWriter.ExecuteSequence(
-            Group, target, Current(Others(1)),
+            Group, target,
+            clear: () => calls.Add("clear"),
             addBatch: b => Comms10kReplaceWriter.WithRetry(
                 () =>
                 {
@@ -476,49 +401,16 @@ public class Comms10kReplaceWriterTests
                     calls.Add($"add:{b.Count}");
                 },
                 (_, _, _, _) => { }),
-            removeBatch: b => calls.Add($"remove:{b.Count}"),
-            removeByDnBatch: _ => { },
             readBack: () => Matching(target));
 
-        Assert.Equal(new[] { "add:2000", "add:2000", "remove:1" }, calls);
+        Assert.Single(calls, c => c == "clear");
+        Assert.Equal(new[] { "clear", "add:2000", "add:2000" }, calls);
     }
 
     // ----- harness -------------------------------------------------------------------------
 
     private static List<Guid> Dns(int count) =>
         Enumerable.Range(0, count).Select(i => new Guid(i + 1, 0, 0, new byte[8])).ToList();
-
-    // Members the file does not name: a disjoint range.
-    private static List<Guid> Others(int count) =>
-        Enumerable.Range(0, count).Select(i => new Guid(i + 1, 1, 0, new byte[8])).ToList();
-
-    private static Comms10kReplaceWriter.CurrentMembership Current(IReadOnlyList<Guid> members) =>
-        new(members, Array.Empty<string>());
-
-    // Records "add:N" / "remove:N" / "remove-dn:N"; a trailing "!" marks the batch that threw.
-    private static Comms10kUpdateResult Execute(
-        IReadOnlyList<Guid> target, Comms10kReplaceWriter.CurrentMembership current, List<string> calls,
-        int failAdd = 0, int failRemove = 0, Func<Comms10kReplaceWriter.ReadBack>? readBack = null,
-        Func<bool>? dispatched = null)
-    {
-        var adds = 0;
-        var removes = 0;
-        return Comms10kReplaceWriter.ExecuteSequence(
-            Group, target, current,
-            addBatch: b =>
-            {
-                if (++adds == failAdd) { calls.Add($"add:{b.Count}!"); throw new InvalidOperationException("the directory refused the GUID form"); }
-                calls.Add($"add:{b.Count}");
-            },
-            removeBatch: b =>
-            {
-                if (++removes == failRemove) { calls.Add($"remove:{b.Count}!"); throw new InvalidOperationException("the directory refused the removal"); }
-                calls.Add($"remove:{b.Count}");
-            },
-            removeByDnBatch: b => calls.Add($"remove-dn:{b.Count}"),
-            readBack: readBack ?? (() => Matching(target)),
-            writeWasDispatched: dispatched);
-    }
 
     private static Comms10kReplaceWriter.ReadBack Matching(IReadOnlyList<Guid> target) =>
         new(target, Array.Empty<Guid>());

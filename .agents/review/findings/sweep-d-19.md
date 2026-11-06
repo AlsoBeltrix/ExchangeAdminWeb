@@ -80,4 +80,8 @@ Run once for the branch at its tip; see the sweep-d hand-back. Not run: any live
 
 The add-then-remove order is reverted by owner ruling (`.agents/decisions.md` 2026-11-06): it reversed the approved
 plan's measured rejection of that order and slows a large swap from seconds to minutes. The GUID member form was
-verified live by the owner the same day. The named-refusal and item-20 changes stand. The revert is a separate slice.
+verified live by the owner the same day. The named-refusal and item-20 changes stand. The revert is a separate slice:
+`952c290d` on `fix/comms10k-order` (record `comms10k-order.md`). It keeps the named failed add batch and item 20's
+single check (now immediately before the clear); it removes the add/remove planning, the `-Remove` writes, the
+pre-write membership read and its refusal, and the "refused, list unchanged" outcome, all of which served only the
+add-first order. The deploy check's `-Remove` step above no longer applies.

@@ -12,7 +12,7 @@ namespace ExchangeAdminWeb.Tests;
 public class Comms10kPowerShellLifecycleTests
 {
     [Theory]
-    [InlineData("remove")]
+    [InlineData("clear")]
     [InlineData("add")]
     [InlineData("members")]
     [InlineData("primary")]
@@ -28,7 +28,7 @@ public class Comms10kPowerShellLifecycleTests
     }
 
     [Theory]
-    [InlineData("remove")]
+    [InlineData("clear")]
     [InlineData("add")]
     [InlineData("members")]
     [InlineData("primary")]
@@ -43,7 +43,7 @@ public class Comms10kPowerShellLifecycleTests
     }
 
     [Theory]
-    [InlineData("remove")]
+    [InlineData("clear")]
     [InlineData("add")]
     public void RetryingAFailedWriteExecutesOnlyTheNewAttempt(string operation)
     {
@@ -60,7 +60,7 @@ public class Comms10kPowerShellLifecycleTests
     }
 
     [Theory]
-    [InlineData("remove")]
+    [InlineData("clear")]
     [InlineData("add")]
     public void TheWritersReadBackAfterAFailureCannotReplayTheMutation(string operation)
     {
@@ -68,20 +68,17 @@ public class Comms10kPowerShellLifecycleTests
 
         var result = Comms10kReplaceWriter.ExecuteSequence(
             "Local broadcast", [Harness.NewMemberGuid],
-            new Comms10kReplaceWriter.CurrentMembership([Harness.ExistingMemberGuid], []),
+            clear: () => harness.Invoke("clear"),
             addBatch: _ => harness.Invoke("add"),
-            removeBatch: _ => harness.Invoke("remove"),
-            removeByDnBatch: _ => throw new InvalidOperationException("none expected"),
             readBack: () => Comms10kService.ReadBackMembers(
                 harness.PowerShell, harness.Credential, Harness.Target));
 
-        // A failed add stops before any removal; a failed removal is not replayed by the read-back.
-        var expectedCalls = operation == "add"
-            ? new[] { "add", "members", "primary" }
-            : new[] { "add", "remove", "members", "primary" };
+        var expectedCalls = operation == "clear"
+            ? new[] { "clear", "members", "primary" }
+            : new[] { "clear", "add", "members", "primary" };
         Assert.Equal(expectedCalls, harness.Calls);
-        Assert.Equal(operation == "add" ? 1 : 2, result.FinalCount);
-        Assert.Equal(operation == "add" ? Comms10kOutcome.RefusedBeforeAnyChange : Comms10kOutcome.PartlyApplied, result.Outcome);
+        Assert.Equal(operation == "clear" ? 1 : 0, result.FinalCount);
+        Assert.Equal(Comms10kOutcome.PartlyApplied, result.Outcome);
         Assert.Empty(harness.PowerShell.Commands.Commands);
         Assert.Empty(harness.PowerShell.Streams.Error);
     }
@@ -90,7 +87,6 @@ public class Comms10kPowerShellLifecycleTests
     {
         public const string NewMember = "CN=New member,DC=example,DC=test";
         public static readonly Guid NewMemberGuid = new("a04e5a15-174b-4b8b-b743-26ffd2c84057");
-        public static readonly Guid ExistingMemberGuid = new("6263592c-0648-49c4-853f-bd8dfd1a590d");
         public static readonly Comms10kTarget Target = new(
             "CN=Local broadcast,DC=example,DC=test", Comms10kService.TargetGroupGuid);
 
@@ -113,13 +109,13 @@ public class Comms10kPowerShellLifecycleTests
                 """));
             state.Commands.Add(new SessionStateFunctionEntry("Set-ADGroup", """
                 [CmdletBinding()]
-                param($Identity, [hashtable] $Remove, [hashtable] $Add, [pscredential] $Credential)
-                if ($PSBoundParameters.ContainsKey('Remove')) {
-                    Invoke-LocalOperation 'remove'
-                    $global:C9Members.Remove('CN=Existing member,DC=example,DC=test') | Out-Null
+                param($Identity, [string] $Clear, [hashtable] $Add, [pscredential] $Credential)
+                if ($PSBoundParameters.ContainsKey('Clear')) {
+                    Invoke-LocalOperation 'clear'
+                    $global:C9Members.Clear()
                 } else {
                     Invoke-LocalOperation 'add'
-                    $global:C9Members.Add('CN=New member,DC=example,DC=test')
+                    foreach ($dn in $Add['member']) { $global:C9Members.Add($dn) }
                 }
                 """));
             state.Commands.Add(new SessionStateFunctionEntry("Get-ADGroup", """
@@ -141,12 +137,7 @@ public class Comms10kPowerShellLifecycleTests
                 [CmdletBinding()]
                 param([string] $LDAPFilter, [string[]] $Properties, [pscredential] $Credential)
                 if ($LDAPFilter -notlike '(primaryGroupID=*') {
-                    if ($LDAPFilter.Contains('(distinguishedName=CN=Existing member,DC=example,DC=test)')) {
-                        [pscustomobject]@{ DistinguishedName = 'CN=Existing member,DC=example,DC=test'; ObjectGUID = [guid] '6263592c-0648-49c4-853f-bd8dfd1a590d' }
-                    }
-                    if ($LDAPFilter.Contains('(distinguishedName=CN=New member,DC=example,DC=test)')) {
-                        [pscustomobject]@{ DistinguishedName = 'CN=New member,DC=example,DC=test'; ObjectGUID = [guid] 'a04e5a15-174b-4b8b-b743-26ffd2c84057' }
-                    }
+                    [pscustomobject]@{ DistinguishedName = 'CN=Existing member,DC=example,DC=test'; ObjectGUID = [guid] '6263592c-0648-49c4-853f-bd8dfd1a590d' }
                     return
                 }
                 Invoke-LocalOperation 'primary'
@@ -169,8 +160,8 @@ public class Comms10kPowerShellLifecycleTests
         {
             switch (operation)
             {
-                case "remove":
-                    Comms10kService.RemoveMemberBatch(PowerShell, Credential, Target, [ExistingMemberGuid]);
+                case "clear":
+                    Comms10kService.ClearMembers(PowerShell, Credential, Target);
                     break;
                 case "add":
                     Comms10kService.AddMemberBatch(PowerShell, Credential, Target, [NewMemberGuid]);

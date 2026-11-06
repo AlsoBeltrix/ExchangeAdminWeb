@@ -62,19 +62,18 @@ public sealed class Comms10kInterruptionTests
         Assert.False(notification.Success);
         Assert.Equal("Interrupted", notification.Details["Outcome"]);
         Assert.Contains(interrupted.Message!, notification.Details["Detail"], StringComparison.Ordinal);
-        Assert.Contains("a mix of the old and new members", notification.Details["Detail"], StringComparison.Ordinal);
+        Assert.Contains("empty or partial", notification.Details["Detail"], StringComparison.Ordinal);
         Assert.Equal(notification.Details["Detail"], notification.Error);
         Assert.StartsWith("UNKNOWN", notification.Details[WrittenLabel], StringComparison.Ordinal);
         Assert.StartsWith("UNKNOWN", notification.Details["Members requested"], StringComparison.Ordinal);
         Assert.StartsWith("UNKNOWN", notification.Details["Final membership"], StringComparison.Ordinal);
     }
 
-    // The list starts with three of the file's members and two it does not name (sweep-d item 19).
     [Theory]
-    [InlineData("first-add-fails", 5, 0, Comms10kOutcome.RefusedBeforeAnyChange)]
-    [InlineData("second-add-fails", 2005, null, Comms10kOutcome.PartlyApplied)]
-    [InlineData("remove-fails", Requested + 2, Requested, Comms10kOutcome.PartlyApplied)]
-    [InlineData("last-add-applies-then-throws", Requested + 2, null, Comms10kOutcome.PartlyApplied)]
+    [InlineData("first-add-fails", 0, null, Comms10kOutcome.PartlyApplied)]
+    [InlineData("second-add-fails", 2000, null, Comms10kOutcome.PartlyApplied)]
+    [InlineData("clear-fails", 3, null, Comms10kOutcome.PartlyApplied)]
+    [InlineData("last-add-applies-then-throws", Requested, null, Comms10kOutcome.Succeeded)]
     [InlineData("success", Requested, Requested, Comms10kOutcome.Succeeded)]
     [InlineData("readback-fails", null, Requested, Comms10kOutcome.CouldNotConfirm)]
     [InlineData("add-and-readback-fail", null, null, Comms10kOutcome.CouldNotConfirm)]
@@ -94,29 +93,14 @@ public sealed class Comms10kInterruptionTests
         Assert.Equal(finalCount, result.FinalCount);
         Assert.Equal(outcome, result.Outcome);
         Assert.Equal(outcome == Comms10kOutcome.Succeeded, result.Success);
-        // Never a clear, and no removal before the last add.
-        Assert.DoesNotContain("clear", fixture.Directory.Calls);
-        if (fixture.Directory.Calls.Contains("remove"))
-            Assert.True(fixture.Directory.Calls.LastIndexOf("add") < fixture.Directory.Calls.IndexOf("remove"));
-        // Only the 9,997 members not already present are written, in the measured batches.
-        Assert.All(fixture.Directory.BatchSizes, size => Assert.True(size <= 2000));
+        Assert.Single(fixture.Directory.Calls, call => call == "clear");
+        Assert.All(fixture.Directory.BatchSizes, size => Assert.Equal(2000, size));
         if (mode is "first-add-fails" or "add-and-readback-fail")
             Assert.Single(fixture.Directory.BatchSizes);
         if (mode == "second-add-fails")
             Assert.Equal(2, fixture.Directory.BatchSizes.Count);
-        if (mode is "success" or "remove-fails" or "last-add-applies-then-throws" or "readback-fails" or "concurrent-removal")
-            Assert.Equal([2000, 2000, 2000, 2000, 1997], fixture.Directory.BatchSizes);
-        // A failed add stops the run before any removal.
-        if (mode is "first-add-fails" or "second-add-fails" or "last-add-applies-then-throws" or "add-and-readback-fail")
-            Assert.DoesNotContain("remove", fixture.Directory.Calls);
-        else
-            Assert.Single(fixture.Directory.Calls, call => call == "remove");
-        if (mode is "first-add-fails" or "second-add-fails" or "remove-fails" or "last-add-applies-then-throws" or "add-and-readback-fail")
+        if (mode is "first-add-fails" or "second-add-fails" or "clear-fails" or "last-add-applies-then-throws" or "add-and-readback-fail")
             Assert.Contains("Write acknowledgement unavailable.", result.Message, StringComparison.Ordinal);
-        if (mode is "first-add-fails")
-            Assert.Contains("Add batch 1 of 5 (2,000 members) failed", result.Message, StringComparison.Ordinal);
-        if (mode is "remove-fails")
-            Assert.Contains("Remove batch 1 of 1 failed", result.Message, StringComparison.Ordinal);
         if (outcome == Comms10kOutcome.PartlyApplied)
             Assert.Contains("Re-run the same CSV", result.Message, StringComparison.Ordinal);
         if (finalCount is null)
@@ -146,8 +130,7 @@ public sealed class Comms10kInterruptionTests
         Assert.Equal(0, result.MembersWritten);
         Assert.Equal(Comms10kOutcome.RefusedBeforeAnyChange, result.Outcome);
         Assert.Contains(mode == "primary-refusal" ? "primary-group members outside the approved set" : "Preparation unavailable.", result.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("add", fixture.Directory.Calls);
-        Assert.DoesNotContain("remove", fixture.Directory.Calls);
+        Assert.DoesNotContain("clear", fixture.Directory.Calls);
         Assert.Empty(fixture.Directory.BatchSizes);
         fixture.AssertRecordedCounts(job, result, 0, null);
     }
@@ -409,8 +392,6 @@ public sealed class Comms10kInterruptionTests
         {
             Mode = mode;
             Members.AddRange(Rows.Take(3));
-            Members.AddRange(Enumerable.Range(1, 2).Select(index =>
-                new DirectoryMember(new Guid(index, 1, 0, new byte[8]), $"CN=Leaver{index},DC=example,DC=test", $"leaver{index}@example.test")));
             State.Variables.Add(new SessionStateVariableEntry("C11Directory", this, "local directory recorder"));
             State.Variables.Add(new SessionStateVariableEntry("C11TargetGuid", Comms10kService.TargetGroupGuid, "fixed target"));
             State.Commands.Add(new SessionStateFunctionEntry("Import-Module", """
@@ -422,17 +403,18 @@ public sealed class Comms10kInterruptionTests
                 if ([guid] $Identity -ne $global:C11TargetGuid) { throw 'Target must remain pinned.' }
                 $directory = $global:C11Directory
                 $directory.Calls.Add('group')
-                $written = $directory.Calls.Contains('add') -or $directory.Calls.Contains('remove')
-                if ($written -and $directory.Mode -in @('readback-fails', 'add-and-readback-fail')) { throw 'Read-back unavailable.' }
-                if ($written -and $directory.Mode -eq 'concurrent-removal') { $directory.Members.RemoveAt(0) }
+                if ($directory.Calls.Contains('clear') -and $directory.Mode -in @('readback-fails', 'add-and-readback-fail')) { throw 'Read-back unavailable.' }
+                if ($directory.Calls.Contains('clear') -and $directory.Mode -eq 'concurrent-removal') { $directory.Members.RemoveAt(0) }
                 [pscustomobject]@{ DistinguishedName = 'CN=Broadcast,DC=example,DC=test'; ObjectGUID = $global:C11TargetGuid; SID = 'S-1-5-21-100-200-300-4242'; member = @($directory.Members | ForEach-Object { $_.Dn }) }
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Set-ADGroup", """
-                [CmdletBinding()] param($Identity, [hashtable] $Remove, [hashtable] $Add, [pscredential] $Credential)
+                [CmdletBinding()] param($Identity, [string] $Clear, [hashtable] $Add, [pscredential] $Credential)
                 if ([guid] $Identity -ne $global:C11TargetGuid) { throw 'Target must remain pinned.' }
                 $directory = $global:C11Directory
-                if ($PSBoundParameters.ContainsKey('Remove')) {
-                    $directory.RecordRemove($Remove['member'])
+                if ($PSBoundParameters.ContainsKey('Clear')) {
+                    $directory.Calls.Add('clear')
+                    if ($directory.Mode -eq 'clear-fails') { throw 'Write acknowledgement unavailable.' }
+                    $directory.Members.Clear()
                 } else {
                     $directory.RecordAdd($Add['member'])
                 }
@@ -452,19 +434,6 @@ public sealed class Comms10kInterruptionTests
                 """));
         }
 
-        public void RecordRemove(string[] values)
-        {
-            Calls.Add("remove");
-            if (Mode == "remove-fails")
-                throw new InvalidOperationException("Write acknowledgement unavailable.");
-            foreach (var value in values)
-            {
-                Assert.StartsWith("<GUID=", value, StringComparison.Ordinal);
-                var guid = Guid.Parse(value[6..^1]);
-                Members.RemoveAll(member => member.Guid == guid);
-            }
-        }
-
         public void RecordAdd(string[] values)
         {
             Calls.Add("add");
@@ -479,7 +448,7 @@ public sealed class Comms10kInterruptionTests
                 var guid = Guid.Parse(value[6..^1]);
                 Members.Add(Rows.Single(row => row.Guid == guid));
             }
-            if (Mode == "last-add-applies-then-throws" && AddCalls == 5)
+            if (Mode == "last-add-applies-then-throws" && AddCalls == Requested / 2000)
                 throw new InvalidOperationException("Write acknowledgement unavailable.");
         }
     }
