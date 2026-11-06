@@ -213,8 +213,9 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         };
     }
 
-    // Re-read the live stores on every call, including after asynchronous write preparation
-    // and before each retry. This checks configuration, not Windows-token membership refresh.
+    // Re-read the live stores on every call: at each stage, and once more by the service after
+    // asynchronous write preparation, immediately before the first write (never between batches,
+    // sweep-d item 20). This checks configuration, not Windows-token membership refresh.
     private string? AuthorizationDenial(BulkJob job)
     {
         var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);

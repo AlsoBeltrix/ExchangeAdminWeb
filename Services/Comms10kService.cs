@@ -440,8 +440,9 @@ public class Comms10kService
     }
 
     /// <summary>
-    /// The write itself. Everything that can refuse does so BEFORE the first write is issued;
-    /// from the first write onwards the outcome comes from the read-back and nothing else.
+    /// The write itself. Everything that can refuse does so BEFORE the first write is issued,
+    /// including the one authorization check (sweep-d item 20); from the first write onwards the
+    /// outcome comes from the read-back and nothing else.
     /// </summary>
     /// <remarks>
     /// <b>One runspace for the whole sequence, and the steps are passed to
@@ -504,6 +505,14 @@ public class Comms10kService
                 return Refused(group, memberGuids,
                     "The group has primary-group members outside the approved set. They cannot be removed by this operation. Correct the membership and validate again.");
 
+            // sweep-d item 20: authorization is checked ONCE, immediately before the first write,
+            // and the run then goes to completion. A re-check between batches could stop a run
+            // halfway and leave the list neither the old membership nor the file's - the very
+            // state the add-first order exists to avoid. A revocation after this point takes
+            // effect on the next run.
+            if (authorizationDenial() is { } denial)
+                return Refused(group, memberGuids, denial);
+
             var plan = Comms10kReplaceWriter.Plan(memberGuids, current);
             _logger.LogInformation(
                 "Comms10k replace of {Group}: {Current} current members, {Add} to add, {Remove} to remove ({Unidentified} by their stored value)",
@@ -512,12 +521,7 @@ public class Comms10kService
 
             // Immediately before Invoke. Merely entering the delegate does not establish that any
             // mutation has been dispatched.
-            void MarkDispatched()
-            {
-                if (authorizationDenial() is { } denial)
-                    throw new InvalidOperationException(denial);
-                writeDispatched = true;
-            }
+            void MarkDispatched() => writeDispatched = true;
 
             return Comms10kReplaceWriter.ExecuteSequence(
                 group,

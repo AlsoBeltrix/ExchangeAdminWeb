@@ -160,6 +160,94 @@ public sealed partial class Comms10kRefusalTests
         Assert.Contains("primary", directory.Calls);
     }
 
+    // sweep-d item 20: a revocation after the first write no longer stops the run halfway. The
+    // run completes and the list ends as the file; the revocation applies to the next run.
+    [Theory]
+    [InlineData("first-add", false)]
+    [InlineData("first-add", true)]
+    [InlineData("between-batches", true)]
+    [InlineData("add-retry", false)]
+    [InlineData("remove", false)]
+    public async Task C2ARevocationAfterTheFirstWriteDoesNotLeaveAHalfReplacedList(string boundary, bool disableModule)
+    {
+        using var fixture = new Fixture();
+        var directory = new C2Directory(boundary == "between-batches" ? 2001 : 1)
+        {
+            FailAddOnce = boundary == "add-retry",
+        };
+        fixture.Service.ReplaceState = directory.State;
+        fixture.Service.Candidates = directory.Rows.Select(row => Candidate(row.Guid, row.Dn, row.Address)).ToArray();
+        var revoked = false;
+        directory.OnStep = step =>
+        {
+            if (revoked) return;
+            if ((boundary != "remove" && step == "add") || (boundary == "remove" && step == "remove"))
+            {
+                revoked = true;
+                C2Revoke(fixture, disableModule);
+            }
+        };
+        var job = C2Job(C2Snapshot(), directory.Rows);
+        var processor = fixture.Processor(fixture.Service);
+        await processor.ProcessRowAsync(job, 0, CancellationToken.None);
+
+        var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
+        await processor.OnJobCompletedAsync(job);
+
+        var result = Assert.IsType<Comms10kUpdateResult>(fixture.Service.LastResult);
+        Assert.True(revoked);
+        Assert.Equal(BulkJobRowStatus.Success, row.Status);
+        Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
+        Assert.Equal(directory.Rows.Count, result.FinalCount);
+        Assert.Equal(directory.Rows.Count, result.MembersWritten);
+        Assert.True(directory.Actual.SetEquals(directory.Rows.Select(r => r.Guid)));
+        Assert.Equal(boundary == "between-batches" ? 2 : 1, directory.Writes.Count(write => write == "add") - (boundary == "add-retry" ? 1 : 0));
+        Assert.Equal(1, directory.Writes.Count(write => write == "remove"));
+        Assert.True(directory.Writes.LastIndexOf("add") < directory.Writes.IndexOf("remove"));
+        fixture.AssertAudit(null, result.Outcome, true);
+        fixture.AssertNotification(row.Message!, result.Outcome, true);
+    }
+
+    [Fact]
+    public async Task C2TheServiceConsultsAuthorizationExactlyOnce_AfterPreparation_BeforeTheFirstWrite()
+    {
+        using var fixture = new Fixture();
+        var directory = new C2Directory(2001);
+        fixture.Service.ReplaceState = directory.State;
+        var members = directory.Rows.Select(row => new Comms10kAddressResolver.ResolvedMember(row.Guid, row.Dn)).ToArray();
+
+        var result = await fixture.Service.ExecuteReplaceAsync(members, "EXAMPLE\\operator", () =>
+        {
+            directory.Record("authorization");
+            return null;
+        });
+
+        Assert.Equal(Comms10kOutcome.Succeeded, result.Outcome);
+        Assert.Equal(1, directory.Calls.Count(call => call == "authorization"));
+        var gate = directory.Calls.IndexOf("authorization");
+        Assert.True(gate > directory.Calls.IndexOf("primary"));
+        Assert.True(gate < directory.Calls.IndexOf("add"));
+        Assert.Equal(["add", "add", "remove"], directory.Writes);
+    }
+
+    [Fact]
+    public async Task C2ADenialAtTheSingleCheckRefusesWithTheListUntouched()
+    {
+        using var fixture = new Fixture();
+        var directory = new C2Directory();
+        fixture.Service.ReplaceState = directory.State;
+        var members = directory.Rows.Select(row => new Comms10kAddressResolver.ResolvedMember(row.Guid, row.Dn)).ToArray();
+        var before = directory.Actual.ToArray();
+
+        var result = await fixture.Service.ExecuteReplaceAsync(members, "EXAMPLE\\operator", () => C2Disabled);
+
+        Assert.Equal(Comms10kOutcome.RefusedBeforeAnyChange, result.Outcome);
+        Assert.Contains(C2Disabled, result.Message, StringComparison.Ordinal);
+        Assert.Empty(directory.Writes);
+        Assert.Equal(before, directory.Actual);
+        Assert.DoesNotContain("readback", directory.Calls);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

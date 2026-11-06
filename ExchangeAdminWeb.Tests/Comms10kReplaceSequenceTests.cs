@@ -180,6 +180,21 @@ public class Comms10kReplaceSequenceTests
         Assert.Contains("readBack: () => ReadBackMembers(", body, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AuthorizationIsConsultedOnce_BeforeTheSequence_AndNeverInsideAWrite()
+    {
+        // sweep-d item 20: a re-check between batches could stop a run halfway. The one check sits
+        // after every preparation read and before ExecuteSequence; no write carries a gate.
+        var body = StripComments(MemberBody(ServiceSource(), "private Comms10kUpdateResult PerformReplace("));
+
+        Assert.Equal(1, Regex.Matches(body, Regex.Escape("authorizationDenial()")).Count);
+        var gate = body.IndexOf("authorizationDenial()", StringComparison.Ordinal);
+        Assert.True(gate > body.IndexOf("ReadCurrentMembers(", StringComparison.Ordinal));
+        Assert.True(gate < body.IndexOf("Comms10kReplaceWriter.ExecuteSequence(", StringComparison.Ordinal));
+        Assert.DoesNotContain("RequireAuthorization", body, StringComparison.Ordinal);
+        Assert.Equal(3, Regex.Matches(body, Regex.Escape("beforeDispatch: MarkDispatched")).Count);
+    }
+
     // ----- S4 test 16: the upload guard names its limit -----------------------------------------
 
     [Fact]

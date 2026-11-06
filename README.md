@@ -383,6 +383,8 @@ Dedicated bulk member replacement for broadcast distribution lists.
   not. Either way the module reports the state explicitly, and re-running the same CSV
   repairs it. The cost: a full swap to a disjoint list takes about 53 seconds at ten
   thousand members (the list briefly holds both), against seconds when most members stay.
+  Access is checked once, immediately before the first write, and the run then goes to
+  completion; a permission removed mid-run applies to the next run (sweep-d item 20).
   **Replaces are not serialised** (owner ruling 2026-09-30): two run at the
   same time on the same group can interleave and leave the list holding neither uploaded
   file. Each run's read-back compares against its own list, so an interleaved run reports
