@@ -194,16 +194,49 @@ public sealed class ConfigBooleanTests : IDisposable
         Assert.False(new ServiceNowService(Config(), NullLogger<ServiceNowService>.Instance, factory).Enabled);
     }
 
+    // Sweep item 43. The Mailbox and Calendar Permissions pages parsed the same switch with bool.Parse during render, so a
+    // value such as "yes" failed both pages for every user. They render, and claim notifications only for a value that is true.
+    [Theory]
+    [InlineData(typeof(ExchangeAdminWeb.Components.Pages.MailboxPermissions))]
+    [InlineData(typeof(ExchangeAdminWeb.Components.Pages.CalendarPermissions))]
+    public void ThePermissionPages_GivenANotificationSwitchThatIsNotABoolean_Render_WithoutClaimingNotifications(Type pageType)
+    {
+        const string Notice = "Affected users will receive email notifications";
+
+        Assert.DoesNotContain(Notice, RenderedPermissionPage(pageType, "yes"), StringComparison.Ordinal);
+        Assert.Contains(Notice, RenderedPermissionPage(pageType, "True"), StringComparison.Ordinal);
+        Assert.DoesNotContain(Notice, RenderedPermissionPage(pageType, null), StringComparison.Ordinal);
+    }
+
+    private static string RenderedPermissionPage(Type pageType, string? notifyUsers)
+    {
+        var page = Activator.CreateInstance(pageType)!;
+        pageType.GetProperty("Config", PrivateInstance)!.SetValue(page, Config((NotifyUsers, notifyUsers)));
+        pageType.GetProperty("Logger", PrivateInstance)!.SetValue(page,
+            Activator.CreateInstance(typeof(NullLogger<>).MakeGenericType(pageType)));
+
+        using var builder = new RenderTreeBuilder();
+        pageType.GetMethod("BuildRenderTree", PrivateInstance)!.Invoke(page, [builder]);
+        var frames = builder.GetFrames();
+        var text = new StringBuilder();
+        for (var i = 0; i < frames.Count; i++)
+        {
+            var frame = frames.Array[i];
+            if (frame.FrameType == RenderTreeFrameType.Text)
+                text.Append(frame.TextContent).Append(' ');
+            else if (frame.FrameType == RenderTreeFrameType.Markup)
+                text.Append(frame.MarkupContent).Append(' ');
+        }
+
+        return text.ToString();
+    }
+
     [Fact]
     public void NoPageOrService_ParsesAConfigurationBooleanWithBoolParse()
     {
-        // The two pages are another agent's files in this round. aud-a58's record, under "Left for a follow-up", names the
-        // change they need; the follow-up removes them from here.
-        var allowance = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Components/Pages/MailboxPermissions.razor"] = 1,
-            ["Components/Pages/CalendarPermissions.razor"] = 1,
-        };
+        // Sweep item 43: the two permission pages aud-a58 left for a follow-up read the switch through ConfigBoolean too, so
+        // nothing is allowed any more.
+        var allowance = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         var root = RepoRoot();
         var offenders = new List<string>();

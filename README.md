@@ -1417,9 +1417,8 @@ corrected it is read as:
   text. A relay that does not offer TLS on connect then refuses the mail, and each failure is logged.
 - `ServiceNow:Enabled`: `true`, so a mistyped value never passes every ticket unchecked. Without a
   reachable ServiceNow instance, each ticket's check then fails.
-- `Email:NotifyUsersOnPermissionGrant`: `false`, as when it is left out, and the Home page then does
-  not say that users are notified. Until a follow-up lands, the Mailbox Permissions and Calendar
-  Permissions pages still fail to render on such a value.
+- `Email:NotifyUsersOnPermissionGrant`: `false`, as when it is left out, and the Home, Mailbox
+  Permissions and Calendar Permissions pages then do not say that users are notified.
 
 Before, such a value stopped the Home page, and every page that sends mail or checks a ticket.
 

@@ -19,7 +19,7 @@
 
 <div class="container-fluid">
     <div class="alert alert-info py-2 mb-3">
-        <small>All permission changes are logged for audit purposes.@if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false")){<text> Affected users will receive email notifications when permissions are granted or removed; a bulk upload sends each person one email for the whole file, and none for a row Exchange reports as no change.</text>}</small>
+        <small>All permission changes are logged for audit purposes.@if (ConfigBoolean.Read(Config, "Email:NotifyUsersOnPermissionGrant", whenBlank: false, whenNotBoolean: false, Logger)){<text> Affected users will receive email notifications when permissions are granted or removed; a bulk upload sends each person one email for the whole file, and none for a row Exchange reports as no change.</text>}</small>
     </div>
     <h1 class="mb-4">Calendar Permissions<ModuleVersion /></h1>
 
