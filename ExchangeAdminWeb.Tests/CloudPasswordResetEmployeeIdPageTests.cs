@@ -657,7 +657,7 @@ public class CloudPasswordResetFillCatalogTests
     [Fact]
     public void The_module_is_at_1_2_0()
     {
-        Assert.Equal("1.2.1", Module.Version);
+        Assert.Equal("1.2.2", Module.Version);
     }
 
     [Fact]
