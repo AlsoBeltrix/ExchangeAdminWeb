@@ -220,6 +220,7 @@ internal sealed class SettingsPageHarness : IDisposable
                     new ProtectedPrincipalVerifyAdapter(),
                     new ModuleGroupVerifyAdapter(VerifyIgnoreList.SectionAccessStore),
                     new ModuleGroupVerifyAdapter(VerifyIgnoreList.ModuleAdminsStore),
+                    new ModuleConfigVerifyAdapter(),
                 ], NullLogger<DirectoryObjectVerifier>.Instance),
         });
         page.ModuleId = moduleId;

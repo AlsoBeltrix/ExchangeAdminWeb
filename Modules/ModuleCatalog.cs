@@ -524,7 +524,8 @@ public sealed class ModuleCatalog
                 new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases. Exchange distributes mailboxes across all listed databases in each move-back batch."),
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by migration eligibility checks", Required: false),
                 new("CloudQuotaGB", "Cloud Quota (GB)", "Max size for cloud migration, applied to the primary mailbox and the archive separately. Combined size is not checked.", DefaultValue: "99"),
-                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated groups whose direct members are excluded from cloud migration. Each value is what Get-ADGroup -Identity resolves in a domain of the forest: its sAMAccountName, SID or objectGUID. A name held by groups in several domains excludes the members of each, and the check names the domains: enter its SID or objectGUID to name one. A distinguished name cannot be entered, because the setting is split at commas. The user is found by the address typed - as their UPN, mail or a proxy address.", Required: false)
+                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated groups whose direct members are excluded from cloud migration. Each value is what Get-ADGroup -Identity resolves in a domain of the forest: its sAMAccountName, SID or objectGUID. A name held by groups in several domains excludes the members of each, and the check names the domains: enter its SID or objectGUID to name one. A distinguished name cannot be entered, because the setting is split at commas. The user is found by the address typed - as their UPN, mail or a proxy address.", Required: false,
+                    FieldType: ConfigFieldType.AdGroup, ListSeparator: ',')
             ]
         },
         new()
@@ -1214,14 +1215,14 @@ public sealed class ModuleCatalog
                 FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the on-prem AD credential used to write dir-synced room attributes (City/State/Country) via Set-ADUser during Room Finder apply"),
-                new("DefaultArbiterGroup", "Default Arbiter Group", "Default group with editor permissions on room calendars (e.g. room-admins@example.com)"),
-                new("ExecConfCoordinatorsGroup", "Exec Conf Coordinators Group", "Group for executive conference coordinators (e.g. exec-coordinators@example.com)"),
-                new("ConfExecAdminsGroup", "Conf Exec Admins Group", "Executive conference admins group (e.g. exec-admins@example.com)"),
-                new("ConfExecVPsGroup", "Conf Exec VPs Group", "Executive VP booking group (e.g. exec-vps@example.com)"),
-                new("ConfAdminsGroup", "Conf Admins Group", "General conference admins group for restricted rooms (e.g. conf-admins@example.com)"),
-                new("ConfCEOGroup", "CEO Room Group", "Group for CEO room booking (e.g. ceo-room@example.com)"),
-                new("ConfExceptionGroup", "Exception Room Group", "Group for exception room booking (e.g. exception-room@example.com)"),
-                new("ADGTAdminsGroup", "ADGT Meeting Room Admins", "ADGT site-specific admins group (e.g. adgt-admins@example.com)"),
+                new("DefaultArbiterGroup", "Default Arbiter Group", "Default group with editor permissions on room calendars (e.g. room-admins@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ExecConfCoordinatorsGroup", "Exec Conf Coordinators Group", "Group for executive conference coordinators (e.g. exec-coordinators@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ConfExecAdminsGroup", "Conf Exec Admins Group", "Executive conference admins group (e.g. exec-admins@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ConfExecVPsGroup", "Conf Exec VPs Group", "Executive VP booking group (e.g. exec-vps@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ConfAdminsGroup", "Conf Admins Group", "General conference admins group for restricted rooms (e.g. conf-admins@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ConfCEOGroup", "CEO Room Group", "Group for CEO room booking (e.g. ceo-room@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ConfExceptionGroup", "Exception Room Group", "Group for exception room booking (e.g. exception-room@example.com)", FieldType: ConfigFieldType.RecipientGroup),
+                new("ADGTAdminsGroup", "ADGT Meeting Room Admins", "ADGT site-specific admins group (e.g. adgt-admins@example.com)", FieldType: ConfigFieldType.RecipientGroup),
                 new("RestrictedMailTip", "Restricted Room MailTip", "Default mail tip for restricted rooms. Leave blank for built-in default."),
                 new("ExecMailTip", "Executive Room MailTip", "Mail tip for executive rooms. Leave blank for built-in default."),
                 new("RestrictedContactEmail", "Restricted Contact Email", "Contact email shown in restricted room responses (e.g. conf-admins@example.com)"),
@@ -1462,7 +1463,7 @@ public sealed class ModuleCatalog
                     "ActiveDirectorySearchBase",
                     "Active Directory Search Base",
                     "Optional DN limiting live BitLocker recovery searches to one AD subtree.",
-                    Required: false),
+                    Required: false, FieldType: ConfigFieldType.SearchBase),
                 new(
                     "ActiveDirectoryServer",
                     "Active Directory Server",
@@ -1723,7 +1724,8 @@ public sealed class ModuleCatalog
             ],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by attribute read/write operations"),
-                new("DefaultSearchBase", "Allowed Search Bases", "Optional semicolon-separated OU DNs that limit which users can be edited (e.g. OU=Users,DC=ad,DC=contoso,DC=com;OU=Contractors,DC=ad,DC=contoso,DC=com)", Required: false)
+                new("DefaultSearchBase", "Allowed Search Bases", "Optional semicolon-separated OU DNs that limit which users can be edited (e.g. OU=Users,DC=ad,DC=contoso,DC=com;OU=Contractors,DC=ad,DC=contoso,DC=com)", Required: false,
+                    FieldType: ConfigFieldType.SearchBase, ListSeparator: ';')
             ]
         },
         new()

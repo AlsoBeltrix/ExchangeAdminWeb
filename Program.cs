@@ -341,7 +341,8 @@ try
     // docs/DirectoryObjectVerify-Plan.md B.1: the Verify engine, reading in the protection service's warm sessions with its
     // directory-read credential, and one adapter per store (slice V1: the protected principals; slice V3: Module
     // Configuration's section access - which resolves a grant stored by name with the SID migration's own directory, a bare
-    // name in the host's domain - and module admins).
+    // name in the host's domain - and module admins; slice V4: the config panes' text settings, Conference Rooms' group addresses
+    // through that module's own scoped Exchange service).
     builder.Services.AddSingleton(sp => new DirectoryObjectVerifier(
         sp.GetRequiredService<ProtectedPrincipalService>(),
         [
@@ -349,6 +350,7 @@ try
             new ModuleGroupVerifyAdapter(VerifyIgnoreList.SectionAccessStore,
                 sp.GetRequiredService<ExchangeAdminWeb.Authorization.ISectionAccessGroupDirectory>()),
             new ModuleGroupVerifyAdapter(VerifyIgnoreList.ModuleAdminsStore),
+            new ModuleConfigVerifyAdapter(new ConferenceRoomRecipientGroupLookup(sp.GetRequiredService<IServiceScopeFactory>())),
         ],
         sp.GetRequiredService<ILogger<DirectoryObjectVerifier>>()));
     builder.Services.AddSingleton<PermissionValidator>();

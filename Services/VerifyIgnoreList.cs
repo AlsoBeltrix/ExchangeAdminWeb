@@ -52,6 +52,14 @@ internal static class VerifyIgnoreList
     /// </summary>
     public const string ModuleAdminsStore = "ModuleAdmins";
 
+    /// <summary>
+    /// The store name of the Module Configuration settings that hold a directory object as text (A5-A8, slice V4):
+    /// <c>module_config</c> values. An entry's row key is the setting key (each verified key belongs to one module,
+    /// <see cref="ModuleConfigVerifyAdapter.Settings"/>), its identifier-or-text one entry of the value as the module splits
+    /// it. Its ignores change only what Verify reports (plan C.2: display-only); no module reads the list.
+    /// </summary>
+    public const string ConfigStore = "Config";
+
     /// <summary>What a <c>Missing</c> finding observes: the directory answered and holds no such object.</summary>
     public const string NotFoundObserved = "not found";
 

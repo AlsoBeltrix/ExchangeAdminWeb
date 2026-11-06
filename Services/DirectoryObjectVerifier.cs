@@ -180,6 +180,29 @@ internal interface IVerifyDirectory : IProtectedPrincipalResolveDirectory
 
     /// <summary>The objects at <paramref name="dns"/>, read on <paramref name="server"/> (a domain controller of their domain).</summary>
     IReadOnlyList<VerifyDirectoryObject> ReadByDns(IReadOnlyList<string> dns, string server);
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2, A6 (slice V4): whether <c>Get-ADOrganizationalUnit -Identity</c> finds an
+    /// organizational unit at <paramref name="dn"/> on <paramref name="server"/> - the Emergency Disable module's own
+    /// precondition. False is a confirmed absence: the AD module's not-found, which it also answers for a container that is not
+    /// an OU. Throws on any other failure. A directory that has no such read throws.
+    /// </summary>
+    bool OrganizationalUnitExists(string dn, string server) =>
+        throw new NotSupportedException("this directory cannot read organizational units");
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2, A5 (slice V4): the forest's domains as the Migration module asks for them
+    /// (<see cref="MigrationService.ForestDomains"/>). Throws when they cannot be read.
+    /// </summary>
+    IReadOnlyList<string> ForestDomainNames() =>
+        throw new NotSupportedException("this directory cannot list the forest's domains");
+
+    /// <summary>
+    /// docs/DirectoryObjectVerify-Plan.md B.2, A5 (slice V4): one excluded-group value through the Migration module's own
+    /// per-domain lookup (<see cref="MigrationService.TryResolveExcludedGroup"/>), in each of <paramref name="domains"/>.
+    /// </summary>
+    MigrationService.ExcludedGroupResolution ResolveExcludedGroup(string configured, IReadOnlyList<string> domains) =>
+        throw new NotSupportedException("this directory cannot resolve excluded groups");
 }
 
 /// <summary>A press's directory session, or why it could not be had.</summary>
@@ -585,6 +608,20 @@ internal sealed class VerifySessionDirectory(PowerShellProtectedGroupDirectory i
 
     public IReadOnlyList<VerifyDirectoryObject> ReadByDns(IReadOnlyList<string> dns, string server) =>
         Read(() => Inner.FindVerifyObjects(VerifyFilters.AnyDn(dns), server));
+
+    public bool OrganizationalUnitExists(string dn, string server) => Read(() => Inner.OrganizationalUnitExists(dn, server));
+
+    public IReadOnlyList<string> ForestDomainNames() => Read(() => Inner.ForestDomainNames());
+
+    // A lookup the Migration module would have thrown on - a domain that could not be asked - breaks the session as a throw
+    // would: it is failed and not lent again, as the module's own check fails it (MigrationService.CheckExcludedGroups).
+    public MigrationService.ExcludedGroupResolution ResolveExcludedGroup(string configured, IReadOnlyList<string> domains)
+    {
+        var answer = Read(() => Inner.ResolveExcludedGroup(configured, domains));
+        if (answer is MigrationService.ExcludedGroupResolution.Unreadable)
+            Faulted = true;
+        return answer;
+    }
 
     public string ResolveDomainServer(string domain) => Read(() => Inner.ResolveDomainServer(domain));
 

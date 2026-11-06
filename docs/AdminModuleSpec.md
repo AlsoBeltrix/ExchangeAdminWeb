@@ -36,6 +36,30 @@ new AdminModuleDescriptor
 }
 ```
 
+### Config Field Types
+
+`ModuleConfigField(Key, Label, Description, Required, IsSecret, DefaultValue, FieldType, ListSeparator)`
+(`Modules/ModuleConfigField.cs`). `FieldType` decides only how the Module Configuration page edits the value; the stored
+value is always text, read and parsed by the module itself. `ListSeparator` marks a list field: the character the module
+splits the value at, so the editor and Verify treat each entry on its own.
+
+| `ConfigFieldType` | Editor | Holds |
+|---|---|---|
+| `Text` (default) | text box | anything |
+| `Boolean` | checkbox, writes exactly `true` / `false` | a switch (owner ruling 2026-09-01) |
+| `AdGroup` | single value: the group search; a list (`ListSeparator`): a text box, since a pick would replace the list | AD group identities |
+| `AdUser` | text box | an AD user |
+| `OU` | text box with the OU browser | the DN of an organizational unit, never another container |
+| `SearchBase` | text box with the OU browser; any container may be typed | the DN a directory search starts at - an OU, a container or a domain root |
+| `RecipientGroup` | text box | the address of an Exchange group |
+
+The settings that hold a directory object as text - Migration `ExcludedADGroups` (`AdGroup`, `,`), Emergency Disable
+`LockdownOuDn` (`OU`), AD Attribute Editor `DefaultSearchBase` (`SearchBase`, `;`), BitLocker Recovery
+`ActiveDirectorySearchBase` (`SearchBase`) and the eight Conference Rooms group settings (`RecipientGroup`) - are checked by
+the config pane's **Verify**, each by the rule its module applies (`Services/ModuleConfigVerifyAdapter.cs`,
+`docs/DirectoryObjectVerify-Plan.md` A5-A8, C.3). A new setting of that kind is added to the adapter's `Settings` with its
+module's own lookup rule.
+
 ### Category And Ordering
 
 `Category` must be one of the constants in `Modules/ModuleCategories.cs` -
