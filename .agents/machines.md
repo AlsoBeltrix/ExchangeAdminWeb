@@ -12,7 +12,7 @@ _First recorded 2026-07-21._
 - **Superseded 2026-10-26 / 2026-11-04 / 2026-11-06:** codex (Portkey) is out and codex-commercial is the review
   harness again (`.agents/decisions.md` 2026-10-26 and 2026-11-04). Working incantation, probed 2026-11-06 from the
   repo root (read a file and ran `git rev-parse` in one read-only dispatch): prompt on stdin, then
-  `C:Usersmcoelho.localbindex-commercial.cmd exec --model gpt-6-astra --config 'model_reasoning_effort="<level>"'
+  `C:/Users/mcoelho/.local/bin/codex-commercial.cmd exec --model gpt-6-astra --config 'model_reasoning_effort="<level>"'
   --sandbox read-only --skip-git-repo-check --output-last-message <file> -`. Use the LONG flag names: the `.ps1`
   wrapper binds `-c`, `-s` and `-o` as prefixes of its own `-CodexArgs` parameter and the dispatch then fails with
   "A positional parameter cannot be found that accepts argument 'exec'". The entry below is history.
