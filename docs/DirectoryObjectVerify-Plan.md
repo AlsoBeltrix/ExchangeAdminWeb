@@ -1,8 +1,6 @@
 # Verify stored directory objects - Plan
 
-Status: **Approved 2026-11-04 (owner: "approved, but do a review with codex as a sanity check"; "clear to review. use up to 3 rounds for consensus."). Reviewed by codex-commercial in three rounds, consensus reached at revision 4 (section G). Implementation V1-V4 may begin.**
-review, up to three rounds to consensus ("clear to review. use up to 3 rounds for consensus."). Revision 3 after round 2
-(ACCEPTABLE WITH CHANGES, required changes R1-R5 and five citation defects, all adopted - section G).**
+Status: **Implemented 2026-11-06.** Approved 2026-11-04 after three codex-commercial review rounds to consensus (section G); slices V1-V4 landed on `master` at `77ad7fcd`, `b0c1b06e`, `7c15250a`, `fe3b86b8` (records `.agents/review/findings/dov-v1..v4.md`). Section H lists where the build departed from this text.
 Owner: Michael
 Date: 2026-11-04
 Last verified against code: local `master` `389d8dda`, 2026-11-04 (inventory pass plus the round-1 reviewer's re-verification).
@@ -89,7 +87,7 @@ From the read-only inventory of 2026-11-04 (file:line at `389d8dda`).
 | A4 | `module_admins` (`Services/Storage/ModuleAdminRepository.cs:17-36`); display names borrowed from `section_access` (`ModuleConfig.razor:2254`) | group SID; legacy names | Module Configuration, Module Admins pane (`:612-675`) | as A3; name rows via `ProtectedPrincipalIdentifierResolver.ResolveModuleAdminGrants` (`:146`) rules |
 | A5 | Migration `ExcludedADGroups` (`Modules/ModuleCatalog.cs:527`) | comma-separated (`Services/MigrationService.cs:44` splits at every comma, so a DN cannot be entered - the field help says so): sAMAccountName, SID or objectGUID, anything `Get-ADGroup -Identity` accepts except a DN | Module Configuration config pane, text (`ModuleConfig.razor:480-490`) | each entry through the Migration module's own per-domain lookup, exposed as a typed result (B.2): one group -> verified; absent in every domain -> missing; present in several domains -> several (the module excludes members of each and warns) |
 | A6 | EmergencyDisable `LockdownOuDn` (`ModuleCatalog.cs:1302-1304`, `FieldType: OU`) | OU DN | config pane, text | `Get-ADOrganizationalUnit -Identity <dn>`, the module's own precondition (`Services/EmergencyDisableService.cs:750-754`; the module runs it with its own credential and no `-Server`, so Verify's read with the shared credential proves existence and type, not the module's reach): an OU only, never a container |
-| A7 | ADAttributeEditor `DefaultSearchBase` (`:1726`, semicolon list) and BitLockerRecovery `ActiveDirectorySearchBase` (`:1462`) | DNs used as `-SearchBase` | config pane (`:380-451`, text + OU browser for the first) | base read of the DN in the DN's own domain: any object that can be a search base (OU, container, domain root) -> verified; absent -> missing. BitLocker reads with its own credential against its configured server (`Services/BitLockerLiveDirectorySearch.cs:224`, `:287`); Verify proves existence, not that reach |
+| A7 | ADAttributeEditor `DefaultSearchBase` (`:1726`, semicolon list) and BitLockerRecovery `ActiveDirectorySearchBase` (`:1462`) | DNs used as `-SearchBase` | config pane (`:380-451`, text + OU browser for the first) | base read of the DN in the DN's own domain: any object that can be a search base (OU, container, domain root) -> verified; absent -> missing. BitLocker reads with its own credential against its configured server (`Services/BitLockerLiveDirectorySearch.cs:278-285`, `AddAdScope`); Verify proves existence, not that reach |
 | A8 | ConferenceRooms eight group settings (`ModuleCatalog.cs:1217-1224`; `Services/ConferenceRoomService.cs:36-49`) | SMTP address text | config pane, text | Exchange `Get-Recipient -Identity <address>` through the module's session: exactly one recipient of a group type -> verified; confirmed not found -> missing; another type -> wrong type |
 
 Not covered, and why: MailboxPermissions `ExcludedUsers` has no field and no page (`Services/ProtectedPrincipalService.cs:1636-1650`;
@@ -385,3 +383,41 @@ Each slice: full gates (`.agents/repo-guidance.md` Verification), non-vacuity pr
   the ordinary Remove and Save on Admin Settings (`AdminSettings.razor:1515`, whole-store replacement) also perform the
   ignore cleanup of B.3. Citation fix: Migration's throw is at `:500`. **Consensus reached within the owner's three
   rounds: the approach stands, every required change is in the plan, implementation may begin.**
+
+## H. As built (2026-11-06) - departures recorded by the implementing slices
+
+Each is in the slice's finding record with its reason; this list is so a reader of the plan is not misled by the text above.
+
+- **B.1 one adapter per store:** V3 serves section access, servicer and module admins from one class with per-store
+  construction; V4 serves A5-A8 from one `Config` adapter with per-setting rules (ignore row key = setting key,
+  `verify_last` key `Config:<ModuleId>`, audit section `Verify:Config`).
+- **B.1 forest check:** applied to every stored DN before any lookup (V1). A DN in a domain outside the forest is
+  `Unreadable` even if the catalog holds the object; its only action is Remove. A `user_sid` row has no DN to check, so a
+  SID the catalog lacks reads `Missing` (assumption: another forest's user reads as missing; display-only).
+- **B.1 one session:** A3 legacy names are resolved through the section-access migration's own directory (app identity,
+  no `-Server`), not the shared credential's warm session, to keep the one "bare name = host's domain" rule (V3). A5 runs
+  in the warm session under the session's identity as the Migration module does, domains from the module's `Get-ADForest`
+  (V4); the reach disclosure therefore covers A6 and A7 only.
+- **Engine additions:** lookup kind `ResolveOutsideDirectory` returning findings (V3); `IVerifyDirectory` members
+  `OrganizationalUnitExists`, `ForestDomainNames`, `ResolveExcludedGroup` with throwing defaults that read as unreadable
+  (V4); A7 is read by the adapter with DN spacing ignored, because the engine's DN key match is exact text (V4).
+- **B.4 legacy row beside an ignored SID:** a Group row stored by name whose text equals an ignored `group_sid` row's SID
+  is not covered by the ignore and still refuses (V2).
+- **B.2 classifications the plan left open:** A8 several recipients is `Ambiguous`; group types counted are
+  MailUniversalDistributionGroup, MailUniversalSecurityGroup, MailNonUniversalGroup, DynamicDistributionGroup (unverified
+  against live Exchange - deploy check list). A6 container at the DN is `Missing` (B.2 as written).
+- **C.2 shapes:** Remove on Module Configuration is "Remove now" (direct write) as on Admin Settings; the tabs' ordinary
+  Remove + Save also prunes ignores (V3). "Edit the text" is the `Replace` action labelled "Edit...", writing nothing;
+  the last-search-base confirmation is an in-page strip, and the write itself refuses an unconfirmed removal (V4). The OU
+  browser is offered on every `OU` and `SearchBase` field; the list `AdGroup` field stays a text box (V4). A3 Rename
+  changes that SID's display name on every alias holding it (`SaveDisplayNames` keys by value).
+- **C.1 Access tab:** Verify is not offered before section access is configured, and its writes refuse then (V3).
+- **Deleted with the sweep:** `ProtectedPrincipalEntryValidator.ShouldFlagAsStale` and its four tests (V1).
+- **Help placement:** README Troubleshooting gained a separate entry for "no such group - run Verify on Admin Settings"
+  (V2); the run-book's "press Verify on each page" step landed in V4 as section D says.
+- **Versions:** AdminSettings 1.2.6 -> 1.3.1 (V1 1.3.0, V2 1.3.1); base 2.36.0 unchanged; no module bumps (C.3 holds:
+  stored values and runtime unchanged, held by the existing Migration tests).
+- **Open from the build:** `docs/AdminModuleSpec.md` header still reads Version 2.0 against app 2.36.0 (already logged as
+  cpe-4; not fixed here). The PowerShell reads (`FindVerifyObjects`, `ForestDomainServer`, `OrganizationalUnitExists`,
+  per-domain `Get-ADGroup`, `Get-Recipient`) were proven over stand-ins only; pressing Verify on each page is on the
+  deploy check list.

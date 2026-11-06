@@ -8,6 +8,28 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 - Verify plan Implemented (V1-V4 landed); back to the sweep
+
+**Master `fe3b86b8`** (merge of `fix/dov-v4`; worktree and branch gone). `docs/DirectoryObjectVerify-Plan.md` Implemented;
+section H lists the as-built departures. V4: `Services/ModuleConfigVerifyAdapter.cs` and `ModuleConfigVerifyActions.cs`
+verify the config pane's text settings one list entry at a time - Migration excluded groups through the module's own
+per-domain lookup (`MigrationService.TryResolveExcludedGroup`, throw preserved), the lockdown OU via
+`Get-ADOrganizationalUnit` (container = missing), search bases by base read with DN spacing ignored, the eight Conference
+Rooms addresses via `Get-Recipient` (not-found = missing, non-group = wrong type, several = ambiguous); field types
+`SearchBase` and `RecipientGroup`; Edit (opens the field or OU browser), Remove one entry (last search base needs the
+in-page confirmation, which the write also enforces), Ignore (display-only); global admin or that module's module admin;
+run-book step "press Verify on each page". Record dov-v4 (31 mutations caught). Supervisor's gates on master at
+`fe3b86b8`: Release build 0 errors (19 known warnings); xUnit 8601 passed, 0 failed; format, whitespace and ASCII clean.
+Not pushed. Not run anywhere in V1-V4: the PowerShell and Exchange reads against a real forest or tenant.
+
+**Deploy check list additions from the Verify work:** press Verify on Admin Settings Protected principals, Module
+Configuration Access and Module Admins for one module, and the config pane of Migration, Emergency Disable, AD Attribute
+Editor, BitLocker Recovery and Conference Rooms; confirm a Conference Rooms address reads Verified (recipient group types
+unverified against live Exchange).
+
+**Next:** remaining sweep MEDIUM items 19-45 in groups, item 12 code half, kd-94's shape if needed; then the owner's two
+pending questions (item 16; whether the end-of-work codex-commercial review still stands) and the one dev deploy.
+
 ### 2026-11-05 (V3) - Verify on the Module Configuration group panes landed; V4 next
 
 **Master `7c15250a`** (merge of `fix/dov-v3`; worktree and branch gone). `Services/ModuleGroupVerifyAdapter.cs`,
