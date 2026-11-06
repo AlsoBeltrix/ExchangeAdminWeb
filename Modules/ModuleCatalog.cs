@@ -208,7 +208,7 @@ public sealed class ModuleCatalog
             // and the mailbox-GUID refusals no longer appear; until the Graph Directory Read Credential is set it is refused.
             // 1.6.10: a grant to a group the operator is in is still refused, but the refusal (and its audit row) names the
             // group and how they are in it - directly, through nested groups, or through their primary group (sweep-c item 18).
-            Version = "1.6.10",
+            Version = "1.6.11",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -280,7 +280,7 @@ public sealed class ModuleCatalog
             // Exchange's pre-flight answer still runs. A command already sent runs to its end.
             // 1.4.9: as Mailbox Permissions 1.6.9 - the target mailbox is bound by its on-premises SID (ppi S3).
             // 1.4.10: as Mailbox Permissions 1.6.10 - a self-grant refusal for a group names the group and the path (sweep-c item 18).
-            Version = "1.4.10",
+            Version = "1.4.11",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

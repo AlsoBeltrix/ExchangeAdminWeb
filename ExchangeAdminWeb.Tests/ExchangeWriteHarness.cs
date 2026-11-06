@@ -63,6 +63,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public Hashtable Failures { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
+    /// Sweep item 21. Command name to warning text: that stand-in records its call, then writes the text as a warning and
+    /// carries on - as Exchange answers a permission write that changed nothing.
+    /// </summary>
+    public Hashtable Warnings { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// aud-a70 (14). On-premises commands whose session breaks once they are sent: the stand-in Invoke-Command runs a script
     /// naming a key - the command takes - and then writes a remoting transport failure with the value as its message, as a
     /// session that broke before its answer came back does. The message carries none of the words a connection error is read
@@ -802,6 +808,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
         rs.SessionStateProxy.SetVariable("Mailboxes", Mailboxes);
         rs.SessionStateProxy.SetVariable("DirectoryObjects", DirectoryObjects);
         rs.SessionStateProxy.SetVariable("Failures", Failures);
+        rs.SessionStateProxy.SetVariable("Warnings", Warnings);
         rs.SessionStateProxy.SetVariable("OnPremTransportFailures", OnPremTransportFailures);
         rs.SessionStateProxy.SetVariable("FailuresAfterSetPlace", FailuresAfterSetPlace);
         rs.SessionStateProxy.SetVariable("ListMembers", ListMembers);
@@ -867,6 +874,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
             [void]$global:Calls.Add($row)
             $failure = $global:Failures[$Command]
             if ($failure) { throw $failure }
+            $warning = $global:Warnings[$Command]
+            if ($warning) { Write-Warning $warning }
         }
         # Not found is a non-terminating error, as on the real cmdlets: -ErrorAction Stop makes it
         # throw, -ErrorAction Ignore swallows it.

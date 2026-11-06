@@ -87,7 +87,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (fullAccess)
                 {
-                    outcomes.Add(TryRight(tracker, "FullAccess", own =>
+                    outcomes.Add(TryRight(ps, tracker, "FullAccess", own =>
                     {
                         ps.AddCommand("Add-MailboxPermission")
                           .AddParameter("Identity", mailbox.Identity)
@@ -101,7 +101,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (sendAs)
                 {
-                    outcomes.Add(TryRight(tracker, "SendAs", own =>
+                    outcomes.Add(TryRight(ps, tracker, "SendAs", own =>
                     {
                         ps.AddCommand("Add-RecipientPermission")
                           .AddParameter("Identity", mailbox.Identity)
@@ -150,7 +150,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (fullAccess)
                 {
-                    outcomes.Add(TryRight(tracker, "FullAccess", own =>
+                    outcomes.Add(TryRight(ps, tracker, "FullAccess", own =>
                     {
                         ps.AddCommand("Remove-MailboxPermission")
                           .AddParameter("Identity", mailbox.Identity)
@@ -163,7 +163,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
                 if (sendAs)
                 {
-                    outcomes.Add(TryRight(tracker, "SendAs", own =>
+                    outcomes.Add(TryRight(ps, tracker, "SendAs", own =>
                     {
                         ps.AddCommand("Remove-RecipientPermission")
                           .AddParameter("Identity", mailbox.Identity)
@@ -189,14 +189,19 @@ public class MailboxPermissionService : ExchangeServiceBase
     /// swallowed here: what the right's own invoke flags is carried to the operation's tracker.
     /// aud-a70 (14): and read for the right itself - a failure its session caused once the command was sent leaves the right
     /// unconfirmed (<see cref="ExchangeServiceBase.OutcomeUnknown"/>), where Exchange's own refusal is a failed right.
+    /// Sweep item 21: Exchange answers a grant already in place, or a removal of a right already absent, with a warning and
+    /// no error, which this counted as applied. The warning stream is cleared before the right and read after it, so a
+    /// right Exchange said changed nothing is a success marked <see cref="RightOutcome.Unchanged"/> - still applied for every
+    /// reader of the result, and left out of a bulk run's notices (<see cref="ExchangeNoChangeWarning"/>).
     /// </remarks>
-    private static RightOutcome TryRight(ConnectionErrorTracker operation, string right, Action<ConnectionErrorTracker> apply)
+    internal static RightOutcome TryRight(PowerShell ps, ConnectionErrorTracker operation, string right, Action<ConnectionErrorTracker> apply)
     {
         var own = new ConnectionErrorTracker();
         try
         {
+            ps.Streams.Warning.Clear();
             apply(own);
-            return RightOutcome.Ok(right);
+            return RightOutcome.Ok(right, unchanged: ExchangeNoChangeWarning.SaysNothingChanged(ps));
         }
         catch (Exception ex)
         {
@@ -277,6 +282,9 @@ public class MailboxPermissionService : ExchangeServiceBase
         // kd-88. One operation for the whole file: every row's protected-principal and self-grant checks share one fetch of
         // the directory-read credential (aud-a70's rule for the file), where each row's checks fetched it for themselves.
         using var directoryRead = DirectoryReadOperation.Begin();
+
+        // Sweep item 21. One mail per affected person, sent after the loop (owner ruling 2026-11-03).
+        var digest = new PermissionChangeDigest();
 
         foreach (var row in records)
         {
@@ -418,12 +426,10 @@ public class MailboxPermissionService : ExchangeServiceBase
                     extra: ValidatedMailbox.WithWrittenIdentity(ProtectedPrincipalServicing.Extra(servicedNote), targetValidation.Mailbox),
                     filedAs: PermissionChangeFailure.FiledAs(result)); // aud-a70 (14): a right whose outcome is unknown files the row Undetermined
 
-                // Audit finding A24. The row was audited and the operator's administrators got
-                // a summary; the trustee and the mailbox owner got nothing. AppliedRights rather
-                // than result.Success so a partial row notifies on the part that took (A23).
-                await PermissionChangeNotifier.NotifyAffectedAsync(
-                    email, result.AppliedRights ?? [], row.Target, row.Target, row.User,
-                    currentUser, isAdd, _logger);
+                // Audit finding A24: the trustee and the mailbox owner are told. The applied rights rather than
+                // result.Success so a partial row tells of the part that took (A23); less the rights Exchange answered as
+                // changing nothing (sweep item 21). Recorded here and sent once per person after the loop.
+                digest.Record(result.ChangedRights, row.Target, row.Target, row.User);
 
                 if (result.Success)
                 {
@@ -434,7 +440,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                         User = row.User,
                         Permission = permType,
                         Status = "SUCCESS",
-                        Message = result.Message
+                        Message = BulkRowMessage(result, row.User, row.Target, isAdd)
                     });
                 }
                 else
@@ -468,6 +474,9 @@ public class MailboxPermissionService : ExchangeServiceBase
             }
         }
 
+        // Sweep item 21: after every row, one mail per trustee and one per owner. Never throws for a failed send.
+        await digest.SendAsync(email, currentUser, isAdd, _logger);
+
         return new BulkOperationResult
         {
             TotalRows = records.Count,
@@ -476,6 +485,27 @@ public class MailboxPermissionService : ExchangeServiceBase
             Errors = errors,
             Entries = entries
         };
+    }
+
+    /// <summary>
+    /// Sweep item 21. A successful bulk row's outcome when Exchange answered a right it applied as changing nothing: a row
+    /// where nothing changed is said as no change, not as granted or removed, and a row where some rights changed says
+    /// which did not. Otherwise the result's own message.
+    /// </summary>
+    internal static string BulkRowMessage(PermissionResult result, string user, string target, bool isAdd)
+    {
+        if (!result.Success || result.UnchangedRights is not { Count: > 0 } unchanged)
+            return result.Message;
+
+        var rights = string.Join(" and ", unchanged);
+        if (result.ChangedRights.Count > 0)
+            return isAdd
+                ? $"{result.Message} ({rights}: already in place, nothing changed.)"
+                : $"{result.Message} ({rights}: already absent, nothing changed.)";
+
+        return isAdd
+            ? $"No change: {user} already had {rights} on {target} (Exchange reported nothing to grant)."
+            : $"No change: {user} did not have {rights} on {target} (Exchange reported nothing to remove).";
     }
 
     /// <summary>

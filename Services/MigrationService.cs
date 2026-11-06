@@ -1040,6 +1040,7 @@ https://admin.exchange.microsoft.com/#/migration";
             UnverifiedTargets = unverifiedTargets,
             AppliedRights = result.AppliedRights,
             UnconfirmedRights = result.UnconfirmedRights,
+            UnchangedRights = result.UnchangedRights,
             Changed = result.Changed,
             ServicedNote = servicedSummary,
         };
@@ -1087,6 +1088,7 @@ https://admin.exchange.microsoft.com/#/migration";
             UnverifiedTargets = result.UnverifiedTargets,
             AppliedRights = result.AppliedRights,
             UnconfirmedRights = result.UnconfirmedRights,
+            UnchangedRights = result.UnchangedRights,
             Changed = result.Changed,
             ServicedNote = result.ServicedNote,
         };

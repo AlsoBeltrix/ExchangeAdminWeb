@@ -1385,6 +1385,11 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 - Set `NotifyUsersOnPermissionGrant: true` to enable
 - Sent when permissions are granted or removed
 - Friendly email with mailbox details and security notice
+- A bulk CSV run (Mailbox or Calendar Permissions) sends each affected person one mail after the run, not one per row:
+  the trustee gets one mail listing every mailbox or calendar the run changed for them, and each owner one mail listing
+  every user whose access to their mailbox or calendar changed. A person with a single change gets the same mail a
+  single change sends. A row Exchange answers as changing nothing (the right already in place, already absent, or the
+  calendar entry already at that level) is shown as "No change" in the run's results and mails nobody.
 
 **Boolean settings:** `Email:SmtpUseSsl`, `Email:NotifyUsersOnPermissionGrant` and `ServiceNow:Enabled`
 take `true` or `false`, in any case. Left out or blank, each is `false`. A value that is neither -

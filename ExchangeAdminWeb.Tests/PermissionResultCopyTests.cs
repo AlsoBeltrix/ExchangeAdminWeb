@@ -70,4 +70,16 @@ public class PermissionResultCopyTests
         Assert.Equal("the new note", copy.ServicedNote);
         AssertCarriesEveryFieldBut(nameof(PermissionResult.ServicedNote), source, copy, nameof(PermissionResult.WithServicedNote));
     }
+
+    [Fact]
+    public void WithUnchangedRights_CarriesEveryFieldButTheUnchangedRights()
+    {
+        // Sweep item 21: the outcome builders name a no-op right this way, so every other field the result had is kept.
+        var source = EveryFieldSet();
+
+        var copy = source.WithUnchangedRights(["the right"]);
+
+        Assert.Equal(["the right"], copy.UnchangedRights!);
+        AssertCarriesEveryFieldBut(nameof(PermissionResult.UnchangedRights), source, copy, nameof(PermissionResult.WithUnchangedRights));
+    }
 }
