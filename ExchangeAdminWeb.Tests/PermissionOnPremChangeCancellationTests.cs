@@ -173,21 +173,41 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
         AssertACancelNeverSent(outcome, cancel.Token);
     }
 
-    // kd-59's rule, kept: nothing after the mark looks at the token. Cancelled as the first command is sent, the change runs to
-    // its end - every command sent - and its result stands.
+    // kd-59's rule, kept: nothing after the mark looks at the token. Cancelled as the first write command is sent, the change
+    // runs to its end - every command sent - and its result stands.
     [Theory]
     [MemberData(nameof(Changes))]
     public async Task AChangeCancelledAsItsFirstCommandIsSent_RunsToItsEnd(string page, bool grant)
     {
         var seams = new Seams(_h);
         using var cancel = new CancellationTokenSource();
-        seams.AsACommandIsSent = cancel.Cancel;
+        seams.AsAWriteIsSent = cancel.Cancel;
 
         var result = await Change(page, grant, seams, cancel.Token).WaitAsync(Bound, TestContext.Current.CancellationToken);
 
         Assert.True(cancel.IsCancellationRequested);
         Assert.Equal(CommandsSent(page), _h.CallsTo("Invoke-Command").Count); // first: a change stopped after its first command fails here
         Assert.True(result.Success, result.Message);
+    }
+
+    // Sweep item 23. A calendar change reads the mailbox's folder before its write; a cancel during that read is before the
+    // mark - the write is never sent, and the change leaves as one nothing was sent by.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ACalendarChangeCancelledDuringItsFolderRead_SendsNoWrite(bool grant)
+    {
+        var seams = new Seams(_h);
+        using var cancel = new CancellationTokenSource();
+        seams.AsACommandIsSent = cancel.Cancel;
+
+        var outcome = await Record.ExceptionAsync(() => Change(CalendarPage, grant, seams, cancel.Token).WaitAsync(Bound, TestContext.Current.CancellationToken));
+
+        Assert.Single(_h.CallsTo("Invoke-Command"));
+        Assert.Single(_h.CallsTo("Get-MailboxFolderStatistics"));
+        Assert.Empty(_h.Writes);
+        Assert.Single(seams.SessionsRemoved);
+        AssertACancelNeverSent(outcome, cancel.Token);
     }
 
     // ---- the page ------------------------------------------------------------------------------------------------------
@@ -246,9 +266,9 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
 
     /// <summary>
     /// The commands a change sends through its session: Mailbox Permissions' one per right, Full Access and Send As; Calendar
-    /// Permissions' one, its folder permission.
+    /// Permissions' two, the read of the mailbox's calendar folder and its folder permission (sweep item 23).
     /// </summary>
-    private static int CommandsSent(string page) => page == MailboxPage ? 2 : 1;
+    private static int CommandsSent(string page) => 2;
 
     /// <summary><paramref name="page"/>'s on-premises change of <see cref="Other"/>'s access to <see cref="Target"/>, under <paramref name="cancellationToken"/>.</summary>
     private Task<PermissionResult> Change(string page, bool grant, Seams seams, CancellationToken cancellationToken)
@@ -294,6 +314,9 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
 
         public Action? AsACommandIsSent { get; set; }
 
+        /// <summary>Sweep item 23. As <see cref="AsACommandIsSent"/>, for a write command only - not the calendar's folder read.</summary>
+        public Action? AsAWriteIsSent { get; set; }
+
         public TaskCompletionSource? CredentialsFetched { get; set; }
 
         public int RunspacesMade => Volatile.Read(ref _runspacesMade);
@@ -314,7 +337,11 @@ public sealed class PermissionOnPremChangeCancellationTests : IDisposable
             ps.Runspace.SessionStateProxy.SetVariable("Calls", new ObservedCalls(h.Calls, call =>
             {
                 if ((string)call["__Command"]! == "Invoke-Command")
+                {
                     AsACommandIsSent?.Invoke();
+                    if (call["Script"] is string script && !script.Contains("Get-MailboxFolderStatistics", StringComparison.Ordinal))
+                        AsAWriteIsSent?.Invoke();
+                }
             }));
             ps.Runspace.SessionStateProxy.SetVariable("SessionsRemoved", SessionsRemoved);
             using (var define = PowerShell.Create())

@@ -280,7 +280,11 @@ public sealed class ModuleCatalog
             // Exchange's pre-flight answer still runs. A command already sent runs to its end.
             // 1.4.9: as Mailbox Permissions 1.6.9 - the target mailbox is bound by its on-premises SID (ppi S3).
             // 1.4.10: as Mailbox Permissions 1.6.10 - a self-grant refusal for a group names the group and the path (sweep-c item 18).
-            Version = "1.4.11",
+            // 1.4.12: on-premises grants and removals send one command per Invoke-Command (the endpoint is no-language): the
+            // folder read from the mailbox, then Set, then Add only on "no entry"; a language-mode refusal is not a dead
+            // session (sweep-f item 23).
+            // 1.4.13: the cloud Set falls back to Add on the no-entry error class (type, identifier, wordings), and any other refusal is said as the Set's or the Add's (sweep-f item 25).
+            Version = "1.4.13",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -503,7 +507,9 @@ public sealed class ModuleCatalog
             // read), excludes a member of any group a name shared by several domains names, says so, and runs in a warm session
             // (sweep-c item 14).
             // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.27.1",
+            // 1.27.2: Approve's refusal for a batch of its own that holds errors (SyncedWithErrors, CompletedWithErrors) says so and what to do first; the rule (exactly Synced) is unchanged (sweep-f item 24).
+            // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
+            Version = "1.27.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -667,7 +673,8 @@ public sealed class ModuleCatalog
             // waits for the on-premises server (up to two minutes), as its session opens, between connect attempts or between
             // its reads ends the lookup there - "Cancelled by the operator" - where it waited and connected first; a read
             // already sent finishes first.
-            Version = "1.8.2",
+            // 1.8.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
+            Version = "1.8.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -694,7 +701,8 @@ public sealed class ModuleCatalog
             // 1.1.4: as Mailbox Permissions 1.6.9 - its protection check (ValidateTargetMailboxAsync) binds a synced mailbox
             // by its on-premises SID (ppi S3).
             // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.1.5",
+            // 1.1.6: Check Status - a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
+            Version = "1.1.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1722,7 +1730,8 @@ public sealed class ModuleCatalog
             // 1.7.5: an allowlist save the Module Configuration page stops waiting for - it moved to another module - writes
             // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
             // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.7.6",
+            // 1.7.7: a save's re-read, write and read-back are pinned to the DC that answered the domain's RootDSE, and the read-back compares in the schema's syntax (Boolean and integer by value from any CLR type, DN by DN) (sweep-f item 27).
+            Version = "1.7.7",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

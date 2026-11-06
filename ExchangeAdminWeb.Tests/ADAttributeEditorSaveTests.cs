@@ -506,8 +506,10 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         Assert.Contains("'Analyst'", result.Error, StringComparison.Ordinal);
         Assert.Contains("'Lead Analyst'", result.Error, StringComparison.Ordinal);
         // aud-a26l: it names the server the read-back was sent to, and that the value may not have reached it.
-        Assert.Contains("example.test", result.Error, StringComparison.Ordinal);
-        Assert.Contains("replicated", result.Error, StringComparison.Ordinal);
+        Assert.Contains("dc01.example.test", result.Error, StringComparison.Ordinal);
+        // Sweep-f item 27: read back from the DC the write went to, the difference is not said to be replication's.
+        Assert.Contains("the domain controller the write was sent to", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("replicated", result.Error, StringComparison.Ordinal);
         Assert.Single(_h.Ad.Sets);
         Assert.Equal("Analyst", alex.Attributes["title"]);
 
@@ -779,7 +781,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     public async Task AReadBackSentWhereTheWriteWent_IsConfirmed_ThoughAnotherReplicaLags()
     {
         // The folded-in finding: a read sent anywhere but where the write went is answered by a replica that
-        // has not seen it. One -Server for the re-read, the write and the read-back - the object's own domain.
+        // has not seen it. One -Server for the re-read, the write and the read-back - since sweep-f item 27 the DC that
+        // answered the object's own domain's RootDSE.
         var alex = _h.Ad.AddAlex(title: "Analyst");
         _h.Ad.ReplicaLag = true;
 
@@ -787,18 +790,38 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
 
         Assert.True(result.Success, result.Error);
         Assert.Equal("Lead Analyst", alex.Attributes["title"]);
-        Assert.Equal(["example.test", "example.test"], _h.Ad.Reads.Select(r => r.Server));
-        Assert.Equal("example.test", Assert.Single(_h.Ad.Sets).Server);
+        Assert.Equal(["example.test"], _h.Ad.RootDseServers);
+        Assert.Equal(["dc01.example.test", "dc01.example.test"], _h.Ad.Reads.Select(r => r.Server));
+        Assert.Equal("dc01.example.test", Assert.Single(_h.Ad.Sets).Server);
         Assert.Equal("Lead Analyst", Text(Assert.Single(_h.AuditEvents()), "new_title"));
     }
 
     [Fact]
-    public async Task ADnThatNamesNoDomain_GoesToTheDefaultDomainController_AndSaysSo()
+    public async Task ADnThatNamesNoDomain_IsPinnedToTheDefaultDomainControllerThatAnswered_AndSaysSo()
     {
-        // The explicit fallback: no DC components, so no server to route to - all three calls unrouted, a
-        // warning, and an unconfirmed read names the default domain controller as the server asked.
+        // Sweep-f item 27: no DC components, so no domain to route to - the RootDSE is asked unrouted, and the DC that
+        // answers it takes the re-read, the write and the read-back, so a lagging replica cannot fail the save.
         var robin = _h.Ad.Add("robin.hart@example.test", "CN=Robin Hart,OU=Staff,O=Example", "Robin Hart", ("title", "Analyst"));
         _h.Ad.ReplicaLag = true;
+
+        var result = await Save(robin, new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal([null], _h.Ad.RootDseServers);
+        Assert.All(_h.Ad.Reads, read => Assert.Equal("dc01.default.test", read.Server));
+        Assert.Equal("dc01.default.test", Assert.Single(_h.Ad.Sets).Server);
+        Assert.Contains(_h.Logger.Warnings, w => w.Contains(robin.Upn, StringComparison.Ordinal)
+            && w.Contains("default domain controller", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ADnThatNamesNoDomain_WithNoRootDse_GoesToTheDefaultDomainController_AndSaysSo()
+    {
+        // The explicit fallback: no DC components and no RootDSE answer, so no server to route to - all three calls
+        // unrouted, a warning, and an unconfirmed read names the default domain controller as the server asked.
+        var robin = _h.Ad.Add("robin.hart@example.test", "CN=Robin Hart,OU=Staff,O=Example", "Robin Hart", ("title", "Analyst"));
+        _h.Ad.ReplicaLag = true;
+        _h.Ad.RootDseFailure = "The server is not operational";
 
         var result = await Save(robin, new() { ["title"] = "Lead Analyst" });
 

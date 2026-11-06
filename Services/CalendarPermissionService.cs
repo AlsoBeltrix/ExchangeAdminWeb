@@ -113,10 +113,24 @@ public class CalendarPermissionService : ExchangeServiceBase
                     {
                         Invoke(ps, add);
                     }
+                    catch (Exception addFailure) when (!OutcomeUnknown(addFailure, add))
+                    {
+                        // Sweep-f item 25: Exchange's refusal of the Add, said as the Add's, after the Set's "no entry".
+                        throw new InvalidOperationException(
+                            $"Add-MailboxFolderPermission failed for {user} on {calendarPath}, after Set-MailboxFolderPermission answered that the user holds no entry there: {ResolveFailure(addFailure).primary.Trim().TrimEnd('.')}.", addFailure);
+                    }
                     finally
                     {
                         Carry(add, tracker);
                     }
+                }
+                catch (Exception setFailure) when (!OutcomeUnknown(setFailure, set))
+                {
+                    // Sweep-f item 25. Any other refusal of the Set is its own answer, reported as the Set's, in Exchange's words:
+                    // no Add is sent (it would meet the same refusal, or hide it). It read as the bare error text, nothing saying
+                    // which command refused or that no entry was added.
+                    throw new InvalidOperationException(
+                        $"Set-MailboxFolderPermission failed for {user} on {calendarPath}: {ResolveFailure(setFailure).primary.Trim().TrimEnd('.')}. No entry was added: Exchange did not answer that the user holds none.", setFailure);
                 }
                 finally
                 {
@@ -235,21 +249,37 @@ public class CalendarPermissionService : ExchangeServiceBase
     /// identifier anywhere in the chain (labelled assumption, not probed: Exchange Online says "There is no existing
     /// permission entry found for user" and names <c>UserNotFoundInPermissionEntryException</c>).
     /// </summary>
+    /// <remarks>
+    /// Sweep-f item 25. Matched on the error class, not on one sentence: the exception type's name
+    /// (<c>UserNotFoundInPermissionEntryException</c>) wherever it appears - the exception itself or one it wraps, the error
+    /// record's exception and its fully qualified error id, and the "|type|message" prefix the EXO V3 module puts on a REST
+    /// error's text - and the wordings "no existing permission entry" and "no permission entry" (Exchange's sentence, and a
+    /// rewording that drops "existing"), in the message, the error record's text (its details when it carries any) and
+    /// every captured error. Case-insensitive. Never matched: Add's own "An existing permission entry was found for user" (the
+    /// opposite answer), or any other refusal - that is the Set's own answer, and an Add would meet it too.
+    /// </remarks>
     internal static bool NamesNoPermissionEntry(Exception ex)
     {
-        for (var e = ex; e is not null; e = e.InnerException)
+        for (var (e, depth) = (ex, 0); e is not null && depth < 16; e = e.InnerException, depth++)
         {
-            if (Says(e.Message) || (e.Data[PsErrorsDataKey] is string[] errors && errors.Any(Says)))
+            if (Says(e.Message) || Says(e.GetType().Name) || (e.Data[PsErrorsDataKey] is string[] errors && errors.Any(Says)))
                 return true;
             if ((e as IContainsErrorRecord)?.ErrorRecord is { } record
-                && (Says(record.ToString()) || record.FullyQualifiedErrorId?.Contains("UserNotFoundInPermissionEntry", StringComparison.OrdinalIgnoreCase) == true))
+                && (Says(record.ToString())
+                    || Says(record.FullyQualifiedErrorId)
+                    || Says(record.Exception?.GetType().Name)
+                    || (record.Exception is { } inner && !ReferenceEquals(inner, e) && NamesNoPermissionEntry(inner))))
                 return true;
         }
 
         return false;
-
-        static bool Says(string? text) => text?.Contains("no existing permission entry", StringComparison.OrdinalIgnoreCase) == true;
     }
+
+    private static readonly string[] NoPermissionEntryMarks =
+        ["UserNotFoundInPermissionEntry", "no existing permission entry", "no permission entry"];
+
+    private static bool Says(string? text) =>
+        text is not null && NoPermissionEntryMarks.Any(mark => text.Contains(mark, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>aud-a70 (14). The right a calendar write's <see cref="PermissionResult.UnconfirmedRights"/> names: its one folder permission.</summary>
     internal const string CalendarRight = "Calendar";
@@ -539,17 +569,19 @@ public class CalendarPermissionService : ExchangeServiceBase
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 E7: before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
-                var script = ScriptBlock.Create(@"
-                    param($Identity, $User, $AccessRights)
-                    try {
-                        Set-MailboxFolderPermission -Identity ""$Identity`:\Calendar"" -User $User -AccessRights $AccessRights -ErrorAction Stop
-                    } catch {
-                        Add-MailboxFolderPermission -Identity ""$Identity`:\Calendar"" -User $User -AccessRights $AccessRights -ErrorAction Stop
-                    }");
-                ps.AddCommand("Invoke-Command")
-                  .AddParameter("Session", session)
-                  .AddParameter("ScriptBlock", script)
-                  .AddParameter("ArgumentList", new object[] { mailbox.Identity, user, accessRight });
+                // Sweep item 23. The folder identity is read from this mailbox on-premises, as the cloud path reads it: a
+                // localized calendar ("Kalender") is not "\Calendar". A read that fails writes nothing.
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: connected, before the read
+                var folder = OnPremCalendarFolder(ps, session, mailbox.Identity, targetMailbox, out var unreadable);
+                if (folder is null)
+                    return PermissionResult.Fail(unreadable!);
+
+                // Sweep item 23. One command per Invoke-Command. The Microsoft.Exchange endpoint runs in no-language mode:
+                // Invoke-Command sends a script block as a command only when it converts to one pipeline, and sent the old
+                // try { Set } catch { Add } as script text, which the endpoint refuses - nothing ran, and the refusal's words
+                // ("... not supported by this runspace ...") read as a dead session, so the grant was filed unconfirmed. Set
+                // first; Add only on Exchange's answer that the user holds no entry, as the cloud path does (kd-43).
+                AddOnPremWrite(ps, session, OnPremSetScript, folder, user, accessRight);
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: the last look, immediately before the mark
                 submission.Submitting(); // aud-a76: the Invoke-Command is sent next
                 var sent = new ConnectionErrorTracker();
@@ -557,16 +589,25 @@ public class CalendarPermissionService : ExchangeServiceBase
                 {
                     Invoke(ps, sent);
                 }
+                catch (Exception setFailure) when (!OutcomeUnknown(setFailure, sent) && NamesNoPermissionEntry(setFailure))
+                {
+                    // The one refusal an Add follows; a Set whose session failed once sent is followed by nothing.
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                    AddOnPremWrite(ps, session, OnPremAddScript, folder, user, accessRight);
+                    var added = new ConnectionErrorTracker();
+                    try
+                    {
+                        Invoke(ps, added);
+                    }
+                    catch (Exception addFailure)
+                    {
+                        return OnPremSetFailed(addFailure, added, targetMailbox, user, accessRight);
+                    }
+                }
                 catch (Exception ex)
                 {
-                    // aud-a70 (12): Exchange refusing the write is a failed result, as TryRightOnPrem makes one on Mailbox
-                    // Permissions - it answered, and nothing was written by it; it was let out as an exception, which the page
-                    // filed "could not be confirmed". (14): a session that broke once the command was sent leaves it unknown.
-                    _logger.LogWarning(ex, "The on-premises calendar permission write on {Target} failed", targetMailbox);
-                    var cause = ResolveFailure(ex).primary.Trim().TrimEnd('.');
-                    return OutcomeUnknown(ex, sent)
-                        ? NotConfirmed($"Whether {user} was granted {accessRight} on {targetMailbox} calendar (on-premises) could not be confirmed: {cause}. Check the permissions before trying again.")
-                        : PermissionResult.Fail($"Failed on {targetMailbox} calendar (on-premises): {cause}.");
+                    return OnPremSetFailed(ex, sent, targetMailbox, user, accessRight);
                 }
 
                 return new PermissionResult { Success = true, Message = $"{user} granted {accessRight} on {targetMailbox} calendar (on-premises)." };
@@ -582,6 +623,62 @@ public class CalendarPermissionService : ExchangeServiceBase
                 catch { }
             }
         }), _onPremThrottle, cancellationToken)); // kd-58 E7: the wait for one of the server's two slots takes the token
+    }
+
+    // Sweep item 23. The on-premises writes, each one pipeline with the folder identity passed in whole (built here from
+    // the mailbox's own folder path), so each converts to a single command for the no-language endpoint.
+    internal const string OnPremSetScript = "param($Folder, $User, $AccessRights) Set-MailboxFolderPermission -Identity $Folder -User $User -AccessRights $AccessRights -ErrorAction Stop";
+    internal const string OnPremAddScript = "param($Folder, $User, $AccessRights) Add-MailboxFolderPermission -Identity $Folder -User $User -AccessRights $AccessRights -ErrorAction Stop";
+    internal const string OnPremRemoveScript = "param($Folder, $User) Remove-MailboxFolderPermission -Identity $Folder -User $User -Confirm:$false -ErrorAction Stop";
+
+    private static void AddOnPremWrite(PowerShell ps, object? session, string script, params object[] arguments) =>
+        ps.AddCommand("Invoke-Command")
+          .AddParameter("Session", session)
+          .AddParameter("ScriptBlock", ScriptBlock.Create(script))
+          .AddParameter("ArgumentList", arguments);
+
+    /// <summary>
+    /// Sweep item 23. The calendar folder identity of <paramref name="identity"/> on-premises, from its own
+    /// <c>Get-MailboxFolderStatistics -FolderScope Calendar</c> (one pipeline, as every on-premises read is), or null with
+    /// <paramref name="unreadable"/> saying why - nothing was written. A cancel passes through.
+    /// </summary>
+    private string? OnPremCalendarFolder(PowerShell ps, object? session, string identity, string targetMailbox, out string? unreadable)
+    {
+        unreadable = null;
+        string? path;
+        try
+        {
+            if (session is null)
+                throw new InvalidOperationException("there is no on-premises Exchange session to run it in");
+            AddOnPremRead(ps, session, "Get-MailboxFolderStatistics -Identity $Identity -FolderScope Calendar -ErrorAction Stop | Select-Object -First 1 FolderPath", identity);
+            var folder = Invoke(ps).FirstOrDefault();
+            if (folder is null)
+            {
+                unreadable = $"Failed on {targetMailbox} calendar (on-premises): no calendar folder was found for the mailbox. Nothing was written.";
+                return null;
+            }
+            path = folder.Properties["FolderPath"]?.Value?.ToString();
+        }
+        catch (Exception ex) when (!IsCancellation(ex))
+        {
+            _logger.LogWarning(ex, "The on-premises calendar folder read on {Target} failed", targetMailbox);
+            unreadable = $"Failed on {targetMailbox} calendar (on-premises): the calendar folder could not be read: {ResolveFailure(ex).primary.Trim().TrimEnd('.')}. Nothing was written.";
+            return null;
+        }
+
+        var built = CalendarFolderIdentity.Build(identity, path);
+        _logger.LogInformation("On-premises calendar identity for {Target}: '{FullPath}' (raw FolderPath '{RawPath}')", targetMailbox, built, path ?? "<null>");
+        return built;
+    }
+
+    /// <summary>aud-a70 (12), (14), unchanged by sweep item 23: Exchange's refusal is a failed result; a session that broke once the command was sent leaves it unknown.</summary>
+    private PermissionResult OnPremSetFailed(Exception ex, ConnectionErrorTracker sent, string targetMailbox, string user, string accessRight)
+    {
+        _logger.LogWarning(ex, "The on-premises calendar permission write on {Target} failed", targetMailbox);
+        var cause = ResolveFailure(ex).primary.Trim().TrimEnd('.');
+        return OutcomeUnknown(ex, sent)
+            ? NotConfirmed($"Whether {user} was granted {accessRight} on {targetMailbox} calendar (on-premises) could not be confirmed: {cause}. Check the permissions before trying again.")
+            : PermissionResult.Fail($"Failed on {targetMailbox} calendar (on-premises): {cause}.");
     }
 
     /// <summary>The on-premises revoke; bound exactly as <see cref="SetCalendarPermissionOnPremAsync"/>, its token too (kd-59, kd-58 A7).</summary>
@@ -608,13 +705,14 @@ public class CalendarPermissionService : ExchangeServiceBase
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 E7: before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
-                var script = ScriptBlock.Create(@"
-                    param($Identity, $User)
-                    Remove-MailboxFolderPermission -Identity ""$Identity`:\Calendar"" -User $User -Confirm:$false -ErrorAction Stop");
-                ps.AddCommand("Invoke-Command")
-                  .AddParameter("Session", session)
-                  .AddParameter("ScriptBlock", script)
-                  .AddParameter("ArgumentList", new object[] { mailbox.Identity, user });
+                // Sweep item 23. The mailbox's own calendar folder, read as the grant reads it: the removal named "\Calendar",
+                // which is not the folder of a mailbox whose calendar has a localized name.
+                cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: connected, before the read
+                var folder = OnPremCalendarFolder(ps, session, mailbox.Identity, targetMailbox, out var unreadable);
+                if (folder is null)
+                    return PermissionResult.Fail(unreadable!);
+
+                AddOnPremWrite(ps, session, OnPremRemoveScript, folder, user);
                 cancellationToken.ThrowIfCancellationRequested(); // kd-58 E7: the last look, immediately before the mark
                 submission.Submitting(); // aud-a76: the Invoke-Command is sent next
                 var sent = new ConnectionErrorTracker();

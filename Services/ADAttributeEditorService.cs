@@ -1379,10 +1379,15 @@ public class ADAttributeEditorService
         // a landed save as unconfirmed, with no Undo and a failure notice. The server is the object's own domain,
         // from the DN the re-read asks for - the object it returns is the one written and read back (aud-a2p/a2q's
         // routing). A DN naming no domain leaves all three unrouted, as every call was, and says so.
-        // *Assumption, not probed (DC affinity)*: three calls in one session sent to one domain name are answered
-        // by one domain controller; where they are not, a landed write reads back unconfirmed - loud, never a false
-        // success.
+        // Sweep-f item 27: the DC-affinity assumption (three calls sent to one domain name answered by one domain
+        // controller) is replaced by a pin. Before the re-read, the domain's RootDSE is read through the same -Server and
+        // credential, and the dnsHostName of the domain controller that answered becomes the -Server of the re-read, the
+        // write and the read-back - one named DC, discovered at runtime, never configured. Where the RootDSE cannot be
+        // read, the chain goes to the domain name as before (the old assumption, logged); a mismatch then still fails
+        // closed, loud, never a false success.
         var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
+        string? schemaContext = null;
+        var pinned = false;
         if (server is null)
         {
             _logger.LogWarning(
@@ -1408,6 +1413,8 @@ public class ADAttributeEditorService
             ActiveDirectoryModuleImport.Import(ps);
 
             credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+            (server, schemaContext, pinned) = PinDomainController(ps, server, credential, target.UserPrincipalName);
 
             ps.AddCommand("Get-ADUser")
               .AddParameter("Identity", target.DistinguishedName)
@@ -1464,7 +1471,11 @@ public class ADAttributeEditorService
             return new(false, notSingleText, null);
         }
 
-        var changes = ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist);
+        // Sweep-f item 27. Each proposed attribute's syntax, from the schema the pinned DC holds, so a value is judged by
+        // what the attribute is rather than by the CLR type the module hands back or a list of names.
+        var syntaxes = ReadSchemaSyntaxes(ps, schemaContext, proposedValues.Keys, server, credential, target.UserPrincipalName);
+
+        var changes = ComputeChanges(proposedValues, CurrentValues(reReadUser, allowlist), allowlist, syntaxes);
         if (changes.Count == 0)
         {
             // aud-a26d: SaveAsync announces this result too, so it needs a record to answer to.
@@ -1530,7 +1541,7 @@ public class ADAttributeEditorService
         // the value written. A save not confirmed is recorded failed with no old/new pair - the event log
         // offers no Undo of a change its record cannot vouch for - and a confirmed one is recorded with the
         // values read: what the directory holds, not what was proposed.
-        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, allowlist, server, credential);
+        var (confirmError, asRead) = ConfirmWrite(ps, target, reReadGuid, changes, allowlist, server, credential, syntaxes, pinned);
         if (confirmError != null)
         {
             // aud-a28o. What it tried is recorded as attempted_<name>, old and proposed, not as old_/new_ pairs:
@@ -1558,7 +1569,9 @@ public class ADAttributeEditorService
         List<AttributeChange> written,
         List<EditableAttribute> allowlist,
         string? server,
-        PSCredential credential)
+        PSCredential credential,
+        IReadOnlyDictionary<string, ReadBackSyntax> syntaxes,
+        bool pinned)
     {
         var asked = server ?? "the default domain controller";
         string? readError;
@@ -1584,14 +1597,16 @@ public class ADAttributeEditorService
         foreach (var attribute in allowlist)
             types.TryAdd(attribute.Name, attribute.Type);
 
-        var (unconfirmed, asRead) = UnconfirmedWrites(written, read, types);
+        var (unconfirmed, asRead) = UnconfirmedWrites(written, read, types, syntaxes);
         if (unconfirmed.Count > 0)
         {
             var detail = string.Join("; ", unconfirmed);
-            var answered = server is null ? "the default domain controller" : $"the domain controller that answered for {server}";
             _logger.LogWarning("Set-ADUser on {Target} was not confirmed by reading it back by objectGUID {ObjectGuid} from {Server}: {Detail}", target.UserPrincipalName, objectGuid, asked, detail);
-            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid} from {asked}, {detail}. "
-                + $"The value may not have replicated yet to {answered}.", written);
+            // Sweep-f item 27: read back from the domain controller the write went to, a difference is not replication's.
+            var why = pinned
+                ? $"The read-back was answered by {server}, the domain controller the write was sent to."
+                : $"The value may not have replicated yet to {(server is null ? "the default domain controller" : $"the domain controller that answered for {server}")}.";
+            return ($"Set-ADUser on {target.UserPrincipalName} was not confirmed: read back by objectGUID {objectGuid} from {asked}, {detail}. {why}", written);
         }
 
         return (null, asRead);
@@ -1640,7 +1655,8 @@ public class ADAttributeEditorService
     // AllowlistConcurrentSaveTests takes a non-private method handed rows for a writer, and this reads one
     // field. Pure, for unit testing.
     internal static (List<string> Unconfirmed, List<AttributeChange> AsRead) UnconfirmedWrites(
-        IReadOnlyList<AttributeChange> written, PSObject read, IReadOnlyDictionary<string, string> allowlistTypes)
+        IReadOnlyList<AttributeChange> written, PSObject read, IReadOnlyDictionary<string, string> allowlistTypes,
+        IReadOnlyDictionary<string, ReadBackSyntax>? schemaSyntaxes = null)
     {
         var unconfirmed = new List<string>();
         var asRead = new List<AttributeChange>();
@@ -1650,7 +1666,7 @@ public class ADAttributeEditorService
             var expected = EmptyAsAbsent(change.NewValue);
             var actual = EmptyAsAbsent(value?.ToString());
             allowlistTypes.TryGetValue(change.Name, out var type);
-            if (!ReadsAsWritten(SyntaxOf(type, change.Name, value), expected, actual, value))
+            if (!ReadsAsWritten(SyntaxOf(type, change.Name, value, SchemaSyntax(schemaSyntaxes, change.Name)), expected, actual, value))
             {
                 unconfirmed.Add($"{change.Name} ({change.Label}) {(actual is null ? "is not set" : $"is '{actual}'")}, "
                     + $"not {(expected is null ? "cleared" : $"'{expected}'")} as written");
@@ -1693,8 +1709,17 @@ public class ADAttributeEditorService
     // - any other Type, a row the configuration page cannot write, is compared ordinal and untrimmed.
     // A string is never parsed because it looks like a Boolean or a number: "007" in a string attribute is not
     // 7, and "True" in one is not true.
-    internal static ReadBackSyntax SyntaxOf(string? type, string name, object? read)
+    //
+    // Sweep-f item 27: the schema's word first. When the save read the attribute's attributeSyntax from the schema of
+    // the domain controller it is pinned to (ReadSchemaSyntaxes), Boolean, Integer / Large Integer and DN syntax are
+    // that, whatever CLR type the value comes back as - a string included - and every other syntax is the row's
+    // string kind; only without it do the rules above decide.
+    internal static ReadBackSyntax SyntaxOf(string? type, string name, object? read, ReadBackSyntax? schema = null)
     {
+        if (schema is { } fromSchema)
+            return fromSchema is ReadBackSyntax.Boolean or ReadBackSyntax.Integer or ReadBackSyntax.DistinguishedName
+                ? fromSchema
+                : type is "String" or "Choice" ? ReadBackSyntax.PlainString : ReadBackSyntax.Ordinal;
         if (read is bool)
             return ReadBackSyntax.Boolean;
         if (IntegerOf(read) is not null)
@@ -1718,9 +1743,12 @@ public class ADAttributeEditorService
 
         return syntax switch
         {
-            ReadBackSyntax.Boolean => bool.TryParse(expected, out var flag) && read is bool held && flag == held,
-            ReadBackSyntax.Integer => long.TryParse(expected, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var number)
-                && IntegerOf(read) == number,
+            // Sweep-f item 27: by value, from whatever CLR type the module returned - System.Boolean, or its text
+            // ("TRUE", "True"); an integral type of any width, or its invariant text. Never looser: a value that parses
+            // to another flag or number, or does not parse, fails.
+            ReadBackSyntax.Boolean => bool.TryParse(expected.Trim(), out var flag) && BooleanOf(read) == flag,
+            ReadBackSyntax.Integer => long.TryParse(expected.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var number)
+                && (IntegerOf(read) ?? IntegerText(read)) == number,
             ReadBackSyntax.DistinguishedName => SameDistinguishedName(expected, actual),
             ReadBackSyntax.PlainString => string.Equals(expected.Trim(), actual.Trim(), StringComparison.Ordinal),
             _ => string.Equals(expected, actual, StringComparison.Ordinal),
@@ -1763,6 +1791,134 @@ public class ADAttributeEditorService
         ulong v when v <= long.MaxValue => (long)v,
         _ => null,
     };
+
+    // Sweep-f item 27. A Boolean read back as System.Boolean or as its text; null for anything else.
+    private static bool? BooleanOf(object? value) => value switch
+    {
+        bool flag => flag,
+        string text when bool.TryParse(text.Trim(), out var parsed) => parsed,
+        _ => null,
+    };
+
+    // Sweep-f item 27. An integer read back as invariant text; null for anything else. Reached only for an attribute the
+    // schema, or an integral read, says is an integer: a string attribute's "007" is never parsed.
+    private static long? IntegerText(object? value) =>
+        value is string text && long.TryParse(text.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+
+    private static ReadBackSyntax? SchemaSyntax(IReadOnlyDictionary<string, ReadBackSyntax>? syntaxes, string name) =>
+        syntaxes is not null && syntaxes.TryGetValue(name, out var syntax) ? syntax : null;
+
+    /// <summary>
+    /// Sweep-f item 27. The domain controller the save's chain is pinned to: the RootDSE of <paramref name="domain"/>
+    /// (or of the default DC when the DN names no domain) read with the save's credential, and its <c>dnsHostName</c> -
+    /// the DC that answered - used as the -Server of the re-read, the write and the read-back; its
+    /// <c>schemaNamingContext</c> for the syntax read. Never throws: a RootDSE that cannot be read leaves the chain on
+    /// <paramref name="domain"/>, as before, and says so in the log.
+    /// </summary>
+    private (string? Server, string? SchemaContext, bool Pinned) PinDomainController(PowerShell ps, string? domain, PSCredential credential, string targetName)
+    {
+        try
+        {
+            ps.AddCommand("Get-ADRootDSE")
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            if (domain is not null)
+                ps.AddParameter("Server", domain);
+            var root = ps.Invoke();
+            var clean = !ps.HadErrors && root.Count == 1;
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+
+            var host = clean ? TextOf(root[0].Properties["dnsHostName"]?.Value) : null;
+            var schema = clean ? TextOf(root[0].Properties["schemaNamingContext"]?.Value) : null;
+            if (host is null)
+            {
+                _logger.LogWarning(
+                    "AD attribute save for {Target}: the RootDSE of {Domain} named no domain controller, so the re-read, the write and the read-back go to the domain name (DC affinity assumed)",
+                    targetName, domain ?? "the default domain controller");
+                return (domain, schema, false);
+            }
+
+            _logger.LogInformation("AD attribute save for {Target}: pinned to domain controller {Server}", targetName, host);
+            return (host, schema, true);
+        }
+        catch (Exception ex)
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            _logger.LogWarning(ex,
+                "AD attribute save for {Target}: the RootDSE of {Domain} could not be read, so the re-read, the write and the read-back go to the domain name (DC affinity assumed)",
+                targetName, domain ?? "the default domain controller");
+            return (domain, null, false);
+        }
+    }
+
+    /// <summary>
+    /// Sweep-f item 27. The syntax of each named attribute, from its <c>attributeSyntax</c> in the schema at
+    /// <paramref name="schemaContext"/>, read on <paramref name="server"/>: 2.5.5.8 Boolean, 2.5.5.9 and 2.5.5.16
+    /// Integer, 2.5.5.1 DN; any other syntax is recorded as Ordinal, meaning "none of those" (the row's string kind then
+    /// decides). Never throws: an attribute missing from the answer, or a read that fails, is absent, and
+    /// <see cref="SyntaxOf"/> falls back to its rules - which can only fail loud, never confirm falsely.
+    /// </summary>
+    private Dictionary<string, ReadBackSyntax> ReadSchemaSyntaxes(
+        PowerShell ps, string? schemaContext, IEnumerable<string> names, string? server, PSCredential credential, string targetName)
+    {
+        var syntaxes = new Dictionary<string, ReadBackSyntax>(StringComparer.OrdinalIgnoreCase);
+        var wanted = names.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (schemaContext is null || wanted.Count == 0)
+            return syntaxes;
+
+        try
+        {
+            var filter = "(|" + string.Concat(wanted.Select(n => $"(lDAPDisplayName={EscapeLdapFilterValue(n)})")) + ")";
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("SearchBase", schemaContext)
+              .AddParameter("LDAPFilter", filter)
+              .AddParameter("Properties", new[] { "lDAPDisplayName", "attributeSyntax" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            if (server is not null)
+                ps.AddParameter("Server", server);
+            var found = ps.Invoke();
+            var clean = !ps.HadErrors;
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            if (!clean)
+                return syntaxes;
+
+            foreach (var entry in found)
+            {
+                var name = TextOf(entry?.Properties["lDAPDisplayName"]?.Value);
+                var oid = TextOf(entry?.Properties["attributeSyntax"]?.Value);
+                if (name is null || oid is null)
+                    continue;
+                syntaxes[name] = oid switch
+                {
+                    "2.5.5.8" => ReadBackSyntax.Boolean,
+                    "2.5.5.9" or "2.5.5.16" => ReadBackSyntax.Integer,
+                    "2.5.5.1" => ReadBackSyntax.DistinguishedName,
+                    _ => ReadBackSyntax.Ordinal,
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            _logger.LogWarning(ex, "AD attribute save for {Target}: the schema syntax of {Attributes} could not be read; the read-back judges by the values' own types", targetName, string.Join(", ", wanted));
+        }
+
+        return syntaxes;
+    }
+
+    // RFC 4515: the characters a filter value must escape.
+    private static string EscapeLdapFilterValue(string value) =>
+        value.Replace("\\", "\\5c").Replace("*", "\\2a").Replace("(", "\\28").Replace(")", "\\29").Replace("\0", "\\00");
+
+    private static string? TextOf(object? value) =>
+        (value is PSObject wrapped ? wrapped.BaseObject : value)?.ToString() is { Length: > 0 } text ? text : null;
 
     private static string? EmptyAsAbsent(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
@@ -1941,7 +2097,8 @@ public class ADAttributeEditorService
     private static List<AttributeChange> ComputeChanges(
         Dictionary<string, string?> proposed,
         IReadOnlyDictionary<string, object?> current,
-        List<EditableAttribute> allowlist)
+        List<EditableAttribute> allowlist,
+        IReadOnlyDictionary<string, ReadBackSyntax>? schemaSyntaxes = null)
     {
         var changes = new List<AttributeChange>();
         foreach (var kv in proposed)
@@ -1953,7 +2110,7 @@ public class ADAttributeEditorService
             var newValue = EmptyAsAbsent(kv.Value);
             var oldValue = EmptyAsAbsent(read?.ToString());
 
-            if (!ReadsAsWritten(SyntaxOf(attr.Type, attr.Name, read), newValue, oldValue, read))
+            if (!ReadsAsWritten(SyntaxOf(attr.Type, attr.Name, read, SchemaSyntax(schemaSyntaxes, attr.Name)), newValue, oldValue, read))
                 changes.Add(new AttributeChange(attr.Name, attr.Label, oldValue, newValue));
         }
         return changes;

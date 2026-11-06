@@ -1205,8 +1205,9 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     {
         // aud-a70 (12). The remote set failed, its fallback add failed too, and the Invoke-Command threw what the command said:
         // the catch filed a write Exchange refused as one that could not be confirmed (aud-a75, aud-a76). Exchange answered, so
-        // the write is a failed result - its own row Failed through the write's own record, as on Mailbox Permissions.
-        _h.Failures["Set-MailboxFolderPermission"] = "the folder permission could not be set";
+        // the write is a failed result - its own row Failed through the write's own record, as on Mailbox Permissions. Sweep
+        // item 23: the add follows Exchange's answer that the user holds no entry, in a command of its own.
+        _h.Failures["Set-MailboxFolderPermission"] = "There is no existing permission entry found for user: other.";
         _h.Failures["Add-MailboxFolderPermission"] = "the folder permission could not be added";
 
         var (result, warnings) = await ConfirmOnPrem(CalendarPage, Other, ExchangeNamesTheAliasAsTheOperator(), _h.Audit);
@@ -1218,7 +1219,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.Equal("Failed", Text(record, "result"));
         Assert.Equal(result.Message, Text(record, "error"));
         Assert.Empty(warnings);
-        Assert.Single(_h.CallsTo("Invoke-Command"));
+        Assert.Equal(3, _h.CallsTo("Invoke-Command").Count); // the folder read, the Set, the Add
         Assert.Equal(new[] { "Set-MailboxFolderPermission", "Add-MailboxFolderPermission" }, _h.Writes);
     }
 

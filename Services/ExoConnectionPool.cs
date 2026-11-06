@@ -559,11 +559,35 @@ public sealed class ExoConnectionPool : IDisposable
     /// delegates here so the rule lives in one place.
     /// </summary>
     public static bool IsConnectionError(Exception? ex) =>
-        ex != null && (
+        ex != null && !IsLanguageModeRefusal(ex) && (
             ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("Connect-ExchangeOnline", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Sweep item 23. A remote endpoint refusing a command for its language mode: "The syntax is not supported by this
+    /// runspace. This can occur if the runspace is in no-language mode." (identifier <c>ScriptsNotAllowed</c>). The endpoint
+    /// parsed the script and ran none of it, so the session is sound and the command provably did nothing - its "runspace"
+    /// is not a dead session's, and it is not a pool event. Labelled assumption, not probed against a live endpoint: the
+    /// wording is PowerShell's own resource string as recalled; either of its two phrases, or the identifier, matches.
+    /// </summary>
+    internal static bool IsLanguageModeRefusal(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (Says(e.Message)
+                || (e as System.Management.Automation.IContainsErrorRecord)?.ErrorRecord?.FullyQualifiedErrorId?.Contains("ScriptsNotAllowed", StringComparison.OrdinalIgnoreCase) == true)
+                return true;
+        }
+
+        return false;
+
+        static bool Says(string? text) =>
+            text is not null
+            && (text.Contains("no-language mode", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("syntax is not supported by this runspace", StringComparison.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// Narrow classifier for "the borrowed session was already dead BEFORE the first cmdlet ran"

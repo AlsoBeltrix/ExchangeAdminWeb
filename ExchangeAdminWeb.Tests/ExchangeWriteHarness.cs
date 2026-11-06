@@ -1130,6 +1130,16 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Invoke-Command {
             [CmdletBinding()] param($Session, [scriptblock] $ScriptBlock, [object[]] $ArgumentList)
             [void]$global:Calls.Add(@{ '__Command' = 'Invoke-Command'; Session = $Session; Script = $ScriptBlock.ToString(); ArgumentList = $ArgumentList })
+            # Sweep item 23. The Exchange endpoint is in no-language mode: Invoke-Command sends a script block as a command
+            # only when it converts to one pipeline (ScriptBlock.GetPowerShell); anything else goes as script text, which the
+            # endpoint refuses, running none of it.
+            try { $null = if ($ArgumentList) { $ScriptBlock.GetPowerShell($ArgumentList) } else { $ScriptBlock.GetPowerShell() } }
+            catch {
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Management.Automation.RemoteException]::new('The syntax is not supported by this runspace. This can occur if the runspace is in no-language mode.'),
+                    'ScriptsNotAllowed', [System.Management.Automation.ErrorCategory]::ParserError, $null))
+                return
+            }
             & $ScriptBlock @ArgumentList
             # aud-a70 (14). The session breaking once the command was sent: it ran, and its answer never came back.
             foreach ($key in @($global:OnPremTransportFailures.Keys)) {

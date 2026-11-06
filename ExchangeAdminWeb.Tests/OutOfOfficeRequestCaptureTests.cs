@@ -742,23 +742,19 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Contains($"{shownStart} \u2014 {shownEnd}", text, StringComparison.Ordinal);
     }
 
-    // aud-a7f, reversed by aud-a23g. Local, in .NET, says the clock is this server's - but the clock came from
-    // the module that reported it, and nothing here proves that is this server's zone. So it names no zone
-    // this app can trust: shown as reported, given no zone and no offset, as Unspecified is.
+    // aud-a7f, reversed by aud-a23g, restored by sweep-f item 26. Local is what the remoting layer's deserializer makes
+    // of a time written with an offset: this server's clock for the instant written (ReportedTimeBoundaryTests). So a
+    // read schedule of Kind Local is shown as its instant is - in the browser's zone, with the zone and each offset.
     [Fact]
-    public async Task AReadScheduleOfKindLocal_IsShownAsReported_AndIsGivenNone()
+    public async Task AReadScheduleOfKindLocal_IsShownAsTheInstantItNames()
     {
         var (page, _) = BuildPage("none", browserZone: "America/New_York");
-        var start = Utc("2026-10-30T13:00:00Z").ToLocalTime();
-        var end = Utc("2026-11-06T22:00:00Z").ToLocalTime();
-        ReadBack(start, end);
+        ReadBack(Utc("2026-10-30T13:00:00Z").ToLocalTime(), Utc("2026-11-06T22:00:00Z").ToLocalTime());
 
         var text = await CheckedStatus(page);
 
-        Assert.Contains($"{start.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported) \u2014 "
-            + $"{end.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported)", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("America/New_York", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("UTC", text, StringComparison.Ordinal);
+        Assert.Contains("2026-10-30 09:00 (America/New_York, UTC-04:00) \u2014 2026-11-06 17:00 (America/New_York, UTC-05:00)", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("time zone not reported", text, StringComparison.Ordinal);
     }
 
     // aud-a7f. A time of Kind Unspecified names no instant. It is shown as reported and given no zone

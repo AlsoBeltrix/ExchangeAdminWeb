@@ -1647,12 +1647,30 @@ https://admin.exchange.microsoft.com/#/migration";
                 $"{emailAddress} was not approved: its migration batch {emailAddress} is already {status}, so its migration has finished and there is nothing left to approve. Nothing was changed.");
         }
 
+        // Sweep-f item 24. A status that says the batch holds errors (SyncedWithErrors, CompletedWithErrors) is refused in
+        // those words, with what to do, where it read only as "not a status the Complete action completes from". The rule is
+        // unchanged: Exchange documents Complete-MigrationBatch from SyncedWithErrors too, but the planner keeps Complete to
+        // exactly Synced (owner ruling 2026-09-25, "a migration batch with errors is not completable"; aud-a23r), and widening
+        // it is the owner's question, not this fix's.
+        if (!MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status)
+            && status.EndsWith("WithErrors", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(WithErrorsRefusal(emailAddress, status));
+        }
+
         if (!MigrationBatchActionPlanner.Applies(MigrationBatchAction.Complete, status))
         {
             throw new InvalidOperationException(
                 $"{emailAddress} was not approved: approving it completes its migration batch {emailAddress}, which is {status} - not a status the batch Complete action completes a batch from. Nothing was changed.");
         }
     }
+
+    /// <summary>
+    /// Sweep-f item 24. The approval's refusal for its own batch at a status that says it holds errors: the fact, that
+    /// approving completes the batch and a batch with errors is not completed, and what to do first.
+    /// </summary>
+    internal static string WithErrorsRefusal(string emailAddress, string status) =>
+        $"{emailAddress} was not approved: its migration batch {emailAddress} is {status}, so the batch holds errors. Approving it completes the batch, and a batch with errors is not completed here: fix or remove the errors its mailbox report names, then approve again. Nothing was changed.";
 
     // aud-a55. Throws, before the first write, unless Exchange reports the migration user at a status the Approve action
     // approves a mailbox from: MigrationUserActionPlanner.Applies(Approve, ...), the rule's one owner (NeedsApproval) and the

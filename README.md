@@ -14,6 +14,7 @@ ASP.NET Core 10 Blazor Server application for Exchange Online administration, ma
 - Set calendar sharing permissions (Owner, Editor, Reviewer, Limited Details, etc.)
 - Remove calendar permissions
 - Automatic calendar folder detection (supports international/localized folder names)
+- A grant sets the user's existing entry, and adds one only when Exchange answers that the user holds none (read from the error's type, identifier or wording, not one sentence). Any other refusal is reported as the Set's, in Exchange's words, with nothing added; an Add that Exchange refuses is reported as the Add's
 - Single operations and bulk CSV upload support
 - On-premises mailbox support for authorized power users (see below)
 
@@ -44,6 +45,7 @@ Check migration eligibility and create move batches between Exchange Online and 
 - **Batch actions report what was QUEUED, not what is finished.** `Remove-MigrationBatch` and `Start-MigrationBatch` return when Exchange accepts the request; the batch then sits at `Removing` or `Starting` until Exchange completes it, so the row stays visible for a while. Batches Exchange accepted are unticked automatically; ones it refused stay ticked so they can be retried
 - The ticket field for a single-batch or single-user action appears directly beneath that row, not at the top of the table
 - The per-user `Report` button is available on every user row, not only rows that already look broken
+- **Approve** on a mailbox in a batch of its own completes that batch, so it runs only when the batch is exactly `Synced`. A batch at `SyncedWithErrors` or `CompletedWithErrors` is refused saying the batch holds errors and to fix or remove them first (owner ruling 2026-09-25); nothing is changed
 - Migration Status results can be downloaded as CSV (`BatchName,Status,Direction,Created,Started,Completed,Total,Synced,Finalized,Failed,TargetEndpoint`)
 - Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
 
@@ -163,6 +165,10 @@ When a target mailbox is detected as on-premises:
 - **Power users** (members of the `MailboxPermissionsOnPrem` or `CalendarPermissionsOnPrem` section-access groups) are prompted with a confirmation dialog and can proceed.
 - Execution uses an on-prem PowerShell remoting session (`New-PSSession`) authenticated with credentials retrieved from Delinea Secret Server at runtime.
 - Concurrency is throttled to 2 simultaneous on-prem operations.
+- The on-premises Exchange endpoint runs one command per call (no-language mode), so each step is its own command. A
+  Calendar Permissions change reads the mailbox's own calendar folder first (a localized name such as "Kalender" is
+  written as such; a failed read writes nothing), then sets the permission, and adds it only when Exchange answers that
+  the user holds no entry on the folder. Any other refusal is reported as that failure.
 
 ### Admin Settings Page (`/admin-settings`)
 
@@ -425,6 +431,12 @@ View and edit allowlisted Active Directory attributes for on-premises user accou
   **missing**. **Remove now** takes that one semicolon entry out and keeps the others; removing the last one asks for a
   confirmation, because no search-base boundary will remain: the editor may then search the whole directory
 - Uses Delinea credentials for Active Directory operations
+- **A save is done when it reads back as written.** The re-read before the write, the write and the read-back all go to one
+  domain controller: the one that answers the object's domain's RootDSE, found at the time of the save (logged). Each value
+  is compared in the syntax the schema gives the attribute: a Boolean or an integer by its value, whatever form the
+  directory returns it in; a DN by DN, whatever its case and spacing; text as text. A value that differs is still a failed
+  save, with no Undo and a failure notice. If the RootDSE or the schema cannot be read, the save goes to the domain name
+  and judges by the values' own types, as before (a warning is logged)
 - Section access keys: `ADAttributeEditor`, `ADAttributeEditorLevel1`, `ADAttributeEditorLevel2`, `ADAttributeEditorLevel3`
 
 ### Licensing Updates (`/licensing-updates`)
@@ -1489,6 +1501,13 @@ exec@company.com,old-assistant@company.com
 Configure email notifications, group-based access control, self-grant prevention, protected user lists, and audit logging in `appsettings.json`.
 
 ## Troubleshooting
+
+### "... (time zone not reported)" after a time
+- Migration, Recipient Lookup and Out of Office Check Status show each time Exchange reports in the browser's zone (in
+  UTC on Migration), with the zone and its offset. A time that arrives naming its instant - in UTC, with an offset, or as
+  the remoting layer hands one over (converted into this server's zone) - is shown that way
+- Only a time that names no zone at all is shown as its bare clock with "(time zone not reported)": nothing says which
+  zone's clock it is, so the app does not guess. If every time reads that way, report it with the page and the field
 
 ### "Exchange refused the mailbox GUID identity ..."
 - Every Exchange change and the read-back before it name the mailbox by its Exchange mailbox GUID - the mailbox the

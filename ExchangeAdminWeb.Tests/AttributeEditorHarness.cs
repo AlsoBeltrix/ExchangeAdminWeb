@@ -569,6 +569,70 @@ internal sealed class LocalAd
     /// </summary>
     public bool ReplicaLag { get; set; }
 
+    /// <summary>
+    /// Sweep-f item 27. With <see cref="ReplicaLag"/>: a -Server that is a domain name, not a domain controller's host
+    /// name, may be answered by any DC of the domain, so even the write's own domain name reads stale after it - the DC
+    /// affinity the pin replaces. A host name (one <see cref="RootDseHost"/> gives) is one DC.
+    /// </summary>
+    public bool DomainNameReachesAnyDc { get; set; }
+
+    /// <summary>
+    /// Sweep-f item 27. The dnsHostName Get-ADRootDSE answers with for the -Server it was sent (null for none); null from
+    /// the function answers with no host name. Default: <c>dc01.</c> and the domain asked.
+    /// </summary>
+    public Func<string?, string?> RootDseHost { get; set; } = server => "dc01." + (string.IsNullOrEmpty(server) ? "default.test" : server);
+
+    /// <summary>Sweep-f item 27. When set, Get-ADRootDSE fails with this message as a terminating error.</summary>
+    public string? RootDseFailure { get; set; }
+
+    /// <summary>Sweep-f item 27. The schemaNamingContext Get-ADRootDSE answers with.</summary>
+    public string SchemaContext { get; set; } = "CN=Schema,CN=Configuration,DC=example,DC=test";
+
+    /// <summary>Sweep-f item 27. Each schema attribute's attributeSyntax OID, by lDAPDisplayName, for Get-ADObject.</summary>
+    public Dictionary<string, string> Schema { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Sweep-f item 27. When set, the schema read (Get-ADObject) fails with this message as a terminating error.</summary>
+    public string? SchemaFailure { get; set; }
+
+    private readonly List<string?> _rootDseServers = [];
+    private readonly List<(string SearchBase, string Filter, string? Server)> _schemaReads = [];
+
+    /// <summary>Sweep-f item 27. Every Get-ADRootDSE's -Server, in order (null for none).</summary>
+    public IReadOnlyList<string?> RootDseServers
+    {
+        get { lock (_rootDseServers) return _rootDseServers.ToList(); }
+    }
+
+    /// <summary>Sweep-f item 27. Every schema read: its search base, its filter and its -Server (null for none).</summary>
+    public IReadOnlyList<(string SearchBase, string Filter, string? Server)> SchemaReads
+    {
+        get { lock (_schemaReads) return _schemaReads.ToList(); }
+    }
+
+    public void NoteRootDse(string? server)
+    {
+        lock (_rootDseServers)
+            _rootDseServers.Add(string.IsNullOrEmpty(server) ? null : server);
+    }
+
+    public PSObject[] FindSchema(string searchBase, string filter, string? server)
+    {
+        lock (_schemaReads)
+            _schemaReads.Add((searchBase, filter, string.IsNullOrEmpty(server) ? null : server));
+        if (!string.Equals(searchBase, SchemaContext, StringComparison.OrdinalIgnoreCase))
+            return [];
+        return Schema
+            .Where(entry => filter.Contains($"(lDAPDisplayName={entry.Key})", StringComparison.OrdinalIgnoreCase))
+            .Select(entry =>
+            {
+                var row = new PSObject();
+                row.Properties.Add(new PSNoteProperty("lDAPDisplayName", entry.Key));
+                row.Properties.Add(new PSNoteProperty("attributeSyntax", entry.Value));
+                return row;
+            })
+            .ToArray();
+    }
+
     /// <summary>When set, Import-Module fails with this message, as on a host without the module.</summary>
     public string? ImportFailure { get; set; }
 
@@ -768,7 +832,9 @@ internal sealed class LocalAd
                 Write-Error -Message "Access to the search base was denied: $SearchBase" -ErrorAction Continue
                 return
             }
-            $stale = $global:AttributeWriteSent -and $directory.ReplicaLag -and -not ($Server -and $Server -eq $global:AttributeWriteServer)
+            # Sweep-f item 27: a domain name reaches any DC when DomainNameReachesAnyDc, so only one DC's host name is sure.
+            $sameDc = $Server -and $Server -eq $global:AttributeWriteServer -and -not ($directory.DomainNameReachesAnyDc -and -not "$Server".StartsWith('dc'))
+            $stale = $global:AttributeWriteSent -and $directory.ReplicaLag -and -not $sameDc
             $found = $directory.Find([string]$Identity, [string]$LDAPFilter, [string]$SearchBase, [bool]$stale)
             if ($Identity -and $found.Length -eq 0) {
                 $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
@@ -776,6 +842,31 @@ internal sealed class LocalAd
                     'ObjectNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Identity))
             }
             $found
+            """));
+
+        // Sweep-f item 27. The RootDSE of the -Server asked: the DC that answered, by host name, and the schema's context.
+        state.Commands.Add(new SessionStateFunctionEntry("Get-ADRootDSE", """
+            [CmdletBinding()] param($Server, $Credential)
+            $directory = $global:AttributeDirectory
+            $directory.NoteRootDse([string]$Server)
+            if ($directory.RootDseFailure) {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new($directory.RootDseFailure),
+                    'RootDseUnavailable', [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $Server))
+            }
+            [pscustomobject]@{ dnsHostName = $directory.RootDseHost.Invoke([string]$Server); schemaNamingContext = $directory.SchemaContext }
+            """));
+
+        // Sweep-f item 27. The schema read: each attribute Schema holds that the filter names, with its attributeSyntax.
+        state.Commands.Add(new SessionStateFunctionEntry("Get-ADObject", """
+            [CmdletBinding()] param($SearchBase, $LDAPFilter, $Properties, $Credential, $Server)
+            $directory = $global:AttributeDirectory
+            if ($directory.SchemaFailure) {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new($directory.SchemaFailure),
+                    'SchemaUnavailable', [System.Management.Automation.ErrorCategory]::ReadError, $SearchBase))
+            }
+            $directory.FindSchema([string]$SearchBase, [string]$LDAPFilter, [string]$Server)
             """));
 
         state.Commands.Add(new SessionStateFunctionEntry("Set-ADUser", """

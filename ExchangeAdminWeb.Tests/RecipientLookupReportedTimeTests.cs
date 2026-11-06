@@ -221,25 +221,22 @@ public sealed class RecipientLookupReportedTimeTests : IDisposable
         Assert.Contains($"Last Logon</td>{logon}", text, StringComparison.Ordinal);
     }
 
-    // aud-a23g. A Kind-Local value says its clock is this server's, which nothing here proves: it is shown as
-    // reported and given no zone, even with the browser's zone known - the rule Migration and Check Status share.
+    // aud-a23g, superseded by sweep-f item 26. A Kind-Local value is what the remoting layer's deserializer makes of a time
+    // written with an offset - the instant it names - so it is shown in the browser's zone as the same instant of Kind Utc
+    // is, with the zone and its offset: the rule Migration and Check Status share.
     [Theory]
-    [InlineData("America/New_York")]
-    [InlineData("Asia/Kolkata")]
-    public async Task WithTheBrowsersZone_TimesOfKindLocal_AreShownAsReported_AndGivenNoZone(string zone)
+    [InlineData("America/New_York", "2026-10-01 16:15 (America/New_York, UTC-04:00)", "2026-11-06 09:00 (America/New_York, UTC-05:00)")]
+    [InlineData("Asia/Kolkata", "2026-10-02 01:45 (Asia/Kolkata, UTC+05:30)", "2026-11-06 19:30 (Asia/Kolkata, UTC+05:30)")]
+    public async Task WithTheBrowsersZone_TimesOfKindLocal_AreShownAsTheInstantTheyName(string zone, string created, string logon)
     {
-        var created = CreatedUtc.ToLocalTime();
-        var logon = LogonAfterDstEndUtc.ToLocalTime();
-        _read["WhenCreated"] = created;
-        _read["LastLogonTime"] = logon;
+        _read["WhenCreated"] = CreatedUtc.ToLocalTime();
+        _read["LastLogonTime"] = LogonAfterDstEndUtc.ToLocalTime();
 
         var text = await LookedUp(zone);
 
-        Assert.Contains($"Created</td>{created.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported)",
-            text, StringComparison.Ordinal);
-        Assert.Contains($"Last Logon</td>{logon.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} (time zone not reported)",
-            text, StringComparison.Ordinal);
-        Assert.DoesNotContain($"({zone},", text, StringComparison.Ordinal);
+        Assert.Contains($"Created</td>{created}", text, StringComparison.Ordinal);
+        Assert.Contains($"Last Logon</td>{logon}", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("time zone not reported", text, StringComparison.Ordinal);
     }
 
     // aud-a23e. Without the browser's zone - the call fails, the answer is blank, or this server cannot resolve
