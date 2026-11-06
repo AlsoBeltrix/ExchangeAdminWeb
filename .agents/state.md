@@ -8,6 +8,30 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
+
+Merged `fix/sweep-d` into master at `c06b07b0` (`--no-ff`, cherry 0, worktree and branch removed) on the agent's
+guard proof (every mutation caught; tables in `.agents/review/findings/sweep-d-*.md`). Master gates: see the
+2026-11-06 token-log line. Module versions: Comms10k 1.4.20, GroupManagement 2.16.2, M365GroupManagement 1.9.1,
+CloudPasswordReset 1.2.2, DefenderEndpointDevices 1.6.19, EmergencyDisable 1.7.2; base stays 2.36.0.
+
+Departures worth knowing: item 19 add-before-remove makes a full swap to a wholly different list about 53 s against
+7.9 s before (plan's own measurement); the `-Remove <GUID=...>` form is assumed accepted wherever `-Add` is (deploy
+check). Item 29's "run each search once" was not done: the confirm re-derives the destination because cpr-9 (HIGH)
+requires it. Item 31 changed five tests that used a 429 to mean "one batch fails, the rest carry on".
+
+Deploy check list additions: Comms-10k scratch-group test with `-Add` AND `-Remove <GUID=...>` after downloading the
+membership CSV; Graph grants and roles for Cloud Password Reset plus the `employeeID` `searchFlags` index; User.Read.All
+(Application) on the M365 Groups registration; `runHuntingQuery ... 429` lines and the two new Defender warnings;
+`NotifySecurityTeam` and `Email:AdminNotificationEmail` on both instances.
+
+Owner rulings 2026-11-06 (decisions.md): item 16 keep revalidation (5-minute window); item 33 keep through-group
+rights (no validation-time cost, verified); end-of-work codex-commercial defect reviews run per merged group, kept
+reasonable.
+
+**Next:** remaining sweep groups 21/28/40-44, 23-27, scripts 34-39, records 45, item 12 code half, kd-94's shape if
+needed; then the codex-commercial reviews and the one dev deploy.
+
 ### 2026-11-06 - Verify plan Implemented (V1-V4 landed); back to the sweep
 
 **Master `fe3b86b8`** (merge of `fix/dov-v4`; worktree and branch gone). `docs/DirectoryObjectVerify-Plan.md` Implemented;
@@ -27,8 +51,7 @@ Configuration Access and Module Admins for one module, and the config pane of Mi
 Editor, BitLocker Recovery and Conference Rooms; confirm a Conference Rooms address reads Verified (recipient group types
 unverified against live Exchange).
 
-**Next:** remaining sweep MEDIUM items 19-45 in groups, item 12 code half, kd-94's shape if needed; then the
-codex-commercial defect reviews per merged group (owner 2026-11-06, decisions.md) and the one dev deploy.
+**Next:** see the sweep-d entry above.
 
 ### 2026-11-05 (V3) - Verify on the Module Configuration group panes landed; V4 next
 
