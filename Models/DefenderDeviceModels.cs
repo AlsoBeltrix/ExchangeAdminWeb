@@ -453,6 +453,15 @@ public static class DefenderDiscoveryReasons
         "Microsoft Graph throttled the advanced hunting query (429 Too Many Requests): the tenant's "
         + "advanced hunting quota is exhausted. Wait, then load again.";
 
+    /// <summary>
+    /// sweep-d item 31. Appended to <see cref="Throttled"/> when a 429 stopped the hunting loop: how many devices were
+    /// left unqueried, so the operator knows the greyed rows are the quota's and not the devices'.
+    /// </summary>
+    public static string ThrottledStop(int notQueried, bool afterRetry) =>
+        (afterRetry ? "It was refused again after waiting the time Microsoft Graph asked for, so " : "So ")
+        + $"the hunting stopped there: {notQueried:N0} device(s) were not queried and show (unavailable). "
+        + "The device list itself is complete.";
+
     /// <summary>A client-side timeout, which arrives as an exception and not as a status.</summary>
     public const string TimedOut =
         "The advanced hunting query timed out. Load again, and narrow the filters if it keeps "

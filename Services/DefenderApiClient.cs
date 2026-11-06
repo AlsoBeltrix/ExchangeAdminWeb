@@ -28,11 +28,16 @@ namespace ExchangeAdminWeb.Services;
 /// <see cref="GraphTokenClient.ExtractGraphError"/>. Never a token, a secret or a raw body.
 /// </param>
 /// <param name="TimedOut">True only for a client-side timeout, never for a service-issued 408.</param>
+/// <param name="RetryAfter">
+/// sweep-d item 31. The wait a failed response asked for in its <c>Retry-After</c> header (seconds, or a date taken
+/// relative to now), or null when it named none. Never negative.
+/// </param>
 public readonly record struct DefenderApiResult(
     JsonDocument? Document,
     HttpStatusCode StatusCode,
     string? SafeError,
-    bool TimedOut);
+    bool TimedOut,
+    TimeSpan? RetryAfter = null);
 
 /// <summary>A known token/configuration failure, distinct from a hunting query failure.</summary>
 internal sealed class DefenderAuthenticationException(string message, bool stopHunting = true)
@@ -195,7 +200,8 @@ public sealed class DefenderApiClient
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
-                return new DefenderApiResult(null, response.StatusCode, GraphTokenClient.ExtractGraphError(content), false);
+                return new DefenderApiResult(null, response.StatusCode, GraphTokenClient.ExtractGraphError(content), false,
+                    RetryAfterOf(response));
 
             if (string.IsNullOrWhiteSpace(content))
                 return new DefenderApiResult(null, response.StatusCode, null, false);
@@ -222,6 +228,20 @@ public sealed class DefenderApiClient
             // to the orchestration boundary, which knows the overall enrichment deadline.
             return new DefenderApiResult(null, HttpStatusCode.RequestTimeout, null, true);
         }
+    }
+
+    /// <summary>sweep-d item 31: the response's Retry-After as a wait from now, or null when it named none.</summary>
+    internal static TimeSpan? RetryAfterOf(HttpResponseMessage response)
+    {
+        var header = response.Headers.RetryAfter;
+        if (header?.Delta is { } delta)
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+        if (header?.Date is { } date)
+        {
+            var wait = date - DateTimeOffset.UtcNow;
+            return wait < TimeSpan.Zero ? TimeSpan.Zero : wait;
+        }
+        return null;
     }
 
     /// <summary>

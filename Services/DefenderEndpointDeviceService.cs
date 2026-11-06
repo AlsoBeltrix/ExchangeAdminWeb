@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using ExchangeAdminWeb.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -31,6 +33,20 @@ public sealed class DefenderEndpointDeviceService
     private readonly IHttpClientFactory? _httpClientFactory;
     private readonly Func<Task<DefenderApiClient?>> _apiClientFactory;
     private readonly Func<CancellationToken, Task<DefenderApiClient?>> _huntingClientFactory;
+    private ILogger _logger = NullLogger.Instance;
+
+    /// <summary>Where the hunting loop's throttle stop is logged (sweep-d item 31). A test sets its own.</summary>
+    internal ILogger Logger { get => _logger; init => _logger = value; }
+
+    /// <summary>
+    /// sweep-d item 31. The longest Retry-After the hunting loop waits out, once per run. A 429 that names a longer
+    /// wait, or none, stops the loop at once: a minute is a quarter of the four-minute enrichment deadline, and the
+    /// devices already enriched are worth more than a wait that may not end inside it.
+    /// </summary>
+    internal static readonly TimeSpan MaxHonouredRetryAfter = TimeSpan.FromSeconds(60);
+
+    /// <summary>Test seam: the wait a honoured Retry-After takes. Production waits on <see cref="EnrichmentTimeProvider"/>.</summary>
+    internal Func<TimeSpan, CancellationToken, Task>? ThrottleDelayForTests { get; init; }
 
     /// <summary>
     /// The forest's subnet-to-site map. Null only in tests that are not about location.
@@ -266,8 +282,10 @@ public sealed class DefenderEndpointDeviceService
         ModuleConfigService moduleConfig,
         DelineaService delineaService,
         IHttpClientFactory httpClientFactory,
-        AdSiteDirectory siteDirectory)
+        AdSiteDirectory siteDirectory,
+        ILogger<DefenderEndpointDeviceService>? logger = null)
     {
+        _logger = logger ?? (ILogger)NullLogger.Instance;
         _moduleConfig = moduleConfig;
         _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;
@@ -926,6 +944,9 @@ public sealed class DefenderEndpointDeviceService
             return Finish();
         }
 
+        // sweep-d item 31: a 429 waits out a short Retry-After once per run, or stops the loop (HonourThrottleAsync).
+        var throttle = new ThrottleBudget();
+
         foreach (var batch in batches)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -934,7 +955,9 @@ public sealed class DefenderEndpointDeviceService
                 break;
             }
             attempted++;
-            var posture = await TryEnrichBatchAsync(client, batch, rows, cancellationToken);
+            var batchIndex = attempted - 1;
+            var posture = await HonourThrottleAsync(
+                () => TryEnrichBatchAsync(client, batch, rows, cancellationToken), throttle, batches, batchIndex, "posture", cancellationToken);
             if (!posture.Succeeded)
             {
                 failed++;
@@ -960,7 +983,8 @@ public sealed class DefenderEndpointDeviceService
             else
             {
                 observerAttempted++;
-                observers = await TryReadObserversAsync(client, batch, rows, cancellationToken);
+                observers = await HonourThrottleAsync(
+                    () => TryReadObserversAsync(client, batch, rows, cancellationToken), throttle, batches, batchIndex, "observer", cancellationToken);
                 if (!observers.Succeeded)
                     observerFailed++;
             }
@@ -981,7 +1005,73 @@ public sealed class DefenderEndpointDeviceService
     }
 
     /// <summary>A batch's outcome and safe diagnostic belong to its call, including across awaits.</summary>
-    private sealed record HuntingBatchResult(bool Succeeded, string Reason, bool StopHunting = false);
+    /// <param name="Throttled">sweep-d item 31: the call was refused with 429.</param>
+    /// <param name="RetryAfter">The wait that 429 asked for, when it named one.</param>
+    private sealed record HuntingBatchResult(
+        bool Succeeded, string Reason, bool StopHunting = false, bool Throttled = false, TimeSpan? RetryAfter = null);
+
+    /// <summary>sweep-d item 31: whether this run has already waited out a Retry-After. One per run.</summary>
+    private sealed class ThrottleBudget
+    {
+        public bool Used { get; set; }
+    }
+
+    /// <summary>
+    /// sweep-d item 31. Runs one hunting call and answers a 429 the way the quota it reports deserves.
+    /// </summary>
+    /// <remarks>
+    /// A 429 is the tenant's advanced hunting quota, not this batch: every later batch would be refused the same way
+    /// and grey its devices, which is what the loop did when only 401 and 403 stopped it. So a 429 whose Retry-After is
+    /// present and no longer than <see cref="MaxHonouredRetryAfter"/> is waited out ONCE in the run and the same call
+    /// made again; a second 429, or a missing or longer Retry-After, stops the loop, and the reason says how many devices
+    /// were not queried. Both the wait and the stop are logged. A method rather than a local function so the loop's own
+    /// awaits stay the only continuations of <see cref="GetDiscoveryEnrichmentAsync"/>.
+    /// </remarks>
+    private async Task<HuntingBatchResult> HonourThrottleAsync(
+        Func<Task<HuntingBatchResult>> call, ThrottleBudget budget, IReadOnlyList<IReadOnlyList<string>> batches,
+        int batchIndex, string what, CancellationToken cancellationToken)
+    {
+        var result = await call();
+        if (!result.Throttled)
+            return result;
+
+        var retried = false;
+        if (!budget.Used && result.RetryAfter is { } wait && wait <= MaxHonouredRetryAfter)
+        {
+            budget.Used = true;
+            retried = true;
+            _logger.LogWarning(
+                "Defender advanced hunting was throttled (429) on the {What} query of batch {Batch} of {Batches}; waiting {Wait} as Retry-After asks, once",
+                what, batchIndex + 1, batches.Count, wait);
+            try
+            {
+                await (ThrottleDelayForTests?.Invoke(wait, cancellationToken)
+                    ?? Task.Delay(wait, EnrichmentTimeProvider, cancellationToken));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return new(false, DefenderDiscoveryReasons.DeadlineReached, true);
+            }
+
+            result = await call();
+            if (!result.Throttled)
+                return result;
+        }
+
+        var notQueried = batches.Skip(batchIndex).Sum(b => b.Count);
+        var why = retried ? "again after waiting out Retry-After"
+            : result.RetryAfter is null ? "no Retry-After"
+            : budget.Used ? "the one wait of the run was already used"
+            : $"Retry-After {result.RetryAfter} is over {MaxHonouredRetryAfter}";
+        _logger.LogWarning(
+            "Defender advanced hunting stopped on a 429 on the {What} query of batch {Batch} of {Batches} ({Why}); {NotQueried} device(s) were not queried",
+            what, batchIndex + 1, batches.Count, why, notQueried);
+        return result with
+        {
+            StopHunting = true,
+            Reason = $"{result.Reason} {DefenderDiscoveryReasons.ThrottledStop(notQueried, retried)}",
+        };
+    }
 
     /// <summary>
     /// Runs one hunting batch and merges its rows, returning its outcome and safe failure reason.
@@ -1025,7 +1115,8 @@ public sealed class DefenderEndpointDeviceService
 
         if (response.Document == null)
             return new(false, DescribeEnrichmentFailure(response),
-                response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
+                response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden,
+                Throttled: response.StatusCode == HttpStatusCode.TooManyRequests, RetryAfter: response.RetryAfter);
 
         using var document = response.Document;
 
@@ -1075,7 +1166,8 @@ public sealed class DefenderEndpointDeviceService
 
         if (response.Document == null)
             return new(false, DescribeEnrichmentFailure(response),
-                response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
+                response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden,
+                Throttled: response.StatusCode == HttpStatusCode.TooManyRequests, RetryAfter: response.RetryAfter);
 
         using var document = response.Document;
 

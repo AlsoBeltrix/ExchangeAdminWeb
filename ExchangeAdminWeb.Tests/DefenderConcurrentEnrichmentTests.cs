@@ -163,7 +163,7 @@ public class DefenderConcurrentEnrichmentTests
 
     private static string ExpectedReason(string failure) => failure switch
     {
-        "status" => DefenderDiscoveryReasons.Throttled,
+        "status" => DefenderEndpointDeviceService.DescribeEnrichmentFailure(new DefenderApiResult(null, HttpStatusCode.BadGateway, null, false)),
         "malformed" => DefenderDiscoveryReasons.MalformedResponse,
         "send" => DefenderDiscoveryReasons.SendFailed,
         _ => throw new ArgumentOutOfRangeException(nameof(failure))
@@ -171,7 +171,7 @@ public class DefenderConcurrentEnrichmentTests
 
     private static HttpResponseMessage Failure(string failure) => failure switch
     {
-        "status" => Json("{}", HttpStatusCode.TooManyRequests),
+        "status" => Json("{}", HttpStatusCode.BadGateway),
         "malformed" => Json("""{"results":{}}"""),
         "send" => throw new HttpRequestException("Synthetic transport failure; never report this text."),
         _ => throw new ArgumentOutOfRangeException(nameof(failure))

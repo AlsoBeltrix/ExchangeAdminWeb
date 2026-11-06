@@ -712,7 +712,10 @@ permission that could. Disabled by default and fail-closed.
 - Discovery sources, device type, category, vendor and model come from a second call: one constant
   `DeviceInfo` advanced hunting query on Microsoft Graph. Its failure never takes the page down --
   those five columns read `(unavailable)` with the reason named above the table, never merely
-  blank
+  blank. A `429` (the tenant's hunting quota) is waited out once per load when Microsoft Graph's
+  `Retry-After` asks for a minute or less; a second `429`, or one with no or a longer
+  `Retry-After`, stops the hunting there and the reason says how many devices were not queried
+  (sweep-d item 31). `401` and `403` stop it at once, as before
 - The detail panel renders from the row the list already returned. The module never calls
   get-machine-by-id, which Microsoft documents only under `Machine.ReadWrite.All`
 - Results can be downloaded as CSV (27 columns: device identity and DNS name, OS, health,
