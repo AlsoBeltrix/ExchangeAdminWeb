@@ -173,7 +173,10 @@ public sealed class MailboxGuidIdentityTests : IDisposable
         // The on-premises writes pass the mailbox as the script block's first argument; the calendar folder and the
         // auto-reply read and the room read take it through a helper.
         { "MailboxPermissionService.cs", @"""ArgumentList"", new object[] { mailbox.Identity, ", 4 },
-        { "CalendarPermissionService.cs", @"""ArgumentList"", new object[] { mailbox.Identity, ", 2 },
+        // Sweep-f item 23: the on-premises calendar writes read the mailbox's folder by the validated GUID and pass the
+        // identity built from it, so the GUID reaches them through the folder read.
+        { "CalendarPermissionService.cs", "OnPremCalendarFolder(ps, session, mailbox.Identity, ", 2 },
+        { "CalendarPermissionService.cs", "CalendarFolderIdentity.Build(identity, path)", 1 },
         { "CalendarPermissionService.cs", "GetCalendarFolderName(ps, mailbox.Identity)", 2 },
         { "OutOfOfficeService.cs", "GetOutOfOfficeAsync(mailbox.Identity)", 1 },
         { "ConferenceRoomService.cs", "ReadRoomDetails(ps, tracker, ReadValidatedMailbox(ps, tracker, room), room.Identity)", 1 },
