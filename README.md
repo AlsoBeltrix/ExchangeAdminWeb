@@ -163,6 +163,10 @@ When a target mailbox is detected as on-premises:
 - **Power users** (members of the `MailboxPermissionsOnPrem` or `CalendarPermissionsOnPrem` section-access groups) are prompted with a confirmation dialog and can proceed.
 - Execution uses an on-prem PowerShell remoting session (`New-PSSession`) authenticated with credentials retrieved from Delinea Secret Server at runtime.
 - Concurrency is throttled to 2 simultaneous on-prem operations.
+- The on-premises Exchange endpoint runs one command per call (no-language mode), so each step is its own command. A
+  Calendar Permissions change reads the mailbox's own calendar folder first (a localized name such as "Kalender" is
+  written as such; a failed read writes nothing), then sets the permission, and adds it only when Exchange answers that
+  the user holds no entry on the folder. Any other refusal is reported as that failure.
 
 ### Admin Settings Page (`/admin-settings`)
 

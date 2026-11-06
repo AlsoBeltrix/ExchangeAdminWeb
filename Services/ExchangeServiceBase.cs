@@ -908,7 +908,7 @@ public abstract class ExchangeServiceBase
     // aud-a23o. One read in the on-premises session: -ErrorAction Stop on the remote command and on Invoke-Command, so a
     // remote failure throws here with its record - category, reason, FullyQualifiedErrorId - for IsNotFound to read, where it
     // reached the local error stream as text, or, under SilentlyContinue, not at all.
-    private static void AddOnPremRead(PowerShell ps, object? session, string command, string identity) =>
+    protected static void AddOnPremRead(PowerShell ps, object? session, string command, string identity) =>
         ps.AddCommand("Invoke-Command")
           .AddParameter("Session", session)
           .AddParameter("ScriptBlock", ScriptBlock.Create($"param($Identity) {command}"))

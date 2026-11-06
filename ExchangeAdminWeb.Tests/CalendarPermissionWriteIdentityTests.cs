@@ -127,8 +127,14 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         var result = await new OnPremService(_h).SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, "Reviewer", TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
-        Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Argument(Assert.Single(_h.CallsTo("Invoke-Command")), 0));
+        // Sweep item 23: the folder read from the validated mailbox, then the Set on that folder - two commands, each one.
+        var sent = _h.CallsTo("Invoke-Command");
+        Assert.Equal(2, sent.Count);
+        Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Argument(sent[0], 0));
+        Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Get-MailboxFolderStatistics")), "Identity"));
+        Assert.Equal(Folder(Checked), ExchangeWriteHarness.Argument(sent[1], 0));
         Assert.Equal(Folder(Checked), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Set-MailboxFolderPermission")), "Identity"));
+        Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
     }
 
     [Fact]
@@ -137,7 +143,10 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         var result = await new OnPremService(_h).RemoveCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, TestContext.Current.CancellationToken);
 
         Assert.True(result.Success, result.Message);
-        Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Argument(Assert.Single(_h.CallsTo("Invoke-Command")), 0));
+        var sent = _h.CallsTo("Invoke-Command");
+        Assert.Equal(2, sent.Count);
+        Assert.Equal(Checked.ToString("D"), ExchangeWriteHarness.Argument(sent[0], 0));
+        Assert.Equal(Folder(Checked), ExchangeWriteHarness.Argument(sent[1], 0));
         Assert.Equal(Folder(Checked), ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Remove-MailboxFolderPermission")), "Identity"));
     }
 
@@ -156,6 +165,102 @@ public sealed class CalendarPermissionWriteIdentityTests : IDisposable
         Assert.Equal(ValidatedMailbox.Refusal(Typed), result.Message);
         Assert.Equal(0, service.CredentialRequests);
         Assert.Empty(_h.Calls);
+    }
+
+    // ---- sweep item 23: one command per Invoke-Command, the folder read on-premises -----------------
+
+    [Fact]
+    public async Task AnOnPremSetWithNoEntryToSet_AddsInACommandOfItsOwn_OnTheSameFolder()
+    {
+        _h.Failures["Set-MailboxFolderPermission"] = "There is no existing permission entry found for user: jdoe.";
+
+        var result = await new OnPremService(_h).SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, "Reviewer", TestContext.Current.CancellationToken);
+
+        Assert.True(result.Success, result.Message);
+        var sent = _h.CallsTo("Invoke-Command");
+        Assert.Equal(3, sent.Count);
+        Assert.Contains("Set-MailboxFolderPermission", (string)sent[1]["Script"]!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Add-MailboxFolderPermission", (string)sent[1]["Script"]!, StringComparison.Ordinal);
+        Assert.Contains("Add-MailboxFolderPermission", (string)sent[2]["Script"]!, StringComparison.Ordinal);
+        var added = Assert.Single(_h.CallsTo("Add-MailboxFolderPermission"));
+        Assert.Equal(Folder(Checked), ExchangeWriteHarness.Bound(added, "Identity"));
+        Assert.Equal("Reviewer", ExchangeWriteHarness.Bound(added, "AccessRights")?.ToString());
+    }
+
+    [Fact]
+    public async Task AnOnPremSetRefusedForAnotherReason_IsThatFailure_NoAdd_NotUnconfirmed()
+    {
+        _h.Failures["Set-MailboxFolderPermission"] = "The user 'jdoe' isn't valid for this operation.";
+
+        var result = await new OnPremService(_h).SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, "Reviewer", TestContext.Current.CancellationToken);
+
+        Assert.False(result.Success);
+        Assert.Contains("isn't valid for this operation", result.Message, StringComparison.Ordinal);
+        Assert.False(result.Unconfirmed);
+        Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnOnPremWriteOnALocalizedCalendar_WritesThatFolder_NotBackslashCalendar(bool set)
+    {
+        var service = new OnPremService(_h);
+        var result = set
+            ? await service.SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Vip), Trustee, "Reviewer", TestContext.Current.CancellationToken)
+            : await service.RemoveCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Vip), Trustee, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Success, result.Message);
+        var written = Assert.Single(_h.CallsTo(set ? "Set-MailboxFolderPermission" : "Remove-MailboxFolderPermission"));
+        Assert.Equal(Vip.ToString("D") + @":\Kalender", ExchangeWriteHarness.Bound(written, "Identity"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AnOnPremFolderReadThatFails_WritesNothing_AndSaysSo(bool set)
+    {
+        _h.Failures["Get-MailboxFolderStatistics"] = "The operation couldn't be performed because the mailbox is unavailable.";
+        var service = new OnPremService(_h);
+
+        var result = set
+            ? await service.SetCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, "Reviewer", TestContext.Current.CancellationToken)
+            : await service.RemoveCalendarPermissionOnPremAsync(Typed, ExchangeWriteHarness.Validated(Checked), Trustee, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Success);
+        Assert.Contains("calendar folder could not be read", result.Message, StringComparison.Ordinal);
+        Assert.Contains("Nothing was written", result.Message, StringComparison.Ordinal);
+        Assert.False(result.Unconfirmed);
+        Assert.Empty(_h.CallsTo("Set-MailboxFolderPermission"));
+        Assert.Empty(_h.CallsTo("Add-MailboxFolderPermission"));
+        Assert.Empty(_h.CallsTo("Remove-MailboxFolderPermission"));
+    }
+
+    [Theory]
+    [InlineData(CalendarPermissionService.OnPremSetScript)]
+    [InlineData(CalendarPermissionService.OnPremAddScript)]
+    [InlineData(CalendarPermissionService.OnPremRemoveScript)]
+    public void EachOnPremWriteScript_ConvertsToOneCommand_AsTheNoLanguageEndpointRequires(string script)
+    {
+        // What Invoke-Command does before it sends: a block that converts goes as a command; one that does not goes as
+        // script text, which a no-language endpoint refuses.
+        // The conversion needs a runspace's context, so it is asked inside one.
+        using var ps = PowerShell.Create();
+        ps.AddScript("param($s) [scriptblock]::Create($s).GetPowerShell('folder', 'user', 'Reviewer').Commands.Commands.Count").AddArgument(script);
+        var converted = ps.Invoke();
+        Assert.False(ps.HadErrors, string.Join(" | ", ps.Streams.Error.Select(e => e.ToString())));
+        Assert.Equal(1, (int)Assert.Single(converted).BaseObject);
+    }
+
+    [Fact]
+    public void ANoLanguageRefusal_IsNotADeadSession_SoTheWriteIsNotFiledUnconfirmed()
+    {
+        var refusal = new RemoteException("The syntax is not supported by this runspace. This can occur if the runspace is in no-language mode.");
+
+        Assert.False(ExoConnectionPool.IsConnectionError(refusal));
+        Assert.False(ExchangeServiceBase.OutcomeUnknown(refusal, new ExchangeServiceBase.ConnectionErrorTracker()));
+        // Still a dead session: a runspace that has closed, in words with no language-mode phrase.
+        Assert.True(ExoConnectionPool.IsConnectionError(new InvalidOperationException("The runspace is not open.")));
     }
 
     // ---- the CSV bulk loop ---------------------------------------------------------------------

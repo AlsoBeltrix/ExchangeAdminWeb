@@ -176,8 +176,9 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
     {
         // aud-a70 (12). aud-a76's case: the one Invoke-Command let out what its remote command threw, and the page filed a write
         // Exchange refused as one that could not be confirmed. Exchange answered: the write is a failed result, as Mailbox
-        // Permissions' TryRightOnPrem makes one, in the command's own words. The set falls back to an add, which fails too.
-        _h.Failures["Set-MailboxFolderPermission"] = "the folder permission could not be set";
+        // Permissions' TryRightOnPrem makes one, in the command's own words. The set falls back to an add - on Exchange's
+        // answer that the user holds no entry, in a command of its own (sweep item 23) - which fails too.
+        _h.Failures["Set-MailboxFolderPermission"] = "There is no existing permission entry found for user: jdoe.";
         _h.Failures[command] = "the remote command failed";
 
         var result = await OnPrem(write);
@@ -185,7 +186,8 @@ public sealed class PermissionWriteSubmissionTests : IDisposable
         Assert.False(result.Success);
         Assert.False(result.Unconfirmed);
         Assert.Equal($"Failed on {Typed} calendar (on-premises): the remote command failed.", result.Message);
-        Assert.Single(_h.CallsTo("Invoke-Command"));
+        // The folder read, the Set, and for a grant its Add (sweep item 23).
+        Assert.Equal(write == "SetCalendarPermissionOnPrem" ? 3 : 2, _h.CallsTo("Invoke-Command").Count);
         Assert.Single(_h.CallsTo(command));
     }
 

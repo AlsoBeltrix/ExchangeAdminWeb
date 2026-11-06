@@ -280,7 +280,10 @@ public sealed class ModuleCatalog
             // Exchange's pre-flight answer still runs. A command already sent runs to its end.
             // 1.4.9: as Mailbox Permissions 1.6.9 - the target mailbox is bound by its on-premises SID (ppi S3).
             // 1.4.10: as Mailbox Permissions 1.6.10 - a self-grant refusal for a group names the group and the path (sweep-c item 18).
-            Version = "1.4.11",
+            // 1.4.12: on-premises grants and removals send one command per Invoke-Command (the endpoint is no-language): the
+            // folder read from the mailbox, then Set, then Add only on "no entry"; a language-mode refusal is not a dead
+            // session (sweep-f item 23).
+            Version = "1.4.12",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
