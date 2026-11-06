@@ -1313,7 +1313,44 @@ share one root: see [Shared log root](#shared-log-root-dev-and-prod-on-one-serve
 - ConferenceRooms: `target`, `properties`, `policyTemplate`
 - DhcpAuthorization: `target`, `operation`
 
-Null fields are omitted. `error` appears only on failure.
+Null fields are omitted. `error` appears on every result but `Success`.
+
+**`result` - the closed list of values (for Splunk searches).** Every audit record's `result` is one of:
+
+| Value | Meaning |
+|---|---|
+| `Success` | The operation succeeded. |
+| `Failed` | The operation failed or was refused. A refusal is a `Failed` row too; see the conventions below to tell one from a write that failed. |
+| `Undetermined` | Whether the change was made could not be confirmed - the command was sent and the session failed before Exchange or the directory answered (Mailbox and Calendar Permissions, Migration actions, a stalled Blocked Senders unblock), or a Migration eligibility check could not decide. The change may have landed. |
+| `Cancelled` | The operator cancelled - a change stopped before its write was sent (nothing written; a Conference Rooms bulk job's row stopped by the job's cancel included), or a read cancelled (Message Analysis, Recipient Lookup). |
+| `Ineligible` | Migration eligibility checks only (`CheckMigrationEligibility`): the check found the mailbox not eligible. |
+
+A search for `result="Failed"` therefore misses changes filed `Undetermined` that may have landed, and cancels. Search
+`result!="Success"` for everything that did not plainly succeed. `error` carries the reason on every value but `Success`.
+
+**How a refusal is recorded - the current conventions.** A refusal (the operation was stopped before its write) is
+filed `Failed`, but its shape differs by page. The shapes in use today:
+
+1. A `*_Refused` action with the refusal fields `refusedAt` (the step that refused, e.g. `TicketValidation`,
+   `Authorization`) and `mutationAttempted` `false` - for example `ADAttributeEdit_Refused`.
+2. The operation's own action with the refusal fields - for example `MfaReset_Execute`, `DHCP_Deauthorize`, the
+   Mailbox and Calendar Permissions changes' own actions, `LicensingUpdates_Update` with target `(bulk) N rows`, the
+   module's own undo action for an Event Log undo.
+3. A `*_Denied` action with `error` only and no refusal fields - for example `UnblockSender_Denied`,
+   `OutOfOffice_Denied`, `Add_Denied`/`Remove_Denied` on Mailbox Permissions, `SetCalendar_Denied`/`RemoveCalendar_Denied`
+   (authorization and protected-principal refusals). Since sweep-e item 41 the ticket refusals on Blocked Senders and Out
+   of Office use the same `*_Denied` action with the refusal fields added.
+4. A `{action}_Denied` action with `mutationAttempted` `false` - Migration's authorization denials (with `targetCount`
+   and `targets` for a bulk run); its ticket refusals (sweep-e item 41) add `refusedAt` `TicketValidation`.
+5. The operation's own action, `Failed`, with the reason in `error` and no refusal fields - authorization refusals on
+   DHCP Authorization, Named Locations, M365 Groups, AD Group Management, Self-Service Groups, MFA Reset, Intune Devices
+   and Risky Users.
+6. The outcome in the action name - `_PARTIAL` (some rights applied) and `_UNCONFIRMED` (administrator notification of
+   an `Undetermined` change) on Mailbox Permissions.
+
+To find every refusal, search for `refusedAt=*` OR `action="*_Denied"` OR `action="*_Refused"`; shape 5 is told apart
+from a failed write only by its `error` text. Unifying these shapes would change what existing Splunk searches match,
+so it is left as it is pending an owner decision.
 
 **Operation trace records:** Each audit transaction writes structured trace events with the same `operationId`:
 - `operation.start` — transaction accepted by the logging pipeline
