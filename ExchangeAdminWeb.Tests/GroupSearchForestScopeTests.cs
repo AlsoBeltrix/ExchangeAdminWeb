@@ -39,7 +39,7 @@ public sealed class GroupSearchForestScopeTests
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Services", "GroupManagementService.cs"));
-        var start = text.IndexOf("public async Task<List<GroupInfo>> SearchGroupsAsync(", StringComparison.Ordinal);
+        var start = text.IndexOf("public virtual async Task<List<GroupInfo>> SearchGroupsAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "SearchGroupsAsync signature not found - tripwire is stale.");
         var end = text.IndexOf("private string? ResolveSearchGlobalCatalog(", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound SearchGroupsAsync - update the tripwire.");

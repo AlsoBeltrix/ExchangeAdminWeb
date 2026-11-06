@@ -66,7 +66,7 @@ public class M365GroupManagementService
         }
     }
 
-    public async Task<List<M365Group>> SearchGroupsAsync(string searchTerm)
+    public virtual async Task<List<M365Group>> SearchGroupsAsync(string searchTerm)
     {
         var client = await GetGraphClientAsync();
         var groups = new List<M365Group>();
@@ -91,7 +91,7 @@ public class M365GroupManagementService
         return groups.OrderBy(g => g.DisplayName).ToList();
     }
 
-    public async Task<M365Group?> GetGroupDetailsAsync(string groupId)
+    public virtual async Task<M365Group?> GetGroupDetailsAsync(string groupId)
     {
         var client = await GetGraphClientAsync();
         using var doc = await client.GetAsync($"/groups/{Uri.EscapeDataString(groupId)}?$select=id,displayName,mail,description,visibility,groupTypes,mailEnabled,securityEnabled,createdDateTime");
@@ -151,12 +151,12 @@ public class M365GroupManagementService
         return new M365GroupResult { Success = true, Message = $"Deleted '{displayName}'." };
     }
 
-    public async Task<List<M365GroupMember>> GetMembersAsync(string groupId)
+    public virtual async Task<List<M365GroupMember>> GetMembersAsync(string groupId)
     {
         return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/members?$select=id,displayName,mail,userPrincipalName&$top=999");
     }
 
-    public async Task<List<M365GroupMember>> GetOwnersAsync(string groupId)
+    public virtual async Task<List<M365GroupMember>> GetOwnersAsync(string groupId)
     {
         return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=id,displayName,mail,userPrincipalName&$top=999");
     }

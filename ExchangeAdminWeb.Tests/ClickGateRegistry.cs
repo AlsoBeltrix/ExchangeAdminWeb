@@ -2353,7 +2353,7 @@ public static class ClickGateRegistry
         // well below every registered control (the lowest is 315), so no line key moved -
         // only the count. Verified by running the ClickGate suite after the edit. kd-18 and kd-24
         // the same.
-        ExpectedLineCount = 1158,
+        ExpectedLineCount = 1216,
 
         // One page-wide predicate, tested against this file rather than assumed. This page has a
         // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces
@@ -2934,7 +2934,7 @@ public static class ClickGateRegistry
     private static PageGateEntry M365GroupManagement => new()
     {
         Page = "M365GroupManagement.razor",
-        ExpectedLineCount = 842,
+        ExpectedLineCount = 899,
 
         Predicates =
         [

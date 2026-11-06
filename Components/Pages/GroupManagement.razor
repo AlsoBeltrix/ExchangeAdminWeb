@@ -333,6 +333,18 @@
     private bool isSelecting;
     private int selectToken;
 
+    // sweep-d item 22, the kd-19 Self-Service Groups shape. Which load may publish into the selection
+    // (memberList, targetProtection, the bulk outcome table). Search and SelectGroup advance it; every
+    // handler captures it with the group before its first await and publishes only while both still
+    // hold (IsCurrentSelection). The reference check alone let a late answer publish after the
+    // operator went A -> B -> A (the same GroupInfo), and every refresh checked it BEFORE its await
+    // and published AFTER, so a switch during the read put one group's members under another's header.
+    // Distinct from selectToken, which owns isSelecting's lowering and must advance in SelectGroup alone.
+    private int selectionToken;
+
+    private bool IsCurrentSelection(GroupInfo group, int token) =>
+        token == selectionToken && ReferenceEquals(selectedGroup, group);
+
     /// <summary>
     /// The page-wide busy predicate every control on this page consults. One predicate is right
     /// here and it was tested rather than assumed: this page has a single view. Search replaces
@@ -409,6 +421,7 @@
         // and leave the results table labelled with the text they can see in the box.
         var term = searchTerm.Trim();
         isLoading = true;
+        selectionToken++;
         selectedGroup = null;
         memberList = null;
         opResult = null;
@@ -436,7 +449,7 @@
         // awaits twice and every control on the page stayed live for the whole of the protection
         // check (docs/ClickGatingAudit-Plan.md Revision 1, falsification 7). isSelecting is that
         // flag, and the lowering below is a token-guarded finally rather than the
-        // ReferenceEquals(selectedGroup, group) style the rest of this method is written in.
+        // selection-token check (IsCurrentSelection) the rest of this method publishes under.
         //
         // That distinction is the trap, and it is load-bearing: a lowering conditional on this
         // group still being the selection never runs once the operator has switched groups, and
@@ -446,9 +459,17 @@
         // invocation always owns the lowering and always reaches its finally, while a superseded
         // one lowers nothing and so cannot open the gate under the selection that replaced it.
         // Same shape as MessageTrace.ToggleDetail; do not "simplify" it to a bare clear either.
+        //
+        // sweep-d item 22: refused while the page is busy, which is what the Manage buttons'
+        // disabled="@IsBusy" says - one round trip stale, so a Manage click landing while a member
+        // load or a write was running replaced the selection under it.
+        if (IsBusy)
+            return;
+
         var token = ++selectToken;
         isSelecting = true;
 
+        var selection = ++selectionToken;
         selectedGroup = group;
         memberList = null;
         opResult = null;
@@ -471,12 +492,12 @@
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var check = await GroupService.CheckTargetProtectionAsync(group.Identity, group.SamAccountName, authState.User);
-            if (ReferenceEquals(selectedGroup, group))
+            if (IsCurrentSelection(group, selection))
                 targetProtection = check;
         }
         catch (Exception ex)
         {
-            if (ReferenceEquals(selectedGroup, group))
+            if (IsCurrentSelection(group, selection))
                 targetProtection = new TargetProtectionCheck(true, ex.Message, null);
         }
         finally
@@ -499,6 +520,7 @@
         // escaped the handler; with no ErrorBoundary anywhere in this app that tears the circuit
         // down and the operator loses the page rather than seeing an error.
         var group = selectedGroup;
+        var selection = selectionToken;
         if (group is null)
             return;
 
@@ -510,19 +532,25 @@
         selectedGuids.Clear();
         showRemoveConfirm = false;
         await Task.Yield();
+        // This load's own answer, for the activity; the page gets it only while its group is current.
+        GroupMemberList? loaded = null;
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            memberList = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName);
+            loaded = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName);
         }
         catch (Exception ex)
         {
-            memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message };
+            loaded = new GroupMemberList { GroupName = group.Name, Error = ex.Message };
         }
         finally
         {
+            // sweep-d item 22: a load for a group the operator has left publishes nothing.
+            if (IsCurrentSelection(group, selection))
+                memberList = loaded;
+
             isLoading = false;
-            loadActivity.Complete(memberList?.Error is null, memberList?.Error);
+            loadActivity.Complete(loaded?.Error is null, loaded?.Error);
         }
     }
 
@@ -549,6 +577,7 @@
         // navigation stays live while awaits run, so the write must use the group and member
         // the operation was initiated with, never whatever the page points at afterwards.
         var group = selectedGroup;
+        var current = selectionToken;
         var memberLabel = newMember.Trim();
         var selection = newMemberSelection;
         // The ticket is on the same footing and used to be read live inside the try, below the
@@ -589,9 +618,14 @@
             {
                 newMember = "";
                 newMemberSelection = null;
-                // Refresh only when the operator is still looking at the group we wrote to.
-                if (ReferenceEquals(selectedGroup, group))
-                    memberList = await GroupService.GetMembersAsync(group.Identity, (await AuthStateProvider.GetAuthenticationStateAsync()).User, group.SamAccountName);
+                // Refresh only when the operator is still looking at the group we wrote to - checked
+                // again after the read (sweep-d item 22), which is when the answer is published.
+                if (IsCurrentSelection(group, current))
+                {
+                    var refreshed = await GroupService.GetMembersAsync(group.Identity, (await AuthStateProvider.GetAuthenticationStateAsync()).User, group.SamAccountName);
+                    if (IsCurrentSelection(group, current))
+                        memberList = refreshed;
+                }
             }
         }
         catch (Exception ex)
@@ -682,6 +716,7 @@
         // gmn-7: snapshot the group BEFORE the first await - group navigation stays live while
         // awaits run, and the removal must execute against the group whose list showed the row.
         var group = selectedGroup;
+        var current = selectionToken;
         // As AddMember: the ticket validated must be the ticket recorded, so it is captured here
         // rather than read live inside the try below the yield.
         var ticket = ticketNumber.Trim();
@@ -713,9 +748,14 @@
             var outcome = await RemoveOneAsync(group, listed, ticket, sendAdminEmail: true);
             opResult = completed = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
 
-            // Refresh only when the operator is still looking at the group we wrote to.
-            if (outcome.Done && ReferenceEquals(selectedGroup, group))
-                memberList = await GroupService.GetMembersAsync(group.Identity, (await AuthStateProvider.GetAuthenticationStateAsync()).User, group.SamAccountName);
+            // Refresh only when the operator is still looking at the group we wrote to - checked
+            // again after the read (sweep-d item 22), which is when the answer is published.
+            if (outcome.Done && IsCurrentSelection(group, current))
+            {
+                var refreshed = await GroupService.GetMembersAsync(group.Identity, (await AuthStateProvider.GetAuthenticationStateAsync()).User, group.SamAccountName);
+                if (IsCurrentSelection(group, current))
+                    memberList = refreshed;
+            }
         }
         catch (Exception ex)
         {
@@ -926,6 +966,7 @@
     {
         // gmn-7: snapshot the group AND the rows before the first await.
         var group = selectedGroup;
+        var current = selectionToken;
         var rows = SelectedMembers();
         // And the ticket, which is validated once for the batch and then recorded against every
         // row: read live below the yield, a keystroke in the stale-attribute window put one
@@ -986,18 +1027,26 @@
             if (summary.ChangedCount > 0)
                 await NotifyGroupManagerAsync(group, action, ticket, $"{summary.ChangedCount} of {summary.Requested} changed: {string.Join("; ", summary.ChangedLines)}", summary.Success);
 
-            selectedGuids.Clear();
-            bulkOutcome = outcomes;
-            bulkOutcomeTitle = $"Remove selected: {summary.Done} of {summary.Requested} removed";
+            // sweep-d item 22: the outcome table is this group's; it is not published under another.
+            if (IsCurrentSelection(group, current))
+            {
+                selectedGuids.Clear();
+                bulkOutcome = outcomes;
+                bulkOutcomeTitle = $"Remove selected: {summary.Done} of {summary.Requested} removed";
+            }
             opResult = completed = summary.Success
                 ? PermissionResult.Ok($"{summary.Done} member(s) removed from {group.Name}.")
                 : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not removed - see the outcome table.");
 
-            // One refresh for the whole batch, only if the operator is still looking at this group.
-            if (ReferenceEquals(selectedGroup, group))
+            // One refresh for the whole batch, only if the operator is still looking at this group -
+            // checked again after the read (sweep-d item 22), which is when the answer is published.
+            if (IsCurrentSelection(group, current))
             {
-                try { memberList = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName); }
-                catch (Exception ex) { memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message }; }
+                GroupMemberList refreshed;
+                try { refreshed = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName); }
+                catch (Exception ex) { refreshed = new GroupMemberList { GroupName = group.Name, Error = ex.Message }; }
+                if (IsCurrentSelection(group, current))
+                    memberList = refreshed;
             }
         }
         finally
@@ -1074,6 +1123,7 @@
     {
         // gmn-7: snapshot the group AND the rows before the first await.
         var group = selectedGroup;
+        var current = selectionToken;
         var rows = resolution?.Where(r => r.Status == BulkIdentityList.Status.Resolved && r.Match != null).ToList() ?? new();
         // As RemoveSelectedAsync: one ticket for the batch, captured at entry so the ticket
         // validated is the ticket every row's audit record and the summary email carry.
@@ -1131,8 +1181,12 @@
             if (summary.ChangedCount > 0)
                 await NotifyGroupManagerAsync(group, action, ticket, $"{summary.ChangedCount} of {summary.Requested} changed: {string.Join("; ", summary.ChangedLines)}", summary.Success);
 
-            bulkOutcome = outcomes;
-            bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";
+            // sweep-d item 22: the outcome table is this group's; it is not published under another.
+            if (IsCurrentSelection(group, current))
+            {
+                bulkOutcome = outcomes;
+                bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";
+            }
             opResult = completed = summary.Success
                 ? PermissionResult.Ok($"{summary.Done} member(s) added to {group.Name}.")
                 : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not added - see the outcome table.");
@@ -1142,11 +1196,15 @@
                 resolution = null;
             }
 
-            // One refresh for the whole batch, only if the operator is still looking at this group.
-            if (ReferenceEquals(selectedGroup, group))
+            // One refresh for the whole batch, only if the operator is still looking at this group -
+            // checked again after the read (sweep-d item 22), which is when the answer is published.
+            if (IsCurrentSelection(group, current))
             {
-                try { memberList = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName); }
-                catch (Exception ex) { memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message }; }
+                GroupMemberList refreshed;
+                try { refreshed = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName); }
+                catch (Exception ex) { refreshed = new GroupMemberList { GroupName = group.Name, Error = ex.Message }; }
+                if (IsCurrentSelection(group, current))
+                    memberList = refreshed;
             }
         }
         finally

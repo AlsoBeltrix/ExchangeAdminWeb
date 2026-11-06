@@ -794,7 +794,7 @@ public sealed class ModuleCatalog
             // - the shared TicketPresence rule (kd-48).
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
-            Version = "2.16.1",
+            Version = "2.16.2",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -823,7 +823,7 @@ public sealed class ModuleCatalog
             // TicketPresence rule (kd-24).
             // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
-            Version = "1.9.0",
+            Version = "1.9.1",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",

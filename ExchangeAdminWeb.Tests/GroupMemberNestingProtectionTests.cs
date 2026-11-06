@@ -321,9 +321,9 @@ public class GroupMemberNestingProtectionTests
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Services", "GroupManagementService.cs"));
-        var start = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var start = text.IndexOf("public virtual async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "GetMembersAsync signature not found - tripwire is stale.");
-        var end = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
+        var end = text.IndexOf("public virtual async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
         var body = text[start..end];
 
@@ -431,8 +431,8 @@ public class GroupMemberNestingProtectionTests
         Assert.Contains("AddParameter(\"Server\", server)", resolver, StringComparison.Ordinal);
 
         // ...and the member-list detail lookup routes by each member's own DN.
-        var lStart = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
-        var lEnd = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", lStart, StringComparison.Ordinal);
+        var lStart = text.IndexOf("public virtual async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var lEnd = text.IndexOf("public virtual async Task<PermissionResult> AddMemberAsync(", lStart, StringComparison.Ordinal);
         Assert.True(lStart >= 0 && lEnd > lStart, "Could not bound GetMembersAsync - update the tripwire.");
         var listing = text[lStart..lEnd];
         Assert.Contains("ServerFromDn(memberDn)", listing, StringComparison.Ordinal);
@@ -622,9 +622,9 @@ public class GroupMemberNestingProtectionTests
     public void AdminAddPath_OrdersResolveGateGuardsWriteReadback()
     {
         var text = AdminServiceText();
-        var start = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", StringComparison.Ordinal);
+        var start = text.IndexOf("public virtual async Task<PermissionResult> AddMemberAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "AddMemberAsync signature not found - tripwire is stale.");
-        var end = text.IndexOf("public async Task<PermissionResult> RemoveMemberAsync(", start, StringComparison.Ordinal);
+        var end = text.IndexOf("public virtual async Task<PermissionResult> RemoveMemberAsync(", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound AddMemberAsync - update the tripwire.");
         var body = text[start..end];
 
@@ -667,7 +667,7 @@ public class GroupMemberNestingProtectionTests
     public void AdminRemovePath_GuidKeyed_GatesResolved_AndReadsBack()
     {
         var text = AdminServiceText();
-        var start = text.IndexOf("public async Task<PermissionResult> RemoveMemberAsync(", StringComparison.Ordinal);
+        var start = text.IndexOf("public virtual async Task<PermissionResult> RemoveMemberAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "RemoveMemberAsync signature not found - tripwire is stale.");
         var end = text.IndexOf("// --- Helpers ---", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound RemoveMemberAsync - update the tripwire.");
