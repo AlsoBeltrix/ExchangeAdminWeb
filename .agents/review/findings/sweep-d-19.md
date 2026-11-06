@@ -75,3 +75,9 @@ Run once for the branch at its tip; see the sweep-d hand-back. Not run: any live
   `Get-ADGroup <scratch> -Properties member`.
 - Added by this fix: then `Set-ADGroup <scratch> -Remove @{member="<GUID=$((Get-ADUser $env:USERNAME).ObjectGUID)>"}`
   and read `member` again, so the removal form is proven as well.
+
+## Superseded in part (2026-11-06)
+
+The add-then-remove order is reverted by owner ruling (`.agents/decisions.md` 2026-11-06): it reversed the approved
+plan's measured rejection of that order and slows a large swap from seconds to minutes. The GUID member form was
+verified live by the owner the same day. The named-refusal and item-20 changes stand. The revert is a separate slice.

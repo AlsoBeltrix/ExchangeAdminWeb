@@ -20,8 +20,8 @@ Departures worth knowing: item 19 add-before-remove makes a full swap to a wholl
 check). Item 29's "run each search once" was not done: the confirm re-derives the destination because cpr-9 (HIGH)
 requires it. Item 31 changed five tests that used a 429 to mean "one batch fails, the rest carry on".
 
-Deploy check list additions: Comms-10k scratch-group test with `-Add` AND `-Remove <GUID=...>` after downloading the
-membership CSV; Graph grants and roles for Cloud Password Reset plus the `employeeID` `searchFlags` index; User.Read.All
+Deploy check list additions: Comms-10k scratch-group run of the module path (GUID member form verified live by the owner 2026-11-06,
+decisions.md) after downloading the membership CSV; Graph grants and roles for Cloud Password Reset plus the `employeeID` `searchFlags` index; User.Read.All
 (Application) on the M365 Groups registration; `runHuntingQuery ... 429` lines and the two new Defender warnings;
 `NotifySecurityTeam` and `Email:AdminNotificationEmail` on both instances.
 

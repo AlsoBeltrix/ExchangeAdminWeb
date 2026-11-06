@@ -5,6 +5,28 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-06 - Comms-10k write order reverts to clear-then-add; the GUID member form is verified live
+
+Owner, on the sweep-d item-19 change (add every file member, then remove the stale): "this change violates the rule.
+this significantly changes the workflow by increasing the time. I need a better way to do it quickly." The approved
+`docs/Comms10kBulkResolveScale-Plan.md` had measured add-then-remove at 53.2 s against 7.9 s on a 10k swap and
+rejected it; the sweep-d brief chose it anyway without flagging the reversal (supervisor error). Ruling: the write
+order goes back to clear, then add in 2,000 batches, as the plan approved. Item 19's non-order parts stay (a failed
+batch after the clear is reported partly applied and named; item 20's single authorization check before the first
+write). To be built as the next slice after sweep-e.
+
+The risk item 19 actually named - the `<GUID=...>` member value form (C4, 2026-10-15) never run against this
+directory - is closed: the owner ran, as himself from a domain-joined shell on 2026-11-06, `Set-ADGroup -Identity
+<bare group GUID> -Add @{member="<GUID=<user objectGUID>>"}` against a throwaway group; the read-back by DN returned
+True. The form is accepted by this forest's domain controllers. The deploy check list keeps the scratch-group run of
+the module's own path only as the end-to-end check; no separate form test is needed. The `-Identity` parameter takes
+a bare GUID, not the `<GUID=...>` form (the first attempt failed on that; the app already passes the bare GUID).
+
+Owner context, recorded as an environment fact that no safety argument may rest on (ruling 2026-09-11): "in our
+environment, sAMAccountName is never reused for a new person. rehires get the same historic account name they had
+previously." The GUID binding stays: it costs nothing at run time and guards DN changes between approval and write,
+which account-name policy does not cover.
+
 ### 2026-11-06 - Three pending owner questions settled (sweep items 16 and 33; end-of-work review)
 
 Asked one at a time with context, action, consequence and recommendation; the owner answered each by number.
