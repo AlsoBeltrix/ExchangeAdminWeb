@@ -104,7 +104,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
         Assert.Equal([PersonGuid], directory.Actual);
-        Assert.Equal(["add", "remove"], directory.Writes);
+        Assert.Equal(["clear", "add"], directory.Writes);
         fixture.AssertAudit(null, Comms10kOutcome.Succeeded, true);
         fixture.AssertNotification(row.Message!, Comms10kOutcome.Succeeded, true);
     }
@@ -140,7 +140,7 @@ public sealed partial class Comms10kRefusalTests
     [InlineData("target-reread", true)]
     [InlineData("primary", false)]
     [InlineData("primary", true)]
-    public async Task C2TheWriteGateFollowsAllPreparation(string phase, bool disableModule)
+    public async Task C2TheFinalClearGateFollowsAllPreparation(string phase, bool disableModule)
     {
         using var fixture = new Fixture();
         var directory = new C2Directory();
@@ -160,19 +160,20 @@ public sealed partial class Comms10kRefusalTests
         Assert.Contains("primary", directory.Calls);
     }
 
-    // sweep-d item 20: a revocation after the first write no longer stops the run halfway. The
-    // run completes and the list ends as the file; the revocation applies to the next run.
+    // sweep-d item 20: a revocation after the clear no longer stops the run halfway. The run
+    // completes and the list ends as the file; the revocation applies to the next run.
     [Theory]
-    [InlineData("first-add", false)]
-    [InlineData("first-add", true)]
+    [InlineData("clear", false)]
+    [InlineData("clear", true)]
+    [InlineData("clear-retry", false)]
     [InlineData("between-batches", true)]
     [InlineData("add-retry", false)]
-    [InlineData("remove", false)]
     public async Task C2ARevocationAfterTheFirstWriteDoesNotLeaveAHalfReplacedList(string boundary, bool disableModule)
     {
         using var fixture = new Fixture();
         var directory = new C2Directory(boundary == "between-batches" ? 2001 : 1)
         {
+            FailClearOnce = boundary == "clear-retry",
             FailAddOnce = boundary == "add-retry",
         };
         fixture.Service.ReplaceState = directory.State;
@@ -181,7 +182,8 @@ public sealed partial class Comms10kRefusalTests
         directory.OnStep = step =>
         {
             if (revoked) return;
-            if ((boundary != "remove" && step == "add") || (boundary == "remove" && step == "remove"))
+            if ((boundary is "clear" or "clear-retry" && step == "clear")
+                || (boundary is "between-batches" or "add-retry" && step == "add"))
             {
                 revoked = true;
                 C2Revoke(fixture, disableModule);
@@ -201,15 +203,15 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(directory.Rows.Count, result.FinalCount);
         Assert.Equal(directory.Rows.Count, result.MembersWritten);
         Assert.True(directory.Actual.SetEquals(directory.Rows.Select(r => r.Guid)));
-        Assert.Equal(boundary == "between-batches" ? 2 : 1, directory.Writes.Count(write => write == "add") - (boundary == "add-retry" ? 1 : 0));
-        Assert.Equal(1, directory.Writes.Count(write => write == "remove"));
-        Assert.True(directory.Writes.LastIndexOf("add") < directory.Writes.IndexOf("remove"));
+        Assert.Equal(boundary == "clear-retry" ? 2 : 1, directory.Writes.Count(write => write == "clear"));
+        Assert.Equal(boundary is "between-batches" or "add-retry" ? 2 : 1, directory.Writes.Count(write => write == "add"));
+        Assert.True(directory.Writes.LastIndexOf("clear") < directory.Writes.IndexOf("add"));
         fixture.AssertAudit(null, result.Outcome, true);
         fixture.AssertNotification(row.Message!, result.Outcome, true);
     }
 
     [Fact]
-    public async Task C2TheServiceConsultsAuthorizationExactlyOnce_AfterPreparation_BeforeTheFirstWrite()
+    public async Task C2TheServiceConsultsAuthorizationExactlyOnce_AfterPreparation_BeforeTheClear()
     {
         using var fixture = new Fixture();
         var directory = new C2Directory(2001);
@@ -226,8 +228,8 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(1, directory.Calls.Count(call => call == "authorization"));
         var gate = directory.Calls.IndexOf("authorization");
         Assert.True(gate > directory.Calls.IndexOf("primary"));
-        Assert.True(gate < directory.Calls.IndexOf("add"));
-        Assert.Equal(["add", "add", "remove"], directory.Writes);
+        Assert.True(gate < directory.Calls.IndexOf("clear"));
+        Assert.Equal(["clear", "add", "add"], directory.Writes);
     }
 
     [Fact]
@@ -265,7 +267,7 @@ public sealed partial class Comms10kRefusalTests
         var error = Assert.Throws<InvalidOperationException>(() =>
         {
             if (add) Comms10kService.AddMemberBatch(ps, credential, target, [PersonGuid], denied);
-            else Comms10kService.RemoveMemberBatch(ps, credential, target, [OtherGuid], denied);
+            else Comms10kService.ClearMembers(ps, credential, target, denied);
         });
         Assert.Equal(C2Disabled, error.Message);
         Assert.Empty(ps.Commands.Commands);
@@ -481,20 +483,22 @@ public sealed partial class Comms10kRefusalTests
         public List<string> Calls { get; } = [];
         public List<string> Writes { get; } = [];
         public Action<string>? OnStep { get; set; }
+        public bool FailClearOnce { get; set; }
         public bool FailAddOnce { get; set; }
         public bool FailReadback { get; set; }
         public void Record(string step) { Calls.Add(step); OnStep?.Invoke(step); }
         public void Read(bool membership)
         {
-            var readback = Writes.Count > 0;
+            var readback = Writes.Contains("clear");
             Record(readback ? "readback" : membership ? "preflight-membership" : "target-reread");
             if (readback && FailReadback) throw new InvalidOperationException("Read-back unavailable.");
         }
-        public void Remove(string[] values)
+        public void Clear()
         {
-            Writes.Add("remove");
-            Record("remove");
-            Actual.ExceptWith(values.Select(value => Guid.Parse(value[6..^1])));
+            Writes.Add("clear");
+            Record("clear");
+            if (FailClearOnce) { FailClearOnce = false; throw new AdException(); }
+            Actual.Clear();
         }
         public void Add(string[] values)
         {
@@ -521,8 +525,8 @@ public sealed partial class Comms10kRefusalTests
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Set-ADGroup", """
                 [CmdletBinding()]
-                param($Identity, [hashtable] $Remove, [hashtable] $Add, [pscredential] $Credential)
-                if ($PSBoundParameters.ContainsKey('Remove')) { $global:C2Directory.Remove([string[]] $Remove['member']) }
+                param($Identity, [string] $Clear, [hashtable] $Add, [pscredential] $Credential)
+                if ($PSBoundParameters.ContainsKey('Clear')) { $global:C2Directory.Clear() }
                 else { $global:C2Directory.Add([string[]] $Add['member']) }
                 """));
             State.Commands.Add(new SessionStateFunctionEntry("Get-ADObject", """

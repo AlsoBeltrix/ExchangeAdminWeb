@@ -378,22 +378,19 @@ Dedicated bulk member replacement for broadcast distribution lists.
 - CSV upload of new member list
 - Resolves all entries before applying changes
 - Confirmation step stating the number of members the list will be set to. Not an
-  add/remove diff: the current membership is read only by the job, immediately before it
-  writes, so no removal count exists at confirmation time (the job's log records it)
-- **Add first, then remove, then read back** (sweep-d item 19). The directory refuses a
-  single-operation swap at this module's size, so the job reads the current `member`
-  attribute, adds the file's members who are not already on the list in batches of 2,000,
-  and only after every add has succeeded removes, in batches, the members the file does not
-  name. Members on the list and in the file are not written at all. It reports from a
-  read-back of what the group actually holds -- never from which batches were believed to
-  have run. **The list is never emptied:** if an add fails the run stops before any removal,
-  so everyone who was on the list is still on it (when the read-back shows the list exactly
-  as it was, the job reports "refused before any change" and names the failed batch and the
-  error); if a removal fails, everyone the file names is on the list along with some it does
-  not. Either way the module reports the state explicitly, and re-running the same CSV
-  repairs it. The cost: a full swap to a disjoint list takes about 53 seconds at ten
-  thousand members (the list briefly holds both), against seconds when most members stay.
-  Access is checked once, immediately before the first write, and the run then goes to
+  add/remove diff: the write never reads the prior membership, so no removal count
+  exists to show
+- **Clear, then fill, then read back.** The directory refuses a single-operation swap at
+  this module's size, so the write empties the `member` attribute, adds the resolved list
+  in batches of 2,000, and reports from a read-back of what the group actually holds --
+  never from which batches were believed to have run. **This gives up atomicity:** the
+  list is briefly empty and then partial during the sequence (about eight seconds at ten
+  thousand members), and a failure in that window leaves it empty or partial until a
+  re-run. The module reports that state explicitly rather than as a generic failure (a
+  failed add names the batch and the error), and re-running the same CSV repairs it. The
+  order was briefly add-first and is back to clear-then-fill by owner ruling 2026-11-06:
+  add-first was measured seven times slower on a full swap.
+  Access is checked once, immediately before the clear, and the run then goes to
   completion; a permission removed mid-run applies to the next run (sweep-d item 20).
   **Replaces are not serialised** (owner ruling 2026-09-30): two run at the
   same time on the same group can interleave and leave the list holding neither uploaded
@@ -408,7 +405,7 @@ Dedicated bulk member replacement for broadcast distribution lists.
   job may contain failures or no recorded stages. Missing AD credentials do not hide history;
   current Comms-10k permission and enablement still gate access.
 - Request cancellation of your queued/running jobs or delete your finished job records.
-  Cancellation cannot undo or abort an in-flight add/remove. Deleting a record retains its
+  Cancellation cannot undo or abort an in-flight clear/refill. Deleting a record retains its
   audit history; job controls are scoped to your full signed-in identity and are audited.
 - Section access key: `Comms10k`
 

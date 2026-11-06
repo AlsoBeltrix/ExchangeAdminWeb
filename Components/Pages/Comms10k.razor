@@ -106,7 +106,7 @@
                     <button class="btn btn-outline-secondary btn-sm" @onclick="PreviousJobsPage" disabled="@(jobsBusy || historyPage == 0)">Newer</button>
                     <button class="btn btn-outline-secondary btn-sm" @onclick="NextJobsPage" disabled="@(jobsBusy || !hasMoreHistory)">Older</button>
                 </div>
-                <p class="text-muted mt-2 mb-0"><small>Cancellation stops before a later stage. It cannot undo or abort an in-flight membership add/remove.</small></p>
+                <p class="text-muted mt-2 mb-0"><small>Cancellation stops before a later stage. It cannot undo or abort an in-flight membership clear/refill.</small></p>
                 @if (detailsJob is not null)
                 {
                     <div class="border-top mt-3 pt-2">
@@ -816,9 +816,9 @@
             // This is the app's broadest exemption and it is scoped to this one module: it is
             // BROADER than the Self-Service Groups exception, which drops the target check only
             // and keeps its member check. No other module may read itself into it.
-            // ENQUEUED, NOT EXECUTED HERE. The write is NOT atomic: it adds the file's new members in
-            // batches, then removes the members the file does not name (sweep-d item 19), so for
-            // several seconds the list holds a mix of the old and new members. Run from this
+            // The write is NOT atomic: it clears the member attribute and refills in batches,
+            // ENQUEUED, NOT EXECUTED HERE. The write clears the member attribute and refills in
+            // batches, so for several seconds the list is empty and then partial. Run from this
             // page, an operator who navigated away mid-write would have the result land nowhere -
             // and a progress bar over work whose answer gets discarded is, in the owner's words,
             // "just protracted doom". On the runner the result is durable and leaving is safe.
@@ -935,7 +935,7 @@
     {
         Comms10kOutcome.Succeeded => "Replaced.",
         Comms10kOutcome.SucceededWithExceptions => "Replaced, with members that could not be removed.",
-        Comms10kOutcome.PartlyApplied => "The list does not match the file - re-run the same file.",
+        Comms10kOutcome.PartlyApplied => "The list is INCOMPLETE - re-run the same file.",
         Comms10kOutcome.CouldNotConfirm => "The result could not be confirmed - check the group.",
         _ => "Nothing was changed."
     };
@@ -1155,7 +1155,7 @@
                     : BulkJobs.CancelOwnedJob(Comms10kReplaceProcessor.ModuleName, Comms10kReplaceJobPayload.JobType, actor, jobId, out job);
             jobsActionSucceeded = succeeded;
             jobsActionMessage = !succeeded ? JobRefusal : delete ? "Job record deleted. The audit record is kept."
-                : "Cancellation requested. It cannot undo or abort an in-flight membership add/remove.";
+                : "Cancellation requested. It cannot undo or abort an in-flight membership clear/refill.";
             if (succeeded && delete && detailsJob?.Id == jobId)
             {
                 detailsJob = null;
@@ -1222,8 +1222,8 @@
     private static string JobStageName(int rowIndex) => rowIndex switch { 0 => "Resolve", 1 => "Replace", _ => $"Stage {rowIndex}" };
     private static string JobOutcomeSummary(BulkJob job) => job.Status switch
     {
-        BulkJobStatus.Interrupted => "Interrupted. The group may hold a mix of the old and new members; check the group and the recorded stages before recovery.",
-        BulkJobStatus.Cancelled => "Cancelled. Cancellation cannot undo an in-flight add/remove. Read the recorded stages before recovery.",
+        BulkJobStatus.Interrupted => "Interrupted. The group may be empty or partial; check the group and the recorded stages before recovery.",
+        BulkJobStatus.Cancelled => "Cancelled. Cancellation cannot undo an in-flight clear/refill. Read the recorded stages before recovery.",
         BulkJobStatus.Completed when job.ProcessedRows == 0 => "Completed without recorded stages. No successful replace is established; read the job message.",
         BulkJobStatus.Completed when job.PartialCount > 0 => "Completed with a partial or unconfirmed result. Read the Replace stage for the directory outcome and counts.",
         BulkJobStatus.Completed when job.FailedCount > 0 => "Completed with failed stages. Read the recorded refusal or failure before resubmitting.",
