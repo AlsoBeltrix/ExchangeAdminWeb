@@ -197,7 +197,9 @@ internal sealed class SelfGrantDirectory : IDisposable
         }
     }
 
-    // A null credential is the session's own identity; any other is passed as -Credential (aud-a69).
+    // A null credential is the session's own identity; any other is passed as -Credential (aud-a69). Every caller searches the
+    // forest at its global catalog, so the base is stated empty (rev-a3, rev-b1, rev-c1): with none the AD cmdlets start at the
+    // catalog's own domain partition, and a grantee in another tree would read as no row - which lets the grant through.
     private List<SelfGrantDirectoryObject> Search(string filter, string server, PSCredential? credential)
     {
         _ps.Commands.Clear();
@@ -207,6 +209,7 @@ internal sealed class SelfGrantDirectory : IDisposable
             var command = _ps.AddCommand("Get-ADObject")
                .AddParameter("LDAPFilter", filter)
                .AddParameter("Server", server)
+               .AddParameter("SearchBase", string.Empty)
                .AddParameter("Properties", Properties);
             if (credential is not null)
                 command.AddParameter("Credential", credential);
@@ -220,8 +223,9 @@ internal sealed class SelfGrantDirectory : IDisposable
 
             return rows.Select(ToObject).ToList();
         }
-        catch
+        catch (Exception ex)
         {
+            DirectoryCredentialRejection.Observe(ex); // rev-a2: a rotated secret, for the check to fetch afresh
             // kd-88: a read that failed throws the warm session away rather than lending it again.
             _session.Fail();
             throw;

@@ -241,7 +241,7 @@ public class LicensingUpdatesService
 
                 ps.AddCommand("Get-ADUser")
                   .AddParameter("LDAPFilter", filter)
-                  .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID", TargetAttribute })
+                  .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID", "objectSid", TargetAttribute })
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
                 var users = ps.Invoke();
@@ -267,7 +267,8 @@ public class LicensingUpdatesService
                     PrimarySmtpAddress: adUser.Properties["mail"]?.Value?.ToString(),
                     DistinguishedName: adUser.Properties["DistinguishedName"]?.Value?.ToString(),
                     ObjectGuid: adUser.Properties["ObjectGUID"]?.Value?.ToString(),
-                    EntraObjectId: null);
+                    EntraObjectId: null,
+                    ObjectSid: ProtectedPrincipalService.ObjectSidOf(adUser));
 
                 var currentValue = adUser.Properties[TargetAttribute]?.Value?.ToString();
                 rows.Add(new(identity, principal, currentValue, licenseType, null));

@@ -985,7 +985,7 @@ public class SelfServiceGroupService
 
         ps.AddCommand("Get-ADObject")
           .AddParameter("Identity", memberObjectGuid)
-          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
+          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID", "objectSid" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         // Bind the GUID lookup to the domain that owns the listed row, exactly as the listing
@@ -1019,7 +1019,8 @@ public class SelfServiceGroupService
             PrimarySmtpAddress: o.Properties["mail"]?.Value?.ToString(),
             DistinguishedName: dn,
             ObjectGuid: o.Properties["ObjectGUID"]?.Value?.ToString(),
-            EntraObjectId: null);
+            EntraObjectId: null,
+            ObjectSid: ProtectedPrincipalService.ObjectSidOf(o));
     }
 
     /// <summary>
@@ -1144,7 +1145,7 @@ public class SelfServiceGroupService
         var filter = AdOwnershipFilter.BuildUserByIdentityFilter(memberIdentity.Trim());
         ps.AddCommand("Get-ADUser")
           .AddParameter("LDAPFilter", filter)
-          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
+          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID", "objectSid" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var users = ps.Invoke();
@@ -1165,7 +1166,8 @@ public class SelfServiceGroupService
             PrimarySmtpAddress: u.Properties["mail"]?.Value?.ToString(),
             DistinguishedName: dn,
             ObjectGuid: u.Properties["ObjectGUID"]?.Value?.ToString(),
-            EntraObjectId: null);
+            EntraObjectId: null,
+            ObjectSid: ProtectedPrincipalService.ObjectSidOf(u));
     }
 
     /// <summary>

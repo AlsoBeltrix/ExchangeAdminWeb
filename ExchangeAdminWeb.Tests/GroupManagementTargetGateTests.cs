@@ -176,7 +176,7 @@ public sealed class GroupManagementTargetGateTests : IDisposable
         var body = text[start..end];
 
         var iRead = body.IndexOf("AddCommand(\"Get-ADGroup\")", StringComparison.Ordinal);
-        var iGate = body.IndexOf("ProtectedPrincipalServicing.ForWriteTarget(", StringComparison.Ordinal);
+        var iGate = body.IndexOf("ProtectedPrincipalServicing.ForWriteTargetAsync(", StringComparison.Ordinal);
         var iDenial = body.IndexOf("result.Error = targetGate.FailReason", StringComparison.Ordinal);
         var iProject = body.IndexOf("MemberDnsOf(groupWithMembers)", StringComparison.Ordinal);
 
@@ -251,7 +251,7 @@ public sealed class GroupManagementTargetGateTests : IDisposable
 
             var iMemberGate = body.IndexOf("return resolvedGate.Denial;", StringComparison.Ordinal);
             var iGroupResolve = body.IndexOf("ResolveGroupForWrite(creds.Value, samAccountName, groupIdentity)", StringComparison.Ordinal);
-            var iTargetGate = body.IndexOf("ProtectedPrincipalServicing.ForWriteTarget(", StringComparison.Ordinal);
+            var iTargetGate = body.IndexOf("ProtectedPrincipalServicing.ForWriteTargetAsync(", StringComparison.Ordinal);
             var iRefusal = body.IndexOf("if (!targetGate.Allowed)", StringComparison.Ordinal);
             var iSnapshotDn = body.IndexOf("var resolvedGroupDn = resolvedGroup.Principal!.DistinguishedName!;", StringComparison.Ordinal);
             var iWrite = body.IndexOf(writeCmd, StringComparison.Ordinal);

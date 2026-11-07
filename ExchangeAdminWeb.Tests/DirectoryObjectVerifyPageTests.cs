@@ -142,4 +142,76 @@ public sealed class DirectoryObjectVerifyPageTests : IDisposable
         }
         Assert.Contains("One ignore changes a protection check", AdminSettingsPage.VerifyPaneNote, StringComparison.Ordinal);
     }
+
+    // ----- rev-c3: an edit made while Verify or an action awaits is the admin's -----
+
+    /// <summary>A directory that answers only when the test lets it, and says when it was asked.</summary>
+    private sealed class GatedAccess : IVerifyDirectoryAccess
+    {
+        public TaskCompletionSource Asked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Answer { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<VerifyDirectoryRun<T>> RunAsync<T>(Func<IVerifyDirectory, T> reads, CancellationToken cancellationToken)
+        {
+            Asked.TrySetResult();
+            await Answer.Task;
+            return VerifyDirectoryRun<T>.NotRun("held by the test");
+        }
+    }
+
+    private static void SetVerifier(AdminSettingsPage page, IVerifyDirectoryAccess access) =>
+        typeof(AdminSettingsPage).GetProperty("Verifier", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(page, new DirectoryObjectVerifier(access, [new ProtectedPrincipalVerifyAdapter()],
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<DirectoryObjectVerifier>.Instance));
+
+    [Fact]
+    public async Task APatternAddedWhileVerifyReads_IsKept_AndTheFindingsAreNotShownAgainstIt()
+    {
+        var page = OpenWith(ProtectedPrincipalData.Empty with { Groups = [GroupDn], GroupIds = [GroupRow] });
+        var access = new GatedAccess();
+        SetVerifier(page, access);
+
+        var press = _h.RunAsync(page, "VerifyProtectedAsync");
+        await access.Asked.Task;
+        // The pane's Add stays enabled while Verify reads: the admin adds a pattern.
+        await _h.OnDispatcherAsync(() => SettingsPageHarness.SetField(page, typeof(AdminSettingsPage), "ppNewPattern", "adm-*"));
+        await _h.RunAsync(page, "AddPpPattern");
+        access.Answer.SetResult();
+        await press;
+
+        Assert.Equal(["adm-*"], SettingsPageHarness.Field<List<string>>(page, typeof(AdminSettingsPage), "ppPatterns"));
+        Assert.Null(SettingsPageHarness.Field<VerifyReport?>(page, typeof(AdminSettingsPage), "ppVerifyReport"));
+        Assert.Contains("edited while Verify ran", Text(page));
+        Assert.Contains("Save or discard", Text(page));
+    }
+
+    [Fact]
+    public async Task AnEditMadeWhileAVerifyActionWrites_IsKept_AndThePaneIsNotReplacedWithTheWrittenRules()
+    {
+        var page = OpenWith(ProtectedPrincipalData.Empty with { Groups = [GroupDn], GroupIds = [GroupRow] });
+        var workset = Assert.IsType<ProtectedPrincipalVerifyWorkset>(_h.ProtectedPrincipals.ReadForVerify());
+        var acted = new VerifyItemResult(workset.Items.Single(i => i.RowKey == "group_sid"), VerifyFinding.Missing());
+        SettingsPageHarness.SetField(page, typeof(AdminSettingsPage), "ppVerifyReport", new VerifyReport(DateTimeOffset.UtcNow, [acted], []));
+        var written = new TaskCompletionSource<VerifyActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var asked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<ProtectedPrincipalVerifyActions, System.Security.Claims.ClaimsPrincipal, string, Task<VerifyActionResult>> act = (_, _, _) =>
+        {
+            asked.TrySetResult();
+            return written.Task;
+        };
+
+        var click = _h.RunAsync(page, "RunVerifyActionAsync", acted, act);
+        await asked.Task;
+        await _h.OnDispatcherAsync(() => SettingsPageHarness.SetField(page, typeof(AdminSettingsPage), "ppNewPattern", "adm-*"));
+        await _h.RunAsync(page, "AddPpPattern");
+        // The action's write landed: the group row is gone from the store's rules.
+        written.SetResult(new VerifyActionResult(true, "Removed.", new VerifyWriteOutcome(
+            VerifyWriteStatus.Written, null, ProtectedPrincipalData.Empty, "v2", null)));
+        await click;
+
+        Assert.Equal(["adm-*"], SettingsPageHarness.Field<List<string>>(page, typeof(AdminSettingsPage), "ppPatterns"));
+        Assert.Equal([GroupRow], SettingsPageHarness.Field<List<string>>(page, typeof(AdminSettingsPage), "ppGroupIds"));
+        Assert.Null(SettingsPageHarness.Field<VerifyReport?>(page, typeof(AdminSettingsPage), "ppVerifyReport"));
+        Assert.Contains("edited meanwhile", Text(page));
+    }
 }

@@ -18,9 +18,11 @@ namespace ExchangeAdminWeb.Services;
 /// <param name="ObjectSid">
 /// The Active Directory object's objectSid, canonical, when the resolution read it; null otherwise. Filled by
 /// <see cref="ProtectedPrincipalService"/>'s own AD resolution and by its binding of a synced Exchange recipient by SID.
-/// A <c>user_sid</c> protection row compares against it (docs/ProtectedPrincipalIdentifiers-Plan.md C.2); a target that
-/// does not carry one is compared by the row's label, as before the identifier rows existed, so a resolution that did not
-/// read it cannot drop a protection.
+/// A <c>user_sid</c> protection row compares against it (docs/ProtectedPrincipalIdentifiers-Plan.md C.2), and against nothing
+/// else: rev-b2, a row's label is never compared. Every on-premises target snapshot carries it (every caller that builds one
+/// from an AD read asks for <c>objectSid</c>); an on-premises target without it - a DN or a sAMAccountName and no SID - makes
+/// the check incomplete, refusing with <see cref="ProtectedPrincipalService.TargetSidNotRead"/>, while protected user rows
+/// exist. A target with no on-premises identity at all (cloud-only) cannot be a protected user row's object.
 /// </param>
 public sealed record ResolvedDirectoryPrincipal(
     string Source,
@@ -300,6 +302,32 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// change, a bulk file - the operation's one answer, its secret or its failure; outside one, a fetch of its own. A fetch
     /// that throws is a secret not retrieved, as the store's own failures already are.
     /// </summary>
+    /// <summary>
+    /// rev-a2. Runs one directory flow on the directory-read credential. When a read inside it was refused for the credential
+    /// itself - the secret rotated under the same Secret ID while the store's cache (<see cref="DelineaService"/>, five minutes
+    /// from retrieval) or this operation still held the old password - what was kept is dropped in both places and the flow
+    /// runs once more on a fresh fetch; its second answer is the flow's, whatever it is. A flow the directory did not reject
+    /// runs once.
+    /// </summary>
+    private async Task<T> WithDirectoryReadCredentialAsync<T>(int secretId,
+        Func<(string username, string password, string domain)?, Task<T>> flow)
+    {
+        using (var watch = DirectoryCredentialRejection.Begin())
+        {
+            var first = await flow(await DirectoryReadSecretAsync(secretId));
+            if (!watch.Rejected)
+                return first;
+        }
+
+        _logger.LogWarning("The directory rejected the protected-principal directory-read credential - fetching it afresh and reading once more");
+        DirectoryReadOperation.ForgetDirectoryReadSecret(secretId);
+        (DirectoryReadSecretInvalidate ?? _delineaService.Invalidate)(secretId);
+        return await flow(await DirectoryReadSecretAsync(secretId));
+    }
+
+    /// <summary>rev-a2. Test seam: what drops the store's kept credential for a Secret ID; null is the store's own.</summary>
+    internal Action<int>? DirectoryReadSecretInvalidate { get; set; }
+
     private async Task<(string username, string password, string domain)?> DirectoryReadSecretAsync(int secretId)
     {
         try
@@ -404,14 +432,15 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
 
         if (cfg != null)
         {
-            CheckDirectUserMatches(cfg, target, matchedRules);
+            var sidProblems = new List<string>();
+            CheckDirectUserMatches(cfg, target, matchedRules, sidProblems);
             CheckPatternMatches(cfg, target, matchedRules);
-            CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: false);
 
             // docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3: a user, group or OU row stored by name only is never
             // resolved or matched by name. It cannot be answered, so the check is incomplete, naming it, and refuses unless
             // another rule matched - forgetting db convert-identifiers fails closed and says so.
             var notConverted = NotConvertedProblems(cfg);
+            notConverted.AddRange(sidProblems); // rev-b2: refuses as an unconverted row does, unless another rule matched
 
             // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: group_sid rows (and legacy Group rows stored as a SID) join the
             // group check as SIDs, and ou_guid rows are compared by the objectGUIDs of the target's containers - both read in
@@ -458,8 +487,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         {
             return session.PowerShell.Invoke();
         }
-        catch
+        catch (Exception ex)
         {
+            DirectoryCredentialRejection.Observe(ex); // rev-a2: a rotated secret, for the flow to fetch afresh
             session.Fail();
             throw;
         }
@@ -491,10 +521,11 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// ExcludedUsers list is not evaluated either: it is a module-scoped user list, not one of
     /// the four rule kinds.
     ///
-    /// Synchronous and directory-free by construction: every rule evaluated here keys on the
-    /// resolved snapshot the caller supplies (pgwt-2: a FULL snapshot, never a bare DN), so an
-    /// unavailable directory cannot turn this check into a silent allow. Fails closed on a
-    /// config load error (AC5). virtual as a test seam, like CheckAsync.
+    /// Synchronous and directory-free: every rule evaluated here keys on the resolved snapshot the caller supplies (pgwt-2:
+    /// a FULL snapshot, never a bare DN), so an unavailable directory cannot turn this part into a silent allow. Fails closed
+    /// on a config load error (AC5). virtual as a test seam, like CheckAsync. rev-b3: the OrganizationalUnits rule is NOT
+    /// evaluated here - an OU is compared by the objectGUIDs of the target's containers, which only the directory holds -
+    /// so every write gate calls <see cref="CheckWriteTargetAsync"/>, which adds it.
     /// </remarks>
     public virtual ProtectedPrincipalResult CheckWriteTarget(ResolvedDirectoryPrincipal target)
     {
@@ -507,16 +538,15 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
 
         if (cfg != null)
         {
-            CheckDirectUserMatches(cfg, target, matchedRules);
+            var sidProblems = new List<string>();
+            CheckDirectUserMatches(cfg, target, matchedRules, sidProblems);
             CheckPatternMatches(cfg, target, matchedRules);
-            // Directory-free, so an ou_guid row is compared here by its label - the DN suffix its companion carries - as
-            // this check compared that OU before the identifier rows existed: no protection it gave is lost.
-            CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: true);
             CheckGroupTargetMatches(cfg, target, matchedRules);
 
             // K.3 point 3: a user or OU row stored by name only is never compared by its text; with no rule matched, the check
             // cannot say the target is not protected, and refuses naming the rows (the Groups rule is not evaluated here).
             var notConverted = NotConvertedProblems(cfg, includeGroups: false);
+            notConverted.AddRange(sidProblems); // rev-b2
             if (notConverted.Count > 0 && matchedRules.Count == 0)
                 return ProtectedPrincipalResult.Failed(IncompleteReason(notConverted));
         }
@@ -527,6 +557,106 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 matchedRules.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
 
         return ProtectedPrincipalResult.NotProtected();
+    }
+
+    /// <summary>
+    /// rev-b3. The write-target check in full: <see cref="CheckWriteTarget"/>'s directory-free rules, and the
+    /// OrganizationalUnits rule compared as the principal check compares it - by the objectGUIDs of the target group's
+    /// containers, read once by DN in its own domain under the directory-read credential (<see cref="ProtectedOuMembership"/>),
+    /// so an OU protected by objectGUID still protects its groups after it is renamed or moved. A read that cannot be
+    /// completed refuses, naming why, unless another rule matched. virtual as a test seam.
+    /// </summary>
+    public virtual async Task<ProtectedPrincipalResult> CheckWriteTargetAsync(ResolvedDirectoryPrincipal target)
+    {
+        var first = CheckWriteTarget(target);
+        if (first.CheckFailed)
+            return first;
+
+        var (cfg, _, loadError) = LoadEffectiveConfig();
+        if (loadError != null)
+            return ProtectedPrincipalResult.Failed(loadError);
+        var ouIds = cfg is null ? [] : RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid).Ids;
+        if (ouIds.Count == 0)
+            return first;
+
+        string? failReason;
+        IReadOnlyList<string> ouMatches;
+        if (string.IsNullOrWhiteSpace(target.DistinguishedName))
+            (ouMatches, failReason) = ([], IncompleteReason([WriteTargetContainersNotRead]));
+        else
+        {
+            using var check = BeginCheck(target.DistinguishedName);
+            (ouMatches, failReason) = await CheckOuGuidsAsync(ouIds, target.DistinguishedName);
+        }
+
+        var rules = first.MatchedRules.Concat(ouMatches).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (rules.Length > 0)
+            return ProtectedPrincipalResult.Protected("Target group is protected against membership changes.", rules);
+        return failReason is null ? ProtectedPrincipalResult.NotProtected() : ProtectedPrincipalResult.Failed(failReason);
+    }
+
+    /// <summary>rev-b3. The problem a write target whose containers could not be read for the protected OUs is refused with.</summary>
+    internal const string WriteTargetContainersNotRead = "the containers the target is in could not be read for the protected OUs";
+
+    // rev-b3. The ou_guid rows matched by the containers of targetDn, read in a warm session under the directory-read
+    // credential; a reason when the read could not be completed (no credential, the throttle, a failed or partial read).
+    private async Task<(IReadOnlyList<string> Matches, string? FailReason)> CheckOuGuidsAsync(
+        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, string targetDn)
+    {
+        if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
+            return ([], "Directory-read credential recently failed. Retry shortly or check configuration.");
+
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId == null)
+            return ([], "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
+
+        return await WithDirectoryReadCredentialAsync(secretId.Value, ReadWith);
+
+        async Task<(IReadOnlyList<string> Matches, string? FailReason)> ReadWith((string username, string password, string domain)? creds)
+        {
+            if (creds == null)
+            {
+                _lastCredentialFailure = DateTime.UtcNow;
+                return ([], "Protected-principal directory-read credential is unavailable. Contact your administrator.");
+            }
+
+            try
+            {
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
+                    return ([], "AD service is busy. Please try again.");
+                try
+                {
+                    return await Task.Run(() =>
+                    {
+                        using var session = DirectorySessions.Lease(SessionWait);
+                        try
+                        {
+                            var directory = new PowerShellProtectedGroupDirectory(
+                                session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
+                            var (matches, incomplete) = ProtectedOuMembership.Evaluate(ouIds, targetDn, directory, _logger);
+                            if (incomplete)
+                                session.Fail();
+                            return (matches, incomplete ? IncompleteReason([WriteTargetContainersNotRead]) : (string?)null);
+                        }
+                        catch (Exception ex)
+                        {
+                            DirectoryCredentialRejection.Observe(ex);
+                            session.Fail();
+                            throw;
+                        }
+                    });
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "The protected-OU check of write target {Target} failed", targetDn);
+                return ([], IncompleteReason([WriteTargetContainersNotRead]));
+            }
+        }
     }
 
     private static void CheckGroupTargetMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
@@ -648,41 +778,46 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (null, ResolutionStatus.Unavailable);
         }
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogWarning("Failed to retrieve directory-read credential for principal resolution");
-            return (null, ResolutionStatus.Unavailable);
-        }
+        // kd-88: the operation's one fetch; rev-a2: once more when the directory rejected it.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, ResolveWith);
 
-        try
+        async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            if (creds == null)
             {
-                _logger.LogWarning("AD throttle timeout during principal resolution for {Identity}", identity);
+                _lastCredentialFailure = DateTime.UtcNow;
+                _logger.LogWarning("Failed to retrieve directory-read credential for principal resolution");
                 return (null, ResolutionStatus.Unavailable);
             }
 
             try
             {
-                var result = await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
-                return result != null ? (result, ResolutionStatus.Resolved) : (null, ResolutionStatus.NotFound);
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+                {
+                    _logger.LogWarning("AD throttle timeout during principal resolution for {Identity}", identity);
+                    return (null, ResolutionStatus.Unavailable);
+                }
+
+                try
+                {
+                    var result = await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    return result != null ? (result, ResolutionStatus.Resolved) : (null, ResolutionStatus.NotFound);
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
             }
-            finally
+            catch (InvalidOperationException ex) when (ex.Message.Contains("Ambiguous", StringComparison.OrdinalIgnoreCase))
             {
-                _adThrottle.Release();
+                _logger.LogWarning(ex, "Ambiguous resolution for {Identity} - blocking", identity);
+                return (null, ResolutionStatus.Ambiguous);
             }
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Ambiguous", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning(ex, "Ambiguous resolution for {Identity} - blocking", identity);
-            return (null, ResolutionStatus.Ambiguous);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to resolve directory principal for {Identity}", identity);
-            return (null, ResolutionStatus.Unavailable);
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resolve directory principal for {Identity}", identity);
+                return (null, ResolutionStatus.Unavailable);
+            }
         }
     }
 
@@ -755,21 +890,28 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 // carries a DN and the group / OU / pattern rules apply normally.
                 // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: when the SID source reports the recipient's on-premises
                 // SID, the principal is the one account holding it, read at the global catalog (steps 3-4), not whatever
-                // AD holds under the address. A source that reports none, or cannot be asked, leaves the address
-                // re-resolve below exactly as it was: this entry point is not re-ordered, and its 13 callers keep working
-                // while the Graph credential is unset.
-                if (OnPremisesSidSource is not null)
+                // AD holds under the address. rev-b4: only a source that ANSWERED with no SID (NoneReported) leaves the
+                // address re-resolve below; one that could not be asked - Graph unreachable, the Graph Directory Read
+                // Credential blank, no source at all - is Unavailable, which every caller refuses (C.2 step 6, as
+                // BindSyncedAsync reads it). Re-resolving by address then could bind another local account that carries
+                // the canonical address while Exchange resolved the alias to a protected one.
+                var sid = await ReadOnPremisesSidAsync(identity, recipient);
+                if (sid.Outcome == OnPremisesSidOutcome.NotAnswered)
                 {
-                    var sid = await ReadOnPremisesSidAsync(identity, recipient);
-                    if (sid.Outcome == OnPremisesSidOutcome.Reported)
-                    {
-                        var (bySid, bySidStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
-                        // ExchangeGuid stays ResolveExchangeTargetAsync's alone (aud-a2d, ValidatedMailbox.From).
-                        return bySidStatus == ResolutionStatus.Resolved && bySid is not null
-                            ? (bySid with { ExchangeGuid = null }, ResolutionStatus.Resolved)
-                            : (null, bySidStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : bySidStatus);
-                    }
+                    _logger.LogWarning(
+                        "{Identity} is an alias of a directory-synced recipient whose on-premises SID could not be read - failing closed",
+                        identity);
+                    return (null, ResolutionStatus.Unavailable);
                 }
+                if (sid.Outcome == OnPremisesSidOutcome.Reported)
+                {
+                    var (bySid, bySidStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
+                    // ExchangeGuid stays ResolveExchangeTargetAsync's alone (aud-a2d, ValidatedMailbox.From).
+                    return bySidStatus == ResolutionStatus.Resolved && bySid is not null
+                        ? (bySid with { ExchangeGuid = null }, ResolutionStatus.Resolved)
+                        : (null, bySidStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : bySidStatus);
+                }
+                _logger.LogWarning("no on-premises SID reported for {Identity}; bound by address", identity);
 
                 _logger.LogInformation(
                     "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
@@ -806,8 +948,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         // Cloud-only: no on-premises object, under this or any address. Group and OU rules are
         // evaluated from an on-prem DN, which this principal does not have and cannot have - a
         // cloud-only object cannot be a member of an on-prem group. Those rules are therefore not
-        // "skipped", they are inapplicable. The user rows still apply and are what must protect
-        // such a principal; the SamAccountName patterns cannot match either, for the same reason.
+        // "skipped", they are inapplicable. So are the user rows since rev-b2: each is an on-premises
+        // SID, compared by SID alone (the Constitution: a cloud-only principal cannot be protected);
+        // the SamAccountName patterns cannot match either, for the same reason.
         // See docs/ProjectConstitution.md (Protected Principals) and
         // docs/ProtectedPrincipalResolution-Plan.md D4.
         //
@@ -1132,38 +1275,43 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (false, []);
         }
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogWarning("Failed to retrieve directory-read credential for the read by SID");
-            return (false, []);
-        }
+        // kd-88: the operation's one fetch; rev-a2: once more when the directory rejected it.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, ReadWith);
 
-        try
+        async Task<(bool answered, IReadOnlyList<DirectorySidObject> found)> ReadWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            if (creds == null)
             {
-                _logger.LogWarning("AD throttle timeout during the read by SID");
+                _lastCredentialFailure = DateTime.UtcNow;
+                _logger.LogWarning("Failed to retrieve directory-read credential for the read by SID");
                 return (false, []);
             }
 
             try
             {
-                var found = await Task.Run(() => FindObjectsBySidAtCatalog(
-                    sid, creds.Value.username, creds.Value.password, creds.Value.domain));
-                return (true, found);
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+                {
+                    _logger.LogWarning("AD throttle timeout during the read by SID");
+                    return (false, []);
+                }
+
+                try
+                {
+                    var found = await Task.Run(() => FindObjectsBySidAtCatalog(
+                        sid, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    return (true, found);
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                _adThrottle.Release();
+                Volatile.Write(ref _globalCatalog, null);
+                _logger.LogWarning(ex, "The read by SID at the global catalog failed");
+                return (false, []);
             }
-        }
-        catch (Exception ex)
-        {
-            Volatile.Write(ref _globalCatalog, null);
-            _logger.LogWarning(ex, "The read by SID at the global catalog failed");
-            return (false, []);
         }
     }
 
@@ -1206,55 +1354,60 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         if (secretId == null)
             return VerifyDirectoryRun<T>.NotRun("the Directory Read Credential (Delinea Secret ID) is not configured");
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value);
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            return VerifyDirectoryRun<T>.NotRun("the directory-read credential could not be retrieved");
-        }
+        // rev-a2: once more on a fresh fetch when the directory rejected the credential.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, RunWith);
 
-        try
+        async Task<VerifyDirectoryRun<T>> RunWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
-                return VerifyDirectoryRun<T>.NotRun("the directory was busy (throttle timeout)");
+            if (creds == null)
+            {
+                _lastCredentialFailure = DateTime.UtcNow;
+                return VerifyDirectoryRun<T>.NotRun("the directory-read credential could not be retrieved");
+            }
 
             try
             {
-                return await Task.Run(() =>
+                if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
+                    return VerifyDirectoryRun<T>.NotRun("the directory was busy (throttle timeout)");
+
+                try
                 {
-                    using var session = DirectorySessions.Lease(SessionWait);
-                    var directory = new VerifySessionDirectory(new PowerShellProtectedGroupDirectory(
-                        session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain),
-                        Volatile.Read(ref _globalCatalog)));
-                    try
+                    return await Task.Run(() =>
                     {
-                        var result = reads(directory);
-                        Volatile.Write(ref _globalCatalog, directory.Inner.KnownGlobalCatalog);
-                        return VerifyDirectoryRun<T>.Ran(result);
-                    }
-                    finally
-                    {
-                        if (directory.Faulted)
+                        using var session = DirectorySessions.Lease(SessionWait);
+                        var directory = new VerifySessionDirectory(new PowerShellProtectedGroupDirectory(
+                            session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain),
+                            Volatile.Read(ref _globalCatalog)));
+                        try
                         {
-                            session.Fail();
-                            Volatile.Write(ref _globalCatalog, null);
+                            var result = reads(directory);
+                            Volatile.Write(ref _globalCatalog, directory.Inner.KnownGlobalCatalog);
+                            return VerifyDirectoryRun<T>.Ran(result);
                         }
-                    }
-                }, cancellationToken);
+                        finally
+                        {
+                            if (directory.Faulted)
+                            {
+                                session.Fail();
+                                Volatile.Write(ref _globalCatalog, null);
+                            }
+                        }
+                    }, cancellationToken);
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
             }
-            finally
+            catch (OperationCanceledException)
             {
-                _adThrottle.Release();
+                throw;
             }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "The Verify directory session could not be used");
-            return VerifyDirectoryRun<T>.NotRun($"the directory could not be read: {ex.Message}");
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "The Verify directory session could not be used");
+                return VerifyDirectoryRun<T>.NotRun($"the directory could not be read: {ex.Message}");
+            }
         }
     }
 
@@ -1381,13 +1534,13 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// </summary>
     private ResolvedDirectoryPrincipal CloudOnlyPrincipal(string identity, ResolvedRecipient recipient)
     {
-        // CheckOuMatches and CheckTransitiveGroupMembership both degrade to "no match" on a null
-        // DN without raising a failure, so this is logged rather than left silent: an operator
+        // The group, OU and user checks all degrade to "no match" for a target with no on-premises
+        // object without raising a failure, so this is logged rather than left silent: an operator
         // reading the audit trail has to be able to see which rules could not be evaluated.
         _logger.LogInformation(
             "Exchange resolved {Identity} as a cloud-only recipient (canonical {Canonical}) with no "
-            + "on-premises object - group, OU and SamAccountName-pattern rules were NOT evaluated; "
-            + "only protected user rows apply",
+            + "on-premises object - group, OU and SamAccountName-pattern rules were NOT evaluated, "
+            + "and no protected user row (an on-premises SID) can name it",
             identity, recipient.PrimarySmtpAddress);
 
         return new ResolvedDirectoryPrincipal(
@@ -1921,20 +2074,47 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         return entries;
     }
 
-    private static void CheckDirectUserMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
+    /// <summary>
+    /// rev-b2. The problem an on-premises target without its objectSid makes the check incomplete with, while protected user
+    /// rows exist: the rows are compared by SID alone, so without it the check cannot say the target is none of them.
+    /// </summary>
+    internal const string TargetSidNotRead =
+        "the target's objectSid was not read, so it cannot be compared with the protected user rows";
+
+    /// <summary>
+    /// rev-b2. The objectSid an AD read returned for <paramref name="row"/>, canonical, or null - for the snapshot a caller builds
+    /// for the check from its own read (which must ask for <c>objectSid</c>).
+    /// </summary>
+    internal static string? ObjectSidOf(PSObject? row) =>
+        row is null ? null : ProtectedPrincipalIdEntry.CanonicalSid(AccountLockoutRemediationService.SidText(row.Properties["objectSid"]?.Value));
+
+    // An on-premises object: one the directory names by DN or sAMAccountName. A cloud-only target has neither (plan C.2).
+    private static bool IsOnPremisesTarget(ResolvedDirectoryPrincipal target) =>
+        !string.IsNullOrWhiteSpace(target.DistinguishedName) || !string.IsNullOrWhiteSpace(target.SamAccountName);
+
+    private static void CheckDirectUserMatches(
+        ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules, List<string> problems)
     {
         // A user_sid row is this object, compared by SID: another account carrying its address in mail or UPN is not it
-        // (plan C.2). A target whose resolution did not read a SID is compared by the row's label, as its companion was -
-        // the absence of an identifier on the TARGET is not evidence it is someone else. Legacy rows stored by name only are
-        // not compared at all (K.3): they are NotConvertedProblems.
+        // (plan C.2). rev-b2: and only by SID - a row's label is never compared, since a renamed protected user keeps its SID
+        // and loses its label. An on-premises target whose snapshot did not carry its SID cannot be compared, so the check is
+        // incomplete, named; a cloud-only target cannot be a row's object. Legacy rows stored by name only are not compared at
+        // all (K.3): they are NotConvertedProblems.
         var (_, _, ids) = RowsToEvaluate(cfg.Users, cfg.UserIds, ProtectedPrincipalIdEntry.CanonicalSid);
+        if (ids.Count == 0)
+            return;
+
         var targetSid = ProtectedPrincipalIdEntry.CanonicalSid(target.ObjectSid);
+        if (targetSid is null)
+        {
+            if (IsOnPremisesTarget(target))
+                problems.Add(TargetSidNotRead);
+            return;
+        }
+
         foreach (var id in ids)
         {
-            var matches = targetSid is not null
-                ? string.Equals(id.Identifier, targetSid, StringComparison.OrdinalIgnoreCase)
-                : id.Label.Length > 0 && MatchesIdentity(id.Label, target);
-            if (matches)
+            if (string.Equals(id.Identifier, targetSid, StringComparison.OrdinalIgnoreCase))
                 matchedRules.Add($"User:{id.Display}");
         }
     }
@@ -1986,30 +2166,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         return Regex.IsMatch(value, regexPattern, RegexOptions.IgnoreCase, RegexTimeout);
     }
 
-    /// <summary>
-    /// ou_guid rows are compared by objectGUID in the directory phase of <see cref="CheckAsync"/>; with
-    /// <paramref name="ouIdsByLabel"/> - the directory-free write-target check - by their label's DN suffix instead, the
-    /// comparison their companion row gets from an older build. Legacy OU rows stored by name only are not compared at all
-    /// (K.3): they are <see cref="NotConvertedProblems"/>.
-    /// </summary>
-    private static void CheckOuMatches(
-        ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules, bool ouIdsByLabel)
-    {
-        if (string.IsNullOrEmpty(target.DistinguishedName) || !ouIdsByLabel)
-            return;
-
-        var (_, _, ids) = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid);
-        foreach (var id in ids)
-        {
-            if (id.Label.Length > 0 && IsAtOrBeneath(target.DistinguishedName, id.Label))
-                matchedRules.Add($"OU:{id.Display}");
-        }
-    }
-
-    private static bool IsAtOrBeneath(string targetDn, string ou) =>
-        targetDn.EndsWith("," + ou, StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(targetDn, ou, StringComparison.OrdinalIgnoreCase);
-
     private async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckGroupMembershipAsync(
         IReadOnlyList<string> groupEntries, IReadOnlyDictionary<string, string> groupLabels, IReadOnlySet<string> ignoredMissing,
         IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, ResolvedDirectoryPrincipal target,
@@ -2027,55 +2183,61 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogError("Failed to retrieve directory-read credential for protected-principal group check");
-            return (matches, true, "Protected-principal directory-read credential is unavailable. Contact your administrator.");
-        }
+        // kd-88: the operation's one fetch; rev-a2: once more when the directory rejected it.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, CheckWith);
 
-        try
+        async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
-                return (matches, true, "AD service is busy. Please try again.");
+            matches.Clear(); // rev-a2: a retry starts from nothing the rejected run found
+            if (creds == null)
+            {
+                _lastCredentialFailure = DateTime.UtcNow;
+                _logger.LogError("Failed to retrieve directory-read credential for protected-principal group check");
+                return (matches, true, "Protected-principal directory-read credential is unavailable. Contact your administrator.");
+            }
 
             try
             {
-                var (groupMatches, expansionHadErrors, problems) = await Task.Run(() =>
-                    CheckGroupsInWarmSession(groupEntries, groupLabels, ignoredMissing, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
-                matches.AddRange(groupMatches);
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
+                    return (matches, true, "AD service is busy. Please try again.");
 
-                // Fail closed: if expansion had errors and no matches were found,
-                // we cannot confirm the user is NOT in a protected group. sweep-c item 17: the refusal names what could not be
-                // answered - the entry by its label - where it said only "expansion errors".
-                if (expansionHadErrors && matches.Count == 0)
+                try
                 {
-                    var reason = IncompleteReason([.. notConverted, .. problems]);
-                    _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}: {Reason}", target.UserPrincipalName, reason);
-                    return (matches, true, reason);
+                    var (groupMatches, expansionHadErrors, problems) = await Task.Run(() =>
+                        CheckGroupsInWarmSession(groupEntries, groupLabels, ignoredMissing, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    matches.AddRange(groupMatches);
+
+                    // Fail closed: if expansion had errors and no matches were found,
+                    // we cannot confirm the user is NOT in a protected group. sweep-c item 17: the refusal names what could not be
+                    // answered - the entry by its label - where it said only "expansion errors".
+                    if (expansionHadErrors && matches.Count == 0)
+                    {
+                        var reason = IncompleteReason([.. notConverted, .. problems]);
+                        _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}: {Reason}", target.UserPrincipalName, reason);
+                        return (matches, true, reason);
+                    }
+
+                    // K.3 point 3: rows stored by name only could not be answered at all; with no rule matched, refuse naming them.
+                    if (notConverted.Count > 0 && matches.Count == 0 && !otherRuleMatched)
+                    {
+                        var reason = IncompleteReason(notConverted);
+                        _logger.LogWarning("Protected-principal check incomplete for {Target}: {Reason}", target.UserPrincipalName, reason);
+                        return (matches, true, reason);
+                    }
                 }
-
-                // K.3 point 3: rows stored by name only could not be answered at all; with no rule matched, refuse naming them.
-                if (notConverted.Count > 0 && matches.Count == 0 && !otherRuleMatched)
+                finally
                 {
-                    var reason = IncompleteReason(notConverted);
-                    _logger.LogWarning("Protected-principal check incomplete for {Target}: {Reason}", target.UserPrincipalName, reason);
-                    return (matches, true, reason);
+                    _adThrottle.Release();
                 }
             }
-            finally
+            catch (Exception ex)
             {
-                _adThrottle.Release();
+                _logger.LogError(ex, "Group membership check failed for {Target}", target.UserPrincipalName);
+                return (matches, true, "Group membership check failed. Contact your administrator.");
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Group membership check failed for {Target}", target.UserPrincipalName);
-            return (matches, true, "Group membership check failed. Contact your administrator.");
-        }
 
-        return (matches, false, null);
+            return (matches, false, null);
+        }
     }
 
     /// <summary>
@@ -2097,8 +2259,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 session.Fail();
             return outcome;
         }
-        catch
+        catch (Exception ex)
         {
+            DirectoryCredentialRejection.Observe(ex); // rev-a2
             session.Fail();
             throw;
         }

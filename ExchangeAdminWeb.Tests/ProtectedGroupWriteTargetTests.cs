@@ -116,29 +116,45 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     }
 
     [Fact]
-    public void OuRule_RefusesATargetInsideAProtectedOu()
+    public void OuRule_IsNotComparedByItsLabel_InTheDirectoryFreePart()
     {
+        // rev-b3: the ou_guid row is compared by the objectGUIDs of the target's containers, which only the directory holds
+        // (CheckWriteTargetAsync, GroupWriteTargetOuTests) - never by its label, which a rename or a move leaves behind.
         var service = CreateRealService();
-        // K.3: an OU is compared by its ou_guid row - here by that row's label, the write-target check being directory-free.
         service.SaveConfig(new ProtectedPrincipalConfig { OrganizationalUnits = ["OU=Tier0,DC=ad,DC=analog,DC=com"], OuIds = [ProtectedPrincipalIdEntry.Format("0b5e3c2a-7d41-4f8e-9c6a-2e1f3d4b5a69", "OU=Tier0,DC=ad,DC=analog,DC=com")] });
 
         var result = service.CheckWriteTarget(Group(dn: "CN=SomeGroup,OU=Tier0,DC=ad,DC=analog,DC=com", guid: TargetGuid));
 
-        Assert.True(result.IsProtected);
-        Assert.Contains("OU:OU=Tier0,DC=ad,DC=analog,DC=com", result.MatchedRules);
+        Assert.False(result.IsProtected);
+        Assert.False(result.CheckFailed, result.Reason);
     }
 
     [Fact]
     public void UsersRule_DirectIdentityEntry_RefusesTheTarget()
     {
         var service = CreateRealService();
-        // K.3: a user is compared by its user_sid row; the target carries no SID here, so by that row's label.
+        // K.3: a user is compared by its user_sid row; rev-b2: by the SID the target carries, never by the row's label.
+        const string sid = "S-1-5-21-1000000000-1000000000-1000000000-1105";
+        service.SaveConfig(new ProtectedPrincipalConfig { Users = [TargetDn], UserIds = [ProtectedPrincipalIdEntry.Format(sid, TargetDn)] });
+
+        var result = service.CheckWriteTarget(Group(dn: TargetDn, guid: TargetGuid, sid: sid));
+
+        Assert.True(result.IsProtected);
+        Assert.Contains($"User:{TargetDn}", result.MatchedRules);
+    }
+
+    [Fact]
+    public void UsersRule_AgainstAGroupSnapshotWithoutItsSid_RefusesAsIncomplete_NotByTheLabel()
+    {
+        // rev-b2: the row's label is the target's DN, which once matched; without the SID the check cannot compare, and says so.
+        var service = CreateRealService();
         service.SaveConfig(new ProtectedPrincipalConfig { Users = [TargetDn], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000000000-1000000000-1000000000-1105", TargetDn)] });
 
         var result = service.CheckWriteTarget(Group(dn: TargetDn, guid: TargetGuid));
 
-        Assert.True(result.IsProtected);
-        Assert.Contains($"User:{TargetDn}", result.MatchedRules);
+        Assert.True(result.CheckFailed, result.Reason);
+        Assert.Contains(ProtectedPrincipalService.TargetSidNotRead, result.Reason, StringComparison.Ordinal);
+        Assert.Empty(result.MatchedRules);
     }
 
     [Fact]
@@ -214,23 +230,23 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     // ----- ForWriteTarget: the shared gate's servicer and fail-closed semantics (AC3/AC5) -----
 
     [Fact]
-    public void Gate_UnprotectedTarget_Allows()
+    public async Task Gate_UnprotectedTarget_Allows()
     {
         var (pp, servicers) = GateHarness(servicerGroups: null, verdict: ProtectedPrincipalResult.NotProtected());
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
 
         Assert.True(decision.Allowed);
         Assert.Null(decision.ServicedNote);
     }
 
     [Fact]
-    public void Gate_ProtectedTarget_RefusesAnOrdinaryOperator_WithNoVerbatimReason()
+    public async Task Gate_ProtectedTarget_RefusesAnOrdinaryOperator_WithNoVerbatimReason()
     {
         var (pp, servicers) = GateHarness(servicerGroups: null,
             verdict: ProtectedPrincipalResult.Protected("protected", "Target:CN=Domain Admins"));
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
 
         Assert.False(decision.Allowed);
         Assert.Null(decision.FailReason); // the caller supplies its audience's wording
@@ -238,12 +254,12 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     }
 
     [Fact]
-    public void Gate_AuthorisedServicer_IsAllowed_AndTheNoteNamesEverything()
+    public async Task Gate_AuthorisedServicer_IsAllowed_AndTheNoteNamesEverything()
     {
         var (pp, servicers) = GateHarness(servicerGroups: [ServicerSid],
             verdict: ProtectedPrincipalResult.Protected("protected", "Target:CN=Domain Admins"));
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
 
         Assert.True(decision.Allowed);
         Assert.NotNull(decision.ServicedNote);
@@ -255,46 +271,46 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     }
 
     [Fact]
-    public void Gate_NullActingUser_Refuses_EvenWithAGrantConfigured()
+    public async Task Gate_NullActingUser_Refuses_EvenWithAGrantConfigured()
     {
         var (pp, servicers) = GateHarness(servicerGroups: [ServicerSid],
             verdict: ProtectedPrincipalResult.Protected("protected", "Target:CN=Domain Admins"));
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), actingUser: null, "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), actingUser: null, "GroupManagement");
 
         Assert.False(decision.Allowed);
         Assert.Null(decision.ServicedNote);
     }
 
     [Fact]
-    public void Gate_AGrantInAnotherModule_ConfersNothing()
+    public async Task Gate_AGrantInAnotherModule_ConfersNothing()
     {
         var (pp, servicers) = GateHarness(servicerGroups: null, otherModuleServicerGroups: [ServicerSid],
             verdict: ProtectedPrincipalResult.Protected("protected", "Target:CN=Domain Admins"));
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
 
         Assert.False(decision.Allowed);
     }
 
     [Fact]
-    public void Gate_FailedCheck_DeniesWithTheReason_EvenForAServicer()
+    public async Task Gate_FailedCheck_DeniesWithTheReason_EvenForAServicer()
     {
         var (pp, servicers) = GateHarness(servicerGroups: [ServicerSid],
             verdict: ProtectedPrincipalResult.Failed("store unreadable"));
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
 
         Assert.False(decision.Allowed);
         Assert.Contains("Protection check failed: store unreadable", decision.FailReason!, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Gate_ThrowingCheck_DeniesClosed()
+    public async Task Gate_ThrowingCheck_DeniesClosed()
     {
         var (pp, servicers) = GateHarness(servicerGroups: [ServicerSid], verdict: null /* throw */);
 
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
+        var decision = await ProtectedPrincipalServicing.ForWriteTargetAsync(pp, servicers, Group(TargetDn, TargetGuid), UserIn(ServicerSid), "GroupManagement");
 
         Assert.False(decision.Allowed);
         Assert.Contains("Protection check error:", decision.FailReason!, StringComparison.Ordinal);
@@ -485,8 +501,8 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
 
     // ---- harness ------------------------------------------------------------------------------
 
-    private static ResolvedDirectoryPrincipal Group(string dn, string? guid, string? sam = null) =>
-        new("Test-AD", "Some Group", string.Empty, sam, null, dn, guid, null);
+    private static ResolvedDirectoryPrincipal Group(string dn, string? guid, string? sam = null, string? sid = null) =>
+        new("Test-AD", "Some Group", string.Empty, sam, null, dn, guid, null, ObjectSid: sid);
 
     private static ClaimsPrincipal UserIn(string groupSid) =>
         new(new ClaimsIdentity(

@@ -92,12 +92,9 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     {
         // A null server is the whole forest. The global catalog holds every group's
         // sAMAccountName, name, objectSid and scope.
-        var target = server ?? GlobalCatalog();
-
-        return ToGroups(Run("Get-ADGroup", new Dictionary<string, object>
+        return ToGroups(RunAt("Get-ADGroup", server, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ProtectedGroupMembership.GroupLookupFilter(key, value),
-            ["Server"] = target,
             ["Properties"] = GroupProperties,
         }));
     }
@@ -129,14 +126,12 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     {
         // kd-88. The named objects' memberOf, by DN - never a search for whatever contains them. A null server is the forest's
         // global catalog, which holds every universal group's links.
-        var target = server ?? GlobalCatalog();
         var found = new List<DirectoryMemberOf>();
         foreach (var batch in ProtectedGroupMembership.Batches(dns))
         {
-            foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+            foreach (var row in RunAt("Get-ADObject", server, new Dictionary<string, object>
             {
                 ["LDAPFilter"] = ProtectedGroupMembership.AnyDnFilter(batch),
-                ["Server"] = target,
                 ["Properties"] = new[] { "objectSid", "memberOf" },
             }))
             {
@@ -189,10 +184,9 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     public IReadOnlyList<string> FindObjectDnsBySid(string sid)
     {
         var dns = new List<string>();
-        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        foreach (var row in RunAt("Get-ADObject", null, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ProtectedGroupMembership.GroupLookupFilter(GroupLookupKey.Sid, sid),
-            ["Server"] = GlobalCatalog(),
         }))
         {
             // A row without a DN is a failed read, never a missing object.
@@ -210,10 +204,9 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     internal IReadOnlyList<DirectorySidObject> FindObjectsBySidAtCatalog(string sid)
     {
         var found = new List<DirectorySidObject>();
-        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        foreach (var row in RunAt("Get-ADObject", null, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ADDirectorySearchService.BuildSidFilter(sid),
-            ["Server"] = GlobalCatalog(),
             ["Properties"] = new[] { "objectSid", "objectGUID", "objectClass", "sAMAccountName", "userPrincipalName", "mail", "displayName" },
         }))
         {
@@ -241,10 +234,9 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     internal IReadOnlyList<VerifyDirectoryObject> FindVerifyObjects(string ldapFilter, string? server)
     {
         var found = new List<VerifyDirectoryObject>();
-        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        foreach (var row in RunAt("Get-ADObject", server, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ldapFilter,
-            ["Server"] = server ?? GlobalCatalog(),
             ["Properties"] = new[] { "objectSid", "objectGUID", "objectClass", "userPrincipalName", "mail", "distinguishedName", "sAMAccountName" },
         }))
         {
@@ -353,10 +345,9 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
     internal IReadOnlyList<DirectoryUserObject> FindUsers(string ldapFilter, string? server)
     {
         var users = new List<DirectoryUserObject>();
-        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        foreach (var row in RunAt("Get-ADObject", server, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ldapFilter,
-            ["Server"] = server ?? GlobalCatalog(),
             ["Properties"] = new[] { "objectSid" },
         }))
         {
@@ -388,7 +379,18 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             _ps.AddScript("param($cred) (Get-ADForest -Credential $cred -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1")
                .AddArgument(_credential);
             DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
-            var host = _ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            string? host;
+            try
+            {
+                host = _ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            }
+            catch (Exception ex)
+            {
+                DirectoryCredentialRejection.Observe(ex); // rev-a2
+                throw;
+            }
+            if (_ps.HadErrors)
+                DirectoryCredentialRejection.Observe(_ps.Streams.Error.FirstOrDefault()?.Exception); // rev-a2
             if (_ps.HadErrors || string.IsNullOrWhiteSpace(host))
                 throw new InvalidOperationException("The forest reported no global catalog.");
 
@@ -400,6 +402,24 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             _ps.Commands.Clear();
             _ps.Streams.Error.Clear();
         }
+    }
+
+    /// <summary>
+    /// rev-a3, rev-b1, rev-c1. A read on <paramref name="server"/> - a domain controller of a named domain, which keeps that
+    /// domain's own base - or, when null, forest-wide at the global catalog with an explicitly empty <c>-SearchBase</c>.
+    /// </summary>
+    /// <remarks>
+    /// The AD cmdlets default <c>-SearchBase</c> to the server's default naming context, on the catalog port as on any other:
+    /// the catalog's own domain partition, which does not hold another tree's objects. Microsoft documents the empty
+    /// <c>-SearchBase</c> on a catalog port as the search of every partition, so a forest-wide read states it rather than
+    /// relying on the forest's shape (repo-guidance Invariant 7).
+    /// </remarks>
+    private Collection<PSObject> RunAt(string command, string? server, Dictionary<string, object> parameters)
+    {
+        parameters["Server"] = server ?? GlobalCatalog();
+        if (server is null)
+            parameters["SearchBase"] = string.Empty;
+        return Run(command, parameters);
     }
 
     private Collection<PSObject> Run(string command, Dictionary<string, object> parameters)
@@ -415,10 +435,20 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
                .AddParameter("ErrorAction", "Stop");
 
             DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
-            var rows = _ps.Invoke();
+            Collection<PSObject> rows;
+            try
+            {
+                rows = _ps.Invoke();
+            }
+            catch (Exception ex)
+            {
+                DirectoryCredentialRejection.Observe(ex); // rev-a2: a rotated secret, for the flow to fetch afresh
+                throw;
+            }
             if (_ps.HadErrors)
             {
                 var error = _ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? $"{command} reported an error";
+                DirectoryCredentialRejection.Observe(error); // rev-a2
                 throw new InvalidOperationException(error);
             }
             return rows;

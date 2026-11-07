@@ -131,6 +131,28 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenamedProtectedUser_IsRefused_ByTheSidTheLookupRead()
+    {
+        // rev-b2. The protection check compares a protected user row by SID alone, so the snapshot the lookup builds must
+        // carry it: a user whose UPN and mail changed since the row was stored keeps the SID. The decision here is by SID
+        // only; the lookup's snapshot without objectSid made it "not protected" and the save wrote.
+        var alex = _h.Ad.AddAlex();
+        _h.Protection.Decide = target => target.ObjectSid == alex.Sid
+            ? ProtectedPrincipalResult.Protected("protected for test", "User:alex.old@example.test")
+            : ProtectedPrincipalResult.NotProtected();
+
+        var lookup = await _h.Service.LookupAsync(alex.Upn);
+        Assert.True(lookup.Success, lookup.Error);
+        Assert.Equal(alex.Sid, lookup.Principal!.ObjectSid);
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" }, principal: lookup.Principal);
+
+        Assert.False(result.Success);
+        Assert.Equal("Target is a protected principal and cannot be modified.", result.Error);
+        Assert.Empty(_h.Ad.Sets);
+    }
+
+    [Fact]
     public async Task AFailedProtectionRead_Refuses_FailClosed()
     {
         // The check could not be made. That is not "not protected": it refuses with the reason.
@@ -790,7 +812,7 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
 
         Assert.True(result.Success, result.Error);
         Assert.Equal("Lead Analyst", alex.Attributes["title"]);
-        Assert.Equal(["example.test"], _h.Ad.RootDseServers);
+        Assert.Equal(["dc01.example.test"], _h.Ad.RootDseServers); // rev-d1: the writable DC located, then its RootDSE
         Assert.Equal(["dc01.example.test", "dc01.example.test"], _h.Ad.Reads.Select(r => r.Server));
         Assert.Equal("dc01.example.test", Assert.Single(_h.Ad.Sets).Server);
         Assert.Equal("Lead Analyst", Text(Assert.Single(_h.AuditEvents()), "new_title"));
@@ -807,7 +829,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         var result = await Save(robin, new() { ["title"] = "Lead Analyst" });
 
         Assert.True(result.Success, result.Error);
-        Assert.Equal([null], _h.Ad.RootDseServers);
+        Assert.Equal([null], _h.Ad.Discoveries); // rev-d1: the session's own domain, located as writable
+        Assert.Equal(["dc01.default.test"], _h.Ad.RootDseServers);
         Assert.All(_h.Ad.Reads, read => Assert.Equal("dc01.default.test", read.Server));
         Assert.Equal("dc01.default.test", Assert.Single(_h.Ad.Sets).Server);
         Assert.Contains(_h.Logger.Warnings, w => w.Contains(robin.Upn, StringComparison.Ordinal)

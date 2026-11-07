@@ -77,10 +77,9 @@ internal sealed class InvokingUserIdentifierDirectory : IProtectedPrincipalResol
     public IReadOnlyList<DirectoryGroup> FindGroups(GroupLookupKey key, string value, string? server)
     {
         var groups = new List<DirectoryGroup>();
-        foreach (var row in Run("Get-ADGroup", new Dictionary<string, object>
+        foreach (var row in RunAt("Get-ADGroup", server, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ProtectedGroupMembership.GroupLookupFilter(key, value),
-            ["Server"] = server ?? GlobalCatalog(),
             ["Properties"] = GroupProperties,
         }))
         {
@@ -103,10 +102,9 @@ internal sealed class InvokingUserIdentifierDirectory : IProtectedPrincipalResol
         // An equality search on an indexed key - UPN, mail, sAMAccountName or DN - built by ProtectedPrincipalIdentifierResolver;
         // a null server is the forest, through its global catalog.
         var users = new List<DirectoryUserObject>();
-        foreach (var row in Run("Get-ADObject", new Dictionary<string, object>
+        foreach (var row in RunAt("Get-ADObject", server, new Dictionary<string, object>
         {
             ["LDAPFilter"] = ldapFilter,
-            ["Server"] = server ?? GlobalCatalog(),
             ["Properties"] = new[] { "objectSid" },
         }))
         {
@@ -165,6 +163,21 @@ internal sealed class InvokingUserIdentifierDirectory : IProtectedPrincipalResol
             _ps.Commands.Clear();
             _ps.Streams.Error.Clear();
         }
+    }
+
+    /// <summary>
+    /// rev-b1. A read on <paramref name="server"/> - a named domain's, which keeps that domain's own base - or, when null,
+    /// forest-wide at the global catalog with an explicitly empty <c>-SearchBase</c>: with none the AD cmdlets start at the
+    /// catalog's own domain partition, which does not hold another tree's objects, so a name that is a group in two trees
+    /// would be seen once and converted rather than refused as ambiguous. Microsoft documents the empty base on a catalog
+    /// port as the search of every partition (as <see cref="PowerShellProtectedGroupDirectory"/> reads).
+    /// </summary>
+    private Collection<PSObject> RunAt(string command, string? server, Dictionary<string, object> parameters)
+    {
+        parameters["Server"] = server ?? GlobalCatalog();
+        if (server is null)
+            parameters["SearchBase"] = string.Empty;
+        return Run(command, parameters);
     }
 
     private Collection<PSObject> Run(string command, Dictionary<string, object> parameters)

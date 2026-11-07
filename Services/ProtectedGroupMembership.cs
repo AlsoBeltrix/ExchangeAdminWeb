@@ -208,9 +208,12 @@ internal interface IProtectedGroupDirectory
 /// own answer: its <c>tokenGroups</c>, one base-scope read in its own domain, which carries its primary group (hole 2,
 /// checked), universal groups across the forest (aud-a3c) and its own domain's domain-local groups. A token does not carry
 /// what is not security - a distribution group - nor a domain-local group of another domain (hole 1), nor anything at all
-/// for a target without one: a group or a contact. Those, and only those, are read from the membership links: the target's
-/// ancestry, one read of the named objects per level, in its own domain and at the global catalog, then the one anchored
-/// question to a domain-local group's own domain. Nothing searches a domain or the forest for whatever contains the target.
+/// for a target without one: a group or a contact. A group the token carries is a match; rev-a1: a group it does not carry is
+/// read from the membership links - a security group too, since a token is computed through security groups only and a
+/// distribution group between the account and the group drops it - unless it is a global group of another domain, which
+/// cannot hold the account. The links are the target's ancestry, one read of the named objects per level, in its own domain
+/// and at the global catalog, then the one anchored question to a domain-local group's own domain. Nothing searches a domain
+/// or the forest for whatever contains the target.
 ///
 /// Fail closed throughout: a read that fails, a lookup that matches nothing or several, a domain that cannot be determined, a
 /// token without the primary group - each marks the answer incomplete, naming the entry (<see cref="Result.Problems"/>), and
@@ -397,9 +400,11 @@ internal static class ProtectedGroupMembership
                     continue;
                 }
 
-                // A security group the token is complete for, and does not carry: not a member. Every other group - one a
-                // token cannot carry - is asked of the membership links below.
-                if (TokenAnswers(membership, group, groupServer, targetServer))
+                // rev-a1. The token's presence is a positive answer (above); its silence is not a negative one. A token holds
+                // only the security groups reached through security groups, so a security group the target reaches through a
+                // distribution group is absent from it. Every group the token did not carry is asked of the membership links
+                // below - except a global group of another domain, which cannot contain the target at all.
+                if (CannotContain(membership, group, groupServer, targetServer))
                     continue;
 
                 unanswered.Add((raw, group, groupServer));
@@ -484,15 +489,22 @@ internal static class ProtectedGroupMembership
     }
 
     /// <summary>
-    /// Whether the target's token settles <paramref name="group"/>: a security group, and not a domain-local group of another
-    /// domain. A token computed in the target's own domain carries every such group the target is in - its own domain's
-    /// global and domain-local groups, every universal group of the forest, its primary group - so one it does not carry does
-    /// not contain the target. A global group of another domain cannot contain it at all.
+    /// rev-a1. Whether <paramref name="group"/> cannot contain the account at all, so no link need be read for it: a global
+    /// group of another domain, which holds only its own domain's accounts and global groups.
     /// </summary>
-    private static bool TokenAnswers(TargetMembership membership, DirectoryGroup group, string groupServer, string targetServer)
+    /// <remarks>
+    /// Until rev-a1 this was "the token settles it": a security group the token did not carry was taken as no member. A token
+    /// is computed through security groups only, so an account in distribution group D, which is in security group S, has no
+    /// S in its token - and the pre-kd-88 member-chain walk protected it. No single anchored in-chain question to S's domain
+    /// answers that in every forest: in a multi-domain forest the chain can run through another domain's global group (whose
+    /// links only that domain holds) into a universal S, or through another domain's universal group (whose links only it and
+    /// the global catalogs hold) into a domain-local S. The target's ancestry, read where each link lives, does - so a group
+    /// the token did not carry takes that path, which runs once per check whatever the number of such groups.
+    /// </remarks>
+    private static bool CannotContain(TargetMembership membership, DirectoryGroup group, string groupServer, string targetServer)
         => membership.HasToken
-           && group.Security
-           && !(group.Scope == DirectoryGroupScope.DomainLocal && !SameDomain(groupServer, targetServer));
+           && group.Scope == DirectoryGroupScope.Global
+           && !SameDomain(groupServer, targetServer);
 
     /// <summary>
     /// The target, and for an account its token. Null when the target could not be read completely: an account whose primary

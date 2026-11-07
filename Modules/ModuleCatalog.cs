@@ -807,7 +807,7 @@ public sealed class ModuleCatalog
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
             // 2.16.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "2.16.3",
+            Version = "2.16.5",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -990,7 +990,7 @@ public sealed class ModuleCatalog
             // outcome rather than the result banner's field, which its dismiss can clear. Nothing the operator
             // sees changes today - no await sits between the two - but one added there would have skipped the
             // refresh silently (kd-74).
-            Version = "1.14.2",
+            Version = "1.14.3",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
@@ -1030,7 +1030,7 @@ public sealed class ModuleCatalog
             // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
             // before, and a second submit during a listing is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.2",
+            Version = "1.6.3",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -1691,7 +1691,7 @@ public sealed class ModuleCatalog
             // 1.1.7: a second click on Apply during an apply is ignored, so a double click no longer runs a second bulk
             // licence change over the same rows (kd-74).
             // 1.1.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.1.8",
+            Version = "1.1.9",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1731,7 +1731,7 @@ public sealed class ModuleCatalog
             // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
             // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.7.7: a save's re-read, write and read-back are pinned to the DC that answered the domain's RootDSE, and the read-back compares in the schema's syntax (Boolean and integer by value from any CLR type, DN by DN) (sweep-f item 27).
-            Version = "1.7.7",
+            Version = "1.7.9",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
@@ -1784,7 +1784,7 @@ public sealed class ModuleCatalog
             // 1.3.1: an Ignore of a protected group found missing stops that group refusing writes while the directory
             // confirms it is gone, still looked up on every check; a non-ignored one's refusal says "run Verify on Admin
             // Settings"; the pane note and the Ignore and missing tips say so (docs/DirectoryObjectVerify-Plan.md B.4, slice V2).
-            Version = "1.3.1",
+            Version = "1.3.2",
             MainPermission = new(
                 "Access",
                 "AdminSettings",

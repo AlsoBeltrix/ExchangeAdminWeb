@@ -23,8 +23,9 @@ public class DelineaService
 
     /// <summary>
     /// kd-88 (addition; the supervisor's call of 2026-10-30, to meet the owner's near-instant requirement - the owner may
-    /// veto). How long a credential <see cref="GetCredentialsBySecretIdAsync"/> fetched is kept after its last use: five
-    /// minutes, sliding. Each fetch from the store takes 2.7-4.1 s on the dev host (app-20261030.log 08:23), so one per
+    /// veto). How long a credential <see cref="GetCredentialsBySecretIdAsync"/> fetched is kept: five minutes
+    /// from its retrieval (rev-a2: never slid on by a use, so a secret rotated under the same ID is fetched again at most five
+    /// minutes later however busy the instance is). Each fetch from the store takes 2.7-4.1 s on the dev host (app-20261030.log 08:23), so one per
     /// operation (kd-88 item 2) still put seconds into every grant.
     /// </summary>
     internal static readonly TimeSpan DefaultCredentialWindow = TimeSpan.FromMinutes(5);
@@ -36,22 +37,20 @@ public class DelineaService
     internal TimeProvider Clock { get; init; } = TimeProvider.System;
 
     // kd-88. The credentials kept, by Secret ID - in this process's memory only, the password as a SecureString, never
-    // written to disk or to any log. A fetch inside the window is answered from here and slides the window on; a fetch that
-    // fails drops what was kept for its ID; another Secret ID - the configured one changed - is another entry, fetched on its
+    // written to disk or to any log. A fetch inside the window - five minutes from the retrieval, not from the last use
+    // (rev-a2) - is answered from here; a fetch that fails drops what was kept for its ID, and so does a caller's report that
+    // the directory rejected it (<see cref="Invalidate"/>); another Secret ID - the configured one changed - is another entry, fetched on its
     // own, and the old one lapses unused.
     private readonly ConcurrentDictionary<int, KeptCredential> _kept = new();
 
-    private sealed class KeptCredential(PSCredential credential, string domain, long lastUsed)
+    private sealed class KeptCredential(PSCredential credential, string domain, long retrieved)
     {
-        private long _lastUsed = lastUsed;
-
         public PSCredential Credential { get; } = credential;
 
         public string Domain { get; } = domain;
 
-        public long LastUsed => Interlocked.Read(ref _lastUsed);
-
-        public void Use(long now) => Interlocked.Exchange(ref _lastUsed, now);
+        /// <summary>rev-a2. When the store answered it: the window is measured from here, and a use does not move it.</summary>
+        public long Retrieved { get; } = retrieved;
     }
 
     public DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger, ExtendedLogService extLog, OperationTraceService operationTrace)
@@ -276,7 +275,7 @@ public class DelineaService
         }
     }
 
-    // kd-88. The credential kept for this Secret ID when its last use is inside the window, the window slid on to now;
+    // kd-88. The credential kept for this Secret ID while its retrieval is inside the window (rev-a2: not slid on by this use);
     // otherwise nothing, and what had lapsed is dropped. The reuse is traced and logged by Secret ID alone, as the token's is.
     private (string username, string password, string domain)? Kept(int secretId)
     {
@@ -284,13 +283,12 @@ public class DelineaService
             return null;
 
         var now = Clock.GetTimestamp();
-        if (Clock.GetElapsedTime(entry.LastUsed, now) >= CredentialWindow)
+        if (Clock.GetElapsedTime(entry.Retrieved, now) >= CredentialWindow)
         {
             _kept.TryRemove(new KeyValuePair<int, KeptCredential>(secretId, entry));
             return null;
         }
 
-        entry.Use(now);
         _extLog.Write(LogEventLevel.Debug, "Using kept Delinea credential", "Delinea", () => $"SecretId={secretId}");
         _operationTrace.Step("VaultCredentialReused", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId });
         return (entry.Credential.UserName, entry.Credential.GetNetworkCredential().Password, entry.Domain);
@@ -312,6 +310,19 @@ public class DelineaService
 
     // kd-88. A fetch that failed: nothing is kept for its Secret ID, so the next asks the store again.
     private void Forget(int secretId) => _kept.TryRemove(secretId, out _);
+
+    /// <summary>
+    /// rev-a2. A caller's report that the directory rejected the credential kept for <paramref name="secretId"/> - the secret
+    /// rotated under the same ID inside the window: what was kept is dropped, so the caller's next fetch asks the store.
+    /// </summary>
+    internal void Invalidate(int secretId)
+    {
+        if (_kept.TryRemove(secretId, out _))
+        {
+            _extLog.Write(LogEventLevel.Information, "Kept Delinea credential dropped: the directory rejected it", "Delinea", () => $"SecretId={secretId}");
+            _operationTrace.Step("VaultCredentialInvalidated", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId });
+        }
+    }
 
     private static string GetOAuthErrorCode(string errorBody)
     {

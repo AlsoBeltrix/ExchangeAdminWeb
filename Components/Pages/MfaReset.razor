@@ -150,6 +150,11 @@
     private string? listedUpn;
     private string ticketNumber = "";
     private bool resetConfirmPending;
+
+    // rev-d2. A reset is running, from its first statement to the end of its outermost finally - the administrator
+    // notification included. isLoading drops before that notification (the page is usable while it sends), so it cannot be
+    // the reset's own guard: a second click queued during the send was admitted and reset the listed user again.
+    private bool resetInProgress;
     private List<AuthMethod> methods = new();
     private MfaResetResult? result;
 
@@ -290,8 +295,10 @@
     {
         // Sweep item 42 (kd-72's shape). A second click while this runs is ignored, not run beside it: the button is
         // disabled meanwhile, but the browser's copy of that is one round trip stale. The flag is raised before the
-        // first await and lowered in the finally, as it was.
-        if (isLoading) return;
+        // first await and lowered in the finally, as it was. rev-d2: and resetInProgress, raised here and lowered only when the
+        // whole handler - its notification included - has finished.
+        if (isLoading || resetInProgress) return;
+        resetInProgress = true;
 
         // kd-46. Captured at handler entry, ABOVE the raise and above the yield below, which is a real
         // yield back to the message loop: the ticket box binds on oninput and its disabled attribute
@@ -316,6 +323,7 @@
             // Nothing is listed, so there is no reviewed account to act on. Fail closed rather
             // than fall back to the box, which is the defect this guard exists to stop.
             isLoading = false;
+            resetInProgress = false; // rev-d2: this exit ends the handler
             result = new MfaResetResult { Success = false, Message = "List the user's methods again before resetting." };
             return;
         }
@@ -538,7 +546,15 @@
             // Idle while an email is still in flight. This is the closing end of the same fix:
             // the Complete used to sit immediately after the Graph reset, which left the send -
             // the last remote call this handler makes - outside the window.
-            activity.Complete(completedOk, completedOk ? null : completed?.Message);
+            try
+            {
+                activity.Complete(completedOk, completedOk ? null : completed?.Message);
+            }
+            finally
+            {
+                // rev-d2: lowered LAST, when nothing of this handler is left to run - the notification above included.
+                resetInProgress = false;
+            }
         }
     }
 }

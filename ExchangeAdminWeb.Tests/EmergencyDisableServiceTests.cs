@@ -835,8 +835,8 @@ public class EmergencyDisableServiceTests : IDisposable
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
 
-        // docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a user row is compared only through its user_sid row (here by its label:
-        // the test principals carry no SID), so each imported row gets the one db convert-identifiers writes.
+        // docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a user row is compared only through its user_sid row - rev-b2, by SID alone:
+        // each imported row gets the one db convert-identifiers writes, UserSid(label), and a test principal carries UserSid(upn).
         var (loaded, _, loadError) = protectedPrincipalService.LoadEffectiveConfig();
         if (loadError is null && loaded is { Users.Length: > 0 })
         {
@@ -846,7 +846,7 @@ public class EmergencyDisableServiceTests : IDisposable
                 Groups = loaded.Groups,
                 OrganizationalUnits = loaded.OrganizationalUnits,
                 SamAccountNamePatterns = loaded.SamAccountNamePatterns,
-                UserIds = loaded.Users.Select((u, i) => ProtectedPrincipalIdEntry.Format($"S-1-5-21-1000000000-1000000000-1000000000-{1100 + i}", u)).ToArray(),
+                UserIds = loaded.Users.Select(u => ProtectedPrincipalIdEntry.Format(UserSid(u), u)).ToArray(),
             });
         }
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
@@ -887,6 +887,10 @@ public class EmergencyDisableServiceTests : IDisposable
             Substitute.For<ILogger<EmergencyDisableService>>());
     }
 
+    // rev-b2. The SID a user row labelled (or a principal addressed) <paramref name="label"/> carries in these tests.
+    private static string UserSid(string label) =>
+        "S-1-5-21-1000000000-1000000000-1000000000-" + (1000 + (uint)StringComparer.OrdinalIgnoreCase.GetHashCode(label) % 100000);
+
     private static ResolvedDirectoryPrincipal MakePrincipal(string upn = "user@contoso.com")
     {
         return new ResolvedDirectoryPrincipal(
@@ -897,6 +901,7 @@ public class EmergencyDisableServiceTests : IDisposable
             PrimarySmtpAddress: upn,
             DistinguishedName: $"CN={upn.Split('@')[0]},OU=Users,DC=contoso,DC=com",
             ObjectGuid: Guid.NewGuid().ToString(),
-            EntraObjectId: Guid.NewGuid().ToString());
+            EntraObjectId: Guid.NewGuid().ToString(),
+            ObjectSid: UserSid(upn));
     }
 }

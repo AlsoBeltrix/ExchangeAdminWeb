@@ -432,10 +432,12 @@ View and edit allowlisted Active Directory attributes for on-premises user accou
   confirmation, because no search-base boundary will remain: the editor may then search the whole directory
 - Uses Delinea credentials for Active Directory operations
 - **A save is done when it reads back as written.** The re-read before the write, the write and the read-back all go to one
-  domain controller: the one that answers the object's domain's RootDSE, found at the time of the save (logged). Each value
+  writable domain controller of the object's domain, located at the time of the save and confirmed by its RootDSE
+  (logged) - never a read-only one, whose writes would all be refused. Each value
   is compared in the syntax the schema gives the attribute: a Boolean or an integer by its value, whatever form the
   directory returns it in; a DN by DN, whatever its case and spacing; text as text. A value that differs is still a failed
-  save, with no Undo and a failure notice. If the RootDSE or the schema cannot be read, the save goes to the domain name
+  save, with no Undo and a failure notice. If no writable DC can be confirmed, or the RootDSE or the schema cannot be read,
+  the save goes to the domain name
   and judges by the values' own types, as before (a warning is logged)
 - Section access keys: `ADAttributeEditor`, `ADAttributeEditorLevel1`, `ADAttributeEditorLevel2`, `ADAttributeEditorLevel3`
 
@@ -764,7 +766,9 @@ permission that could. Disabled by default and fail-closed.
     account holding that SID, read at a global catalog, so a mailbox in another domain resolves and an account that
     only carries the mailbox's address is never the one checked. Empty until an admin fills it, with no fallback:
     while it is empty, or Graph cannot be read, every protection-checked change to a synced mailbox (Mailbox
-    Permissions, Calendar Permissions, Out of Office, Conference Rooms) is refused as unavailable. Cloud-only mailboxes
+    Permissions, Calendar Permissions, Out of Office, Conference Rooms) is refused as unavailable, and so is every
+    protection check of a synced recipient addressed by an alias Active Directory does not hold (Blocked Senders
+    included) - never re-resolved by its address, which another account could carry. Cloud-only mailboxes
     do not need it; a synced mailbox Graph reports no SID for is checked by its address and logged ("bound by address")
   - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
     refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient
@@ -1166,8 +1170,9 @@ rendered (aud-a29g).
   does not answer within 60 seconds, the account's last answer is used instead if it was read
   within one interval plus two minutes - so the answer of the tab's previous check, or of a recent
   page load - and is compared exactly as a fresh one: it confirms, or it refuses for its own reason.
-  Each such fallback is logged as a warning with a running count. Two failed checks in a row find
-  no answer that recent, and end the session.
+  Each such fallback is logged as a warning with a running count. Two failed checks in a row end the
+  session, whatever the interval: the session counts its checks whose read failed, and a check whose
+  read answered starts the count again.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
   cannot be completed within 60 seconds with no recent answer to fall back to (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the
@@ -1216,8 +1221,9 @@ C-Suite, Board of Directors, ceo@example.com
 The app-wide protection rules - **Admin Settings → Protected principals** (users, groups, OUs, sAMAccountName
 patterns, group targets) - store a user or group added there by its SID and an OU by its object GUID, each beside a
 companion row by name that an older build sharing the database keeps enforcing; removing the entry removes both. The
-check compares a user by SID wherever the target's SID was read (another account given the same address is not
-protected in its place), a group by SID against the target's token, and an OU by the object GUIDs of the target's
+check compares a user by SID alone (another account given the same address is not protected in its place, and
+a user renamed since stays protected; an on-premises target read without its SID refuses: "the target's objectSid was not
+read, so it cannot be compared with the protected user rows"), a group by SID against the target's token, and an OU by the object GUIDs of the target's
 containers, so a renamed OU still protects the accounts beneath it. A user or OU is looked up in any domain of the
 forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. The check never
 resolves or matches a stored name. An entry stored by name only - added before identifiers were stored, or left by an
@@ -1235,12 +1241,13 @@ name - a user's UPN, else its mail; a group's, OU's or target's DN - is not the 
 flagged); **not converted** (stored by name only, with what the conversion's own lookup finds: one object, none, several,
 or no answer); **several objects**; **wrong type**; **could not verify** (the directory could not be asked, or the stored
 DN names a domain that is not in this forest - never read as missing); or **ignored**. The summary line reads "Verified N
-entries at <time>: M findings, K ignored, J could not be verified", and the last press is shown to the next admin. Beside
+entries at <time>: M findings, K ignored, J could not be verified", and the last press is shown to the next admin. An edit made in the pane while Verify reads, or while one of its actions
+writes, is kept: the findings are not shown against it, the pane says so, and a Save is then checked against the rules as
+they were read before. Beside
 each finding are its actions, each written at once (not at Save), checked against the rules as Verify read them (a change
 since refuses: "run Verify again"), re-authorized at the click and audited under `Verify:ProtectedPrincipals`:
-**Rename** (store the current name as the entry's label and as its companion for an older build - which also changes what
-the two name fallbacks match, a user compared by label when the target has no SID and an OU compared by DN suffix in the
-write-target check), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
+**Rename** (store the current name as the entry's label and as its companion for an older build; the check itself never compares
+names - an OU protects the groups and accounts beneath it by its object GUID, in a group write-target check too), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
 name; checked as an Add is), **Remove now** (the entry, its companion and any ignore of it), and **Ignore** (keep the entry
 and stop the finding being reported until what Verify sees changes; never offered for an entry not converted or one that
 could not be verified). One ignore changes a protection check (slice V2, docs/DirectoryObjectVerify-Plan.md B.4): a

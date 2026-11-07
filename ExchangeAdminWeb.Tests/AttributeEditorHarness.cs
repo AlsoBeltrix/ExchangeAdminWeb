@@ -165,7 +165,7 @@ internal sealed class AttributeEditorHarness : IDisposable
 
     /// <summary>The principal a lookup of <paramref name="user"/> would have resolved.</summary>
     public static ResolvedDirectoryPrincipal PrincipalFor(LocalAd.User user) =>
-        new("OnPremAD", user.DisplayName, user.Upn, user.Sam, user.Mail, user.Dn, user.Guid.ToString(), null);
+        new("OnPremAD", user.DisplayName, user.Upn, user.Sam, user.Mail, user.Dn, user.Guid.ToString(), null, ObjectSid: user.Sid);
 
     public void ConfigureSearchBases(params string[] searchBases) =>
         ModuleConfig.SaveModuleConfig("ADAttributeEditor", new Dictionary<string, string>
@@ -500,6 +500,11 @@ internal sealed class LocalAd
         public string? Sam { get; init; }
         public string? Mail { get; init; }
         public string DisplayName { get; init; } = "";
+
+        /// <summary>rev-b2. The objectSid the stand-in returns for the user: what the protection check compares a user row with.</summary>
+        public string Sid { get; init; } = "S-1-5-21-700000000-700000000-700000000-" + System.Threading.Interlocked.Increment(ref _nextRid);
+
+        private static int _nextRid = 1000;
         public Dictionary<string, string?> Attributes { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The attributes as they were before the last Set-ADUser, for <see cref="ReplicaLag"/>.</summary>
@@ -580,7 +585,45 @@ internal sealed class LocalAd
     /// Sweep-f item 27. The dnsHostName Get-ADRootDSE answers with for the -Server it was sent (null for none); null from
     /// the function answers with no host name. Default: <c>dc01.</c> and the domain asked.
     /// </summary>
-    public Func<string?, string?> RootDseHost { get; set; } = server => "dc01." + (string.IsNullOrEmpty(server) ? "default.test" : server);
+    public Func<string?, string?> RootDseHost { get; set; } = server =>
+        string.IsNullOrEmpty(server) ? "dc01.default.test"
+        : server.StartsWith("dc01.", StringComparison.OrdinalIgnoreCase) ? server // rev-d1: a DC asked by its host name is that DC
+        : "dc01." + server;
+
+    /// <summary>
+    /// rev-d1. The host name Get-ADDomainController -Discover -Writable answers with for the -DomainName asked (null for
+    /// none); null from the function discovers nothing. Default: what <see cref="RootDseHost"/> gives for that domain.
+    /// </summary>
+    public Func<string?, string?> WritableHost { get; set; } = domain => "dc01." + (string.IsNullOrEmpty(domain) ? "default.test" : domain);
+
+    /// <summary>rev-d1. When set, Get-ADDomainController -Discover fails with this message as a terminating error.</summary>
+    public string? DiscoverFailure { get; set; }
+
+    /// <summary>
+    /// rev-d1. Read-only domain controllers, by host name: their RootDSE carries the read-only capability, and a Set-ADUser
+    /// sent to one is refused, as a real RODC refuses a write.
+    /// </summary>
+    public HashSet<string> ReadOnlyDcs { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly List<string?> _discoveries = [];
+
+    /// <summary>rev-d1. Every Get-ADDomainController -Discover's -DomainName, in order (null for none).</summary>
+    public IReadOnlyList<string?> Discoveries
+    {
+        get { lock (_discoveries) return _discoveries.ToList(); }
+    }
+
+    public void NoteDiscovery(string? domain)
+    {
+        lock (_discoveries)
+            _discoveries.Add(string.IsNullOrEmpty(domain) ? null : domain);
+    }
+
+    /// <summary>rev-d1. The supportedCapabilities of the RootDSE of <paramref name="host"/>: the read-only one for an RODC.</summary>
+    public string[] CapabilitiesOf(string? host) =>
+        host is not null && ReadOnlyDcs.Contains(host)
+            ? ["1.2.840.113556.1.4.800", "1.2.840.113556.1.4.1920"]
+            : ["1.2.840.113556.1.4.800"];
 
     /// <summary>Sweep-f item 27. When set, Get-ADRootDSE fails with this message as a terminating error.</summary>
     public string? RootDseFailure { get; set; }
@@ -854,7 +897,23 @@ internal sealed class LocalAd
                     [System.InvalidOperationException]::new($directory.RootDseFailure),
                     'RootDseUnavailable', [System.Management.Automation.ErrorCategory]::ResourceUnavailable, $Server))
             }
-            [pscustomobject]@{ dnsHostName = $directory.RootDseHost.Invoke([string]$Server); schemaNamingContext = $directory.SchemaContext }
+            $rootHost = $directory.RootDseHost.Invoke([string]$Server)
+            [pscustomobject]@{ dnsHostName = $rootHost; schemaNamingContext = $directory.SchemaContext; supportedCapabilities = $directory.CapabilitiesOf($rootHost) }
+            """));
+
+        // rev-d1. The DC locator: a writable domain controller of the -DomainName asked, by host name.
+        state.Commands.Add(new SessionStateFunctionEntry("Get-ADDomainController", """
+            [CmdletBinding()] param([switch]$Discover, [switch]$Writable, $Service, $DomainName)
+            $directory = $global:AttributeDirectory
+            $directory.NoteDiscovery([string]$DomainName)
+            if ($directory.DiscoverFailure) {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new($directory.DiscoverFailure),
+                    'DiscoverFailed', [System.Management.Automation.ErrorCategory]::ObjectNotFound, $DomainName))
+            }
+            if (-not $Writable) { throw 'stand-in: a discovery that does not ask for a writable DC' }
+            $found = $directory.WritableHost.Invoke([string]$DomainName)
+            if ($found) { [pscustomobject]@{ HostName = $found } }
             """));
 
         // Sweep-f item 27. The schema read: each attribute Schema holds that the filter names, with its attributeSyntax.
@@ -875,6 +934,11 @@ internal sealed class LocalAd
             $directory.Note("Set-ADUser|$Identity")
             $global:AttributeWriteSent = $true
             $global:AttributeWriteServer = [string]$Server
+            if ($Server -and $directory.ReadOnlyDcs.Contains([string]$Server)) {
+                $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new('A referral was returned from the server'),
+                    'ReadOnlyDc', [System.Management.Automation.ErrorCategory]::WriteError, $Identity))
+            }
             if ($directory.SetFailure) {
                 $refusal = [System.Management.Automation.ErrorRecord]::new(
                     [System.InvalidOperationException]::new($directory.SetFailure),
@@ -915,6 +979,7 @@ internal sealed class LocalAd
         result.Properties.Add(new PSNoteProperty("UserPrincipalName", user.Upn));
         result.Properties.Add(new PSNoteProperty("SamAccountName", user.Sam));
         result.Properties.Add(new PSNoteProperty("mail", user.Mail));
+        result.Properties.Add(new PSNoteProperty("objectSid", new System.Security.Principal.SecurityIdentifier(user.Sid)));
         var attributes = stale && user.BeforeLastWrite is { } before ? before : user.Attributes;
         foreach (var (name, value) in attributes)
             result.Properties.Add(new PSNoteProperty(name, ReadsAs is { } typed ? typed(name, value) : value));

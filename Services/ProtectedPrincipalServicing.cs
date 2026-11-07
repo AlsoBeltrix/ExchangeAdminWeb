@@ -79,14 +79,14 @@ public static class ProtectedPrincipalServicing
     /// </summary>
     /// <remarks>
     /// The invariants are the servicer stream's, not re-litigated: protection is evaluated
-    /// FIRST via <see cref="ProtectedPrincipalService.CheckWriteTarget"/> and never weakened;
+    /// FIRST via <see cref="ProtectedPrincipalService.CheckWriteTargetAsync"/> and never weakened;
     /// fail-closed outranks servicing (a failed or errored check denies with its reason, AC5);
     /// a null acting principal refuses; the grant is per module; the note names the authorising
     /// group and the rules overridden, qualified "write target" so an audit can tell a serviced
     /// TARGET from a serviced MEMBER. Two hand-written gates is how they come to disagree about
     /// what "protected" means - this is the only one.
     /// </remarks>
-    public static WriteTargetDecision ForWriteTarget(
+    public static async Task<WriteTargetDecision> ForWriteTargetAsync(
         ProtectedPrincipalService protection,
         ProtectedPrincipalServicerService servicers,
         ResolvedDirectoryPrincipal targetGroup,
@@ -95,7 +95,8 @@ public static class ProtectedPrincipalServicing
     {
         try
         {
-            var check = protection.CheckWriteTarget(targetGroup);
+            // rev-b3: the full check - its OU rule is read from the directory.
+            var check = await protection.CheckWriteTargetAsync(targetGroup);
             if (check.CheckFailed)
                 return new(false, $"Protection check failed: {check.Reason}", null);
             if (!check.IsProtected)

@@ -275,7 +275,8 @@ public sealed class ProtectedPrincipalRepository
     /// <summary>
     /// Replace: <paramref name="row"/> leaves (with its companion) and <paramref name="newRow"/> - the picked object's
     /// identifier row, or a target's <c>objectGUID|DN</c> - takes its place in the same kind, with
-    /// <paramref name="newCompanion"/> beside it; the old row's Verify ignores go in the same transaction.
+    /// <paramref name="newCompanion"/> beside it; the old row's Verify ignores go in the same transaction - rev-c2: every one
+    /// that names the replaced row, even when the picked object carries the same identifier (an ignore is undone by Replace).
     /// </summary>
     /// <remarks>A legacy row stored by name only (A2) is replaced by an identifier row of the kind it converts into.</remarks>
     public VerifyWriteOutcome ReplaceWithCompanionAndIgnores(
@@ -287,7 +288,7 @@ public sealed class ProtectedPrincipalRepository
                 return VerifyDecision.Refuse(VerifyWriteStatus.RowChanged);
             lists.Add(row.Kind, newRow, newCompanion);
             return VerifyDecision.Rules(lists.ToData());
-        });
+        }, dropIgnoresOf: row);
 
     /// <summary>
     /// Rename (B.5): the identifier row of <paramref name="kind"/> carrying <paramref name="identifier"/> gets
@@ -323,7 +324,7 @@ public sealed class ProtectedPrincipalRepository
 
     private VerifyWriteOutcome WriteVerify(
         string expectedVersion, bool casIgnores, string? expectedIgnores, VerifyIgnoreEntry? addIgnore,
-        Func<ProtectedPrincipalSnapshot, VerifyDecision> decide)
+        Func<ProtectedPrincipalSnapshot, VerifyDecision> decide, VerifyRowRef? dropIgnoresOf = null)
     {
         try
         {
@@ -367,7 +368,8 @@ public sealed class ProtectedPrincipalRepository
                     }
                     else
                     {
-                        var kept = entries.Where(e => StillNamesARow(e, after.Data)).ToList();
+                        // rev-c2: and none that names the row the write took out, whatever took its place.
+                        var kept = entries.Where(e => StillNamesARow(e, after.Data) && !NamesRow(e, dropIgnoresOf)).ToList();
                         if (addIgnore is not null)
                             kept.Add(addIgnore);
                         if (kept.Count != entries.Count || addIgnore is not null)
@@ -431,6 +433,14 @@ public sealed class ProtectedPrincipalRepository
                 return v;
         }
     }
+
+    // rev-c2. Whether an ignore names the row a write took out: this store, the row's kind and its identity.
+    private static bool NamesRow(VerifyIgnoreEntry entry, VerifyRowRef? row) =>
+        row is not null
+        && string.Equals(entry.Store, VerifyIgnoreList.ProtectedPrincipalsStore, StringComparison.Ordinal)
+        && string.Equals(entry.RowKey, row.Kind, StringComparison.Ordinal)
+        && RowIdentity(row.Kind, row.Value) is { } identity
+        && string.Equals(identity, entry.IdentifierOrText.Trim(), StringComparison.OrdinalIgnoreCase);
 
     // An ignore of another store, or one naming a row these rules still hold.
     private static bool StillNamesARow(VerifyIgnoreEntry entry, ProtectedPrincipalData rules) =>
