@@ -78,7 +78,7 @@ public sealed class MfaResetNotificationGuardTests : IDisposable
         var notificationSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var notificationAsked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var email = Substitute.For<EmailService>(config, NullLogger<EmailService>.Instance);
-        email.SendAdminNotificationAsync(default!, default!, default!, default, default, default, default)
+        email.SendAdminNotificationAsync(default!, default!, default!, default, default!, default!, default)
             .ReturnsForAnyArgs(_ =>
             {
                 notificationAsked.TrySetResult();
@@ -117,7 +117,7 @@ public sealed class MfaResetNotificationGuardTests : IDisposable
         await first.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
         Assert.Equal(1, protection.Resolutions);
-        await email.ReceivedWithAnyArgs(1).SendAdminNotificationAsync(default!, default!, default!, default, default, default, default);
+        await email.ReceivedWithAnyArgs(1).SendAdminNotificationAsync(default!, default!, default!, default, default!, default!, default);
         Assert.False((bool)typeof(MfaReset).GetField("resetInProgress", PrivateInstance)!.GetValue(page)!);
     }
 }
