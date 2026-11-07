@@ -1239,8 +1239,8 @@ DN names a domain that is not in this forest - never read as missing); or **igno
 entries at <time>: M findings, K ignored, J could not be verified", and the last press is shown to the next admin. Beside
 each finding are its actions, each written at once (not at Save), checked against the rules as Verify read them (a change
 since refuses: "run Verify again"), re-authorized at the click and audited under `Verify:ProtectedPrincipals`:
-**Rename** (store the current name as the entry's label and as its companion for an older build - which also changes what
-the name fallback matches: an OU compared by DN suffix in the write-target check), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
+**Rename** (store the current name as the entry's label and as its companion for an older build; the check itself never compares
+names - an OU protects the groups and accounts beneath it by its object GUID, in a group write-target check too), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
 name; checked as an Add is), **Remove now** (the entry, its companion and any ignore of it), and **Ignore** (keep the entry
 and stop the finding being reported until what Verify sees changes; never offered for an entry not converted or one that
 could not be verified). One ignore changes a protection check (slice V2, docs/DirectoryObjectVerify-Plan.md B.4): a

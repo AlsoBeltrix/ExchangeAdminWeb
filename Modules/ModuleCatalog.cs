@@ -807,7 +807,7 @@ public sealed class ModuleCatalog
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
             // 2.16.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "2.16.4",
+            Version = "2.16.5",
             MainPermission = new(
                 "Access",
                 "GroupManagement",

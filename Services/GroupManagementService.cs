@@ -379,7 +379,7 @@ public class GroupManagementService
         if (resolvedGroup.Error is not null)
             return new(true, resolvedGroup.Error, null);
 
-        var gate = ProtectedPrincipalServicing.ForWriteTarget(
+        var gate = await ProtectedPrincipalServicing.ForWriteTargetAsync(
             _protectedPrincipals, _servicers, resolvedGroup.Principal!, actingUser, ServicerModuleId);
         if (!gate.Allowed)
             return new(true, gate.FailReason
@@ -393,7 +393,7 @@ public class GroupManagementService
         if (creds is null)
             return new GroupMemberList { GroupName = groupIdentity, Error = "AD credentials unavailable." };
 
-        return await ThrottledAdAsync(async () => await Task.Run(() =>
+        return await ThrottledAdAsync(async () => await Task.Run(async () => // rev-b3: the target gate awaits its OU read
         {
             var result = new GroupMemberList { GroupName = groupIdentity };
             using var runspace = CreateDirectoryRunspace();
@@ -456,7 +456,7 @@ public class GroupManagementService
                 ObjectGuid: groupWithMembers.Properties["ObjectGUID"]?.Value?.ToString(),
                 EntraObjectId: null,
                 ObjectSid: ProtectedPrincipalService.ObjectSidOf(groupWithMembers));
-            var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
+            var targetGate = await ProtectedPrincipalServicing.ForWriteTargetAsync(
                 _protectedPrincipals, _servicers, targetSnapshot, actingUser, ServicerModuleId);
             if (!targetGate.Allowed)
             {
@@ -669,7 +669,7 @@ public class GroupManagementService
         if (resolvedGroup.Error is not null)
             return PermissionResult.Fail(resolvedGroup.Error);
 
-        var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
+        var targetGate = await ProtectedPrincipalServicing.ForWriteTargetAsync(
             _protectedPrincipals, _servicers, resolvedGroup.Principal!, actingUser, ServicerModuleId);
         if (!targetGate.Allowed)
             return PermissionResult.Fail(targetGate.FailReason
@@ -843,7 +843,7 @@ public class GroupManagementService
         if (resolvedGroup.Error is not null)
             return PermissionResult.Fail(resolvedGroup.Error);
 
-        var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
+        var targetGate = await ProtectedPrincipalServicing.ForWriteTargetAsync(
             _protectedPrincipals, _servicers, resolvedGroup.Principal!, actingUser, ServicerModuleId);
         if (!targetGate.Allowed)
             return PermissionResult.Fail(targetGate.FailReason

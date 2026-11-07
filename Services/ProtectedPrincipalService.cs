@@ -435,7 +435,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             var sidProblems = new List<string>();
             CheckDirectUserMatches(cfg, target, matchedRules, sidProblems);
             CheckPatternMatches(cfg, target, matchedRules);
-            CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: false);
 
             // docs/ProtectedPrincipalIdentifiers-Plan.md K.3 point 3: a user, group or OU row stored by name only is never
             // resolved or matched by name. It cannot be answered, so the check is incomplete, naming it, and refuses unless
@@ -522,10 +521,11 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// ExcludedUsers list is not evaluated either: it is a module-scoped user list, not one of
     /// the four rule kinds.
     ///
-    /// Synchronous and directory-free by construction: every rule evaluated here keys on the
-    /// resolved snapshot the caller supplies (pgwt-2: a FULL snapshot, never a bare DN), so an
-    /// unavailable directory cannot turn this check into a silent allow. Fails closed on a
-    /// config load error (AC5). virtual as a test seam, like CheckAsync.
+    /// Synchronous and directory-free: every rule evaluated here keys on the resolved snapshot the caller supplies (pgwt-2:
+    /// a FULL snapshot, never a bare DN), so an unavailable directory cannot turn this part into a silent allow. Fails closed
+    /// on a config load error (AC5). virtual as a test seam, like CheckAsync. rev-b3: the OrganizationalUnits rule is NOT
+    /// evaluated here - an OU is compared by the objectGUIDs of the target's containers, which only the directory holds -
+    /// so every write gate calls <see cref="CheckWriteTargetAsync"/>, which adds it.
     /// </remarks>
     public virtual ProtectedPrincipalResult CheckWriteTarget(ResolvedDirectoryPrincipal target)
     {
@@ -541,9 +541,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             var sidProblems = new List<string>();
             CheckDirectUserMatches(cfg, target, matchedRules, sidProblems);
             CheckPatternMatches(cfg, target, matchedRules);
-            // Directory-free, so an ou_guid row is compared here by its label - the DN suffix its companion carries - as
-            // this check compared that OU before the identifier rows existed: no protection it gave is lost.
-            CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: true);
             CheckGroupTargetMatches(cfg, target, matchedRules);
 
             // K.3 point 3: a user or OU row stored by name only is never compared by its text; with no rule matched, the check
@@ -560,6 +557,106 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 matchedRules.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
 
         return ProtectedPrincipalResult.NotProtected();
+    }
+
+    /// <summary>
+    /// rev-b3. The write-target check in full: <see cref="CheckWriteTarget"/>'s directory-free rules, and the
+    /// OrganizationalUnits rule compared as the principal check compares it - by the objectGUIDs of the target group's
+    /// containers, read once by DN in its own domain under the directory-read credential (<see cref="ProtectedOuMembership"/>),
+    /// so an OU protected by objectGUID still protects its groups after it is renamed or moved. A read that cannot be
+    /// completed refuses, naming why, unless another rule matched. virtual as a test seam.
+    /// </summary>
+    public virtual async Task<ProtectedPrincipalResult> CheckWriteTargetAsync(ResolvedDirectoryPrincipal target)
+    {
+        var first = CheckWriteTarget(target);
+        if (first.CheckFailed)
+            return first;
+
+        var (cfg, _, loadError) = LoadEffectiveConfig();
+        if (loadError != null)
+            return ProtectedPrincipalResult.Failed(loadError);
+        var ouIds = cfg is null ? [] : RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid).Ids;
+        if (ouIds.Count == 0)
+            return first;
+
+        string? failReason;
+        IReadOnlyList<string> ouMatches;
+        if (string.IsNullOrWhiteSpace(target.DistinguishedName))
+            (ouMatches, failReason) = ([], IncompleteReason([WriteTargetContainersNotRead]));
+        else
+        {
+            using var check = BeginCheck(target.DistinguishedName);
+            (ouMatches, failReason) = await CheckOuGuidsAsync(ouIds, target.DistinguishedName);
+        }
+
+        var rules = first.MatchedRules.Concat(ouMatches).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (rules.Length > 0)
+            return ProtectedPrincipalResult.Protected("Target group is protected against membership changes.", rules);
+        return failReason is null ? ProtectedPrincipalResult.NotProtected() : ProtectedPrincipalResult.Failed(failReason);
+    }
+
+    /// <summary>rev-b3. The problem a write target whose containers could not be read for the protected OUs is refused with.</summary>
+    internal const string WriteTargetContainersNotRead = "the containers the target is in could not be read for the protected OUs";
+
+    // rev-b3. The ou_guid rows matched by the containers of targetDn, read in a warm session under the directory-read
+    // credential; a reason when the read could not be completed (no credential, the throttle, a failed or partial read).
+    private async Task<(IReadOnlyList<string> Matches, string? FailReason)> CheckOuGuidsAsync(
+        IReadOnlyList<ProtectedPrincipalIdEntry> ouIds, string targetDn)
+    {
+        if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
+            return ([], "Directory-read credential recently failed. Retry shortly or check configuration.");
+
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId == null)
+            return ([], "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
+
+        return await WithDirectoryReadCredentialAsync(secretId.Value, ReadWith);
+
+        async Task<(IReadOnlyList<string> Matches, string? FailReason)> ReadWith((string username, string password, string domain)? creds)
+        {
+            if (creds == null)
+            {
+                _lastCredentialFailure = DateTime.UtcNow;
+                return ([], "Protected-principal directory-read credential is unavailable. Contact your administrator.");
+            }
+
+            try
+            {
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
+                    return ([], "AD service is busy. Please try again.");
+                try
+                {
+                    return await Task.Run(() =>
+                    {
+                        using var session = DirectorySessions.Lease(SessionWait);
+                        try
+                        {
+                            var directory = new PowerShellProtectedGroupDirectory(
+                                session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain));
+                            var (matches, incomplete) = ProtectedOuMembership.Evaluate(ouIds, targetDn, directory, _logger);
+                            if (incomplete)
+                                session.Fail();
+                            return (matches, incomplete ? IncompleteReason([WriteTargetContainersNotRead]) : (string?)null);
+                        }
+                        catch (Exception ex)
+                        {
+                            DirectoryCredentialRejection.Observe(ex);
+                            session.Fail();
+                            throw;
+                        }
+                    });
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "The protected-OU check of write target {Target} failed", targetDn);
+                return ([], IncompleteReason([WriteTargetContainersNotRead]));
+            }
+        }
     }
 
     private static void CheckGroupTargetMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
@@ -1429,13 +1526,13 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// </summary>
     private ResolvedDirectoryPrincipal CloudOnlyPrincipal(string identity, ResolvedRecipient recipient)
     {
-        // CheckOuMatches and CheckTransitiveGroupMembership both degrade to "no match" on a null
-        // DN without raising a failure, so this is logged rather than left silent: an operator
+        // The group, OU and user checks all degrade to "no match" for a target with no on-premises
+        // object without raising a failure, so this is logged rather than left silent: an operator
         // reading the audit trail has to be able to see which rules could not be evaluated.
         _logger.LogInformation(
             "Exchange resolved {Identity} as a cloud-only recipient (canonical {Canonical}) with no "
-            + "on-premises object - group, OU and SamAccountName-pattern rules were NOT evaluated; "
-            + "only protected user rows apply",
+            + "on-premises object - group, OU and SamAccountName-pattern rules were NOT evaluated, "
+            + "and no protected user row (an on-premises SID) can name it",
             identity, recipient.PrimarySmtpAddress);
 
         return new ResolvedDirectoryPrincipal(
@@ -2060,30 +2157,6 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
         return Regex.IsMatch(value, regexPattern, RegexOptions.IgnoreCase, RegexTimeout);
     }
-
-    /// <summary>
-    /// ou_guid rows are compared by objectGUID in the directory phase of <see cref="CheckAsync"/>; with
-    /// <paramref name="ouIdsByLabel"/> - the directory-free write-target check - by their label's DN suffix instead, the
-    /// comparison their companion row gets from an older build. Legacy OU rows stored by name only are not compared at all
-    /// (K.3): they are <see cref="NotConvertedProblems"/>.
-    /// </summary>
-    private static void CheckOuMatches(
-        ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules, bool ouIdsByLabel)
-    {
-        if (string.IsNullOrEmpty(target.DistinguishedName) || !ouIdsByLabel)
-            return;
-
-        var (_, _, ids) = RowsToEvaluate(cfg.OrganizationalUnits, cfg.OuIds, ProtectedPrincipalIdEntry.CanonicalGuid);
-        foreach (var id in ids)
-        {
-            if (id.Label.Length > 0 && IsAtOrBeneath(target.DistinguishedName, id.Label))
-                matchedRules.Add($"OU:{id.Display}");
-        }
-    }
-
-    private static bool IsAtOrBeneath(string targetDn, string ou) =>
-        targetDn.EndsWith("," + ou, StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(targetDn, ou, StringComparison.OrdinalIgnoreCase);
 
     private async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckGroupMembershipAsync(
         IReadOnlyList<string> groupEntries, IReadOnlyDictionary<string, string> groupLabels, IReadOnlySet<string> ignoredMissing,

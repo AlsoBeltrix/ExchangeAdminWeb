@@ -1167,8 +1167,8 @@
                 + "Replace it with the object it should name, Remove it, or Ignore it if you know why."),
             VerifyFindingKind.LabelDrift => ("name changed", "bg-warning text-dark",
                 $"Stored as '{r.Item.Label}'; the object's current name is '{f.Detail}'. It still protects by its identifier. "
-                + "Rename stores the current name, which is also what an older build sharing the database, and the one "
-                + "fallback that compares names (an OU in the group write-target check), match."),
+                + "Rename stores the current name, which is also what an older build sharing the database matches; "
+                + "this build never compares names."),
             VerifyFindingKind.NotConverted => ("not converted", "bg-warning text-dark",
                 "Stored by name only, so every protection check that finds no other match is refused, naming it, until it is "
                 + $"converted. The directory says: {f.Resolution?.Detail ?? f.Detail}. Cannot be ignored."),
