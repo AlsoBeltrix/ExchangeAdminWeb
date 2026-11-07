@@ -8,6 +8,16 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (sweep-g, stalled) - scripts slice stopped after three of seven items; resume later
+
+`fix/sweep-g` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-g`, from master `145f513f`) holds items 12 (`ff681201`),
+34 (`e02c4c0c`) and 35 (`aa0082f0`) committed, and item 36 (plan mode across `deploy.ps1`, `promote-dev-to-prod.ps1`,
+`Move-ConfigDbToShared.ps1`, with `tests/ps/AppPoolControl.Tests.ps1`) UNCOMMITTED and unverified in the worktree. The
+agent went silent at 19:12 with no commit, no file change and no reply to a status message for an hour (its last text:
+"Now the password, pool config, ACL and IIS auth steps."); the supervisor stopped it at 20:17 as stalled, most likely on
+a permission prompt nobody could answer. Nothing was merged. **Resume:** a fresh agent on the same branch finishes item
+36 from the working tree (verify before trusting it), then 37, 38, 39, records; brief in the supervisor's scratchpad
+`brief-sweep-g.md` plus this note. Owner: if a permission prompt is pending in the terminal on return, that was it.
 ### 2026-11-06 (reviews A-D) - codex-commercial defect reviews of everything merged since the dev build
 
 Four read-only reviews (codex-commercial, gpt-6-astra, xhigh; prompts and reports in `.agents/review/rev-{a,b,c,d}.*`,
@@ -90,7 +100,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** sweep-g (scripts 34-39, item 12 code half; in flight), then fix slice rev-abc for the thirteen review findings, review E of sweep-g,
+**Next:** fix slice rev-abc for the thirteen review findings (in flight), then resume sweep-g (items 36-39 and records), review E of sweep-g,
 then master gates and the final state entry; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
