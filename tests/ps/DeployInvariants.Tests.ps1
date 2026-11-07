@@ -3423,3 +3423,100 @@ Describe 'tools/deploy-pipeline.ps1' {
             -Because 'the pipeline must not pass switches the promote script no longer has'
     }
 }
+
+Describe 'tools/deploy-pipeline.ps1: dev is stale only when its build inputs differ (sweep item 35)' {
+
+    # -Prod and -Prod -PlanOnly refused with "Dev is stale" whenever HEAD differed from the dev
+    # manifest's commit, even for a commit touching only .agents/. The pipeline now compares the build
+    # inputs at the two commits, and a plan warns where the real run refuses. The script requires
+    # elevation and runs at the top level, so its functions are lifted out of the file unchanged and
+    # driven against a throwaway git repository.
+
+    BeforeAll {
+        $path = Join-Path $RepoRoot 'tools/deploy-pipeline.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+        foreach ($name in 'Write-Ok', 'Write-Warn', 'Test-IsNonBuildInputPath', 'Get-BuildInputTreeId', 'Assert-DevBuildCurrent') {
+            $definition = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }.GetNewClosure(), $true)
+            if (-not $definition) { throw "deploy-pipeline.ps1 defines no $name" }
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        # The list itself, lifted the same way: the two assignments that define it.
+        foreach ($assignment in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -match '^\$script:NonBuildInput' }, $false))) {
+            . ([scriptblock]::Create($assignment.Extent.Text))
+        }
+
+        $script:Repo = Join-Path ([System.IO.Path]::GetTempPath()) ('s35_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:Repo | Out-Null
+        function Invoke-S35Git { & git -C $script:Repo @args 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+        function Save-S35Commit {
+            param([hashtable]$Files)
+            foreach ($k in $Files.Keys) {
+                $file = Join-Path $script:Repo $k
+                New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
+                Set-Content -LiteralPath $file -Value $Files[$k] -Encoding ascii
+            }
+            Invoke-S35Git add -A
+            Invoke-S35Git -c user.name=t -c user.email=t@example.invalid commit -q -m 'c'
+            (& git -C $script:Repo rev-parse HEAD).Trim()
+        }
+        Invoke-S35Git init -q
+        $script:Built = Save-S35Commit @{ 'Program.cs' = 'v1'; 'tools/deploy.ps1' = 'a'; 'README.md' = 'r1'; 'docs/x.md' = 'd1'; '.agents/state.md' = 's1'; 'tests/ps/a.Tests.ps1' = 't1' }
+        $script:RecordsOnly = Save-S35Commit @{ '.agents/state.md' = 's2'; '.agents/review/x.md' = 'n' }
+        $script:DocsAndTests = Save-S35Commit @{ 'docs/x.md' = 'd2'; 'README.md' = 'r2'; 'Services/Notes.md' = 'm'; 'tests/ps/a.Tests.ps1' = 't2' }
+        $script:CodeChange = Save-S35Commit @{ 'Program.cs' = 'v2' }
+    }
+
+    AfterAll { Remove-Item -LiteralPath $script:Repo -Recurse -Force -ErrorAction SilentlyContinue }
+
+    It 'holds the list in one place: .agents/, docs/, every Markdown file and tests/ps/, nothing else' {
+        ($script:NonBuildInputPrefixes -join ',') | Should -BeExactly '.agents/,docs/,tests/ps/'
+        ($script:NonBuildInputSuffixes -join ',') | Should -BeExactly '.md'
+        $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/deploy-pipeline.ps1') -Raw
+        ([regex]::Matches($text, "'\.agents/'")).Count | Should -Be 1 -Because 'the list is defined once'
+    }
+
+    It 'reads <Path> as <Expected>' -TestCases @(
+        @{ Path = '.agents/state.md'; Expected = $true }
+        @{ Path = 'docs/Plan.md'; Expected = $true }
+        @{ Path = 'tests/ps/X.Tests.ps1'; Expected = $true }
+        @{ Path = 'Resources/notes.MD'; Expected = $true }
+        @{ Path = 'Program.cs'; Expected = $false }
+        @{ Path = 'tools/deploy-pipeline.ps1'; Expected = $false }
+        @{ Path = 'ExchangeAdminWeb.Tests/A.cs'; Expected = $false }
+        @{ Path = 'tests/psx/a.ps1'; Expected = $false }
+        @{ Path = 'wwwroot/app.css'; Expected = $false }
+    ) {
+        Test-IsNonBuildInputPath $Path | Should -Be $Expected
+    }
+
+    It 'is not stale when the commits between touch only <Case>, in a real run and a plan' -TestCases @(
+        @{ Case = '.agents/'; Head = 'RecordsOnly' }
+        @{ Case = 'docs/, Markdown files and tests/ps/'; Head = 'DocsAndTests' }
+    ) {
+        $head = Get-Variable -Name $Head -Scope Script -ValueOnly
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $head -DevShort 'b' -SourceShort 'h' 6>$null } | Should -Not -Throw
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $head -DevShort 'b' -SourceShort 'h' -PlanOnly 6>$null } | Should -Not -Throw
+    }
+
+    It 'refuses a real -Prod when a build input changed' {
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $script:CodeChange -DevShort 'b' -SourceShort 'h' 6>$null } |
+            Should -Throw -ExpectedMessage 'Dev is stale: built from commit b but source is at h, and the build inputs differ*Run -Dev first.'
+    }
+
+    It 'lets -PlanOnly go on with a warning when a build input changed' {
+        $out = Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $script:CodeChange -DevShort 'b' -SourceShort 'h' -PlanOnly 6>&1
+        ($out | Out-String) | Should -BeLike '*Dev is stale*A real -Prod refuses here*This plan goes on*'
+    }
+
+    It 'treats a dev commit git cannot find as stale: refused for real, a warning in a plan' {
+        $missing = 'f' * 40
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $missing -SourceCommit $script:CodeChange -DevShort 'ffffffff' -SourceShort 'h' 6>$null } |
+            Should -Throw -ExpectedMessage '*Dev is stale*cannot be compared*'
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $missing -SourceCommit $script:CodeChange -DevShort 'ffffffff' -SourceShort 'h' -PlanOnly 6>$null } | Should -Not -Throw
+    }
+
+    It 'is what the -Prod branch calls when HEAD differs from the manifest' {
+        $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/deploy-pipeline.ps1') -Raw
+        $text | Should -Match '(?s)\} elseif \(\$currentCommit -ne \$manifest\.gitCommit\) \{.*?Assert-DevBuildCurrent -RepoRoot \$repoRoot -DevCommit \$manifest\.gitCommit -SourceCommit \$currentCommit .*?-PlanOnly:\$PlanOnly\s*\} else \{'
+    }
+}

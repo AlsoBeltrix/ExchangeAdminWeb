@@ -933,6 +933,12 @@ environments; it is intentionally separate from the standalone installer.
 .\deploy.ps1
 ```
 
+On the ADI host the entry point is `tools\deploy-pipeline.ps1` (elevated): `-Dev` builds and
+deploys dev through `deploy.ps1`, `-Prod` promotes dev's build to prod without rebuilding. `-Prod`
+refuses a stale dev - one built from a commit whose build inputs differ from HEAD's. A commit that
+touches only `.agents/`, `docs/`, Markdown files or `tests/ps/` does not make dev stale, and with
+`-PlanOnly` a stale dev is a warning, so the dry run still prints.
+
 `deploy.ps1` updates in place when the publish folder already holds `appsettings.json`.
 `-Force` (which regenerates `appsettings.json`) and `-ConfirmFreshInstall` take the fresh-install
 path, which points the IIS application at the run's `-PublishPath` and `-AppPoolName`: if the
