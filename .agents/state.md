@@ -8,6 +8,30 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (rev-abc) - all thirteen review findings fixed and merged
+
+Merged `fix/rev-abc` into master at `78c03e49` (`--no-ff`, cherry 0, worktree and branch removed) on the agent's guard
+proof (records `rev-a1..a3`, `rev-b1..b5`, `rev-c1..c3`, `rev-d1..d2` updated in place; all thirteen verified real,
+none declined). Master gates: 8852 xUnit, 19 warnings, format, diff-check and ASCII clean. Versions: GroupManagement
+2.16.5, SelfServiceGroups 1.14.3, LicensingUpdates 1.1.9, ADAttributeEditor 1.7.9, AdminSettings 1.3.2, MfaReset 1.6.3;
+base stays 2.36.0.
+
+Behaviour the owner should know: (a1) a token miss on a protected security group now goes to kd-88's link-read path
+instead of being read as a confirmed negative; cost is one ancestry read per check (+3 reads for an ordinary account,
++2 per nesting level; estimated well under a second warm; the timing log line reports the real number). (a2) the
+directory credential cache expires five minutes from retrieval and is dropped and re-read once when the directory
+rejects it. (b4) until the Graph Directory Read Credential is filled on the deployed build, a protection check on a
+synced recipient addressed by an alias AD does not hold refuses as unavailable (Blocked Senders included) - fail closed,
+and the deploy step already on the list. (b2) every on-premises write target now carries its SID; a target without one
+refuses. (b5) two consecutive failed revalidations end the session, as the README says. Departures and the other sites
+with the same SearchBase root are in `rev-x1` (admitted, not fixed).
+
+Deploy check list additions: fill the Graph credential first; a grant to a user reaching a protected security group only
+through a distribution group must refuse, then read the "Protected-principal check ... took n ms (r directory reads)"
+line; rotate the directory-read secret under the same ID and see one "rejected ... fetching it afresh" line then success;
+run a protected check, a Verify and a conversion against a group in the other tree; an attribute-editor save logs
+"pinned to domain controller <writable DC>"; a group write inside a renamed protected OU refuses.
+
 ### 2026-11-06 (sweep-g, stalled) - scripts slice stopped after three of seven items; resume later
 
 `fix/sweep-g` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-g`, from master `145f513f`) holds items 12 (`ff681201`),
@@ -100,7 +124,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** fix slice rev-abc for the thirteen review findings (in flight), then resume sweep-g (items 36-39 and records), review E of sweep-g,
+**Next:** resume sweep-g (items 36-39 and records; in flight), then review E (sweep-g and rev-abc ranges), fixes if any,
 then master gates and the final state entry; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
