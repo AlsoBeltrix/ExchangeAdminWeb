@@ -8,6 +8,18 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 
+### 2026-11-06 (sweep-g, blocked) - second attempt stalled the same way; slice deferred to the owner's return
+
+A fresh agent resumed `fix/sweep-g` at 22:30, edited `tools/deploy-pipeline.ps1` and `README.md` for item 36 until 22:35,
+then went silent (last text: "Now add README text for item 36."), no process running, no reply to a status message;
+stopped 23:20. Both attempts stalled with no tool process alive, which fits a tool call held on a permission prompt that
+only the owner's terminal can answer. The worktree keeps the uncommitted item-36 work (`deploy.ps1`,
+`tools/promote-dev-to-prod.ps1`, `tools/Move-ConfigDbToShared.ps1`, `tools/deploy-pipeline.ps1`, `README.md`,
+`tests/ps/AppPoolControl.Tests.ps1`), unverified. **Blocked; proposed action:** owner, on return, look for a pending
+permission prompt in this terminal and answer it (or tell the supervisor what the agents may not do), then the slice
+resumes with the same brief (`brief-sweep-g.md.full` in the supervisor's scratchpad; its content is the sweep items
+12, 34-39 with the rules in this file's earlier sweep-g entry). Items 12, 34 and 35 are committed on the branch and
+unmerged; nothing on master depends on them.
 ### 2026-11-06 (rev-abc) - all thirteen review findings fixed and merged
 
 Merged `fix/rev-abc` into master at `78c03e49` (`--no-ff`, cherry 0, worktree and branch removed) on the agent's guard
@@ -124,7 +136,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** resume sweep-g (items 36-39 and records; in flight), then review E (sweep-g and rev-abc ranges), fixes if any,
+**Next:** review E (rev-abc range; retrying after a 401 from codex-commercial), fixes if any; sweep-g waits for the owner (blocked, above);
 then master gates and the final state entry; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled
