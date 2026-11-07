@@ -470,6 +470,54 @@ public class PageRequestRevalidationTests
     }
 
     [Fact]
+    public async Task TwoFailedChecksInARow_EndTheSession_WithAThirtySecondIntervalAndASixtySecondTimeout()
+    {
+        // rev-b5. The supported shortest interval with the longest timeout: the recorded answer's window is 30 + 60 + 60 =
+        // 150 s, so the answer read at t=0 is still inside it at t=30, 60, 90 and 120. Two failed checks in a row end the
+        // session all the same - the second, at t=60.
+        using var h = new Harness(lookupTimeout: TimeSpan.FromSeconds(60), interval: TimeSpan.FromSeconds(30));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+            _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid)),
+            _ => throw new DirectoryUnavailableException("no domain controller answered"));
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True(await provider.ValidateAsync(user, "Interval", Ct));   // the first failure: the recorded answer stands in
+        Assert.Equal(1, h.Revalidator.FallbackCount);
+        h.Clock.Advance(h.Options.Interval);
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));  // the second in a row: the session ends
+        Assert.Equal(CircuitRevocationReason.LookupFailed, revocation.Reason);
+    }
+
+    [Fact]
+    public async Task AFreshReadBetweenTwoFailures_StartsTheCountAgain()
+    {
+        using var h = new Harness(lookupTimeout: TimeSpan.FromSeconds(60), interval: TimeSpan.FromSeconds(30));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(
+            _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid)),
+            _ => throw new DirectoryUnavailableException("no domain controller answered"),
+            _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid)),
+            _ => throw new DirectoryUnavailableException("no domain controller answered"));
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        foreach (var _ in Enumerable.Range(0, 3))
+        {
+            h.Clock.Advance(h.Options.Interval);
+            Assert.True(await provider.ValidateAsync(user, "Interval", Ct));
+        }
+        Assert.False(revocation.IsRevoked);
+    }
+
+    [Fact]
     public async Task ARealDenial_StillEndsTheSessionAtOnce_WhateverWasRecorded()
     {
         // A fresh read that answers is the directory's word: an answer recorded before, which would confirm, never overrides it.
@@ -815,7 +863,7 @@ public class PageRequestRevalidationTests
         private readonly TempDir _temp = new();
         private CircuitMembershipRevalidator? _revalidator;
 
-        public Harness(bool enabled = true, TimeSpan? lookupTimeout = null)
+        public Harness(bool enabled = true, TimeSpan? lookupTimeout = null, TimeSpan? interval = null)
         {
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -832,7 +880,7 @@ public class PageRequestRevalidationTests
 
             var log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
             Audit = new AuditService(log, new OperationTraceService(config, log));
-            Options = new CircuitRevalidationOptions(TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10), enabled);
+            Options = new CircuitRevalidationOptions(interval ?? TimeSpan.FromMinutes(5), lookupTimeout ?? TimeSpan.FromSeconds(10), enabled);
         }
 
         public SqliteConfigStore Store { get; }

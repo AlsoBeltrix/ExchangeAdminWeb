@@ -86,7 +86,10 @@ public sealed record MembershipRevalidationResult(
 /// nothing or does not answer within <see cref="CircuitRevalidationOptions.LookupTimeout"/>, the
 /// account's last recorded answer is used if its read started within <see cref="FallbackWindow"/> -
 /// one interval plus two lookup timeouts, so the answer the circuit's own previous check recorded is
-/// still there when the next one fails, and two failed checks in a row find none. That answer is
+/// still there when the next one fails. rev-b5: that window alone does not make two failed checks in a row end a session -
+/// with an interval shorter than two lookup timeouts one answer outlives several failed checks - so each verdict that stood
+/// in for a failed read says so (<see cref="MembershipRevalidationResult.FromRecordedAnswer"/>), and the session's provider
+/// counts them and ends the session at the second in a row; the window stays the outer bound. That answer is
 /// compared exactly as a fresh one: it confirms, or it refuses with its own reason - a removal the
 /// directory reported is never forgiven. Only with no such answer does the failure stand, and the
 /// session ends as before. Every fallback is counted (<see cref="FallbackCount"/>) and logged at

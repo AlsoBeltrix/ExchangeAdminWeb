@@ -82,6 +82,17 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
     private readonly object _grantsSync = new();
     private readonly HashSet<AuthorizationGrant> _grants = new();
 
+    // rev-b5. This session's checks in a row whose fresh directory read failed and that a recorded answer stood in for
+    // (MembershipRevalidationResult.FromRecordedAnswer); a check whose fresh read answered resets it.
+    private int _consecutiveFailedReads;
+
+    /// <summary>
+    /// rev-b5. How many checks in a row a session's fresh directory read may fail before the session ends: the second
+    /// ends it, whatever the interval and the lookup timeout - the recorded answer's age limit
+    /// (<see cref="CircuitMembershipRevalidator.FallbackWindow"/>) stays the outer bound.
+    /// </summary>
+    internal const int FailedReadsThatEndTheSession = 2;
+
     // kd-90. What the revalidation path reads of a principal: a copy of its claims - its name, its account SID, its groups -
     // as plain strings, taken once, the first time this circuit is handed the principal or reads it, and read in its place
     // ever after. The framework disposes a WindowsIdentity's token with the request that carried it and the circuit outlives
@@ -182,6 +193,23 @@ public sealed class MembershipRevalidatingAuthenticationStateProvider
 
         if (result.IsValid)
         {
+            // rev-b5. A confirmation from the recorded answer is a failed read all the same: two in a row end the session, as
+            // the README says, however short the interval - the answer's age limit alone let a 30-second interval with a
+            // 60-second timeout reuse one answer for four failed checks. A fresh read that answered starts the count again.
+            if (result.FromRecordedAnswer)
+            {
+                if (Interlocked.Increment(ref _consecutiveFailedReads) >= FailedReadsThatEndTheSession)
+                {
+                    Revoke(user, MembershipRevalidationResult.LookupFailed(
+                        $"The directory could not be read for {FailedReadsThatEndTheSession} access re-checks in a row. {result.Detail}"), trigger);
+                    return false;
+                }
+            }
+            else
+            {
+                Interlocked.Exchange(ref _consecutiveFailedReads, 0);
+            }
+
             // What this check confirmed joins what the circuit is held to; nothing is taken out, so
             // a grant first seen now is watched from now on (aud-a29d).
             lock (_grantsSync)

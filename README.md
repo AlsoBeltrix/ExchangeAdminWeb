@@ -1168,8 +1168,9 @@ rendered (aud-a29g).
   does not answer within 60 seconds, the account's last answer is used instead if it was read
   within one interval plus two minutes - so the answer of the tab's previous check, or of a recent
   page load - and is compared exactly as a fresh one: it confirms, or it refuses for its own reason.
-  Each such fallback is logged as a warning with a running count. Two failed checks in a row find
-  no answer that recent, and end the session.
+  Each such fallback is logged as a warning with a running count. Two failed checks in a row end the
+  session, whatever the interval: the session counts its checks whose read failed, and a check whose
+  read answered starts the count again.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
   cannot be completed within 60 seconds with no recent answer to fall back to (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the
