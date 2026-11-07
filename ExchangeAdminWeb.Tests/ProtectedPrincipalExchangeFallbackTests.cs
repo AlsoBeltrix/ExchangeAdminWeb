@@ -421,10 +421,11 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     }
 
     [Fact]
-    public async Task CloudOnlyRecipient_AddressedByAlias_IsProtectedByTheUserRow()
+    public async Task CloudOnlyRecipient_AddressedByAlias_IsNotMatchedByAUserRowsLabel()
     {
-        // The end-to-end consequence of ppv-1: the same principal must be protected whether it is
-        // addressed by its primary address or by an alias.
+        // ppv-1's end-to-end case, under the identifier rows: the alias resolves to the canonical cloud-only recipient, and
+        // rev-b2 / the Constitution - a cloud-only principal cannot be protected; no user row can name it, since every row
+        // is an on-premises object's SID and a row's label is never compared.
         var json = System.Text.Json.JsonSerializer.Serialize(new
         {
             ProtectedPrincipals = new
@@ -439,7 +440,7 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
-        // K.3: the user row is compared by its user_sid row - here, a cloud-only target carrying no SID, by that row's label.
+        // K.3: the user row is a user_sid row - an on-premises object, compared by SID alone.
         service.SaveConfig(new ProtectedPrincipalConfig { Users = ["vip.cloud@contoso.com"], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000-2000-3000-1199", "vip.cloud@contoso.com")] });
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
 
@@ -448,8 +449,9 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         var verdict = await service.CheckAsync(principal!);
 
-        Assert.True(verdict.IsProtected);
-        Assert.Contains("User:vip.cloud@contoso.com", verdict.MatchedRules);
+        Assert.False(verdict.IsProtected);
+        Assert.False(verdict.CheckFailed, verdict.Reason);
+        Assert.Empty(verdict.MatchedRules);
     }
 
     [Fact]
@@ -471,10 +473,10 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     }
 
     [Fact]
-    public async Task CloudOnlyRecipient_StillMatchesProtectedUserRows()
+    public async Task CloudOnlyRecipient_IsNotMatchedByAUserRowsLabel()
     {
-        // The rule types a cloud-only principal CAN be protected by must actually fire. This is
-        // the guarantee behind the Constitution's "protect by address, never by group membership".
+        // The Constitution, corrected 2026-11-06: a cloud-only principal cannot be protected by this app - no row names it.
+        // rev-b2: the user row (an on-premises SID) is not compared by its label, which once matched the address.
         var json = System.Text.Json.JsonSerializer.Serialize(new
         {
             ProtectedPrincipals = new
@@ -489,7 +491,7 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
-        // K.3: the user row is compared by its user_sid row - here, a cloud-only target carrying no SID, by that row's label.
+        // K.3: the user row is a user_sid row - an on-premises object, compared by SID alone.
         service.SaveConfig(new ProtectedPrincipalConfig { Users = ["vip.cloud@contoso.com"], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000-2000-3000-1199", "vip.cloud@contoso.com")] });
         service.AdReturns("vip.cloud@contoso.com", ResolutionStatus.NotFound);
 
@@ -498,9 +500,9 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
 
         var verdict = await service.CheckAsync(principal!);
 
-        Assert.True(verdict.IsProtected);
-        Assert.False(verdict.CheckFailed);
-        Assert.Contains("User:vip.cloud@contoso.com", verdict.MatchedRules);
+        Assert.False(verdict.IsProtected);
+        Assert.False(verdict.CheckFailed, verdict.Reason);
+        Assert.Empty(verdict.MatchedRules);
     }
 
     [Fact]

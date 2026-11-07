@@ -337,7 +337,7 @@ public class GroupMemberNestingProtectionTests
         Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
         // "mail" rides the same read since 2.6.0 - it feeds the query-time target-gate
         // snapshot without a second round-trip; the member-attribute shape is unchanged.
-        Assert.Contains("AddParameter(\"Properties\", new[] { \"member\", \"mail\" })", body, StringComparison.Ordinal);
+        Assert.Contains("AddParameter(\"Properties\", new[] { \"member\", \"mail\", \"objectSid\" })", body, StringComparison.Ordinal);
         Assert.Contains("MemberDnsOf(groupWithMembers)", body, StringComparison.Ordinal);
         Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
         Assert.Contains("AddParameter(\"Identity\", memberDn)", body, StringComparison.Ordinal);

@@ -129,6 +129,24 @@ public sealed class LicensingUpdatesPowerShellLifecycleTests
         session.AssertClean();
     }
 
+    [Fact]
+    public void ResolveUsers_TheSnapshotCarriesTheUsersObjectSid_SoARenamedProtectedUserIsComparedByIt()
+    {
+        // rev-b2. The protection check compares a protected user row by SID alone; the preview's snapshot left the SID out,
+        // so the check fell back to the row's stored label and a protected user whose UPN and mail had changed passed.
+        const string sid = "S-1-5-21-111111111-222222222-333333333-4242";
+        using var session = new Session(getAdUser: $$"""
+            if ($Properties -notcontains 'objectSid') { throw 'objectSid was not asked for' }
+            [pscustomobject]@{ DisplayName = 'Renamed'; UserPrincipalName = 'renamed@example.test'; SamAccountName = 'renamed'; mail = 'renamed@example.test'; DistinguishedName = 'CN=renamed'; ObjectGUID = 'guid-renamed'; objectSid = [System.Security.Principal.SecurityIdentifier]::new('{{sid}}'); extensionAttribute11 = 'E3' }
+            """);
+
+        var row = Assert.Single(session.Resolve("renamed@example.test"));
+
+        Assert.Null(row.Error);
+        Assert.Equal(sid, row.Principal?.ObjectSid);
+        session.AssertClean();
+    }
+
     private static LicensePreviewRow PreviewRow(string name) => new(name,
         new ResolvedDirectoryPrincipal("OnPremAD", name, $"{name}@example.test", name,
             $"{name}@example.test", $"CN={name}", $"guid-{name}", null),

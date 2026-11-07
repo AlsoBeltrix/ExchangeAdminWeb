@@ -518,7 +518,8 @@ public sealed class PermissionValidatorTests : IDisposable
         // and passed as an unrelated address.
         var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
         pp.ResolveTo = new ResolvedDirectoryPrincipal(
-            "Test", "VIP", "vip@contoso.com", "vip", "vip@contoso.com", "CN=vip,DC=contoso,DC=com", "guid", null);
+            "Test", "VIP", "vip@contoso.com", "vip", "vip@contoso.com", "CN=vip,DC=contoso,DC=com", "guid", null,
+            ObjectSid: VipSid);
 
         var result = await validator.ValidateTargetMailboxAsync(
             "alias@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
@@ -538,7 +539,7 @@ public sealed class PermissionValidatorTests : IDisposable
         var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
         pp.ResolveTo = new ResolvedDirectoryPrincipal(
             "Test", "VIP", "someone.else@contoso.com", "vip", "primary@contoso.com",
-            "CN=vip,DC=contoso,DC=com", "guid", null);
+            "CN=vip,DC=contoso,DC=com", "guid", null, ObjectSid: VipSid);
 
         var result = await validator.ValidateTargetMailboxAsync(
             "vip@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
@@ -556,7 +557,7 @@ public sealed class PermissionValidatorTests : IDisposable
         var (validator, pp) = CreateValidatorWithScriptedResolution(addressOnlyConfig: true);
         pp.ResolveTo = new ResolvedDirectoryPrincipal(
             "Test", "Nobody", "nobody@contoso.com", "nobody", "nobody@contoso.com",
-            "CN=nobody,DC=contoso,DC=com", "guid", null, ExchangeGuid: AnyoneGuid);
+            "CN=nobody,DC=contoso,DC=com", "guid", null, ExchangeGuid: AnyoneGuid, ObjectSid: OtherSid);
 
         var result = await validator.ValidateTargetMailboxAsync(
             "nobody@contoso.com", actingUser: null, moduleId: "MailboxPermissions");
@@ -645,7 +646,7 @@ public sealed class PermissionValidatorTests : IDisposable
             ResolveCalls++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
                 ? ResolveTo ?? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null,
-                    ExchangeGuid: DefaultMailboxGuid)
+                    ExchangeGuid: DefaultMailboxGuid, ObjectSid: OtherSid)
                 : null;
             return Task.FromResult((p, Status));
         }
@@ -657,7 +658,7 @@ public sealed class PermissionValidatorTests : IDisposable
         {
             ResolvedDirectoryPrincipal? p = AdFirstStatus == ResolutionStatus.Resolved
                 ? new ResolvedDirectoryPrincipal("Test", "Unrelated", "unrelated@contoso.com", identity,
-                    null, "CN=Unrelated,DC=y", "unrelated-guid", null)
+                    null, "CN=Unrelated,DC=y", "unrelated-guid", null, ObjectSid: UnrelatedSid)
                 : null;
             return Task.FromResult((p, AdFirstStatus));
         }
@@ -680,6 +681,11 @@ public sealed class PermissionValidatorTests : IDisposable
     /// <param name="excludedUsers">aud-a2d: a legacy list to run beside the central check.</param>
     /// <param name="resolver">aud-a2d: what Exchange answers the legacy list, when it asks.</param>
     /// <param name="servicerSid">aud-a2d: a Mailbox Permissions servicer group, so the serviced allow is reachable.</param>
+    // rev-b2: the SIDs the scripted targets carry - every on-premises target snapshot carries its objectSid.
+    internal const string VipSid = "S-1-5-21-1000000000-1000000000-1000000000-1105";
+    internal const string OtherSid = "S-1-5-21-1000000000-1000000000-1000000000-2001";
+    internal const string UnrelatedSid = "S-1-5-21-1000000000-1000000000-1000000000-2002";
+
     private (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution(
         bool addressOnlyConfig = false,
         string[]? excludedUsers = null,
@@ -736,13 +742,13 @@ public sealed class PermissionValidatorTests : IDisposable
         var pp = new ScriptedPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delinea);
         if (addressOnlyConfig)
         {
-            // docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a user row is compared by its user_sid row only - here, the
-            // scripted targets carrying no SID, by that row's label - so the address row gets the one db convert-identifiers
-            // writes. A legacy row alone would refuse every check as "not converted".
+            // docs/ProtectedPrincipalIdentifiers-Plan.md K.3: a user row is compared by its user_sid row only - rev-b2, by the SID
+            // the scripted target carries (VipSid for the protected mailbox), never by its label - so the address row gets the one
+            // db convert-identifiers writes. A legacy row alone would refuse every check as "not converted".
             pp.SaveConfig(new ProtectedPrincipalConfig
             {
                 Users = ["vip@contoso.com"],
-                UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000000000-1000000000-1000000000-1105", "vip@contoso.com")],
+                UserIds = [ProtectedPrincipalIdEntry.Format(VipSid, "vip@contoso.com")],
             });
         }
 
@@ -913,7 +919,7 @@ public sealed class PermissionValidatorTests : IDisposable
 
     private static ResolvedDirectoryPrincipal SharedMailbox(Guid? exchangeGuid) => new(
         "Test", "Shared", "shared@contoso.com", "shared", "shared@contoso.com",
-        "CN=shared,DC=contoso,DC=com", SharedObjectGuid, null, ExchangeGuid: exchangeGuid);
+        "CN=shared,DC=contoso,DC=com", SharedObjectGuid, null, ExchangeGuid: exchangeGuid, ObjectSid: OtherSid);
 
     [Fact]
     public async Task TheAllowCarriesTheMailboxTheCheckResolved_NotTheStringTyped()

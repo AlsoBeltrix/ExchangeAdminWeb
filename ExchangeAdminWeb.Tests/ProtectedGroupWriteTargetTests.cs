@@ -132,13 +132,28 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     public void UsersRule_DirectIdentityEntry_RefusesTheTarget()
     {
         var service = CreateRealService();
-        // K.3: a user is compared by its user_sid row; the target carries no SID here, so by that row's label.
+        // K.3: a user is compared by its user_sid row; rev-b2: by the SID the target carries, never by the row's label.
+        const string sid = "S-1-5-21-1000000000-1000000000-1000000000-1105";
+        service.SaveConfig(new ProtectedPrincipalConfig { Users = [TargetDn], UserIds = [ProtectedPrincipalIdEntry.Format(sid, TargetDn)] });
+
+        var result = service.CheckWriteTarget(Group(dn: TargetDn, guid: TargetGuid, sid: sid));
+
+        Assert.True(result.IsProtected);
+        Assert.Contains($"User:{TargetDn}", result.MatchedRules);
+    }
+
+    [Fact]
+    public void UsersRule_AgainstAGroupSnapshotWithoutItsSid_RefusesAsIncomplete_NotByTheLabel()
+    {
+        // rev-b2: the row's label is the target's DN, which once matched; without the SID the check cannot compare, and says so.
+        var service = CreateRealService();
         service.SaveConfig(new ProtectedPrincipalConfig { Users = [TargetDn], UserIds = [ProtectedPrincipalIdEntry.Format("S-1-5-21-1000000000-1000000000-1000000000-1105", TargetDn)] });
 
         var result = service.CheckWriteTarget(Group(dn: TargetDn, guid: TargetGuid));
 
-        Assert.True(result.IsProtected);
-        Assert.Contains($"User:{TargetDn}", result.MatchedRules);
+        Assert.True(result.CheckFailed, result.Reason);
+        Assert.Contains(ProtectedPrincipalService.TargetSidNotRead, result.Reason, StringComparison.Ordinal);
+        Assert.Empty(result.MatchedRules);
     }
 
     [Fact]
@@ -485,8 +500,8 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
 
     // ---- harness ------------------------------------------------------------------------------
 
-    private static ResolvedDirectoryPrincipal Group(string dn, string? guid, string? sam = null) =>
-        new("Test-AD", "Some Group", string.Empty, sam, null, dn, guid, null);
+    private static ResolvedDirectoryPrincipal Group(string dn, string? guid, string? sam = null, string? sid = null) =>
+        new("Test-AD", "Some Group", string.Empty, sam, null, dn, guid, null, ObjectSid: sid);
 
     private static ClaimsPrincipal UserIn(string groupSid) =>
         new(new ClaimsIdentity(

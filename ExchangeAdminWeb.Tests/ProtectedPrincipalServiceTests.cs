@@ -123,23 +123,26 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
     /// <summary>
     /// K.3: the check compares users by identifier only. Gives every legacy user row the service loaded a user_sid row
-    /// labelled with it - what db convert-identifiers writes - so these tests reach the comparison they pin: the targets
-    /// carry no SID, so each row is compared by its label (plan C.2's fallback).
+    /// labelled with it - what db convert-identifiers writes - its SID <see cref="SidFor"/> the label, so these tests reach the
+    /// comparison they pin: rev-b2, a target is that row's user when it carries that SID, never by the label.
     /// </summary>
     private static void ConvertUsers(ProtectedPrincipalService service)
     {
         var (cfg, _, error) = service.LoadEffectiveConfig();
         Assert.Null(error);
-        var rid = 1000;
         service.SaveConfig(new ProtectedPrincipalConfig
         {
             Users = cfg!.Users,
             Groups = cfg.Groups,
             OrganizationalUnits = cfg.OrganizationalUnits,
             SamAccountNamePatterns = cfg.SamAccountNamePatterns,
-            UserIds = cfg.Users.Select(u => ProtectedPrincipalIdEntry.Format($"S-1-5-21-1000000000-1000000000-1000000000-{rid++}", u)).ToArray(),
+            UserIds = cfg.Users.Select(u => ProtectedPrincipalIdEntry.Format(SidFor(u), u)).ToArray(),
         });
     }
+
+    /// <summary>rev-b2. The SID <see cref="ConvertUsers"/> gives the user row labelled <paramref name="label"/>: one per label.</summary>
+    private static string SidFor(string label) =>
+        "S-1-5-21-1000000000-1000000000-1000000000-" + (1000 + (uint)StringComparer.OrdinalIgnoreCase.GetHashCode(label) % 100000);
 
     private static ResolvedDirectoryPrincipal MakePrincipal(
         string upn = "user@contoso.com",
@@ -147,7 +150,8 @@ public class ProtectedPrincipalServiceTests : IDisposable
         string? primarySmtp = null,
         string? dn = null,
         string? objectGuid = null,
-        string? entraObjectId = null)
+        string? entraObjectId = null,
+        string? sid = null)
     {
         return new ResolvedDirectoryPrincipal(
             Source: "Test",
@@ -157,7 +161,8 @@ public class ProtectedPrincipalServiceTests : IDisposable
             PrimarySmtpAddress: primarySmtp ?? upn,
             DistinguishedName: dn,
             ObjectGuid: objectGuid,
-            EntraObjectId: entraObjectId);
+            EntraObjectId: entraObjectId,
+            ObjectSid: sid);
     }
 
     // --- Missing config with legacy fallback ---
@@ -192,7 +197,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var service = CreateService(protectedPrincipalsJson: json);
         ConvertUsers(service);
-        var principal = MakePrincipal(upn: "ceo@contoso.com");
+        var principal = MakePrincipal(upn: "ceo@contoso.com", sid: SidFor("ceo@contoso.com"));
 
         var result = await service.CheckAsync(principal);
 
@@ -216,7 +221,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var service = CreateService(protectedPrincipalsJson: json);
         ConvertUsers(service);
-        var principal = MakePrincipal(upn: "someone@contoso.com", primarySmtp: "boss@contoso.com");
+        var principal = MakePrincipal(upn: "someone@contoso.com", primarySmtp: "boss@contoso.com", sid: SidFor("boss@contoso.com"));
 
         var result = await service.CheckAsync(principal);
 
@@ -239,7 +244,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var service = CreateService(protectedPrincipalsJson: json);
         ConvertUsers(service);
-        var principal = MakePrincipal(upn: "ceo@contoso.com");
+        var principal = MakePrincipal(upn: "ceo@contoso.com", sid: SidFor("CEO@Contoso.COM"));
 
         var result = await service.CheckAsync(principal);
 
@@ -433,7 +438,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var service = CreateService(protectedPrincipalsJson: json);
         ConvertUsers(service);
-        var principal = MakePrincipal(upn: "normaluser@contoso.com", samAccountName: "normaluser", dn: "CN=Normal,OU=Users,DC=ad,DC=contoso,DC=com");
+        var principal = MakePrincipal(upn: "normaluser@contoso.com", samAccountName: "normaluser", dn: "CN=Normal,OU=Users,DC=ad,DC=contoso,DC=com", sid: SidFor("normaluser@contoso.com"));
 
         var result = await service.CheckAsync(principal);
 
@@ -526,7 +531,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         var service = CreateService(configOverrides, json);
         ConvertUsers(service);
 
-        var centralTarget = MakePrincipal(upn: "central-protected@contoso.com");
+        var centralTarget = MakePrincipal(upn: "central-protected@contoso.com", sid: SidFor("central-protected@contoso.com"));
         var centralResult = await service.CheckAsync(centralTarget);
         Assert.True(centralResult.IsProtected);
     }
@@ -694,7 +699,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var service = CreateService(protectedPrincipalsJson: json);
         ConvertUsers(service);
-        var principal = MakePrincipal(samAccountName: "breakglass");
+        var principal = MakePrincipal(samAccountName: "breakglass", sid: SidFor(@"CONTOSO\breakglass"));
 
         var result = await service.CheckAsync(principal);
 

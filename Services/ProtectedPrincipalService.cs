@@ -18,9 +18,11 @@ namespace ExchangeAdminWeb.Services;
 /// <param name="ObjectSid">
 /// The Active Directory object's objectSid, canonical, when the resolution read it; null otherwise. Filled by
 /// <see cref="ProtectedPrincipalService"/>'s own AD resolution and by its binding of a synced Exchange recipient by SID.
-/// A <c>user_sid</c> protection row compares against it (docs/ProtectedPrincipalIdentifiers-Plan.md C.2); a target that
-/// does not carry one is compared by the row's label, as before the identifier rows existed, so a resolution that did not
-/// read it cannot drop a protection.
+/// A <c>user_sid</c> protection row compares against it (docs/ProtectedPrincipalIdentifiers-Plan.md C.2), and against nothing
+/// else: rev-b2, a row's label is never compared. Every on-premises target snapshot carries it (every caller that builds one
+/// from an AD read asks for <c>objectSid</c>); an on-premises target without it - a DN or a sAMAccountName and no SID - makes
+/// the check incomplete, refusing with <see cref="ProtectedPrincipalService.TargetSidNotRead"/>, while protected user rows
+/// exist. A target with no on-premises identity at all (cloud-only) cannot be a protected user row's object.
 /// </param>
 public sealed record ResolvedDirectoryPrincipal(
     string Source,
@@ -430,7 +432,8 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
 
         if (cfg != null)
         {
-            CheckDirectUserMatches(cfg, target, matchedRules);
+            var sidProblems = new List<string>();
+            CheckDirectUserMatches(cfg, target, matchedRules, sidProblems);
             CheckPatternMatches(cfg, target, matchedRules);
             CheckOuMatches(cfg, target, matchedRules, ouIdsByLabel: false);
 
@@ -438,6 +441,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             // resolved or matched by name. It cannot be answered, so the check is incomplete, naming it, and refuses unless
             // another rule matched - forgetting db convert-identifiers fails closed and says so.
             var notConverted = NotConvertedProblems(cfg);
+            notConverted.AddRange(sidProblems); // rev-b2: refuses as an unconverted row does, unless another rule matched
 
             // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: group_sid rows (and legacy Group rows stored as a SID) join the
             // group check as SIDs, and ou_guid rows are compared by the objectGUIDs of the target's containers - both read in
@@ -534,7 +538,8 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
 
         if (cfg != null)
         {
-            CheckDirectUserMatches(cfg, target, matchedRules);
+            var sidProblems = new List<string>();
+            CheckDirectUserMatches(cfg, target, matchedRules, sidProblems);
             CheckPatternMatches(cfg, target, matchedRules);
             // Directory-free, so an ou_guid row is compared here by its label - the DN suffix its companion carries - as
             // this check compared that OU before the identifier rows existed: no protection it gave is lost.
@@ -544,6 +549,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             // K.3 point 3: a user or OU row stored by name only is never compared by its text; with no rule matched, the check
             // cannot say the target is not protected, and refuses naming the rows (the Groups rule is not evaluated here).
             var notConverted = NotConvertedProblems(cfg, includeGroups: false);
+            notConverted.AddRange(sidProblems); // rev-b2
             if (notConverted.Count > 0 && matchedRules.Count == 0)
                 return ProtectedPrincipalResult.Failed(IncompleteReason(notConverted));
         }
@@ -1963,20 +1969,47 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         return entries;
     }
 
-    private static void CheckDirectUserMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
+    /// <summary>
+    /// rev-b2. The problem an on-premises target without its objectSid makes the check incomplete with, while protected user
+    /// rows exist: the rows are compared by SID alone, so without it the check cannot say the target is none of them.
+    /// </summary>
+    internal const string TargetSidNotRead =
+        "the target's objectSid was not read, so it cannot be compared with the protected user rows";
+
+    /// <summary>
+    /// rev-b2. The objectSid an AD read returned for <paramref name="row"/>, canonical, or null - for the snapshot a caller builds
+    /// for the check from its own read (which must ask for <c>objectSid</c>).
+    /// </summary>
+    internal static string? ObjectSidOf(PSObject? row) =>
+        row is null ? null : ProtectedPrincipalIdEntry.CanonicalSid(AccountLockoutRemediationService.SidText(row.Properties["objectSid"]?.Value));
+
+    // An on-premises object: one the directory names by DN or sAMAccountName. A cloud-only target has neither (plan C.2).
+    private static bool IsOnPremisesTarget(ResolvedDirectoryPrincipal target) =>
+        !string.IsNullOrWhiteSpace(target.DistinguishedName) || !string.IsNullOrWhiteSpace(target.SamAccountName);
+
+    private static void CheckDirectUserMatches(
+        ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules, List<string> problems)
     {
         // A user_sid row is this object, compared by SID: another account carrying its address in mail or UPN is not it
-        // (plan C.2). A target whose resolution did not read a SID is compared by the row's label, as its companion was -
-        // the absence of an identifier on the TARGET is not evidence it is someone else. Legacy rows stored by name only are
-        // not compared at all (K.3): they are NotConvertedProblems.
+        // (plan C.2). rev-b2: and only by SID - a row's label is never compared, since a renamed protected user keeps its SID
+        // and loses its label. An on-premises target whose snapshot did not carry its SID cannot be compared, so the check is
+        // incomplete, named; a cloud-only target cannot be a row's object. Legacy rows stored by name only are not compared at
+        // all (K.3): they are NotConvertedProblems.
         var (_, _, ids) = RowsToEvaluate(cfg.Users, cfg.UserIds, ProtectedPrincipalIdEntry.CanonicalSid);
+        if (ids.Count == 0)
+            return;
+
         var targetSid = ProtectedPrincipalIdEntry.CanonicalSid(target.ObjectSid);
+        if (targetSid is null)
+        {
+            if (IsOnPremisesTarget(target))
+                problems.Add(TargetSidNotRead);
+            return;
+        }
+
         foreach (var id in ids)
         {
-            var matches = targetSid is not null
-                ? string.Equals(id.Identifier, targetSid, StringComparison.OrdinalIgnoreCase)
-                : id.Label.Length > 0 && MatchesIdentity(id.Label, target);
-            if (matches)
+            if (string.Equals(id.Identifier, targetSid, StringComparison.OrdinalIgnoreCase))
                 matchedRules.Add($"User:{id.Display}");
         }
     }

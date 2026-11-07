@@ -165,7 +165,7 @@ internal sealed class AttributeEditorHarness : IDisposable
 
     /// <summary>The principal a lookup of <paramref name="user"/> would have resolved.</summary>
     public static ResolvedDirectoryPrincipal PrincipalFor(LocalAd.User user) =>
-        new("OnPremAD", user.DisplayName, user.Upn, user.Sam, user.Mail, user.Dn, user.Guid.ToString(), null);
+        new("OnPremAD", user.DisplayName, user.Upn, user.Sam, user.Mail, user.Dn, user.Guid.ToString(), null, ObjectSid: user.Sid);
 
     public void ConfigureSearchBases(params string[] searchBases) =>
         ModuleConfig.SaveModuleConfig("ADAttributeEditor", new Dictionary<string, string>
@@ -500,6 +500,11 @@ internal sealed class LocalAd
         public string? Sam { get; init; }
         public string? Mail { get; init; }
         public string DisplayName { get; init; } = "";
+
+        /// <summary>rev-b2. The objectSid the stand-in returns for the user: what the protection check compares a user row with.</summary>
+        public string Sid { get; init; } = "S-1-5-21-700000000-700000000-700000000-" + System.Threading.Interlocked.Increment(ref _nextRid);
+
+        private static int _nextRid = 1000;
         public Dictionary<string, string?> Attributes { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The attributes as they were before the last Set-ADUser, for <see cref="ReplicaLag"/>.</summary>
@@ -915,6 +920,7 @@ internal sealed class LocalAd
         result.Properties.Add(new PSNoteProperty("UserPrincipalName", user.Upn));
         result.Properties.Add(new PSNoteProperty("SamAccountName", user.Sam));
         result.Properties.Add(new PSNoteProperty("mail", user.Mail));
+        result.Properties.Add(new PSNoteProperty("objectSid", new System.Security.Principal.SecurityIdentifier(user.Sid)));
         var attributes = stale && user.BeforeLastWrite is { } before ? before : user.Attributes;
         foreach (var (name, value) in attributes)
             result.Properties.Add(new PSNoteProperty(name, ReadsAs is { } typed ? typed(name, value) : value));

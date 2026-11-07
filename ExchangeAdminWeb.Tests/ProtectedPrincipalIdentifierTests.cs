@@ -227,15 +227,44 @@ public class ProtectedPrincipalIdentifierTests : IDisposable
     }
 
     [Fact]
-    public async Task AUserSidRow_AgainstATargetWhoseSidWasNotRead_ComparesByItsLabel()
+    public async Task AUserSidRow_AgainstAnOnPremisesTargetWhoseSidWasNotRead_RefusesAsIncomplete_NeverByItsLabel()
     {
-        // A resolution that did not read the target's SID is not evidence the target is someone else: the row gives the
-        // answer its companion gave before identifiers were stored, never none.
+        // rev-b2. A resolution that did not read the target's SID is not evidence the target is someone else - nor is its
+        // label evidence it is the row's user: a renamed protected user keeps the SID and loses the label. The check cannot
+        // compare, and refuses naming why, whether the label matches or not.
+        var service = ServiceWith(new ProtectedPrincipalConfig { Users = [Alice], UserIds = [$"{AliceSid}|{Alice}"] });
+
+        foreach (var upn in new[] { Alice, "alice.renamed@contoso.com" })
+        {
+            var result = await service.CheckAsync(Target(upn: upn, sid: null, sam: "alice", dn: "CN=Alice,OU=Staff,DC=contoso,DC=com"));
+
+            Assert.True(result.CheckFailed, result.Reason);
+            Assert.Contains(ProtectedPrincipalService.TargetSidNotRead, result.Reason, StringComparison.Ordinal);
+            Assert.False(result.IsProtected);
+        }
+    }
+
+    [Fact]
+    public async Task AUserSidRow_RenamedUser_IsProtectedByItsSid_ThoughNoLabelMatches()
+    {
+        var service = ServiceWith(new ProtectedPrincipalConfig { Users = [Alice], UserIds = [$"{AliceSid}|{Alice}"] });
+
+        var result = await service.CheckAsync(Target(upn: "alice.renamed@contoso.com", sid: AliceSid, sam: "alice2", dn: "CN=Alice2,OU=Staff,DC=contoso,DC=com"));
+
+        Assert.True(result.IsProtected);
+    }
+
+    [Fact]
+    public async Task AUserSidRow_CannotMatchACloudOnlyTarget_ByItsLabel()
+    {
+        // Constitution: a cloud-only principal cannot be protected - no DN, no sAMAccountName, no on-premises SID - so no user
+        // row can name it, whatever its address. Not incomplete: there is nothing to compare.
         var service = ServiceWith(new ProtectedPrincipalConfig { Users = [Alice], UserIds = [$"{AliceSid}|{Alice}"] });
 
         var result = await service.CheckAsync(Target(upn: Alice, sid: null));
 
-        Assert.True(result.IsProtected);
+        Assert.False(result.IsProtected);
+        Assert.False(result.CheckFailed, result.Reason);
     }
 
     [Fact]

@@ -421,7 +421,7 @@ public class GroupManagementService
             ps.Streams.Error.Clear();
             ps.AddCommand("Get-ADGroup")
               .AddParameter("Identity", resolvedDn)
-              .AddParameter("Properties", new[] { "member", "mail" })
+              .AddParameter("Properties", new[] { "member", "mail", "objectSid" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             // fsr-1: the group object lives in its own domain's partition - route the read
@@ -454,7 +454,8 @@ public class GroupManagementService
                 PrimarySmtpAddress: groupWithMembers.Properties["mail"]?.Value?.ToString(),
                 DistinguishedName: resolvedDn,
                 ObjectGuid: groupWithMembers.Properties["ObjectGUID"]?.Value?.ToString(),
-                EntraObjectId: null);
+                EntraObjectId: null,
+                ObjectSid: ProtectedPrincipalService.ObjectSidOf(groupWithMembers));
             var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
                 _protectedPrincipals, _servicers, targetSnapshot, actingUser, ServicerModuleId);
             if (!targetGate.Allowed)
@@ -1178,7 +1179,7 @@ public class GroupManagementService
         ActiveDirectoryModuleImport.Import(ps);
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
-        var props = new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" };
+        var props = new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID", "objectSid" };
 
         PSObject? obj;
         // lst-1: coalesce on non-BLANK, never null-only. A blank GUID beside a real DN must
@@ -1241,7 +1242,8 @@ public class GroupManagementService
             PrimarySmtpAddress: obj.Properties["mail"]?.Value?.ToString(),
             DistinguishedName: dn,
             ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString(),
-            EntraObjectId: null);
+            EntraObjectId: null,
+            ObjectSid: ProtectedPrincipalService.ObjectSidOf(obj));
         return new ResolvedMember(principal, isGroup, null);
     }
 
@@ -1406,7 +1408,7 @@ public class GroupManagementService
             {
                 ps.AddCommand("Get-ADGroup")
                   .AddParameter("Identity", groupIdentity)
-                  .AddParameter("Properties", new[] { "mail" })
+                  .AddParameter("Properties", new[] { "mail", "objectSid" })
                   .AddParameter("Credential", credential)
                   .AddParameter("Server", dnServer)
                   .AddParameter("ErrorAction", "Stop");
@@ -1425,7 +1427,8 @@ public class GroupManagementService
                     PrimarySmtpAddress: byDn.Properties["mail"]?.Value?.ToString(),
                     DistinguishedName: byDn.Properties["DistinguishedName"]?.Value?.ToString() ?? groupIdentity,
                     ObjectGuid: byDn.Properties["ObjectGUID"]?.Value?.ToString(),
-                    EntraObjectId: null), IsGroup: true, Error: null);
+                    EntraObjectId: null,
+                    ObjectSid: ProtectedPrincipalService.ObjectSidOf(byDn)), IsGroup: true, Error: null);
             }
             catch (Exception)
             {
@@ -1459,7 +1462,7 @@ public class GroupManagementService
             ps.Streams.Error.Clear();
             ps.AddCommand("Get-ADGroup")
               .AddParameter("LDAPFilter", $"(|(sAMAccountName={esc})(name={esc})(mail={esc}))")
-              .AddParameter("Properties", new[] { "mail" })
+              .AddParameter("Properties", new[] { "mail", "objectSid" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             if (catalog is not null && !catalog.StartsWith(':'))
@@ -1490,7 +1493,7 @@ public class GroupManagementService
                 ps.Streams.Error.Clear();
                 ps.AddCommand("Get-ADGroup")
                   .AddParameter("Identity", dn)
-                  .AddParameter("Properties", new[] { "mail" })
+                  .AddParameter("Properties", new[] { "mail", "objectSid" })
                   .AddParameter("Credential", credential)
                   .AddParameter("Server", matchServer)
                   .AddParameter("ErrorAction", "Stop");
@@ -1517,7 +1520,8 @@ public class GroupManagementService
                 PrimarySmtpAddress: g.Properties["mail"]?.Value?.ToString(),
                 DistinguishedName: dn,
                 ObjectGuid: g.Properties["ObjectGUID"]?.Value?.ToString(),
-                EntraObjectId: null);
+                EntraObjectId: null,
+                ObjectSid: ProtectedPrincipalService.ObjectSidOf(g));
             return new ResolvedMember(principal, true, null);
         }
 

@@ -131,6 +131,28 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenamedProtectedUser_IsRefused_ByTheSidTheLookupRead()
+    {
+        // rev-b2. The protection check compares a protected user row by SID alone, so the snapshot the lookup builds must
+        // carry it: a user whose UPN and mail changed since the row was stored keeps the SID. The decision here is by SID
+        // only; the lookup's snapshot without objectSid made it "not protected" and the save wrote.
+        var alex = _h.Ad.AddAlex();
+        _h.Protection.Decide = target => target.ObjectSid == alex.Sid
+            ? ProtectedPrincipalResult.Protected("protected for test", "User:alex.old@example.test")
+            : ProtectedPrincipalResult.NotProtected();
+
+        var lookup = await _h.Service.LookupAsync(alex.Upn);
+        Assert.True(lookup.Success, lookup.Error);
+        Assert.Equal(alex.Sid, lookup.Principal!.ObjectSid);
+
+        var result = await Save(alex, new() { ["title"] = "Lead Analyst" }, principal: lookup.Principal);
+
+        Assert.False(result.Success);
+        Assert.Equal("Target is a protected principal and cannot be modified.", result.Error);
+        Assert.Empty(_h.Ad.Sets);
+    }
+
+    [Fact]
     public async Task AFailedProtectionRead_Refuses_FailClosed()
     {
         // The check could not be made. That is not "not protected": it refuses with the reason.

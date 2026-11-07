@@ -1216,8 +1216,9 @@ C-Suite, Board of Directors, ceo@example.com
 The app-wide protection rules - **Admin Settings → Protected principals** (users, groups, OUs, sAMAccountName
 patterns, group targets) - store a user or group added there by its SID and an OU by its object GUID, each beside a
 companion row by name that an older build sharing the database keeps enforcing; removing the entry removes both. The
-check compares a user by SID wherever the target's SID was read (another account given the same address is not
-protected in its place), a group by SID against the target's token, and an OU by the object GUIDs of the target's
+check compares a user by SID alone (another account given the same address is not protected in its place, and
+a user renamed since stays protected; an on-premises target read without its SID refuses: "the target's objectSid was not
+read, so it cannot be compared with the protected user rows"), a group by SID against the target's token, and an OU by the object GUIDs of the target's
 containers, so a renamed OU still protects the accounts beneath it. A user or OU is looked up in any domain of the
 forest; an ambiguous name, a built-in group and an object whose identifier cannot be read are refused. The check never
 resolves or matches a stored name. An entry stored by name only - added before identifiers were stored, or left by an
@@ -1239,8 +1240,7 @@ entries at <time>: M findings, K ignored, J could not be verified", and the last
 each finding are its actions, each written at once (not at Save), checked against the rules as Verify read them (a change
 since refuses: "run Verify again"), re-authorized at the click and audited under `Verify:ProtectedPrincipals`:
 **Rename** (store the current name as the entry's label and as its companion for an older build - which also changes what
-the two name fallbacks match, a user compared by label when the target has no SID and an OU compared by DN suffix in the
-write-target check), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
+the name fallback matches: an OU compared by DN suffix in the write-target check), **Convert** (one entry, as `db convert-identifiers` would), **Replace...** (pick the object it should
 name; checked as an Add is), **Remove now** (the entry, its companion and any ignore of it), and **Ignore** (keep the entry
 and stop the finding being reported until what Verify sees changes; never offered for an entry not converted or one that
 could not be verified). One ignore changes a protection check (slice V2, docs/DirectoryObjectVerify-Plan.md B.4): a

@@ -1322,7 +1322,8 @@ public class ADAttributeEditorService
             PrimarySmtpAddress: adUser.Properties["mail"]?.Value?.ToString(),
             DistinguishedName: dn,
             ObjectGuid: adUser.Properties["ObjectGUID"]?.Value?.ToString(),
-            EntraObjectId: null);
+            EntraObjectId: null,
+            ObjectSid: ProtectedPrincipalService.ObjectSidOf(adUser));
 
         // aud-a26r. Each value is read as the save, the preview and the read-back read it (ReadDirectoryValue). By ToString
         // a one-element collection was its type's name, in the form and in both undo conflict checks, which compare the
@@ -2400,7 +2401,8 @@ public class ADAttributeEditorService
         var props = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "DisplayName", "UserPrincipalName", "SamAccountName",
-            "mail", "DistinguishedName", "ObjectGUID", "Name"
+            "mail", "DistinguishedName", "ObjectGUID", "Name",
+            "objectSid", // rev-b2: the protection check compares protected user rows by SID
         };
         foreach (var attr in allowlist)
             props.Add(attr.Name);
