@@ -1731,7 +1731,7 @@ public sealed class ModuleCatalog
             // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
             // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.7.7: a save's re-read, write and read-back are pinned to the DC that answered the domain's RootDSE, and the read-back compares in the schema's syntax (Boolean and integer by value from any CLR type, DN by DN) (sweep-f item 27).
-            Version = "1.7.8",
+            Version = "1.7.9",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",

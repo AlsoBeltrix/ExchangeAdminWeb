@@ -812,7 +812,7 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
 
         Assert.True(result.Success, result.Error);
         Assert.Equal("Lead Analyst", alex.Attributes["title"]);
-        Assert.Equal(["example.test"], _h.Ad.RootDseServers);
+        Assert.Equal(["dc01.example.test"], _h.Ad.RootDseServers); // rev-d1: the writable DC located, then its RootDSE
         Assert.Equal(["dc01.example.test", "dc01.example.test"], _h.Ad.Reads.Select(r => r.Server));
         Assert.Equal("dc01.example.test", Assert.Single(_h.Ad.Sets).Server);
         Assert.Equal("Lead Analyst", Text(Assert.Single(_h.AuditEvents()), "new_title"));
@@ -829,7 +829,8 @@ public sealed class ADAttributeEditorSaveTests : IDisposable
         var result = await Save(robin, new() { ["title"] = "Lead Analyst" });
 
         Assert.True(result.Success, result.Error);
-        Assert.Equal([null], _h.Ad.RootDseServers);
+        Assert.Equal([null], _h.Ad.Discoveries); // rev-d1: the session's own domain, located as writable
+        Assert.Equal(["dc01.default.test"], _h.Ad.RootDseServers);
         Assert.All(_h.Ad.Reads, read => Assert.Equal("dc01.default.test", read.Server));
         Assert.Equal("dc01.default.test", Assert.Single(_h.Ad.Sets).Server);
         Assert.Contains(_h.Logger.Warnings, w => w.Contains(robin.Upn, StringComparison.Ordinal)

@@ -432,10 +432,12 @@ View and edit allowlisted Active Directory attributes for on-premises user accou
   confirmation, because no search-base boundary will remain: the editor may then search the whole directory
 - Uses Delinea credentials for Active Directory operations
 - **A save is done when it reads back as written.** The re-read before the write, the write and the read-back all go to one
-  domain controller: the one that answers the object's domain's RootDSE, found at the time of the save (logged). Each value
+  writable domain controller of the object's domain, located at the time of the save and confirmed by its RootDSE
+  (logged) - never a read-only one, whose writes would all be refused. Each value
   is compared in the syntax the schema gives the attribute: a Boolean or an integer by its value, whatever form the
   directory returns it in; a DN by DN, whatever its case and spacing; text as text. A value that differs is still a failed
-  save, with no Undo and a failure notice. If the RootDSE or the schema cannot be read, the save goes to the domain name
+  save, with no Undo and a failure notice. If no writable DC can be confirmed, or the RootDSE or the schema cannot be read,
+  the save goes to the domain name
   and judges by the values' own types, as before (a warning is logged)
 - Section access keys: `ADAttributeEditor`, `ADAttributeEditorLevel1`, `ADAttributeEditorLevel2`, `ADAttributeEditorLevel3`
 

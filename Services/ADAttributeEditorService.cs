@@ -1383,7 +1383,8 @@ public class ADAttributeEditorService
         // Sweep-f item 27: the DC-affinity assumption (three calls sent to one domain name answered by one domain
         // controller) is replaced by a pin. Before the re-read, the domain's RootDSE is read through the same -Server and
         // credential, and the dnsHostName of the domain controller that answered becomes the -Server of the re-read, the
-        // write and the read-back - one named DC, discovered at runtime, never configured. Where the RootDSE cannot be
+        // write and the read-back - one named DC, discovered at runtime, never configured. rev-d1: a WRITABLE one - located
+        // as writable first, and never pinned when its RootDSE reports a read-only DC (PinDomainController). Where the RootDSE cannot be
         // read, the chain goes to the domain name as before (the old assumption, logged); a mismatch then still fails
         // closed, loud, never a false success.
         var server = GroupManagementService.ServerFromDn(target.DistinguishedName);
@@ -1818,15 +1819,25 @@ public class ADAttributeEditorService
     /// <c>schemaNamingContext</c> for the syntax read. Never throws: a RootDSE that cannot be read leaves the chain on
     /// <paramref name="domain"/>, as before, and says so in the log.
     /// </summary>
+    /// <remarks>
+    /// rev-d1. The pin is a WRITABLE domain controller: the domain's name can be answered by a read-only one, whose RootDSE
+    /// and reads succeed and whose every write is refused. So the DC is first discovered by the locator as writable
+    /// (<c>Get-ADDomainController -Discover -Writable -Service ADWS</c>, for the DN's own domain - discovered at runtime, never
+    /// configured), its RootDSE is read on it with the save's credential, and a RootDSE that still reports the read-only
+    /// capability (<see cref="ReadOnlyDcCapability"/>) is not pinned. A discovery that fails falls back to the domain's own
+    /// RootDSE, with the same read-only test; whatever is not pinned leaves the chain on the domain name, logged.
+    /// </remarks>
     private (string? Server, string? SchemaContext, bool Pinned) PinDomainController(PowerShell ps, string? domain, PSCredential credential, string targetName)
     {
         try
         {
+            var writable = DiscoverWritableDomainController(ps, domain, targetName);
+
             ps.AddCommand("Get-ADRootDSE")
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            if (domain is not null)
-                ps.AddParameter("Server", domain);
+            if ((writable ?? domain) is { } rootServer)
+                ps.AddParameter("Server", rootServer);
             var root = ps.Invoke();
             var clean = !ps.HadErrors && root.Count == 1;
             ps.Commands.Clear();
@@ -1834,6 +1845,13 @@ public class ADAttributeEditorService
 
             var host = clean ? TextOf(root[0].Properties["dnsHostName"]?.Value) : null;
             var schema = clean ? TextOf(root[0].Properties["schemaNamingContext"]?.Value) : null;
+            if (host is not null && IsReadOnlyDomainController(root[0]))
+            {
+                _logger.LogWarning(
+                    "AD attribute save for {Target}: the domain controller {Server} that answered is read-only, so it is not pinned; the re-read, the write and the read-back go to the domain name",
+                    targetName, host);
+                return (domain, schema, false);
+            }
             if (host is null)
             {
                 _logger.LogWarning(
@@ -1854,6 +1872,72 @@ public class ADAttributeEditorService
                 targetName, domain ?? "the default domain controller");
             return (domain, null, false);
         }
+    }
+
+    /// <summary>
+    /// rev-d1. LDAP_CAP_ACTIVE_DIRECTORY_PARTIAL_SECRETS_OID: a RootDSE whose <c>supportedCapabilities</c> carries it is a
+    /// read-only domain controller's (MS-ADTS 3.1.1.3.4.3.6).
+    /// </summary>
+    internal const string ReadOnlyDcCapability = "1.2.840.113556.1.4.1920";
+
+    private static bool IsReadOnlyDomainController(PSObject rootDse)
+    {
+        var value = rootDse.Properties["supportedCapabilities"]?.Value;
+        if (value is PSObject wrapped)
+            value = wrapped.BaseObject;
+        var capabilities = value is string single
+            ? [single]
+            : value is System.Collections.IEnumerable many
+                ? many.Cast<object?>().Select(TextOf).Where(c => c is not null).Cast<string>()
+                : Enumerable.Empty<string>();
+        return capabilities.Any(c => string.Equals(c.Trim(), ReadOnlyDcCapability, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// rev-d1. The host name of a writable domain controller of <paramref name="domain"/> (the session's own domain when
+    /// null) running the AD web services, from the DC locator; null, logged, when none could be discovered - the caller then
+    /// reads the domain's own RootDSE.
+    /// </summary>
+    private string? DiscoverWritableDomainController(PowerShell ps, string? domain, string targetName)
+    {
+        try
+        {
+            ps.AddCommand("Get-ADDomainController")
+              .AddParameter("Discover")
+              .AddParameter("Writable")
+              .AddParameter("Service", "ADWS")
+              .AddParameter("ErrorAction", "Stop");
+            if (domain is not null)
+                ps.AddParameter("DomainName", domain);
+            var found = ps.Invoke();
+            var clean = !ps.HadErrors && found.Count >= 1;
+            var host = clean ? FirstText(found[0].Properties["HostName"]?.Value) : null;
+            if (host is null)
+                _logger.LogWarning("AD attribute save for {Target}: no writable domain controller of {Domain} was discovered", targetName, domain ?? "the session's domain");
+            return host;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AD attribute save for {Target}: discovering a writable domain controller of {Domain} failed", targetName, domain ?? "the session's domain");
+            return null;
+        }
+        finally
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
+    }
+
+    // A host name the module may hand back as one string or as a collection of them.
+    private static string? FirstText(object? value)
+    {
+        if (value is PSObject wrapped)
+            value = wrapped.BaseObject;
+        if (value is string single)
+            return single.Length > 0 ? single.Trim() : null;
+        if (value is System.Collections.IEnumerable many)
+            return many.Cast<object?>().Select(TextOf).FirstOrDefault(t => t is not null)?.Trim();
+        return TextOf(value)?.Trim();
     }
 
     /// <summary>

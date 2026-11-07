@@ -69,10 +69,49 @@ public sealed class ADAttributeEditorPinAndSyntaxTests : IDisposable
         var result = await Save(jordan, new() { ["title"] = "Lead Analyst" });
 
         Assert.True(result.Success, result.Error);
-        Assert.Equal(["example.test"], _h.Ad.RootDseServers);
+        // rev-d1: a writable DC of the DN's domain is located first, and its own RootDSE read.
+        Assert.Equal(["example.test"], _h.Ad.Discoveries);
+        Assert.Equal(["dc01.example.test"], _h.Ad.RootDseServers);
         Assert.Equal(["dc01.example.test", "dc01.example.test"], _h.Ad.Reads.Select(r => r.Server));
         Assert.Equal("dc01.example.test", Assert.Single(_h.Ad.Sets).Server);
         Assert.All(_h.Ad.SchemaReads, read => Assert.Equal("dc01.example.test", read.Server));
+    }
+
+    [Fact]
+    public async Task TheChain_IsPinnedToAWritableDc_NotTheReadOnlyOneTheDomainNameAnswersFrom()
+    {
+        // rev-d1. The domain's name is answered by a read-only DC: its RootDSE and reads succeed, and every write is refused.
+        // The chain goes to the writable DC the locator names instead, and the save lands and is confirmed.
+        var jordan = AddJordan();
+        _h.Ad.ReadOnlyDcs.Add("rodc01.example.test");
+        _h.Ad.RootDseHost = server => server == "example.test" ? "rodc01.example.test" : server;
+        _h.Ad.WritableHost = _ => "dc02.example.test";
+
+        var result = await Save(jordan, new() { ["title"] = "Lead Analyst" });
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(["dc02.example.test"], _h.Ad.RootDseServers);
+        Assert.Equal("dc02.example.test", Assert.Single(_h.Ad.Sets).Server);
+        Assert.All(_h.Ad.Reads, read => Assert.Equal("dc02.example.test", read.Server));
+    }
+
+    [Fact]
+    public async Task AReadOnlyDcThatAnswersTheRootDse_IsNeverPinned_WhenNoWritableDcIsDiscovered()
+    {
+        // The locator could not be asked: the domain's own RootDSE answers from a read-only DC, which is not pinned. The
+        // chain stays on the domain name, logged, as when the RootDSE cannot be read (here the stand-in's domain name takes
+        // the write); a mismatch on that path still fails closed (ARootDseThatCannotBeRead_...).
+        var jordan = AddJordan();
+        _h.Ad.ReadOnlyDcs.Add("rodc01.example.test");
+        _h.Ad.RootDseHost = server => server == "example.test" ? "rodc01.example.test" : server;
+        _h.Ad.DiscoverFailure = "The specified domain either does not exist or could not be contacted";
+
+        var result = await Save(jordan, new() { ["title"] = "Lead Analyst" });
+
+        Assert.Equal(["example.test"], _h.Ad.RootDseServers);
+        Assert.NotEqual("rodc01.example.test", Assert.Single(_h.Ad.Sets).Server);
+        Assert.Contains(_h.Logger.Warnings, w => w.Contains("is read-only, so it is not pinned", StringComparison.Ordinal));
+        Assert.True(result.Success, result.Error);
     }
 
     [Fact]
