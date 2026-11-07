@@ -7,7 +7,27 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (newest 
 the latest sweep is Archived 2026-10-23).
 
 ## Now
+### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
 
+**Done since the owner left (2026-11-06 ~16:00):** sweep-e, Comms-10k clear-then-add revert, sweep-f (items 23, 25,
+26, 27; 24's wording), item 45 records, codex-commercial defect reviews A-D over everything merged since the dev build
+(13 findings, all fixed and merged as rev-abc), and rev-x1 admitted. Master `78c03e49` + records; gates there: 8852
+xUnit, 19 warnings, format, diff-check and ASCII clean. Nothing deployed, pushed, or changed outside the repo.
+
+**Blocked 1 - sweep-g (scripts: items 36-39 and records; 12, 34, 35 committed on the branch).** Two agents stalled the
+same way in the worktree (entry above). Proposed action: owner answers any pending permission prompt in this terminal,
+or says what the agents may not do; the supervisor then resumes the slice with the same brief.
+
+**Blocked 2 - review E (codex-commercial over the rev-abc range `3f2bcb3b..78c03e49`).** codex-commercial now fails with
+`401 Unauthorized: Encountered invalidated oauth token for user` (ChatGPT-subscription token invalidated after four
+successful reviews today). Proposed action: owner runs `C:\Users\mcoelho\.local\bin\codex-commercial.cmd login`
+(interactive) and says go; the supervisor re-dispatches review E (prompt ready in its scratchpad: `cx/review-E.txt`),
+then review F over sweep-g once that lands.
+
+**Owner questions queued (one at a time):** item 44 audit refusal convention (`sweep-e-44.md`); item 24 approve from
+SyncedWithErrors (`sweep-f-24.md`); confirm the two Constitution edits (`sweep-45.md`); rev-x1 scope.
+
+**Then:** the one dev deploy with its check list (all additions are in this file's entries from 2026-11-06).
 ### 2026-11-06 (sweep-g, blocked) - second attempt stalled the same way; slice deferred to the owner's return
 
 A fresh agent resumed `fix/sweep-g` at 22:30, edited `tools/deploy-pipeline.ps1` and `README.md` for item 36 until 22:35,
@@ -136,7 +156,7 @@ per merged group (reasonable scope, authorization and write paths first) with fi
 push, no config or host change, no owner decision (item 44 convention included). If blocked: obstacle and proposed
 action here, then wait.
 
-**Next:** review E (rev-abc range; retrying after a 401 from codex-commercial), fixes if any; sweep-g waits for the owner (blocked, above);
+**Next:** see the 2026-11-07 entry at the top: two owner-cleared blockers (sweep-g permission prompt; codex-commercial login), then review E, sweep-g, review F,
 then master gates and the final state entry; the one dev deploy waits for the owner.
 
 ### 2026-11-06 (sweep-d) - sweep items 19, 20, 22, 29, 30, 31, 32 landed; three owner questions settled

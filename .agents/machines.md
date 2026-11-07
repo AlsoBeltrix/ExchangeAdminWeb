@@ -10,6 +10,8 @@ _First recorded 2026-07-21._
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
 - **Superseded 2026-10-26 / 2026-11-04 / 2026-11-06:** codex (Portkey) is out and codex-commercial is the review
+- **2026-11-07 00:20:** codex-commercial dispatch failed with `401 Unauthorized: Encountered invalidated oauth token for
+  user` after four successful reviews the same day; needs an interactive `codex-commercial.cmd login` by the owner.
   harness again (`.agents/decisions.md` 2026-10-26 and 2026-11-04). Working incantation, probed 2026-11-06 from the
   repo root (read a file and ran `git rev-parse` in one read-only dispatch): prompt on stdin, then
   `C:/Users/mcoelho/.local/bin/codex-commercial.cmd exec --model gpt-6-astra --config 'model_reasoning_effort="<level>"'
