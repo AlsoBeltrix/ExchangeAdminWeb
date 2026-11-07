@@ -1239,7 +1239,9 @@ name - a user's UPN, else its mail; a group's, OU's or target's DN - is not the 
 flagged); **not converted** (stored by name only, with what the conversion's own lookup finds: one object, none, several,
 or no answer); **several objects**; **wrong type**; **could not verify** (the directory could not be asked, or the stored
 DN names a domain that is not in this forest - never read as missing); or **ignored**. The summary line reads "Verified N
-entries at <time>: M findings, K ignored, J could not be verified", and the last press is shown to the next admin. Beside
+entries at <time>: M findings, K ignored, J could not be verified", and the last press is shown to the next admin. An edit made in the pane while Verify reads, or while one of its actions
+writes, is kept: the findings are not shown against it, the pane says so, and a Save is then checked against the rules as
+they were read before. Beside
 each finding are its actions, each written at once (not at Save), checked against the rules as Verify read them (a change
 since refuses: "run Verify again"), re-authorized at the click and audited under `Verify:ProtectedPrincipals`:
 **Rename** (store the current name as the entry's label and as its companion for an older build; the check itself never compares

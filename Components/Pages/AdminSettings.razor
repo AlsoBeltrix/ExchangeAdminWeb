@@ -1335,6 +1335,15 @@
             activity.Report(items.Count);
             activity.Complete(true, report.Summary(report.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm")));
 
+            // rev-c3, as Module Configuration does: the pane's controls stay live while Verify reads, so an edit made meanwhile
+            // is the admin's - neither overwritten with the rows verified nor shown against a report of other rows.
+            if (dirty.IsSectionDirty(SecProtected))
+            {
+                ppVerifyMessage = "This pane was edited while Verify ran, so its findings are not shown. Save or discard the edit and press Verify again.";
+                ppVerifyIsError = true;
+                return;
+            }
+
             // The rows shown are the rows verified: the pane holds no unsaved edit, so showing the snapshot loses nothing.
             ShowRules(workset.Rules);
             SetRulesBaseline(workset.Rules);
@@ -1474,7 +1483,15 @@
             var result = await act(VerifyActions(), authState.User, ip);
             ppVerifyMessage = result.Message;
             ppVerifyIsError = !result.Succeeded;
-            if (result.Succeeded && result.Outcome is { } outcome)
+            if (result.Succeeded && dirty.IsSectionDirty(SecProtected))
+            {
+                // rev-c3: edited while the write ran - the edit is kept and the findings are not shown against it. A Save is
+                // then checked against the rules' version as read before this write, so it refuses rather than overwrite it.
+                ppVerifyMessage = result.Message + " This pane was edited meanwhile; reload it to see what is stored.";
+                ppVerifyReport = null;
+                ppReplaceTarget = null;
+            }
+            else if (result.Succeeded && result.Outcome is { } outcome)
             {
                 if (outcome.After is { } after)
                 {
