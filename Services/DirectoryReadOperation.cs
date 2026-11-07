@@ -169,6 +169,12 @@ public sealed class DirectoryReadOperation : IDisposable
         })).Value;
     }
 
+    /// <summary>
+    /// rev-a2. Drops the current operation's answer for <paramref name="secretId"/> - the directory rejected the credential it
+    /// held - so the next caller inside the operation fetches afresh. Nothing outside an operation is kept to drop.
+    /// </summary>
+    internal static void ForgetDirectoryReadSecret(int secretId) => Root(Ambient.Value)?._secrets?.TryRemove(secretId, out _);
+
     private static DirectoryReadOperation? Root(DirectoryReadOperation? node)
     {
         while (node is not null && node._secrets is null)

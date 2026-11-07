@@ -379,7 +379,18 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
             _ps.AddScript("param($cred) (Get-ADForest -Credential $cred -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1")
                .AddArgument(_credential);
             DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
-            var host = _ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            string? host;
+            try
+            {
+                host = _ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            }
+            catch (Exception ex)
+            {
+                DirectoryCredentialRejection.Observe(ex); // rev-a2
+                throw;
+            }
+            if (_ps.HadErrors)
+                DirectoryCredentialRejection.Observe(_ps.Streams.Error.FirstOrDefault()?.Exception); // rev-a2
             if (_ps.HadErrors || string.IsNullOrWhiteSpace(host))
                 throw new InvalidOperationException("The forest reported no global catalog.");
 
@@ -424,10 +435,20 @@ internal sealed class PowerShellProtectedGroupDirectory : IProtectedGroupDirecto
                .AddParameter("ErrorAction", "Stop");
 
             DirectoryReadOperation.CountRead(); // kd-88: the timing line's count
-            var rows = _ps.Invoke();
+            Collection<PSObject> rows;
+            try
+            {
+                rows = _ps.Invoke();
+            }
+            catch (Exception ex)
+            {
+                DirectoryCredentialRejection.Observe(ex); // rev-a2: a rotated secret, for the flow to fetch afresh
+                throw;
+            }
             if (_ps.HadErrors)
             {
                 var error = _ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? $"{command} reported an error";
+                DirectoryCredentialRejection.Observe(error); // rev-a2
                 throw new InvalidOperationException(error);
             }
             return rows;

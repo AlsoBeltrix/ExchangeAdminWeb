@@ -106,23 +106,63 @@ public sealed class DelineaCredentialWindowTests : IDisposable
         Assert.Equal(2, _vault.SecretRequests(SecretId));
     }
 
-    // Sliding: each use inside the window starts it again, so a credential in steady use is not refetched every five
-    // minutes - and five minutes after the LAST use, it is.
+    // rev-a2. Not sliding: the window runs from the retrieval, so a use inside it does not start it again - a credential in
+    // steady use is fetched afresh five minutes after it was fetched, however busy the instance is.
     [Fact]
-    public async Task EachUseInsideTheWindow_SlidesItOn()
+    public async Task AUseInsideTheWindow_DoesNotSlideIt_TheWindowRunsFromTheRetrieval()
     {
         var store = Store();
 
         await InAnOperation(store, SecretId);
         _clock.Advance(TimeSpan.FromMinutes(4));
         await InAnOperation(store, SecretId);
-        _clock.Advance(TimeSpan.FromMinutes(4));
-        await InAnOperation(store, SecretId);
         Assert.Equal(1, _vault.SecretRequests(SecretId));
 
-        _clock.Advance(DelineaService.DefaultCredentialWindow);
+        _clock.Advance(TimeSpan.FromMinutes(1)); // five minutes from the retrieval, one from the last use
         await InAnOperation(store, SecretId);
         Assert.Equal(2, _vault.SecretRequests(SecretId));
+    }
+
+    // rev-a2. The secret rotated under the same ID while the old password was kept: a use every minute, as on a busy instance,
+    // gets the new one five minutes after the old one was fetched - never the old one indefinitely.
+    [Fact]
+    public async Task ARotatedSecret_IsServedFreshWithinTheWindow_HoweverOftenItIsUsed()
+    {
+        var store = Store();
+        await InAnOperation(store, SecretId);
+        _vault.Password = "rotated-P@ss";
+
+        var served = new List<string?>();
+        for (var minute = 1; minute <= 6; minute++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            served.Add((await InAnOperation(store, SecretId))?.password);
+        }
+
+        Assert.Equal([Password, Password, Password, Password, "rotated-P@ss", "rotated-P@ss"], served);
+        Assert.Equal(2, _vault.SecretRequests(SecretId));
+    }
+
+    // rev-a2. A caller's report that the directory rejected the kept credential drops it: the next fetch asks the store, and
+    // gets the rotated password, inside the window.
+    [Fact]
+    public async Task AnInvalidatedCredential_IsFetchedAfresh_InsideTheWindow()
+    {
+        var store = Store();
+        await InAnOperation(store, SecretId);
+        await InAnOperation(store, OtherSecretId);
+        _vault.Password = "rotated-P@ss";
+        _clock.Advance(TimeSpan.FromMinutes(1));
+
+        store.Invalidate(SecretId);
+        var fresh = await InAnOperation(store, SecretId);
+        var other = await InAnOperation(store, OtherSecretId);
+
+        Assert.Equal("rotated-P@ss", fresh?.password);
+        Assert.Equal(2, _vault.SecretRequests(SecretId));
+        // Another Secret ID's kept credential is untouched.
+        Assert.Equal(Password, other?.password);
+        Assert.Equal(1, _vault.SecretRequests(OtherSecretId));
     }
 
     // The configured Secret ID changed: the new one is not answered from the old one's credential - it is fetched - and each
@@ -223,6 +263,9 @@ public sealed class DelineaCredentialWindowTests : IDisposable
 
         public HashSet<int> Failing { get; } = [];
 
+        /// <summary>rev-a2. The password every secret answers with: a test rotates it.</summary>
+        public string Password { get; set; } = DelineaCredentialWindowTests.Password;
+
         public int SecretRequests(int secretId) => _requests.GetValueOrDefault(secretId);
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -238,7 +281,7 @@ public sealed class DelineaCredentialWindowTests : IDisposable
 
             var account = secretId == SecretId ? Account : $"{Account}-{secretId}";
             return Answer(HttpStatusCode.OK,
-                $$"""{"items":[{"fieldName":"Username","itemValue":"{{account}}"},{"fieldName":"Password","itemValue":"{{Password}}"},{"fieldName":"Domain","itemValue":"CONTOSO"}]}""");
+                $$"""{"items":[{"fieldName":"Username","itemValue":"{{account}}"},{"fieldName":"Password","itemValue":"{{this.Password}}"},{"fieldName":"Domain","itemValue":"CONTOSO"}]}""");
         }
 
         private static Task<HttpResponseMessage> Answer(HttpStatusCode status, string body) =>

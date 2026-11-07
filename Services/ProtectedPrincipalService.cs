@@ -300,6 +300,32 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// change, a bulk file - the operation's one answer, its secret or its failure; outside one, a fetch of its own. A fetch
     /// that throws is a secret not retrieved, as the store's own failures already are.
     /// </summary>
+    /// <summary>
+    /// rev-a2. Runs one directory flow on the directory-read credential. When a read inside it was refused for the credential
+    /// itself - the secret rotated under the same Secret ID while the store's cache (<see cref="DelineaService"/>, five minutes
+    /// from retrieval) or this operation still held the old password - what was kept is dropped in both places and the flow
+    /// runs once more on a fresh fetch; its second answer is the flow's, whatever it is. A flow the directory did not reject
+    /// runs once.
+    /// </summary>
+    private async Task<T> WithDirectoryReadCredentialAsync<T>(int secretId,
+        Func<(string username, string password, string domain)?, Task<T>> flow)
+    {
+        using (var watch = DirectoryCredentialRejection.Begin())
+        {
+            var first = await flow(await DirectoryReadSecretAsync(secretId));
+            if (!watch.Rejected)
+                return first;
+        }
+
+        _logger.LogWarning("The directory rejected the protected-principal directory-read credential - fetching it afresh and reading once more");
+        DirectoryReadOperation.ForgetDirectoryReadSecret(secretId);
+        (DirectoryReadSecretInvalidate ?? _delineaService.Invalidate)(secretId);
+        return await flow(await DirectoryReadSecretAsync(secretId));
+    }
+
+    /// <summary>rev-a2. Test seam: what drops the store's kept credential for a Secret ID; null is the store's own.</summary>
+    internal Action<int>? DirectoryReadSecretInvalidate { get; set; }
+
     private async Task<(string username, string password, string domain)?> DirectoryReadSecretAsync(int secretId)
     {
         try
@@ -458,8 +484,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         {
             return session.PowerShell.Invoke();
         }
-        catch
+        catch (Exception ex)
         {
+            DirectoryCredentialRejection.Observe(ex); // rev-a2: a rotated secret, for the flow to fetch afresh
             session.Fail();
             throw;
         }
@@ -648,41 +675,46 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (null, ResolutionStatus.Unavailable);
         }
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogWarning("Failed to retrieve directory-read credential for principal resolution");
-            return (null, ResolutionStatus.Unavailable);
-        }
+        // kd-88: the operation's one fetch; rev-a2: once more when the directory rejected it.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, ResolveWith);
 
-        try
+        async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            if (creds == null)
             {
-                _logger.LogWarning("AD throttle timeout during principal resolution for {Identity}", identity);
+                _lastCredentialFailure = DateTime.UtcNow;
+                _logger.LogWarning("Failed to retrieve directory-read credential for principal resolution");
                 return (null, ResolutionStatus.Unavailable);
             }
 
             try
             {
-                var result = await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
-                return result != null ? (result, ResolutionStatus.Resolved) : (null, ResolutionStatus.NotFound);
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+                {
+                    _logger.LogWarning("AD throttle timeout during principal resolution for {Identity}", identity);
+                    return (null, ResolutionStatus.Unavailable);
+                }
+
+                try
+                {
+                    var result = await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    return result != null ? (result, ResolutionStatus.Resolved) : (null, ResolutionStatus.NotFound);
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
             }
-            finally
+            catch (InvalidOperationException ex) when (ex.Message.Contains("Ambiguous", StringComparison.OrdinalIgnoreCase))
             {
-                _adThrottle.Release();
+                _logger.LogWarning(ex, "Ambiguous resolution for {Identity} - blocking", identity);
+                return (null, ResolutionStatus.Ambiguous);
             }
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Ambiguous", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogWarning(ex, "Ambiguous resolution for {Identity} - blocking", identity);
-            return (null, ResolutionStatus.Ambiguous);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to resolve directory principal for {Identity}", identity);
-            return (null, ResolutionStatus.Unavailable);
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resolve directory principal for {Identity}", identity);
+                return (null, ResolutionStatus.Unavailable);
+            }
         }
     }
 
@@ -1132,38 +1164,43 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (false, []);
         }
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogWarning("Failed to retrieve directory-read credential for the read by SID");
-            return (false, []);
-        }
+        // kd-88: the operation's one fetch; rev-a2: once more when the directory rejected it.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, ReadWith);
 
-        try
+        async Task<(bool answered, IReadOnlyList<DirectorySidObject> found)> ReadWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            if (creds == null)
             {
-                _logger.LogWarning("AD throttle timeout during the read by SID");
+                _lastCredentialFailure = DateTime.UtcNow;
+                _logger.LogWarning("Failed to retrieve directory-read credential for the read by SID");
                 return (false, []);
             }
 
             try
             {
-                var found = await Task.Run(() => FindObjectsBySidAtCatalog(
-                    sid, creds.Value.username, creds.Value.password, creds.Value.domain));
-                return (true, found);
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+                {
+                    _logger.LogWarning("AD throttle timeout during the read by SID");
+                    return (false, []);
+                }
+
+                try
+                {
+                    var found = await Task.Run(() => FindObjectsBySidAtCatalog(
+                        sid, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    return (true, found);
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                _adThrottle.Release();
+                Volatile.Write(ref _globalCatalog, null);
+                _logger.LogWarning(ex, "The read by SID at the global catalog failed");
+                return (false, []);
             }
-        }
-        catch (Exception ex)
-        {
-            Volatile.Write(ref _globalCatalog, null);
-            _logger.LogWarning(ex, "The read by SID at the global catalog failed");
-            return (false, []);
         }
     }
 
@@ -1206,55 +1243,60 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         if (secretId == null)
             return VerifyDirectoryRun<T>.NotRun("the Directory Read Credential (Delinea Secret ID) is not configured");
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value);
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            return VerifyDirectoryRun<T>.NotRun("the directory-read credential could not be retrieved");
-        }
+        // rev-a2: once more on a fresh fetch when the directory rejected the credential.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, RunWith);
 
-        try
+        async Task<VerifyDirectoryRun<T>> RunWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
-                return VerifyDirectoryRun<T>.NotRun("the directory was busy (throttle timeout)");
+            if (creds == null)
+            {
+                _lastCredentialFailure = DateTime.UtcNow;
+                return VerifyDirectoryRun<T>.NotRun("the directory-read credential could not be retrieved");
+            }
 
             try
             {
-                return await Task.Run(() =>
+                if (!await _adThrottle.WaitAsync(SessionWait, cancellationToken))
+                    return VerifyDirectoryRun<T>.NotRun("the directory was busy (throttle timeout)");
+
+                try
                 {
-                    using var session = DirectorySessions.Lease(SessionWait);
-                    var directory = new VerifySessionDirectory(new PowerShellProtectedGroupDirectory(
-                        session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain),
-                        Volatile.Read(ref _globalCatalog)));
-                    try
+                    return await Task.Run(() =>
                     {
-                        var result = reads(directory);
-                        Volatile.Write(ref _globalCatalog, directory.Inner.KnownGlobalCatalog);
-                        return VerifyDirectoryRun<T>.Ran(result);
-                    }
-                    finally
-                    {
-                        if (directory.Faulted)
+                        using var session = DirectorySessions.Lease(SessionWait);
+                        var directory = new VerifySessionDirectory(new PowerShellProtectedGroupDirectory(
+                            session.PowerShell, CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain),
+                            Volatile.Read(ref _globalCatalog)));
+                        try
                         {
-                            session.Fail();
-                            Volatile.Write(ref _globalCatalog, null);
+                            var result = reads(directory);
+                            Volatile.Write(ref _globalCatalog, directory.Inner.KnownGlobalCatalog);
+                            return VerifyDirectoryRun<T>.Ran(result);
                         }
-                    }
-                }, cancellationToken);
+                        finally
+                        {
+                            if (directory.Faulted)
+                            {
+                                session.Fail();
+                                Volatile.Write(ref _globalCatalog, null);
+                            }
+                        }
+                    }, cancellationToken);
+                }
+                finally
+                {
+                    _adThrottle.Release();
+                }
             }
-            finally
+            catch (OperationCanceledException)
             {
-                _adThrottle.Release();
+                throw;
             }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "The Verify directory session could not be used");
-            return VerifyDirectoryRun<T>.NotRun($"the directory could not be read: {ex.Message}");
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "The Verify directory session could not be used");
+                return VerifyDirectoryRun<T>.NotRun($"the directory could not be read: {ex.Message}");
+            }
         }
     }
 
@@ -2027,55 +2069,61 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
-        var creds = await DirectoryReadSecretAsync(secretId.Value); // kd-88: the operation's one fetch
-        if (creds == null)
-        {
-            _lastCredentialFailure = DateTime.UtcNow;
-            _logger.LogError("Failed to retrieve directory-read credential for protected-principal group check");
-            return (matches, true, "Protected-principal directory-read credential is unavailable. Contact your administrator.");
-        }
+        // kd-88: the operation's one fetch; rev-a2: once more when the directory rejected it.
+        return await WithDirectoryReadCredentialAsync(secretId.Value, CheckWith);
 
-        try
+        async Task<(List<string> matches, bool checkFailed, string? failReason)> CheckWith((string username, string password, string domain)? creds)
         {
-            if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
-                return (matches, true, "AD service is busy. Please try again.");
+            matches.Clear(); // rev-a2: a retry starts from nothing the rejected run found
+            if (creds == null)
+            {
+                _lastCredentialFailure = DateTime.UtcNow;
+                _logger.LogError("Failed to retrieve directory-read credential for protected-principal group check");
+                return (matches, true, "Protected-principal directory-read credential is unavailable. Contact your administrator.");
+            }
 
             try
             {
-                var (groupMatches, expansionHadErrors, problems) = await Task.Run(() =>
-                    CheckGroupsInWarmSession(groupEntries, groupLabels, ignoredMissing, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
-                matches.AddRange(groupMatches);
+                if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
+                    return (matches, true, "AD service is busy. Please try again.");
 
-                // Fail closed: if expansion had errors and no matches were found,
-                // we cannot confirm the user is NOT in a protected group. sweep-c item 17: the refusal names what could not be
-                // answered - the entry by its label - where it said only "expansion errors".
-                if (expansionHadErrors && matches.Count == 0)
+                try
                 {
-                    var reason = IncompleteReason([.. notConverted, .. problems]);
-                    _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}: {Reason}", target.UserPrincipalName, reason);
-                    return (matches, true, reason);
+                    var (groupMatches, expansionHadErrors, problems) = await Task.Run(() =>
+                        CheckGroupsInWarmSession(groupEntries, groupLabels, ignoredMissing, ouIds, target, creds.Value.username, creds.Value.password, creds.Value.domain));
+                    matches.AddRange(groupMatches);
+
+                    // Fail closed: if expansion had errors and no matches were found,
+                    // we cannot confirm the user is NOT in a protected group. sweep-c item 17: the refusal names what could not be
+                    // answered - the entry by its label - where it said only "expansion errors".
+                    if (expansionHadErrors && matches.Count == 0)
+                    {
+                        var reason = IncompleteReason([.. notConverted, .. problems]);
+                        _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}: {Reason}", target.UserPrincipalName, reason);
+                        return (matches, true, reason);
+                    }
+
+                    // K.3 point 3: rows stored by name only could not be answered at all; with no rule matched, refuse naming them.
+                    if (notConverted.Count > 0 && matches.Count == 0 && !otherRuleMatched)
+                    {
+                        var reason = IncompleteReason(notConverted);
+                        _logger.LogWarning("Protected-principal check incomplete for {Target}: {Reason}", target.UserPrincipalName, reason);
+                        return (matches, true, reason);
+                    }
                 }
-
-                // K.3 point 3: rows stored by name only could not be answered at all; with no rule matched, refuse naming them.
-                if (notConverted.Count > 0 && matches.Count == 0 && !otherRuleMatched)
+                finally
                 {
-                    var reason = IncompleteReason(notConverted);
-                    _logger.LogWarning("Protected-principal check incomplete for {Target}: {Reason}", target.UserPrincipalName, reason);
-                    return (matches, true, reason);
+                    _adThrottle.Release();
                 }
             }
-            finally
+            catch (Exception ex)
             {
-                _adThrottle.Release();
+                _logger.LogError(ex, "Group membership check failed for {Target}", target.UserPrincipalName);
+                return (matches, true, "Group membership check failed. Contact your administrator.");
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Group membership check failed for {Target}", target.UserPrincipalName);
-            return (matches, true, "Group membership check failed. Contact your administrator.");
-        }
 
-        return (matches, false, null);
+            return (matches, false, null);
+        }
     }
 
     /// <summary>
@@ -2097,8 +2145,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 session.Fail();
             return outcome;
         }
-        catch
+        catch (Exception ex)
         {
+            DirectoryCredentialRejection.Observe(ex); // rev-a2
             session.Fail();
             throw;
         }

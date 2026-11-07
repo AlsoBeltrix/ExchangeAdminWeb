@@ -223,8 +223,9 @@ internal sealed class SelfGrantDirectory : IDisposable
 
             return rows.Select(ToObject).ToList();
         }
-        catch
+        catch (Exception ex)
         {
+            DirectoryCredentialRejection.Observe(ex); // rev-a2: a rotated secret, for the check to fetch afresh
             // kd-88: a read that failed throws the warm session away rather than lending it again.
             _session.Fail();
             throw;
