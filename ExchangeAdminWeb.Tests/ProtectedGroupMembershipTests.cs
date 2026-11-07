@@ -826,9 +826,9 @@ public class ProtectedGroupMembershipTests
 
     [Theory]
     [InlineData("public DirectoryTarget ReadTarget(", "public string ResolveDomainServer(", "= server,")]
-    [InlineData("public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<string> ReadTokenGroups(", "= target,")]
+    [InlineData("public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<string> ReadTokenGroups(", ", server, new Dictionary<string, object>")]
     [InlineData("public IReadOnlyList<string> ReadTokenGroups(", "public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "= server,")]
-    [InlineData("public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "public bool DomainLocalGroupContainsAny(", "= target,")]
+    [InlineData("public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "public bool DomainLocalGroupContainsAny(", ", server, new Dictionary<string, object>")]
     [InlineData("public bool DomainLocalGroupContainsAny(", "public IReadOnlyList<string> FindObjectDnsBySid(", "= server,")]
     public void EveryRead_CarriesTheServerItWasGiven(string signature, string next, string serverAssignment)
     {
@@ -844,13 +844,21 @@ public class ProtectedGroupMembershipTests
         var body = MethodBody(DirectoryCode(),
             "public IReadOnlyList<DirectoryGroup> FindGroups(", "public IReadOnlyList<string> ReadTokenGroups(");
 
-        Assert.Contains("var target = server ?? GlobalCatalog();", body, StringComparison.Ordinal);
+        Assert.Contains("RunAt(", body, StringComparison.Ordinal);
 
         // aud-a3c: universal links are only complete on a global catalog - kd-88's ancestry read asks it for them, by name.
         var ancestry = MethodBody(DirectoryCode(),
             "public IReadOnlyList<DirectoryMemberOf> ReadMemberOf(", "public bool DomainLocalGroupContainsAny(");
-        Assert.Contains("var target = server ?? GlobalCatalog();", ancestry, StringComparison.Ordinal);
+        Assert.Contains("RunAt(", ancestry, StringComparison.Ordinal);
         Assert.Contains("ProtectedGroupMembership.AnyDnFilter(batch)", ancestry, StringComparison.Ordinal);
+
+        // rev-a3, rev-b1, rev-c1: the forest-wide form names the catalog AND the empty base; raw text, the keys are literals.
+        var raw = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "PowerShellProtectedGroupDirectory.cs"));
+        var runAt = raw[raw.IndexOf("private Collection<PSObject> RunAt(", StringComparison.Ordinal)..raw.IndexOf("private Collection<PSObject> Run(", StringComparison.Ordinal)];
+        Assert.Contains("parameters[\"Server\"] = server ?? GlobalCatalog();", runAt, StringComparison.Ordinal);
+        Assert.Contains("if (server is null)\n            parameters[\"SearchBase\"] = string.Empty;", runAt.ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        // No catalog read is built any other way.
+        Assert.Equal(1, raw.Split("GlobalCatalog();").Length - 1);
     }
 
     [Fact]
@@ -931,8 +939,8 @@ public class ProtectedGroupMembershipTests
             init.Runspace = runspace;
             init.AddScript("""
                 function global:Get-ADGroup {
-                    [CmdletBinding()] param($LDAPFilter, $Server, $Properties, $Credential)
-                    [void]$ReadCalls.Add("Get-ADGroup $Server as $($Credential.UserName)")
+                    [CmdletBinding()] param($LDAPFilter, $Server, $Properties, $Credential, $SearchBase)
+                    [void]$ReadCalls.Add("Get-ADGroup $Server as $($Credential.UserName)$(if ($PSBoundParameters.ContainsKey('SearchBase')) { " base '$SearchBase'" })")
                 }
                 function global:Get-ADForest {
                     [CmdletBinding()] param($Credential)
@@ -949,7 +957,7 @@ public class ProtectedGroupMembershipTests
         directory.FindGroups(GroupLookupKey.Sid, $"{SidA}-512", DomainA);
         directory.FindGroups(GroupLookupKey.Sid, $"{SidA}-512", null);
 
-        Assert.Equal([$"Get-ADGroup {DomainA} as svc", "Get-ADForest as svc", "Get-ADGroup gc.a.example:3268 as svc"], calls.Cast<string>());
+        Assert.Equal([$"Get-ADGroup {DomainA} as svc", "Get-ADForest as svc", "Get-ADGroup gc.a.example:3268 as svc base ''"], calls.Cast<string>());
         const System.Reflection.BindingFlags Every = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
             | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static;
         var type = typeof(PowerShellProtectedGroupDirectory);

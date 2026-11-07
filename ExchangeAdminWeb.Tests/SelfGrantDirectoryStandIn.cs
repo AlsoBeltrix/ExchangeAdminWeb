@@ -283,7 +283,7 @@ internal sealed class SelfGrantDirectoryStandIn
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADObject', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, '', [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, '', [bool]$Credential, $SearchBase, $PSBoundParameters.ContainsKey('SearchBase'), $SearchScope, $Properties)) { $row }
             """),
         // kd-88: the protected-principal resolution's lookup - user objects only, as the real cmdlet answers.
         ("Get-ADUser", """
@@ -293,7 +293,7 @@ internal sealed class SelfGrantDirectoryStandIn
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADUser', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, 'user', [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, 'user', [bool]$Credential, $SearchBase, $PSBoundParameters.ContainsKey('SearchBase'), $SearchScope, $Properties)) { $row }
             """),
         ("Get-ADGroup", """
             [CmdletBinding()] param([string] $LDAPFilter, [string] $Server, [string[]] $Properties, [System.Management.Automation.PSCredential] $Credential, [string] $SearchBase, [string] $SearchScope)
@@ -302,7 +302,7 @@ internal sealed class SelfGrantDirectoryStandIn
             [void]$SelfGrantIdentities.Add($(if ($Credential) { $Credential.UserName } else { '' }))
             $problem = $SelfGrantProblem.Invoke('Get-ADGroup', $Server, "$LDAPFilter$asked")
             if ($problem) { Write-Error $problem; return }
-            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, 'group', [bool]$Credential, $SearchBase, $SearchScope, $Properties)) { $row }
+            foreach ($row in $SelfGrantSearch.Invoke($LDAPFilter, $Server, 'group', [bool]$Credential, $SearchBase, $PSBoundParameters.ContainsKey('SearchBase'), $SearchScope, $Properties)) { $row }
             """),
     ];
 
@@ -322,7 +322,7 @@ internal sealed class SelfGrantDirectoryStandIn
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantProblem", (Func<string, string, string, string?>)Problem, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantCatalogs", (Func<string[]>)(() => GlobalCatalogs), null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantSearch",
-            (Func<string, string, string, bool, string?, string?, string[]?, object[]>)Search, null));
+            (Func<string, string, string, bool, string?, bool, string?, string[]?, object[]>)Search, null));
         state.Variables.Add(new SessionStateVariableEntry("SelfGrantAsked", (Func<string[]?, string>)Asked, null));
         foreach (var (name, body) in Stubs)
             state.Commands.Add(new SessionStateFunctionEntry(name, body));
@@ -376,12 +376,33 @@ internal sealed class SelfGrantDirectoryStandIn
         : properties?.Contains(MemberOf, StringComparer.OrdinalIgnoreCase) == true ? " " + MemberOf
         : "";
 
-    private object[] Search(string filter, string server, string onlyClass, bool credentialed, string? searchBase, string? searchScope,
-        string[]? properties)
+    /// <summary>
+    /// rev-a3, rev-b1, rev-c1. As the AD module answers: a search at the catalog endpoint with no <c>-SearchBase</c> starts at
+    /// the catalog's own domain partition - the domain its host is in - so it does not reach <see cref="OtherDomainDn"/>, a
+    /// separate tree; only an explicitly empty <c>-SearchBase</c> is every partition. An empty <c>-SearchBase</c> sent to a
+    /// domain is refused, as the module refuses it off the catalog port: this is that refusal.
+    /// </summary>
+    public const string EmptyBaseOffCatalog = "The supplied distinguishedName must belong to one of the following partition(s).";
+
+    // The DN of the domain a catalog host is in: its DNS name less the host label.
+    private static string CatalogDomainDn(string server)
+    {
+        var host = server.Split(':')[0];
+        return string.Join(',', host.Split('.').Skip(1).Select(label => "DC=" + label));
+    }
+
+    private object[] Search(string filter, string server, string onlyClass, bool credentialed, string? searchBase, bool baseBound,
+        string? searchScope, string[]? properties)
     {
         try
         {
             var reach = Reach(server) ?? throw new InvalidOperationException(UnreachableServer);
+
+            // rev-a3, rev-b1, rev-c1: see EmptyBaseOffCatalog.
+            if (reach != "forest" && baseBound && string.IsNullOrEmpty(searchBase))
+                throw new InvalidOperationException(EmptyBaseOffCatalog);
+            if (reach == "forest" && !baseBound)
+                searchBase = CatalogDomainDn(server);
 
             // kd-88. tokenGroups is constructed only in a base-scope search: asked for in any other, the read is refused in
             // Active Directory's words, as the access re-check's stand-in refuses it (kd-87).
