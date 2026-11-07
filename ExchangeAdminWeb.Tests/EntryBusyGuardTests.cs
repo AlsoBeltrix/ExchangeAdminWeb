@@ -40,6 +40,7 @@ public sealed class EntryBusyGuardTests
         { typeof(GroupManagement), "AddMember", "isLoading" },
         { typeof(GroupManagement), "RemoveMember", "isLoading" },
         { typeof(MfaReset), "ExecuteReset", "isLoading" },
+        { typeof(MfaReset), "ExecuteReset", "resetInProgress" }, // rev-d2: up until the notification has been sent
         { typeof(AdminBulkJobs), "CancelJob", "isActing" },
         { typeof(AdminBulkJobs), "RemoveJob", "isActing" },
     };
