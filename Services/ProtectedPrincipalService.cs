@@ -890,21 +890,28 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 // carries a DN and the group / OU / pattern rules apply normally.
                 // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: when the SID source reports the recipient's on-premises
                 // SID, the principal is the one account holding it, read at the global catalog (steps 3-4), not whatever
-                // AD holds under the address. A source that reports none, or cannot be asked, leaves the address
-                // re-resolve below exactly as it was: this entry point is not re-ordered, and its 13 callers keep working
-                // while the Graph credential is unset.
-                if (OnPremisesSidSource is not null)
+                // AD holds under the address. rev-b4: only a source that ANSWERED with no SID (NoneReported) leaves the
+                // address re-resolve below; one that could not be asked - Graph unreachable, the Graph Directory Read
+                // Credential blank, no source at all - is Unavailable, which every caller refuses (C.2 step 6, as
+                // BindSyncedAsync reads it). Re-resolving by address then could bind another local account that carries
+                // the canonical address while Exchange resolved the alias to a protected one.
+                var sid = await ReadOnPremisesSidAsync(identity, recipient);
+                if (sid.Outcome == OnPremisesSidOutcome.NotAnswered)
                 {
-                    var sid = await ReadOnPremisesSidAsync(identity, recipient);
-                    if (sid.Outcome == OnPremisesSidOutcome.Reported)
-                    {
-                        var (bySid, bySidStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
-                        // ExchangeGuid stays ResolveExchangeTargetAsync's alone (aud-a2d, ValidatedMailbox.From).
-                        return bySidStatus == ResolutionStatus.Resolved && bySid is not null
-                            ? (bySid with { ExchangeGuid = null }, ResolutionStatus.Resolved)
-                            : (null, bySidStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : bySidStatus);
-                    }
+                    _logger.LogWarning(
+                        "{Identity} is an alias of a directory-synced recipient whose on-premises SID could not be read - failing closed",
+                        identity);
+                    return (null, ResolutionStatus.Unavailable);
                 }
+                if (sid.Outcome == OnPremisesSidOutcome.Reported)
+                {
+                    var (bySid, bySidStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
+                    // ExchangeGuid stays ResolveExchangeTargetAsync's alone (aud-a2d, ValidatedMailbox.From).
+                    return bySidStatus == ResolutionStatus.Resolved && bySid is not null
+                        ? (bySid with { ExchangeGuid = null }, ResolutionStatus.Resolved)
+                        : (null, bySidStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : bySidStatus);
+                }
+                _logger.LogWarning("no on-premises SID reported for {Identity}; bound by address", identity);
 
                 _logger.LogInformation(
                     "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
@@ -941,8 +948,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         // Cloud-only: no on-premises object, under this or any address. Group and OU rules are
         // evaluated from an on-prem DN, which this principal does not have and cannot have - a
         // cloud-only object cannot be a member of an on-prem group. Those rules are therefore not
-        // "skipped", they are inapplicable. The user rows still apply and are what must protect
-        // such a principal; the SamAccountName patterns cannot match either, for the same reason.
+        // "skipped", they are inapplicable. So are the user rows since rev-b2: each is an on-premises
+        // SID, compared by SID alone (the Constitution: a cloud-only principal cannot be protected);
+        // the SamAccountName patterns cannot match either, for the same reason.
         // See docs/ProjectConstitution.md (Protected Principals) and
         // docs/ProtectedPrincipalResolution-Plan.md D4.
         //

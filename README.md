@@ -764,7 +764,9 @@ permission that could. Disabled by default and fail-closed.
     account holding that SID, read at a global catalog, so a mailbox in another domain resolves and an account that
     only carries the mailbox's address is never the one checked. Empty until an admin fills it, with no fallback:
     while it is empty, or Graph cannot be read, every protection-checked change to a synced mailbox (Mailbox
-    Permissions, Calendar Permissions, Out of Office, Conference Rooms) is refused as unavailable. Cloud-only mailboxes
+    Permissions, Calendar Permissions, Out of Office, Conference Rooms) is refused as unavailable, and so is every
+    protection check of a synced recipient addressed by an alias Active Directory does not hold (Blocked Senders
+    included) - never re-resolved by its address, which another account could carry. Cloud-only mailboxes
     do not need it; a synced mailbox Graph reports no SID for is checked by its address and logged ("bound by address")
   - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
     refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient

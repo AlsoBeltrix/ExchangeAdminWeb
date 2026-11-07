@@ -301,6 +301,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         // principal the protection rules match against.
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vincent.roche@contoso.com", "ext-1", "UserMailbox", ExistsOnPrem: true)));
+        // rev-b4: the address re-resolve is C.2 step 5 - Graph answered and reports no on-premises SID.
+        service.GraphReports("ext-1", null);
         service.AdReturns("VRoche@o365.contoso.com", ResolutionStatus.NotFound);
         service.AdReturns("vincent.roche@contoso.com", ResolutionStatus.Resolved, AdPrincipal("vincent.roche@contoso.com"));
 
@@ -319,7 +321,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     {
         // AD went down between the two calls. The alias case must not degrade into an absence.
         var service = CreateService(ResolverReturning(
-            new ResolvedRecipient("vincent.roche@contoso.com", null, "UserMailbox", ExistsOnPrem: true)));
+            new ResolvedRecipient("vincent.roche@contoso.com", "ext-1", "UserMailbox", ExistsOnPrem: true)));
+        service.GraphReports("ext-1", null); // rev-b4: step 5, Graph answered with no SID
         service.AdReturns("VRoche@o365.contoso.com", ResolutionStatus.NotFound);
         service.AdReturns("vincent.roche@contoso.com", ResolutionStatus.Unavailable);
 
@@ -332,7 +335,8 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     public async Task AliasReResolution_AmbiguousInAd_StaysAmbiguous()
     {
         var service = CreateService(ResolverReturning(
-            new ResolvedRecipient("shared@contoso.com", null, "UserMailbox", ExistsOnPrem: true)));
+            new ResolvedRecipient("shared@contoso.com", "ext-shared", "UserMailbox", ExistsOnPrem: true)));
+        service.GraphReports("ext-shared", null); // rev-b4: step 5, Graph answered with no SID
         service.AdReturns("alias@contoso.com", ResolutionStatus.NotFound);
         service.AdReturns("shared@contoso.com", ResolutionStatus.Ambiguous);
 
@@ -350,6 +354,7 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         // synced recipient whose group and OU rules were never evaluated.
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("vip@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: true)));
+        service.GraphReports("ext-vip", null); // rev-b4: step 5, Graph answered with no SID
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
         service.AdReturns("vip@contoso.com", ResolutionStatus.NotFound);
 
@@ -951,9 +956,42 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     }
 
     [Fact]
-    public async Task Fallback_AnAliasOfASyncedMailbox_WithGraphUnanswered_ReResolvesTheAddressAsBefore()
+    public async Task Fallback_AnAliasOfASyncedMailbox_WithGraphUnanswered_IsUnavailable_NotReResolvedByAddress()
+    {
+        // rev-b4. Exchange resolved the alias to the protected synced VIP; another local account carries the canonical
+        // address. Re-resolving by that address bound the other account, whose SID passed the VIP's rule. A source that
+        // could not be asked is no answer: the resolution is Unavailable, which every caller refuses.
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, AddressNamesake);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Null(principal);
+        Assert.Equal(new[] { "vip.alias@contoso.com" }, service.AdLookups);
+    }
+
+    [Fact]
+    public async Task Fallback_AnAliasOfASyncedMailbox_WithNoSidSource_IsUnavailable()
     {
         var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.OnPremisesSidSource = null;
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
+
+        var (_, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Equal(new[] { "vip.alias@contoso.com" }, service.AdLookups);
+    }
+
+    [Fact]
+    public async Task Fallback_AnAliasOfASyncedMailbox_GraphAnsweredWithNoSid_StillReResolvesTheAddress()
+    {
+        // C.2 step 5 is kept: Graph answered and reports no on-premises SID - the canonical address, as before.
+        var service = CreateService(ResolverReturning(SyncedVipRecipient()));
+        service.GraphReports("ext-vip", null);
         service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
         service.AdReturns("vip.person@contoso.com", ResolutionStatus.Resolved, VipMailboxUser);
 
