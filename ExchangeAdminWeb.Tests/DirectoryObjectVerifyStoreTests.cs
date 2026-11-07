@@ -338,6 +338,26 @@ public sealed class DirectoryObjectVerifyStoreTests : IDisposable
         Assert.Equal((OtherRow, result.Outcome!.AfterVersion), (kept.Item.StoredValue, kept.Item.SnapshotVersion));
     }
 
+    [Fact]
+    public async Task AReplace_WithTheSamePrincipal_StillTakesTheOldRowsIgnores()
+    {
+        // rev-c2. A group ignored as missing, restored with the same SID, and the row Replaced by picking the restored group:
+        // the identifier is unchanged, and the ignore - which the pane says Replace undoes - goes all the same. Kept, it
+        // would suppress the refusal the next time the group disappears.
+        Seed(TwoGroups);
+        SeedIgnores(Ignore(GroupSid), Ignore(OtherSid));
+        var workset = Workset();
+        var item = ItemOf(workset, "group_sid", GroupRow);
+        const string restoredDn = "CN=Tier0 Admins Restored,OU=Groups,DC=contoso,DC=com";
+
+        var result = await Actions().ReplaceAsync(Admin, _h.AdminName, SettingsPageHarness.Ip, item, VerifyFinding.Missing(),
+            ProtectedPrincipalIdEntry.Format(GroupSid, restoredDn), restoredDn, workset.IgnoresRaw);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Contains(ProtectedPrincipalIdEntry.Format(GroupSid, restoredDn), StoredRules().GroupIds);
+        Assert.Equal([OtherSid], StoredIgnoreEntries().Select(e => e.IdentifierOrText));
+    }
+
     // ----- B.3: the enforcement load reads the list with the rules -----
 
     [Fact]
