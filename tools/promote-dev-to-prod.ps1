@@ -314,7 +314,12 @@ function Stop-AppPoolChecked {
     # The one result that neither throws nor means Stopped is 'Absent'. That is right for a
     # first install, where nothing is serving yet; it is wrong here, where the prod application
     # about to be replaced must exist. So nothing but 'Stopped' gets past this point.
+    #
+    # Sweep item 38: from here on prod may be stopped, so the finally around the promotion restarts
+    # it whatever happens next - a stop that times out included. 'Absent' asked nothing to stop.
+    $script:prodStopRequested = $true
     $poolState = Stop-AppPoolVerified -Name $Name
+    if ($poolState -eq 'Absent') { $script:prodStopRequested = $false }
     if ($poolState -ne 'Stopped') {
         if ($poolState -eq 'Absent') {
             Write-Fail "Prod app pool '$Name' does not exist. Prod must exist to be promoted to: a promotion replaces the files of the running prod application, so check -ProdAppPoolName. Nothing was promoted; prod is unchanged."
@@ -453,18 +458,24 @@ if ($Apply) {
     Write-Plan $configDbToolPlan.AclSummary
 }
 
-# aud-a38b: outside the try below, on purpose. A pool that cannot be confirmed stopped throws
-# here and ends the script before anything is mirrored over prod. Inside the try, the catch
-# would answer that refusal with a rollback - robocopy /MIR of the backup over the very
-# application that would not stop.
-Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod -PlanIisUnavailable $planIisUnavailable
-
 $promotionFailed = $false
 $rolledBack = $false
 # A38: a restart failure is its own outcome, reported alongside the promotion verdict rather
 # than replacing it.
 $poolStartError = $null
+# Sweep item 38. The stop used to sit outside this try, so that a pool which would not confirm
+# stopped was never answered with a rollback (aud-a38b). But it also left nothing to restart prod:
+# a stop that took longer than the wait ended the run with prod stopping and down. It is inside
+# now, and two flags keep aud-a38b's rule: the catch rolls back only once the mirror has started
+# ($mirrorStarted), and the finally restarts prod only once a stop was asked for
+# ($prodStopRequested) - a refusal before the stop changes nothing and starts nothing.
+$script:prodStopRequested = $false
+$mirrorStarted = $false
+$promotionError = $null
 try {
+    Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod -PlanIisUnavailable $planIisUnavailable
+
+    $mirrorStarted = $true
     Invoke-RobocopyChecked -Description "Promoting dev binaries to prod" -RobocopyArgs @(
         $dev, $prod,
         '/MIR',
@@ -487,11 +498,16 @@ try {
     }
 } catch {
     $promotionFailed = $true
+    $promotionError = $_.Exception.Message
     Write-Host ""
     Write-Host "  X  Promotion FAILED: $_" -ForegroundColor Red
     Write-Host ""
 
-    if ($Apply -and (Test-Path -LiteralPath $backup -PathType Container)) {
+    if (-not $mirrorStarted) {
+        # aud-a38b: refused at the stop or before it. Nothing was mirrored, so there is nothing to roll
+        # back - a rollback here would mirror the backup over an application that may not have stopped.
+        Write-Warn "Nothing was mirrored over prod, so there is nothing to roll back."
+    } elseif ($Apply -and (Test-Path -LiteralPath $backup -PathType Container)) {
         Write-Step "Rolling back prod binaries from backup: $backup"
         try {
             # Binaries only: config\ is excluded so the rollback never touches the per-instance
@@ -518,8 +534,10 @@ try {
     # raised in a finally block REPLACES whatever was propagating, so a failed restart used
     # to erase the promotion and rollback verdict below and surface only the pool error.
     # The operator then could not tell whether prod held old binaries or new ones.
+    # Sweep item 38: a dry run plans the start as before; a real run starts prod only if it asked it
+    # to stop.
     try {
-        Start-AppPoolChecked -Name $ProdAppPoolName
+        if (-not $Apply -or $script:prodStopRequested) { Start-AppPoolChecked -Name $ProdAppPoolName }
     } catch {
         $poolStartError = $_.Exception.Message
         Write-Host "  X  Prod app pool did not start: $poolStartError" -ForegroundColor Red
@@ -527,7 +545,9 @@ try {
 }
 
 if ($promotionFailed) {
-    $verdict = if ($rolledBack) {
+    $verdict = if (-not $mirrorStarted) {
+        "Promotion refused before anything was mirrored: $promotionError Prod's files are unchanged.$(if ($script:prodStopRequested -and -not $poolStartError) { ' Prod''s app pool was started again.' })"
+    } elseif ($rolledBack) {
         "Promotion failed and was rolled back. Prod has been restored from backup."
     } else {
         "Promotion failed and automatic rollback did not complete. Prod may be in an inconsistent state - restore manually from $backup."

@@ -984,6 +984,14 @@ reach that folder - its own path at, inside or above it, a path that cannot be p
 named pool. One elsewhere on the server (another team's site with a missing root virtual
 directory, say) is named in a warning and does not stop the run.
 
+A stop is confirmed, not assumed: the scripts poll IIS until the pool reports Stopped. They wait
+60 seconds, and past that as long as IIS lets the worker exit - the pool's
+`processModel.shutdownTimeLimit` (90 seconds unless changed) plus 30 seconds - before refusing.
+The promotion restarts prod on every failure after it asked prod to stop, a stop that never
+confirmed included; it rolls back only once the mirror has started. `deploy.ps1` still leaves its
+pool stopped after a failed mirror (cdt-16): it keeps no copy of the previous build to roll back
+to, and starting the pool would serve a mix of old and new files.
+
 **Default URL:** `http://yourserver/ExchangeAdminWeb`
 
 #### Shared config database (dev and prod on one server)

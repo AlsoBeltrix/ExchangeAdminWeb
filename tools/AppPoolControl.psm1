@@ -29,6 +29,14 @@
     nothing to corrupt - the installer's first run is exactly this case. It is reported as
     'Absent' so the caller can log it rather than infer it.
 
+    How long it waits (sweep item 38): IIS gives a stopping worker the pool's
+    processModel.shutdownTimeLimit (90 seconds unless changed) before it ends the process,
+    so a fixed 60 seconds refused - with the pool still stopping and nobody restarting it -
+    a stop IIS was still allowed to finish. With no -TimeoutSeconds it waits 60 seconds;
+    past that, and only then, it reads the pool's shutdownTimeLimit (90 seconds when it
+    cannot be read) and waits until that plus -MarginSeconds have passed since the stop.
+    An explicit -TimeoutSeconds is used as given.
+
 .NOTES
     Pure ASCII, deliberately: deploy.ps1 is read by Windows PowerShell 5.1, which reads a
     BOM-less file as ANSI and turns non-ASCII characters into parse errors
@@ -51,8 +59,16 @@ function Stop-AppPoolVerified {
         [string]$Name,
 
         # Generous rather than tight: the cost of waiting is seconds, the cost of giving up
-        # too early is a half-replaced live application.
+        # too early is a half-replaced live application. Left out (every script), it is 60
+        # seconds, extended to the pool's shutdownTimeLimit plus -MarginSeconds (sweep item 38).
         [int]$TimeoutSeconds = 60,
+
+        # Sweep item 38: how long past IIS's shutdownTimeLimit to keep asking.
+        [int]$MarginSeconds = 30,
+
+        # Sweep item 38: the pool's processModel.shutdownTimeLimit - read only once the first 60
+        # seconds have passed without a Stopped. A TimeSpan, or anything it parses from.
+        [scriptblock]$ShutdownTimeLimitProbe = { param($PoolName) Get-ItemProperty "IIS:\AppPools\$PoolName" -Name processModel.shutdownTimeLimit -ErrorAction Stop },
 
         [int]$PollMilliseconds = 500,
 
@@ -80,7 +96,12 @@ function Stop-AppPoolVerified {
     $stopError = $null
     try { & $StopAction $Name } catch { $stopError = $_.Exception.Message }
 
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $stoppedAt = Get-Date
+    $deadline = $stoppedAt.AddSeconds($TimeoutSeconds)
+    $waitSeconds = $TimeoutSeconds
+    # Sweep item 38: extended at most once, and never when the caller named the timeout.
+    $mayExtend = -not $PSBoundParameters.ContainsKey('TimeoutSeconds')
+    $limitNote = ''
     $state = $null
 
     while ($true) {
@@ -93,9 +114,20 @@ function Stop-AppPoolVerified {
 
         if ($state -eq 'Stopped') { return 'Stopped' }
 
+        if ((Get-Date) -ge $deadline -and $mayExtend) {
+            $mayExtend = $false
+            $limit = Get-AppPoolShutdownTimeLimitSecond -Name $Name -Probe $ShutdownTimeLimitProbe
+            $limitNote = " IIS allows its worker $($limit.Seconds) seconds to exit ($($limit.Source)); this waited that plus $MarginSeconds."
+            $extended = [int][Math]::Ceiling($limit.Seconds) + $MarginSeconds
+            if ($extended -gt $waitSeconds) {
+                $waitSeconds = $extended
+                $deadline = $stoppedAt.AddSeconds($waitSeconds)
+            }
+        }
+
         if ((Get-Date) -ge $deadline) {
             $because = if ($stopError) { " The stop attempt reported: $stopError." } else { '' }
-            throw "App pool '$Name' is still '$state' after $TimeoutSeconds seconds.$because Refusing to deploy over a running application - stop it by hand and retry."
+            throw "App pool '$Name' is still '$state' after $waitSeconds seconds.$limitNote$because Refusing to deploy over a running application - stop it by hand and retry."
         }
 
         & $Sleep $PollMilliseconds
@@ -103,6 +135,34 @@ function Stop-AppPoolVerified {
 }
 
 Export-ModuleMember -Function Stop-AppPoolVerified
+
+function Get-AppPoolShutdownTimeLimitSecond {
+    # Private (sweep item 38). The pool's processModel.shutdownTimeLimit in seconds, and where the
+    # number came from. WebAdministration hands it back as a TimeSpan, or as a configuration
+    # attribute whose Value is one (assumption: not verified on the deploy host, so a string or a
+    # number of seconds is accepted too). Anything unreadable is IIS's default, 90 seconds - a
+    # longer wait than before, never a shorter one.
+    param([string]$Name, [scriptblock]$Probe)
+
+    $default = [pscustomobject]@{ Seconds = 90; Source = 'IIS''s default; the pool''s shutdownTimeLimit could not be read' }
+    try {
+        $raw = & $Probe $Name
+    } catch {
+        return $default
+    }
+    if ($null -ne $raw -and $raw -isnot [TimeSpan] -and $null -ne $raw.PSObject.Properties['Value']) { $raw = $raw.Value }
+    $span = $null
+    if ($raw -is [TimeSpan]) {
+        $span = $raw
+    } elseif ($raw -is [int] -or $raw -is [long] -or $raw -is [double]) {
+        $span = [TimeSpan]::FromSeconds([double]$raw)
+    } elseif ($raw -is [string]) {
+        $parsed = [TimeSpan]::Zero
+        if ([TimeSpan]::TryParse($raw, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) { $span = $parsed }
+    }
+    if ($null -eq $span -or $span.TotalSeconds -le 0) { return $default }
+    return [pscustomobject]@{ Seconds = $span.TotalSeconds; Source = 'the pool''s processModel.shutdownTimeLimit' }
+}
 
 function Resolve-AppPoolIdentityPlan {
     <#

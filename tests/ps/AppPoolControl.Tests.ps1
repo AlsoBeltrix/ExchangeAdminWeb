@@ -460,7 +460,8 @@ Describe 'A38: the promotion restart cannot erase the promotion verdict' {
     It 'does not let the restart throw out of the finally block' {
         # An exception raised in finally REPLACES whatever was propagating, so a failed
         # restart used to erase the promotion and rollback verdict entirely.
-        $script:Promote | Should -Match '(?s)\} finally \{.*?try \{\s*Start-AppPoolChecked'
+        # Sweep item 38: gated on a stop having been asked for, still inside the try.
+        $script:Promote | Should -Match '(?s)\} finally \{.*?try \{\s*if \(-not \$Apply -or \$script:prodStopRequested\) \{ Start-AppPoolChecked'
     }
 
     It 'records the restart failure instead of discarding it' {
@@ -942,15 +943,23 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $verified[0].Extent.EndOffset | Should -BeLessThan $stopStep.Extent.EndOffset
         }
 
-        It 'stops the prod pool at the top level, before any robocopy writes into prod' {
+        It 'stops the prod pool first in the promotion try, before any robocopy writes into prod, and rolls back only once the mirror started (sweep item 38)' {
             $stops = @(Get-PromoteCommand 'Stop-AppPoolChecked')
             $stops.Count | Should -Be 1
             $stop = $stops[0]
             $stop.Extent.Text | Should -Match '^Stop-AppPoolChecked -Name \$ProdAppPoolName '
 
-            # A direct statement of the script body: nothing - no try, no if - stands between its
-            # throw and the end of the script, so a refusal cannot fall through to the mirror.
-            [object]::ReferenceEquals($stop.Parent.Parent, $script:PromoteAst.EndBlock) | Should -BeTrue
+            # Sweep item 38: the first statement of the try whose finally restarts prod, so a stop that
+            # times out is answered with a restart. aud-a38b's rule - a refusal there is never answered
+            # with a rollback - is kept by $mirrorStarted, set only after the stop and read by the catch.
+            $try = $stop.Parent.Parent.Parent
+            $try | Should -BeOfType ([System.Management.Automation.Language.TryStatementAst])
+            [object]::ReferenceEquals($try.Parent, $script:PromoteAst.EndBlock) | Should -BeTrue -Because 'the try is a statement of the script body'
+            [object]::ReferenceEquals(@($try.Body.Statements)[0], $stop.Parent) | Should -BeTrue
+            @($try.Body.Statements)[1].Extent.Text | Should -BeExactly '$mirrorStarted = $true'
+            $catchFirst = @($try.CatchClauses[0].Body.Statements | Where-Object { $_ -is [System.Management.Automation.Language.IfStatementAst] })[0]
+            $catchFirst.Clauses[0].Item1.Extent.Text | Should -BeExactly '-not $mirrorStarted'
+            $catchFirst.Clauses[0].Item2.Extent.Text | Should -Not -Match 'robocopy'
 
             # Every robocopy whose DESTINATION is prod: the promotion mirror and the rollback.
             # The backup copy reads from prod and is meant to run while prod is still serving.
@@ -1997,5 +2006,143 @@ Describe 'sweep item 37: the IIS reads fail closed whatever the caller''s error 
         }
         { Assert-AppPoolServesPath -Name 'Pool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
             Should -Throw -ExpectedMessage '*the site list cannot be read*'
+    }
+}
+
+Describe 'sweep item 38: the stop waits as long as IIS lets a worker exit' {
+    # The wait is measured with Get-Date. A fake clock, moved on by each poll's sleep, runs the minutes
+    # in milliseconds.
+    BeforeEach {
+        $script:S38Clock = [datetime]'2026-11-09T00:00:00'
+        $script:S38LimitReads = 0
+        Mock Get-Date -ModuleName AppPoolControl { $script:S38Clock }
+    }
+    AfterAll { Remove-Variable -Name S38Clock, S38LimitReads, S38StopsAt, S38Limit -Scope Script -ErrorAction SilentlyContinue }
+
+    BeforeAll {
+        function Invoke-S38Stop {
+            param([double]$StopsAfterSeconds, [scriptblock]$Limit = { [TimeSpan]::FromSeconds(90) }, [hashtable]$Extra = @{})
+            $start = $script:S38Clock
+            $script:S38StopsAt = if ($StopsAfterSeconds -ge 0) { $start.AddSeconds($StopsAfterSeconds) } else { [datetime]::MaxValue }
+            $script:S38Limit = $Limit
+            Stop-AppPoolVerified -Name 'Pool' -ExistsProbe { $true } -StopAction { } `
+                -StateProbe { if ($script:S38Clock -ge $script:S38StopsAt) { 'Stopped' } else { 'Stopping' } } `
+                -Sleep { param($Milliseconds) $script:S38Clock = $script:S38Clock.AddMilliseconds($Milliseconds) } `
+                -ShutdownTimeLimitProbe { $script:S38LimitReads++; & $script:S38Limit } @Extra
+        }
+    }
+
+    It 'waits past 60 seconds for a stop IIS still allows (shutdownTimeLimit 90), and returns Stopped' {
+        Invoke-S38Stop -StopsAfterSeconds 85 | Should -Be 'Stopped'
+        $script:S38LimitReads | Should -Be 1
+    }
+
+    It 'refuses once the limit plus the margin has passed, saying both' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 } | Should -Throw -ExpectedMessage "*still 'Stopping' after 120 seconds*IIS allows its worker 90 seconds to exit (the pool's processModel.shutdownTimeLimit); this waited that plus 30*"
+        ($script:S38Clock - [datetime]'2026-11-09T00:00:00').TotalSeconds | Should -BeGreaterOrEqual 120
+        ($script:S38Clock - [datetime]'2026-11-09T00:00:00').TotalSeconds | Should -BeLessThan 121
+    }
+
+    It 'follows a longer configured limit' {
+        Invoke-S38Stop -StopsAfterSeconds 300 -Limit { [TimeSpan]::FromMinutes(5) } | Should -Be 'Stopped'
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { '00:05:00' } } | Should -Throw -ExpectedMessage '*after 330 seconds*'
+    }
+
+    It 'takes the value of a configuration attribute' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { [pscustomobject]@{ Value = [TimeSpan]::FromSeconds(200) } } } | Should -Throw -ExpectedMessage '*after 230 seconds*'
+    }
+
+    It 'uses IIS''s default of 90 seconds when the limit cannot be read' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { throw 'no IIS: drive' } } | Should -Throw -ExpectedMessage "*after 120 seconds*IIS's default*"
+    }
+
+    It 'never waits less than the 60 seconds it waited before, whatever the limit' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { [TimeSpan]::FromSeconds(5) } } | Should -Throw -ExpectedMessage '*after 60 seconds*'
+    }
+
+    It 'reads no limit for a pool that stops within the first 60 seconds' {
+        Invoke-S38Stop -StopsAfterSeconds 10 | Should -Be 'Stopped'
+        $script:S38LimitReads | Should -Be 0
+    }
+
+    It 'uses an explicit -TimeoutSeconds as given' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Extra @{ TimeoutSeconds = 5 } } | Should -Throw -ExpectedMessage '*after 5 seconds*'
+        $script:S38LimitReads | Should -Be 0
+    }
+}
+
+Describe 'sweep item 38: every failure of the promotion after the stop is asked for restarts prod' {
+    # The promotion's stop-mirror-restart region, lifted from the script unchanged, from
+    # "$promotionFailed = $false" through the verdict, and run with the stop, the copies and the start
+    # stubbed.
+    BeforeAll {
+        $promotePath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\tools\promote-dev-to-prod.ps1')).Path
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($promotePath, [ref]$null, [ref]$null)
+        $statements = @($ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$promotionFailed = $false') { $i } })[0]
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Clauses[0].Item1.Extent.Text -eq '$promotionFailed') { $i } })[0]
+        $script:S38Region = [scriptblock]::Create((($statements[$from..$to]) | ForEach-Object { $_.Extent.Text }) -join "`n")
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan') {
+            $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+
+        function Invoke-S38Promotion {
+            param([string]$Stop, [bool]$MirrorFails = $false)
+            $script:S38Events = New-Object System.Collections.Generic.List[string]
+            $script:S38StopMode = $Stop
+            $script:S38MirrorFails = $MirrorFails
+            # Stand-ins, set as function items: the stop step, the copies and the start.
+            Set-Item -Path function:Stop-AppPoolChecked -Value {
+                switch ($script:S38StopMode) {
+                    'refused' { throw 'IIS serves the folder from another pool' }
+                    'timeout' { $script:prodStopRequested = $true; $script:S38Events.Add('stop'); throw "App pool 'Prod' is still 'Stopping' after 120 seconds." }
+                    default { $script:prodStopRequested = $true; $script:S38Events.Add('stop') }
+                }
+            }
+            Set-Item -Path function:Invoke-RobocopyChecked -Value { $script:S38Events.Add('mirror'); if ($script:S38MirrorFails) { throw 'robocopy failed with exit code 8' } }
+            Set-Item -Path function:Copy-FileChecked -Value { $script:S38Events.Add('copy settings') }
+            Set-Item -Path function:Set-AppsettingsPathBase -Value { $script:S38Events.Add('pathbase') }
+            Set-Item -Path function:Start-AppPoolChecked -Value { $script:S38Events.Add('start') }
+            Set-Item -Path function:robocopy -Value { $script:S38Events.Add('rollback'); $global:LASTEXITCODE = 1 }
+
+            $Apply = $true; $ProdAppPoolName = 'Prod'; $CopyAppSettings = $false
+            $dev = Join-Path $TestDrive 'dev'; $prod = Join-Path $TestDrive 'prod'
+            $backup = Join-Path $TestDrive 'backup'
+            New-Item -ItemType Directory -Path $backup -Force | Out-Null
+            $prodAppSettings = Join-Path $prod 'appsettings.json'; $devAppSettings = Join-Path $dev 'appsettings.json'
+            $ProdPathBase = '/Prod'; $ProdPublicBaseUrl = $null; $timestamp = '20261109'
+            $prodConfigDbPath = 'D:\shared\exchangeadmin.db'; $planIisUnavailable = $null
+            $null = $Apply, $ProdAppPoolName, $CopyAppSettings, $prodAppSettings, $devAppSettings, $ProdPathBase, $ProdPublicBaseUrl, $timestamp, $prodConfigDbPath, $planIisUnavailable
+            $thrown = $null
+            try { . $script:S38Region 6>$null } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Events = ($script:S38Events -join ','); Thrown = $thrown }
+        }
+    }
+
+    It 'a stop that times out restarts prod, rolls nothing back, and says nothing was mirrored' {
+        $r = Invoke-S38Promotion -Stop 'timeout'
+        $r.Events | Should -BeExactly 'stop,start' -Because 'prod was asked to stop, so the finally starts it; no mirror ran, so nothing is rolled back (aud-a38b)'
+        $r.Thrown | Should -Match 'refused before anything was mirrored'
+        $r.Thrown | Should -Match "still 'Stopping' after 120 seconds"
+        $r.Thrown | Should -Match 'started again'
+    }
+
+    It 'a refusal before the stop starts nothing and rolls nothing back' {
+        $r = Invoke-S38Promotion -Stop 'refused'
+        $r.Events | Should -BeExactly '' -Because 'nothing was stopped, so nothing is started'
+        $r.Thrown | Should -Match 'refused before anything was mirrored: IIS serves the folder from another pool'
+    }
+
+    It 'a failed mirror rolls back and restarts, as before' {
+        $r = Invoke-S38Promotion -Stop 'ok' -MirrorFails $true
+        $r.Events | Should -BeExactly 'stop,mirror,rollback,start'
+        $r.Thrown | Should -Match 'rolled back'
+    }
+
+    It 'a promotion that succeeds restarts prod and throws nothing' {
+        $r = Invoke-S38Promotion -Stop 'ok'
+        $r.Events | Should -BeExactly 'stop,mirror,pathbase,start'
+        $r.Thrown | Should -BeNullOrEmpty
     }
 }
