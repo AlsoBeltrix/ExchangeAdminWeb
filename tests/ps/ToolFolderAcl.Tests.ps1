@@ -301,6 +301,101 @@ Describe 'ToolFolderAcl: the folders above the app folder (rev-f1)' {
     }
 }
 
+Describe 'ToolFolderAcl: the walk above the app folder stops at the root of the volume, a share on a network path (rev-g1)' {
+    # No network is touched: every ACL read of the stand-in share (and of the stand-in drive) is
+    # answered in memory, and each path asked is recorded. Split-Path -Parent answers \\server for a
+    # share root, which is not a folder; asking for its permissions failed, so an app folder on a
+    # share was refused as "a folder above it cannot be read" though its share and folders were safe.
+
+    It 'names the parent the walk reads next, and nothing past the root: <Path>' -TestCases @(
+        @{ Path = '\\server\share\App\Sub'; Parent = '\\server\share\App' }
+        @{ Path = '\\server\share\App'; Parent = '\\server\share' }
+        @{ Path = '\\server\share\App\'; Parent = '\\server\share' }
+        @{ Path = '\\server\share'; Parent = $null }
+        @{ Path = '\\server\share\'; Parent = $null }
+        @{ Path = 'D:\App'; Parent = 'D:\' }
+        @{ Path = 'D:\'; Parent = $null }
+    ) {
+        $next = InModuleScope ToolFolderAcl -Parameters @{ P = $Path } { param($P) Get-AclWalkParent -Path $P }
+        $next | Should -Be $Parent
+    }
+
+    It 'reads every folder above a share app folder up to the share itself, and never asks for \\server' {
+        $script:Asked = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $script:Asked.Add([string]$LiteralPath)
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+            $security
+        }
+        $found = @(InModuleScope ToolFolderAcl {
+                Get-ParentChainExposure -FirstParent '\\server\share\App' -Below '\\server\share\App\Sub' -TrustedSid (Get-ToolFolderTrustedSid)
+            })
+        $found.Count | Should -Be 0
+        ($script:Asked | ForEach-Object { $_.TrimEnd('\') }) -join ',' | Should -BeExactly '\\server\share\App,\\server\share'
+    }
+
+    It 'still refuses a share root owned by a principal outside the trusted set' {
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $owner = if (([string]$LiteralPath).TrimEnd('\') -eq '\\server\share') { 'S-1-1-0' } else { 'S-1-5-18' }
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new($owner))
+            $security
+        }
+        $found = @(InModuleScope ToolFolderAcl {
+                Get-ParentChainExposure -FirstParent '\\server\share\App' -Below '\\server\share\App\Sub' -TrustedSid (Get-ToolFolderTrustedSid)
+            })
+        ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path.TrimEnd('\'))" }) -join ',' | Should -BeExactly "ParentOwner|$($script:Everyone)|\\server\share"
+    }
+
+    It 'judges an app folder that is the share root itself, owner included, with no walk above it' {
+        $script:Asked = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName ToolFolderAcl Test-Path -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith { $true }
+        Mock -ModuleName ToolFolderAcl Get-Item -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith { [pscustomobject]@{ FullName = '\\server\share\' } }
+        Mock -ModuleName ToolFolderAcl Get-ChildItem -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith { @() }
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $script:Asked.Add([string]$LiteralPath)
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-1-0'))
+            $security
+        }
+        $found = @(Get-ToolFolderWriteExposure -Path '\\server\share\')
+        ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)" }) -join ',' | Should -BeExactly "Owner|$($script:Everyone)|\\server\share"
+        ($script:Asked | ForEach-Object { $_.TrimEnd('\') }) -join ',' | Should -BeExactly '\\server\share'
+    }
+
+    It 'judges a folder not created yet on a share by the share, and never asks for \\server' {
+        $script:Asked = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName ToolFolderAcl Test-Path -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            ([string]$LiteralPath).TrimEnd('\') -eq '\\server\share'
+        }
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('\\server', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $script:Asked.Add([string]$LiteralPath)
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+            $security
+        }
+        @(Get-ToolFolderInheritedWriteExposure -Path '\\server\share\staging.1\app').Count | Should -Be 0
+        $script:Asked | Should -Not -Contain '\\server'
+        ($script:Asked | ForEach-Object { $_.TrimEnd('\') } | Select-Object -Unique) -join ',' | Should -BeExactly '\\server\share'
+    }
+
+    It 'walks a drive path up to the drive root and stops there' {
+        $script:Asked = [System.Collections.Generic.List[string]]::new()
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('Q:', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $script:Asked.Add([string]$LiteralPath)
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+            $security
+        }
+        $found = @(InModuleScope ToolFolderAcl {
+                Get-ParentChainExposure -FirstParent 'Q:\EawApp' -Below 'Q:\EawApp\Sub' -TrustedSid (Get-ToolFolderTrustedSid)
+            })
+        $found.Count | Should -Be 0
+        $script:Asked -join ',' | Should -BeExactly 'Q:\EawApp,Q:\'
+    }
+}
+
 Describe 'Resolve-ConfigDbTool refuses an app folder others can change (sweep item 12)' {
 
     It 'returns the tool for a narrow folder' {

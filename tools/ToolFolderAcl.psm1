@@ -33,8 +33,9 @@
     one needs a write right that is checked itself.
 
     The folders ABOVE the app folder are read too, every one up to the root of the volume
-    (finding rev-f1): a principal who can delete or rename what is in a parent folder can put
-    another folder in the app folder's place between this check and the run, and the elevated
+    (finding rev-f1; on a network share the root is the share itself, \\server\share, which is
+    read, and the walk stops there - finding rev-g1): a principal who can delete or rename what
+    is in a parent folder can put another folder in the app folder's place between this check and the run, and the elevated
     tool loads whatever is there then. A parent is safe when it is owned by the trusted set and
     no other principal holds, on the parent itself (inherited or not, inheritable or not), a
     right that can replace what is below it: delete child, delete, change permissions, take
@@ -155,10 +156,26 @@ function Get-ObjectWriteExposure {
     }
 }
 
+function Get-AclWalkParent {
+    # Private (rev-g1). The folder above $Path for the parent walk, or nothing when $Path is the
+    # root of its volume. For a path on a network share the root is the share (\\server\share):
+    # Split-Path -Parent answers \\server for it, which is not a folder and has no permissions to
+    # read, so the walk must stop at the share instead of asking for it.
+    param([Parameter(Mandatory)][string]$Path)
+
+    $root = [System.IO.Path]::GetPathRoot($Path)
+    if ($root -and $Path.TrimEnd('\', '/').Equals($root.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    $parent = Split-Path -Parent $Path
+    if ($parent) { $parent }
+}
+
 function Get-ParentChainExposure {
     # Private (rev-f1). The owner and every allow entry on $FirstParent and on each folder above it,
-    # up to the root of the volume, that lets a principal outside the trusted set replace what is
-    # below it. $Below is the folder being judged, named in the error when a parent cannot be read.
+    # up to the root of the volume (the share itself on a network path; rev-g1), that lets a
+    # principal outside the trusted set replace what is below it. $Below is the folder being
+    # judged, named in the error when a parent cannot be read.
     param(
         [Parameter(Mandatory)][string]$FirstParent,
         [Parameter(Mandatory)][string]$Below,
@@ -209,7 +226,7 @@ function Get-ParentChainExposure {
                 Kind      = 'ParentGrant'
             }
         }
-        $parent = Split-Path -Parent $parent
+        $parent = Get-AclWalkParent -Path $parent
     }
 }
 
@@ -240,7 +257,7 @@ function Get-ToolFolderWriteExposure {
     $root = (Get-Item -LiteralPath $Path -Force -ErrorAction Stop).FullName.TrimEnd('\')
     $skipped = @($script:RuntimeDataFolders | ForEach-Object { Join-Path $root $_ })
 
-    $above = Split-Path -Parent $root
+    $above = Get-AclWalkParent -Path $root
     if ($above) {
         Get-ParentChainExposure -FirstParent $above -Below $root -TrustedSid $trusted
     }
@@ -277,9 +294,9 @@ function Get-ToolFolderInheritedWriteExposure {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
 
-    $ancestor = Split-Path -Parent $Path
+    $ancestor = Get-AclWalkParent -Path $Path
     while ($ancestor -and -not (Test-Path -LiteralPath $ancestor -PathType Container)) {
-        $ancestor = Split-Path -Parent $ancestor
+        $ancestor = Get-AclWalkParent -Path $ancestor
     }
     if (-not $ancestor) {
         throw "No folder above $Path exists, so what it would inherit cannot be read."
