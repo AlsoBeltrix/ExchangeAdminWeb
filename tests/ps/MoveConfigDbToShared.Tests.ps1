@@ -244,6 +244,24 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
             New-TestDb -AppPath $script:AppPath -Path $fake.Shared -Sql 'CREATE TABLE t(x); INSERT INTO t VALUES (1);' | Out-Null
             $out = & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $fake.Shared -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-String
             $out | Should -Match 'passes PRAGMA integrity_check - nothing to do'
+            # Sweep item 36: the plan goes on to the IIS checks a real run makes, and ends after them.
+            $iisAt = $out.IndexOf("Assert-AppPoolServesPath -Name ExchangeAdminWeb -PhysicalPath $($fake.Prod)")
+            $iisAt | Should -BeGreaterThan 0 -Because 'a plan on a host already cut over still reaches the IIS checks of step 1b'
+            $out.IndexOf('the cutover has nothing to do') | Should -BeLessThan $iisAt
+            $out.LastIndexOf('nothing to do') | Should -BeGreaterThan $iisAt -Because 'the plan ends with the "nothing to do" line, after the IIS checks'
+            $out | Should -Not -Match 'Verified backup of dev DB' -Because 'nothing after step 1b is planned when there is nothing to do'
+        }
+
+        It 'sweep item 36: a plan whose shared file is missing still prints the IIS checks, then fails with the check''s answer' {
+            $lines = New-Object System.Collections.Generic.List[string]
+            $err = $null
+            try { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $fake.Shared -PlanOnly -MinimumAppVersion '1.0' *>&1 | ForEach-Object { $lines.Add("$_") } }
+            catch { $err = $_ }
+            "$err" | Should -Match 'no file exists there' -Because 'a missing configured file is still a failure in plan mode (scdi-3)'
+            $text = $lines -join "`n"
+            $text | Should -BeLike "*Assert-AppPoolServesPath -Name ExchangeAdminWeb -PhysicalPath $($fake.Prod)*"
+            $text | Should -Not -Match 'nothing to do'
+            Test-Path -LiteralPath $fake.Shared | Should -BeFalse
         }
     }
 

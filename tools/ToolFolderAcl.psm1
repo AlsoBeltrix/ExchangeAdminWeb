@@ -1,0 +1,226 @@
+<#
+.SYNOPSIS
+    Who besides the administrators can change the code in an app folder that an elevated script
+    is about to run (live-risk sweep item 12, sweep-g).
+
+.DESCRIPTION
+    The ops scripts run `<ProgramFiles>\dotnet\dotnet.exe <AppPath>\ExchangeAdminWeb.dll db ...`
+    elevated (docs/ConfigDbToolInApp-Plan.md). The .NET host is taken from Program Files, which only
+    administrators can write. The assembly and everything it loads - its dependencies, its
+    deps.json and runtimeconfig.json, the native SQLite library under runtimes\ - comes from the app
+    folder, and an elevated script that runs code from a folder another principal can write has
+    handed that principal administrator rights: the aud-sqlite3-path hole, moved from sqlite3.exe
+    to the app folder. Whether a folder is safe is not assumed from where it is or from how a host
+    is usually set up (Architectural Invariant 7); it is read here, at run time, every time.
+
+    A folder is safe when nothing in it - the folder itself and every file and folder under it,
+    except the config\ and logs\ folders at its top, which hold runtime data the app writes and
+    no code the tool loads - is owned by, or grants any of the rights that change content, to a
+    principal other than:
+      - BUILTIN\Administrators (S-1-5-32-544),
+      - NT AUTHORITY\SYSTEM (S-1-5-18),
+      - NT SERVICE\TrustedInstaller (S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464),
+      - the account running this script, which is the principal the tool runs as anyway.
+    Any other principal - Authenticated Users, Users, Everyone, INTERACTIVE, the app pool's own
+    identity, a service account - may read and execute, never write.
+
+    The rights that change content: write data / create files, append data / create folders,
+    delete child, delete, change permissions, take ownership, and the generic all / generic write
+    bits an inheritable entry can carry. An owner can always rewrite the permissions, so an owner
+    outside the list counts too. Deny entries are ignored (they only take rights away), and so are
+    entries that do not apply to the object they sit on (inherit-only) and the CREATOR OWNER /
+    CREATOR GROUP placeholders, which grant nothing until a new object is created - and creating
+    one needs a write right that is checked itself.
+
+    Not checked: the folders ABOVE the app folder. A principal who can rename a parent folder can
+    put another folder in this one's place between this check and the run. Those rights are the
+    host's, and are named as an owner check in the sweep-g record rather than read here.
+
+    Pure ASCII and Windows PowerShell 5.1-compatible: deploy.ps1 imports this (through
+    SqliteConfigBackup.psm1) under 5.1.
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# WriteData 0x2, AppendData 0x4, DeleteSubdirectoriesAndFiles 0x40, Delete 0x10000,
+# ChangePermissions 0x40000, TakeOwnership 0x80000, GENERIC_ALL 0x10000000, GENERIC_WRITE 0x40000000.
+$script:ContentChangingRights = 0x2 -bor 0x4 -bor 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+
+# The runtime-data folders at the top of an app folder: written by the app pool's identity on
+# purpose, and holding no code the db tool loads.
+$script:RuntimeDataFolders = @('config', 'logs')
+
+function Get-ToolFolderTrustedSid {
+    <#
+    .SYNOPSIS
+        The SIDs that may own, or hold a content-changing right on, an app folder an elevated
+        script runs code from.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param()
+
+    $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    return @(
+        'S-1-5-32-544',
+        'S-1-5-18',
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464',
+        $current
+    ) | Select-Object -Unique
+}
+
+function ConvertTo-PrincipalName {
+    # Private. The account name for a SID when it translates, else the SID itself.
+    param([System.Security.Principal.SecurityIdentifier]$Sid)
+
+    try {
+        return $Sid.Translate([System.Security.Principal.NTAccount]).Value
+    } catch {
+        return $Sid.Value
+    }
+}
+
+function Get-ObjectWriteExposure {
+    # Private. The owner and every allow entry on one file or folder that the trusted set does not
+    # cover. -InheritableOnly evaluates what a NEW child of this folder would inherit instead of
+    # what applies to the folder itself (the plan-mode answer for a folder not created yet).
+    param(
+        [Parameter(Mandatory)][string]$LiteralPath,
+        [Parameter(Mandatory)][string[]]$TrustedSid,
+        [switch]$InheritableOnly
+    )
+
+    $acl = Get-Acl -LiteralPath $LiteralPath -ErrorAction Stop
+
+    if (-not $InheritableOnly) {
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+        if ($null -eq $owner) {
+            throw "The owner of $LiteralPath cannot be read."
+        }
+        if ($TrustedSid -notcontains $owner.Value) {
+            [pscustomobject]@{
+                Path      = $LiteralPath
+                Principal = ConvertTo-PrincipalName $owner
+                Sid       = $owner.Value
+                Rights    = 'owner (can change the permissions at any time)'
+                Inherited = $false
+                Kind      = 'Owner'
+            }
+        }
+    }
+
+    foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+        $sid = [string]$rule.IdentityReference.Value
+        if ($sid -eq 'S-1-3-0' -or $sid -eq 'S-1-3-1') { continue }
+        if ($TrustedSid -contains $sid) { continue }
+
+        $inheritOnly = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0
+        if ($InheritableOnly) {
+            if ($rule.InheritanceFlags -eq [System.Security.AccessControl.InheritanceFlags]::None) { continue }
+        } elseif ($inheritOnly) {
+            continue
+        }
+
+        $mask = [int64][int]$rule.FileSystemRights
+        if ($mask -lt 0) { $mask += 4294967296 }
+        if (($mask -band $script:ContentChangingRights) -eq 0) { continue }
+
+        [pscustomobject]@{
+            Path      = $LiteralPath
+            Principal = ConvertTo-PrincipalName $rule.IdentityReference
+            Sid       = $sid
+            Rights    = [string]$rule.FileSystemRights
+            Inherited = [bool]$rule.IsInherited
+            Kind      = 'Grant'
+        }
+    }
+}
+
+function Get-ToolFolderWriteExposure {
+    <#
+    .SYNOPSIS
+        Every owner and every allow entry in an app folder that lets a principal other than the
+        administrators, SYSTEM, TrustedInstaller or the current account change its code.
+
+    .DESCRIPTION
+        Reads the folder, then every file and folder under it except the config\ and logs\ folders
+        at its top (see the module description). Each finding is an object: Path, Principal, Sid,
+        Rights, Inherited, Kind ('Owner' or 'Grant'). Nothing returned means the folder is safe.
+
+        THROWS when the folder is not there or anything in it cannot be read: a folder whose
+        permissions cannot be shown is not a folder shown to be safe, so a caller refuses then too.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "The folder $Path does not exist, so its permissions cannot be read."
+    }
+
+    $trusted = Get-ToolFolderTrustedSid
+    $root = (Get-Item -LiteralPath $Path -Force -ErrorAction Stop).FullName.TrimEnd('\')
+    $skipped = @($script:RuntimeDataFolders | ForEach-Object { Join-Path $root $_ })
+
+    Get-ObjectWriteExposure -LiteralPath $root -TrustedSid $trusted
+    foreach ($item in @(Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop)) {
+        $full = $item.FullName
+        $inRuntimeData = $false
+        foreach ($folder in $skipped) {
+            if ($full.Equals($folder, [System.StringComparison]::OrdinalIgnoreCase) -or
+                $full.StartsWith($folder + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                $inRuntimeData = $true
+                break
+            }
+        }
+        if ($inRuntimeData) { continue }
+        Get-ObjectWriteExposure -LiteralPath $full -TrustedSid $trusted
+    }
+}
+
+function Get-ToolFolderInheritedWriteExposure {
+    <#
+    .SYNOPSIS
+        For a folder that does not exist yet: what it would inherit from the nearest existing
+        folder above it that lets another principal change its code.
+
+    .DESCRIPTION
+        The plan-mode answer for a folder a run creates (a staging publish). Reads the nearest
+        existing ancestor and returns its inheritable allow entries that the trusted set does not
+        cover, in the shape Get-ToolFolderWriteExposure returns. The new folder's owner is whoever
+        creates it, so no owner finding is made. Throws when no ancestor exists or it cannot be read.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    $ancestor = Split-Path -Parent $Path
+    while ($ancestor -and -not (Test-Path -LiteralPath $ancestor -PathType Container)) {
+        $ancestor = Split-Path -Parent $ancestor
+    }
+    if (-not $ancestor) {
+        throw "No folder above $Path exists, so what it would inherit cannot be read."
+    }
+    Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid (Get-ToolFolderTrustedSid) -InheritableOnly
+}
+
+function Format-ToolFolderWriteExposure {
+    <#
+    .SYNOPSIS
+        One line naming the findings: the first five, and how many more.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([object[]]$Exposure)
+
+    $all = @($Exposure)
+    $shown = @($all | Select-Object -First 5 | ForEach-Object {
+            $how = if ($_.Kind -eq 'Owner') { 'is the owner of' } elseif ($_.Inherited) { "holds $($_.Rights) (inherited) on" } else { "holds $($_.Rights) on" }
+            "$($_.Principal) $how $($_.Path)"
+        })
+    $text = $shown -join '; '
+    if ($all.Count -gt 5) { $text += "; and $($all.Count - 5) more" }
+    return $text
+}
+
+Export-ModuleMember -Function Get-ToolFolderTrustedSid, Get-ToolFolderWriteExposure, Get-ToolFolderInheritedWriteExposure, Format-ToolFolderWriteExposure

@@ -7,7 +7,11 @@
 .DESCRIPTION
     -Dev   Build from source and deploy to the dev IIS site.
     -Prod  Promote the current dev deployment to prod. Does NOT rebuild.
-           Verifies dev was built from the current source commit.
+           Verifies dev was built from the current source: the same commit, or one
+           whose build inputs are the same - a commit that touches only .agents/,
+           docs/, Markdown files or tests/ps/ does not make dev stale (sweep item 35).
+           A stale dev refuses -Prod; with -PlanOnly it is a warning and the dry run
+           still prints.
            Backup taken before overwrite. Automatic rollback on failure.
 
     Workflow: run -Dev first, validate in dev, then run -Prod to promote.
@@ -22,6 +26,12 @@
 .EXAMPLE
     .\deploy-pipeline.ps1 -Dev
     # Build and deploy to dev. Validate at https://<server>/ExchangeAdminWebDev
+
+.EXAMPLE
+    .\deploy-pipeline.ps1 -Dev -PlanOnly
+    # PLAN of the dev deploy (sweep item 36): runs deploy.ps1 -PlanOnly, which prints every
+    # step and makes only the read-only checks (IIS lookups, which pool serves the folder, the
+    # db tool's folder check). Nothing is built, published, stopped or written.
 
 .EXAMPLE
     .\deploy-pipeline.ps1 -Prod
@@ -62,6 +72,87 @@ function Write-Step    { param($m) Write-Host ">>> $m" -ForegroundColor Cyan }
 function Write-Ok      { param($m) Write-Host " OK  $m" -ForegroundColor Green }
 function Write-Warn    { param($m) Write-Host "  !  $m" -ForegroundColor Yellow }
 
+# Sweep item 35. The tracked paths whose changes never reach the build, in this one place: the
+# agent records, the docs, every Markdown file, and the PowerShell test suite. A commit that
+# touches only these leaves dev's build current, so -Prod is not refused for it. Everything else
+# counts as a build input - tools\ and the C# test project included - so the list errs toward
+# "stale". tests/ps/DeployInvariants.Tests.ps1 pins it.
+$script:NonBuildInputPrefixes = @('.agents/', 'docs/', 'tests/ps/')
+$script:NonBuildInputSuffixes = @('.md')
+
+function Test-IsNonBuildInputPath {
+    # True for a repository path (forward slashes, as git prints it) that the list above leaves out.
+    param([string]$Path)
+
+    foreach ($prefix in $script:NonBuildInputPrefixes) {
+        if ($Path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    foreach ($suffix in $script:NonBuildInputSuffixes) {
+        if ($Path.EndsWith($suffix, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+function Get-BuildInputTreeId {
+    # The build inputs of one commit as one hash: the mode, blob id and path of every tracked file
+    # the list above does not leave out. git is native and does not throw, so its exit code is
+    # read; a commit git cannot list throws.
+    param([string]$RepoRoot, [string]$Commit)
+
+    $listing = $null
+    try {
+        $listing = & git -C $RepoRoot ls-tree -r --full-tree $Commit 2>$null
+    } catch {
+        throw "git could not list commit ${Commit}: $($_.Exception.Message)"
+    }
+    if ($LASTEXITCODE -ne 0) { throw "git could not list commit $Commit (exit $LASTEXITCODE); it may not be in this repository" }
+
+    $kept = foreach ($line in @($listing)) {
+        $tab = $line.IndexOf("`t")
+        if ($tab -lt 0) { continue }
+        if (-not (Test-IsNonBuildInputPath $line.Substring($tab + 1))) { $line }
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes((@($kept) -join "`n")))
+    } finally {
+        $sha.Dispose()
+    }
+    return (-join ($bytes | ForEach-Object { $_.ToString('x2') }))
+}
+
+function Assert-DevBuildCurrent {
+    # Sweep item 35. Dev was built from another commit than HEAD. It is current when the two commits
+    # hold the same build inputs; otherwise it is stale, and so is a pair git cannot compare. A stale
+    # dev refuses a real -Prod; a plan (-PlanOnly) warns and goes on, so it can still print.
+    param(
+        [string]$RepoRoot,
+        [string]$DevCommit,
+        [string]$SourceCommit,
+        [string]$DevShort,
+        [string]$SourceShort,
+        [switch]$PlanOnly
+    )
+
+    $excluded = (@($script:NonBuildInputPrefixes) + @($script:NonBuildInputSuffixes | ForEach-Object { "*$_" })) -join ', '
+    try {
+        $devInputs = Get-BuildInputTreeId -RepoRoot $RepoRoot -Commit $DevCommit
+        $sourceInputs = Get-BuildInputTreeId -RepoRoot $RepoRoot -Commit $SourceCommit
+        if ($devInputs -eq $sourceInputs) {
+            Write-Ok "Dev was built from $DevShort and source is at $SourceShort, but the build inputs are the same at both (the commits between touch only $excluded)"
+            return
+        }
+        $reason = "Dev is stale: built from commit $DevShort but source is at $SourceShort, and the build inputs differ between them (everything but $excluded)"
+    } catch {
+        $reason = "Dev is stale: built from commit $DevShort but source is at $SourceShort, and the two cannot be compared ($($_.Exception.Message))"
+    }
+    if ($PlanOnly) {
+        Write-Warn "$reason. A real -Prod refuses here: run -Dev first. This plan goes on."
+        return
+    }
+    throw "$reason. Run -Dev first."
+}
+
 if (-not $Dev -and -not $Prod) { throw "Specify -Dev or -Prod." }
 if ($Dev -and $Prod) { throw "Specify -Dev or -Prod, not both." }
 
@@ -80,24 +171,26 @@ if ($Dev) {
     Write-Host "=== Build and deploy to dev ===" -ForegroundColor Magenta
     Write-Host ""
 
+    # deploy.ps1 signals failure by throwing (Write-Fail). Do not gate on
+    # $LASTEXITCODE here: after a successful run it holds the last native
+    # command's exit code (robocopy returns 1-3 on success), so any
+    # exit-code comparison misclassifies script-to-script invocation.
+    # Sweep item 36: -PlanOnly runs deploy.ps1's own plan mode - every step printed, only the
+    # reads run - where it used to skip the dev deploy entirely.
+    & $deployScript `
+        -ParentSite "Default Web Site" `
+        -AppAlias "ExchangeAdminWebDev" `
+        -AppPoolName $DevAppPool `
+        -PublishPath $DevPath `
+        -PathBase $DevPathBase `
+        -LogRoot $LogRoot `
+        -NonInteractive `
+        -PlanOnly:$PlanOnly
+
     if ($PlanOnly) {
-        Write-Host "PLAN  Would run: deploy.ps1 -ParentSite 'Default Web Site' -AppAlias ExchangeAdminWebDev -AppPoolName $DevAppPool -PublishPath $DevPath -PathBase $DevPathBase -LogRoot $LogRoot -NonInteractive" -ForegroundColor DarkGray
-        Write-Warn "deploy.ps1 has no native plan mode yet; -PlanOnly skips the dev deploy entirely."
+        Write-Ok "Dev deploy PLAN complete. Re-run with -Dev (without -PlanOnly) to apply."
     }
     else {
-        # deploy.ps1 signals failure by throwing (Write-Fail). Do not gate on
-        # $LASTEXITCODE here: after a successful run it holds the last native
-        # command's exit code (robocopy returns 1-3 on success), so any
-        # exit-code comparison misclassifies script-to-script invocation.
-        & $deployScript `
-            -ParentSite "Default Web Site" `
-            -AppAlias "ExchangeAdminWebDev" `
-            -AppPoolName $DevAppPool `
-            -PublishPath $DevPath `
-            -PathBase $DevPathBase `
-            -LogRoot $LogRoot `
-            -NonInteractive
-
         Write-Host ""
         Write-Ok "Dev deployment complete at $DevPath"
         Write-Host "Validate: https://<server>$DevPathBase" -ForegroundColor Cyan
@@ -179,7 +272,9 @@ if ($Prod) {
         # crash. Shorten only what is long enough to shorten.
         $devShort = if ($manifest.gitCommit.Length -ge 8) { $manifest.gitCommit.Substring(0, 8) } else { $manifest.gitCommit }
         $srcShort = if ($currentCommit.Length -ge 8) { $currentCommit.Substring(0, 8) } else { $currentCommit }
-        throw "Dev is stale: built from commit $devShort but source is at $srcShort. Run -Dev first."
+        # Sweep item 35: a different commit is not a different build. Compare what feeds the
+        # build at the two commits; a plan warns where the real run refuses.
+        Assert-DevBuildCurrent -RepoRoot $repoRoot -DevCommit $manifest.gitCommit -SourceCommit $currentCommit -DevShort $devShort -SourceShort $srcShort -PlanOnly:$PlanOnly
     } else {
         Write-Ok "Dev commit matches source HEAD"
     }

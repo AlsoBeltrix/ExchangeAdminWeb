@@ -20,6 +20,28 @@ Notepad.
 > administrator (never per-user, never through a per-user package manager - `winget` on a
 > server installs into your own profile, where any process running as you can replace the
 > binary), and never run it from an elevated script. `.recover` has no in-app equivalent.
+>
+> **Who can change the app folder (sweep item 12).** The scripts run that `db` mode elevated,
+> from an instance's publish folder or a staging publish, so whoever can change the code in that
+> folder can run code as an administrator. Before every run they read the folder's permissions -
+> the folder and everything in it except its `config\` and `logs\` folders - and **refuse** when
+> anyone other than `BUILTIN\Administrators`, `NT AUTHORITY\SYSTEM`, `NT SERVICE\TrustedInstaller`
+> or the account running the script owns it or holds a right that changes content (write,
+> append, delete, change permissions, take ownership; Modify and Full control include them). The
+> app pool's identity, `Users`, `Authenticated Users` and the rest may read and execute only. The
+> refusal names each grant; a plan (`-PlanOnly`, or the promotion's dry run) prints the same
+> verdict as a line instead of refusing. The job check before a recycle skips the tool with a
+> warning instead. There is no override switch. To fix a folder that inherits a grant from the
+> drive (elevated; this changes the host, so it is the owner's step):
+>
+> ```powershell
+> (Get-Acl 'D:\inetpub\ExchangeAdminWebDev').Access | Format-Table IdentityReference, FileSystemRights, IsInherited
+> icacls 'D:\inetpub\ExchangeAdminWebDev' /inheritance:d                 # copy the inherited entries, stop inheriting
+> icacls 'D:\inetpub\ExchangeAdminWebDev' /remove:g '*S-1-5-11' /T       # Authenticated Users, folder and contents
+> ```
+>
+> Do the same for the folder above, which a deploy's staging publish inherits from. The folders
+> above the app folder are not checked by the scripts; check them by hand.
 
 ## Where the database is — read this before anything else
 
@@ -30,6 +52,7 @@ Notepad.
 |---|---|
 | Set (the normal arrangement) | That path — **one file, both instances** |
 | Absent | That instance's own `<PublishPath>\config\exchangeadmin.db` |
+| Unreadable (`appsettings.json` there but locked, denied or not valid JSON) | None: every ops script **refuses** ("Cannot read ... Refusing to fall back") rather than back up or check the instance's own file, which would be the wrong one (sweep item 37) |
 
 Find it before you touch anything:
 

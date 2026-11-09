@@ -11,7 +11,10 @@
     Run it elevated (it stops and starts IIS app pools) and with -PlanOnly first, then -Apply.
     Run the plan ELEVATED too: only then can it read IIS - which app pool serves each publish
     folder (step 1), and the app pool identities that step 5 needs. Unelevated, the plan says so
-    and skips those checks rather than pretending.
+    and skips those checks rather than pretending. On a host already cut over (both instances
+    name -SharedDbPath) a real run checks the shared file and stops with "nothing to do"; a plan
+    prints that check's answer, still makes the IIS checks of step 1, and then ends - with the
+    check's failure, if it failed (sweep item 36).
 
     THE ORDER MATTERS: both instances must already run a build that accepts a database newer
     than itself (app version 2.19.0 or later, SharedConfigDb-Plan S1). Deploy that build to dev
@@ -711,6 +714,8 @@ $appsettingsBackupSuffix = "pre-shared.$timestamp.bak"
 # Every backup, copy and integrity check here runs the app's db mode from the deployed dev
 # build, through the .NET host in Program Files (docs/ConfigDbToolInApp-Plan.md).
 $configDbToolPlan = Resolve-ConfigDbTool -AppPath $DevPublishPath -PlanOnly
+# Sweep item 12: whether a real run would refuse to run the tool, elevated, from the dev folder.
+if ($PlanOnly) { Write-Plan $configDbToolPlan.AclSummary }
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb shared config database cutover" -ForegroundColor Magenta
@@ -722,26 +727,47 @@ Write-Host "  Min build : $MinimumAppVersion" -ForegroundColor DarkGray
 Write-Host "  Mode      : $(if ($PlanOnly) { 'PLAN ONLY' } else { 'APPLY' })" -ForegroundColor DarkGray
 Write-Host ""
 
+# Sweep item 36. Once the cutover has been run, both instances name the shared file and the script
+# has nothing to do. Its plan used to stop here, after the database check, so on a host already cut
+# over a plan never reached the IIS checks below - the ones a dry run exists to exercise. A plan now
+# records the check's answer, makes the read-only IIS checks of step 1b, and only then ends: with the
+# "nothing to do" line, or, when the shared file is missing or unsound, with that failure - still a
+# failure in plan mode too (scdi-3), only no longer one that hides the IIS checks. A real run is
+# unchanged: the check, then "nothing to do" or the failure, and nothing else.
+$alreadyShared = $false
+$alreadySharedFailure = $null
 if ($devDb -ieq $SharedDbPath -and $prodDb -ieq $SharedDbPath) {
     # The no-op shortcut sits BEHIND the invariant it claims (scdi-3): a missing or corrupt
     # configured file is a failure to report, in plan mode too, never "nothing to do".
-    Assert-SharedDbUsable -Path $SharedDbPath -DevConfigDir $devConfigDir -ProdConfigDir $prodConfigDir -DevAppSettings $devAppSettings -ProdAppSettings $prodAppSettings
-    Write-Ok "Both instances already name $SharedDbPath in ConfigStore:Path and the file passes PRAGMA integrity_check - nothing to do."
-    return
+    if (-not $PlanOnly) {
+        Assert-SharedDbUsable -Path $SharedDbPath -DevConfigDir $devConfigDir -ProdConfigDir $prodConfigDir -DevAppSettings $devAppSettings -ProdAppSettings $prodAppSettings
+        Write-Ok "Both instances already name $SharedDbPath in ConfigStore:Path and the file passes PRAGMA integrity_check - nothing to do."
+        return
+    }
+    $alreadyShared = $true
+    try {
+        Assert-SharedDbUsable -Path $SharedDbPath -DevConfigDir $devConfigDir -ProdConfigDir $prodConfigDir -DevAppSettings $devAppSettings -ProdAppSettings $prodAppSettings
+        Write-Plan "Both instances already name $SharedDbPath and the file passes PRAGMA integrity_check: the cutover has nothing to do. The IIS checks a real run makes first still run below."
+    } catch {
+        $alreadySharedFailure = $_.Exception.Message
+        Write-Warn "The shared database check fails (see above); this plan ends with that failure after the IIS checks below."
+    }
 }
-if ($devDb -ieq $SharedDbPath -or $prodDb -ieq $SharedDbPath) {
-    Write-Fail "One instance already points at $SharedDbPath and the other does not (split state). Finish or revert that by hand before running this script; see the restore commands in the script help."
-}
-if (-not (Test-Path -LiteralPath $devDb -PathType Leaf)) {
-    Write-Fail "Dev has no config database at $devDb - there is nothing to make shared. Start dev once with the current build first."
-}
-if (Test-Path -LiteralPath $SharedDbPath -PathType Leaf) {
-    Write-Fail "A file already exists at $SharedDbPath. This script only creates the shared database; remove or rename the existing file deliberately first."
-}
+if (-not $alreadyShared) {
+    if ($devDb -ieq $SharedDbPath -or $prodDb -ieq $SharedDbPath) {
+        Write-Fail "One instance already points at $SharedDbPath and the other does not (split state). Finish or revert that by hand before running this script; see the restore commands in the script help."
+    }
+    if (-not (Test-Path -LiteralPath $devDb -PathType Leaf)) {
+        Write-Fail "Dev has no config database at $devDb - there is nothing to make shared. Start dev once with the current build first."
+    }
+    if (Test-Path -LiteralPath $SharedDbPath -PathType Leaf) {
+        Write-Fail "A file already exists at $SharedDbPath. This script only creates the shared database; remove or rename the existing file deliberately first."
+    }
 
-# Step 1 - both builds tolerate a newer database (read-only, runs in plan mode too).
-Assert-BuildTolerates -Label 'Dev' -PublishPath $DevPublishPath
-Assert-BuildTolerates -Label 'Prod' -PublishPath $ProdPublishPath
+    # Step 1 - both builds tolerate a newer database (read-only, runs in plan mode too).
+    Assert-BuildTolerates -Label 'Dev' -PublishPath $DevPublishPath
+    Assert-BuildTolerates -Label 'Prod' -PublishPath $ProdPublishPath
+}
 
 # Step 1b - confirm IIS serves each publish folder from the pool named for it (aud-a38g), then
 # resolve both app pool identities, BEFORE anything is stopped.
@@ -809,6 +835,13 @@ if ($PlanOnly) {
     ) | Select-Object -Unique
     $identityLabel = $poolIdentities -join ' and '
     Write-Ok "App pool identities resolved: $identityLabel"
+}
+
+# Sweep item 36: a plan on a host already cut over ends here, after the IIS checks.
+if ($alreadyShared) {
+    if ($alreadySharedFailure) { throw $alreadySharedFailure }
+    Write-Ok "Both instances already name $SharedDbPath in ConfigStore:Path and the file passes PRAGMA integrity_check - nothing to do."
+    return
 }
 
 # --- Steps 2-8 -------------------------------------------------------------------------------

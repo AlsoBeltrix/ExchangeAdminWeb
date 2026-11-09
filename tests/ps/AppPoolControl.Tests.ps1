@@ -460,7 +460,8 @@ Describe 'A38: the promotion restart cannot erase the promotion verdict' {
     It 'does not let the restart throw out of the finally block' {
         # An exception raised in finally REPLACES whatever was propagating, so a failed
         # restart used to erase the promotion and rollback verdict entirely.
-        $script:Promote | Should -Match '(?s)\} finally \{.*?try \{\s*Start-AppPoolChecked'
+        # Sweep item 38: gated on a stop having been asked for, still inside the try.
+        $script:Promote | Should -Match '(?s)\} finally \{.*?try \{\s*if \(-not \$Apply -or \$script:prodStopRequested\) \{ Start-AppPoolChecked'
     }
 
     It 'records the restart failure instead of discarding it' {
@@ -734,24 +735,52 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
         }
 
-        It 'in a dry run prints the plan line first and reads nothing from IIS' {
+        It 'sweep item 36: in a dry run prints the plan lines first, then makes the same IIS reads and prints their answers, reading no jobs with the tool' {
             Set-Variable -Name Apply -Value $false
-            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' } -Others {
+                $script:promoteEvents.Add('other-applications probe')
+                [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
+                [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = $TestDrive }
+            }
 
             Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
-            $script:promoteEvents | Should -Not -Contain 'other-applications probe' -Because "this script's dry run reads nothing from IIS"
-            @($script:promoteEvents | Where-Object { $_ -like 'said: *' }) | Should -BeNullOrEmpty
             $plans = @($script:promoteEvents | Where-Object { $_ -like 'plan: *' })
             $plans[0] | Should -BeExactly 'plan: Get-AppPoolOtherApplication -Name aud-a38b-prod -PhysicalPath X:\prod (name the IIS applications this pool serves besides prod, which stop with it, and read their active bulk jobs)'
             $plans[1] | Should -BeLike 'plan: Assert-AppPoolServesPath -Name aud-a38b-prod *'
+            $script:promoteEvents.IndexOf('other-applications probe') | Should -BeGreaterThan $script:promoteEvents.IndexOf($plans[-1])
+            @($script:promoteEvents | Where-Object { $_ -like 'jobs: *' }) | Should -Be @('jobs: X:\prod\config X:\dev PlanOnly=True', "jobs: $(Join-Path $TestDrive 'config') X:\dev PlanOnly=True") -Because 'the other application''s jobs are a plan line too: a dry run runs no db tool'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
         }
 
-        It 'reports once, straight after the step line of the apply path, before the jobs, the folder check and the stop (AST)' {
+        It 'sweep item 36: in a dry run that cannot read IIS, says the checks were not run and reads nothing' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod' -PlanIisUnavailable 'this session is not elevated'
+            $script:promoteEvents | Should -Not -Contain 'other-applications probe'
+            $script:promoteEvents | Should -Not -Contain 'applications probe'
+            ($script:promoteEvents -join "`n") | Should -BeLike '*said:*IIS checks before the stop were NOT run in this dry run: this session is not elevated*'
+        }
+
+        It 'sweep item 36: in a dry run prints a refusal the real run would make, and throws nothing' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' } -Serving {
+                $script:promoteEvents.Add('applications probe')
+                [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38c-real-prod'; PhysicalPath = 'X:\prod' }
+            }
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } | Should -Not -Throw
+            ($script:promoteEvents -join "`n") | Should -BeLike "*said:*a real promotion REFUSES here, before stopping anything*Web/prod runs under 'aud-a38c-real-prod'*"
+        }
+
+        It 'reports once in the apply path, straight after its step line, before the jobs, the folder check and the stop (AST)' {
             $stop = Get-PromoteFunction 'Stop-AppPoolChecked'
             $reports = @(Get-PromoteCommand 'Write-AppPoolSharingReport')
-            $reports.Count | Should -Be 1 -Because 'the promotion reports once, in its one stop step'
-            $reports[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath'
+            # Sweep item 36: and once in the dry run, with -PlanOnly.
+            $reports.Count | Should -Be 2 -Because 'the promotion reports once in each path of its one stop step'
+            @($reports | Where-Object { $_.Extent.Text -eq 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath -PlanOnly' }).Count | Should -Be 1
+            $reports = @($reports | Where-Object { $_.Extent.Text -eq 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath' })
+            $reports.Count | Should -Be 1
             $statements = @($stop.Body.EndBlock.Statements)
             $at = [array]::IndexOf($statements, $reports[0].Parent)
             $at | Should -BeGreaterThan 0 -Because 'the call is a statement of the stop step itself, not of a branch or a block'
@@ -807,13 +836,15 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $exists | Should -BeGreaterThan $binding
         }
 
-        It 'in a dry run prints the check and reads nothing from IIS' {
+        It 'sweep item 36: in a dry run prints the check, then makes it and prints the answer, and stops nothing' {
             Set-Variable -Name Apply -Value $false
-            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' }
 
             Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
-            $script:promoteEvents | Should -Not -Contain 'applications probe'
+            $script:promoteEvents | Should -Contain 'applications probe' -Because 'the dry run makes the real run''s read-only IIS check'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
             # aud-a38j: the plan line states the rule the promotion applies, nested nodes included.
             @($script:promoteEvents | Where-Object { $_ -like 'plan: Assert-AppPoolServesPath *' }) |
                 Should -Be @('plan: Assert-AppPoolServesPath -Name aud-a38b-prod -PhysicalPath X:\prod -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)')
@@ -875,17 +906,20 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
         }
 
         It 'checks the folder the mirror replaces, inside the stop step, before the stop' {
+            # Sweep item 36: twice - the dry run's read and the real run's - both inside the stop step.
             $checks = @(Get-PromoteCommand 'Assert-AppPoolServesPath')
-            $checks.Count | Should -Be 1
-            $checks[0].Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse'
+            $checks.Count | Should -Be 2
+            foreach ($check in $checks) { $check.Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse' }
 
             $stopStep = Get-PromoteFunction 'Stop-AppPoolChecked'
             $verified = @(Get-PromoteCommand 'Stop-AppPoolVerified')[0]
-            $checks[0].Extent.StartOffset | Should -BeGreaterThan $stopStep.Extent.StartOffset
-            $checks[0].Extent.EndOffset | Should -BeLessThan $verified.Extent.StartOffset
+            foreach ($check in $checks) {
+                $check.Extent.StartOffset | Should -BeGreaterThan $stopStep.Extent.StartOffset
+                $check.Extent.EndOffset | Should -BeLessThan $verified.Extent.StartOffset
+            }
 
             # ... and the folder it is handed is the one the mirror writes into.
-            @(Get-PromoteCommand 'Stop-AppPoolChecked')[0].Extent.Text | Should -Match '-PublishPath \$prod$'
+            @(Get-PromoteCommand 'Stop-AppPoolChecked')[0].Extent.Text | Should -Match '-PublishPath \$prod\b'
         }
     }
 
@@ -909,15 +943,23 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $verified[0].Extent.EndOffset | Should -BeLessThan $stopStep.Extent.EndOffset
         }
 
-        It 'stops the prod pool at the top level, before any robocopy writes into prod' {
+        It 'stops the prod pool first in the promotion try, before any robocopy writes into prod, and rolls back only once the mirror started (sweep item 38)' {
             $stops = @(Get-PromoteCommand 'Stop-AppPoolChecked')
             $stops.Count | Should -Be 1
             $stop = $stops[0]
             $stop.Extent.Text | Should -Match '^Stop-AppPoolChecked -Name \$ProdAppPoolName '
 
-            # A direct statement of the script body: nothing - no try, no if - stands between its
-            # throw and the end of the script, so a refusal cannot fall through to the mirror.
-            [object]::ReferenceEquals($stop.Parent.Parent, $script:PromoteAst.EndBlock) | Should -BeTrue
+            # Sweep item 38: the first statement of the try whose finally restarts prod, so a stop that
+            # times out is answered with a restart. aud-a38b's rule - a refusal there is never answered
+            # with a rollback - is kept by $mirrorStarted, set only after the stop and read by the catch.
+            $try = $stop.Parent.Parent.Parent
+            $try | Should -BeOfType ([System.Management.Automation.Language.TryStatementAst])
+            [object]::ReferenceEquals($try.Parent, $script:PromoteAst.EndBlock) | Should -BeTrue -Because 'the try is a statement of the script body'
+            [object]::ReferenceEquals(@($try.Body.Statements)[0], $stop.Parent) | Should -BeTrue
+            @($try.Body.Statements)[1].Extent.Text | Should -BeExactly '$mirrorStarted = $true'
+            $catchFirst = @($try.CatchClauses[0].Body.Statements | Where-Object { $_ -is [System.Management.Automation.Language.IfStatementAst] })[0]
+            $catchFirst.Clauses[0].Item1.Extent.Text | Should -BeExactly '-not $mirrorStarted'
+            $catchFirst.Clauses[0].Item2.Extent.Text | Should -Not -Match 'robocopy'
 
             # Every robocopy whose DESTINATION is prod: the promotion mirror and the rollback.
             # The backup copy reads from prod and is meant to run while prod is still serving.
@@ -1459,9 +1501,16 @@ Describe 'aud-a38d: the promotion refuses to run where it cannot see the app poo
         foreach ($helper in $helpers) { . ([scriptblock]::Create($helper.Extent.Text)) }
     }
 
-    It 'imports WebAdministration once, in the apply path' {
-        $script:Imports.Count | Should -Be 1
-        $script:Imports[0].Extent.Text | Should -Be 'Import-Module WebAdministration -ErrorAction Stop'
+    It 'imports WebAdministration in the apply path, and in the dry run only to make its IIS reads (sweep item 36)' {
+        $script:Imports.Count | Should -Be 2
+        foreach ($import in $script:Imports) { $import.Extent.Text | Should -Be 'Import-Module WebAdministration -ErrorAction Stop' }
+        # The first is the apply path's, which the drive guard below follows.
+        $applyBranch = $script:Imports[0].Parent
+        while ($applyBranch -and -not ($applyBranch -is [System.Management.Automation.Language.IfStatementAst])) { $applyBranch = $applyBranch.Parent }
+        $applyBranch.Clauses[0].Item1.Extent.Text | Should -Be '$Apply'
+        # The dry run's records why IIS cannot be read instead of refusing.
+        $dryRun = $script:Imports[1].Parent.Parent
+        $dryRun.Extent.Text | Should -Match 'planIisUnavailable = .the IIS: drive is unavailable'
     }
 
     It 'checks for the IIS: drive straight after the import, and refuses through Write-Fail' {
@@ -1775,5 +1824,325 @@ Describe 'cdt-54: Get-AppPoolOtherApplication lists what else a stop of the pool
             ($others | ForEach-Object { "$($_.Location)|$($_.PhysicalPath)" }) -join ',' |
                 Should -BeExactly 'Web/|D:\sites,Web/Reports|D:\apps\Reports,Other/Tools|D:\other\Tools' -Because 'a site root is an application too, an application of another site under the pool is listed, and the instance and the other pool''s site are not'
         }
+    }
+}
+
+Describe 'sweep item 34: an unreadable IIS node refuses only when it could reach the folder' {
+
+    # The serving-pool check read every site, application and virtual directory on the server and
+    # refused on any oddity anywhere: another team's application with a missing root virtual directory,
+    # a site name holding both quote characters, or one read error refused every deploy, promotion and
+    # install stop. Now a node that cannot be read refuses only when its own path is at, inside or
+    # above the folder, or cannot be placed, or it runs under the named pool; any other is a warning.
+    # Driven through the default probe with stand-ins for the three IIS reads, several sites at once.
+
+    BeforeAll {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { $script:S34Sites }
+            function script:Get-WebApplication {
+                [CmdletBinding()]
+                param([string]$Site)
+                if ($script:S34AppErrors.ContainsKey($Site)) { throw $script:S34AppErrors[$Site] }
+                if ($script:S34Apps.ContainsKey($Site)) { $script:S34Apps[$Site] }
+            }
+            function script:Get-WebConfiguration {
+                [CmdletBinding()]
+                param([string]$PSPath, [string]$Filter)
+                $null = $PSPath
+                if ($script:S34DirErrors.ContainsKey($Filter)) { Write-Error $script:S34DirErrors[$Filter] }
+                if ($script:S34Dirs.ContainsKey($Filter)) { $script:S34Dirs[$Filter] }
+            }
+        }
+
+        function Get-S34Site { param([string]$Name, [string]$Pool, [string]$Path) [pscustomobject]@{ name = $Name; applicationPool = $Pool; physicalPath = $Path } }
+        function Get-S34App { param([string]$Path, [string]$Pool, [string]$Physical) [pscustomobject]@{ path = $Path; applicationPool = $Pool; PhysicalPath = $Physical } }
+        function Get-S34DirFilter { param([string]$Site, [string]$App) "/system.applicationHost/sites/site[@name='$Site']/application[@path='$App']/virtualDirectory" }
+        function Get-S34Root { param([string]$Physical) [pscustomobject]@{ path = '/'; physicalPath = $Physical } }
+
+        # The instance: site Web at D:\sites, application /App at D:\sites\App under ProdPool. Each
+        # case adds other sites to it.
+        function Initialize-S34Server {
+            param([object[]]$Sites, [hashtable]$Apps = @{}, [hashtable]$Dirs = @{}, [hashtable]$AppErrors = @{}, [hashtable]$DirErrors = @{})
+            $allApps = @{ 'Web' = @(Get-S34App -Path '/App' -Pool 'ProdPool' -Physical 'D:\sites\App') }
+            foreach ($k in $Apps.Keys) { $allApps[$k] = $Apps[$k] }
+            $allDirs = @{ (Get-S34DirFilter 'Web' '/') = @(Get-S34Root 'D:\sites'); (Get-S34DirFilter 'Web' '/App') = @(Get-S34Root 'D:\sites\App') }
+            foreach ($k in $Dirs.Keys) { $allDirs[$k] = $Dirs[$k] }
+            $allSites = @(Get-S34Site -Name 'Web' -Pool 'SitePool' -Path 'D:\sites') + @($Sites)
+            InModuleScope AppPoolControl -Parameters @{ S = $allSites; A = $allApps; D = $allDirs; AE = $AppErrors; DE = $DirErrors } {
+                param($S, $A, $D, $AE, $DE)
+                $script:S34Sites = $S
+                $script:S34Apps = $A
+                $script:S34Dirs = $D
+                $script:S34AppErrors = $AE
+                $script:S34DirErrors = $DE
+            }
+        }
+
+        function Invoke-S34Check {
+            $warnings = $null
+            $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -WarningVariable warnings 3>$null)
+            [pscustomobject]@{ Result = $result; Warnings = @($warnings) }
+        }
+    }
+
+    AfterAll {
+        InModuleScope AppPoolControl {
+            Remove-Item -Path 'function:Get-Website', 'function:Get-WebApplication', 'function:Get-WebConfiguration' -ErrorAction SilentlyContinue
+            Remove-Variable -Name S34Sites, S34Apps, S34Dirs, S34AppErrors, S34DirErrors -Scope Script -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'passes, and warns naming it, when another site elsewhere has an application without a root virtual directory' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Tools' -Pool 'OtherPool' -Physical 'D:\other\Tools') } -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') }
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike "*Other/Tools at 'D:\other\Tools' under 'OtherPool': its virtual directories cannot be read: IIS listed no root virtual directory for Other/Tools*"
+        ($run.Warnings -join ' ') | Should -BeLike '*do not stop this run*'
+    }
+
+    It 'passes, and warns, when another site elsewhere has a name holding both quote characters' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name "Bob's `"Web`"" -Pool 'OtherPool' -Path 'D:\other')
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike '*holds both quote characters*'
+    }
+
+    It 'passes, and warns, when the applications of another site elsewhere cannot be listed' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -AppErrors @{ 'Other' = 'Access denied' }
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike "*Other/ at 'D:\other' under 'OtherPool': its applications cannot be read: Access denied*"
+    }
+
+    It 'passes, and warns, when a virtual-directory read elsewhere reports an error' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') } -DirErrors @{ (Get-S34DirFilter 'Other' '/') = 'The configuration section cannot be read' }
+        $run = Invoke-S34Check
+        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($run.Warnings -join ' ') | Should -BeLike '*The configuration section cannot be read*'
+    }
+
+    It 'refuses when the unreadable node runs under the named pool, wherever its files are' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Jobs' -Pool 'ProdPool' -Physical 'D:\other\Jobs') } -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve 'D:\sites\App'*Other/Jobs at 'D:\other\Jobs' under 'ProdPool'*"
+    }
+
+    It 'refuses when the unreadable node is above the folder' {
+        Initialize-S34Server -Sites @() -DirErrors @{ (Get-S34DirFilter 'Web' '/') = 'The configuration section cannot be read' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve*Web/ at 'D:\sites' under 'SitePool'*cannot be read*"
+    }
+
+    It 'refuses when the unreadable node is inside the folder' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\sites\App\nested') -AppErrors @{ 'Other' = 'Access denied' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Other/ at 'D:\sites\App\nested'*Access denied*"
+    }
+
+    It 'refuses when the unreadable node has no path that can be placed' {
+        # A site object missing its physicalPath: strict mode throws reading it, and nothing says where it is.
+        Initialize-S34Server -Sites @([pscustomobject]@{ name = 'Odd'; applicationPool = 'OtherPool' })
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage '*Odd/*the site itself cannot be read*'
+    }
+
+    It 'cdt-61 holds: another application at the folder under another pool still refuses, with an unreadable site elsewhere' {
+        Initialize-S34Server -Sites @((Get-S34Site -Name 'Twin' -Pool 'TwinPool' -Path 'D:\twin'), (Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other')) `
+            -Apps @{ 'Twin' = @(Get-S34App -Path '/Copy' -Pool 'TwinPool' -Physical 'D:\sites\App') } `
+            -Dirs @{ (Get-S34DirFilter 'Twin' '/') = @(Get-S34Root 'D:\twin'); (Get-S34DirFilter 'Twin' '/Copy') = @(Get-S34Root 'D:\sites\App') } `
+            -AppErrors @{ 'Other' = 'Access denied' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*served by an app pool other than 'ProdPool'*Twin/Copy runs under 'TwinPool'*"
+    }
+
+    It 'still refuses when the site list itself cannot be read: then nothing can be placed' {
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe { throw 'IIS is not answering' } } |
+            Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*IIS is not answering*'
+    }
+}
+
+Describe 'sweep item 37: the IIS reads fail closed whatever the caller''s error preference' {
+    # The default probes call the real cmdlets. Stand-ins are defined in the module's own scope, where
+    # the probes resolve commands first, and report an error without throwing - as a failed IIS read
+    # does. Before the fix they ran under the global Continue and answered $null or nothing.
+    BeforeEach { $ErrorActionPreference = 'Continue' }
+    AfterEach {
+        InModuleScope AppPoolControl {
+            Remove-Item -Path 'function:Get-WebAppPoolState', 'function:Get-Website', 'function:Get-WebApplication' -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'a state read that reports an error refuses at once, not after the timeout' {
+        InModuleScope AppPoolControl {
+            function script:Get-WebAppPoolState { [CmdletBinding()] param([string]$Name) Write-Error "cannot read pool $Name" }
+        }
+        { Stop-AppPoolVerified -Name 'Pool' -TimeoutSeconds 1 -ExistsProbe { $true } -StopAction { } -Sleep { } } |
+            Should -Throw -ExpectedMessage "*Cannot read the state of app pool 'Pool'*cannot read pool Pool*"
+    }
+
+    It 'a state read that reports an error refuses the start check too' {
+        InModuleScope AppPoolControl {
+            function script:Get-WebAppPoolState { [CmdletBinding()] param([string]$Name) Write-Error "cannot read pool $Name" }
+        }
+        { Start-AppPoolVerified -Name 'Pool' -TimeoutSeconds 1 -ExistsProbe { $true } -StartAction { } -Sleep { } } |
+            Should -Throw -ExpectedMessage "*Cannot read the state of app pool 'Pool'*cannot read pool Pool*"
+    }
+
+    It 'a site list that reports an error refuses the other-applications read' {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { [CmdletBinding()] param() Write-Error 'the site list cannot be read' }
+        }
+        { Get-AppPoolOtherApplication -Name 'Pool' -PhysicalPath 'D:\sites\App' } |
+            Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*the site list cannot be read*'
+    }
+
+    It 'an application list that reports an error refuses the other-applications read' {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { [pscustomobject]@{ name = 'Web'; applicationPool = 'Pool'; physicalPath = 'D:\sites' } }
+            function script:Get-WebApplication { [CmdletBinding()] param([string]$Site) Write-Error "the applications of $Site cannot be read" }
+        }
+        { Get-AppPoolOtherApplication -Name 'Pool' -PhysicalPath 'D:\sites\App' } |
+            Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*the applications of Web cannot be read*'
+    }
+
+    It 'a site list that reports an error refuses the serving-pool check' {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { [CmdletBinding()] param() Write-Error 'the site list cannot be read' }
+        }
+        { Assert-AppPoolServesPath -Name 'Pool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
+            Should -Throw -ExpectedMessage '*the site list cannot be read*'
+    }
+}
+
+Describe 'sweep item 38: the stop waits as long as IIS lets a worker exit' {
+    # The wait is measured with Get-Date. A fake clock, moved on by each poll's sleep, runs the minutes
+    # in milliseconds.
+    BeforeEach {
+        $script:S38Clock = [datetime]'2026-11-09T00:00:00'
+        $script:S38LimitReads = 0
+        Mock Get-Date -ModuleName AppPoolControl { $script:S38Clock }
+    }
+    AfterAll { Remove-Variable -Name S38Clock, S38LimitReads, S38StopsAt, S38Limit -Scope Script -ErrorAction SilentlyContinue }
+
+    BeforeAll {
+        function Invoke-S38Stop {
+            param([double]$StopsAfterSeconds, [scriptblock]$Limit = { [TimeSpan]::FromSeconds(90) }, [hashtable]$Extra = @{})
+            $start = $script:S38Clock
+            $script:S38StopsAt = if ($StopsAfterSeconds -ge 0) { $start.AddSeconds($StopsAfterSeconds) } else { [datetime]::MaxValue }
+            $script:S38Limit = $Limit
+            Stop-AppPoolVerified -Name 'Pool' -ExistsProbe { $true } -StopAction { } `
+                -StateProbe { if ($script:S38Clock -ge $script:S38StopsAt) { 'Stopped' } else { 'Stopping' } } `
+                -Sleep { param($Milliseconds) $script:S38Clock = $script:S38Clock.AddMilliseconds($Milliseconds) } `
+                -ShutdownTimeLimitProbe { $script:S38LimitReads++; & $script:S38Limit } @Extra
+        }
+    }
+
+    It 'waits past 60 seconds for a stop IIS still allows (shutdownTimeLimit 90), and returns Stopped' {
+        Invoke-S38Stop -StopsAfterSeconds 85 | Should -Be 'Stopped'
+        $script:S38LimitReads | Should -Be 1
+    }
+
+    It 'refuses once the limit plus the margin has passed, saying both' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 } | Should -Throw -ExpectedMessage "*still 'Stopping' after 120 seconds*IIS allows its worker 90 seconds to exit (the pool's processModel.shutdownTimeLimit); this waited that plus 30*"
+        ($script:S38Clock - [datetime]'2026-11-09T00:00:00').TotalSeconds | Should -BeGreaterOrEqual 120
+        ($script:S38Clock - [datetime]'2026-11-09T00:00:00').TotalSeconds | Should -BeLessThan 121
+    }
+
+    It 'follows a longer configured limit' {
+        Invoke-S38Stop -StopsAfterSeconds 300 -Limit { [TimeSpan]::FromMinutes(5) } | Should -Be 'Stopped'
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { '00:05:00' } } | Should -Throw -ExpectedMessage '*after 330 seconds*'
+    }
+
+    It 'takes the value of a configuration attribute' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { [pscustomobject]@{ Value = [TimeSpan]::FromSeconds(200) } } } | Should -Throw -ExpectedMessage '*after 230 seconds*'
+    }
+
+    It 'uses IIS''s default of 90 seconds when the limit cannot be read' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { throw 'no IIS: drive' } } | Should -Throw -ExpectedMessage "*after 120 seconds*IIS's default*"
+    }
+
+    It 'never waits less than the 60 seconds it waited before, whatever the limit' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Limit { [TimeSpan]::FromSeconds(5) } } | Should -Throw -ExpectedMessage '*after 60 seconds*'
+    }
+
+    It 'reads no limit for a pool that stops within the first 60 seconds' {
+        Invoke-S38Stop -StopsAfterSeconds 10 | Should -Be 'Stopped'
+        $script:S38LimitReads | Should -Be 0
+    }
+
+    It 'uses an explicit -TimeoutSeconds as given' {
+        { Invoke-S38Stop -StopsAfterSeconds -1 -Extra @{ TimeoutSeconds = 5 } } | Should -Throw -ExpectedMessage '*after 5 seconds*'
+        $script:S38LimitReads | Should -Be 0
+    }
+}
+
+Describe 'sweep item 38: every failure of the promotion after the stop is asked for restarts prod' {
+    # The promotion's stop-mirror-restart region, lifted from the script unchanged, from
+    # "$promotionFailed = $false" through the verdict, and run with the stop, the copies and the start
+    # stubbed.
+    BeforeAll {
+        $promotePath = (Resolve-Path (Join-Path $PSScriptRoot '..\..\tools\promote-dev-to-prod.ps1')).Path
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($promotePath, [ref]$null, [ref]$null)
+        $statements = @($ast.EndBlock.Statements)
+        $from = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i].Extent.Text -eq '$promotionFailed = $false') { $i } })[0]
+        $to = @(for ($i = 0; $i -lt $statements.Count; $i++) { if ($statements[$i] -is [System.Management.Automation.Language.IfStatementAst] -and $statements[$i].Clauses[0].Item1.Extent.Text -eq '$promotionFailed') { $i } })[0]
+        $script:S38Region = [scriptblock]::Create((($statements[$from..$to]) | ForEach-Object { $_.Extent.Text }) -join "`n")
+        foreach ($name in 'Write-Step', 'Write-Ok', 'Write-Warn', 'Write-Plan') {
+            $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+
+        function Invoke-S38Promotion {
+            param([string]$Stop, [bool]$MirrorFails = $false)
+            $script:S38Events = New-Object System.Collections.Generic.List[string]
+            $script:S38StopMode = $Stop
+            $script:S38MirrorFails = $MirrorFails
+            # Stand-ins, set as function items: the stop step, the copies and the start.
+            Set-Item -Path function:Stop-AppPoolChecked -Value {
+                switch ($script:S38StopMode) {
+                    'refused' { throw 'IIS serves the folder from another pool' }
+                    'timeout' { $script:prodStopRequested = $true; $script:S38Events.Add('stop'); throw "App pool 'Prod' is still 'Stopping' after 120 seconds." }
+                    default { $script:prodStopRequested = $true; $script:S38Events.Add('stop') }
+                }
+            }
+            Set-Item -Path function:Invoke-RobocopyChecked -Value { $script:S38Events.Add('mirror'); if ($script:S38MirrorFails) { throw 'robocopy failed with exit code 8' } }
+            Set-Item -Path function:Copy-FileChecked -Value { $script:S38Events.Add('copy settings') }
+            Set-Item -Path function:Set-AppsettingsPathBase -Value { $script:S38Events.Add('pathbase') }
+            Set-Item -Path function:Start-AppPoolChecked -Value { $script:S38Events.Add('start') }
+            Set-Item -Path function:robocopy -Value { $script:S38Events.Add('rollback'); $global:LASTEXITCODE = 1 }
+
+            $Apply = $true; $ProdAppPoolName = 'Prod'; $CopyAppSettings = $false
+            $dev = Join-Path $TestDrive 'dev'; $prod = Join-Path $TestDrive 'prod'
+            $backup = Join-Path $TestDrive 'backup'
+            New-Item -ItemType Directory -Path $backup -Force | Out-Null
+            $prodAppSettings = Join-Path $prod 'appsettings.json'; $devAppSettings = Join-Path $dev 'appsettings.json'
+            $ProdPathBase = '/Prod'; $ProdPublicBaseUrl = $null; $timestamp = '20261109'
+            $prodConfigDbPath = 'D:\shared\exchangeadmin.db'; $planIisUnavailable = $null
+            $null = $Apply, $ProdAppPoolName, $CopyAppSettings, $prodAppSettings, $devAppSettings, $ProdPathBase, $ProdPublicBaseUrl, $timestamp, $prodConfigDbPath, $planIisUnavailable
+            $thrown = $null
+            try { . $script:S38Region 6>$null } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Events = ($script:S38Events -join ','); Thrown = $thrown }
+        }
+    }
+
+    It 'a stop that times out restarts prod, rolls nothing back, and says nothing was mirrored' {
+        $r = Invoke-S38Promotion -Stop 'timeout'
+        $r.Events | Should -BeExactly 'stop,start' -Because 'prod was asked to stop, so the finally starts it; no mirror ran, so nothing is rolled back (aud-a38b)'
+        $r.Thrown | Should -Match 'refused before anything was mirrored'
+        $r.Thrown | Should -Match "still 'Stopping' after 120 seconds"
+        $r.Thrown | Should -Match 'started again'
+    }
+
+    It 'a refusal before the stop starts nothing and rolls nothing back' {
+        $r = Invoke-S38Promotion -Stop 'refused'
+        $r.Events | Should -BeExactly '' -Because 'nothing was stopped, so nothing is started'
+        $r.Thrown | Should -Match 'refused before anything was mirrored: IIS serves the folder from another pool'
+    }
+
+    It 'a failed mirror rolls back and restarts, as before' {
+        $r = Invoke-S38Promotion -Stop 'ok' -MirrorFails $true
+        $r.Events | Should -BeExactly 'stop,mirror,rollback,start'
+        $r.Thrown | Should -Match 'rolled back'
+    }
+
+    It 'a promotion that succeeds restarts prod and throws nothing' {
+        $r = Invoke-S38Promotion -Stop 'ok'
+        $r.Events | Should -BeExactly 'stop,mirror,pathbase,start'
+        $r.Thrown | Should -BeNullOrEmpty
     }
 }

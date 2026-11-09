@@ -624,3 +624,49 @@ Describe 'SqliteConfigBackup module' {
         }
     }
 }
+
+Describe 'sweep item 37: the module fails closed whatever the caller''s error preference' {
+    # A module's functions read the module's own $ErrorActionPreference, then the global one; the
+    # caller's "Stop" never reaches them. These run under the global default, Continue.
+    BeforeEach { $ErrorActionPreference = 'Continue' }
+
+    It 'refuses an appsettings.json it cannot read, never answering with the instance''s own database' {
+        $publish = New-TempDir
+        $settings = Join-Path $publish 'appsettings.json'
+        Set-Content -LiteralPath $settings -Encoding UTF8 -Value '{ "ConfigStore": { "Path": "D:\\shared\\config\\exchangeadmin.db" } }'
+        $lock = [System.IO.File]::Open($settings, 'Open', 'Read', 'None')
+        try {
+            { Get-ConfigStorePathSetting -PublishPath $publish } | Should -Throw -ExpectedMessage "*Cannot read $settings*Refusing to fall back*"
+            { Resolve-ConfigDbPath -PublishPath $publish } | Should -Throw -ExpectedMessage '*Refusing to fall back*' -Because 'answering config\exchangeadmin.db would back up the wrong database'
+        } finally {
+            $lock.Dispose()
+            Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'refuses an appsettings.json that does not parse' {
+        $publish = New-TempDir
+        try {
+            Set-Content -LiteralPath (Join-Path $publish 'appsettings.json') -Encoding UTF8 -Value '{ "ConfigStore": '
+            { Resolve-ConfigDbPath -PublishPath $publish } | Should -Throw -ExpectedMessage '*Refusing to fall back*'
+        } finally {
+            Remove-Item $publish -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'throws when the copy cannot be moved over the destination, never returning it as done' {
+        $src = New-TempDir
+        $dst = New-TempDir
+        $db = New-ValidDb -Dir $src
+        $target = Join-Path $dst 'exchangeadmin.db'
+        [System.IO.File]::WriteAllText($target, 'held open')
+        $lock = [System.IO.File]::Open($target, 'Open', 'Read', 'None')
+        try {
+            { Copy-SqliteDbFile -SourceDbPath $db -DestDbPath $target -AppPath $script:AppPath } | Should -Throw
+            @(Get-ChildItem -LiteralPath $dst -Filter 'exchangeadmin.copy.*') | Should -BeNullOrEmpty -Because 'the temporary copy is removed on the failure path'
+        } finally {
+            $lock.Dispose()
+            Remove-Item $src, $dst -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

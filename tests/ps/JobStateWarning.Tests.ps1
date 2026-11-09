@@ -208,3 +208,15 @@ Describe 'cdt-60 (2): a plan launches no db tool and reads no jobs database' {
         "$warnings" | Should -BeLike '*1 bulk job(s) are ACTIVE*'
     }
 }
+
+Describe 'sweep item 37: the job check stays a warning under the module''s "Stop"' {
+    It 'a check that cannot run warns and returns 0, never throwing' {
+        $ErrorActionPreference = 'Continue'
+        $used = @(Get-PSDrive -PSProvider FileSystem | ForEach-Object Name)
+        $free = @([char[]]'QRSTUVWXYZ' | Where-Object { "$_" -notin $used })[0]
+        $warnings = $null
+        $count = Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir "${free}:\nowhere\config" -AppPath $script:AppPath -WarningVariable warnings -WarningAction SilentlyContinue
+        $count | Should -Be 0
+        "$warnings" | Should -BeLike '*Could not check for active bulk jobs*Proceeding anyway (warn, not block)*'
+    }
+}

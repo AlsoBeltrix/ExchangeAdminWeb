@@ -18,8 +18,12 @@
     integrity check and the copy run the app's own command-line mode,
     `<ProgramFiles>\dotnet\dotnet.exe <AppPath>\ExchangeAdminWeb.dll db <verb>`. The .NET host
     is taken from Program Files, which only administrators can write, and never searched for
-    on PATH; the assembly is the build the caller is about to deploy or already runs, so no
-    new principal can put code in this path. sqlite3.exe is not used: an elevated deploy used
+    on PATH. The assembly is the build the caller is about to deploy or already runs, and its
+    folder is the one thing here that is not administrator-only by construction: before the
+    tool runs, Resolve-ConfigDbTool reads that folder's permissions and REFUSES when anyone but
+    the administrators, SYSTEM, TrustedInstaller or the account running the script can change
+    the code in it (ToolFolderAcl.psm1, live-risk sweep item 12). That is read on every run,
+    never assumed from the host's layout. sqlite3.exe is not used: an elevated deploy used
     to run whatever sqlite3.exe PATH resolved to first, and on the deploy host that was a
     user-writable, unsigned copy. Backups are still a true online backup ('VACUUM INTO')
     followed by 'PRAGMA integrity_check', done inside the app, which works while the app is
@@ -37,6 +41,13 @@
 #>
 
 Set-StrictMode -Version Latest
+# Sweep item 37. A module's functions do not inherit the caller's "Stop": they read this module's
+# scope, then the global one (Continue). An unreadable appsettings.json then read as one naming no
+# ConfigStore:Path, and a failed Move-Item still returned success. Every failure throws here.
+$ErrorActionPreference = 'Stop'
+
+# Who may change the code in the app folder the tool runs from (sweep item 12).
+Import-Module (Join-Path $PSScriptRoot 'ToolFolderAcl.psm1')
 
 # The first app version with the db command-line mode (ConfigDbToolInApp-Plan S1).
 $script:ConfigDbToolMinimumVersion = [version]'2.34.0'
@@ -50,10 +61,14 @@ $script:ConfigDbToolMinimumVersion = [version]'2.34.0'
 .PARAMETER PlanOnly
     Return the intended paths without requiring them to exist (a plan runs before publish, so
     the staging folder is not there yet). Missing lists what is absent; Summary is a printable
-    line that says so.
+    line that says so. The folder check below is made too and reported, never thrown:
+    AclExposure holds what it found and AclSummary is a printable line saying what a real run
+    would do - for a folder not there yet, from what it would inherit from the folder above it.
 .OUTPUTS
-    A hashtable: Host, Assembly, Missing, Summary. In action mode a missing file, or an app too
-    old to have the db mode, is a throw naming it.
+    A hashtable: Host, Assembly, Missing, Summary, AclExposure, AclSummary. In action mode a
+    missing file, an app too old to have the db mode, or an app folder that anyone but the
+    administrators, SYSTEM, TrustedInstaller or the current account can change (sweep item 12),
+    is a throw naming it.
 #>
 function Resolve-ConfigDbTool {
     [CmdletBinding()]
@@ -79,13 +94,36 @@ function Resolve-ConfigDbTool {
     if ($missing.Count -gt 0) { $summary += " (not present yet: $($missing -join ', '))" }
 
     $tool = @{
-        Host     = $dotnetHost
-        Assembly = $assembly
-        Missing  = $missing
-        Summary  = $summary
+        Host        = $dotnetHost
+        Assembly    = $assembly
+        Missing     = $missing
+        Summary     = $summary
+        AclExposure = @()
+        AclSummary  = $null
     }
 
-    if ($PlanOnly) { return $tool }
+    if ($PlanOnly) {
+        # Sweep item 12: the same folder check the real run makes, reported as a plan line and
+        # never thrown. A folder not created yet (a staging publish) is judged by what it would
+        # inherit from the nearest folder above it.
+        try {
+            if (Test-Path -LiteralPath $AppPath -PathType Container) {
+                $tool.AclExposure = @(Get-ToolFolderWriteExposure -Path $AppPath)
+                $where = $AppPath
+            } else {
+                $tool.AclExposure = @(Get-ToolFolderInheritedWriteExposure -Path $AppPath)
+                $where = "$AppPath (not there yet; judged by what it would inherit from the folder above it)"
+            }
+            if ($tool.AclExposure.Count -eq 0) {
+                $tool.AclSummary = "App folder permissions: only the administrators, SYSTEM, TrustedInstaller and the account running this script can change the code in $where, so the elevated db tool may run from it."
+            } else {
+                $tool.AclSummary = "App folder permissions: a real run REFUSES to run the db tool from ${where}: $(Format-ToolFolderWriteExposure $tool.AclExposure)."
+            }
+        } catch {
+            $tool.AclSummary = "App folder permissions: a real run REFUSES to run the db tool from ${AppPath}: they cannot be read ($($_.Exception.Message))."
+        }
+        return $tool
+    }
 
     if ($missing.Count -gt 0) {
         throw "The config DB tool is missing: $($missing -join ' and ') not found. The backup runs the app's own db mode through the .NET host in Program Files; nothing else is searched. Nothing was changed."
@@ -101,6 +139,20 @@ function Resolve-ConfigDbTool {
     if ($version -lt $script:ConfigDbToolMinimumVersion) {
         throw "The app at $assembly is version $version, older than the backup tool (db mode needs $($script:ConfigDbToolMinimumVersion) or later): the deployed app is older than the backup tool; deploy dev first. Nothing was changed."
     }
+
+    # Sweep item 12. This tool runs elevated, so whoever can change the code in its folder can run
+    # code as administrator. Read the folder's permissions now, on every run, and refuse unless only
+    # the administrators, SYSTEM, TrustedInstaller and the account running this script can change
+    # it. A folder whose permissions cannot be read is refused too.
+    try {
+        $exposure = @(Get-ToolFolderWriteExposure -Path $AppPath)
+    } catch {
+        throw "Refusing to run the config DB tool from ${AppPath}: the folder's permissions cannot be read ($($_.Exception.Message)), so it cannot be shown that only administrators can change the code an elevated script would run there. Nothing was changed."
+    }
+    if ($exposure.Count -gt 0) {
+        throw "Refusing to run the config DB tool from ${AppPath}: principals other than the administrators, SYSTEM, TrustedInstaller and the account running this script can change the code an elevated script would run there - $(Format-ToolFolderWriteExposure $exposure). Remove those grants (break the inherited ones with icacls <folder> /inheritance:d, then icacls <folder> /remove:g <principal>) or move the app to a folder only administrators can write, then retry; docs/ConfigDbOperations.md has the steps. Nothing was changed."
+    }
+    $tool.AclSummary = "App folder permissions: only the administrators, SYSTEM, TrustedInstaller and the account running this script can change the code in $AppPath."
 
     return $tool
 }
@@ -176,7 +228,14 @@ function Get-ConfigStorePathSetting {
         return $null
     }
 
-    $json = Get-Content -LiteralPath $appsettings -Raw | ConvertFrom-Json
+    # Sweep item 37: a file that is there but cannot be read or parsed refuses. Answering $null would
+    # send every caller to the instance's own config\exchangeadmin.db - a backup or check of the wrong
+    # database, when this file names a shared one.
+    try {
+        $json = Get-Content -LiteralPath $appsettings -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Cannot read $appsettings ($($_.Exception.Message)), so it cannot be told whether it names a ConfigStore:Path. Refusing to fall back to the instance's own config\exchangeadmin.db, which would be the wrong database if the file names a shared one. Fix or restore the file and retry. Nothing was changed."
+    }
     if ($null -eq $json) { return $null }
 
     $section = $json.PSObject.Properties['ConfigStore']
@@ -386,10 +445,10 @@ function Copy-SqliteDbFile {
 
         foreach ($suffix in '-wal', '-shm') {
             $side = "$DestDbPath$suffix"
-            if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force }
+            if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force -ErrorAction Stop }
         }
 
-        Move-Item -LiteralPath $tmpDb -Destination $DestDbPath -Force
+        Move-Item -LiteralPath $tmpDb -Destination $DestDbPath -Force -ErrorAction Stop
         return $DestDbPath
     } finally {
         if (Test-Path -LiteralPath $tmpDb -PathType Leaf) {

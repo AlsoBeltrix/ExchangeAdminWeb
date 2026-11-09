@@ -929,13 +929,35 @@ preserves existing `appsettings.json` and `config/` fragments on update:
 .\tools\Install-ExchangeAdminWeb.ps1 -PlanOnly  # dry run, no changes
 ```
 
+`-NarrowPublishAcl` (opt-in; validate on dev first) replaces the publish folder's ACL: inheritance
+removed, and exactly Administrators and SYSTEM Full control plus the app pool identity Read and
+execute; `logs\` and `config\` keep Modify. It reads the ACL back and refuses if anyone else can
+still change the code there. `-PlanOnly` prints the intended ACL.
+
 **ADI environment only — `deploy.ps1`** is the ADI-specific deployment helper (it targets
 ADI aliases/app pools and the `ExchangeAdminWebDev` dev path). Do not use it in other
 environments; it is intentionally separate from the standalone installer.
 
 ```powershell
 .\deploy.ps1
+.\deploy.ps1 -PlanOnly   # elevated: prints every step, runs only the reads, changes nothing
 ```
+
+`-PlanOnly` means the same in each ops script: every step is printed, and the read-only checks the
+real run makes before it stops anything are made and their answers printed - the IIS application
+and pool lookups, which pool serves the folder (`Assert-AppPoolServesPath`), the other applications
+the pool serves, the config database's path and the db tool's folder check. A refusal one of those
+checks would make is printed and the plan goes on; nothing is published, backed up, configured,
+stopped, copied or written. `deploy-pipeline.ps1 -Dev -PlanOnly` runs `deploy.ps1 -PlanOnly`; the
+promotion's dry run makes its IIS checks before the stop; a cutover plan on a host already cut over
+prints the shared database check's answer and still makes the IIS checks. Run plans elevated:
+without elevation, or without the IIS: drive, a plan says which IIS checks it did not run.
+
+On the ADI host the entry point is `tools\deploy-pipeline.ps1` (elevated): `-Dev` builds and
+deploys dev through `deploy.ps1`, `-Prod` promotes dev's build to prod without rebuilding. `-Prod`
+refuses a stale dev - one built from a commit whose build inputs differ from HEAD's. A commit that
+touches only `.agents/`, `docs/`, Markdown files or `tests/ps/` does not make dev stale, and with
+`-PlanOnly` a stale dev is a warning, so the dry run still prints.
 
 `deploy.ps1` updates in place when the publish folder already holds `appsettings.json`.
 `-Force` (which regenerates `appsettings.json`) and `-ConfirmFreshInstall` take the fresh-install
@@ -957,6 +979,27 @@ The deploy/install scripts will:
 - Grant app pool access to certificate private key
 - Grant app pool write access to audit log folder
 - Restart the application pool
+
+Every script that takes the verified config-database backup runs the app's own `db` mode
+elevated from the publish or staging folder, and refuses to when anyone but the administrators,
+SYSTEM, TrustedInstaller or the account running it can change that folder's code (it names the
+grant; a plan prints the verdict instead). See `docs/ConfigDbOperations.md`, "Who can change the
+app folder", for what is checked and how to narrow a folder.
+
+Before each pool stop the scripts ask IIS which pool serves the folder about to be replaced
+(`Assert-AppPoolServesPath` in `tools\AppPoolControl.psm1`) and refuse unless it is the named
+pool alone. A site, application or virtual directory IIS cannot read refuses only when it could
+reach that folder - its own path at, inside or above it, a path that cannot be placed, or the
+named pool. One elsewhere on the server (another team's site with a missing root virtual
+directory, say) is named in a warning and does not stop the run.
+
+A stop is confirmed, not assumed: the scripts poll IIS until the pool reports Stopped. They wait
+60 seconds, and past that as long as IIS lets the worker exit - the pool's
+`processModel.shutdownTimeLimit` (90 seconds unless changed) plus 30 seconds - before refusing.
+The promotion restarts prod on every failure after it asked prod to stop, a stop that never
+confirmed included; it rolls back only once the mirror has started. `deploy.ps1` still leaves its
+pool stopped after a failed mirror (cdt-16): it keeps no copy of the previous build to roll back
+to, and starting the pool would serve a mix of old and new files.
 
 **Default URL:** `http://yourserver/ExchangeAdminWeb`
 

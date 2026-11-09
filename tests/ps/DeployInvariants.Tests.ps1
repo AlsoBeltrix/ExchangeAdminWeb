@@ -72,6 +72,19 @@ BeforeAll {
         $modeBranches[0].ElseClause
     }
 
+    function Test-InDeployPlan {
+        # Sweep item 36: true when the node is inside deploy.ps1's plan block - the script-level
+        # 'if ($PlanOnly) { ... return }' that prints the steps and makes only the reads. The real run's
+        # call counts below leave it out; the plan's own calls are counted by the item 36 tests.
+        param($Node)
+        $ancestor = $Node.Parent
+        while ($null -ne $ancestor) {
+            if ($ancestor -is [System.Management.Automation.Language.IfStatementAst] -and $ancestor.Clauses[0].Item1.Extent.Text -eq '$PlanOnly' -and $ancestor.Clauses[0].Item2.Extent.StartOffset -le $Node.Extent.StartOffset -and $Node.Extent.EndOffset -le $ancestor.Clauses[0].Item2.Extent.EndOffset) { return $true }
+            $ancestor = $ancestor.Parent
+        }
+        return $false
+    }
+
     function Get-ConditionalAncestor {
         # Every if, loop, switch, catch, trap, script block or function between $Node and $Stop:
         # the constructs that can make a statement run on some paths and not others.
@@ -271,8 +284,8 @@ Describe 'deploy.ps1' {
             $statements[$stopAt - 1].Extent.Text | Should -BeExactly '$null = Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse' -Because "the folder the $($entry[0]) mirror replaces is checked right before the stop, not only the alias, and nothing may be rooted inside it (aud-a38j)"
             ($stopAt - 1) | Should -BeGreaterThan ($lookupAt + 2) -Because 'the alias checks still run first; they catch a different mistake, with their own message'
         }
-        $calls = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true))
-        $calls.Count | Should -Be 2 -Because 'one per branch, and nowhere else'
+        $calls = @($s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Assert-AppPoolServesPath' }, $true) | Where-Object { -not (Test-InDeployPlan $_) })
+        $calls.Count | Should -Be 2 -Because 'one per branch, and nowhere else outside the plan (sweep item 36)'
         foreach ($call in $calls) {
             $ancestor = $call.Parent
             while ($null -ne $ancestor) {
@@ -1572,8 +1585,8 @@ Describe 'deploy.ps1' {
             $reports[0] | Should -BeLessThan $lookupAt[0]
             $reports[0] | Should -BeLessThan $stopAt[0] -Because "the $($entry[0]) run names what the stop takes down before it stops anything"
         }
-        $calls = @($s.Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true))
-        $calls.Count | Should -Be 2 -Because 'one call per stop, and no other'
+        $calls = @($s.Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Write-AppPoolSharingReport' }, $true) | Where-Object { -not (Test-InDeployPlan $_) })
+        $calls.Count | Should -Be 2 -Because 'one call per stop, and no other outside the plan (sweep item 36)'
     }
 
     It 'names another application whose folder is not on disk and reads none of its jobs, so a drive this host lacks is a warning and each branch goes on to the stop (cdt-59)' {
@@ -1974,8 +1987,8 @@ Describe 'deploy.ps1' {
                     param($node)
                     $node -is [System.Management.Automation.Language.CommandAst] -and
                     $node.GetCommandName() -eq 'Assert-NoActiveBulkJobsBeforeRecycle'
-                }, $true))
-        # The upgrade's check and, since cdt-49, the fresh-install path's two: the report of the instance a
+                }, $true) | Where-Object { -not (Test-InDeployPlan $_) })
+        # Outside the plan block (sweep item 36), whose own checks are plan lines. The upgrade's check and, since cdt-49, the fresh-install path's two: the report of the instance a
         # -AllowRepoint move takes down (the serving folder's, $runtimeConfigDir) and the check before the
         # stop, of the instance the stop acts on ($stoppedConfigDir, -PublishPath's config\). Since cdt-54,
         # one more, in Write-AppPoolSharingReport, which both branches call before their stop: each other
@@ -2708,6 +2721,127 @@ Write-DeploymentManifest -PublishFolder $Out -RepoRoot $Repo | Out-Null
     }
 }
 
+Describe 'deploy.ps1 -PlanOnly: every step printed, only the reads made (sweep item 36)' {
+    BeforeAll {
+        $script:s = Get-ScriptUnderTest 'deploy.ps1'
+        $script:planIf = @($s.Ast.EndBlock.Statements | Where-Object {
+                $_ -is [System.Management.Automation.Language.IfStatementAst] -and $_.Clauses[0].Item1.Extent.Text -eq '$PlanOnly'
+            })
+        # Every command that changes something: IIS, ACLs, files, the pool, the db tool's backup, a
+        # prompt. The plan block may name none of them, and a run of it calls none.
+        $script:Writers = @(
+            'New-Item', 'Copy-Item', 'Move-Item', 'Remove-Item', 'Set-Content', 'Out-File', 'Add-Content',
+            'Set-ItemProperty', 'New-WebAppPool', 'New-WebApplication', 'Set-WebConfigurationProperty',
+            'Remove-WebConfigurationProperty', 'Start-WebAppPool', 'Stop-WebAppPool', 'Set-AclChecked', 'icacls',
+            'robocopy', 'dotnet', 'Stop-AppPoolVerified', 'Start-AppPoolWithRetry', 'Backup-SqliteConfigDb',
+            'Write-DeploymentManifest', 'Write-AppSettingsFile', 'Read-Host', 'Prompt-Value', 'Prompt-SecureValue', 'Set-Acl')
+    }
+
+    It 'has one plan block, at script level, before the first write, ending in return' {
+        $planIf.Count | Should -Be 1
+        $backupDirAt = $s.Text.IndexOf('$BackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"')
+        $backupDirAt | Should -BeGreaterThan 0
+        $planIf[0].Extent.EndOffset | Should -BeLessThan $backupDirAt -Because 'the first write of the real run is the backup folder'
+        $checkAt = $s.Text.IndexOf('Assert-ApplicationTargetUnchanged -Location')
+        $planIf[0].Extent.StartOffset | Should -BeGreaterThan $checkAt -Because 'the read-only checks before it run in a plan as they are'
+        $last = @($planIf[0].Clauses[0].Item2.Statements)[-1]
+        $last.Extent.Text | Should -BeExactly 'return'
+        $planIf[0].ElseClause | Should -BeNullOrEmpty
+    }
+
+    It 'names no writing command anywhere in the plan block (AST)' {
+        $named = @($planIf[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) |
+                ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -in $script:Writers })
+        $named | Should -BeNullOrEmpty
+    }
+
+    It 'nothing before the plan block writes: the script-level statements ahead of it only read (AST)' {
+        $before = @($s.Ast.EndBlock.Statements | Where-Object { $_.Extent.EndOffset -le $planIf[0].Extent.StartOffset })
+        $named = @($before | ForEach-Object { $_.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) } |
+                Where-Object { -not (Get-ConditionalAncestor -Node $_ -Stop $s.Ast | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] }) } |
+                ForEach-Object { $_.GetCommandName() } | Where-Object { $_ -in $script:Writers })
+        $named | Should -BeNullOrEmpty
+    }
+
+    Context 'a run of the plan block, with every writer and read stubbed' {
+        BeforeAll {
+            foreach ($name in 'Write-Step', 'Write-Plan', 'Write-PlanRefusal', 'Write-Warn', 'Write-Success') {
+                . ([scriptblock]::Create((Find-FunctionDefinition $s $name).Extent.Text))
+            }
+            $script:PlanBody = [scriptblock]::Create($planIf[0].Clauses[0].Item2.Extent.Text.Trim().TrimStart('{').TrimEnd('}'))
+            $script:RunPlan = {
+                param([hashtable]$Vars, [scriptblock]$Serves = { [pscustomobject]@{ Location = 'Site/App'; ApplicationPool = 'ExamplePool' } })
+                $script:planEvents = New-Object System.Collections.Generic.List[string]
+                foreach ($writer in $script:Writers) {
+                    Set-Item -Path "function:$writer" -Value ([scriptblock]::Create("`$script:planEvents.Add('WRITE $writer')"))
+                }
+                # Stubs of two built-ins the plan reads IIS through; set as items so they shadow only here.
+                Set-Item -Path function:Test-Path -Value { param([string]$Path, [string]$LiteralPath, $PathType) $null = $PathType; $script:planEvents.Add("test $Path$LiteralPath"); $script:poolExists -and "$Path" -like 'IIS:\AppPools\*' }
+                Set-Item -Path function:Get-ItemProperty -Value { $script:planEvents.Add('read pool'); [pscustomobject]@{ userName = 'DOMAIN\svc'; identityType = 'SpecificUser' } }
+                function Resolve-ConfigDbTool { param($AppPath, [switch]$PlanOnly) $script:planEvents.Add("tool PlanOnly=$PlanOnly"); @{ Summary = "dotnet $AppPath\ExchangeAdminWeb.dll db"; AclSummary = 'App folder permissions: ok' } }
+                function Get-ConfigStorePathSetting { $null }
+                function Resolve-ConfigDbPath { param($PublishPath) "$PublishPath\config\exchangeadmin.db" }
+                function Test-IsSqliteConfigDbPresent { $true }
+                function Assert-NoActiveBulkJobsBeforeRecycle { param($ConfigDir, $AppPath, [switch]$PlanOnly) $null = $AppPath; $script:planEvents.Add("jobs $ConfigDir PlanOnly=$PlanOnly"); 0 }
+                function Write-AppPoolSharingReport { param($AppPoolName, $PublishPath, $StagingPath, [switch]$PlanOnly) $null = $AppPoolName, $PublishPath, $StagingPath; $script:planEvents.Add("sharing PlanOnly=$PlanOnly") }
+                $script:servesBlock = $Serves
+                function Assert-AppPoolServesPath { param($Name, $PhysicalPath, $NestedNodes) $script:planEvents.Add("serves $Name $PhysicalPath $NestedNodes"); & $script:servesBlock }
+
+                $ErrorActionPreference = 'Stop'
+                # The script variables the lifted block reads, as deploy.ps1 sets them for an upgrade.
+                $planVars = [ordered]@{
+                    PlanOnly = $true; LogRoot = "$TestDrive\logs"; PublishPath = "$TestDrive\publish"; timestamp = '20261109000000'
+                    Force = $false; movesFolder = $false; NonInteractive = $true; AllowRepoint = $false
+                    AppPoolName = 'ExamplePool'; ParentSite = 'Site'; AppAlias = 'App'; CertSubject = 'CN=Example'
+                    ProjectRoot = "$TestDrive\source"; servingFolder = "$TestDrive\publish"; configPath = "$TestDrive\publish\appsettings.json"
+                    servingConfigPath = "$TestDrive\publish\appsettings.json"; isUpgrade = $true; mode = 'UPGRADE'
+                    ServiceAccount = $null; ServiceAccountPassword = $null; AllowedGroups = @(); AdminGroups = @()
+                    EXOAppId = $null; EXOOrganization = $null; OnPremServerUri = $null; OnPremTargetDomain = $null
+                    DelineaUrl = $null; SmtpHost = $null; AdminEmail = $null; CloudTargetDomain = $null
+                    existingApplication = [pscustomobject]@{ applicationPool = 'ExamplePool'; PhysicalPath = "$TestDrive\publish" }
+                    poolExists = $true
+                }
+                foreach ($k in $Vars.Keys) { $planVars[$k] = $Vars[$k] }
+                foreach ($k in $planVars.Keys) { Set-Variable -Name $k -Value $planVars[$k] }
+                $script:poolExists = $planVars.poolExists
+                $out = & $script:PlanBody 6>&1 | Out-String
+                [pscustomobject]@{ Events = @($script:planEvents); Out = $out }
+            }
+        }
+
+        It 'an upgrade plan makes the reads, prints every step, and writes nothing' {
+            $r = & $RunPlan @{ poolExists = $true }
+            @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty
+            $r.Events | Should -Contain 'read pool'
+            $r.Events | Should -Contain 'tool PlanOnly=True'
+            $r.Events | Should -Contain 'sharing PlanOnly=True'
+            $r.Events | Should -Contain "jobs $TestDrive\publish\config PlanOnly=True"
+            $r.Events | Should -Contain "serves ExamplePool $TestDrive\publish Refuse" -Because 'the real run''s serving-pool check is made in the plan'
+            foreach ($step in 'dotnet publish', 'Verified online backup', 'Stop app pool ExamplePool', 'robocopy', 'Start app pool', 'Post-deploy checks') {
+                $r.Out | Should -Match ([regex]::Escape($step))
+            }
+            $r.Out | Should -Match 'Plan complete \(UPGRADE\).*0 refusal'
+        }
+
+        It 'prints the refusals a real run would make, and still writes nothing' {
+            $r = & $RunPlan @{ poolExists = $true; existingApplication = [pscustomobject]@{ applicationPool = 'OtherPool'; PhysicalPath = "$TestDrive\publish" } } -Serves { throw 'folder also served by OtherPool' }
+            @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty
+            $r.Out | Should -Match "REFUSES here: IIS application Site/App runs under app pool 'OtherPool'"
+            $r.Out | Should -Match 'REFUSES here: folder also served by OtherPool'
+            $r.Out | Should -Match '2 refusal'
+        }
+
+        It 'a fresh-install plan prompts for nothing and names what a real run would ask for' {
+            $r = & $RunPlan @{ poolExists = $false; isUpgrade = $false; mode = 'INSTALL'; existingApplication = $null; NonInteractive = $false }
+            @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty -Because 'Read-Host and Prompt-Value are writers here: a plan must never wait on a prompt'
+            $r.Out | Should -Match 'A real run prompts for EXOAppId'
+            $r.Out | Should -Match 'A real run prompts for the service account'
+            $r.Events | Should -Not -Contain "serves ExamplePool $TestDrive\publish Refuse" -Because 'IIS does not show an application the real run creates first'
+            $r.Out | Should -Match 'not read in this plan'
+        }
+    }
+}
+
 Describe 'tools/Install-ExchangeAdminWeb.ps1' {
     BeforeAll { $script:s = Get-ScriptUnderTest 'tools/Install-ExchangeAdminWeb.ps1' }
 
@@ -3421,5 +3555,102 @@ Describe 'tools/deploy-pipeline.ps1' {
             -Because 'the help text should point the operator at where the shared database is named'
         $s.Text | Should -Not -Match 'SkipConfigFragments|\bRefresh\b' `
             -Because 'the pipeline must not pass switches the promote script no longer has'
+    }
+}
+
+Describe 'tools/deploy-pipeline.ps1: dev is stale only when its build inputs differ (sweep item 35)' {
+
+    # -Prod and -Prod -PlanOnly refused with "Dev is stale" whenever HEAD differed from the dev
+    # manifest's commit, even for a commit touching only .agents/. The pipeline now compares the build
+    # inputs at the two commits, and a plan warns where the real run refuses. The script requires
+    # elevation and runs at the top level, so its functions are lifted out of the file unchanged and
+    # driven against a throwaway git repository.
+
+    BeforeAll {
+        $path = Join-Path $RepoRoot 'tools/deploy-pipeline.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$null)
+        foreach ($name in 'Write-Ok', 'Write-Warn', 'Test-IsNonBuildInputPath', 'Get-BuildInputTreeId', 'Assert-DevBuildCurrent') {
+            $definition = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }.GetNewClosure(), $true)
+            if (-not $definition) { throw "deploy-pipeline.ps1 defines no $name" }
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        # The list itself, lifted the same way: the two assignments that define it.
+        foreach ($assignment in @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -match '^\$script:NonBuildInput' }, $false))) {
+            . ([scriptblock]::Create($assignment.Extent.Text))
+        }
+
+        $script:Repo = Join-Path ([System.IO.Path]::GetTempPath()) ('s35_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:Repo | Out-Null
+        function Invoke-S35Git { & git -C $script:Repo @args 2>&1 | Out-Null; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+        function Save-S35Commit {
+            param([hashtable]$Files)
+            foreach ($k in $Files.Keys) {
+                $file = Join-Path $script:Repo $k
+                New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force | Out-Null
+                Set-Content -LiteralPath $file -Value $Files[$k] -Encoding ascii
+            }
+            Invoke-S35Git add -A
+            Invoke-S35Git -c user.name=t -c user.email=t@example.invalid commit -q -m 'c'
+            (& git -C $script:Repo rev-parse HEAD).Trim()
+        }
+        Invoke-S35Git init -q
+        $script:Built = Save-S35Commit @{ 'Program.cs' = 'v1'; 'tools/deploy.ps1' = 'a'; 'README.md' = 'r1'; 'docs/x.md' = 'd1'; '.agents/state.md' = 's1'; 'tests/ps/a.Tests.ps1' = 't1' }
+        $script:RecordsOnly = Save-S35Commit @{ '.agents/state.md' = 's2'; '.agents/review/x.md' = 'n' }
+        $script:DocsAndTests = Save-S35Commit @{ 'docs/x.md' = 'd2'; 'README.md' = 'r2'; 'Services/Notes.md' = 'm'; 'tests/ps/a.Tests.ps1' = 't2' }
+        $script:CodeChange = Save-S35Commit @{ 'Program.cs' = 'v2' }
+    }
+
+    AfterAll { Remove-Item -LiteralPath $script:Repo -Recurse -Force -ErrorAction SilentlyContinue }
+
+    It 'holds the list in one place: .agents/, docs/, every Markdown file and tests/ps/, nothing else' {
+        ($script:NonBuildInputPrefixes -join ',') | Should -BeExactly '.agents/,docs/,tests/ps/'
+        ($script:NonBuildInputSuffixes -join ',') | Should -BeExactly '.md'
+        $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/deploy-pipeline.ps1') -Raw
+        ([regex]::Matches($text, "'\.agents/'")).Count | Should -Be 1 -Because 'the list is defined once'
+    }
+
+    It 'reads <Path> as <Expected>' -TestCases @(
+        @{ Path = '.agents/state.md'; Expected = $true }
+        @{ Path = 'docs/Plan.md'; Expected = $true }
+        @{ Path = 'tests/ps/X.Tests.ps1'; Expected = $true }
+        @{ Path = 'Resources/notes.MD'; Expected = $true }
+        @{ Path = 'Program.cs'; Expected = $false }
+        @{ Path = 'tools/deploy-pipeline.ps1'; Expected = $false }
+        @{ Path = 'ExchangeAdminWeb.Tests/A.cs'; Expected = $false }
+        @{ Path = 'tests/psx/a.ps1'; Expected = $false }
+        @{ Path = 'wwwroot/app.css'; Expected = $false }
+    ) {
+        Test-IsNonBuildInputPath $Path | Should -Be $Expected
+    }
+
+    It 'is not stale when the commits between touch only <Case>, in a real run and a plan' -TestCases @(
+        @{ Case = '.agents/'; Head = 'RecordsOnly' }
+        @{ Case = 'docs/, Markdown files and tests/ps/'; Head = 'DocsAndTests' }
+    ) {
+        $head = Get-Variable -Name $Head -Scope Script -ValueOnly
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $head -DevShort 'b' -SourceShort 'h' 6>$null } | Should -Not -Throw
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $head -DevShort 'b' -SourceShort 'h' -PlanOnly 6>$null } | Should -Not -Throw
+    }
+
+    It 'refuses a real -Prod when a build input changed' {
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $script:CodeChange -DevShort 'b' -SourceShort 'h' 6>$null } |
+            Should -Throw -ExpectedMessage 'Dev is stale: built from commit b but source is at h, and the build inputs differ*Run -Dev first.'
+    }
+
+    It 'lets -PlanOnly go on with a warning when a build input changed' {
+        $out = Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $script:Built -SourceCommit $script:CodeChange -DevShort 'b' -SourceShort 'h' -PlanOnly 6>&1
+        ($out | Out-String) | Should -BeLike '*Dev is stale*A real -Prod refuses here*This plan goes on*'
+    }
+
+    It 'treats a dev commit git cannot find as stale: refused for real, a warning in a plan' {
+        $missing = 'f' * 40
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $missing -SourceCommit $script:CodeChange -DevShort 'ffffffff' -SourceShort 'h' 6>$null } |
+            Should -Throw -ExpectedMessage '*Dev is stale*cannot be compared*'
+        { Assert-DevBuildCurrent -RepoRoot $script:Repo -DevCommit $missing -SourceCommit $script:CodeChange -DevShort 'ffffffff' -SourceShort 'h' -PlanOnly 6>$null } | Should -Not -Throw
+    }
+
+    It 'is what the -Prod branch calls when HEAD differs from the manifest' {
+        $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/deploy-pipeline.ps1') -Raw
+        $text | Should -Match '(?s)\} elseif \(\$currentCommit -ne \$manifest\.gitCommit\) \{.*?Assert-DevBuildCurrent -RepoRoot \$repoRoot -DevCommit \$manifest\.gitCommit -SourceCommit \$currentCommit .*?-PlanOnly:\$PlanOnly\s*\} else \{'
     }
 }

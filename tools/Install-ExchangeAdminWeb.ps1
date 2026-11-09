@@ -20,6 +20,12 @@
         the publish folder, so the identity running the binaries cannot rewrite them. logs\,
         config\ and any shared config directory keep Modify. Validate on dev first: a module
         that writes under the publish root would fail only after the pool restarts.
+        It REPLACES the publish folder's ACL (sweep item 39): inheritance from the folder above
+        is removed and exactly these grants are set (icacls /grant:r), each for the folder,
+        its subfolders and files - BUILTIN\Administrators Full control, NT AUTHORITY\SYSTEM
+        Full control, the app pool identity Read and execute. The ACL is then read back, and
+        the run refuses if anyone else can still change the code there (an explicit grant
+        left from before, say), naming them. -PlanOnly prints the intended ACL.
 
     Update:
       - Builds the app from the current source tree.
@@ -272,6 +278,55 @@ function Set-DirectoryAcl {
         if ($LASTEXITCODE -ne 0) {
             Write-Fail "icacls failed (exit $LASTEXITCODE) granting $Identity ${Rights} on $Path"
         }
+    }
+}
+
+function Set-NarrowPublishAcl {
+    # Sweep item 39. -NarrowPublishAcl used to run Set-DirectoryAcl with (OI)(CI)RX: icacls /grant
+    # without :r ADDS rights, so the identity's earlier Modify stayed, and the Modify the folder
+    # inherits (from the drive, say) stayed with it - nothing was narrowed. This replaces the
+    # folder's ACL with the one intended, removes inheritance, and proves it by reading it back.
+    #
+    # Order matters: the grants first, then the inheritance removal, so the folder is never left
+    # with an ACL that locks the administrators out. Rights not listed here are not removed; the
+    # read-back refuses if any of them lets someone else change the code, and names them.
+    param([string]$Path, [string]$Identity)
+
+    if ([string]::IsNullOrWhiteSpace($Identity)) {
+        Write-Fail "Refusing to narrow the ACL of $Path for an empty identity: icacls resolves an empty name to BUILTIN\BUILTIN, so the app pool would get nothing."
+    }
+    # SIDs, not names: the names are localized on some Windows installations.
+    $intended = @(
+        [pscustomobject]@{ Principal = '*S-1-5-32-544'; Name = 'BUILTIN\Administrators'; Rights = '(OI)(CI)F' },
+        [pscustomobject]@{ Principal = '*S-1-5-18'; Name = 'NT AUTHORITY\SYSTEM'; Rights = '(OI)(CI)F' },
+        [pscustomobject]@{ Principal = $Identity; Name = $Identity; Rights = '(OI)(CI)RX' }
+    )
+    $described = @($intended | ForEach-Object { "$($_.Name) $($_.Rights)" }) -join ', '
+
+    Invoke-PlanOrAction "Narrow the ACL of $Path to exactly: $described; inheritance from the folder above removed (icacls /grant:r, then /inheritance:r); then read it back and refuse if anyone else can change the code there (logs\ and config\ are granted Modify next)" {
+        if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+            New-Item -ItemType Directory -Path $Path -Force | Out-Null
+        }
+        foreach ($ace in $intended) {
+            & icacls $Path /grant:r "$($ace.Principal):$($ace.Rights)" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "icacls failed (exit $LASTEXITCODE) granting $($ace.Name) $($ace.Rights) on $Path"
+            }
+        }
+        & icacls $Path /inheritance:r | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "icacls failed (exit $LASTEXITCODE) removing inherited permissions from $Path"
+        }
+
+        try {
+            $exposure = @(Get-ToolFolderWriteExposure -Path $Path)
+        } catch {
+            Write-Fail "The narrowed ACL of $Path cannot be read back ($($_.Exception.Message)), so it cannot be shown that only administrators can change the code there."
+        }
+        if ($exposure.Count -gt 0) {
+            Write-Fail "-NarrowPublishAcl set the intended ACL on $Path, but others can still change the code there: $(Format-ToolFolderWriteExposure $exposure). Remove those grants (icacls <path> /remove:g <principal>) or take ownership, then re-run."
+        }
+        Write-Ok "Publish folder ACL narrowed and read back: $described"
     }
 }
 
@@ -801,6 +856,9 @@ $stagingPath = "$PublishPath.staging.$timestamp"
 # installer standalone and environment-neutral (Architectural Invariant 1). Imported before the
 # banner because the config-store decision below reads appsettings.json through it (cdt-11).
 Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
+# Sweep item 39: -NarrowPublishAcl reads the narrowed ACL back with the folder check the db tool's
+# callers use. Not -Force: SqliteConfigBackup has it loaded already.
+Import-Module (Join-Path $PSScriptRoot 'ToolFolderAcl.psm1')
 
 # Optional shared config database. The path must be absolute and local (SQLite locking is not
 # reliable over a network share) and the file MUST already exist: the app opens a configured
@@ -983,8 +1041,11 @@ Invoke-PlanOrAction "Create or update IIS app pool $AppPoolName" {
 $publishRights = if ($NarrowPublishAcl) { "(OI)(CI)RX" } else { "(OI)(CI)M" }
 if ($NarrowPublishAcl) {
     Write-Warn "-NarrowPublishAcl: granting $appPoolIdentity ReadAndExecute (not Modify) on $PublishPath. If any module writes under the publish root, it will fail after the pool restarts - verify on dev before using this in production."
+    # Sweep item 39: replaces the ACL, rather than adding $publishRights to it.
+    Set-NarrowPublishAcl -Path $PublishPath -Identity $appPoolIdentity
+} else {
+    Set-DirectoryAcl -Path $PublishPath -Identity $appPoolIdentity -Rights $publishRights
 }
-Set-DirectoryAcl -Path $PublishPath -Identity $appPoolIdentity -Rights $publishRights
 Set-DirectoryAcl -Path $LogRoot -Identity $appPoolIdentity -Rights "(OI)(CI)M"
 Set-DirectoryAcl -Path $configDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"
 Set-DirectoryAcl -Path $appLogDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"
@@ -1096,8 +1157,16 @@ try {
     # refuses a staging folder without a usable ExchangeAdminWeb.dll - including a fresh install
     # with no database, and a -SkipConfigBackup run. Deliberately fatal: mirroring a payload that
     # cannot run reports success over an unusable instance. The backup reuses this staging folder.
-    Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll')" {
+    # Sweep item 12: the same call refuses a staging folder that anyone but the administrators,
+    # SYSTEM, TrustedInstaller or the account running this script can change, since the tool runs
+    # elevated from it. A plan reports what the real run would decide, from the folder staging
+    # would inherit its permissions from.
+    Invoke-PlanOrAction "Confirm the published build carries the config DB tool at $(Join-Path $stagingPath 'ExchangeAdminWeb.dll'), in a folder only administrators can change" {
         Resolve-ConfigDbTool -AppPath $stagingPath | Out-Null
+    }
+    if ($PlanOnly) {
+        $configDbToolPlan = Resolve-ConfigDbTool -AppPath $stagingPath -PlanOnly
+        Write-Plan $configDbToolPlan.AclSummary
     }
 
     # A36. An upgrade mirrors new binaries over an existing instance, and those binaries may

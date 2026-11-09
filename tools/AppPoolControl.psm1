@@ -29,6 +29,14 @@
     nothing to corrupt - the installer's first run is exactly this case. It is reported as
     'Absent' so the caller can log it rather than infer it.
 
+    How long it waits (sweep item 38): IIS gives a stopping worker the pool's
+    processModel.shutdownTimeLimit (90 seconds unless changed) before it ends the process,
+    so a fixed 60 seconds refused - with the pool still stopping and nobody restarting it -
+    a stop IIS was still allowed to finish. With no -TimeoutSeconds it waits 60 seconds;
+    past that, and only then, it reads the pool's shutdownTimeLimit (90 seconds when it
+    cannot be read) and waits until that plus -MarginSeconds have passed since the stop.
+    An explicit -TimeoutSeconds is used as given.
+
 .NOTES
     Pure ASCII, deliberately: deploy.ps1 is read by Windows PowerShell 5.1, which reads a
     BOM-less file as ANSI and turns non-ASCII characters into parse errors
@@ -39,6 +47,10 @@
 #>
 
 Set-StrictMode -Version Latest
+# Sweep item 37. A module's functions do not inherit the caller's preference: they read this
+# module's scope, then the global one, which is Continue. So a failed IIS read here wrote an error
+# and went on with $null - the caller's "Stop" never applied. Every read fails closed instead.
+$ErrorActionPreference = 'Stop'
 
 function Stop-AppPoolVerified {
     [CmdletBinding()]
@@ -47,8 +59,16 @@ function Stop-AppPoolVerified {
         [string]$Name,
 
         # Generous rather than tight: the cost of waiting is seconds, the cost of giving up
-        # too early is a half-replaced live application.
+        # too early is a half-replaced live application. Left out (every script), it is 60
+        # seconds, extended to the pool's shutdownTimeLimit plus -MarginSeconds (sweep item 38).
         [int]$TimeoutSeconds = 60,
+
+        # Sweep item 38: how long past IIS's shutdownTimeLimit to keep asking.
+        [int]$MarginSeconds = 30,
+
+        # Sweep item 38: the pool's processModel.shutdownTimeLimit - read only once the first 60
+        # seconds have passed without a Stopped. A TimeSpan, or anything it parses from.
+        [scriptblock]$ShutdownTimeLimitProbe = { param($PoolName) Get-ItemProperty "IIS:\AppPools\$PoolName" -Name processModel.shutdownTimeLimit -ErrorAction Stop },
 
         [int]$PollMilliseconds = 500,
 
@@ -56,7 +76,7 @@ function Stop-AppPoolVerified {
 
         [scriptblock]$StopAction = { param($PoolName) Stop-WebAppPool -Name $PoolName -ErrorAction Stop },
 
-        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName).Value },
+        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName -ErrorAction Stop).Value },
 
         [scriptblock]$Sleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
     )
@@ -76,7 +96,12 @@ function Stop-AppPoolVerified {
     $stopError = $null
     try { & $StopAction $Name } catch { $stopError = $_.Exception.Message }
 
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $stoppedAt = Get-Date
+    $deadline = $stoppedAt.AddSeconds($TimeoutSeconds)
+    $waitSeconds = $TimeoutSeconds
+    # Sweep item 38: extended at most once, and never when the caller named the timeout.
+    $mayExtend = -not $PSBoundParameters.ContainsKey('TimeoutSeconds')
+    $limitNote = ''
     $state = $null
 
     while ($true) {
@@ -89,9 +114,20 @@ function Stop-AppPoolVerified {
 
         if ($state -eq 'Stopped') { return 'Stopped' }
 
+        if ((Get-Date) -ge $deadline -and $mayExtend) {
+            $mayExtend = $false
+            $limit = Get-AppPoolShutdownTimeLimitSecond -Name $Name -Probe $ShutdownTimeLimitProbe
+            $limitNote = " IIS allows its worker $($limit.Seconds) seconds to exit ($($limit.Source)); this waited that plus $MarginSeconds."
+            $extended = [int][Math]::Ceiling($limit.Seconds) + $MarginSeconds
+            if ($extended -gt $waitSeconds) {
+                $waitSeconds = $extended
+                $deadline = $stoppedAt.AddSeconds($waitSeconds)
+            }
+        }
+
         if ((Get-Date) -ge $deadline) {
             $because = if ($stopError) { " The stop attempt reported: $stopError." } else { '' }
-            throw "App pool '$Name' is still '$state' after $TimeoutSeconds seconds.$because Refusing to deploy over a running application - stop it by hand and retry."
+            throw "App pool '$Name' is still '$state' after $waitSeconds seconds.$limitNote$because Refusing to deploy over a running application - stop it by hand and retry."
         }
 
         & $Sleep $PollMilliseconds
@@ -99,6 +135,34 @@ function Stop-AppPoolVerified {
 }
 
 Export-ModuleMember -Function Stop-AppPoolVerified
+
+function Get-AppPoolShutdownTimeLimitSecond {
+    # Private (sweep item 38). The pool's processModel.shutdownTimeLimit in seconds, and where the
+    # number came from. WebAdministration hands it back as a TimeSpan, or as a configuration
+    # attribute whose Value is one (assumption: not verified on the deploy host, so a string or a
+    # number of seconds is accepted too). Anything unreadable is IIS's default, 90 seconds - a
+    # longer wait than before, never a shorter one.
+    param([string]$Name, [scriptblock]$Probe)
+
+    $default = [pscustomobject]@{ Seconds = 90; Source = 'IIS''s default; the pool''s shutdownTimeLimit could not be read' }
+    try {
+        $raw = & $Probe $Name
+    } catch {
+        return $default
+    }
+    if ($null -ne $raw -and $raw -isnot [TimeSpan] -and $null -ne $raw.PSObject.Properties['Value']) { $raw = $raw.Value }
+    $span = $null
+    if ($raw -is [TimeSpan]) {
+        $span = $raw
+    } elseif ($raw -is [int] -or $raw -is [long] -or $raw -is [double]) {
+        $span = [TimeSpan]::FromSeconds([double]$raw)
+    } elseif ($raw -is [string]) {
+        $parsed = [TimeSpan]::Zero
+        if ([TimeSpan]::TryParse($raw, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) { $span = $parsed }
+    }
+    if ($null -eq $span -or $span.TotalSeconds -le 0) { return $default }
+    return [pscustomobject]@{ Seconds = $span.TotalSeconds; Source = 'the pool''s processModel.shutdownTimeLimit' }
+}
 
 function Resolve-AppPoolIdentityPlan {
     <#
@@ -265,7 +329,7 @@ function Start-AppPoolVerified {
 
         [scriptblock]$StartAction = { param($PoolName) Start-WebAppPool -Name $PoolName -ErrorAction Stop },
 
-        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName).Value },
+        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName -ErrorAction Stop).Value },
 
         [scriptblock]$Sleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
     )
@@ -477,6 +541,17 @@ function Assert-AppPoolServesPath {
         aud-a38k. The same choice words the refusals: under Refuse they say what the mirror would do
         to files still being served; under Allow, that nothing will be stopped.
 
+        Sweep item 34 (sweep-g). Every node IIS lists is still read, but a node that cannot be read,
+        or reads oddly, refuses only when it could reach the folder: its own path at, inside or above
+        the folder (by lexical or final path), or no path that can be placed, or the named pool as
+        its pool. Such a node is one this check exists to see. Any other - another team's site with a
+        missing root virtual directory, a name holding both quote characters, a read error - is named
+        in a warning and does not stop the run: the warning says that its unread applications or
+        virtual directories were not seen. Before, any one of them anywhere on the server refused
+        every deploy, promotion and install stop (the cdt-61 class). A Get-Website that fails still
+        refuses: then nothing can be placed. Another node at the folder under another pool still
+        refuses (aud-a38c, cdt-61).
+
     .OUTPUTS
         What IIS serves at or inside the folder (Location, ApplicationPool, PhysicalPath) when the
         rule the caller named holds - with Refuse, only what is at the folder. Throws otherwise.
@@ -511,26 +586,62 @@ function Assert-AppPoolServesPath {
         # Every application has a root virtual directory, so a listing without one is a read that
         # missed and is thrown, not taken for "nothing else"; a read that reports an error throws
         # too (-ErrorAction Stop). Under this module's strict mode a missing property throws as
-        # well, and every such throw is a refusal below, not a pass.
+        # well.
+        #
+        # Sweep item 34: a read that fails for one site or application no longer ends the probe.
+        # It yields an issue node in its place - the node whose children could not be read, with
+        # the path and pool already known for it and an Issue saying what failed - and the probe
+        # goes on with the next. The function decides below whether that node could reach the
+        # folder (refuse) or lies elsewhere (warn). Get-Website itself failing still throws, and
+        # refuses.
         [scriptblock]$ApplicationsProbe = {
-            foreach ($site in @(Get-Website)) {
-                [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
-                $owners = @([pscustomobject]@{ Path = '/'; ApplicationPool = $site.applicationPool })
-                foreach ($app in @(Get-WebApplication -Site $site.name)) {
-                    [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
-                    $owners += [pscustomobject]@{ Path = $app.path; ApplicationPool = $app.applicationPool }
+            foreach ($site in @(Get-Website -ErrorAction Stop)) {
+                $siteName = $null
+                $sitePool = $null
+                $sitePath = $null
+                try {
+                    $siteName = [string]$site.name
+                    $sitePool = [string]$site.applicationPool
+                    $sitePath = [string]$site.physicalPath
+                } catch {
+                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "the site itself cannot be read: $($_.Exception.Message)" }
+                    continue
                 }
-                $siteXPath = "/system.applicationHost/sites/site[@name=$(ConvertTo-IisXPathLiteral $site.name)]"
+                [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath }
+                $owners = @([pscustomobject]@{ Path = '/'; ApplicationPool = $sitePool; PhysicalPath = $sitePath })
+                try {
+                    foreach ($app in @(Get-WebApplication -Site $siteName -ErrorAction Stop)) {
+                        [pscustomobject]@{ Location = "$siteName$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
+                        $owners += [pscustomobject]@{ Path = [string]$app.path; ApplicationPool = [string]$app.applicationPool; PhysicalPath = [string]$app.PhysicalPath }
+                    }
+                } catch {
+                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "its applications cannot be read: $($_.Exception.Message)" }
+                    continue
+                }
+                try {
+                    $siteXPath = "/system.applicationHost/sites/site[@name=$(ConvertTo-IisXPathLiteral $siteName)]"
+                } catch {
+                    foreach ($owner in $owners) {
+                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)" }
+                    }
+                    continue
+                }
                 foreach ($owner in $owners) {
-                    $filter = "$siteXPath/application[@path=$(ConvertTo-IisXPathLiteral $owner.Path)]/virtualDirectory"
-                    $directories = @(Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filter -ErrorAction Stop)
-                    if (@($directories | Where-Object { $_.path -eq '/' }).Count -eq 0) {
-                        throw "IIS listed no root virtual directory for $($site.name)$($owner.Path), so its other virtual directories cannot be shown to have been read."
+                    try {
+                        $filter = "$siteXPath/application[@path=$(ConvertTo-IisXPathLiteral $owner.Path)]/virtualDirectory"
+                        $directories = @(Get-WebConfiguration -PSPath 'MACHINE/WEBROOT/APPHOST' -Filter $filter -ErrorAction Stop)
+                        if (@($directories | Where-Object { $_.path -eq '/' }).Count -eq 0) {
+                            throw "IIS listed no root virtual directory for $siteName$($owner.Path), so its other virtual directories cannot be shown to have been read."
+                        }
+                        $found = @(foreach ($directory in $directories) {
+                                if ($directory.path -eq '/') { continue }
+                                [pscustomobject]@{ Location = "$siteName$($owner.Path.TrimEnd('/'))$($directory.path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $directory.physicalPath }
+                            })
+                    } catch {
+                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)" }
+                        continue
                     }
-                    foreach ($directory in $directories) {
-                        if ($directory.path -eq '/') { continue }
-                        [pscustomobject]@{ Location = "$($site.name)$($owner.Path.TrimEnd('/'))$($directory.path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $directory.physicalPath }
-                    }
+                    $found
                 }
             }
         }
@@ -570,6 +681,34 @@ function Assert-AppPoolServesPath {
         $applications = @(& $ApplicationsProbe)
     } catch {
         throw "Cannot read the IIS sites and applications, so it cannot be confirmed that app pool '$Name' is what serves '$PhysicalPath': $($_.Exception.Message)"
+    }
+
+    # Sweep item 34. The nodes the probe could not read, and whether each could reach the folder: at
+    # it, inside it or above it, by lexical or final path; or with no path that can be placed; or
+    # under the named pool. Those refuse, as every unreadable node used to. The rest are elsewhere:
+    # they are named in a warning and the run goes on.
+    $issues = @($applications | Where-Object { $null -ne $_.PSObject.Properties['Issue'] })
+    $applications = @($applications | Where-Object { $null -eq $_.PSObject.Properties['Issue'] })
+    $couldReach = {
+        param($Node)
+        if ([string]::Equals([string]$Node.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        $lexical = ConvertTo-ComparablePhysicalPath $Node.PhysicalPath
+        if (-not $lexical) { return $true }
+        if ((Test-PhysicalPathInside $lexical $target) -or (Test-PhysicalPathInside $target $lexical)) { return $true }
+        if ($null -eq $targetFinal) { return $false }
+        $final = & $finalOf $lexical
+        return ($null -ne $final -and ((Test-PhysicalPathInside $final $targetFinal) -or (Test-PhysicalPathInside $targetFinal $final)))
+    }
+    $describeIssue = { param($Node) "$($Node.Location) at '$($Node.PhysicalPath)' under '$($Node.ApplicationPool)': $($Node.Issue)" }
+    $blocking = @($issues | Where-Object { & $couldReach $_ })
+    if ($blocking.Count -gt 0) {
+        $named = @($blocking | ForEach-Object { & $describeIssue $_ }) -join '; '
+        throw "Cannot read the IIS sites and applications that could serve '$PhysicalPath', so it cannot be confirmed that app pool '$Name' is what serves it: $named"
+    }
+    $unreadElsewhere = @($issues | Where-Object { -not (& $couldReach $_) })
+    if ($unreadElsewhere.Count -gt 0) {
+        $named = @($unreadElsewhere | ForEach-Object { & $describeIssue $_ }) -join '; '
+        Write-Warning "IIS could not fully read $($unreadElsewhere.Count) node(s) whose own folders and pools are neither '$PhysicalPath', inside or above it, nor '$Name', so they do not stop this run: $named. Their unread applications or virtual directories were not seen; one pointing into '$PhysicalPath' would not be either. Fix them in IIS to have them checked."
     }
 
     $inside = @($applications | Where-Object { & $isInFolder $_ })
@@ -677,9 +816,9 @@ function Get-AppPoolOtherApplication {
         # Every site root and application IIS knows: the first half of Assert-AppPoolServesPath's
         # probe, without the virtual directories.
         [scriptblock]$ApplicationsProbe = {
-            foreach ($site in @(Get-Website)) {
+            foreach ($site in @(Get-Website -ErrorAction Stop)) {
                 [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
-                foreach ($app in @(Get-WebApplication -Site $site.name)) {
+                foreach ($app in @(Get-WebApplication -Site $site.name -ErrorAction Stop)) {
                     [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
                 }
             }

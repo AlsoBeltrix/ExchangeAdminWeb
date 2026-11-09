@@ -227,10 +227,13 @@ function Write-AppPoolSharingReport {
     # and refuses it, before the stop.
     # A folder that is not on disk is not read: it holds no jobs database, and Join-Path throws on a
     # drive that does not exist, which would turn this warning into a refusal.
+    # Sweep item 36: -PlanOnly, from the dry run, reads IIS the same way but reads no bulk jobs with
+    # the db tool - the job check prints its plan line instead.
     param(
         [string]$Name,
         [string]$PublishPath,
-        [string]$AppPath
+        [string]$AppPath,
+        [switch]$PlanOnly
     )
 
     try {
@@ -250,7 +253,7 @@ function Write-AppPoolSharingReport {
         if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
         $otherConfigDir = Join-Path $otherFolder 'config'
         Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath | Out-Null
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath -PlanOnly:$PlanOnly | Out-Null
     }
 }
 
@@ -259,15 +262,33 @@ function Stop-AppPoolChecked {
         [string]$Name,
         [string]$ConfigDir,
         [string]$AppPath,
-        [string]$PublishPath
+        [string]$PublishPath,
+        # Sweep item 36. Why the dry run cannot read IIS (not elevated, no IIS: drive), or empty
+        # when it can. Only the dry run reads it.
+        [string]$PlanIisUnavailable
     )
 
     if (-not $Apply) {
-        # cdt-58: a plan line only; the dry run reads nothing from IIS.
         Write-Plan "Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath (name the IIS applications this pool serves besides prod, which stop with it, and read their active bulk jobs)"
         Write-Plan "Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)"
         Write-Plan "Stop-AppPoolVerified -Name $Name (refuse to promote unless IIS confirms it Stopped)"
         if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
+        # Sweep item 36. The dry run used to print these as plan lines and read nothing from IIS, so
+        # it could not catch what the real run's IIS checks refuse (cdt-61). It now makes the same two
+        # reads - both read-only - and prints their answers; a refusal is printed, not thrown, and
+        # nothing is stopped. Without IIS (not elevated, no IIS: drive) it says they were not run.
+        if ($PlanIisUnavailable) {
+            Write-Warn "The IIS checks before the stop were NOT run in this dry run: $PlanIisUnavailable. Run the dry run elevated, in Windows PowerShell 5.1 on the IIS server, to have them run."
+            return
+        }
+        Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath -PlanOnly
+        try {
+            $served = @(Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse)
+            $named = @($served | ForEach-Object { "$($_.Location) under '$($_.ApplicationPool)'" }) -join '; '
+            Write-Ok "Dry run: IIS serves $PublishPath from app pool $Name alone ($named), with nothing rooted inside it"
+        } catch {
+            Write-Warn "Dry run: a real promotion REFUSES here, before stopping anything: $($_.Exception.Message)"
+        }
         return
     }
 
@@ -293,7 +314,12 @@ function Stop-AppPoolChecked {
     # The one result that neither throws nor means Stopped is 'Absent'. That is right for a
     # first install, where nothing is serving yet; it is wrong here, where the prod application
     # about to be replaced must exist. So nothing but 'Stopped' gets past this point.
+    #
+    # Sweep item 38: from here on prod may be stopped, so the finally around the promotion restarts
+    # it whatever happens next - a stop that times out included. 'Absent' asked nothing to stop.
+    $script:prodStopRequested = $true
     $poolState = Stop-AppPoolVerified -Name $Name
+    if ($poolState -eq 'Absent') { $script:prodStopRequested = $false }
     if ($poolState -ne 'Stopped') {
         if ($poolState -eq 'Absent') {
             Write-Fail "Prod app pool '$Name' does not exist. Prod must exist to be promoted to: a promotion replaces the files of the running prod application, so check -ProdAppPoolName. Nothing was promoted; prod is unchanged."
@@ -370,6 +396,22 @@ if ($Apply) {
     Assert-BackupFreeSpace -SourcePath $prod -BackupRootPath $backupRootResolved
 } else {
     Write-Plan "Import-Module WebAdministration, and refuse unless its IIS: drive is available (Windows PowerShell 5.1)"
+    # Sweep item 36: the dry run loads IIS too, when it can, so it can make the real run's read-only
+    # IIS checks before the stop (Stop-AppPoolChecked). Loading a module writes nothing. When it
+    # cannot, the checks say so where they would run.
+    $planIisUnavailable = $null
+    if (-not (Test-IsAdministrator)) {
+        $planIisUnavailable = 'this session is not elevated'
+    } else {
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+            if (-not (Get-PSDrive -Name IIS -ErrorAction SilentlyContinue)) {
+                $planIisUnavailable = 'the IIS: drive is unavailable after importing WebAdministration (it does not load under PowerShell 7)'
+            }
+        } catch {
+            $planIisUnavailable = "WebAdministration did not load: $($_.Exception.Message)"
+        }
+    }
     Write-Plan "Check free space in $backupRootResolved for prod backup"
 }
 
@@ -412,20 +454,28 @@ if ($Apply) {
 } else {
     $configDbToolPlan = Resolve-ConfigDbTool -AppPath $dev -PlanOnly
     Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup via $($configDbToolPlan.Summary) backup"
+    # Sweep item 12: whether the real run would refuse to run the tool from the dev folder.
+    Write-Plan $configDbToolPlan.AclSummary
 }
-
-# aud-a38b: outside the try below, on purpose. A pool that cannot be confirmed stopped throws
-# here and ends the script before anything is mirrored over prod. Inside the try, the catch
-# would answer that refusal with a rollback - robocopy /MIR of the backup over the very
-# application that would not stop.
-Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod
 
 $promotionFailed = $false
 $rolledBack = $false
 # A38: a restart failure is its own outcome, reported alongside the promotion verdict rather
 # than replacing it.
 $poolStartError = $null
+# Sweep item 38. The stop used to sit outside this try, so that a pool which would not confirm
+# stopped was never answered with a rollback (aud-a38b). But it also left nothing to restart prod:
+# a stop that took longer than the wait ended the run with prod stopping and down. It is inside
+# now, and two flags keep aud-a38b's rule: the catch rolls back only once the mirror has started
+# ($mirrorStarted), and the finally restarts prod only once a stop was asked for
+# ($prodStopRequested) - a refusal before the stop changes nothing and starts nothing.
+$script:prodStopRequested = $false
+$mirrorStarted = $false
+$promotionError = $null
 try {
+    Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod -PlanIisUnavailable $planIisUnavailable
+
+    $mirrorStarted = $true
     Invoke-RobocopyChecked -Description "Promoting dev binaries to prod" -RobocopyArgs @(
         $dev, $prod,
         '/MIR',
@@ -448,11 +498,16 @@ try {
     }
 } catch {
     $promotionFailed = $true
+    $promotionError = $_.Exception.Message
     Write-Host ""
     Write-Host "  X  Promotion FAILED: $_" -ForegroundColor Red
     Write-Host ""
 
-    if ($Apply -and (Test-Path -LiteralPath $backup -PathType Container)) {
+    if (-not $mirrorStarted) {
+        # aud-a38b: refused at the stop or before it. Nothing was mirrored, so there is nothing to roll
+        # back - a rollback here would mirror the backup over an application that may not have stopped.
+        Write-Warn "Nothing was mirrored over prod, so there is nothing to roll back."
+    } elseif ($Apply -and (Test-Path -LiteralPath $backup -PathType Container)) {
         Write-Step "Rolling back prod binaries from backup: $backup"
         try {
             # Binaries only: config\ is excluded so the rollback never touches the per-instance
@@ -479,8 +534,10 @@ try {
     # raised in a finally block REPLACES whatever was propagating, so a failed restart used
     # to erase the promotion and rollback verdict below and surface only the pool error.
     # The operator then could not tell whether prod held old binaries or new ones.
+    # Sweep item 38: a dry run plans the start as before; a real run starts prod only if it asked it
+    # to stop.
     try {
-        Start-AppPoolChecked -Name $ProdAppPoolName
+        if (-not $Apply -or $script:prodStopRequested) { Start-AppPoolChecked -Name $ProdAppPoolName }
     } catch {
         $poolStartError = $_.Exception.Message
         Write-Host "  X  Prod app pool did not start: $poolStartError" -ForegroundColor Red
@@ -488,7 +545,9 @@ try {
 }
 
 if ($promotionFailed) {
-    $verdict = if ($rolledBack) {
+    $verdict = if (-not $mirrorStarted) {
+        "Promotion refused before anything was mirrored: $promotionError Prod's files are unchanged.$(if ($script:prodStopRequested -and -not $poolStartError) { ' Prod''s app pool was started again.' })"
+    } elseif ($rolledBack) {
         "Promotion failed and was rolled back. Prod has been restored from backup."
     } else {
         "Promotion failed and automatic rollback did not complete. Prod may be in an inconsistent state - restore manually from $backup."
