@@ -6,7 +6,7 @@ unreadable `appsettings.json` with `$null` and every caller backed up or checked
 (fail-open); a failed `Move-Item -Force` in `Copy-SqliteDbFile` still returned success; a failed `Get-WebAppPoolState`
 (`tools/AppPoolControl.psm1`) gave `$null` and the stop timed out 60 s later; `Get-Website`/`Get-WebApplication` errors were
 written and the listing went on short.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 59522ca6; reviewed by codex review F 2026-11-09
 **Branch**: `fix/sweep-g` (from master `145f513f`)
 **Commit**: `7d3cf358` (`fix(sweep-g, item 37): ...`) | **Reviewer**: implementer (candidate)
 

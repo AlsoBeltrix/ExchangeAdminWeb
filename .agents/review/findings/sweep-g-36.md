@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - sweep item 36: the promotion's dry run printed its IIS checks as plan lines and read nothing from IIS; the
 cutover's plan stopped after a live `db check` on a host already cut over, before its IIS checks; `deploy.ps1` had no plan mode
 (and `deploy-pipeline.ps1 -Dev -PlanOnly` skipped the dev deploy entirely).
-**Status**: Fixed on branch; awaiting review; codex review F 2026-11-09 found a remainder (rev-f3)
+**Status**: Merged 59522ca6; reviewed by codex review F 2026-11-09; codex review F 2026-11-09 found a remainder (rev-f3)
 **Branch**: `fix/sweep-g` (from master `145f513f`)
 **Commit**: `ab7904fb` (`fix(sweep-g, item 36): ...`) | **Reviewer**: implementer (candidate)
 

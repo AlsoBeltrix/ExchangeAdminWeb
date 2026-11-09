@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - sweep item 35: `tools/deploy-pipeline.ps1 -Prod` and `-Prod -PlanOnly` threw "Dev is stale" whenever HEAD
 differed from the dev manifest's commit, so an `.agents/`-only commit forced a full dev redeploy (a pool stop) before even a plan
 could print.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 59522ca6; reviewed by codex review F 2026-11-09
 **Branch**: `fix/sweep-g` (from master `145f513f`)
 **Commit**: `aa0082f0` (`fix(sweep-g, item 35): ...`) | **Reviewer**: implementer (candidate)
 

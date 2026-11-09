@@ -3,7 +3,7 @@
 **Severity**: MEDIUM if relied on - sweep item 39: `tools/Install-ExchangeAdminWeb.ps1` ran `-NarrowPublishAcl` through
 `Set-DirectoryAcl`, which uses `icacls /grant` without `:r`. That adds rights: the identity's earlier Modify stayed, and so did
 the Modify the folder inherits. The switch shipped inside a "ci:" commit (c1ada75f) and has never run against IIS.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 59522ca6; reviewed by codex review F 2026-11-09
 **Branch**: `fix/sweep-g` (from master `145f513f`)
 **Commit**: `3347a925` (`fix(sweep-g, item 39): ...`) | **Reviewer**: implementer (candidate)
 
