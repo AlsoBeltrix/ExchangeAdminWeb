@@ -8,6 +8,41 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 (close) - sweep complete; every admitted finding fixed, merged and reviewed; master ready for the one dev deploy
+
+**Master 6422a3a8 (plus this record).** Gates at 6422a3a8: 676 Pester passed, PSSA 0 errors, ASCII and diff-check
+clean; xUnit 8861 passed and 19 warnings at the last C# change (454fa2b7); format clean. Base version 2.36.0.
+Nothing pushed (local is ahead of `origin/master`; push policy applies), nothing deployed, no host or config change.
+
+**Landed this cycle since the dev build 8557a15a:** ppi-s1..s6, sweep-c, dov-v1..v4, sweep-d, sweep-e, Comms-10k
+clear-then-add revert, sweep-f, item 45, sweep-g (items 12, 34-39), and the review fixes rev-abc (13), rev-e1,
+rev-f1..f3, rev-g1. Codex reviews A-D (codex-commercial) and E-H (codex, Portkey) ran over every merged range; every
+finding admitted was fixed, merged on guard proof and re-reviewed; reviews G and H closed the last ones (rev-h
+CLEAN). Open and NOT fixed: rev-x1 (LOW-MEDIUM, catalog searches outside the protection checks still send no
+SearchBase; owner scope question).
+
+**Owner questions, one at a time (newest first):**
+1. Item 38 `deploy.ps1` half: add a pre-mirror binaries backup so a failed dev mirror can roll back (new
+   functionality), or accept re-running the deploy as the recovery. `sweep-g-38.md`.
+2. rev-f2 scope: an unreadable IIS application list now refuses (fail closed), withdrawing item 34's downgrade for
+   every read the probe cannot complete; keep, or restore the warning for that one case (reopens the hole).
+3. rev-e1 departure: overlapping failed reads during one stall count as one failure (keeps one-forgiven-failure for
+   multi-tab operators); keep, or the strict literal rule (one-branch removal).
+4. Item 44 audit refusal convention (`sweep-e-44.md`). 5. Item 24 approving from SyncedWithErrors (`sweep-f-24.md`).
+6. Constitution edits lines 80 and 95 (`sweep-45.md`). 7. rev-x1 scope. 8. Default review harness after a
+   codex-commercial re-login (decision 2026-11-09 covers only "while logged out").
+
+**The one dev deploy (owner declares it; all check lists accumulated in the 2026-11-06 .. 2026-11-09 entries):**
+first `deploy-pipeline.ps1 -Dev -PlanOnly` elevated under Windows PowerShell 5.1: "App folder permissions" must not
+be a `!` refusal (if it is, it names the parent folder and principal; `D:\` or `D:\inetpub` granting Authenticated
+Users Modify is the likely cause), no "Cannot read the IIS sites and applications" refusal unless IIS has an
+unreadable node, "0 refusal(s)" otherwise; then `-Prod -PlanOnly` and the cutover plan; `shutdownTimeLimit` type and
+value; then the deploy itself, then the checks of the earlier entries (convert-identifiers on a DB copy then live,
+Graph Directory Read Credential filled first, User.Read.All, host ACLs, Verify on each page, Comms-10k scratch-group
+run, protected check through distribution-group nesting refuses with the timing log line, secret rotation re-fetch,
+other-tree group checks, attribute editor "pinned to domain controller <writable DC>", renamed protected OU group
+write refuses, revalidation reload refusal with the directory blocked, two tabs kept on one stall).
+
 ### 2026-11-09 (evening) - rev-f merged; closing codex review G running
 
 **Merged:** rev-f at dde1b7fb (rev-f1 the db tool's folder check reads every folder above the app folder and refuses
