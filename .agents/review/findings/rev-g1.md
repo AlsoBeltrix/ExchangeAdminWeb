@@ -5,7 +5,7 @@
 the share root, `Get-Acl` on it fails, and the walk throws "unreadable parent". Every caller (deploy plan and real
 run, promotion, cutover, installer) then refuses an app folder on a network share whose share and app ACLs are safe.
 Drive roots stop correctly.
-**Status**: Fixed on branch; awaiting review (admitted 2026-11-09 from codex review G, `.agents/review/rev-g.result.txt`)
+**Status**: Merged 6422a3a8; closed by codex review H 2026-11-09 (`.agents/review/rev-h.result.txt` CLEAN; admitted from codex review G, `.agents/review/rev-g.result.txt`)
 **Branch**: `fix/rev-g1` (worktree `D:\source\ExchangeAdminWeb-wt\rev-g1`, from master `871222c4`)
 **Commit**: `031fc4b9` (`fix(rev-g1): the parent-folder ACL walk stops at the root of the volume, the share itself on a network path`) | **Implementer**: Claude (supervised agent)
 **Reviewer**: codex (Portkey) / configured route / xhigh
