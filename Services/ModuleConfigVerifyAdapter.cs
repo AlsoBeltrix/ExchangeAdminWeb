@@ -136,8 +136,7 @@ internal sealed class ModuleConfigVerifyAdapter : IVerifyStoreAdapter
 
     /// <summary>The A6 / BitLocker reach disclosure (R5), in every hover of those settings' findings.</summary>
     internal const string ReachDisclosure =
-        "Verify proves the object exists and is the right type, read with the Directory Read Credential; it does not test that "
-        + "the module's own account (and, for BitLocker, its configured server) can reach it.";
+        "Verify does not test that the module's own account (or, for BitLocker, its configured server) can reach it.";
 
     private readonly IRecipientGroupLookup? _recipients;
 

@@ -320,14 +320,10 @@
                         <div class="alert alert-warning py-2 mb-2">
                             <small>
                                 <strong>Members may act on protected principals in this module.</strong>
-                                Protected principals are otherwise refused to everyone. This is separate
-                                from module access above - it grants nothing else, and confers nothing in
-                                any other module. Actions are audited normally, and record which group
-                                authorised them. With no group listed, no one can service protected
-                                principals here.
-                                <strong>It does not grant access to the module.</strong> A group listed
-                                only here still cannot open @module.DisplayName, so the grant never comes
-                                into play - it needs @module.MainPermission.PolicyAlias above as well.
+                                Protected principals are otherwise refused to everyone; actions are audited
+                                with the group that authorised them.
+                                <strong>It does not grant access to the module:</strong> a group listed only
+                                here also needs @module.MainPermission.PolicyAlias above.
                             </small>
                         </div>
 
@@ -709,9 +705,7 @@
     {
         <div class="adm-pane @PaneClass(SecAdmins)">
 
-                <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.
-                    A grant is stored as the group's SID and matched against the SIDs in the signed-in user's token, so a same-named group in another domain never satisfies it.
-                    A grant stored by name - written before grants were stored as SIDs - grants nothing and is marked <em>not converted - run db convert-identifiers</em>. The app's <code>db convert-identifiers</code> command (README, Troubleshooting) replaces each such name that names exactly one group with that group's SID, which grants from then on; <strong>Convert</strong> after pressing <strong>Verify</strong> below does the same for one grant; or remove it, and pick the group from the search.</small></p>
+                <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.</small></p>
 
                 @* docs/DirectoryObjectVerify-Plan.md C.1 (slice V3): this tab's Verify. *@
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -2501,35 +2495,21 @@
 
     // Known Failure Class 5: what each button does and what it does not.
     internal const string AccessVerifyButtonTip =
-        "Ask Active Directory about every group stored on this tab - the module's access groups and its Protection servicer "
-        + "groups - and mark each with what it found. Reads only: nothing is changed until you press an action beside a group. "
-        + "Global admins only. Not offered while this tab has unsaved changes, or before section access is configured.";
+        "Reads only: checks this tab's access and Protection servicer groups against Active Directory and marks each; global "
+        + "admins only, not offered with unsaved changes or before section access is configured.";
 
     internal const string AdminsVerifyButtonTip =
-        "Ask Active Directory about every module admin group stored for this module and mark each with what it found. Reads "
-        + "only: nothing is changed until you press an action beside a group. Global admins only. Not offered while this tab "
-        + "has unsaved changes.";
+        "Reads only: checks this module's admin groups against Active Directory and marks each; global admins only, not "
+        + "offered with unsaved changes.";
 
     private const string GroupVerifyNoteCommon =
-        "Verify marks each group: verified; missing (the directory holds no group with this SID); name changed (the name shown "
-        + "is not the group's current name - cosmetic, the grant is by SID); not converted (stored by name, so it grants nothing "
-        + "until converted); several objects; wrong type (not a group, or not a usable group SID); could not verify (the "
-        + "directory could not be asked - never a sign the group is gone); or ignored. Beside each finding are its actions: "
-        + "Rename stores the current name; Convert stores the SID the name resolves to; Replace... takes the grant out of the "
-        + "list so you pick its replacement in the search and Save; Remove now deletes the grant and its ignores at once; Ignore "
-        + "keeps the grant and stops the finding being reported until what Verify sees changes. Every action is checked against "
-        + "the groups as Verify read them, re-checked as a global admin at the click, and audited. An ignore here changes only "
-        + "what Verify reports, never who is granted anything: these grants are matched against the SIDs in the user's token, "
-        + "and nothing that decides access reads the ignore list. A grant stored by name, or one that could not be verified, "
-        + "cannot be ignored. ";
+        "Verify checks each group against Active Directory and marks what it found, with actions beside each finding. Each "
+        + "action is re-checked at the click and audited. An ignore here changes only what Verify reports, never who is "
+        + "granted anything.";
 
-    internal const string AccessVerifyPaneNote = GroupVerifyNoteCommon
-        + "A group stored by name is looked up as the startup SID migration looks it up: DOMAIN\\Name in that domain, a bare "
-        + "name in this server's own domain, never across the forest.";
+    internal const string AccessVerifyPaneNote = GroupVerifyNoteCommon;
 
-    internal const string AdminsVerifyPaneNote = GroupVerifyNoteCommon
-        + "A grant stored by name is looked up as db convert-identifiers looks it up: DOMAIN\\name in that domain, a bare name "
-        + "across the forest. The names shown are the section-access display names of the same SIDs.";
+    internal const string AdminsVerifyPaneNote = GroupVerifyNoteCommon;
 
     /// <summary>The badge's text, Bootstrap class and hover for one finding on these tabs (help: Known Failure Class 5).</summary>
     internal static (string Text, string Css, string Tip) GroupVerifyBadgeParts(VerifyItemResult r, string verifiedAt)
@@ -2538,28 +2518,24 @@
         return f.Kind switch
         {
             VerifyFindingKind.Verified => ("verified", "text-bg-light text-muted border",
-                $"Verified at {verifiedAt}: a group with this SID exists, and its name is the one shown."),
+                $"Verified at {verifiedAt}: the group exists and has the name shown."),
             VerifyFindingKind.Missing => ("missing", "bg-danger",
-                "Active Directory answered and holds no object with this SID, so the grant matches no one signed in after the "
-                + "group went. Replace it with the group it should name, Remove it, or Ignore it if you know why."),
+                "Active Directory holds no such group, so this grant matches no one; Replace, Remove or Ignore it."),
             VerifyFindingKind.LabelDrift => ("name changed", "bg-warning text-dark",
-                $"Shown as '{r.Item.Label}'; the group's current name is '{f.Detail}'. The grant is by SID and is unaffected; "
-                + "Rename stores the current name."),
+                $"Shown as '{r.Item.Label}', now named '{f.Detail}'; the grant is unaffected, and Rename stores the new name."),
             VerifyFindingKind.NotConverted => ("not converted", "bg-warning text-dark",
-                "Stored by name, so it grants nothing until it is converted to its group's SID. The directory says: "
-                + $"{f.Resolution?.Detail ?? f.Detail}. Cannot be ignored."),
+                $"Not converted: this grant matches no one until it is converted ({f.Resolution?.Detail ?? f.Detail})."),
             VerifyFindingKind.Ambiguous => ("several objects", "bg-warning text-dark",
-                $"More than one object answers for this SID: {f.Detail}. Replace it with the group it should name, or Remove it."),
+                $"More than one object answers for this grant ({f.Detail}); Replace or Remove it."),
             VerifyFindingKind.WrongClass => ("wrong type", "bg-danger",
                 r.Item.Identifier is null
-                    ? $"This value is a {f.Detail}: it grants nothing at any gate. Remove it. Cannot be ignored."
-                    : $"The object with this SID is a {f.Detail}, not a group. Replace it or Remove it."),
+                    ? $"This value is a {f.Detail} and grants nothing; Remove it."
+                    : $"This grant's object is a {f.Detail}, not a group; Replace or Remove it."),
             VerifyFindingKind.Unreadable => ("could not verify", "bg-secondary",
-                $"The directory could not be asked about this group: {f.Detail}. This says nothing about the group; press Verify "
-                + "again later. Cannot be ignored."),
+                $"The directory could not be asked ({f.Detail}), which says nothing about the group; press Verify again later."),
             VerifyFindingKind.Ignored => ("ignored", "bg-secondary",
-                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}. Changes only "
-                + "what Verify reports. Reported again when what Verify sees changes; undone by Replace or Remove."),
+                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}; reported again "
+                + "when what Verify sees changes."),
             _ => ("", "", ""),
         };
     }
@@ -2567,16 +2543,13 @@
     /// <summary>What each action button does on these tabs (help: Known Failure Class 5).</summary>
     internal static string GroupVerifyActionTip(VerifyAction action, VerifyItemResult r) => action switch
     {
-        VerifyAction.Rename => $"Store '{r.Finding.Detail}' as this SID's display name, on every permission that grants it. The "
-            + "grant is unchanged. Written at once, without Save; audited.",
-        VerifyAction.Convert => $"Store this grant as its group's SID ({r.Finding.Resolution?.Identifier}), which grants from "
-            + "then on - what the conversion does, for this one grant. Written at once, without Save; audited.",
-        VerifyAction.Replace => "Take this grant out of the list, then pick the group it should name in the search below it and "
-            + "press Save: the replacement is checked and saved as any added group is, and the old grant's ignores go with it. "
-            + "Nothing changes until you save; audited.",
-        VerifyAction.Remove => "Delete this grant, and any ignore recorded for it. Written at once, without Save; audited.",
-        VerifyAction.Ignore => "Keep this grant, record that you have seen this finding, and stop reporting it until what Verify "
-            + "sees changes. It changes only what Verify reports, never who is granted anything. Audited.",
+        VerifyAction.Rename => $"Store '{r.Finding.Detail}' as this group's display name; written at once, without Save, and audited.",
+        VerifyAction.Convert => "Convert this one grant to its group; written at once, without Save, and audited.",
+        VerifyAction.Replace => "Take this grant out of the list, then pick its replacement in the search and Save; nothing "
+            + "changes until you save, and it is audited.",
+        VerifyAction.Remove => "Delete this grant and any ignore recorded for it; written at once, without Save, and audited.",
+        VerifyAction.Ignore => "Stop reporting this finding until what Verify sees changes; it changes only what Verify reports, "
+            + "never who is granted anything, and is audited.",
         _ => "",
     };
 
@@ -2904,35 +2877,20 @@
 
     // Known Failure Class 5: what the button does and what it does not.
     internal const string ConfigVerifyButtonTip =
-        "Check every setting on this pane that names a directory object - each entry of a list on its own - by the rule this "
-        + "module applies when it uses it, and mark each with what was found. Reads only: nothing is changed until you press an "
-        + "action beside an entry. Not offered while this pane has unsaved changes.";
+        "Reads only: checks every setting on this pane that names a directory object, each list entry on its own, and marks "
+        + "each; not offered while this pane has unsaved changes.";
 
-    /// <summary>The pane note: the badges, the actions, and this module's rule (help: Known Failure Class 5).</summary>
+    /// <summary>The pane note: what Verify does, and this module's one caveat (help: Known Failure Class 5).</summary>
     internal static string ConfigVerifyPaneNote(string moduleId)
     {
         const string common =
-            "Verify marks each entry: verified; missing (the directory, or Exchange, answered and holds no such object); several "
-            + "objects; wrong type; could not verify (it could not be asked - never a sign the object is gone); or ignored. Beside "
-            + "each finding are its actions: Edit... opens the field so you change the entry and Save; Remove now takes that one "
-            + "entry out of the setting at once, keeping the others; Ignore keeps it and stops the finding being reported until what "
-            + "Verify sees changes. Every action is checked against the settings as Verify read them, re-checked at the click (a "
-            + "global admin or this module's admin), and audited. An ignore changes only what Verify reports: the module never "
-            + "reads it. ";
+            "Verify checks each entry the way this module uses it and marks what it found, with actions beside each finding. "
+            + "Each action is re-checked at the click and audited; an ignore changes only what Verify reports. ";
         return common + moduleId switch
         {
-            "Migration" => "Each excluded group is looked up as the eligibility check looks it up: Get-ADGroup -Identity in each "
-                + "domain of this forest. A name held by groups in several domains is reported as several objects; the check "
-                + "excludes the members of each.",
-            "EmergencyDisable" => "The lockdown OU is looked up as the lockdown step does, with Get-ADOrganizationalUnit: an OU only. "
-                + "A container that is not an OU is reported missing, because the step refuses it. " + ModuleConfigVerifyAdapter.ReachDisclosure,
-            "ADAttributeEditor" => "Each search base is read at its DN in its own domain: an OU, a container or a domain root is "
-                + "verified. Removing the last one asks you to confirm: " + ModuleConfigVerifyActions.LastEntryWarning + ".",
-            "BitLockerRecovery" => "The search base is read at its DN in its own domain: an OU, a container or a domain root is "
-                + "verified. " + ModuleConfigVerifyAdapter.ReachDisclosure,
-            "ConferenceRooms" => "Each group address is looked up in Exchange through this module's session (Get-Recipient): one "
-                + "recipient that is a group is verified; any other kind of recipient is the wrong type. Verify only reads; this "
-                + "module runs no protected-principal check, and Verify adds none.",
+            "Migration" => "A group name held in several domains is reported as several objects; the eligibility check excludes "
+                + "the members of each.",
+            "EmergencyDisable" or "BitLockerRecovery" => ModuleConfigVerifyAdapter.ReachDisclosure,
             _ => "",
         };
     }
@@ -2940,12 +2898,12 @@
     /// <summary>The field tip of a verified setting (help: Known Failure Class 5, plan C.3).</summary>
     internal static string ConfigVerifyFieldTip(ConfigVerifySetting setting) => setting.Rule switch
     {
-        ConfigVerifyRule.ExcludedGroup => "Verify checks each comma-separated group as the eligibility check resolves it, in every domain of the forest.",
-        ConfigVerifyRule.OrganizationalUnit => "An OU only, never another container. Verify checks it with Get-ADOrganizationalUnit, as the lockdown step does; Browse OUs picks one.",
+        ConfigVerifyRule.ExcludedGroup => "Comma-separated groups, each checked in every domain of the forest.",
+        ConfigVerifyRule.OrganizationalUnit => "An OU only, never another container; Browse OUs picks one.",
         ConfigVerifyRule.SearchBase => setting.Separator is null
-            ? "Any container a search can start at: an OU, a container or a domain root. Verify reads it at its DN; Browse OUs picks one."
-            : "Any containers a search can start at, separated by semicolons. Verify reads each at its DN; Browse OUs picks several. Empty means no boundary.",
-        _ => "The address of an Exchange group. Verify looks it up in Exchange and checks that it is a group.",
+            ? "Any container a search can start at (an OU, a container or a domain root); Browse OUs picks one."
+            : "Containers a search can start at, separated by semicolons; empty means no boundary.",
+        _ => "The address of an Exchange group.",
     };
 
     /// <summary>The badge's text, Bootstrap class and hover for one finding on the config pane (help: Known Failure Class 5).</summary>
@@ -2967,20 +2925,20 @@
                 $"Verified at {verifiedAt}: the {what} exists and is the right type."),
             VerifyFindingKind.Missing => ("missing", "bg-danger", setting?.Rule switch
             {
-                ConfigVerifyRule.ExcludedGroup => "No domain of this forest holds a group by this value, so the eligibility check cannot be completed for anyone while it is set.",
-                ConfigVerifyRule.OrganizationalUnit => "No organizational unit is at this DN (a container that is not an OU counts as none), so the lockdown step refuses to move an account.",
-                ConfigVerifyRule.SearchBase => "No object is at this DN, so a search based there finds nothing.",
-                _ => "Exchange answered that no recipient has this address.",
-            } + " Edit it, Remove it, or Ignore it if you know why."),
+                ConfigVerifyRule.ExcludedGroup => "No domain of this forest holds a group by this value, so the eligibility check cannot be completed for anyone while it is set",
+                ConfigVerifyRule.OrganizationalUnit => "No organizational unit is at this DN (a container that is not an OU counts as none), so the lockdown step refuses to move an account",
+                ConfigVerifyRule.SearchBase => "No object is at this DN, so a search based there finds nothing",
+                _ => "Exchange answered that no recipient has this address",
+            } + "; Edit, Remove or Ignore it."),
             VerifyFindingKind.Ambiguous => ("several objects", "bg-warning text-dark",
-                $"More than one object answers for this entry: {f.Detail}. Enter one by its SID or objectGUID, or Remove it."),
+                $"More than one object answers for this entry ({f.Detail}); enter one by its SID or objectGUID, or Remove it."),
             VerifyFindingKind.WrongClass => ("wrong type", "bg-danger",
-                $"This address is a {f.Detail}, not a group. Edit it or Remove it."),
+                $"This address is a {f.Detail}, not a group; Edit or Remove it."),
             VerifyFindingKind.Unreadable => ("could not verify", "bg-secondary",
-                $"This entry could not be checked: {f.Detail}. This says nothing about the {what}; press Verify again later. Cannot be ignored."),
+                $"This entry could not be checked ({f.Detail}), which says nothing about the {what}; press Verify again later."),
             VerifyFindingKind.Ignored => ("ignored", "bg-secondary",
-                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}. Changes only what "
-                + "Verify reports. Reported again when what Verify sees changes; undone by Edit or Remove."),
+                $"{f.Underlying?.Kind} ({f.Underlying?.Observed}) ignored by {f.IgnoredBy?.By} at {f.IgnoredBy?.At}; reported again "
+                + "when what Verify sees changes."),
             _ => ("", "", ""),
         };
         return (text, css, tip.Length > 0 ? tip + reach : tip);
@@ -2989,15 +2947,12 @@
     /// <summary>What each action button does on the config pane (help: Known Failure Class 5).</summary>
     internal static string ConfigVerifyActionTip(VerifyAction action, VerifyItemResult r) => action switch
     {
-        VerifyAction.Replace => "Open this setting for editing (with the OU browser for a DN): change the entry and press Save, "
-            + "which writes it as any edit is written and drops the ignores of entries that are gone. Nothing changes until you "
-            + "save; the click is audited if refused.",
+        VerifyAction.Replace => "Open this setting for editing; nothing changes until you Save, and a refused click is audited.",
         VerifyAction.Remove => ModuleConfigVerifyAdapter.SettingFor(r.Item.RowKey)?.Separator is null
-            ? "Clear this setting, and any ignore recorded for it. Written at once, without Save; audited."
-            : "Take this one entry out of the setting, keeping the others, and any ignore recorded for it. Written at once, "
-                + "without Save; audited.",
-        VerifyAction.Ignore => "Keep this entry, record that you have seen this finding, and stop reporting it until what Verify "
-            + "sees changes. It changes only what Verify reports; the module never reads it. Audited.",
+            ? "Clear this setting and any ignore recorded for it; written at once, without Save, and audited."
+            : "Take this one entry out of the setting, keeping the others; written at once, without Save, and audited.",
+        VerifyAction.Ignore => "Stop reporting this finding until what Verify sees changes; it changes only what Verify reports, "
+            + "and is audited.",
         _ => "",
     };
 
