@@ -984,8 +984,9 @@ The deploy/install scripts will:
 
 Every script that takes the verified config-database backup runs the app's own `db` mode
 elevated from the publish or staging folder, and refuses to when anyone but the administrators,
-SYSTEM, TrustedInstaller or the account running it can change that folder's code (it names the
-grant; a plan prints the verdict instead). See `docs/ConfigDbOperations.md`, "Who can change the
+SYSTEM, TrustedInstaller or the account running it can change that folder's code, or can replace
+the folder through any folder above it up to the drive root (it names the grant and the folder; a
+plan prints the verdict instead). See `docs/ConfigDbOperations.md`, "Who can change the
 app folder", for what is checked and how to narrow a folder.
 
 Before each pool stop the scripts ask IIS which pool serves the folder about to be replaced
