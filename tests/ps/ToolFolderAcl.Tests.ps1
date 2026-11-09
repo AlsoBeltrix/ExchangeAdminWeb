@@ -360,6 +360,18 @@ Describe 'Resolve-ConfigDbTool refuses an app folder others can change (sweep it
         } finally { Clear-AppFixture $dir }
     }
 
+    It 'rev-f3: in plan mode says whether a real run refuses, so a plan can count it' {
+        $dir = Initialize-AppFixture
+        try {
+            (Resolve-ConfigDbTool -AppPath $dir -PlanOnly).AclRefuses | Should -BeFalse
+            Grant-TestRight -Path $dir -Sid $script:Everyone -Rights '(OI)(CI)M'
+            (Resolve-ConfigDbTool -AppPath $dir -PlanOnly).AclRefuses | Should -BeTrue
+            $script:UnreadApp = $dir
+            Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { $LiteralPath -eq $script:UnreadApp } -MockWith { throw 'Attempted to perform an unauthorized operation.' }
+            (Resolve-ConfigDbTool -AppPath $dir -PlanOnly).AclRefuses | Should -BeTrue -Because 'unreadable permissions refuse too'
+        } finally { Clear-AppFixture $dir }
+    }
+
     It 'in plan mode judges a staging folder not published yet by its parent' {
         $parent = Join-Path ([System.IO.Path]::GetTempPath()) ("tfacl_" + [guid]::NewGuid().ToString('N'))
         try {

@@ -2770,16 +2770,26 @@ Describe 'deploy.ps1 -PlanOnly: every step printed, only the reads made (sweep i
             }
             $script:PlanBody = [scriptblock]::Create($planIf[0].Clauses[0].Item2.Extent.Text.Trim().TrimStart('{').TrimEnd('}'))
             $script:RunPlan = {
-                param([hashtable]$Vars, [scriptblock]$Serves = { [pscustomobject]@{ Location = 'Site/App'; ApplicationPool = 'ExamplePool' } })
+                param(
+                    [hashtable]$Vars,
+                    [scriptblock]$Serves = { [pscustomobject]@{ Location = 'Site/App'; ApplicationPool = 'ExamplePool' } },
+                    # rev-f3: the pool-identity read, the config-store read and the tool lookup, each replaceable by a failing one.
+                    [scriptblock]$PoolRead = { [pscustomobject]@{ userName = 'DOMAIN\svc'; identityType = 'SpecificUser' } },
+                    [scriptblock]$StoreRead = { $null },
+                    [scriptblock]$ToolRead = { param($AppPath) @{ Summary = "dotnet $AppPath\ExchangeAdminWeb.dll db"; AclSummary = 'App folder permissions: ok' } }
+                )
+                $script:poolReadBlock = $PoolRead
+                $script:storeReadBlock = $StoreRead
+                $script:toolReadBlock = $ToolRead
                 $script:planEvents = New-Object System.Collections.Generic.List[string]
                 foreach ($writer in $script:Writers) {
                     Set-Item -Path "function:$writer" -Value ([scriptblock]::Create("`$script:planEvents.Add('WRITE $writer')"))
                 }
                 # Stubs of two built-ins the plan reads IIS through; set as items so they shadow only here.
                 Set-Item -Path function:Test-Path -Value { param([string]$Path, [string]$LiteralPath, $PathType) $null = $PathType; $script:planEvents.Add("test $Path$LiteralPath"); $script:poolExists -and "$Path" -like 'IIS:\AppPools\*' }
-                Set-Item -Path function:Get-ItemProperty -Value { $script:planEvents.Add('read pool'); [pscustomobject]@{ userName = 'DOMAIN\svc'; identityType = 'SpecificUser' } }
-                function Resolve-ConfigDbTool { param($AppPath, [switch]$PlanOnly) $script:planEvents.Add("tool PlanOnly=$PlanOnly"); @{ Summary = "dotnet $AppPath\ExchangeAdminWeb.dll db"; AclSummary = 'App folder permissions: ok' } }
-                function Get-ConfigStorePathSetting { $null }
+                Set-Item -Path function:Get-ItemProperty -Value { $script:planEvents.Add('read pool'); & $script:poolReadBlock }
+                function Resolve-ConfigDbTool { param($AppPath, [switch]$PlanOnly) $script:planEvents.Add("tool PlanOnly=$PlanOnly"); & $script:toolReadBlock $AppPath }
+                function Get-ConfigStorePathSetting { $script:planEvents.Add('read store'); & $script:storeReadBlock }
                 function Resolve-ConfigDbPath { param($PublishPath) "$PublishPath\config\exchangeadmin.db" }
                 function Test-IsSqliteConfigDbPresent { $true }
                 function Assert-NoActiveBulkJobsBeforeRecycle { param($ConfigDir, $AppPath, [switch]$PlanOnly) $null = $AppPath; $script:planEvents.Add("jobs $ConfigDir PlanOnly=$PlanOnly"); 0 }
@@ -2829,6 +2839,43 @@ Describe 'deploy.ps1 -PlanOnly: every step printed, only the reads made (sweep i
             $r.Out | Should -Match "REFUSES here: IIS application Site/App runs under app pool 'OtherPool'"
             $r.Out | Should -Match 'REFUSES here: folder also served by OtherPool'
             $r.Out | Should -Match '2 refusal'
+        }
+
+        It 'rev-f3: a pool identity that cannot be read is a counted refusal, and every later step still prints' {
+            $r = & $RunPlan @{ poolExists = $true } -PoolRead { throw 'the processModel section is locked' }
+            @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty
+            $r.Out | Should -Match 'REFUSES here: the identity of app pool ExamplePool cannot be read \(the processModel section is locked\)'
+            foreach ($step in 'dotnet publish', 'Verified online backup', 'Stop app pool ExamplePool', 'robocopy', 'Start app pool', 'Remove the staging folder', 'Post-deploy checks') {
+                $r.Out | Should -Match ([regex]::Escape($step))
+            }
+            $r.Events | Should -Contain "serves ExamplePool $TestDrive\publish Refuse" -Because 'the later reads are still made'
+            $r.Out | Should -Match 'Plan complete \(UPGRADE\).*1 refusal'
+        }
+
+        It 'rev-f3: a config-store path that cannot be read is a counted refusal, and every later step still prints' {
+            $r = & $RunPlan @{ poolExists = $true } -StoreRead { throw 'Cannot read appsettings.json (unexpected character)' }
+            @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty
+            $r.Out | Should -Match "REFUSES here: the config database's path cannot be read from .*publish \(Cannot read appsettings.json \(unexpected character\)\)"
+            $r.Out | Should -Match 'its path was not read: see the refusal above'
+            foreach ($step in 'Stop app pool ExamplePool', 'robocopy', 'Start app pool', 'Remove the staging folder', 'Post-deploy checks') {
+                $r.Out | Should -Match ([regex]::Escape($step))
+            }
+            $r.Events | Should -Contain "serves ExamplePool $TestDrive\publish Refuse"
+            $r.Out | Should -Match 'Plan complete \(UPGRADE\).*1 refusal'
+        }
+
+        It 'rev-f3: a db tool that cannot be located, and a folder verdict that refuses, are each a counted refusal' {
+            $r = & $RunPlan @{ poolExists = $true } -ToolRead { throw 'The ProgramFiles environment variable is not set' }
+            $r.Out | Should -Match 'REFUSES here: the config DB tool cannot be located \(The ProgramFiles environment variable is not set\)'
+            foreach ($step in 'Verified online backup', 'Stop app pool ExamplePool', 'robocopy', 'Post-deploy checks') {
+                $r.Out | Should -Match ([regex]::Escape($step))
+            }
+            $r.Out | Should -Match 'Plan complete \(UPGRADE\).*1 refusal'
+
+            $r = & $RunPlan @{ poolExists = $true } -ToolRead { @{ Summary = 'tool'; AclSummary = 'App folder permissions: a real run REFUSES to run the db tool from X: Everyone holds Modify on X.'; AclRefuses = $true } }
+            $r.Out | Should -Match 'REFUSES here: App folder permissions: a real run REFUSES to run the db tool from X'
+            $r.Out | Should -Match 'Plan complete \(UPGRADE\).*1 refusal'
+            @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty
         }
 
         It 'a fresh-install plan prompts for nothing and names what a real run would ask for' {
