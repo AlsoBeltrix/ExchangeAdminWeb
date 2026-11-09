@@ -4,6 +4,7 @@
 ticket holding any Control or Format character (a pasted zero-width space, BOM, soft hyphen, bidi mark) with "Ticket
 number is required", while the submit buttons tested `!string.IsNullOrWhiteSpace(ticketNumber)` and stayed enabled.
 **Status**: Fixed on branch; awaiting review
+**Superseded in part (2026-11-09)**: `InvisibleCharacterMessage`, the hint beside each ticket box and the button-disable path for it are withdrawn; the ticket is sanitized instead. The button/check agreement (`IsPresentAsTyped`) stands (`.agents/decisions.md` 2026-11-09, "A ticket is sanitized, not refused, for invisible characters"; `ticket-sanitize.md`).
 **Branch**: `fix/sweep-e` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-e`, from master `54dcfb40`)
 **Commits**: `3c75af3c` (`fix(sweep-e, item 40): ...`), `6aa4bc3f` (test sources keep their escapes) | **Reviewer**: implementer (candidate)
 
