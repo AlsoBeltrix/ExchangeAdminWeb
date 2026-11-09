@@ -2,7 +2,7 @@
 
 **Severity**: MEDIUM, owner-reported - a pasted ticket carrying a zero-width space (deploy checklist, 2026-11-09) disabled
 the submit button and showed a refusal, though ServiceNow is dormant and a ticket is plain audit metadata.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged to master at 1a0e42db (2026-11-09); master gates green (8898 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/ticket-sanitize` (worktree `D:/source/ExchangeAdminWeb-wt/ticket-sanitize`, from master `04d1f887`)
 **Decision**: `.agents/decisions.md` 2026-11-09, "A ticket is sanitized, not refused, for invisible characters"
 **Supersedes in part**: kd-48 and sweep-e-40 (the invisible-character refusal); kd-24's blank-ticket rule stands

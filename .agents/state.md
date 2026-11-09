@@ -8,6 +8,18 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 16:30 - ticket-sanitize merged (base 2.36.2); owner to redeploy dev
+
+Owner ruling "sanitize." landed: `TicketPresence.Sanitize` strips control/format characters and unpaired surrogates and
+trims; `Problem`/`IsPresent` judge the sanitized value and the only refusal left is "Ticket number is required". The
+invisible-character message, `HasInvisibleCharacterAsTyped` and every per-box hint are gone; AuditService,
+OperationTraceService and TicketValidationService sanitize too (defence in depth). 78 call sites in 24 files; 22 module
+patch bumps. Merged at 1a0e42db on guard proof; master gates green (8898 xUnit). Record
+`.agents/review/findings/ticket-sanitize.md`; kd-24/kd-48/sweep-e-40 marked superseded in part. Checklist E7 is now
+wrong as written (expects the refusal) and must be re-stated: paste a zero-width-space ticket, write goes ahead, audit
+row shows the clean ticket. Agent noted two things left alone: `Components/Shared/TicketNumberInput.razor` (unreferenced)
+and mail bodies of jobs queued before this deploy may still carry a raw ticket. Next: owner redeploys dev, then E7.
+
 ### 2026-11-09 15:00 - second dev deploy (help sweep, base 2.36.1) done by the owner; checklist handed over again
 
 Session reset after a host hang; nothing was in flight (master ffa6b822, no worktrees). Owner: "deployed". Dev now

@@ -54,7 +54,8 @@ it. Environment names belong in the owner's notes, not in this file.
   "was not confirmed", and a log line "pinned to domain controller <name>" naming a WRITABLE DC.
 - [ ] E6. Conference Rooms: one synced-list Room Finder row with City/State/Country: one credential purpose logged; time
   against the old 25-30 s.
-- [ ] E7. Tickets: paste a ticket number containing a zero-width space: message under the box, button disabled.
+- [ ] E7. Tickets (after the 2.36.2 redeploy): paste a ticket containing a zero-width space; no message, button enabled, the
+  write goes ahead and the audit row shows the ticket without the character.
 - [ ] E8. MFA Reset: double-click Reset; exactly one reset and one notification.
 - [ ] E9. Defender: look for `runHuntingQuery ... 429` lines and the two new warnings only if a throttle occurs.
 - [ ] E10. Cloud Password Reset: two operations within 5 minutes reuse one Graph client; after a secret rotation a new
