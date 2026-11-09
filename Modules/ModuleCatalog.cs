@@ -1315,7 +1315,8 @@ public sealed class ModuleCatalog
             // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
             // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
             // 1.7.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            // 1.7.4: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            // 1.7.4: help sweep - its settings' help cut to one sentence each, and the page warning's no-recipient branch from two
+            // sentences to one (help is behaviour: Constitution, Code Change Discipline).
             Version = "1.7.4",
             MainPermission = new(
                 "Access",
