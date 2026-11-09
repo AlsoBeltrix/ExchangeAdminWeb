@@ -8,6 +8,43 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 - owner back: sweep-g merged, review E done (rev-e1 admitted), reviews move to codex
+
+**Owner clears the blockers:** no permission prompt was ever shown, so the sweep-g stalls were inside a tool call
+(most likely a script or Pester run reaching an interactive read). A third Opus 5.5 agent, briefed to run every pwsh
+call `-NonInteractive` under a timeout and to commit per item, finished items 36-39 and the records with no hang
+(~316K, 155 tool uses, 1 h 18 min). Reviews run on plain codex (Portkey) while codex-commercial's login is invalid
+(owner, decision 2026-11-09).
+
+**Merged:** sweep-g at 59522ca6 (items 12, 34, 35, 36, 37, 38, 39; records `sweep-g-*.md`). Master gates at
+59522ca6: 8852 xUnit passed, 0 failed; 641 Pester passed; PSSA 0 errors; format, diff-check, ASCII clean. Item 36
+note: the stopped agent's `deploy.ps1` work (a per-write `if ($PlanOnly)`) broke 20 structural tests and was
+discarded; `deploy.ps1 -PlanOnly` is now one script-level plan block that makes the real run's reads and returns
+before the first write; the real run's code is unchanged.
+
+**Review E (codex, over 3f2bcb3b..78c03e49, `.agents/review/rev-e.result.txt`):** twelve rev-abc findings CLOSED,
+rev-b5 PARTLY: **rev-e1 (MEDIUM)** page requests bypass the consecutive-fallback counter, so a reload during a
+directory outage keeps access until the recorded answer ages out. Fix slice dispatched (branch `fix/rev-e1`, worktree
+`D:\source\ExchangeAdminWeb-wt\rev-e1`, from 59522ca6). Review F (codex, over 341750c0..59522ca6) dispatched.
+
+**New owner question (from sweep-g, item 38):** `deploy.ps1` does not restart the dev pool after a failed mirror
+and keeps no previous build to roll back to; restoring that needs a binaries backup, which is new functionality.
+The implementer left the `deploy.ps1` half unchanged; the promotion half is done. Decide: add a pre-mirror binaries
+backup to `deploy.ps1` (one more step, more disk), or accept that a failed dev mirror leaves dev down until re-run.
+Related, not changed: the promotion's `finally` restarts prod even when its rollback robocopy failed (exit >= 8),
+which can serve a mixed build; pre-existing (cdt-16 class), recorded in `sweep-g-38.md`.
+
+**Deploy checks added by sweep-g (not run on a host):** run `deploy-pipeline.ps1 -Dev -PlanOnly` and `-Prod -PlanOnly`
+elevated under Windows PowerShell 5.1 and the cutover plan on the cut-over host: expect the steps, the serving-pool
+answer, the db tool verdict and "0 refusal(s)" with nothing changed; before the item-12 host ACL change the plan
+must name Authenticated Users in its REFUSES verdict, after it the verdict is clean; check
+`(Get-ItemProperty IIS:\AppPools\<pool> -Name processModel.shutdownTimeLimit)` type and value (expect 00:01:30);
+before making `-NarrowPublishAcl` the default, install dev with it, `Get-Acl` the folder, confirm the app starts.
+Note: the item-12 tests run real `icacls` on temp folders they create (not mocked); acceptable, recorded.
+
+**Next:** rev-e1 hand-back -> merge on guard proof -> master gates; review F result -> fix findings the same way;
+then the final state entry and the one dev deploy when the owner declares it.
+
 
 **Done since the owner left (2026-11-06 ~16:00):** sweep-e, Comms-10k clear-then-add revert, sweep-f (items 23, 25,
 26, 27; 24's wording), item 45 records, codex-commercial defect reviews A-D over everything merged since the dev build
