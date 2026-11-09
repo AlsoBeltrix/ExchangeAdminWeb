@@ -86,6 +86,20 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
         Assert.Single(requests);
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // audit row carries, the ticket with the character removed.
+    [Fact]
+    public async Task AResetWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
+
+        await Reset(page);
+
+        AssertRefused(page, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
     [Fact]
     public async Task AResetWithATicket_GoesOnToTheAuthorizationCheck()
     {

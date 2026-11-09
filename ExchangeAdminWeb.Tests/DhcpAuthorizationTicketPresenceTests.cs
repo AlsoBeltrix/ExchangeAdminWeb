@@ -87,6 +87,35 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         Assert.Single(requests);
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // audit row carries, the ticket with the character removed.
+    [Fact]
+    public async Task AnAuthorizeWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
+
+        await Authorize(page);
+
+        AssertRefused(page, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
+    [Fact]
+    public async Task ADeauthorizeWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
+
+        await Deauthorize(page);
+
+        var row = Assert.Single(AuditRows());
+        Assert.Equal("DHCP_Deauthorize", row.GetProperty("action").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+        Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
+        Assert.Single(requests);
+    }
+
     [Fact]
     public async Task AnAuthorizeWithATicket_GoesOnToTheAuthorizationCheck()
     {

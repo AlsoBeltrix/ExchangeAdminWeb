@@ -560,7 +560,7 @@
         var nickname = formMailNickname.Trim();
         var description = formDescription.Trim();
         var visibility = formVisibility;
-        var ticket = formTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(formTicketNumber);
 
         var action = existing != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
         var target = existing != null ? $"{name} ({existing.Id})" : name;
@@ -640,7 +640,7 @@
         // is not: the box binds on oninput, the disabled attribute reaches the browser one round
         // trip late, and this handler audits and emails the ticket from the catch as well as the
         // success path. It used to read the field at all three sites.
-        var ticket = formTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(formTicketNumber);
         var target = $"{group.DisplayName} ({group.Id})";
 
         isOperating = true;
@@ -762,7 +762,7 @@
 
         // Below the early return by construction: isMemberOp is a member of IsBusy, and a raise
         // above a guard that has no finally behind it would deaden the whole page permanently.
-        var ticket = memberTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(memberTicketNumber);
         var target = $"{targetLabel} → {group.DisplayName} ({group.Id})";
 
         isMemberOp = true;
@@ -875,7 +875,7 @@
     /// </remarks>
     private async Task<string?> TicketRefusalAsync(string ticket)
     {
-        if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing) // sweep item 40: an invisible character said as that
+        if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing) // 2026-11-09: judged sanitized; only a missing ticket is refused
             return missing;
 
         var validation = await ServiceNow.ValidateTicketAsync(ticket);

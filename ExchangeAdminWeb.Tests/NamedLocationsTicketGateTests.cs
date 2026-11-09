@@ -123,6 +123,21 @@ public sealed class NamedLocationsTicketGateTests : IDisposable
         Assert.Single(requests);
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // audit row carries, the ticket with the character removed.
+    [Theory]
+    [MemberData(nameof(Writes))]
+    public async Task AWriteWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized(string write)
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
+
+        await Run(page, write);
+
+        AssertRefused(page, write, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
     [Theory]
     [MemberData(nameof(Writes))]
     public async Task AMalformedTicket_IsRefusedWithoutAQuery_WhereServiceNowIsEnabled(string write)

@@ -1021,7 +1021,7 @@
         // applied could disagree with what was applied. email and ticket were already captured, but
         // BELOW await Task.Yield(), which is a real yield back to the message loop.
         var email = roomEmail.Trim();
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var cityName = city.Trim();
         var country = countryOrRegion.Trim();
         var stateName = state.Trim();
@@ -1310,7 +1310,7 @@
         // the payload: HandleFinderCsvUpload REPLACES both lists, so a file picked in the round trip
         // before the disabled attribute reaches the browser could otherwise be submitted against a
         // preview nobody approved, or against an emptied one.
-        var ticket = csvFinderTicket.Trim();
+        var ticket = TicketPresence.Sanitize(csvFinderTicket);
         var csvRows = finderCsvData;
         var previewRows = finderPreview;
 
@@ -1424,7 +1424,7 @@
         // the operator never confirmed - and the audit row was read later still, so it could have
         // recorded either answer.
         var email = typeRoomEmail.Trim();
-        var ticket = typeTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(typeTicketNumber);
         var typeName = selectedRoomType;
         var tz = typeTimezone.Trim();
         var site = typeSite;
@@ -1656,7 +1656,7 @@
         // The same three captures as ApplyFinderCsv, for the same three reasons: the catch needs the
         // ticket in scope so it stops re-reading the live field, and HandleTypeCsvUpload replaces
         // both payload lists.
-        var ticket = csvTypeTicket.Trim();
+        var ticket = TicketPresence.Sanitize(csvTypeTicket);
         var csvRows = typeCsvData;
         var previewRows = typePreview;
 

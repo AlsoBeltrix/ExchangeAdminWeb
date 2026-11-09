@@ -307,7 +307,7 @@
         // screen when the operator clicked Reset. The listed user and the method list travel with it, so
         // the audit row, the bar's label and the reset all describe one reviewed account.
         var upn = listedUpn ?? "";
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var methodsAtClick = methods;
         var methodTypesBeforeReset = methodsAtClick.Select(m => m.MethodType).ToArray();
 

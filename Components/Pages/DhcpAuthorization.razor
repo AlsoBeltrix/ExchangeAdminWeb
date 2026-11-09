@@ -294,7 +294,7 @@
         // browser's copy of a disabled attribute is one round trip stale. Only the capture closes
         // it - and the catch below audits these same three values, which it could not do while they
         // were locals inside the try.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var dns = newDnsName.Trim();
         var ip = newIpAddress.Trim();
 
@@ -385,7 +385,7 @@
         // gated but the browser's copy of that attribute is a round trip stale, and the catch below
         // audits this value after several awaits. The server being deauthorized is already a
         // snapshot - it arrives as a parameter captured when the row was clicked.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         isOperating = true;
         operationResult = null;
@@ -394,7 +394,7 @@
 
         try
         {
-            // Sweep item 40: an invisible character is said as that, not as a missing ticket.
+            // 2026-11-09: the ticket is judged sanitized (TicketPresence.Sanitize); only a missing one is refused.
             if (TicketPresence.Describe(ticket, "A ticket number is required for deauthorization. Enter one in the Authorize form.") is { } missing)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = missing };
