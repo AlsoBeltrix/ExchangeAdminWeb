@@ -169,8 +169,9 @@ Describe 'ToolFolderAcl: who besides the administrators can change the code in a
             @(Get-ToolFolderInheritedWriteExposure -Path $notYet).Count | Should -Be 0
 
             Grant-TestRight -Path $parent -Sid $script:AuthenticatedUsers -Rights '(OI)(CI)M'
-            # Modify on the parent itself can also replace the new folder (rev-f1), so it is named twice.
-            @(Get-ToolFolderInheritedWriteExposure -Path $notYet | ForEach-Object { "$($_.Kind)|$($_.Sid)" }) | Should -Be @("ParentGrant|$($script:AuthenticatedUsers)", "Grant|$($script:AuthenticatedUsers)")
+            # Modify on the parent itself can also replace the new folder (rev-f1); the one entry is
+            # named once, with both consequences (rev-i2).
+            @(Get-ToolFolderInheritedWriteExposure -Path $notYet | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.AlsoInherited)" }) | Should -Be @("ParentGrant|$($script:AuthenticatedUsers)|True")
             Test-Path -LiteralPath $notYet | Should -BeFalse -Because 'judging it creates nothing'
         } finally { Clear-AppFixture $parent }
     }
@@ -393,6 +394,85 @@ Describe 'ToolFolderAcl: the walk above the app folder stops at the root of the 
             })
         $found.Count | Should -Be 0
         $script:Asked -join ',' | Should -BeExactly 'Q:\EawApp,Q:\'
+    }
+}
+
+Describe 'ToolFolderAcl: generic rights are named, not printed as a number (rev-i1)' {
+    # The live plan run said "Authenticated Users holds -536805376 (inherited) on ...": an inherit-only
+    # entry carrying GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE (0xE0010000), which
+    # FileSystemRights cannot name. Every ACL read of the stand-in drive Q: is answered in memory.
+
+    It 'names the rights in a mask: <Mask>' -TestCases @(
+        @{ Mask = 0xE0010000L; Text = 'GenericRead, GenericWrite, GenericExecute, Delete' }
+        @{ Mask = 0x10000000L; Text = 'GenericAll' }
+        @{ Mask = 0x1301BFL; Text = 'Modify, Synchronize' }
+        @{ Mask = 0x1F01FFL; Text = 'FullControl' }
+        @{ Mask = 0x40000040L; Text = 'GenericWrite, DeleteSubdirectoriesAndFiles' }
+        @{ Mask = 0x01000000L; Text = '0x1000000' }
+    ) {
+        InModuleScope ToolFolderAcl -Parameters @{ M = $Mask } { param($M) ConvertTo-RightsText -Mask $M } | Should -BeExactly $Text
+    }
+
+    It 'reports an inherit-only generic entry a folder not created yet would inherit by name, and counts it as content-changing' {
+        Mock -ModuleName ToolFolderAcl Test-Path -ParameterFilter { ([string]$LiteralPath).StartsWith('Q:', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            ([string]$LiteralPath).TrimEnd('\') -eq 'Q:\EawSites'
+        }
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('Q:', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            if (([string]$LiteralPath).TrimEnd('\') -eq 'Q:\EawSites') {
+                # GR GW GX SD, object and container inherit, inherit only, inherited.
+                $security.SetSecurityDescriptorSddlForm('O:SYG:SYD:(A;OICIIOID;GRGWGXSD;;;S-1-5-11)')
+            } else {
+                $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+            }
+            $security
+        }
+        $found = @(Get-ToolFolderInheritedWriteExposure -Path 'Q:\EawSites\staging.1')
+        ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)|$($_.Rights)|$($_.Inherited)" }) -join ',' |
+            Should -BeExactly 'Grant|S-1-5-11|Q:\EawSites|GenericRead, GenericWrite, GenericExecute, Delete|True' -Because 'the generic bits change content, and the entry passes them to the new folder'
+        Format-ToolFolderWriteExposure $found | Should -BeExactly 'NT AUTHORITY\Authenticated Users holds GenericRead, GenericWrite, GenericExecute, Delete (inherited) on Q:\EawSites'
+    }
+}
+
+Describe 'ToolFolderAcl: one line per entry for a folder not created yet (rev-i2)' {
+    # The live plan run named "<group> holds FullControl on <parent>" twice: once from the parent walk
+    # (it can replace the new folder) and once from what the new folder would inherit. Both reads are
+    # still made; an entry both find is one finding naming both consequences.
+
+    It 'names an untrusted FullControl entry on the parent once, with both consequences' {
+        $parent = Join-Path ([System.IO.Path]::GetTempPath()) ("tfacl_" + [guid]::NewGuid().ToString('N'))
+        try {
+            Initialize-TightTestFolder -Path $parent | Out-Null
+            Grant-TestRight -Path $parent -Sid $script:Users -Rights '(OI)(CI)F'
+            $found = @(Get-ToolFolderInheritedWriteExposure -Path (Join-Path $parent 'staging.1'))
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)|$($_.Rights)" }) -join ',' |
+                Should -BeExactly "ParentGrant|$($script:Users)|$parent|FullControl"
+            Format-ToolFolderWriteExposure $found |
+                Should -BeExactly "BUILTIN\Users holds FullControl on $parent, a folder above the app folder, so can replace it, and the new folder would inherit it"
+            (Resolve-ConfigDbTool -AppPath (Join-Path $parent 'staging.1') -PlanOnly).AclRefuses | Should -BeTrue -Because 'the merged line still refuses'
+        } finally { Clear-AppFixture $parent }
+    }
+
+    It 'keeps both lines when the parent holds one entry that replaces and another that is only inherited' {
+        $parent = Join-Path ([System.IO.Path]::GetTempPath()) ("tfacl_" + [guid]::NewGuid().ToString('N'))
+        try {
+            Initialize-TightTestFolder -Path $parent | Out-Null
+            Grant-TestRight -Path $parent -Sid $script:Users -Rights '(DC)'
+            Grant-TestRight -Path $parent -Sid $script:Everyone -Rights '(OI)(CI)(IO)M'
+            $found = @(Get-ToolFolderInheritedWriteExposure -Path (Join-Path $parent 'staging.1'))
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)" }) -join ',' | Should -BeExactly "ParentGrant|$($script:Users),Grant|$($script:Everyone)"
+        } finally { Clear-AppFixture $parent }
+    }
+
+    It 'leaves the existing-folder read as it was: the parent entry and the app folder''s inherited copy are two lines' {
+        $f = Initialize-ParentFixture
+        try {
+            Grant-TestRight -Path $f.Parent -Sid $script:Users -Rights '(OI)(CI)F'
+            # The app folder was created before the grant; icacls propagated it.
+            $found = @(Get-ToolFolderWriteExposure -Path $f.App | Where-Object { $_.Path -eq $f.Parent -or $_.Path -eq $f.App })
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)" }) -join ',' | Should -BeExactly "ParentGrant|$($script:Users)|$($f.Parent),Grant|$($script:Users)|$($f.App)"
+            @($found | Where-Object { $_.PSObject.Properties['AlsoInherited'] }).Count | Should -Be 0
+        } finally { Clear-AppFixture $f.Parent }
     }
 }
 

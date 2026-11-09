@@ -99,6 +99,32 @@ function ConvertTo-PrincipalName {
     }
 }
 
+function ConvertTo-RightsText {
+    # Private (rev-i1). The rights in an access mask as words. FileSystemRights has no names for the
+    # generic bits an inheritable entry can carry (an inherit-only entry often holds them), so its
+    # ToString() prints such a mask as a bare number (-536805376 for GENERIC_READ | GENERIC_WRITE |
+    # GENERIC_EXECUTE | DELETE). The generic bits are named here, then the named FileSystemRights of
+    # the bits that remain; a remainder with no name is shown in hex. Wording only: what a mask
+    # counts as is decided from the mask itself, never from this text.
+    param([Parameter(Mandatory)][int64]$Mask)
+
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($generic in @(
+            @{ Bit = 0x80000000; Name = 'GenericRead' },
+            @{ Bit = 0x40000000; Name = 'GenericWrite' },
+            @{ Bit = 0x20000000; Name = 'GenericExecute' },
+            @{ Bit = 0x10000000; Name = 'GenericAll' })) {
+        if (($Mask -band [int64]$generic.Bit) -ne 0) { $names.Add($generic.Name) }
+    }
+    $rest = $Mask -band 0x0FFFFFFF
+    if ($rest -ne 0) {
+        $named = [System.Enum]::ToObject([System.Security.AccessControl.FileSystemRights], [int]$rest).ToString()
+        if ($named -match '^-?\d+$') { $named = '0x{0:X}' -f $rest }
+        $names.Add($named)
+    }
+    return $names -join ', '
+}
+
 function Get-ObjectWriteExposure {
     # Private. The owner and every allow entry on one file or folder that the trusted set does not
     # cover. -InheritableOnly evaluates what a NEW child of this folder would inherit instead of
@@ -149,7 +175,7 @@ function Get-ObjectWriteExposure {
             Path      = $LiteralPath
             Principal = ConvertTo-PrincipalName $rule.IdentityReference
             Sid       = $sid
-            Rights    = [string]$rule.FileSystemRights
+            Rights    = ConvertTo-RightsText -Mask $mask
             Inherited = [bool]$rule.IsInherited
             Kind      = 'Grant'
         }
@@ -221,7 +247,7 @@ function Get-ParentChainExposure {
                 Path      = $parent
                 Principal = ConvertTo-PrincipalName $rule.IdentityReference
                 Sid       = $sid
-                Rights    = [string]$rule.FileSystemRights
+                Rights    = ConvertTo-RightsText -Mask $mask
                 Inherited = [bool]$rule.IsInherited
                 Kind      = 'ParentGrant'
             }
@@ -290,6 +316,12 @@ function Get-ToolFolderInheritedWriteExposure {
         folder (rev-f1), then the ancestor's inheritable allow entries that the trusted set does not
         cover. The new folder's owner is whoever creates it, so no owner finding is made for it.
         Throws when no ancestor exists or any of them cannot be read.
+
+        The two reads answer different questions - can the principal replace the new folder, and
+        would it hold a write right inside it - and an entry that applies to the ancestor and is
+        inherited too answers yes to both. Such an entry is returned once (rev-i2): the ancestor's
+        ParentGrant, with AlsoInherited = $true, rather than a ParentGrant and a Grant naming the
+        same principal, folder and rights. Every other finding of either read is returned as is.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -302,8 +334,21 @@ function Get-ToolFolderInheritedWriteExposure {
         throw "No folder above $Path exists, so what it would inherit cannot be read."
     }
     $trusted = Get-ToolFolderTrustedSid
-    Get-ParentChainExposure -FirstParent $ancestor -Below $Path -TrustedSid $trusted
-    Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid $trusted -InheritableOnly
+    $replacing = @(Get-ParentChainExposure -FirstParent $ancestor -Below $Path -TrustedSid $trusted)
+    $inheritedOnly = [System.Collections.Generic.List[object]]::new()
+    foreach ($grant in @(Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid $trusted -InheritableOnly)) {
+        $same = @($replacing | Where-Object {
+                $_.Kind -eq 'ParentGrant' -and $_.Path -eq $grant.Path -and $_.Sid -eq $grant.Sid -and
+                $_.Rights -eq $grant.Rights -and $_.Inherited -eq $grant.Inherited
+            })
+        if ($same.Count -gt 0) {
+            $same[0] | Add-Member -NotePropertyName AlsoInherited -NotePropertyValue $true -Force
+        } else {
+            $inheritedOnly.Add($grant)
+        }
+    }
+    $replacing
+    $inheritedOnly
 }
 
 function Format-ToolFolderWriteExposure {
@@ -319,6 +364,7 @@ function Format-ToolFolderWriteExposure {
     $shown = @($all | Select-Object -First 5 | ForEach-Object {
             $how = if ($_.Kind -eq 'Owner' -or $_.Kind -eq 'ParentOwner') { 'is the owner of' } elseif ($_.Inherited) { "holds $($_.Rights) (inherited) on" } else { "holds $($_.Rights) on" }
             $where = if ($_.Kind -eq 'ParentOwner' -or $_.Kind -eq 'ParentGrant') { ', a folder above the app folder, so can replace it' } else { '' }
+            if ($_.PSObject.Properties['AlsoInherited'] -and $_.AlsoInherited) { $where += ', and the new folder would inherit it' }
             "$($_.Principal) $how $($_.Path)$where"
         })
     $text = $shown -join '; '

@@ -2873,7 +2873,9 @@ Describe 'deploy.ps1 -PlanOnly: every step printed, only the reads made (sweep i
             $r.Out | Should -Match 'Plan complete \(UPGRADE\).*1 refusal'
 
             $r = & $RunPlan @{ poolExists = $true } -ToolRead { @{ Summary = 'tool'; AclSummary = 'App folder permissions: a real run REFUSES to run the db tool from X: Everyone holds Modify on X.'; AclRefuses = $true } }
-            $r.Out | Should -Match 'REFUSES here: App folder permissions: a real run REFUSES to run the db tool from X'
+            # rev-i3: the verdict carries its own refusal wording, so the plan says REFUSES once.
+            $r.Out | Should -Match '!  PLAN: App folder permissions: a real run REFUSES to run the db tool from X'
+            $r.Out | Should -Not -Match 'REFUSES here: App folder permissions'
             $r.Out | Should -Match 'Plan complete \(UPGRADE\).*1 refusal'
             @($r.Events | Where-Object { $_ -like 'WRITE *' }) | Should -BeNullOrEmpty
         }
