@@ -39,6 +39,10 @@
 #>
 
 Set-StrictMode -Version Latest
+# Sweep item 37. A module's functions do not inherit the caller's preference: they read this
+# module's scope, then the global one, which is Continue. So a failed IIS read here wrote an error
+# and went on with $null - the caller's "Stop" never applied. Every read fails closed instead.
+$ErrorActionPreference = 'Stop'
 
 function Stop-AppPoolVerified {
     [CmdletBinding()]
@@ -56,7 +60,7 @@ function Stop-AppPoolVerified {
 
         [scriptblock]$StopAction = { param($PoolName) Stop-WebAppPool -Name $PoolName -ErrorAction Stop },
 
-        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName).Value },
+        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName -ErrorAction Stop).Value },
 
         [scriptblock]$Sleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
     )
@@ -265,7 +269,7 @@ function Start-AppPoolVerified {
 
         [scriptblock]$StartAction = { param($PoolName) Start-WebAppPool -Name $PoolName -ErrorAction Stop },
 
-        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName).Value },
+        [scriptblock]$StateProbe = { param($PoolName) (Get-WebAppPoolState -Name $PoolName -ErrorAction Stop).Value },
 
         [scriptblock]$Sleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
     )
@@ -531,7 +535,7 @@ function Assert-AppPoolServesPath {
         # folder (refuse) or lies elsewhere (warn). Get-Website itself failing still throws, and
         # refuses.
         [scriptblock]$ApplicationsProbe = {
-            foreach ($site in @(Get-Website)) {
+            foreach ($site in @(Get-Website -ErrorAction Stop)) {
                 $siteName = $null
                 $sitePool = $null
                 $sitePath = $null
@@ -752,9 +756,9 @@ function Get-AppPoolOtherApplication {
         # Every site root and application IIS knows: the first half of Assert-AppPoolServesPath's
         # probe, without the virtual directories.
         [scriptblock]$ApplicationsProbe = {
-            foreach ($site in @(Get-Website)) {
+            foreach ($site in @(Get-Website -ErrorAction Stop)) {
                 [pscustomobject]@{ Location = "$($site.name)/"; ApplicationPool = $site.applicationPool; PhysicalPath = $site.physicalPath }
-                foreach ($app in @(Get-WebApplication -Site $site.name)) {
+                foreach ($app in @(Get-WebApplication -Site $site.name -ErrorAction Stop)) {
                     [pscustomobject]@{ Location = "$($site.name)$($app.path)"; ApplicationPool = $app.applicationPool; PhysicalPath = $app.PhysicalPath }
                 }
             }

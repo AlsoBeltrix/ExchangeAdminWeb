@@ -41,6 +41,10 @@
 #>
 
 Set-StrictMode -Version Latest
+# Sweep item 37. A module's functions do not inherit the caller's "Stop": they read this module's
+# scope, then the global one (Continue). An unreadable appsettings.json then read as one naming no
+# ConfigStore:Path, and a failed Move-Item still returned success. Every failure throws here.
+$ErrorActionPreference = 'Stop'
 
 # Who may change the code in the app folder the tool runs from (sweep item 12).
 Import-Module (Join-Path $PSScriptRoot 'ToolFolderAcl.psm1')
@@ -224,7 +228,14 @@ function Get-ConfigStorePathSetting {
         return $null
     }
 
-    $json = Get-Content -LiteralPath $appsettings -Raw | ConvertFrom-Json
+    # Sweep item 37: a file that is there but cannot be read or parsed refuses. Answering $null would
+    # send every caller to the instance's own config\exchangeadmin.db - a backup or check of the wrong
+    # database, when this file names a shared one.
+    try {
+        $json = Get-Content -LiteralPath $appsettings -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Cannot read $appsettings ($($_.Exception.Message)), so it cannot be told whether it names a ConfigStore:Path. Refusing to fall back to the instance's own config\exchangeadmin.db, which would be the wrong database if the file names a shared one. Fix or restore the file and retry. Nothing was changed."
+    }
     if ($null -eq $json) { return $null }
 
     $section = $json.PSObject.Properties['ConfigStore']
@@ -434,10 +445,10 @@ function Copy-SqliteDbFile {
 
         foreach ($suffix in '-wal', '-shm') {
             $side = "$DestDbPath$suffix"
-            if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force }
+            if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force -ErrorAction Stop }
         }
 
-        Move-Item -LiteralPath $tmpDb -Destination $DestDbPath -Force
+        Move-Item -LiteralPath $tmpDb -Destination $DestDbPath -Force -ErrorAction Stop
         return $DestDbPath
     } finally {
         if (Test-Path -LiteralPath $tmpDb -PathType Leaf) {

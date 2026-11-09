@@ -28,6 +28,10 @@
 #>
 
 Set-StrictMode -Version Latest
+# Sweep item 37: every module under tools\ fails closed on its own reads rather than taking the
+# global Continue. This one still never blocks: Assert-NoActiveBulkJobsBeforeRecycle turns any failure
+# of the check into its warning.
+$ErrorActionPreference = 'Stop'
 
 # Who may change the code in the app folder the tool runs from (sweep item 12): the check
 # SqliteConfigBackup makes before its backups, from the one module that holds it.
@@ -180,7 +184,13 @@ function Assert-NoActiveBulkJobsBeforeRecycle {
         return 0
     }
 
-    $jobs = @(Get-ActiveBulkJobs -ConfigDir $ConfigDir -AppPath $AppPath)
+    # Sweep item 37: with this module's "Stop", a read that fails throws; the policy is warn, not block.
+    try {
+        $jobs = @(Get-ActiveBulkJobs -ConfigDir $ConfigDir -AppPath $AppPath)
+    } catch {
+        Write-Warning "Could not check for active bulk jobs in $ConfigDir before recycle: $($_.Exception.Message). Proceeding anyway (warn, not block)."
+        return 0
+    }
 
     if ($jobs.Count -gt 0) {
         Write-Warning "=============================================================="

@@ -52,6 +52,7 @@ Notepad.
 |---|---|
 | Set (the normal arrangement) | That path — **one file, both instances** |
 | Absent | That instance's own `<PublishPath>\config\exchangeadmin.db` |
+| Unreadable (`appsettings.json` there but locked, denied or not valid JSON) | None: every ops script **refuses** ("Cannot read ... Refusing to fall back") rather than back up or check the instance's own file, which would be the wrong one (sweep item 37) |
 
 Find it before you touch anything:
 

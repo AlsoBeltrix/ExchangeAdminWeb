@@ -1946,3 +1946,56 @@ Describe 'sweep item 34: an unreadable IIS node refuses only when it could reach
             Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*IIS is not answering*'
     }
 }
+
+Describe 'sweep item 37: the IIS reads fail closed whatever the caller''s error preference' {
+    # The default probes call the real cmdlets. Stand-ins are defined in the module's own scope, where
+    # the probes resolve commands first, and report an error without throwing - as a failed IIS read
+    # does. Before the fix they ran under the global Continue and answered $null or nothing.
+    BeforeEach { $ErrorActionPreference = 'Continue' }
+    AfterEach {
+        InModuleScope AppPoolControl {
+            Remove-Item -Path 'function:Get-WebAppPoolState', 'function:Get-Website', 'function:Get-WebApplication' -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'a state read that reports an error refuses at once, not after the timeout' {
+        InModuleScope AppPoolControl {
+            function script:Get-WebAppPoolState { [CmdletBinding()] param([string]$Name) Write-Error "cannot read pool $Name" }
+        }
+        { Stop-AppPoolVerified -Name 'Pool' -TimeoutSeconds 1 -ExistsProbe { $true } -StopAction { } -Sleep { } } |
+            Should -Throw -ExpectedMessage "*Cannot read the state of app pool 'Pool'*cannot read pool Pool*"
+    }
+
+    It 'a state read that reports an error refuses the start check too' {
+        InModuleScope AppPoolControl {
+            function script:Get-WebAppPoolState { [CmdletBinding()] param([string]$Name) Write-Error "cannot read pool $Name" }
+        }
+        { Start-AppPoolVerified -Name 'Pool' -TimeoutSeconds 1 -ExistsProbe { $true } -StartAction { } -Sleep { } } |
+            Should -Throw -ExpectedMessage "*Cannot read the state of app pool 'Pool'*cannot read pool Pool*"
+    }
+
+    It 'a site list that reports an error refuses the other-applications read' {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { [CmdletBinding()] param() Write-Error 'the site list cannot be read' }
+        }
+        { Get-AppPoolOtherApplication -Name 'Pool' -PhysicalPath 'D:\sites\App' } |
+            Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*the site list cannot be read*'
+    }
+
+    It 'an application list that reports an error refuses the other-applications read' {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { [pscustomobject]@{ name = 'Web'; applicationPool = 'Pool'; physicalPath = 'D:\sites' } }
+            function script:Get-WebApplication { [CmdletBinding()] param([string]$Site) Write-Error "the applications of $Site cannot be read" }
+        }
+        { Get-AppPoolOtherApplication -Name 'Pool' -PhysicalPath 'D:\sites\App' } |
+            Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications*the applications of Web cannot be read*'
+    }
+
+    It 'a site list that reports an error refuses the serving-pool check' {
+        InModuleScope AppPoolControl {
+            function script:Get-Website { [CmdletBinding()] param() Write-Error 'the site list cannot be read' }
+        }
+        { Assert-AppPoolServesPath -Name 'Pool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse } |
+            Should -Throw -ExpectedMessage '*the site list cannot be read*'
+    }
+}
