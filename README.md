@@ -931,7 +931,18 @@ environments; it is intentionally separate from the standalone installer.
 
 ```powershell
 .\deploy.ps1
+.\deploy.ps1 -PlanOnly   # elevated: prints every step, runs only the reads, changes nothing
 ```
+
+`-PlanOnly` means the same in each ops script: every step is printed, and the read-only checks the
+real run makes before it stops anything are made and their answers printed - the IIS application
+and pool lookups, which pool serves the folder (`Assert-AppPoolServesPath`), the other applications
+the pool serves, the config database's path and the db tool's folder check. A refusal one of those
+checks would make is printed and the plan goes on; nothing is published, backed up, configured,
+stopped, copied or written. `deploy-pipeline.ps1 -Dev -PlanOnly` runs `deploy.ps1 -PlanOnly`; the
+promotion's dry run makes its IIS checks before the stop; a cutover plan on a host already cut over
+prints the shared database check's answer and still makes the IIS checks. Run plans elevated:
+without elevation, or without the IIS: drive, a plan says which IIS checks it did not run.
 
 On the ADI host the entry point is `tools\deploy-pipeline.ps1` (elevated): `-Dev` builds and
 deploys dev through `deploy.ps1`, `-Prod` promotes dev's build to prod without rebuilding. `-Prod`

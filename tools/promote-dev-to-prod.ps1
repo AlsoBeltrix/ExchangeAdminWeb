@@ -227,10 +227,13 @@ function Write-AppPoolSharingReport {
     # and refuses it, before the stop.
     # A folder that is not on disk is not read: it holds no jobs database, and Join-Path throws on a
     # drive that does not exist, which would turn this warning into a refusal.
+    # Sweep item 36: -PlanOnly, from the dry run, reads IIS the same way but reads no bulk jobs with
+    # the db tool - the job check prints its plan line instead.
     param(
         [string]$Name,
         [string]$PublishPath,
-        [string]$AppPath
+        [string]$AppPath,
+        [switch]$PlanOnly
     )
 
     try {
@@ -250,7 +253,7 @@ function Write-AppPoolSharingReport {
         if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
         $otherConfigDir = Join-Path $otherFolder 'config'
         Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath | Out-Null
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $AppPath -PlanOnly:$PlanOnly | Out-Null
     }
 }
 
@@ -259,15 +262,33 @@ function Stop-AppPoolChecked {
         [string]$Name,
         [string]$ConfigDir,
         [string]$AppPath,
-        [string]$PublishPath
+        [string]$PublishPath,
+        # Sweep item 36. Why the dry run cannot read IIS (not elevated, no IIS: drive), or empty
+        # when it can. Only the dry run reads it.
+        [string]$PlanIisUnavailable
     )
 
     if (-not $Apply) {
-        # cdt-58: a plan line only; the dry run reads nothing from IIS.
         Write-Plan "Get-AppPoolOtherApplication -Name $Name -PhysicalPath $PublishPath (name the IIS applications this pool serves besides prod, which stop with it, and read their active bulk jobs)"
         Write-Plan "Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)"
         Write-Plan "Stop-AppPoolVerified -Name $Name (refuse to promote unless IIS confirms it Stopped)"
         if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -AppPath $AppPath -PlanOnly | Out-Null }
+        # Sweep item 36. The dry run used to print these as plan lines and read nothing from IIS, so
+        # it could not catch what the real run's IIS checks refuse (cdt-61). It now makes the same two
+        # reads - both read-only - and prints their answers; a refusal is printed, not thrown, and
+        # nothing is stopped. Without IIS (not elevated, no IIS: drive) it says they were not run.
+        if ($PlanIisUnavailable) {
+            Write-Warn "The IIS checks before the stop were NOT run in this dry run: $PlanIisUnavailable. Run the dry run elevated, in Windows PowerShell 5.1 on the IIS server, to have them run."
+            return
+        }
+        Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath -PlanOnly
+        try {
+            $served = @(Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse)
+            $named = @($served | ForEach-Object { "$($_.Location) under '$($_.ApplicationPool)'" }) -join '; '
+            Write-Ok "Dry run: IIS serves $PublishPath from app pool $Name alone ($named), with nothing rooted inside it"
+        } catch {
+            Write-Warn "Dry run: a real promotion REFUSES here, before stopping anything: $($_.Exception.Message)"
+        }
         return
     }
 
@@ -370,6 +391,22 @@ if ($Apply) {
     Assert-BackupFreeSpace -SourcePath $prod -BackupRootPath $backupRootResolved
 } else {
     Write-Plan "Import-Module WebAdministration, and refuse unless its IIS: drive is available (Windows PowerShell 5.1)"
+    # Sweep item 36: the dry run loads IIS too, when it can, so it can make the real run's read-only
+    # IIS checks before the stop (Stop-AppPoolChecked). Loading a module writes nothing. When it
+    # cannot, the checks say so where they would run.
+    $planIisUnavailable = $null
+    if (-not (Test-IsAdministrator)) {
+        $planIisUnavailable = 'this session is not elevated'
+    } else {
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+            if (-not (Get-PSDrive -Name IIS -ErrorAction SilentlyContinue)) {
+                $planIisUnavailable = 'the IIS: drive is unavailable after importing WebAdministration (it does not load under PowerShell 7)'
+            }
+        } catch {
+            $planIisUnavailable = "WebAdministration did not load: $($_.Exception.Message)"
+        }
+    }
     Write-Plan "Check free space in $backupRootResolved for prod backup"
 }
 
@@ -420,7 +457,7 @@ if ($Apply) {
 # here and ends the script before anything is mirrored over prod. Inside the try, the catch
 # would answer that refusal with a rollback - robocopy /MIR of the backup over the very
 # application that would not stop.
-Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod
+Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config") -AppPath $dev -PublishPath $prod -PlanIisUnavailable $planIisUnavailable
 
 $promotionFailed = $false
 $rolledBack = $false

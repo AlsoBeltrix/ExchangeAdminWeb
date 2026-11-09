@@ -38,7 +38,13 @@ param(
     # switch is the explicit way to move it. An upgrade never re-points the application, and refuses a
     # pool or folder that does not serve it with or without this switch (cdt-42).
     [switch]$AllowRepoint,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    # Sweep item 36: print every step as a PLAN line and make only the real run's reads - the IIS
+    # application and pool lookups, the pool identity, the serving-pool and sharing checks, the config
+    # database's path, the db tool's folder check - so a plan shows what the real run would refuse.
+    # Nothing is published, backed up, configured, granted, stopped, copied, started or written, and
+    # nothing is prompted for. Still needs elevation: the IIS reads do.
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,6 +68,14 @@ function Write-Warn    { param($m) Write-Host "  !  $m" -ForegroundColor Yellow 
 # Throw (not exit) per the repo error model: callers like deploy-pipeline.ps1 run
 # under $ErrorActionPreference = "Stop" and must see failures as terminating errors.
 function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; throw $m }
+# Sweep item 36: -PlanOnly prints a step instead of running it, and prints a refusal a read would make
+# instead of throwing it, so the plan shows every step.
+function Write-Plan    { param($m) Write-Host "PLAN $m" -ForegroundColor DarkGray }
+function Write-PlanRefusal {
+    param([string]$m)
+    $script:planRefusals++
+    Write-Host "  !  PLAN: a real run REFUSES here: $m" -ForegroundColor Yellow
+}
 
 # icacls is a native exe: $ErrorActionPreference = "Stop" does NOT catch its failures,
 # and "| Out-Null" discards the error text too, so a denied/failed grant printed nothing
@@ -264,7 +278,7 @@ function Assert-ApplicationTargetUnchanged {
 # each. A warning, never a refusal: tools\JobStateWarning.psm1 records the owner's policy for what a
 # recycle interrupts - warn, do not hard-block - and nothing of theirs is replaced, since a node inside
 # -PublishPath is refused before the stop whatever its pool (aud-a38i). Read-only; it says what it
-# found either way, as this script has no plan mode. An unreadable IIS listing is a warning here: the
+# found either way, in a plan too (sweep item 36). An unreadable IIS listing is a warning here: the
 # check that the pool serves -PublishPath reads the same listing, and refuses it, before the stop.
 # cdt-59: a folder that is not on disk is not read for jobs; the warning still names it. It holds no
 # jobs database, and Join-Path throws on a drive that does not exist, which under this script's "Stop"
@@ -273,7 +287,10 @@ function Write-AppPoolSharingReport {
     param(
         [string]$AppPoolName,
         [string]$PublishPath,
-        [string]$StagingPath
+        [string]$StagingPath,
+        # Sweep item 36: from the plan - the same IIS read, and the other applications' job checks as
+        # plan lines instead of runs of the db tool.
+        [switch]$PlanOnly
     )
 
     try {
@@ -293,7 +310,7 @@ function Write-AppPoolSharingReport {
         if (-not $otherFolder -or -not [System.IO.Directory]::Exists($otherFolder)) { continue }
         $otherConfigDir = Join-Path $otherFolder 'config'
         Write-Host "       Active bulk jobs of IIS application $($other.Location), with its files at '$($other.PhysicalPath)', which stops with the pool:" -ForegroundColor DarkGray
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $StagingPath | Out-Null
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $otherConfigDir -AppPath $StagingPath -PlanOnly:$PlanOnly | Out-Null
     }
 }
 
@@ -329,6 +346,7 @@ Write-Host "ExchangeAdminWeb - Deploy ($mode)" -ForegroundColor Magenta
 Write-Host "  Source  : $ProjectRoot" -ForegroundColor DarkGray
 Write-Host "  Publish : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray
+Write-Host "  Run     : $(if ($PlanOnly) { 'PLAN ONLY - reads only, nothing is changed' } else { 'APPLY' })" -ForegroundColor DarkGray
 Write-Host ""
 
 # --- The IIS application this run deploys to (cdt-36, cdt-42) ---
@@ -340,8 +358,8 @@ Write-Host ""
 # the move is intended (cdt-36). An upgrade never moves it, but the pool step and the ACL grants below
 # act on the pool and folder it names before the upgrade branch asks IIS which pool serves the
 # application, so an upgrade whose pool or folder does not serve it is refused here, before they run,
-# whatever the switches (cdt-42). Read-only, and it prints what it compared, so a plan mode could run
-# it as it is (this script has none). A lookup that fails refuses: the run cannot show that the pool
+# whatever the switches (cdt-42). Read-only, and it prints what it compared, so -PlanOnly runs it as
+# it is (sweep item 36). A lookup that fails refuses: the run cannot show that the pool
 # and folder it names are the ones serving the application.
 Write-Step "Checking IIS application $ParentSite/$AppAlias"
 $existingApplication = $null
@@ -399,6 +417,160 @@ if ($movesFolder) {
 # anything below writes.
 if (-not $isUpgrade -and $null -ne $existingApplication -and -not (Test-Path -LiteralPath $servingConfigPath)) {
     Write-Fail "IIS application $ParentSite/$AppAlias exists, but the folder it runs from has no appsettings.json ('$servingConfigPath'). Its running process may have been started with a ConfigStore:Path naming a shared config database: nothing on disk now says which database it opened, the appsettings.json this run would generate names none, and the restarted application would open a database of its own and leave the one it was using, with no verified backup of that one taken. Restore that appsettings.json - earlier deploys keep copies of it under '$(Join-Path $LogRoot 'ExchangeAdminWeb\ConfigBackups')' - or write one naming the ConfigStore:Path the application uses, so this run carries it over; or, if the application has no configuration to keep, remove it from IIS, or move it by hand, before re-running. Nothing was deployed."
+}
+
+# --- Plan mode (sweep item 36) ---
+
+# -PlanOnly stops here, after the read-only checks above, and before the first write below (the backup
+# folder). It prints every step the real run takes from here on, in order, and makes only that run's
+# reads: the app pool's identity, the db tool's paths and folder check, the config database's path, the
+# other applications the pool serves, which pool serves the application, and Assert-AppPoolServesPath.
+# A refusal one of those reads would make is printed (Write-PlanRefusal) and the plan goes on, so it
+# shows every step. Nothing is published, backed up, configured, granted, stopped, copied, started or
+# written, and nothing is prompted for. The real run below is unchanged.
+if ($PlanOnly) {
+    $script:planRefusals = 0
+    $planIsUpgrade = $isUpgrade
+
+    $planBackupDir = Join-Path $LogRoot "ExchangeAdminWeb\ConfigBackups"
+    $planStagingPath = "$PublishPath.staging.$timestamp"
+    Write-Step "Backups taken before anything is configured (plan)"
+    Write-Plan "Create the backup folder $planBackupDir if it is missing"
+    if ($Force -and (Test-Path -LiteralPath $configPath)) {
+        Write-Plan "Copy $configPath to $planBackupDir\appsettings.${timestamp}.pre-force.bak (-Force regenerates it)"
+    }
+    if ($movesFolder -and (Test-Path -LiteralPath $servingConfigPath)) {
+        Write-Plan "Copy $servingConfigPath, the appsettings.json the application runs on now, to $planBackupDir\appsettings.${timestamp}.pre-move.bak"
+    }
+
+    if (-not $planIsUpgrade) {
+        Write-Step "Collecting configuration values (plan)"
+        $unsupplied = @()
+        foreach ($name in 'EXOAppId', 'EXOOrganization', 'OnPremServerUri', 'OnPremTargetDomain', 'DelineaUrl', 'SmtpHost', 'AdminEmail', 'CloudTargetDomain') {
+            if (-not (Get-Variable -Name $name -ValueOnly)) { $unsupplied += $name }
+        }
+        if (-not $AllowedGroups -or $AllowedGroups.Count -eq 0) { $unsupplied += 'AllowedGroups' }
+        if (-not $AdminGroups -or $AdminGroups.Count -eq 0) { $unsupplied += 'AdminGroups' }
+        if ($unsupplied.Count -gt 0) {
+            Write-Plan "A real run prompts for $($unsupplied -join ', ') (with -NonInteractive they stay empty and fail validation), then validates every value and generates appsettings.json"
+        } else {
+            Write-Plan "Validate the supplied configuration values; they go into the appsettings.json the run generates"
+        }
+    }
+
+    Write-Step "Resolving app pool identity (plan)"
+    $planAccount = $ServiceAccount
+    $planNeedsPassword = $false
+    $planPoolExists = Test-Path "IIS:\AppPools\$AppPoolName"
+    if ($planPoolExists) {
+        # The real run's read, the same rule (cdt-24).
+        $planProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
+        $planExistingUser = $planProcessModel.userName
+        $planRunsAsUser = ("$($planProcessModel.identityType)" -in @('SpecificUser', '3')) -and -not [string]::IsNullOrWhiteSpace($planExistingUser)
+        if (-not $planAccount) {
+            if ($planRunsAsUser) {
+                $planAccount = $planExistingUser
+                Write-Plan "App pool $AppPoolName exists and runs as $planAccount; that account is kept"
+            } else {
+                Write-PlanRefusal "app pool $AppPoolName exists but does not run as a specific user (IIS reports identityType '$($planProcessModel.identityType)'), and no -ServiceAccount was given."
+            }
+        } elseif (-not $planRunsAsUser -or $planExistingUser -ne $planAccount) {
+            Write-Plan "App pool identity changes: '$planExistingUser' -> $planAccount"
+            $planNeedsPassword = $true
+        } else {
+            Write-Plan "App pool $AppPoolName exists and runs as $planAccount"
+        }
+    } else {
+        Write-Plan "App pool $AppPoolName does not exist; a real run creates it"
+        if (-not $planAccount) {
+            if ($NonInteractive) { Write-PlanRefusal "-ServiceAccount is required for a new app pool and -NonInteractive forbids the prompt." }
+            else { Write-Plan "A real run prompts for the service account" }
+        }
+        $planNeedsPassword = $true
+    }
+    if ($planNeedsPassword -and -not $ServiceAccountPassword) {
+        if ($NonInteractive) { Write-PlanRefusal "-ServiceAccountPassword is required (new pool or account change) and -NonInteractive forbids the prompt." }
+        else { Write-Plan "A real run prompts for the password of $planAccount" }
+    }
+
+    Write-Step "Configuring app pool, ACLs and the IIS application (plan)"
+    Write-Plan "$(if ($planPoolExists) { 'Update' } else { 'Create' }) app pool ${AppPoolName}: no managed runtime, loadUserProfile on, startMode AlwaysRunning, identity SpecificUser $planAccount$(if ($ServiceAccountPassword -or $planNeedsPassword) { ' with the password' } else { ' (credentials kept)' })"
+    Write-Plan "Grant $planAccount read on the private key of the newest certificate '$CertSubject' in LocalMachine\My, if there is one"
+    foreach ($folder in (Join-Path $LogRoot "ExchangeAdminWeb"), (Join-Path $PublishPath "logs"), (Join-Path $PublishPath "config")) {
+        Write-Plan "Create $folder if it is missing, and grant $planAccount (OI)(CI)M on it"
+    }
+    Write-Plan "Create IIS application $ParentSite/$AppAlias at $PublishPath under $AppPoolName if it does not exist; Windows Authentication on (kernel mode off, app pool credentials), the Negotiate provider removed, Anonymous Authentication off"
+
+    Write-Step "Publishing to staging (plan)"
+    Write-Plan "dotnet publish -c Release -o $planStagingPath (from $ProjectRoot)"
+    # The tool's paths, and what the sweep item 12 folder check would decide for the staging folder,
+    # judged by what it would inherit: nothing is published, so the folder is not there.
+    $planTool = Resolve-ConfigDbTool -AppPath $planStagingPath -PlanOnly
+    Write-Plan "Confirm the published build carries the config DB tool: $($planTool.Summary)"
+    Write-Plan $planTool.AclSummary
+
+    Write-Step "Backing up the runtime configuration (plan)"
+    $planRuntimeConfigDir = Join-Path $servingFolder "config"
+    $planConfigStorePathSetting = Get-ConfigStorePathSetting -PublishPath $servingFolder
+    $planConfigDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
+    $planDbPresent = Test-IsSqliteConfigDbPresent -DbPath $planConfigDbPath
+    if ($planConfigStorePathSetting -and -not $planDbPresent) {
+        Write-PlanRefusal "ConfigStore:Path names '$planConfigDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one)."
+    }
+    if ($planIsUpgrade) {
+        Write-Plan "Copy $configPath to $planBackupDir\appsettings.${timestamp}.bak"
+    }
+    if ($planIsUpgrade -or (Test-Path -LiteralPath $servingConfigPath) -or $planDbPresent) {
+        Write-Plan "Verified online backup of the config DB at $planConfigDbPath$(if ($planDbPresent) { '' } else { ' (not there yet: nothing to back up)' }), via $($planTool.Summary) backup, and a copy of the rest of $planRuntimeConfigDir without the live databases"
+    }
+
+    $planMovesApplication = $false
+    if (-not $planIsUpgrade) {
+        $planMovedOffPool = "$($existingApplication.applicationPool)"
+        $planMovesApplication = $AllowRepoint -and $null -ne $existingApplication -and
+            ($movesFolder -or -not [string]::Equals($planMovedOffPool, $AppPoolName, [System.StringComparison]::OrdinalIgnoreCase))
+        if ($planMovesApplication) {
+            Write-Host "       Active bulk jobs of the instance IIS runs today, under app pool '$planMovedOffPool' with its files at '$servingFolder': re-pointing the application interrupts them." -ForegroundColor DarkGray
+            Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $planRuntimeConfigDir -AppPath $planStagingPath -PlanOnly | Out-Null
+        }
+        Write-Plan "$(if ($existingApplication) { 'Point' } else { 'Create' }) IIS application $ParentSite/$AppAlias at $PublishPath under app pool $AppPoolName, with the authentication settings above"
+    }
+
+    Write-Step "Stopping app pool (plan)"
+    Write-AppPoolSharingReport -AppPoolName $AppPoolName -PublishPath $PublishPath -StagingPath $planStagingPath -PlanOnly
+    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $planRuntimeConfigDir -AppPath $planStagingPath -PlanOnly | Out-Null
+    if ($null -eq $existingApplication -or $planMovesApplication) {
+        # IIS does not show the application as the real run reads it here - it creates or moves it first.
+        Write-Plan "After the application is $(if ($existingApplication) { 'moved' } else { 'created' }): confirm IIS application $ParentSite/$AppAlias runs under $AppPoolName, and Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse (not read in this plan: IIS does not show that state yet)"
+    } else {
+        # The binding the real run reads before its stop (cdt-19), from the lookup above, and its
+        # serving-pool check (cdt-28, aud-a38j), made here as it is there.
+        $planBoundPool = "$($existingApplication.applicationPool)"
+        if (-not $planBoundPool) {
+            Write-PlanRefusal "cannot read which app pool serves IIS application $ParentSite/$AppAlias."
+        } elseif ($planBoundPool -ne $AppPoolName) {
+            Write-PlanRefusal "IIS application $ParentSite/$AppAlias runs under app pool '$planBoundPool', not '$AppPoolName'."
+        } else {
+            Write-Plan "IIS application $ParentSite/$AppAlias runs under app pool $AppPoolName"
+        }
+        try {
+            $planServed = @(Assert-AppPoolServesPath -Name $AppPoolName -PhysicalPath $PublishPath -NestedNodes Refuse)
+            Write-Plan "IIS serves $PublishPath from app pool $AppPoolName alone ($(@($planServed | ForEach-Object { "$($_.Location) under '$($_.ApplicationPool)'" }) -join '; ')), with nothing rooted inside it"
+        } catch {
+            Write-PlanRefusal $_.Exception.Message
+        }
+    }
+    Write-Plan "Stop app pool $AppPoolName, and refuse to deploy unless IIS confirms it Stopped"
+    Write-Plan "robocopy $planStagingPath $PublishPath /MIR /XF appsettings*.json /XD logs config (exit 8 or more fails the deploy)"
+    Write-Plan "$(if ($planIsUpgrade) { 'Reconcile the configuration: warnings only, appsettings.json is not changed' } else { "Generate appsettings.json at $configPath$(if ($planConfigStorePathSetting) { ", keeping ConfigStore:Path $planConfigStorePathSetting" })" })"
+    Write-Plan "Start app pool $AppPoolName and confirm IIS reports it Started; write the deployment manifest to $PublishPath"
+    Write-Plan "Remove the staging folder $planStagingPath"
+    Write-Plan "Post-deploy checks: drift in $planRuntimeConfigDir and appsettings.json, and PRAGMA integrity_check of $planConfigDbPath"
+
+    Write-Host ""
+    Write-Host "Plan complete ($mode): nothing was published, configured, stopped, copied or written. $planRefusals refusal(s) a real run would make, marked '!' above." -ForegroundColor Green
+    Write-Host ""
+    return
 }
 
 # --- Backups taken before anything is configured ---

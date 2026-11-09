@@ -734,24 +734,52 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
         }
 
-        It 'in a dry run prints the plan line first and reads nothing from IIS' {
+        It 'sweep item 36: in a dry run prints the plan lines first, then makes the same IIS reads and prints their answers, reading no jobs with the tool' {
             Set-Variable -Name Apply -Value $false
-            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' } -Others {
+                $script:promoteEvents.Add('other-applications probe')
+                [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = 'X:\prod' }
+                [pscustomobject]@{ Location = 'Web/reports'; ApplicationPool = 'aud-a38b-prod'; PhysicalPath = $TestDrive }
+            }
 
             Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
-            $script:promoteEvents | Should -Not -Contain 'other-applications probe' -Because "this script's dry run reads nothing from IIS"
-            @($script:promoteEvents | Where-Object { $_ -like 'said: *' }) | Should -BeNullOrEmpty
             $plans = @($script:promoteEvents | Where-Object { $_ -like 'plan: *' })
             $plans[0] | Should -BeExactly 'plan: Get-AppPoolOtherApplication -Name aud-a38b-prod -PhysicalPath X:\prod (name the IIS applications this pool serves besides prod, which stop with it, and read their active bulk jobs)'
             $plans[1] | Should -BeLike 'plan: Assert-AppPoolServesPath -Name aud-a38b-prod *'
+            $script:promoteEvents.IndexOf('other-applications probe') | Should -BeGreaterThan $script:promoteEvents.IndexOf($plans[-1])
+            @($script:promoteEvents | Where-Object { $_ -like 'jobs: *' }) | Should -Be @('jobs: X:\prod\config X:\dev PlanOnly=True', "jobs: $(Join-Path $TestDrive 'config') X:\dev PlanOnly=True") -Because 'the other application''s jobs are a plan line too: a dry run runs no db tool'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
         }
 
-        It 'reports once, straight after the step line of the apply path, before the jobs, the folder check and the stop (AST)' {
+        It 'sweep item 36: in a dry run that cannot read IIS, says the checks were not run and reads nothing' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+            Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod' -PlanIisUnavailable 'this session is not elevated'
+            $script:promoteEvents | Should -Not -Contain 'other-applications probe'
+            $script:promoteEvents | Should -Not -Contain 'applications probe'
+            ($script:promoteEvents -join "`n") | Should -BeLike '*said:*IIS checks before the stop were NOT run in this dry run: this session is not elevated*'
+        }
+
+        It 'sweep item 36: in a dry run prints a refusal the real run would make, and throws nothing' {
+            Set-Variable -Name Apply -Value $false
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' } -Serving {
+                $script:promoteEvents.Add('applications probe')
+                [pscustomobject]@{ Location = 'Web/prod'; ApplicationPool = 'aud-a38c-real-prod'; PhysicalPath = 'X:\prod' }
+            }
+            { Stop-AppPoolChecked -Name 'aud-a38b-prod' -PublishPath 'X:\prod' } | Should -Not -Throw
+            ($script:promoteEvents -join "`n") | Should -BeLike "*said:*a real promotion REFUSES here, before stopping anything*Web/prod runs under 'aud-a38c-real-prod'*"
+        }
+
+        It 'reports once in the apply path, straight after its step line, before the jobs, the folder check and the stop (AST)' {
             $stop = Get-PromoteFunction 'Stop-AppPoolChecked'
             $reports = @(Get-PromoteCommand 'Write-AppPoolSharingReport')
-            $reports.Count | Should -Be 1 -Because 'the promotion reports once, in its one stop step'
-            $reports[0].Extent.Text | Should -BeExactly 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath'
+            # Sweep item 36: and once in the dry run, with -PlanOnly.
+            $reports.Count | Should -Be 2 -Because 'the promotion reports once in each path of its one stop step'
+            @($reports | Where-Object { $_.Extent.Text -eq 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath -PlanOnly' }).Count | Should -Be 1
+            $reports = @($reports | Where-Object { $_.Extent.Text -eq 'Write-AppPoolSharingReport -Name $Name -PublishPath $PublishPath -AppPath $AppPath' })
+            $reports.Count | Should -Be 1
             $statements = @($stop.Body.EndBlock.Statements)
             $at = [array]::IndexOf($statements, $reports[0].Parent)
             $at | Should -BeGreaterThan 0 -Because 'the call is a statement of the stop step itself, not of a branch or a block'
@@ -807,13 +835,15 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
             $exists | Should -BeGreaterThan $binding
         }
 
-        It 'in a dry run prints the check and reads nothing from IIS' {
+        It 'sweep item 36: in a dry run prints the check, then makes it and prints the answer, and stops nothing' {
             Set-Variable -Name Apply -Value $false
-            $PSDefaultParameterValues = New-PoolProbe -Exists { $true } -State { 'Stopped' }
+            $PSDefaultParameterValues = New-PoolProbe -Exists { $script:promoteEvents.Add('exists probe'); $true } -State { 'Stopped' }
 
             Stop-AppPoolChecked -Name 'aud-a38b-prod' -ConfigDir 'X:\prod\config' -AppPath 'X:\dev' -PublishPath 'X:\prod'
 
-            $script:promoteEvents | Should -Not -Contain 'applications probe'
+            $script:promoteEvents | Should -Contain 'applications probe' -Because 'the dry run makes the real run''s read-only IIS check'
+            $script:promoteEvents | Should -Not -Contain 'exists probe'
+            $script:promoteEvents | Should -Not -Contain 'verified stop: aud-a38b-prod'
             # aud-a38j: the plan line states the rule the promotion applies, nested nodes included.
             @($script:promoteEvents | Where-Object { $_ -like 'plan: Assert-AppPoolServesPath *' }) |
                 Should -Be @('plan: Assert-AppPoolServesPath -Name aud-a38b-prod -PhysicalPath X:\prod -NestedNodes Refuse (refuse unless IIS serves that folder from this pool and no other, and nothing else is rooted inside it: the mirror replaces the whole folder)')
@@ -875,17 +905,20 @@ Describe 'aud-a38b: the promotion confirms its pool stopped before mirroring ove
         }
 
         It 'checks the folder the mirror replaces, inside the stop step, before the stop' {
+            # Sweep item 36: twice - the dry run's read and the real run's - both inside the stop step.
             $checks = @(Get-PromoteCommand 'Assert-AppPoolServesPath')
-            $checks.Count | Should -Be 1
-            $checks[0].Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse'
+            $checks.Count | Should -Be 2
+            foreach ($check in $checks) { $check.Extent.Text | Should -Be 'Assert-AppPoolServesPath -Name $Name -PhysicalPath $PublishPath -NestedNodes Refuse' }
 
             $stopStep = Get-PromoteFunction 'Stop-AppPoolChecked'
             $verified = @(Get-PromoteCommand 'Stop-AppPoolVerified')[0]
-            $checks[0].Extent.StartOffset | Should -BeGreaterThan $stopStep.Extent.StartOffset
-            $checks[0].Extent.EndOffset | Should -BeLessThan $verified.Extent.StartOffset
+            foreach ($check in $checks) {
+                $check.Extent.StartOffset | Should -BeGreaterThan $stopStep.Extent.StartOffset
+                $check.Extent.EndOffset | Should -BeLessThan $verified.Extent.StartOffset
+            }
 
             # ... and the folder it is handed is the one the mirror writes into.
-            @(Get-PromoteCommand 'Stop-AppPoolChecked')[0].Extent.Text | Should -Match '-PublishPath \$prod$'
+            @(Get-PromoteCommand 'Stop-AppPoolChecked')[0].Extent.Text | Should -Match '-PublishPath \$prod\b'
         }
     }
 
@@ -1459,9 +1492,16 @@ Describe 'aud-a38d: the promotion refuses to run where it cannot see the app poo
         foreach ($helper in $helpers) { . ([scriptblock]::Create($helper.Extent.Text)) }
     }
 
-    It 'imports WebAdministration once, in the apply path' {
-        $script:Imports.Count | Should -Be 1
-        $script:Imports[0].Extent.Text | Should -Be 'Import-Module WebAdministration -ErrorAction Stop'
+    It 'imports WebAdministration in the apply path, and in the dry run only to make its IIS reads (sweep item 36)' {
+        $script:Imports.Count | Should -Be 2
+        foreach ($import in $script:Imports) { $import.Extent.Text | Should -Be 'Import-Module WebAdministration -ErrorAction Stop' }
+        # The first is the apply path's, which the drive guard below follows.
+        $applyBranch = $script:Imports[0].Parent
+        while ($applyBranch -and -not ($applyBranch -is [System.Management.Automation.Language.IfStatementAst])) { $applyBranch = $applyBranch.Parent }
+        $applyBranch.Clauses[0].Item1.Extent.Text | Should -Be '$Apply'
+        # The dry run's records why IIS cannot be read instead of refusing.
+        $dryRun = $script:Imports[1].Parent.Parent
+        $dryRun.Extent.Text | Should -Match 'planIisUnavailable = .the IIS: drive is unavailable'
     }
 
     It 'checks for the IIS: drive straight after the import, and refuses through Write-Fail' {

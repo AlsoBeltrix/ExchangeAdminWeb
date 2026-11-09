@@ -28,6 +28,12 @@
     # Build and deploy to dev. Validate at https://<server>/ExchangeAdminWebDev
 
 .EXAMPLE
+    .\deploy-pipeline.ps1 -Dev -PlanOnly
+    # PLAN of the dev deploy (sweep item 36): runs deploy.ps1 -PlanOnly, which prints every
+    # step and makes only the read-only checks (IIS lookups, which pool serves the folder, the
+    # db tool's folder check). Nothing is built, published, stopped or written.
+
+.EXAMPLE
     .\deploy-pipeline.ps1 -Prod
     # Promote current dev to prod. Does not rebuild - uses what's already deployed in dev.
 
@@ -165,24 +171,26 @@ if ($Dev) {
     Write-Host "=== Build and deploy to dev ===" -ForegroundColor Magenta
     Write-Host ""
 
+    # deploy.ps1 signals failure by throwing (Write-Fail). Do not gate on
+    # $LASTEXITCODE here: after a successful run it holds the last native
+    # command's exit code (robocopy returns 1-3 on success), so any
+    # exit-code comparison misclassifies script-to-script invocation.
+    # Sweep item 36: -PlanOnly runs deploy.ps1's own plan mode - every step printed, only the
+    # reads run - where it used to skip the dev deploy entirely.
+    & $deployScript `
+        -ParentSite "Default Web Site" `
+        -AppAlias "ExchangeAdminWebDev" `
+        -AppPoolName $DevAppPool `
+        -PublishPath $DevPath `
+        -PathBase $DevPathBase `
+        -LogRoot $LogRoot `
+        -NonInteractive `
+        -PlanOnly:$PlanOnly
+
     if ($PlanOnly) {
-        Write-Host "PLAN  Would run: deploy.ps1 -ParentSite 'Default Web Site' -AppAlias ExchangeAdminWebDev -AppPoolName $DevAppPool -PublishPath $DevPath -PathBase $DevPathBase -LogRoot $LogRoot -NonInteractive" -ForegroundColor DarkGray
-        Write-Warn "deploy.ps1 has no native plan mode yet; -PlanOnly skips the dev deploy entirely."
+        Write-Ok "Dev deploy PLAN complete. Re-run with -Dev (without -PlanOnly) to apply."
     }
     else {
-        # deploy.ps1 signals failure by throwing (Write-Fail). Do not gate on
-        # $LASTEXITCODE here: after a successful run it holds the last native
-        # command's exit code (robocopy returns 1-3 on success), so any
-        # exit-code comparison misclassifies script-to-script invocation.
-        & $deployScript `
-            -ParentSite "Default Web Site" `
-            -AppAlias "ExchangeAdminWebDev" `
-            -AppPoolName $DevAppPool `
-            -PublishPath $DevPath `
-            -PathBase $DevPathBase `
-            -LogRoot $LogRoot `
-            -NonInteractive
-
         Write-Host ""
         Write-Ok "Dev deployment complete at $DevPath"
         Write-Host "Validate: https://<server>$DevPathBase" -ForegroundColor Cyan
