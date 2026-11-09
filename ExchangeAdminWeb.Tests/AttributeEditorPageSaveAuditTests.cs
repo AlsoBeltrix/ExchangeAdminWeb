@@ -159,6 +159,25 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
         Assert.Empty(_h.Ad.Sets);
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // record carries, the ticket with the character removed.
+    [Fact]
+    public async Task ASaveWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var alex = _h.Ad.AddAlex();
+        var page = PageShowing(alex, Title());
+        SetField(page, "ticketNumber", TicketPresenceTests.WithZeroWidthSpace(Ticket));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await ConfirmSave(page);
+
+        var shown = Shown(page);
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", shown.Message);
+        AssertRefusal(Assert.Single(_h.AuditEvents()), "TicketValidation", alex.Upn, shown.Message);
+        Assert.Single(requests);
+    }
+
 
     [Fact]
     public async Task AnAuthorizationRefusal_LeavesOneRefusalRecord_AndOpensNoDirectorySession()

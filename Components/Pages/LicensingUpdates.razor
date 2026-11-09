@@ -369,7 +369,7 @@
         // on. The licences had already been changed and the required admin notification was
         // silently dropped. The ticket would have been empty by then too.
         var preview = previewResult;
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         await Task.Yield();
 

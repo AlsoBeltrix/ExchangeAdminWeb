@@ -504,7 +504,7 @@
 
         // kd-72. The ticket too: the box binds on input, and it was read after the yield - into both refusal
         // records, SaveAsync's audit row and notice, and the catch's record and email.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         // Audit finding A14. The PRINCIPAL too, not just its label. A search running
         // concurrently nulls lookupResult and then replaces it with a different user, and

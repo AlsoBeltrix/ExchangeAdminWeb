@@ -87,7 +87,7 @@ public sealed class BlockedSendersSubmittedUnblockTests : IDisposable
     // Sweep item 41. The unblock's ticket was gated only by the Confirm button's markup: it is now checked behind the button -
     // presence by the shared rule, then ServiceNow where enabled - before the authorization re-check, and the refusal is
     // recorded as this page's other refusals are, with the refusal fields.
-    public static TheoryData<string> UnusableTickets => ["", "   ", "INC" + (char)0x200B + "0001"];
+    public static TheoryData<string> UnusableTickets => ["", "   ", ((char)0x200B).ToString()]; // a zero-width space alone: nothing visible once sanitized
 
     [Theory]
     [MemberData(nameof(UnusableTickets))]
@@ -121,6 +121,23 @@ public sealed class BlockedSendersSubmittedUnblockTests : IDisposable
         Assert.Equal($"Ticket validation failed: Ticket {TicketA} not found in ServiceNow", Text(row, "error"));
         Assert.Single(requests);
         Assert.Empty(_authorization.ReceivedCalls());
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is checked and recorded with the character removed.
+    [Fact]
+    public async Task AnUnblockWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var page = PageFor();
+        SetField(page, "ticketNumber", TicketPresenceTests.WithZeroWidthSpace(TicketA));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        Set(page, "ServiceNow", serviceNow);
+
+        await Call(page, "ConfirmUnblock");
+
+        var row = Assert.Single(AuditRows(_temp.Path));
+        Assert.Equal($"Ticket validation failed: Ticket {TicketA} not found in ServiceNow", Text(row, "error"));
+        Assert.Equal(TicketA, Text(row, "ticket"));
+        Assert.Single(requests);
     }
 
     private Page PageFor()

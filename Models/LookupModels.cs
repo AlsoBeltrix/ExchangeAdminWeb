@@ -265,7 +265,7 @@ public class OutOfOfficeResult
 /// Immutable on purpose: the write, the audit row and the notifications all read this one value,
 /// so an edit to the form while the operation is in flight cannot reach any of them.
 /// <see cref="FromForm"/> applies the page's own rules exactly once - messages only when the state
-/// is not Disabled, a schedule only when it is Scheduled, mailbox and ticket trimmed.
+/// is not Disabled, a schedule only when it is Scheduled, mailbox trimmed, ticket sanitized (TicketPresence.Sanitize).
 /// <para>
 /// aud-a7e. <see cref="StartTime"/> and <see cref="EndTime"/> are wall-clock times as the operator
 /// typed them, and <see cref="ScheduleZone"/> is the zone they were typed in - the operator's
@@ -301,7 +301,7 @@ public sealed record OutOfOfficeRequest(
             StartTime: state == "Scheduled" ? WallClock(startTime) : null,
             EndTime: state == "Scheduled" ? WallClock(endTime) : null,
             ScheduleZone: state == "Scheduled" ? scheduleZone : null,
-            Ticket: (ticket ?? "").Trim());
+            Ticket: ExchangeAdminWeb.Services.TicketPresence.Sanitize(ticket));
 
     /// <summary>
     /// The instant a wall-clock time names in <paramref name="zone"/>, as UTC - or null when it names

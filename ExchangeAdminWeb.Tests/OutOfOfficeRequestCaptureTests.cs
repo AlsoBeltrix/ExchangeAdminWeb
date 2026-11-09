@@ -507,7 +507,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
     // Sweep item 41. The ticket was gated only by the Set button's markup: it is now checked behind the button - presence by
     // the shared rule, then ServiceNow where enabled - before the target check, and the refusal is recorded as this page's
     // other refusals are, with the refusal fields. Nothing is read or written.
-    public static TheoryData<string> UnusableTickets => ["", "   ", "INC" + (char)0x200B + "0001"];
+    public static TheoryData<string> UnusableTickets => ["", "   ", ((char)0x200B).ToString()]; // a zero-width space alone: nothing visible once sanitized
 
     [Theory]
     [MemberData(nameof(UnusableTickets))]
@@ -538,6 +538,24 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         Assert.Empty(_setCalls);
         var row = SingleRow(AuditRows(), "OutOfOffice_Denied");
         Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", row.GetProperty("error").GetString());
+        Assert.Single(requests);
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is checked and recorded with the character removed.
+    [Fact]
+    public async Task ASetWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (page, _) = BuildPage("write");
+        SetField(page, "ticketNumber", TicketPresenceTests.WithZeroWidthSpace(Ticket));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await SetOof(page);
+
+        Assert.Empty(_setCalls);
+        var row = SingleRow(AuditRows(), "OutOfOffice_Denied");
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", row.GetProperty("error").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
         Assert.Single(requests);
     }
 

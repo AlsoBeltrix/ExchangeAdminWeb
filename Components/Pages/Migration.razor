@@ -1974,7 +1974,7 @@
         // controls reach the browser's disabled state a round trip late.
         var email = singleEmail;
         var direction = singleMigrationDirection;
-        var ticket = singleTicketNumber;
+        var ticket = TicketPresence.Sanitize(singleTicketNumber);
 
         isLoading = true;
         singleResult = null;
@@ -2040,7 +2040,7 @@
         // yield - into the batch, its audit rows and the notice - and the direction select and the ticket box are
         // not disabled while a create runs, so a change landing there created a batch nobody submitted.
         var direction = singleMigrationDirection;
-        var ticket = singleTicketNumber;
+        var ticket = TicketPresence.Sanitize(singleTicketNumber);
         var batchName = singleBatchName;
         var autoStart = singleAutoStart;
         var autoComplete = singleAutoComplete;
@@ -2139,7 +2139,7 @@
         // and the ticket were read after it, into the check, its audit rows and the notice.
         var file = csvFile;
         var direction = migrationDirection;
-        var ticket = bulkTicketNumber;
+        var ticket = TicketPresence.Sanitize(bulkTicketNumber);
 
         isLoading = true;
         bulkResult = null;
@@ -2205,7 +2205,7 @@
         // kd-72. What this create writes and records, read once, above the first await, as in
         // CreateSingleMigrationBatch: the direction select and the ticket box are not disabled while a create runs.
         var direction = migrationDirection;
-        var ticket = bulkTicketNumber;
+        var ticket = TicketPresence.Sanitize(bulkTicketNumber);
         var batchName = bulkBatchName;
         var autoStart = bulkAutoStart;
         var autoComplete = bulkAutoComplete;
@@ -3349,7 +3349,7 @@
         confirmedScheduleUtc = PendingScheduleUtc;
 
         var callback = pendingActionCallback;
-        var ticket = pendingActionTicket.Trim();
+        var ticket = TicketPresence.Sanitize(pendingActionTicket);
         CancelPendingAction();
         await callback(ticket);
     }

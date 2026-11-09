@@ -156,7 +156,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
     // Sweep item 41. The undo's ticket was its only gate's to judge - Confirm's markup, and a blank-ticket return here that left
     // no record. It is now checked behind the button - presence by the shared rule, then ServiceNow where enabled - before the
     // authorization re-check, and the refusal is the module's own refused-undo record, refusedAt TicketValidation.
-    public static TheoryData<string> UnusableTickets => ["", "   ", "CHG" + (char)0x200B + "0300"];
+    public static TheoryData<string> UnusableTickets => ["", "   ", ((char)0x200B).ToString()]; // a zero-width space alone: nothing visible once sanitized
 
     [Theory]
     [MemberData(nameof(UnusableTickets))]
@@ -194,6 +194,24 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", Text(record, "error"));
         Assert.Single(requests);
         Assert.Empty(_authorization.ReceivedCalls());
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is checked and recorded with the character removed.
+    [Fact]
+    public async Task AnUndoWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var alex = _h.Ad.AddAlex(title: "Lead Analyst");
+        var page = PageConfirming(AttributeEditorHarness.ForwardEdit(alex, "title", from: "Analyst", to: "Lead Analyst"));
+        SetField(page, "undoTicket", TicketPresenceTests.WithZeroWidthSpace(Ticket));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await ExecuteUndo(page);
+
+        var record = Assert.Single(_h.AuditEvents());
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", Text(record, "error"));
+        Assert.Equal(Ticket, Text(record, "ticket"));
+        Assert.Single(requests);
     }
 
     [Theory]

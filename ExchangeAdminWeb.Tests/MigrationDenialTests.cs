@@ -419,4 +419,24 @@ public sealed class MigrationDenialTests : IDisposable
 
         Assert.Equal("CompleteMigrationBatch_Denied", OneTicketRefusal().GetProperty("action").GetString());
     }
+
+    // Decision 2026-11-09: the confirm bar's ticket pasted with a zero-width space reaches the action sanitized - ServiceNow
+    // is asked about, and the refusal row carries, the ticket with the character removed.
+    [Fact]
+    public async Task AConfirmWithATicketTypedWithAZeroWidthSpace_ReachesTheActionSanitized()
+    {
+        var page = Page(deny: null);
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        Set(page, "ServiceNow", serviceNow);
+        typeof(ExchangeAdminWeb.Components.Pages.Migration).GetMethod("CompleteBatch", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(page, [Batch]);
+        Field("pendingActionTicket").SetValue(page, TicketPresenceTests.WithZeroWidthSpace(Ticket));
+
+        await Call(page, "ConfirmPendingAction");
+
+        Assert.Single(requests);
+        var row = OneTicketRefusal();
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", row.GetProperty("error").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+    }
 }
