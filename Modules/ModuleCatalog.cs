@@ -1784,7 +1784,9 @@ public sealed class ModuleCatalog
             // 1.3.1: an Ignore of a protected group found missing stops that group refusing writes while the directory
             // confirms it is gone, still looked up on every check; a non-ignored one's refusal says "run Verify on Admin
             // Settings"; the pane note and the Ignore and missing tips say so (docs/DirectoryObjectVerify-Plan.md B.4, slice V2).
-            Version = "1.3.2",
+            // 1.3.3: help sweep - the Protected principals note, the Verify note, and the Verify button, badge and action tips cut to
+            // what an operator acts on; the two credential fields' help to one sentence each.
+            Version = "1.3.3",
             MainPermission = new(
                 "Access",
                 "AdminSettings",
