@@ -30,6 +30,31 @@ function Initialize-TightTestFolder {
     return $Path
 }
 
+function Use-TempAncestryStandIn {
+    # Finding rev-f1: the folder check reads every folder above the app folder, up to the volume
+    # root, and refuses when anyone outside the trusted set can replace what is below it. The suites'
+    # folders all sit under the temp directory, and the folders from the temp directory up are the
+    # host's: on the dev host other accounts hold Modify there, so every real tool run here would be
+    # refused for a reason that is not the test's. Call this inside a Pester block (BeforeAll): the
+    # ACL reads of the temp directory and the folders above it are answered with an in-memory one
+    # owned by SYSTEM that grants nothing. Every folder a test creates under the temp directory is
+    # still read for real, so a test can still put a grant on a fixture's parent and see it refused.
+    Import-Module (Join-Path $PSScriptRoot '..\..\tools\ToolFolderAcl.psm1')
+    # Every other read goes to the real cmdlet: this Pester does not fall through to it when only
+    # filtered mocks exist.
+    Mock -ModuleName ToolFolderAcl Get-Acl -MockWith { Microsoft.PowerShell.Security\Get-Acl @PesterBoundParameters }
+    Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter {
+        $temp = [System.IO.Path]::GetTempPath().TrimEnd('\')
+        $asked = ([string]$LiteralPath).TrimEnd('\')
+        $asked -and ($temp.Equals($asked, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $temp.StartsWith($asked + '\', [System.StringComparison]::OrdinalIgnoreCase))
+    } -MockWith {
+        $security = [System.Security.AccessControl.DirectorySecurity]::new()
+        $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+        $security
+    }
+}
+
 function Get-TightAppCopy {
     # The build output at $Source, copied into a Initialize-TightTestFolder under the temp directory. One
     # folder per source folder, reused while the build in it is unchanged.

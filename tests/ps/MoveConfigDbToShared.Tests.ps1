@@ -11,6 +11,7 @@ prints every step and must change nothing, and the refusals happen before any st
 
 BeforeAll {
     . (Join-Path $PSScriptRoot 'Get-BuiltApp.ps1')
+    Use-TempAncestryStandIn
     $script:AppPath = Get-BuiltApp
 
     $script:ScriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' 'tools' 'Move-ConfigDbToShared.ps1')).Path

@@ -946,7 +946,9 @@ environments; it is intentionally separate from the standalone installer.
 `-PlanOnly` means the same in each ops script: every step is printed, and the read-only checks the
 real run makes before it stops anything are made and their answers printed - the IIS application
 and pool lookups, which pool serves the folder (`Assert-AppPoolServesPath`), the other applications
-the pool serves, the config database's path and the db tool's folder check. A refusal one of those
+the pool serves, the config database's path and the db tool's folder check (the app folder, what is
+in it, and every folder above it up to the drive root: `docs/ConfigDbOperations.md`, "Who can change
+the app folder"). A refusal one of those
 checks would make is printed and the plan goes on; nothing is published, backed up, configured,
 stopped, copied or written. `deploy-pipeline.ps1 -Dev -PlanOnly` runs `deploy.ps1 -PlanOnly`; the
 promotion's dry run makes its IIS checks before the stop; a cutover plan on a host already cut over

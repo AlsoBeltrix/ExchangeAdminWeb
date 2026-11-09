@@ -32,9 +32,21 @@
     CREATOR GROUP placeholders, which grant nothing until a new object is created - and creating
     one needs a write right that is checked itself.
 
-    Not checked: the folders ABOVE the app folder. A principal who can rename a parent folder can
-    put another folder in this one's place between this check and the run. Those rights are the
-    host's, and are named as an owner check in the sweep-g record rather than read here.
+    The folders ABOVE the app folder are read too, every one up to the root of the volume
+    (finding rev-f1): a principal who can delete or rename what is in a parent folder can put
+    another folder in the app folder's place between this check and the run, and the elevated
+    tool loads whatever is there then. A parent is safe when it is owned by the trusted set and
+    no other principal holds, on the parent itself (inherited or not, inheritable or not), a
+    right that can replace what is below it: delete child, delete, change permissions, take
+    ownership or generic all. Write data and append data on a parent only add new entries next
+    to the app folder, so they are not findings there. The trusted set is the same as for the
+    app folder: the app pool's identity is not trusted with these rights on a parent either,
+    because a pool identity that can replace the folder can change the code the elevated tool
+    runs. A parent whose permissions or owner cannot be read is refused, naming it. For a
+    folder not created yet, the folders above it that exist are read the same way.
+
+    Not checked: where a junction or symbolic link in the path leads. The folders read are the
+    ones the path names.
 
     Pure ASCII and Windows PowerShell 5.1-compatible: deploy.ps1 imports this (through
     SqliteConfigBackup.psm1) under 5.1.
@@ -46,6 +58,11 @@ $ErrorActionPreference = 'Stop'
 # WriteData 0x2, AppendData 0x4, DeleteSubdirectoriesAndFiles 0x40, Delete 0x10000,
 # ChangePermissions 0x40000, TakeOwnership 0x80000, GENERIC_ALL 0x10000000, GENERIC_WRITE 0x40000000.
 $script:ContentChangingRights = 0x2 -bor 0x4 -bor 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+
+# The rights on a folder ABOVE the app folder that can replace what is below it (rev-f1):
+# DeleteSubdirectoriesAndFiles 0x40, Delete 0x10000 (rename the parent itself away),
+# ChangePermissions 0x40000, TakeOwnership 0x80000, GENERIC_ALL 0x10000000.
+$script:ReplacementRights = 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000
 
 # The runtime-data folders at the top of an app folder: written by the app pool's identity on
 # purpose, and holding no code the db tool loads.
@@ -138,6 +155,64 @@ function Get-ObjectWriteExposure {
     }
 }
 
+function Get-ParentChainExposure {
+    # Private (rev-f1). The owner and every allow entry on $FirstParent and on each folder above it,
+    # up to the root of the volume, that lets a principal outside the trusted set replace what is
+    # below it. $Below is the folder being judged, named in the error when a parent cannot be read.
+    param(
+        [Parameter(Mandatory)][string]$FirstParent,
+        [Parameter(Mandatory)][string]$Below,
+        [Parameter(Mandatory)][string[]]$TrustedSid
+    )
+
+    $parent = $FirstParent
+    while ($parent) {
+        try {
+            $acl = Get-Acl -LiteralPath $parent -ErrorAction Stop
+            $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+            $rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
+        } catch {
+            throw "The permissions of $parent, a folder above $Below, cannot be read ($($_.Exception.Message)); whoever can replace a folder above the app folder can replace the code in it."
+        }
+        if ($null -eq $owner) {
+            throw "The owner of $parent, a folder above $Below, cannot be read; whoever owns a folder above the app folder can replace the code in it."
+        }
+        if ($TrustedSid -notcontains $owner.Value) {
+            [pscustomobject]@{
+                Path      = $parent
+                Principal = ConvertTo-PrincipalName $owner
+                Sid       = $owner.Value
+                Rights    = 'owner (can change the permissions at any time)'
+                Inherited = $false
+                Kind      = 'ParentOwner'
+            }
+        }
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+            $sid = [string]$rule.IdentityReference.Value
+            if ($sid -eq 'S-1-3-0' -or $sid -eq 'S-1-3-1') { continue }
+            if ($TrustedSid -contains $sid) { continue }
+            # An inherit-only entry does not apply to the parent itself; what it passes down to a
+            # folder below is read on that folder.
+            if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+
+            $mask = [int64][int]$rule.FileSystemRights
+            if ($mask -lt 0) { $mask += 4294967296 }
+            if (($mask -band $script:ReplacementRights) -eq 0) { continue }
+
+            [pscustomobject]@{
+                Path      = $parent
+                Principal = ConvertTo-PrincipalName $rule.IdentityReference
+                Sid       = $sid
+                Rights    = [string]$rule.FileSystemRights
+                Inherited = [bool]$rule.IsInherited
+                Kind      = 'ParentGrant'
+            }
+        }
+        $parent = Split-Path -Parent $parent
+    }
+}
+
 function Get-ToolFolderWriteExposure {
     <#
     .SYNOPSIS
@@ -145,9 +220,11 @@ function Get-ToolFolderWriteExposure {
         administrators, SYSTEM, TrustedInstaller or the current account change its code.
 
     .DESCRIPTION
-        Reads the folder, then every file and folder under it except the config\ and logs\ folders
-        at its top (see the module description). Each finding is an object: Path, Principal, Sid,
-        Rights, Inherited, Kind ('Owner' or 'Grant'). Nothing returned means the folder is safe.
+        Reads every folder above it up to the root of the volume (rev-f1), then the folder, then
+        every file and folder under it except the config\ and logs\ folders at its top (see the
+        module description). Each finding is an object: Path, Principal, Sid, Rights, Inherited,
+        Kind ('Owner' or 'Grant' in the folder; 'ParentOwner' or 'ParentGrant' above it). Nothing
+        returned means the folder is safe.
 
         THROWS when the folder is not there or anything in it cannot be read: a folder whose
         permissions cannot be shown is not a folder shown to be safe, so a caller refuses then too.
@@ -163,6 +240,10 @@ function Get-ToolFolderWriteExposure {
     $root = (Get-Item -LiteralPath $Path -Force -ErrorAction Stop).FullName.TrimEnd('\')
     $skipped = @($script:RuntimeDataFolders | ForEach-Object { Join-Path $root $_ })
 
+    $above = Split-Path -Parent $root
+    if ($above) {
+        Get-ParentChainExposure -FirstParent $above -Below $root -TrustedSid $trusted
+    }
     Get-ObjectWriteExposure -LiteralPath $root -TrustedSid $trusted
     foreach ($item in @(Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop)) {
         $full = $item.FullName
@@ -187,9 +268,11 @@ function Get-ToolFolderInheritedWriteExposure {
 
     .DESCRIPTION
         The plan-mode answer for a folder a run creates (a staging publish). Reads the nearest
-        existing ancestor and returns its inheritable allow entries that the trusted set does not
-        cover, in the shape Get-ToolFolderWriteExposure returns. The new folder's owner is whoever
-        creates it, so no owner finding is made. Throws when no ancestor exists or it cannot be read.
+        existing ancestor and returns, in the shape Get-ToolFolderWriteExposure returns, the owner
+        and the entries on that ancestor and every folder above it that could replace the new
+        folder (rev-f1), then the ancestor's inheritable allow entries that the trusted set does not
+        cover. The new folder's owner is whoever creates it, so no owner finding is made for it.
+        Throws when no ancestor exists or any of them cannot be read.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -201,7 +284,9 @@ function Get-ToolFolderInheritedWriteExposure {
     if (-not $ancestor) {
         throw "No folder above $Path exists, so what it would inherit cannot be read."
     }
-    Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid (Get-ToolFolderTrustedSid) -InheritableOnly
+    $trusted = Get-ToolFolderTrustedSid
+    Get-ParentChainExposure -FirstParent $ancestor -Below $Path -TrustedSid $trusted
+    Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid $trusted -InheritableOnly
 }
 
 function Format-ToolFolderWriteExposure {
@@ -215,8 +300,9 @@ function Format-ToolFolderWriteExposure {
 
     $all = @($Exposure)
     $shown = @($all | Select-Object -First 5 | ForEach-Object {
-            $how = if ($_.Kind -eq 'Owner') { 'is the owner of' } elseif ($_.Inherited) { "holds $($_.Rights) (inherited) on" } else { "holds $($_.Rights) on" }
-            "$($_.Principal) $how $($_.Path)"
+            $how = if ($_.Kind -eq 'Owner' -or $_.Kind -eq 'ParentOwner') { 'is the owner of' } elseif ($_.Inherited) { "holds $($_.Rights) (inherited) on" } else { "holds $($_.Rights) on" }
+            $where = if ($_.Kind -eq 'ParentOwner' -or $_.Kind -eq 'ParentGrant') { ', a folder above the app folder, so can replace it' } else { '' }
+            "$($_.Principal) $how $($_.Path)$where"
         })
     $text = $shown -join '; '
     if ($all.Count -gt 5) { $text += "; and $($all.Count - 5) more" }
