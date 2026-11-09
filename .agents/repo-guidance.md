@@ -187,6 +187,10 @@ only the new module's own version is set (Constitution "Deployment And Versionin
    help (hover tips, page notes, examples) and the README pointer in the same slice
    (Constitution, Code Change Discipline; owner ruling 2026-10-28). Not a tripwire: the
    reviewer checks every diff that touches a page or a setting for the help that goes with it.
+   The help is rewritten, never appended to: a page or pane note is at most three short sentences
+   and under 350 characters, a hover tip or field help one sentence; mechanisms and reasons go to
+   README, which the note may point to (owner ruling 2026-11-09, `.agents/decisions.md`). The
+   reviewer also fails a diff that pushes a note over the limit.
 
 ## Earned Practices
 

@@ -5,6 +5,21 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-09 - In-app help is short; detail lives in README
+
+Owner, on opening the deployed Admin Settings page and finding two paragraphs of accreted help above the Protected
+principals pane: "what the fuck is this screed doing in the ui? ... sweep the app for this kind of nonsense." Cause:
+the "help left behind" rule (Constitution, Code Change Discipline; repo-guidance Known Failure Class 5) made every
+slice append to the page help; eight slices did, and no one rewrote the whole.
+
+Ruling: in-app help tells an experienced administrator what a control does and any consequence they would not
+expect, and nothing else. Mechanisms, storage forms, identifiers, older builds and reasons belong in README, which the
+note may point to. Limits (chosen by the supervisor to make the ruling checkable; the owner may tighten them): a page
+or pane note is at most three short sentences and under 350 characters; a hover tip or field help is one sentence.
+The "help left behind" rule stands, but its obligation is to keep the help TRUE and SHORT: a slice that changes
+behaviour rewrites the note, it does not append to it. The help-sweep slice (branch `fix/help-sweep`) applies this
+across the app; the reviewer's check in Known Failure Class 5 now includes the length limit.
+
 ### 2026-11-09 - Reviews run on codex (Portkey) while codex-commercial is logged out
 
 Owner, 2026-11-09, on the review-E blocker (codex-commercial answers `401 Unauthorized: Encountered invalidated
