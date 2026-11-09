@@ -916,7 +916,8 @@ public sealed class ModuleCatalog
             // addresses and had no way to obtain the rest - the stakeholder's "requiring us to
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
-            Version = "1.4.21",
+            // 1.4.22: help sweep - the job-delete tip cut from two sentences to one (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.4.22",
             MainPermission = new(
                 "Access",
                 "Comms10k",
