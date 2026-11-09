@@ -33,7 +33,7 @@ public class MigrationTicketPresenceTests
     public void ASingleCreateWithNothingVisibleInItsTicket_IsRefused(string ticket)
     {
         Assert.True(MigrationService.RefusesSingleCreate(Eligible(), ticket, out var refusal));
-        Assert.Equal(TicketPresenceTests.CarriesAnInvisibleCharacter(ticket) ? TicketPresence.InvisibleCharacterMessage + "; nothing was created." : Required, refusal);
+        Assert.Equal(Required, refusal);
     }
 
     [Theory]
@@ -41,7 +41,7 @@ public class MigrationTicketPresenceTests
     public void ABulkCreateWithNothingVisibleInItsTicket_IsRefused(string ticket)
     {
         Assert.True(MigrationService.RefusesBulkCreate(CheckedFile(), ticket, out var refusal));
-        Assert.Equal(TicketPresenceTests.CarriesAnInvisibleCharacter(ticket) ? TicketPresence.InvisibleCharacterMessage + "; nothing was created." : Required, refusal);
+        Assert.Equal(Required, refusal);
     }
 
     [Fact]

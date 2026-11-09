@@ -61,7 +61,7 @@
                             <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
                             <input id="ticketNumber" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" />
                             <div class="form-text">Service request or incident ticket number</div>
                         </div>
 
@@ -125,7 +125,7 @@
                             <label class="form-label fw-semibold" for="bulkTicket">Ticket Number (applies to all rows) <span class="text-danger">*</span></label>
                             <input id="bulkTicket" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(bulkTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" />
                         </div>
 
                         <div class="mb-3">
@@ -353,7 +353,7 @@
         var isSet = tabIndex == 0;
         var target = targetMailbox.Trim();
         var user = affectedUser.Trim();
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var access = accessRight;
         string RefusedAt(string refusal, string step) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogCalendarPermission(currentUser, clientIpAddress, isSet ? "SetCalendar" : "RemoveCalendar", target, user, isSet ? access.ToString() : null, false, ticket, errorDetail: refusal, extra: SelfGrantRefusalRecord.RefusalExtra(step)), Logger, target, SelfGrantRefusalRecord.RefusedChangeRecord); // kd-40: a refusal before the target is checked - the re-authorization, the ticket - is the change's own Failed row, nothing attempted
         isLoading = true;
@@ -546,7 +546,7 @@
         if (file is null) return;
 
         var isSet = bulkIsSet;
-        var ticket = bulkTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(bulkTicketNumber);
         var ipAddress = clientIpAddress;
         string RefusedAt(string refusal, string step) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogCalendarPermission(currentUser, ipAddress, isSet ? "BulkSetCalendar" : "BulkRemoveCalendar", "Bulk", file.Name, "Multiple", false, ticket, errorDetail: refusal, extra: SelfGrantRefusalRecord.RefusalExtra(step)), Logger, "Bulk", SelfGrantRefusalRecord.RefusedChangeRecord); // kd-40: a refusal before the file is read is the run's own Failed row, nothing attempted
         isLoading = true;

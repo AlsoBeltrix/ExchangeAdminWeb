@@ -1792,7 +1792,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     /// <summary>The banner of a ticket refused at its presence check.</summary>
-    private static string NoTicket(string? ticket) => $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}. Nothing was written."; // sweep item 40
+    private static string NoTicket(string? ticket) => $"Ticket validation failed: {TicketPresence.RequiredMessage}. Nothing was written."; // one refusal for every missing ticket (decision 2026-11-09)
 
     /// <summary>
     /// <paramref name="page"/>'s <c>ProcessBulk</c> over a one-row grant file to someone else - the ticket a test gives, its mail,
@@ -1910,6 +1910,21 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
         Assert.DoesNotContain(_h.AuditRows(), row => row.TryGetProperty("refusedAt", out _));
         Assert.Empty(warnings);
         Assert.Equal(TheWrite(page), Assert.Single(_h.Writes));
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it; the run goes ahead and every row
+    // that carries a ticket carries it with the character removed.
+    [Theory]
+    [MemberData(nameof(RefusalPages))]
+    public async Task ABulkRunWithATicketTypedWithAZeroWidthSpace_GoesAhead_AndIsRecordedSanitized(string page)
+    {
+        var (result, bulk, _, _) = await ProcessBulkGrant(page, TicketPresenceTests.WithZeroWidthSpace("INC100"));
+
+        Assert.Null(result);
+        Assert.Equal(1, Assert.IsType<BulkOperationResult>(bulk).SuccessCount);
+        var withTicket = _h.AuditRows().Where(row => row.TryGetProperty("ticket", out _)).ToList();
+        Assert.NotEmpty(withTicket);
+        Assert.All(withTicket, row => Assert.Equal("INC100", Text(row, "ticket")));
     }
 
     // ---- kd-38: a CSV run whose administrator notification cannot be sent is a run that happened -------------------------

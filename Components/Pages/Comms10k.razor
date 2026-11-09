@@ -713,7 +713,7 @@
         var sourceEmails = parsedEmails;
         var emails = sourceEmails.ToArray();
         var sourceFileName = uploadedFileName;
-        var trimmedTicket = ticketNumber.Trim();
+        var trimmedTicket = TicketPresence.Sanitize(ticketNumber);
         ticketNumber = trimmedTicket;
         var parseRejected = rejectedBeforeLookup.Count > 0;
         isLoading = true;

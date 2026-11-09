@@ -74,7 +74,7 @@ public sealed class IntuneDevicesTicketPresenceTests : IDisposable
         Assert.Equal("IntuneDevices", row.GetProperty("category").GetString());
         Assert.Equal("Failed", row.GetProperty("result").GetString());
         Assert.Equal("Ticket number missing", row.GetProperty("error").GetString());
-        Assert.Contains(TicketPresenceTests.Said(ticket, "A ticket number is required."), Shown(page, device.Id), StringComparison.Ordinal);
+        Assert.Contains("A ticket number is required.", Shown(page, device.Id), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -90,6 +90,22 @@ public sealed class IntuneDevicesTicketPresenceTests : IDisposable
 
         Assert.Equal(1, _graphWrites);
         Assert.DoesNotContain(AuditRows(), row => row.GetProperty("error").GetString() == "Ticket number missing");
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it; the write is attempted and every
+    // row that carries a ticket carries it with the character removed.
+    [Fact]
+    public async Task ATicketTypedWithAZeroWidthSpace_ReachesTheWrite_AndIsRecordedSanitized()
+    {
+        var device = Laptop();
+        var page = PageConfirming(device, TicketPresenceTests.TypedWithZeroWidthSpace);
+
+        await Execute(page, device);
+
+        Assert.Equal(1, _graphWrites);
+        var withTicket = AuditRows().Where(row => row.TryGetProperty("ticket", out _)).ToList();
+        Assert.NotEmpty(withTicket);
+        Assert.All(withTicket, row => Assert.Equal(TicketPresenceTests.RecordedSanitized, row.GetProperty("ticket").GetString()));
     }
 
     // ---- the page -----------------------------------------------------------------------------

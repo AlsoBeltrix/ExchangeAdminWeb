@@ -121,6 +121,39 @@ public class AuditServiceTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("operationId").GetString()));
     }
 
+    // Decision 2026-11-09: every audit row records its ticket sanitized - control and format characters removed, then
+    // trimmed - whichever caller wrote it, and a ticket with nothing left is recorded as none.
+    [Fact]
+    public void TheTicketIsRecordedSanitized_OnEveryRowShape()
+    {
+        _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "target@co.com",
+            "user@co.com", "FullAccess", true, TicketPresenceTests.WithZeroWidthSpace("INC001"));
+        _audit.LogModuleAction("admin", "10.0.0.1", "RevealRecoveryKey", "BitLockerRecovery", "PC-1",
+            success: true, ticketNumber: " " + TicketPresenceTests.WithZeroWidthSpace("INC002") + " ");
+        _audit.LogModuleAction("admin", "10.0.0.1", "RevealRecoveryKey", "BitLockerRecovery", "PC-2",
+            success: true, ticketNumber: ((char)0x200B).ToString());
+
+        var events = ReadAuditEvents();
+        Assert.Equal(3, events.Length);
+        Assert.Equal("INC001", events[0].RootElement.GetProperty("ticket").GetString());
+        Assert.Equal("INC002", events[1].RootElement.GetProperty("ticket").GetString());
+        Assert.False(events[2].RootElement.TryGetProperty("ticket", out var none) && none.ValueKind != JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void TheOperationTraceRecordsTheTicketSanitized()
+    {
+        using (var scope = _trace.BeginOperation(module: "M", action: "A", actor: "admin", ipAddress: "10.0.0.1",
+            target: "t", ticket: TicketPresenceTests.WithZeroWidthSpace("INC003")))
+        {
+            scope.Complete(true, null);
+        }
+
+        var withTicket = ReadOperationEvents().Where(e => e.RootElement.TryGetProperty("ticket", out var t) && t.ValueKind == JsonValueKind.String).ToList();
+        Assert.NotEmpty(withTicket);
+        Assert.All(withTicket, e => Assert.Equal("INC003", e.RootElement.GetProperty("ticket").GetString()));
+    }
+
     [Fact]
     public void LogMailboxPermission_FailedResult_ContainsErrorDetail()
     {

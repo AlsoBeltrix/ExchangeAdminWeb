@@ -335,7 +335,7 @@
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="riskyUsersTicket">Ticket number (required)</label>
                                                     <input id="riskyUsersTicket" class="form-control form-control-sm" @bind="actionTicket"
-                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(actionTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" />
                                                 </div>
                                                 <div class="col-md-8">
                                                     <button class="btn btn-danger btn-sm me-2"
@@ -836,7 +836,7 @@
         // started from, not to whichever row the operator opened while it was in flight.
         var userId = user.Id;
         var upn = user.UserPrincipalName;
-        var ticket = actionTicket.Trim();
+        var ticket = TicketPresence.Sanitize(actionTicket);
         var auditAction = AuditActionFor(action);
 
         void Refuse(string message, string auditDetail)
@@ -884,7 +884,7 @@
             // 2. Ticket, mandatory. Presence is checked separately from validation because the
             //    ServiceNow client passes every ticket while the integration is dormant, so
             //    validation alone would admit a blank ticket on a deployment without it (AC14).
-            // Sweep item 40: an invisible character is said as that, not as a missing ticket.
+            // 2026-11-09: the ticket is judged sanitized (TicketPresence.Sanitize); only a missing one is refused.
             if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing)
             {
                 Refuse(missing, "Ticket number missing");

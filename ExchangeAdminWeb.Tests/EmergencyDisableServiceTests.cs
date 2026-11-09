@@ -65,6 +65,37 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.DoesNotContain(result.Steps, s => s.Step == "GetADCredentials");
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space passes the ticket step, and the audit row and the
+    // operation trace carry it with the character removed.
+    [Fact]
+    public async Task DisableAsync_TicketTypedWithAZeroWidthSpace_PassesAndIsRecordedSanitized()
+    {
+        var protectedConfig = JsonSerializer.Serialize(new
+        {
+            ProtectedPrincipals = new
+            {
+                Users = new[] { "ceo@contoso.com" },
+                Groups = Array.Empty<string>(),
+                OrganizationalUnits = Array.Empty<string>(),
+                SamAccountNamePatterns = Array.Empty<string>()
+            }
+        });
+        var service = CreateService(protectedPrincipalsJson: protectedConfig);
+
+        var result = await service.DisableAsync(MakePrincipal("ceo@contoso.com"), TicketPresenceTests.WithZeroWidthSpace("INC001"), "DOMAIN\admin", "10.0.0.1", actingUser: null, moveToLockdownOu: false);
+
+        Assert.Contains(result.Steps, s => s.Step == "TicketValidation" && s.Status == "OK");
+        Assert.Contains(result.Steps, s => s.Step == "ProtectedPrincipalCheck" && s.Status == "BLOCKED");
+        var audit = Assert.Single(ReadAuditEvents(), line => line.Contains("\"ticket\"", StringComparison.Ordinal));
+        Assert.Equal("INC001", JsonDocument.Parse(audit).RootElement.GetProperty("ticket").GetString());
+        foreach (var file in Directory.EnumerateFiles(_tempDir, "*.jsonl", SearchOption.AllDirectories))
+        {
+            var text = File.ReadAllText(file);
+            Assert.DoesNotContain("\u200B", text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(((char)0x200B).ToString(), text, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public async Task DisableAsync_CorruptProtectedPrincipalConfig_FailsClosedBeforeCredentialLookup()
     {
@@ -122,7 +153,8 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.7.1: the account, ticket and lockdown choice are read above the disable's yield (kd-72).
         // 1.7.2: administrators sent their own copy of the notice (sweep-d item 32).
         // 1.7.3: a ticket carrying an invisible character is said as that, and the button agrees (sweep-e item 40).
-        Assert.Equal("1.7.4", module.Version);
+        // 1.7.5: the ticket is sanitized, not refused, for an invisible character (decision 2026-11-09).
+        Assert.Equal("1.7.5", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

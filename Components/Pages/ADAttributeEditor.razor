@@ -210,7 +210,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isSaving" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isSaving" />
                         </div>
                         <button class="btn btn-primary w-100" @onclick="ConfirmSave"
                                 disabled="@(isSaving || !TicketPresence.IsPresentAsTyped(ticketNumber))">
@@ -504,7 +504,7 @@
 
         // kd-72. The ticket too: the box binds on input, and it was read after the yield - into both refusal
         // records, SaveAsync's audit row and notice, and the catch's record and email.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         // Audit finding A14. The PRINCIPAL too, not just its label. A search running
         // concurrently nulls lookupResult and then replaces it with a different user, and

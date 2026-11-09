@@ -852,7 +852,7 @@
         // the search's own arguments, before its await. They were read after it, and Fill Trace Form stays
         // clickable during a trace and rewrites them, so a row could name a search that was never run.
         var target = TraceTarget();
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         try
         {
@@ -913,7 +913,7 @@
     {
         // kd-72. The ticket the analysis is recorded under, read before the analysis's await: it was read after it,
         // and the trace form's ticket box is not disabled while an analysis runs.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         isAnalyzing = true;
         headerAnalysisError = null;
         headerAnalysis = null;
@@ -1097,7 +1097,7 @@
         var target = string.IsNullOrWhiteSpace(msg.MessageId) ? msg.MessageTraceId : msg.MessageId;
         // kd-72. The ticket the read is recorded under, read before its await: the box is not disabled while a
         // detail loads, and it was read after.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         using var detailActivity = Progress.Begin(
             "Message Trace", $"Loading delivery detail for {target}", ActivitySize.Unknown.TakingTheCancel()); // kd-58 3.8a: the detail read takes the cancel (kd-59, kd-58 A10)
@@ -1215,7 +1215,7 @@
         var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
         // kd-72. The ticket the download is recorded under, read before its first await: the box is not disabled
         // while a download runs, and it was read after every read.
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         // Items, and a REAL one: the selection count is known, so the frame shows a true
         // "x of y" rather than a spinner over an unknown number of cloud round trips.
@@ -1339,7 +1339,7 @@
                 SubmittedBy = currentUser,
                 SubmittedByDisplay = currentUser,
                 SubmittedIp = clientIpAddress,
-                Ticket = ticketNumber.Trim(),
+                Ticket = TicketPresence.Sanitize(ticketNumber),
                 PayloadJson = System.Text.Json.JsonSerializer.Serialize(payload),
                 SubmittedAtUtc = DateTime.UtcNow,
             };
@@ -1348,12 +1348,12 @@
             exportActivity.Complete(true, $"Queued as job {job.Id}.");
             submittedRecipientsDisplay = string.Join(", ", recipients);
             var notified = recipients.Count == 0 ? "no notification" : string.Join(", ", recipients);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, true, $"{messages.Count} message(s); job {job.Id}; notify: {notified}", ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, true, $"{messages.Count} message(s); job {job.Id}; notify: {notified}", TicketPresence.Sanitize(ticketNumber));
         }
         catch (Exception ex)
         {
             detailActionError = ex.Message;
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, false, ex.Message, ticketNumber.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, false, ex.Message, TicketPresence.Sanitize(ticketNumber));
         }
         finally
         {

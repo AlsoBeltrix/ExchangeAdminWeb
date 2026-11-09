@@ -1353,13 +1353,13 @@ authorised them.
 
 ### Ticket numbers
 
-Where a page asks for a ticket number, the ticket must hold at least one visible character; leading and trailing
-spaces are trimmed, spaces inside it are kept. A ticket that holds an invisible character - a zero-width space,
-byte-order mark, soft hyphen, bidi mark or control character, usually carried in by a paste - is refused as that
-("Ticket number contains an invisible character ... Retype the ticket number by hand"), not as a missing ticket:
-the message shows under the ticket box and the page's submit buttons stay disabled until it is retyped. Nothing is
-stripped, so the ticket the audit records is the one typed. Each page's buttons are enabled by the same rule as the
-check behind them (`TicketPresence`).
+Where a page asks for a ticket number, the ticket recorded is the typed value with every non-printing character
+removed - control characters, Unicode format characters (a zero-width space, byte-order mark, soft hyphen, bidi
+mark and the rest) and unpaired surrogates, usually carried in by a paste - then trimmed; spaces inside it are kept.
+The box keeps what was typed; the check, the ServiceNow query and the audit row all use the cleaned value. "Ticket
+number is required" is the only refusal of a ticket while ServiceNow is dormant, given when nothing visible is
+left. Each page's buttons are enabled by the same rule as the check behind them (`TicketPresence`; decision
+2026-11-09).
 
 Each ticket-gated action checks the ticket again behind its button, before anything is written: presence by this
 rule, then ServiceNow where that integration is enabled (BitLocker Recovery and Cloud Password Reset: where their

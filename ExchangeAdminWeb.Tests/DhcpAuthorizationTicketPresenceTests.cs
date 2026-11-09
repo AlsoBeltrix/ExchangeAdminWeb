@@ -72,7 +72,7 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
 
         await Authorize(page);
 
-        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket));
+        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresence.RequiredMessage);
     }
 
     [Fact]
@@ -84,6 +84,35 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         await Authorize(page);
 
         AssertRefused(page, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // audit row carries, the ticket with the character removed.
+    [Fact]
+    public async Task AnAuthorizeWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
+
+        await Authorize(page);
+
+        AssertRefused(page, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
+    [Fact]
+    public async Task ADeauthorizeWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
+
+        await Deauthorize(page);
+
+        var row = Assert.Single(AuditRows());
+        Assert.Equal("DHCP_Deauthorize", row.GetProperty("action").GetString());
+        Assert.Equal(Ticket, row.GetProperty("ticket").GetString());
+        Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
         Assert.Single(requests);
     }
 
@@ -128,10 +157,10 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         // say what was sent. A blank ticket is still recorded as none, the writer dropping a null field.
         Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
             Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
         else
-            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+            Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
     }
 
     [Fact]
@@ -184,10 +213,10 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
 
         // A blank ticket is recorded as none: the writer leaves a null field out of the row.
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
             Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
         else
-            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+            Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
 
         Assert.Empty(_authorization.ReceivedCalls());
         var shown = Shown(page);

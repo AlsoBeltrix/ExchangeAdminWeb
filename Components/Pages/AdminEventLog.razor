@@ -433,7 +433,7 @@
                 {
                     <div class="mb-3">
                         <label class="form-label">Ticket Number <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" placeholder="Required" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(undoTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" placeholder="Required" />
                     </div>
                 }
             }
@@ -1150,7 +1150,7 @@
         if (target == null || preview == null)
             return;
 
-        var ticket = undoTicket.Trim();
+        var ticket = TicketPresence.Sanitize(undoTicket);
         var clientIp = ClientInfo.IpAddress;
         string? userName = null;
         var moduleCalled = false;

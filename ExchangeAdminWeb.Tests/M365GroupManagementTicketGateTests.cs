@@ -129,7 +129,7 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
 
         await Run(page, write);
 
-        AssertRefused(page, write, ticket, TicketPresenceTests.Said(ticket, "A ticket number is required."));
+        AssertRefused(page, write, ticket, "A ticket number is required.");
     }
 
     [Theory]
@@ -138,6 +138,21 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
     {
         var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
         var page = PageFor(Ticket, serviceNow);
+
+        await Run(page, write);
+
+        AssertRefused(page, write, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // audit row carries, the ticket with the character removed.
+    [Theory]
+    [MemberData(nameof(Writes))]
+    public async Task AWriteWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized(string write)
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
 
         await Run(page, write);
 
@@ -197,10 +212,10 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
         AssertTarget(write, row);
         // A blank ticket is recorded as none: the writer leaves a null field out of the row.
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
             Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
         else
-            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+            Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
 
         Assert.Equal(0, AdminEmails());
 

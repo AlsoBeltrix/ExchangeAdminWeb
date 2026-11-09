@@ -184,7 +184,7 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(formTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
 
                         <div class="d-flex justify-content-between align-items-center">
@@ -362,7 +362,7 @@
         var values = ParseLines(isIp ? formIpRanges : formCountryCodes);
         var trusted = formIsTrusted;
         var includeUnknown = formIncludeUnknown;
-        var ticket = formTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(formTicketNumber);
         var action = existing != null ? "NamedLocations_Update" : "NamedLocations_Create";
         var auditTarget = existing != null ? $"{name} ({existing.Id})" : name;
 
@@ -465,7 +465,7 @@
         // several awaits later, including from its catch. The result goes into a local for the
         // same reason SaveLocation's does: the banner dismiss can null operationResult while this
         // handler is suspended at the notification await.
-        var ticket = formTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(formTicketNumber);
         var target = $"{loc.DisplayName} ({loc.Id})";
 
         await Task.Yield();
@@ -635,7 +635,7 @@
     /// </remarks>
     private async Task<string?> TicketRefusalAsync(string ticket)
     {
-        if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing) // sweep item 40: an invisible character said as that
+        if (TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing) // 2026-11-09: judged sanitized; only a missing ticket is refused
             return missing;
 
         var validation = await ServiceNow.ValidateTicketAsync(ticket);

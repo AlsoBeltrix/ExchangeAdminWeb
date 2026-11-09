@@ -57,7 +57,7 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         var first = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var second = await f.Processor.ProcessRowAsync(job, 1, CancellationToken.None);
 
-        var refusal = $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}. Nothing was written."; // sweep item 40
+        var refusal = $"Ticket validation failed: {TicketPresence.RequiredMessage}. Nothing was written."; // sweep item 40
         Assert.Equal(BulkJobRowStatus.Failed, first.Status);
         Assert.Equal(BulkJobRowStatus.Failed, second.Status);
         Assert.Equal(refusal, first.Message);
@@ -82,10 +82,10 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
 
             // A blank ticket is recorded as none; a control-only one as it was captured, which is
             // what a reader of the row needs to see.
-            if (string.IsNullOrWhiteSpace(ticket))
+            if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
                 Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
             else
-                Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+                Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
         }
     }
 

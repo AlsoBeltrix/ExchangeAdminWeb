@@ -74,7 +74,7 @@ public class OperationTraceService
             Actor: SamName(actor),
             IpAddress: ipAddress,
             Target: string.IsNullOrWhiteSpace(target) ? null : target,
-            Ticket: string.IsNullOrWhiteSpace(ticket) ? null : ticket,
+            Ticket: TicketPresence.Sanitize(ticket) is { Length: > 0 } recorded ? recorded : null, // decision 2026-11-09: sanitized as the audit row records it
             Started: Stopwatch.StartNew(),
             PriorContext: parent);
 

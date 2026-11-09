@@ -82,7 +82,7 @@ public sealed class LicensingUpdatesApplyBusyGuardTests : IDisposable
     // now checked behind the button - presence by the shared rule, then ServiceNow where enabled - and a refusal is recorded
     // under the run's per-row action with the refusal fields, before the authorization re-check, the progress frame and the
     // apply.
-    public static TheoryData<string> UnusableTickets => ["", "   ", "INC" + (char)0x200B + "0001"];
+    public static TheoryData<string> UnusableTickets => ["", "   ", ((char)0x200B).ToString()]; // a zero-width space alone: nothing visible once sanitized
 
     [Theory]
     [MemberData(nameof(UnusableTickets))]
@@ -93,7 +93,7 @@ public sealed class LicensingUpdatesApplyBusyGuardTests : IDisposable
 
         await Call(page, "RunApply");
 
-        var expected = "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket);
+        var expected = "Ticket validation failed: " + TicketPresence.RequiredMessage;
         Assert.Equal((false, expected), Field<(bool, string)?>(page, "operationResult"));
         var row = Assert.Single(AuditRows(_temp.Path));
         Assert.Equal("LicensingUpdates_Update", Text(row, "action"));
@@ -121,6 +121,23 @@ public sealed class LicensingUpdatesApplyBusyGuardTests : IDisposable
         Assert.Single(requests);
         Assert.Empty(authorization.ReceivedCalls());
         Assert.Empty(_progress.Handles);
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is checked and recorded with the character removed.
+    [Fact]
+    public async Task AnApplyWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (page, _) = PageWithAudit();
+        SetField(page, "ticketNumber", TicketPresenceTests.WithZeroWidthSpace("INC0001"));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        Set(page, "ServiceNow", serviceNow);
+
+        await Call(page, "RunApply");
+
+        var row = Assert.Single(AuditRows(_temp.Path));
+        Assert.Equal("Ticket validation failed: Ticket INC0001 not found in ServiceNow", Text(row, "error"));
+        Assert.Equal("INC0001", Text(row, "ticket"));
+        Assert.Single(requests);
     }
 
     private (Page Page, IAuthorizationService Authorization) PageWithAudit()

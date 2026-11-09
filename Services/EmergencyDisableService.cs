@@ -173,6 +173,10 @@ public class EmergencyDisableService
         ResolvedDirectoryPrincipal target, string ticket, string performedBy, string ip,
         System.Security.Claims.ClaimsPrincipal? actingUser, bool moveToLockdownOu)
     {
+        // Decision 2026-11-09: the ticket is judged, traced and recorded sanitized - control and format characters
+        // removed, then trimmed.
+        ticket = TicketPresence.Sanitize(ticket);
+
         using var opScope = _operationTrace.BeginOperation(
             module: "EmergencyDisable",
             action: "DisableCompromisedAccount",
@@ -183,10 +187,9 @@ public class EmergencyDisableService
 
         var steps = new List<DisableStepResult>();
 
-        // Sweep item 40: an invisible character is said as that, not as a missing ticket.
         if (!TicketPresence.IsPresent(ticket))
         {
-            var ticketRefusal = TicketPresence.Describe(ticket, "Ticket number is required for emergency disable operations.")!;
+            const string ticketRefusal = "Ticket number is required for emergency disable operations.";
             _operationTrace.Step("TicketValidation", "Failed");
             steps.Add(new DisableStepResult("TicketValidation", "FAILED", ticketRefusal));
             opScope.Complete(false, ticketRefusal);
@@ -194,7 +197,6 @@ public class EmergencyDisableService
             return new EmergencyDisableResult(false, ticketRefusal, null, steps);
         }
 
-        ticket = ticket.Trim();
         steps.Add(new DisableStepResult("TicketValidation", "OK", null));
 
         // 1. Protected principal check (fail-closed)

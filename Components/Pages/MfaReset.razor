@@ -59,7 +59,7 @@
 
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                     </div>
                 </div>
             </div>
@@ -307,7 +307,7 @@
         // screen when the operator clicked Reset. The listed user and the method list travel with it, so
         // the audit row, the bar's label and the reset all describe one reviewed account.
         var upn = listedUpn ?? "";
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var methodsAtClick = methods;
         var methodTypesBeforeReset = methodsAtClick.Select(m => m.MethodType).ToArray();
 

@@ -119,7 +119,7 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    [InlineData("CHG\u200B0200")]
+    [InlineData("\u200B")]
     public async Task ASaveWithNoUsableTicket_IsRefusedAndRecorded_BeforeTheAuthorizationCheck(string ticket)
     {
         var alex = _h.Ad.AddAlex();
@@ -130,7 +130,7 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
 
         var shown = Shown(page);
         Assert.False(shown.Success);
-        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), shown.Message);
+        Assert.Equal("Ticket validation failed: " + TicketPresence.RequiredMessage, shown.Message);
         var record = Assert.Single(_h.AuditEvents());
         Assert.Equal("ADAttributeEdit_Refused", Text(record, "action"));
         Assert.Equal("TicketValidation", Text(record, "refusedAt"));
@@ -157,6 +157,25 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
         Assert.Single(requests);
         Assert.Empty(_authorization.ReceivedCalls());
         Assert.Empty(_h.Ad.Sets);
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // record carries, the ticket with the character removed.
+    [Fact]
+    public async Task ASaveWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var alex = _h.Ad.AddAlex();
+        var page = PageShowing(alex, Title());
+        SetField(page, "ticketNumber", TicketPresenceTests.WithZeroWidthSpace(Ticket));
+        var (serviceNow, requests) = TestServiceNow.Enabled("""{"result":[]}""");
+        SetProperty(page, "ServiceNow", serviceNow);
+
+        await ConfirmSave(page);
+
+        var shown = Shown(page);
+        Assert.Equal($"Ticket validation failed: Ticket {Ticket} not found in ServiceNow", shown.Message);
+        AssertRefusal(Assert.Single(_h.AuditEvents()), "TicketValidation", alex.Upn, shown.Message);
+        Assert.Single(requests);
     }
 
 

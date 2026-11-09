@@ -71,7 +71,7 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
 
         await Reset(page);
 
-        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket));
+        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresence.RequiredMessage);
     }
 
     [Fact]
@@ -79,6 +79,20 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
     {
         var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
         var page = PageFor(Ticket, serviceNow);
+
+        await Reset(page);
+
+        AssertRefused(page, Ticket, $"Ticket validation failed: Ticket {Ticket} not found in ServiceNow");
+        Assert.Single(requests);
+    }
+
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it - ServiceNow is asked about, and the
+    // audit row carries, the ticket with the character removed.
+    [Fact]
+    public async Task AResetWithATicketTypedWithAZeroWidthSpace_IsCheckedAndRecordedSanitized()
+    {
+        var (serviceNow, requests) = EnabledServiceNow("""{"result":[]}""");
+        var page = PageFor(TicketPresenceTests.WithZeroWidthSpace(Ticket), serviceNow);
 
         await Reset(page);
 
@@ -181,10 +195,10 @@ public sealed class MfaResetTicketPresenceTests : IDisposable
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
 
         // A blank ticket is recorded as none: the writer leaves a null field out of the row.
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
             Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
         else
-            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+            Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
 
         Assert.Empty(_authorization.ReceivedCalls());
         var shown = Shown(page);

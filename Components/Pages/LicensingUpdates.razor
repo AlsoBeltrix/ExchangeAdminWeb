@@ -199,7 +199,7 @@
                         }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isProcessing" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isProcessing" />
                         </div>
                         <button class="btn btn-primary w-100" @onclick="RunApply"
                                 disabled="@(isProcessing || !TicketPresence.IsPresentAsTyped(ticketNumber) || readyCount == 0)">
@@ -369,7 +369,7 @@
         // on. The licences had already been changed and the required admin notification was
         // silently dropped. The ticket would have been empty by then too.
         var preview = previewResult;
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
 
         await Task.Yield();
 
