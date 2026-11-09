@@ -141,10 +141,9 @@ public sealed class MigrationExclusionWordingTests : IDisposable
         var field = Assert.Single(new ModuleCatalog().GetById("Migration")!.ConfigFields, f => f.Key == "ExcludedADGroups");
 
         Assert.Contains("Get-ADGroup -Identity", field.Description, StringComparison.Ordinal);
-        // sweep-c item 14: a name several domains hold excludes the members of each, and the user is found by any address.
-        Assert.Contains("excludes the members of each", field.Description, StringComparison.Ordinal);
-        Assert.Contains("UPN, mail or a proxy address", field.Description, StringComparison.Ordinal);
-        Assert.Contains("A distinguished name cannot be entered", field.Description, StringComparison.Ordinal);
+        // sweep-c item 14 named the several-domains and any-address rules here; the help sweep (2026-11-09) moved the first to
+        // the Verify pane note and both to README, Migration. The field says what a value must be.
+        Assert.Contains("not a distinguished name", field.Description, StringComparison.Ordinal);
     }
 
     // ---- the load banner ------------------------------------------------------------------------

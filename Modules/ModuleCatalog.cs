@@ -123,7 +123,7 @@ public sealed class ModuleCatalog
         {
             Id = "ExchangeOnline",
             DisplayName = "Exchange Online",
-            Description = "Exchange Online PowerShell connection. Required by all Exchange-dependent modules.",
+            Description = "Exchange Online PowerShell connection, required by every Exchange-dependent module.",
             Route = "exchange-online-config",
             IconCss = "bi bi-cloud-fill-nav-menu",
             Category = ModuleCategories.Exchange,
@@ -136,7 +136,8 @@ public sealed class ModuleCatalog
             // connections are disconnected (aud-a67).
             // 1.0.6: both saves write the toggle and the connection fields as they stood at the click, read above
             // their yield (kd-72).
-            Version = "1.0.6",
+            // 1.0.7: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.0.7",
             MainPermission = new(
                 "Access",
                 "ExchangeOnline",
@@ -509,7 +510,8 @@ public sealed class ModuleCatalog
             // 1.27.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.27.2: Approve's refusal for a batch of its own that holds errors (SyncedWithErrors, CompletedWithErrors) says so and what to do first; the rule (exactly Synced) is unchanged (sweep-f item 24).
             // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
-            Version = "1.27.3",
+            // 1.27.4: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.27.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -528,10 +530,10 @@ public sealed class ModuleCatalog
                 new("HybridEndpoint", "Hybrid Endpoint", "Migration endpoint name", DefaultValue: "hybrid1"),
                 new("CloudTargetDeliveryDomain", "Cloud Target Domain", "e.g. contoso.mail.onmicrosoft.com"),
                 new("OnPremTargetDeliveryDomain", "On-Prem Target Domain", "e.g. contoso.com"),
-                new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases. Exchange distributes mailboxes across all listed databases in each move-back batch."),
+                new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases; each move-back batch spreads its mailboxes across all of them."),
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by migration eligibility checks", Required: false),
-                new("CloudQuotaGB", "Cloud Quota (GB)", "Max size for cloud migration, applied to the primary mailbox and the archive separately. Combined size is not checked.", DefaultValue: "99"),
-                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated groups whose direct members are excluded from cloud migration. Each value is what Get-ADGroup -Identity resolves in a domain of the forest: its sAMAccountName, SID or objectGUID. A name held by groups in several domains excludes the members of each, and the check names the domains: enter its SID or objectGUID to name one. A distinguished name cannot be entered, because the setting is split at commas. The user is found by the address typed - as their UPN, mail or a proxy address.", Required: false,
+                new("CloudQuotaGB", "Cloud Quota (GB)", "Max size for cloud migration, applied to the primary mailbox and the archive separately (their combined size is not checked).", DefaultValue: "99"),
+                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated groups whose direct members are excluded from cloud migration, each as Get-ADGroup -Identity takes it (sAMAccountName, SID or objectGUID - not a distinguished name).", Required: false,
                     FieldType: ConfigFieldType.AdGroup, ListSeparator: ',')
             ]
         },
@@ -610,17 +612,18 @@ public sealed class ModuleCatalog
             // between its reads (kd-58, CancellationDepth A10) - "Cancelled by the operator", filed Cancelled - where each
             // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
             // 1.8.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.8.8",
+            // 1.8.9: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.8.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
                 "MessageTrace",
-                "Open the module, analyse message headers, AND search message traces. NOT YET SPLIT: the Search permission below is declared but nothing enforces it, so this permission still grants trace search and the reading of any user's mail metadata. Do not grant it to anyone who should be limited to header analysis until the split is enforced.",
+                "Open the module, analyse message headers AND search message traces - NOT YET SPLIT: until Search below is enforced this also grants trace search, so do not grant it to anyone limited to header analysis.",
                 FailClosed: true,
                 DisplayName: "Header Analysis"),
             GranularPermissions = [
                 new("Search", "MessageTraceSearch",
-                    "Will grant message trace search: reading any user's senders, recipients, subjects, delivery status, message IDs and IP addresses across Exchange Online and the on-premises transport logs, the per-message delivery trail, and the detail exports built from it. NOT YET ENFORCED: granting this today gives nobody anything and withholding it blocks nobody. Grant it now to the groups that should keep trace search once enforcement lands.",
+                    "Will grant message trace search (any user's senders, recipients, subjects, delivery status and IP addresses, and their exports) - NOT YET ENFORCED: today it gives and withholds nothing, so grant it now to the groups that should keep trace search.",
                     FailClosed: true,
                     DisplayName: "Trace Search")
             ],
@@ -1073,25 +1076,26 @@ public sealed class ModuleCatalog
             // can trigger the save.
             // 1.2.1: the module card and the Access permission say one thing each again; the employee-ID detail
             // lives in the settings' own hints and the README (owner, 2026-10-30).
-            Version = "1.2.2",
+            // 1.2.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.2.3",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
-                "Open the module and reset the password of a cloud-only Entra ID account, including accounts holding administrative roles. The new password is emailed to the account's owner and is never shown to the operator.",
+                "Open the module and reset the password of a cloud-only Entra ID account, admin-role accounts included; the new password is emailed to the account's owner, never shown to the operator.",
                 FailClosed: true),
             GranularPermissions = [
                 new("Reveal", "CloudPasswordResetReveal",
-                    "Additionally see the new password on screen, for an account the module cannot find an owner mailbox for. This is the only way an operator can learn a password this module generates, so hold it to as few people as possible.",
+                    "Also see the new password on screen when the module finds no owner mailbox - the only way an operator can learn one, so grant it to as few people as possible.",
                     FailClosed: true)
             ],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
-                new("ValidateTickets", "Validate ServiceNow tickets", "On: a ticket must validate through ServiceNow before a reset runs. Off: any non-blank ticket is accepted as audit metadata.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
+                new("ValidateTickets", "Validate ServiceNow tickets", "On: a ticket must validate through ServiceNow before a reset runs; off: any non-blank ticket is accepted.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
                 // docs/CloudPasswordResetEmployeeId-Plan.md 4.3. Off by default; the endings have no default, because they
                 // are a fact about one deployment and this repo names none (Architectural Invariant 7). The keys are
                 // CloudPasswordResetService's FillMissingEmployeeIdKey and OwnerNameEndingsKey; a catalog test holds them equal.
-                new("FillMissingEmployeeId", "Fill in a missing employee ID", "On: when an account has no employee ID, the module looks for its owner by the account's name - the part before the @, less one of the endings below - as a logon name across this server's forest. When exactly one person answers to it, carries an employee ID that leads back to them alone and has a mailbox, the reset shows that person before it is confirmed, saves their employee ID on the account, then resets the password and emails it to them. Anyone who can reset passwords here can trigger that save. When nobody suitable is found, a person who cannot see passwords on screen is refused as before, and a person who can sees the password once, as before. Off: an account with no employee ID is handled exactly as before. Saving the number needs the module's Entra app to be allowed to write user details; until it is, resets still go out and the administrators are told the number was not saved.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
-                new("OwnerNameEndings", "Cloud admin account name endings", "Comma-separated endings that your cloud admin account names add to their owner's logon name. The longest one an account's name ends with is removed, ignoring case, before the owner is looked up. Leave blank if the names add nothing.", Required: false)
+                new("FillMissingEmployeeId", "Fill in a missing employee ID", "On: an account with no employee ID is matched to its owner by name (the part before the @, less an ending below), and the reset shows that person, saves their employee ID on the account and emails them the password. Anyone who can reset passwords here can trigger that save.", Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
+                new("OwnerNameEndings", "Cloud admin account name endings", "Comma-separated endings your cloud admin account names add to their owner's logon name (the longest match is removed before the lookup); blank if they add none.", Required: false)
             ]
         },
         new()
@@ -1104,7 +1108,8 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.2",
+            // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.3.3",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",
@@ -1118,7 +1123,7 @@ public sealed class ModuleCatalog
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to read lockout events, query computer sessions, and log off target sessions"),
                 new("DefaultThrottleLimit", "Default Throttle Limit", "Default WinRM fan-out throttle limit. Valid range: 1-256.", Required: false, DefaultValue: "32"),
-                new("MaxSweepTargets", "Maximum Sweep Targets", "Maximum computers allowed in a scoped sweep. Use 0 for no module limit.", Required: false, DefaultValue: "10000")
+                new("MaxSweepTargets", "Maximum Sweep Targets", "Maximum computers allowed in a scoped sweep; 0 for no module limit.", Required: false, DefaultValue: "10000")
             ]
         },
         new()
@@ -1223,7 +1228,8 @@ public sealed class ModuleCatalog
             // The servicing option is withdrawn from Module Configuration and the audit's protectedPrincipalServiced extra goes.
             // 2.20.1: sweep item 28 - a Room Finder row looks the AD credential up once and opens, imports and prepares one
             // directory runspace for all its AD steps (the two preflights, the City/State/Country write, the on-prem room-list add).
-            Version = "2.20.1",
+            // 2.20.2: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "2.20.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1240,8 +1246,8 @@ public sealed class ModuleCatalog
                 new("ConfCEOGroup", "CEO Room Group", "Group for CEO room booking (e.g. ceo-room@example.com)", FieldType: ConfigFieldType.RecipientGroup),
                 new("ConfExceptionGroup", "Exception Room Group", "Group for exception room booking (e.g. exception-room@example.com)", FieldType: ConfigFieldType.RecipientGroup),
                 new("ADGTAdminsGroup", "ADGT Meeting Room Admins", "ADGT site-specific admins group (e.g. adgt-admins@example.com)", FieldType: ConfigFieldType.RecipientGroup),
-                new("RestrictedMailTip", "Restricted Room MailTip", "Default mail tip for restricted rooms. Leave blank for built-in default."),
-                new("ExecMailTip", "Executive Room MailTip", "Mail tip for executive rooms. Leave blank for built-in default."),
+                new("RestrictedMailTip", "Restricted Room MailTip", "Default mail tip for restricted rooms; blank uses the built-in default."),
+                new("ExecMailTip", "Executive Room MailTip", "Mail tip for executive rooms; blank uses the built-in default."),
                 new("RestrictedContactEmail", "Restricted Contact Email", "Contact email shown in restricted room responses (e.g. conf-admins@example.com)"),
                 new("ExecContactEmail", "Exec Contact Email", "Contact email shown in exec room responses (e.g. exec-admins@example.com)"),
                 new("ADGTContactEmail", "ADGT Contact Email", "Contact email for ADGT restricted rooms (e.g. adgt-admins@example.com)")
@@ -1305,7 +1311,8 @@ public sealed class ModuleCatalog
             // 1.7.1: a disable acts on and records the account, ticket and lockdown choice confirmed - read above
             // its yield - and a second click during one, or a second lookup during either, is ignored (kd-72).
             // 1.7.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.7.3",
+            // 1.7.4: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.7.4",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1320,7 +1327,7 @@ public sealed class ModuleCatalog
                 // every existing install (Services/ModuleConfigService.cs). Blank means the
                 // lockdown step is unavailable, not that a disable fails.
                 new("LockdownOuDn", "Lockdown OU",
-                    "Distinguished name of the OU a disabled account is moved into, where delegation does not allow routine re-enablement. Leave blank to make the lockdown step unavailable.",
+                    "OU a disabled account is moved into, outside the delegation that allows routine re-enablement; blank makes the lockdown step unavailable.",
                     Required: false, FieldType: ConfigFieldType.OU)
             ]
         },
@@ -1346,7 +1353,8 @@ public sealed class ModuleCatalog
             // on every DC with "Cannot find an object with identity" - the module's first live
             // run. Now an RFC 4515 filter matching either attribute, escaped in C# so the
             // escaping is testable; no match and more than one match both fail closed.
-            Version = "1.0.2",
+            // 1.0.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.0.3",
             // One permission, no granular tier: the module reads and mutates nothing anywhere.
             // Classified NON-ALERTING under the Constitution's notification rule - it exposes
             // logon timestamps already visible in AD and Entra, and it is an account-hygiene
@@ -1355,12 +1363,12 @@ public sealed class ModuleCatalog
             MainPermission = new(
                 "Access",
                 "TrueLastLogon",
-                "Open the module and look up when one account last logged on, across every domain controller and the Entra ID sign-in logs. Exposes logon timestamps, the domain controller that recorded them, and sign-in detail such as IP address, application and conditional-access result. Read-only - grants no ability to change anything.",
+                "Open the module and look up when one account last logged on, exposing logon timestamps, the recording domain controller and sign-in detail (IP address, application, conditional-access result); read-only.",
                 FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
-                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields. The app registration needs BOTH AuditLog.Read.All and User.Read.All on Microsoft Graph. AuditLog.Read.All appears nowhere else in this app, so an existing module's registration is unlikely to carry it, and consenting it requires a Privileged Role Administrator or Global Administrator. User.ReadBasic.All is NOT sufficient. Leave this unset and the cloud half reports itself as not checked; it never reports the account as dormant.")
+                    "Secret Server secret (Tenant ID, Application ID, Client Secret) of an app holding both AuditLog.Read.All and User.Read.All (User.ReadBasic.All is not enough); unset, the cloud half reports itself not checked.")
             ]
         },
         new()
@@ -1391,7 +1399,8 @@ public sealed class ModuleCatalog
             // 1.6.1: a lookup and a list query read the user and the filter they were submitted with, above
             // their yield, and a second submit during one is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.2",
+            // 1.6.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.6.3",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1403,15 +1412,15 @@ public sealed class ModuleCatalog
                     FailClosed: true)
             ],
             ConfigFields = [
-                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires IdentityRiskyUser.Read.All, plus IdentityRiskyUser.ReadWrite.All for remediation). Requires Microsoft Entra ID P2."),
-                new("MaxTotalRows", "Maximum Total Rows", "Safety ceiling on one query, across all pages. The module follows Graph's paging until the matching set is complete; if more risky users match than this, it shows what it retrieved and says the list is partial. Defaults to 10000. Deliberately a NEW key: the old MaxRows meant page size, and a stored value would have silently capped the fetch at 500.", Required: false, DefaultValue: "10000")
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret (Tenant ID, Application ID, Client Secret) of an app holding IdentityRiskyUser.Read.All, plus IdentityRiskyUser.ReadWrite.All for remediation; needs Microsoft Entra ID P2."),
+                new("MaxTotalRows", "Maximum Total Rows", "Most risky users one query fetches across all pages (default 10000); past it, the list shows what it got and says it is partial.", Required: false, DefaultValue: "10000")
             ]
         },
         new()
         {
             Id = "DhcpAuthorization",
             DisplayName = "DHCP Authorization",
-            Description = "Authorize and deauthorize DHCP servers in Active Directory. Requires Enterprise Admin credentials via Secret Server.",
+            Description = "Authorize and deauthorize DHCP servers in Active Directory, with Enterprise Admin credentials from Secret Server.",
             Route = "dhcp-authorization",
             IconCss = "bi bi-gear-fill-nav-menu",
             Category = ModuleCategories.Infrastructure,
@@ -1431,7 +1440,8 @@ public sealed class ModuleCatalog
             // 1.9.0: a deauthorize refused for its ticket records the ticket as submitted and says where
             // it refused and that nothing was attempted, as authorize already did (kd-49).
             // 1.9.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.9.1",
+            // 1.9.2: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.9.2",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
@@ -1464,7 +1474,8 @@ public sealed class ModuleCatalog
             // 1.3.1: a search runs on, labels and audits the name, recovery value, ticket and live-AD choice it
             // was submitted with - read above its paint yield - and a second submit during one is ignored (kd-72).
             // 1.3.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.3.2",
+            // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.3.3",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
@@ -1475,11 +1486,11 @@ public sealed class ModuleCatalog
                 new(
                     "ArchiveDatabasePath",
                     "Archive Database Path",
-                    "Full path to the BitLocker recovery key SQLite database written by the scheduled export. Must be on a local disk, not a UNC path."),
+                    "Full local path (not UNC) to the BitLocker recovery key SQLite database the scheduled export writes."),
                 new(
                     "DelineaSecretId",
                     "AD Reader Delinea Secret ID",
-                    "Optional unless live AD fallback is used. Secret Server secret containing the AD account allowed to read msFVE-RecoveryPassword.",
+                    "Secret Server secret for the AD account allowed to read msFVE-RecoveryPassword; needed only for the live AD fallback.",
                     Required: false),
                 new(
                     "ActiveDirectorySearchBase",
@@ -1494,16 +1505,13 @@ public sealed class ModuleCatalog
                 new(
                     "SearchResultLimit",
                     "Search Result Limit",
-                    "Maximum rows returned by one search. Capped at 500.",
+                    "Maximum rows returned by one search, capped at 500.",
                     Required: false,
                     DefaultValue: "50"),
                 new(
                     "ValidateTickets",
                     "Validate Tickets Against ServiceNow",
-                    "Off: any non-blank ticket number is accepted and recorded as audit metadata. " +
-                    "On: the ticket must validate against ServiceNow; while the ServiceNow integration " +
-                    "is not enabled on this deployment, On refuses every search rather than silently " +
-                    "validating nothing. A ticket is required in both modes.",
+                    "A ticket is always required; on, it must also validate against ServiceNow, and every search is refused while the ServiceNow integration is not enabled.",
                     Required: false,
                     DefaultValue: "false",
                     FieldType: ConfigFieldType.Boolean)
@@ -1567,22 +1575,23 @@ public sealed class ModuleCatalog
             //        devices "(unavailable)" and never blanks the batches that answered.
             // 1.2.0: device table paged at 50 rows. Rendering all of them killed the circuit.
             //        Paging bounds the DOM only - the CSV still carries the whole matching set.
-            Version = "1.6.19",
+            // 1.6.20: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.6.20",
             // One permission, no granular tier: the module reads and exports and mutates nothing.
             MainPermission = new(
                 "Access",
                 "DefenderEndpointDevices",
-                "Open the module and view or export the Defender for Endpoint device inventory, including network-discovered devices that are not onboarded, with their IP and MAC addresses, operating system and risk level. Read-only - grants no ability to change anything in Defender.",
+                "Open the module and view or export the Defender for Endpoint device inventory, including network-discovered devices that are not onboarded, with their IP and MAC addresses; read-only.",
                 FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
-                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields. The app registration needs BOTH Machine.Read.All on WindowsDefenderATP and ThreatHunting.Read.All on Microsoft Graph. The second was optional while discovery sources were; the owner confirmed on 2026-09-21 that they are wanted, so it is not. Consenting the Graph one requires a Privileged Role Administrator or Global Administrator."),
+                    "Secret Server secret (Tenant ID, Application ID, Client Secret) of an app holding both Machine.Read.All on WindowsDefenderATP and ThreatHunting.Read.All on Microsoft Graph."),
                 new("MaxDevices", "Maximum Devices",
-                    "Safety ceiling on one run - how many devices this server will hold in memory for one operator. The module divides the inventory into Last seen ranges until every part is provably complete; if more devices match the server-side filters than this, it REFUSES the report rather than returning a partial one. Defaults to 100000. Raise it, or narrow the filters the API applies.",
+                    "Most devices one run holds (default 100000); past it the report is refused rather than returned partial, so raise it or narrow the filters.",
                     Required: false, DefaultValue: "100000"),
                 new("IncludeDiscoverySources", "Include Discovery Sources",
-                    "Run the advanced hunting query that supplies the discovery sources, device type, vendor and model columns. Turn off when the app registration does not hold ThreatHunting.Read.All.",
+                    "Run the advanced hunting query behind the discovery sources, device type, vendor and model columns; turn off if the app registration lacks ThreatHunting.Read.All.",
                     Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
             ]
         },
@@ -1615,22 +1624,23 @@ public sealed class ModuleCatalog
             // 1.6.0: a device action's ticket presence is the shared TicketPresence rule, so a ticket
             // with nothing visible in it is refused as a blank one is (kd-45).
             // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.1",
+            // 1.6.2: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.6.2",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
                 "IntuneDevices",
-                "Open the module, search Intune managed devices, and view device detail. Required before any other Intune Devices permission has effect.",
+                "Open the module, search Intune managed devices and view device detail; required before any other Intune Devices permission has effect.",
                 FailClosed: true),
             GranularPermissions = [
                 new("Delete", "IntuneDevicesDelete",
-                    "Delete a device's Intune management record. Company data stays on the device until it next checks in; the Entra ID device object is untouched.",
+                    "Delete a device's Intune record; company data stays on the device until it next checks in, and its Entra ID object is untouched.",
                     FailClosed: true),
                 new("Privileged", "IntuneDevicesPrivileged",
-                    "Retire (remove company data and management) or Wipe (factory reset) a device. The destructive tier.",
+                    "Retire (remove company data and management) or Wipe (factory reset) a device - the destructive tier.",
                     FailClosed: true),
                 new("EntraDelete", "IntuneDevicesEntraDelete",
-                    "Also remove the device's Entra ID directory object via the checkbox beside each action. Backed by a directory-wide Graph scope.",
+                    "Also remove the device's Entra ID directory object, via the checkbox beside each action.",
                     FailClosed: true)
             ],
             ConfigFields = [
@@ -1659,13 +1669,14 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Infrastructure,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.3",
+            // 1.3.4: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.3.4",
             // One permission, no granular tier: the module reads and renders, and mutates
             // nothing (docs/ServiceHealth-Plan.md).
             MainPermission = new(
                 "Access",
                 "ServiceHealth",
-                "Open the module and view current Microsoft 365 service status and the tenant open service incidents. Read-only - grants no ability to change anything.",
+                "Open the module and view current Microsoft 365 service status and the tenant's open incidents; read-only.",
                 FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -1812,7 +1823,8 @@ public sealed class ModuleCatalog
             // 1.5.1: the Result filter offers Cancelled, the result a cancel is filed under since kd-57 -
             // such a row could be found only under All (kd-71).
             // 1.5.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.5.2",
+            // 1.5.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.5.3",
             MainPermission = new(
                 "Access",
                 "EventLog",
@@ -1824,7 +1836,7 @@ public sealed class ModuleCatalog
                     FailClosed: true)
             ],
             ConfigFields = [
-                new("UsageTelemetryEnabled", "Record anonymous usage", "Records which modules are opened and which actions run, with no user, IP or target. Off stops new rows and hides the Home page disclosure; the Usage view keeps showing existing rows.", Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
+                new("UsageTelemetryEnabled", "Record anonymous usage", "Records which modules are opened and which actions run, with no user, IP or target; off stops new rows and hides the Home page disclosure.", Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
             ]
         },
         new()
