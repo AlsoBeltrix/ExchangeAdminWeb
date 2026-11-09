@@ -4,7 +4,7 @@
 cutover and installer scripts run `<ProgramFiles>\dotnet\dotnet.exe <app folder>\ExchangeAdminWeb.dll db ...` elevated, and on the
 dev host that folder inherits Authenticated Users Modify from the drive. `tools/SqliteConfigBackup.psm1`'s premise ("no new
 principal can put code in this path") rested on the host's ACLs. The ACL change on the host is the owner's half and is not here.
-**Status**: Fixed on branch; awaiting review
+**Status**: Fixed on branch; awaiting review; codex review F 2026-11-09 found a remainder (rev-f1)
 **Branch**: `fix/sweep-g` (worktree `D:\source\ExchangeAdminWeb-wt\sweep-g`, from master `145f513f`)
 **Commit**: `ff681201` (`fix(sweep-g, item 12): ...`) | **Reviewer**: implementer (candidate)
 

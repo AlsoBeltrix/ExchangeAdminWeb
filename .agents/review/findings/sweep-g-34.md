@@ -4,7 +4,7 @@
 virtual directory on the server and refused on any oddity anywhere - another team's application with a missing root virtual
 directory, a site name holding both quote characters, a single read error - so every deploy, promotion and install stop was
 refused (the cdt-61 class).
-**Status**: Fixed on branch; awaiting review
+**Status**: Fixed on branch; awaiting review; codex review F 2026-11-09 found a remainder (rev-f2)
 **Branch**: `fix/sweep-g` (from master `145f513f`)
 **Commit**: `e02c4c0c` (`fix(sweep-g, item 34): ...`) | **Reviewer**: implementer (candidate)
 
