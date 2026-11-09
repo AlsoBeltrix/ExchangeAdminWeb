@@ -1,6 +1,6 @@
 # help-sweep - operator help cut to what an operator acts on
 
-Status: in progress on `fix/help-sweep` (not merged). Owner-requested 2026-11-09 after the dev deploy:
+Status: merged at 337aaccd; the owner reviews the wording on the next dev deploy. Owner-requested 2026-11-09 after the dev deploy:
 the Protected principals note on Admin Settings had grown to nine sentences (1613 chars) of storage
 mechanism, older-build compatibility and Graph SID binding, because every slice under Known Failure
 Class 5 ("help left behind") appended to the help without anyone rewriting the whole.
