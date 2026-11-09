@@ -4,7 +4,7 @@
 `AclRefuses` path passed it `Resolve-ConfigDbTool`'s AclSummary, which already reads "App folder permissions: a real
 run REFUSES to run the db tool from ..." (that text carries its own refusal wording because promote,
 Move-ConfigDbToShared and the installer print it with plain `Write-Plan`).
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 350c63b5 (message-only fixes; no review round, owner verifies on the next plan run)
 **Branch**: `fix/rev-i` (worktree `D:\source\ExchangeAdminWeb-wt\rev-i`, from master `79af56e7`)
 **Commit**: `417d0889` (`fix(rev-i3): the deploy plan says REFUSES once for the app-folder verdict`) | **Implementer**: Claude (supervised agent)
 **Reviewer**: owner (live plan run 2026-11-09)

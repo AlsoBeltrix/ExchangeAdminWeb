@@ -5,7 +5,7 @@ GENERIC_EXECUTE | DELETE (0xE0010000) was reported as "holds -536805376 (inherit
 `FileSystemRights` has no names for the generic bits, so `[string]$rule.FileSystemRights` printed the mask as a
 signed integer. The classification was already right (`$script:ContentChangingRights` and `$script:ReplacementRights`
 read the mask and include GENERIC_ALL / GENERIC_WRITE; DELETE is in both).
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 350c63b5 (message-only fixes; no review round, owner verifies on the next plan run)
 **Branch**: `fix/rev-i` (worktree `D:\source\ExchangeAdminWeb-wt\rev-i`, from master `79af56e7`)
 **Commit**: `754852f4` (`fix(rev-i1): a folder finding names generic rights instead of printing the mask as a number`) | **Implementer**: Claude (supervised agent)
 **Reviewer**: owner (live plan run 2026-11-09)

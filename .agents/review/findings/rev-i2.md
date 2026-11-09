@@ -4,7 +4,7 @@
 folder by the nearest existing ancestor twice - the rev-f1 parent walk (can the principal replace the new folder?) and
 `-InheritableOnly` (would it hold a write right inside it?) - and an entry that applies to the ancestor and is
 inheritable came back from both, so the plan line named "<group> holds FullControl on <parent>" twice.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 350c63b5 (message-only fixes; no review round, owner verifies on the next plan run)
 **Branch**: `fix/rev-i` (worktree `D:\source\ExchangeAdminWeb-wt\rev-i`, from master `79af56e7`)
 **Commit**: `4bdfe60f` (`fix(rev-i2): a folder not created yet names an entry on its parent once, not twice`) | **Implementer**: Claude (supervised agent)
 **Reviewer**: owner (live plan run 2026-11-09)

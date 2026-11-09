@@ -8,6 +8,22 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 (plan run) - the owner ran the dev plan; the ACL refusal fired as designed; host ACLs narrowed
+
+The owner ran `deploy-pipeline.ps1 -Dev -PlanOnly` elevated: every step printed, nothing changed, one refusal: the
+drive root granted Authenticated Users Modify (inherited by the web root) and an admin group held FullControl
+directly on the web root. The owner narrowed the host ACLs ("acls updated", 2026-11-09); the plan is to be re-run by
+the owner (it needs an elevated shell) and must show 0 refusal(s) before the real deploy.
+
+Three message defects seen in that output were fixed and merged at 350c63b5 (rev-i1 raw rights number for an
+inherit-only generic ACE, rev-i2 the same parent entry reported twice for a not-yet-created folder, rev-i3 "REFUSES"
+doubled in the plan line). Message-only; classification unchanged; 686 Pester passed, PSSA 0 errors, ASCII and
+diff-check clean. No codex round for these (owner verifies the wording on the next plan run).
+
+Design note for the owner: the check trusts Administrators, SYSTEM and TrustedInstaller by name and cannot see that
+a group is a member of Administrators, so a direct grant to an admin group on a parent folder is reported like any
+other. A runtime `-TrustedPrincipal` parameter would be new functionality (owner question 9).
+
 ### 2026-11-09 (close) - sweep complete; every admitted finding fixed, merged and reviewed; master ready for the one dev deploy
 
 **Master 6422a3a8 (plus this record).** Gates at 6422a3a8: 676 Pester passed, PSSA 0 errors, ASCII and diff-check
