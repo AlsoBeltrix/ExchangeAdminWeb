@@ -153,7 +153,8 @@ public class EmergencyDisableServiceTests : IDisposable
         // 1.7.1: the account, ticket and lockdown choice are read above the disable's yield (kd-72).
         // 1.7.2: administrators sent their own copy of the notice (sweep-d item 32).
         // 1.7.3: a ticket carrying an invisible character is said as that, and the button agrees (sweep-e item 40).
-        Assert.Equal("1.7.4", module.Version);
+        // 1.7.5: the ticket is sanitized, not refused, for an invisible character (decision 2026-11-09).
+        Assert.Equal("1.7.5", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

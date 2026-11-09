@@ -209,7 +209,7 @@ public sealed class ModuleCatalog
             // and the mailbox-GUID refusals no longer appear; until the Graph Directory Read Credential is set it is refused.
             // 1.6.10: a grant to a group the operator is in is still refused, but the refusal (and its audit row) names the
             // group and how they are in it - directly, through nested groups, or through their primary group (sweep-c item 18).
-            Version = "1.6.11",
+            Version = "1.6.12",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -285,7 +285,7 @@ public sealed class ModuleCatalog
             // folder read from the mailbox, then Set, then Add only on "no entry"; a language-mode refusal is not a dead
             // session (sweep-f item 23).
             // 1.4.13: the cloud Set falls back to Add on the no-entry error class (type, identifier, wordings), and any other refusal is said as the Set's or the Add's (sweep-f item 25).
-            Version = "1.4.13",
+            Version = "1.4.14",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -512,7 +512,7 @@ public sealed class ModuleCatalog
             // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
             // 1.27.4: help sweep - its settings' and permissions' help cut to one sentence each, and four two-sentence button tips
             // to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.27.4",
+            Version = "1.27.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -614,7 +614,7 @@ public sealed class ModuleCatalog
             // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
             // 1.8.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.8.9: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.8.9",
+            Version = "1.8.10",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -706,7 +706,7 @@ public sealed class ModuleCatalog
             // by its on-premises SID (ppi S3).
             // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.1.6: Check Status - a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
-            Version = "1.1.6",
+            Version = "1.1.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -742,7 +742,7 @@ public sealed class ModuleCatalog
             // Exchange Online call claims the send stops that call from sending - each filed Cancelled, nothing changed
             // (kd-76). A cancel after the send still leaves the outcome Undetermined.
             // 1.5.4: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.5.4",
+            Version = "1.5.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -811,7 +811,7 @@ public sealed class ModuleCatalog
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
             // 2.16.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "2.16.5",
+            Version = "2.16.6",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -841,7 +841,7 @@ public sealed class ModuleCatalog
             // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
             // 1.9.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.9.2",
+            Version = "1.9.3",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -917,7 +917,7 @@ public sealed class ModuleCatalog
             // manually identify the affected users". Owner ruling 2026-10-12: an address with no
             // exact match is not a match, so the fix is reporting, NOT widening the lookup keys.
             // 1.4.22: help sweep - the job-delete tip cut from two sentences to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.4.22",
+            Version = "1.4.23",
             MainPermission = new(
                 "Access",
                 "Comms10k",
@@ -1036,7 +1036,7 @@ public sealed class ModuleCatalog
             // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
             // before, and a second submit during a listing is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.3",
+            Version = "1.6.4",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -1080,7 +1080,7 @@ public sealed class ModuleCatalog
             // 1.2.1: the module card and the Access permission say one thing each again; the employee-ID detail
             // lives in the settings' own hints and the README (owner, 2026-10-30).
             // 1.2.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.2.3",
+            Version = "1.2.4",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
@@ -1112,7 +1112,7 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.3.3",
+            Version = "1.3.4",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",
@@ -1233,7 +1233,7 @@ public sealed class ModuleCatalog
             // directory runspace for all its AD steps (the two preflights, the City/State/Country write, the on-prem room-list add).
             // 2.20.2: help sweep - its settings' help cut to one sentence each, and the job-removal tip to one (help is
             // behaviour: Constitution, Code Change Discipline).
-            Version = "2.20.2",
+            Version = "2.20.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1276,7 +1276,7 @@ public sealed class ModuleCatalog
             // 1.6.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
             // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.1",
+            Version = "1.6.2",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1317,7 +1317,7 @@ public sealed class ModuleCatalog
             // 1.7.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.7.4: help sweep - its settings' help cut to one sentence each, and the page warning's no-recipient branch from two
             // sentences to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.7.4",
+            Version = "1.7.5",
             MainPermission = new(
                 "Access",
                 "EmergencyDisable",
@@ -1405,7 +1405,7 @@ public sealed class ModuleCatalog
             // their yield, and a second submit during one is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.6.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.6.3",
+            Version = "1.6.4",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1446,7 +1446,7 @@ public sealed class ModuleCatalog
             // it refused and that nothing was attempted, as authorize already did (kd-49).
             // 1.9.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.9.2: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.9.2",
+            Version = "1.9.3",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",
@@ -1481,7 +1481,7 @@ public sealed class ModuleCatalog
             // 1.3.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each, and the export-date tip to one
             // (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.3.3",
+            Version = "1.3.4",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
                 "Access",
@@ -1632,7 +1632,7 @@ public sealed class ModuleCatalog
             // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.6.2: help sweep - its settings' and permissions' help cut to one sentence each, and the page's audit note to three
             // (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.6.2",
+            Version = "1.6.3",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",
@@ -1709,7 +1709,7 @@ public sealed class ModuleCatalog
             // 1.1.7: a second click on Apply during an apply is ignored, so a double click no longer runs a second bulk
             // licence change over the same rows (kd-74).
             // 1.1.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
-            Version = "1.1.9",
+            Version = "1.1.10",
             MainPermission = new(
                 "Access",
                 "LicensingUpdates",
@@ -1749,7 +1749,7 @@ public sealed class ModuleCatalog
             // nothing unless it had committed, and is recorded and shown as the page-moved refusal (kd-58 B3).
             // 1.7.6: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.7.7: a save's re-read, write and read-back are pinned to the DC that answered the domain's RootDSE, and the read-back compares in the schema's syntax (Boolean and integer by value from any CLR type, DN by DN) (sweep-f item 27).
-            Version = "1.7.9",
+            Version = "1.7.10",
             MainPermission = new(
                 "Access",
                 "ADAttributeEditor",
@@ -1831,7 +1831,7 @@ public sealed class ModuleCatalog
             // such a row could be found only under All (kd-71).
             // 1.5.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.5.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.5.3",
+            Version = "1.5.4",
             MainPermission = new(
                 "Access",
                 "EventLog",
