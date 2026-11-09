@@ -5,6 +5,16 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-09 - Reviews run on codex (Portkey) while codex-commercial is logged out
+
+Owner, 2026-11-09, on the review-E blocker (codex-commercial answers `401 Unauthorized: Encountered invalidated
+oauth token`): "use codex for review instead of codex-commercial". Ruling: the end-of-work defect reviews (review
+E over the rev-abc fixes, review F over sweep-g, and any further review this cycle) run on plain `codex` with the
+configured Portkey route and no `--model` flag (`.agents/machines.md` codex entry; probed 2026-11-09, read-only,
+returned the right HEAD). This supersedes the 2026-10-26 / 2026-11-04 / 2026-11-06 rulings that codex-commercial
+is the review harness for as long as its login is invalid; the owner has not said which harness is the default
+after a re-login, so that is an open question, not a reversion.
+
 ### 2026-11-06 - Comms-10k write order reverts to clear-then-add; the GUID member form is verified live
 
 Owner, on the sweep-d item-19 change (add every file member, then remove the stale): "this change violates the rule.

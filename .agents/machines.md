@@ -9,6 +9,10 @@ _First recorded 2026-07-21._
 
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
+- **2026-11-09:** reviews run on plain `codex` (Portkey) again while codex-commercial's login is invalid (owner
+  ruling, `.agents/decisions.md` 2026-11-09). Probe from the repo root the same day: prompt on stdin,
+  `C:/Users/mcoelho/AppData/Roaming/npm/codex.cmd exec --sandbox read-only --skip-git-repo-check
+  --output-last-message <file> -`; the `Failed to refresh token` lines it prints are the harmless noise noted below.
 - **Superseded 2026-10-26 / 2026-11-04 / 2026-11-06:** codex (Portkey) is out and codex-commercial is the review
 - **2026-11-07 00:20:** codex-commercial dispatch failed with `401 Unauthorized: Encountered invalidated oauth token for
   user` after four successful reviews the same day; needs an interactive `codex-commercial.cmd login` by the owner.
