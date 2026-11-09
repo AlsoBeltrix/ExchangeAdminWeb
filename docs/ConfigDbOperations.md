@@ -45,7 +45,8 @@ Notepad.
 > **The folders above the app folder are checked too (rev-f1).** Whoever can delete or rename
 > what is in a parent folder can swap the app folder for another between the check and the run.
 > So the scripts also read every folder above the app folder (or above a staging folder not
-> created yet), up to the root of the drive, and **refuse** when anyone outside the same four
+> created yet), up to the root of the drive - on a network path, the share itself (`\\server\share`),
+> which is read but not gone past (rev-g1) - and **refuse** when anyone outside the same four
 > principals owns one, or holds on it (inherited or not) delete child, delete, change permissions,
 > take ownership or full control - Modify includes delete. Write and append on a parent only add
 > entries beside the app folder and are allowed; so is read. The app pool's identity is not
