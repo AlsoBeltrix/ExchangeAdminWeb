@@ -1213,9 +1213,15 @@ rendered (aud-a29g).
   does not answer within 60 seconds, the account's last answer is used instead if it was read
   within one interval plus two minutes - so the answer of the tab's previous check, or of a recent
   page load - and is compared exactly as a fresh one: it confirms, or it refuses for its own reason.
-  Each such fallback is logged as a warning with a running count. Two failed checks in a row end the
-  session, whatever the interval: the session counts its checks whose read failed, and a check whose
-  read answered starts the count again.
+  Each such fallback is logged as a warning with a running count. Two failed lookups in a row end the
+  session, whatever the interval (rev-b5, rev-e1). The count is the account's, not one tab's: a
+  failed read seen by an open tab's check, a new tab's first check, a page request or a reload all
+  charge the same count, so a reload whose read is the second failure in a row is refused ("This
+  page was not shown") rather than shown from the old answer, and a new tab does not start the
+  count again. A
+  read the directory answers starts the count again. Tabs whose reads were already under way when a
+  failure was counted, and fail with it, are that same failure and are not counted again; a read
+  started after it is.
 - **The session ends** when one of those groups is gone, the account is disabled, or the check
   cannot be completed within 60 seconds with no recent answer to fall back to (fail closed). The tab stops responding and shows
   "This session has ended" with a Reload link; reloading signs in again with the access the
@@ -1235,7 +1241,8 @@ rendered (aud-a29g).
   stands in for it as above, the page is refused (fail closed); during a directory outage a page load waits for the lookup, at most 60 seconds, and the
   status frame shows it loading. The directory is not read for every page: an answer read for the
   same account within `RevalidationInterval` - by an earlier page request or by one of its open
-  tabs' checks - confirms the request, while a refusal is always decided by a fresh read, so
+  tabs' checks - confirms the request (unless the account has already had two failed lookups in a
+  row, when the request reads again), while a refusal is always decided by a fresh read, so
   restored access works at the next request. So page loads cost at most one extra directory read
   per account per interval, made by the first page load after a quiet interval. An operator
   removed from a group within one interval of their account's last check can therefore still have
