@@ -252,7 +252,7 @@
                     {
                         <div class="card mt-2">
                             <div class="card-body">
-                                <p class="text-muted mb-2"><small>Paste usernames, email addresses or UPNs - one per line, or comma-separated. Users only: a line that names a group is reported, not added. <strong>Resolve</strong> checks every line against AD in one pass; only lines that resolve to exactly one user can be added, the rest stay listed with the reason. Up to @BulkIdentityList.MaxBatch per batch.</small></p>
+                                <p class="text-muted mb-2"><small>Paste usernames, email addresses or UPNs, one per line or comma-separated, up to @BulkIdentityList.MaxBatch per batch. Users only: a line that names a group is reported, not added. <strong>Resolve</strong> checks every line; only lines that resolve to exactly one user can be added.</small></p>
                                 <textarea class="form-control form-control-sm mb-2" rows="5" @bind="pasteText" @bind:event="oninput"
                                           disabled="@IsManageBusy" placeholder="jdoe&#10;jane.doe@contoso.com"></textarea>
                                 <div class="d-flex align-items-center gap-2">

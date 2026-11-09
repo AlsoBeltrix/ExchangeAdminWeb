@@ -127,7 +127,7 @@ public sealed class AdminSettingsGraphSecretTests : IDisposable
         var help = (string)typeof(AdminSettingsPage).GetField("GraphSecretHelpText", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetRawConstantValue()!;
         Assert.Contains("User.Read.All", help, StringComparison.Ordinal);
-        Assert.Contains("While it is empty", help, StringComparison.Ordinal);
+        Assert.Contains("while it is empty", help, StringComparison.Ordinal);
         Assert.Contains("refused", help, StringComparison.Ordinal);
     }
 }

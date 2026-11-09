@@ -294,7 +294,7 @@ public sealed class ModuleConfigVerifyStoreTests : IDisposable
         var press = Assert.Single(VerifyRecords());
         Assert.Equal(("Success", "Verify"), (Text(press, "result"), Text(press, "action")));
         Assert.True(_h.ModuleConfig.ReadVerifyLast().ContainsKey("Config:ConferenceRooms"));
-        Assert.Contains("Each group address is looked up in Exchange", SettingsPageHarness.RenderedText(page), StringComparison.Ordinal);
+        Assert.Contains("Verify checks each entry the way this module uses it", SettingsPageHarness.RenderedText(page), StringComparison.Ordinal);
     }
 
     [Fact]

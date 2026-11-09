@@ -81,9 +81,9 @@ public sealed class DirectoryObjectVerifyPageTests : IDisposable
         var text = Text(page);
 
         Assert.Contains("missing", text);
-        Assert.Contains("Active Directory answered and holds no object with this entry&#39;s identifier", SettingsPageHarness.RenderedText(page));
+        Assert.Contains("Active Directory holds no such object, so this entry protects nothing", SettingsPageHarness.RenderedText(page));
         Assert.Contains("not converted", text);
-        Assert.Contains("Cannot be ignored.", text);
+        Assert.Contains("is refused until it is converted", text);
         var buttons = SettingsPageHarness.ButtonLabels(page);
         // Missing: Replace, Remove now, Ignore. Not converted and convertible: Convert, Remove now - never Ignore.
         Assert.Equal(1, buttons.Count(b => b == "Replace..."));

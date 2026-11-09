@@ -55,7 +55,7 @@ public class SelfGrantDocumentationTests
         var page = OneSpaced(File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminSettings.razor")));
 
         Assert.Contains("placeholder=\"Required for group and OU rules, and for every permission grant\"", page, StringComparison.Ordinal);
-        Assert.Contains("While Prevent Self-Grant is on, Mailbox Permissions and Calendar Permissions also need it for every grant: without it every grant is refused. A removal does not need it.", page, StringComparison.Ordinal);
+        Assert.Contains("while Prevent Self-Grant is on, every grant in Mailbox Permissions and Calendar Permissions is refused without it (a removal is not).", page, StringComparison.Ordinal);
         Assert.DoesNotContain("Required when groups or OUs are configured", page, StringComparison.Ordinal);
         Assert.DoesNotContain("also need it to grant to a group", page, StringComparison.Ordinal);
     }

@@ -429,6 +429,6 @@ public class ServiceHealthPageTests
         var module = new ExchangeAdminWeb.Modules.ModuleCatalog().GetById("ServiceHealth");
 
         Assert.NotNull(module);
-        Assert.Equal("1.3.3", module!.Version);
+        Assert.Equal("1.3.4", module!.Version);
     }
 }

@@ -264,7 +264,7 @@ tactical account; resetting a Global Administrator is the module's normal operat
   account whose owner cannot be determined - the only route by which an operator can learn one.
 - **A missing employee ID can be filled in** (module `1.2.0`, off until "Fill in a missing
   employee ID" is switched on in the module's settings). The owner is looked up from the account's
-  name: the part before the `@`, less one of the configured endings, as a logon name across the
+  name: the part before the `@`, less the longest configured ending it ends with (ignoring case), as a logon name across the
   server's forest. Only when exactly one person answers to it, their employee ID leads back to them
   alone and they have a mailbox, the preflight shows that person, the confirm saves their employee
   ID on the account, and the password is reset and mailed to them; the next reset of that account
@@ -492,7 +492,7 @@ Rapidly disable a compromised user account across on-prem AD and Entra ID with s
   (`Email:AdminNotificationEmail`), both, one mail per address (sweep-d item 32). Either list may be comma- or
   semicolon-separated. A blank `NotifySecurityTeam` still warns, on the page and in the result, that the security team
   is not notified; the administrators are
-- **Lockdown OU** (`LockdownOuDn`, optional): the OU a disabled account is moved into; blank makes the step unavailable.
+- **Lockdown OU** (`LockdownOuDn`, optional): the OU a disabled account is moved into, where delegation does not allow routine re-enablement; blank makes the step unavailable.
   The field offers the OU browser. **Verify** on the Module Configuration pane (docs/DirectoryObjectVerify-Plan.md A6,
   slice V4) checks it as the step does, with `Get-ADOrganizationalUnit`: an OU is **verified**; nothing there, or a
   container that is not an OU, is **missing**, because the step refuses both. Verify reads with the Directory Read
@@ -504,9 +504,10 @@ Rapidly disable a compromised user account across on-prem AD and Entra ID with s
 
 Review and act on Microsoft Entra ID Protection risky users via Microsoft Graph API.
 
-- Filtered read of risky users by risk level, risk state, and UPN contains; results
-  are capped at 500 rows (Graph's own `$top` maximum) and a truncated result is shown
-  as such, never silently cut off
+- Filtered read of risky users by risk level, risk state, and UPN contains. The module follows
+  Graph's paging until the matching set is complete, up to `MaxTotalRows` (default 10000) across all
+  pages; past it, the list shows what it retrieved and says it is partial, never silently cut off.
+  `MaxTotalRows` is a new key on purpose: the older `MaxRows` meant page size, and is not read
 - Per-row risk history expander
 - Remediation sits behind the `RiskyUsersRemediate` granular permission, fail-closed
   like the main module permission. Each action is one Graph call per user, never a
@@ -743,6 +744,19 @@ permission that could. Disabled by default and fail-closed.
 - Section access key: `DefenderEndpointDevices`
 - Full operator and maintainer notes, including the app-registration steps and the manual
   validation checklist that has not yet been run: `docs/DefenderEndpointDevices.md`
+
+### True Last Logon (`/true-last-logon`)
+
+When one account really last logged on: every domain controller is asked, together with the Entra ID
+sign-in logs, and the answer says how far it can be trusted.
+
+- **Requires**, for the cloud half: a Graph app registration holding **both** `AuditLog.Read.All` and
+  `User.Read.All` (`User.ReadBasic.All` is not enough), in the module's Graph App Delinea Secret ID.
+  `AuditLog.Read.All` is used nowhere else in this app, so an existing module's registration is unlikely
+  to carry it, and consenting it needs a Privileged Role Administrator or Global Administrator
+- With no secret set, the cloud half reports itself as not checked; it never reports the account as
+  dormant
+- Read-only; section access key: `TrueLastLogon`. Plan: `docs/TrueLastLogon-Plan.md`
 
 ### Security & Compliance
 - **Windows Authentication** — Seamless SSO with Active Directory

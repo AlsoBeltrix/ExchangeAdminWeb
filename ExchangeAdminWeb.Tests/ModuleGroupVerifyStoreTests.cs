@@ -532,7 +532,7 @@ public sealed class ModuleGroupVerifyStoreTests : IDisposable
 
         Assert.Contains("missing", text);
         Assert.Contains("not converted", text);
-        Assert.Contains("Cannot be ignored.", text);
+        Assert.Contains("matches no one until it is converted", text);
         Assert.Equal(1, buttons.Count(b => b == "Replace..."));
         Assert.Equal(1, buttons.Count(b => b == "Convert"));
         Assert.Equal(2, buttons.Count(b => b == "Remove now"));
@@ -541,7 +541,7 @@ public sealed class ModuleGroupVerifyStoreTests : IDisposable
     }
 
     [Fact]
-    public void EveryBadgeAndAction_CarriesItsHelp_AndThePaneNotesNameEachStoresRule()
+    public void EveryBadgeAndAction_CarriesItsHelp_AndThePaneNotesStayShort()
     {
         var item = new VerifyItem(Access, "BlockedSenders", VerifyObjectKind.Group, Sid(1), @"CONTOSO\Old", Sid(1), "v");
         foreach (var finding in new[]
@@ -563,8 +563,8 @@ public sealed class ModuleGroupVerifyStoreTests : IDisposable
         Assert.Contains("never who is granted anything", ModuleConfigPage.GroupVerifyActionTip(VerifyAction.Ignore, new VerifyItemResult(item, VerifyFinding.Missing())));
         Assert.Contains("Reads only", ModuleConfigPage.AccessVerifyButtonTip);
         Assert.Contains("Reads only", ModuleConfigPage.AdminsVerifyButtonTip);
-        Assert.Contains("a bare name in this server's own domain", ModuleConfigPage.AccessVerifyPaneNote);
-        Assert.Contains("a bare name across the forest", ModuleConfigPage.AdminsVerifyPaneNote);
+        Assert.True(ModuleConfigPage.AccessVerifyPaneNote.Length < 350, "the Access tab's Verify note is over the help limit");
+        Assert.True(ModuleConfigPage.AdminsVerifyPaneNote.Length < 350, "the Admins tab's Verify note is over the help limit");
     }
 
     private static bool CanVerify(ModuleConfigPage page, string store) =>

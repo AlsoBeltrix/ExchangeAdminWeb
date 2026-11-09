@@ -25,10 +25,10 @@ public sealed class IdentifierConversionPageTests : IDisposable
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     // docs/DirectoryObjectVerify-Plan.md C.1 (slice V1): the count banner and the "not in AD" badge are replaced by Verify's
-    // badges. The pane still says what an entry stored by name does and how it is converted; the per-entry "not converted"
-    // badge and its hover are pinned in DirectoryObjectVerifyPageTests.
+    // badges. What an entry stored by name does is said where it matters - the per-entry "not converted" badge and its
+    // hover (pinned in DirectoryObjectVerifyPageTests) and the refusal itself - not in the pane note (help sweep 2026-11-09).
     [Fact]
-    public void TheProtectedPrincipalsPane_SaysEntriesStoredByNameRefuseUntilConverted_AndOffersVerify_WithNoBanner()
+    public void TheProtectedPrincipalsPane_SaysWhatItProtects_AndOffersVerify_WithNoBanner()
     {
         new ProtectedPrincipalRepository(TestConfigStore.Create(_h.Root)).Save(ProtectedPrincipalData.Empty with { Users = ["cfo@contoso.com"] });
         var page = _h.OpenAdminSettings();
@@ -36,8 +36,8 @@ public sealed class IdentifierConversionPageTests : IDisposable
 
         var text = Text(page);
 
-        Assert.Contains("every protection check that finds no other match is refused, naming the entry", text);
-        Assert.Contains("db convert-identifiers", text);
+        Assert.Contains("cannot be changed through any module", text);
+        Assert.DoesNotContain("older build", text);
         Assert.DoesNotContain("entry is not converted to a directory identifier", text);
         Assert.DoesNotContain("not in AD", text);
         Assert.DoesNotContain("Resolve now", text);
