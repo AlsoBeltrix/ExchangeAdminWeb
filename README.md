@@ -925,6 +925,11 @@ preserves existing `appsettings.json` and `config/` fragments on update:
 .\tools\Install-ExchangeAdminWeb.ps1 -PlanOnly  # dry run, no changes
 ```
 
+`-NarrowPublishAcl` (opt-in; validate on dev first) replaces the publish folder's ACL: inheritance
+removed, and exactly Administrators and SYSTEM Full control plus the app pool identity Read and
+execute; `logs\` and `config\` keep Modify. It reads the ACL back and refuses if anyone else can
+still change the code there. `-PlanOnly` prints the intended ACL.
+
 **ADI environment only — `deploy.ps1`** is the ADI-specific deployment helper (it targets
 ADI aliases/app pools and the `ExchangeAdminWebDev` dev path). Do not use it in other
 environments; it is intentionally separate from the standalone installer.

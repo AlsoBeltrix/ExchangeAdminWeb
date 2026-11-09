@@ -2097,3 +2097,80 @@ Describe 'cdt-37: -ConfigStorePath takes the forward-slash form the app takes, a
         }
     }
 }
+
+Describe 'sweep item 39: -NarrowPublishAcl replaces the publish folder''s ACL and reads it back' {
+    # The real Set-NarrowPublishAcl and its helpers, lifted from the installer, with icacls and the
+    # read-back stubbed: no ACL on this host is changed or read.
+    BeforeAll {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script:InstallerPath).Path, [ref]$null, [ref]$null)
+        foreach ($name in 'Write-Ok', 'Write-Plan', 'Write-Fail', 'Invoke-PlanOrAction', 'Set-NarrowPublishAcl') {
+            $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+            . ([scriptblock]::Create($fn.Extent.Text))
+        }
+        $script:S39Ast = $ast
+
+        function Invoke-S39Narrow {
+            param([bool]$Plan = $false, [object[]]$Exposure = @(), [int]$FailOn = -1, [string]$Identity = 'IIS AppPool\Example')
+            $script:S39Calls = New-Object System.Collections.Generic.List[string]
+            $script:S39Exposure = $Exposure
+            $script:S39FailOn = $FailOn
+            Set-Item -Path function:icacls -Value {
+                $script:S39Calls.Add("icacls $($args -join ' ')")
+                $global:LASTEXITCODE = if ($script:S39Calls.Count -eq $script:S39FailOn) { 5 } else { 0 }
+            }
+            Set-Item -Path function:Get-ToolFolderWriteExposure -Value { param($Path) $script:S39Calls.Add("read back $Path"); $script:S39Exposure }
+            Set-Item -Path function:Format-ToolFolderWriteExposure -Value { param($Findings) ($Findings | ForEach-Object { "$($_.Principal) $($_.Rights)" }) -join '; ' }
+            Set-Variable -Name PlanOnly -Value $Plan
+            $folder = Join-Path $TestDrive ('publish_' + [guid]::NewGuid().ToString('N'))
+            $thrown = $null
+            $out = $null
+            try { $out = Set-NarrowPublishAcl -Path $folder -Identity $Identity 6>&1 | Out-String } catch { $thrown = $_.Exception.Message }
+            [pscustomobject]@{ Calls = @($script:S39Calls); Thrown = $thrown; Out = $out; Folder = $folder }
+        }
+    }
+
+    It 'grants exactly the intended set with /grant:r, then removes inheritance, then reads the ACL back' {
+        $r = Invoke-S39Narrow
+        $r.Thrown | Should -BeNullOrEmpty
+        $r.Calls | Should -Be @(
+            "icacls $($r.Folder) /grant:r *S-1-5-32-544:(OI)(CI)F",
+            "icacls $($r.Folder) /grant:r *S-1-5-18:(OI)(CI)F",
+            "icacls $($r.Folder) /grant:r IIS AppPool\Example:(OI)(CI)RX",
+            "icacls $($r.Folder) /inheritance:r",
+            "read back $($r.Folder)")
+        $r.Out | Should -Match 'narrowed and read back'
+    }
+
+    It 'refuses, naming them, when anyone else can still change the code after narrowing' {
+        $r = Invoke-S39Narrow -Exposure @([pscustomobject]@{ Principal = 'NT AUTHORITY\Authenticated Users'; Rights = 'Modify' })
+        $r.Thrown | Should -Match 'others can still change the code there: NT AUTHORITY\\Authenticated Users Modify'
+    }
+
+    It 'stops at a failed grant, before inheritance is removed' {
+        $r = Invoke-S39Narrow -FailOn 2
+        $r.Thrown | Should -Match 'icacls failed \(exit 5\) granting NT AUTHORITY\\SYSTEM'
+        $r.Calls.Count | Should -Be 2
+    }
+
+    It 'refuses an empty identity before any icacls call' {
+        $r = Invoke-S39Narrow -Identity ' '
+        $r.Thrown | Should -Match 'empty identity'
+        $r.Calls | Should -BeNullOrEmpty
+    }
+
+    It 'prints the intended ACL in a plan and changes and reads nothing' {
+        $r = Invoke-S39Narrow -Plan $true
+        $r.Calls | Should -BeNullOrEmpty
+        $r.Out | Should -Match ([regex]::Escape('Narrow the ACL of'))
+        $r.Out | Should -Match ([regex]::Escape('BUILTIN\Administrators (OI)(CI)F, NT AUTHORITY\SYSTEM (OI)(CI)F, IIS AppPool\Example (OI)(CI)RX'))
+        Test-Path -LiteralPath $r.Folder | Should -BeFalse
+    }
+
+    It 'is what -NarrowPublishAcl runs for the publish folder, and the default still grants Modify (AST)' {
+        $narrowIf = $script:S39Ast.Find({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$NarrowPublishAcl' -and $n.Clauses[0].Item2.Extent.Text -match 'Set-NarrowPublishAcl' }, $true)
+        $narrowIf | Should -Not -BeNullOrEmpty
+        $narrowIf.Clauses[0].Item2.Extent.Text | Should -Match 'Set-NarrowPublishAcl -Path \$PublishPath -Identity \$appPoolIdentity'
+        $narrowIf.Clauses[0].Item2.Extent.Text | Should -Not -Match 'Set-DirectoryAcl'
+        $narrowIf.ElseClause.Extent.Text | Should -Match 'Set-DirectoryAcl -Path \$PublishPath -Identity \$appPoolIdentity -Rights \$publishRights'
+    }
+}
