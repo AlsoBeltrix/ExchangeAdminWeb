@@ -1230,7 +1230,8 @@ public sealed class ModuleCatalog
             // The servicing option is withdrawn from Module Configuration and the audit's protectedPrincipalServiced extra goes.
             // 2.20.1: sweep item 28 - a Room Finder row looks the AD credential up once and opens, imports and prepares one
             // directory runspace for all its AD steps (the two preflights, the City/State/Country write, the on-prem room-list add).
-            // 2.20.2: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            // 2.20.2: help sweep - its settings' help cut to one sentence each, and the job-removal tip to one (help is
+            // behaviour: Constitution, Code Change Discipline).
             Version = "2.20.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
