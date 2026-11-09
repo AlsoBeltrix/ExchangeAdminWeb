@@ -929,7 +929,7 @@
                                                        one control here, not three. *@
                                                     <button class="dropdown-item" type="button"
                                                             disabled="@IsBusy"
-                                                            title="Fetches a report for each ticked mailbox in the background. Reports already open are reused; the rest can take twenty minutes each."
+                                                            title="Fetches a report for each ticked mailbox in the background, reusing reports already open; the rest can take twenty minutes each."
                                                             @onclick="StartReportExport">
                                                         Export reports
                                                     </button>
@@ -1237,7 +1237,7 @@
                     @if (reportFetchedAtUtc.HasValue)
                     {
                         <button class="btn btn-sm btn-outline-warning" disabled="@IsBusy"
-                                title="Runs Get-MigrationUserStatistics again. On a long or problematic migration this can take twenty minutes or more."
+                                title="Runs Get-MigrationUserStatistics again, which on a long or problematic migration can take twenty minutes or more."
                                 @onclick="() => RefetchUserReport(reportUser)">
                             @if (loadingReport == reportUser)
                             {
@@ -1437,14 +1437,14 @@
                    useful outcome, and disabling is the D2(b) that was rejected. *@
                 <button class="dropdown-item" type="button"
                         disabled="@(IsBusy || pendingActionLabel != null)"
-                        title="Completes selected batches that have finished syncing. A batch with errors cannot complete until they are fixed or removed."
+                        title="Completes selected batches that have finished syncing; a batch with errors cannot complete until they are fixed or removed."
                         @onclick="StageCompleteSelected">
                     Complete now
                 </button>
                 @* R13, queue item 12. *@
                 <button class="dropdown-item" type="button"
                         disabled="@(IsBusy || pendingActionLabel != null)"
-                        title="Sets a future time for the selected batches to finalise. A batch still syncing can be scheduled."
+                        title="Sets a future time for the selected batches to finalise, even while they are still syncing."
                         @onclick="StageScheduleSelected">
                     Schedule completion...
                 </button>
