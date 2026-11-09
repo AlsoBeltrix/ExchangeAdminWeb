@@ -316,6 +316,12 @@ function Get-ToolFolderInheritedWriteExposure {
         folder (rev-f1), then the ancestor's inheritable allow entries that the trusted set does not
         cover. The new folder's owner is whoever creates it, so no owner finding is made for it.
         Throws when no ancestor exists or any of them cannot be read.
+
+        The two reads answer different questions - can the principal replace the new folder, and
+        would it hold a write right inside it - and an entry that applies to the ancestor and is
+        inherited too answers yes to both. Such an entry is returned once (rev-i2): the ancestor's
+        ParentGrant, with AlsoInherited = $true, rather than a ParentGrant and a Grant naming the
+        same principal, folder and rights. Every other finding of either read is returned as is.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -328,8 +334,21 @@ function Get-ToolFolderInheritedWriteExposure {
         throw "No folder above $Path exists, so what it would inherit cannot be read."
     }
     $trusted = Get-ToolFolderTrustedSid
-    Get-ParentChainExposure -FirstParent $ancestor -Below $Path -TrustedSid $trusted
-    Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid $trusted -InheritableOnly
+    $replacing = @(Get-ParentChainExposure -FirstParent $ancestor -Below $Path -TrustedSid $trusted)
+    $inheritedOnly = [System.Collections.Generic.List[object]]::new()
+    foreach ($grant in @(Get-ObjectWriteExposure -LiteralPath $ancestor -TrustedSid $trusted -InheritableOnly)) {
+        $same = @($replacing | Where-Object {
+                $_.Kind -eq 'ParentGrant' -and $_.Path -eq $grant.Path -and $_.Sid -eq $grant.Sid -and
+                $_.Rights -eq $grant.Rights -and $_.Inherited -eq $grant.Inherited
+            })
+        if ($same.Count -gt 0) {
+            $same[0] | Add-Member -NotePropertyName AlsoInherited -NotePropertyValue $true -Force
+        } else {
+            $inheritedOnly.Add($grant)
+        }
+    }
+    $replacing
+    $inheritedOnly
 }
 
 function Format-ToolFolderWriteExposure {
@@ -345,6 +364,7 @@ function Format-ToolFolderWriteExposure {
     $shown = @($all | Select-Object -First 5 | ForEach-Object {
             $how = if ($_.Kind -eq 'Owner' -or $_.Kind -eq 'ParentOwner') { 'is the owner of' } elseif ($_.Inherited) { "holds $($_.Rights) (inherited) on" } else { "holds $($_.Rights) on" }
             $where = if ($_.Kind -eq 'ParentOwner' -or $_.Kind -eq 'ParentGrant') { ', a folder above the app folder, so can replace it' } else { '' }
+            if ($_.PSObject.Properties['AlsoInherited'] -and $_.AlsoInherited) { $where += ', and the new folder would inherit it' }
             "$($_.Principal) $how $($_.Path)$where"
         })
     $text = $shown -join '; '
