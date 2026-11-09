@@ -172,8 +172,8 @@ public class IntuneDevicesPageTests
         // from the device nor removes the Entra ID device object.
         var text = PageSource();
 
-        Assert.Contains("does not remove company data", text);
-        Assert.Contains("does not remove the device's Entra ID object", text);
+        Assert.Contains("Deleting a device's Intune record leaves", text);
+        Assert.Contains("company data on the device and its Entra ID", text);
     }
 
     [Fact]

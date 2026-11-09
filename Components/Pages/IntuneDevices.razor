@@ -31,13 +31,13 @@
 <div class="container-fluid">
     <div class="alert alert-info py-2 mb-3">
         <small>
-            Every search and device lookup is logged for audit purposes, and so is every action.
-            Retire and wipe are queued: the device carries them out at its next check-in, and a
-            powered-off or offline device may not act for a long time.
-            Deleting a device's Intune record does not remove company data from the device and
-            does not remove the device's Entra ID object - both are separate actions.
-            Removing the Entra ID device object is offered separately, needs its own permission,
-            and is reported and audited on its own.
+            Every search, lookup and action is audited.
+            Retire and wipe are queued until the device
+            next checks in, which for a powered-off or
+            offline device may be a long time.
+            Deleting a device's Intune record leaves
+            company data on the device and its Entra ID
+            object in place.
         </small>
     </div>
     <h1 class="mb-4">Intune Devices<ModuleVersion /></h1>

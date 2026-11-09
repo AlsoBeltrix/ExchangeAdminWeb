@@ -1624,7 +1624,8 @@ public sealed class ModuleCatalog
             // 1.6.0: a device action's ticket presence is the shared TicketPresence rule, so a ticket
             // with nothing visible in it is refused as a blank one is (kd-45).
             // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            // 1.6.2: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            // 1.6.2: help sweep - its settings' and permissions' help cut to one sentence each, and the page's audit note to three
+            // (help is behaviour: Constitution, Code Change Discipline).
             Version = "1.6.2",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
