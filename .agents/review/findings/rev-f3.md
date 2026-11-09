@@ -4,7 +4,7 @@
 prints every remaining step" does not hold for two reads: the app-pool `processModel` property and the config-store
 path setting are unguarded, so an unreadable or unparsable `appsettings.json` or a failing pool property read
 terminates the plan before the stop, robocopy, start, cleanup and post-check steps are printed.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged dde1b7fb; awaiting codex review G
 **Branch**: `fix/rev-f` (worktree `D:\source\ExchangeAdminWeb-wt\rev-f`, from master `454fa2b7`)
 **Commit**: `e45731d5` (`fix(rev-f3): deploy.ps1 -PlanOnly turns every failing real-run read into a counted refusal`) |
 **Implementer**: Claude (supervised agent)

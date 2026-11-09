@@ -5,7 +5,7 @@ can be changed by an untrusted principal, but the check starts at the app root a
 with replacement rights on a PARENT folder (create/delete child, non-inheritable) can swap the app folder for another
 between the verdict and the elevated `dotnet ... ExchangeAdminWeb.dll db ...` call. The module's own comment records
 the gap: "Not checked: the folders ABOVE the app folder."
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged dde1b7fb; awaiting codex review G
 **Branch**: `fix/rev-f` (worktree `D:\source\ExchangeAdminWeb-wt\rev-f`, from master `454fa2b7`)
 **Commit**: `a2116bd5` (`fix(rev-f1): the db tool's folder check reads every folder above the app folder`), README
 pointer `3a6f02f6` | **Implementer**: Claude (supervised agent)

@@ -8,6 +8,29 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 (evening) - rev-f merged; closing codex review G running
+
+**Merged:** rev-f at dde1b7fb (rev-f1 the db tool's folder check reads every folder above the app folder and refuses
+on an untrusted owner or replacement right, pool identity not trusted on parents, junctions not followed; rev-f2 any
+IIS node the probe cannot fully read refuses the serving-pool check wherever it sits, the item-34 warning survives
+only for a fully read node elsewhere; rev-f3 deploy.ps1 -PlanOnly wraps every real-run read, and the folder-check
+verdict is a counted refusal via a new additive `AclRefuses`). Master gates at dde1b7fb: 664 Pester passed (641 +
+23), PSSA 0 errors, ASCII and diff-check clean; no C# changed (xUnit stays 8861 at 454fa2b7).
+
+**Implementer departures, accepted by the supervisor as fail-closed within the mandate (owner may relax):** rev-f2
+also makes an unreadable APPLICATION LIST refuse, not only an unreadable virtual-directory list; the practical
+effect is that item 34's downgrade is withdrawn for every read the probe cannot complete (one line, `PathsRead =
+$true` on that node, brings the warning back and with it the fail-open).
+
+**Live consequence to check before the deploy (rev-f1):** if `D:\` or `D:\inetpub` grants Authenticated Users an
+inheritable Modify, every deploy, promotion and cutover now refuses naming that parent until it is narrowed. Run
+`deploy-pipeline.ps1 -Dev -PlanOnly` first: the "App folder permissions" line must not be a `!` refusal. Also: no
+"Cannot read the IIS sites and applications" refusal unless IIS really has an unreadable node; a plan against a
+scratch publish folder with a broken appsettings.json shows the refusal and every later step.
+
+**Review G (codex, over 934d9587..454fa2b7 and 636295cd..dde1b7fb) dispatched.** Next: its findings fixed the same
+way if any, then the final state entry; the one dev deploy waits for the owner's declaration.
+
 ### 2026-11-09 (later) - rev-e1 merged; review F found three deploy-script defects, fix slice running
 
 **Merged:** rev-e1 at 454fa2b7. The consecutive-failed-lookup count now lives on the per-account recorded answer,

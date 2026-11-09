@@ -4,7 +4,7 @@
 the issue node keeps only that application's own physical path, `$couldReach` is decided from that path, and the node
 is downgraded to a warning. One of its unread virtual directories could point inside the deploy folder, so a deploy
 or promotion could mirror over files another pool still serves.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged dde1b7fb; awaiting codex review G
 **Branch**: `fix/rev-f` (worktree `D:\source\ExchangeAdminWeb-wt\rev-f`, from master `454fa2b7`)
 **Commit**: `0bc510c6` (`fix(rev-f2): an unread application or virtual-directory list refuses the serving-pool check`) |
 **Implementer**: Claude (supervised agent)
