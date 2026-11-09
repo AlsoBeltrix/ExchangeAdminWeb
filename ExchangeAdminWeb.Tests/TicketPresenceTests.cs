@@ -15,18 +15,18 @@ public class TicketPresenceTests
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("\t")]
-    [InlineData("́")] // marks that draw nothing alone
-    [InlineData("́̂")]
-    [InlineData("")] // private use
+    [InlineData("\u0301")] // marks that draw nothing alone
+    [InlineData("\u0301\u0302")]
+    [InlineData("\uE000")] // private use
     [InlineData("\u0000")] // kd-24: control only
     [InlineData("\u0000\u0001\u001F")]
     [InlineData("\u007F")]
-    [InlineData("​")] // kd-48: format only - zero-width space, bidi marks, BOM, isolates
-    [InlineData("‎‏")]
-    [InlineData("﻿")]
-    [InlineData("‮⁦")]
-    [InlineData("​ ‏")] // format characters around white space
-    [InlineData("­")] // a soft hyphen alone
+    [InlineData("\u200B")] // kd-48: format only - zero-width space, bidi marks, BOM, isolates
+    [InlineData("\u200E\u200F")]
+    [InlineData("\uFEFF")]
+    [InlineData("\u202E\u2066")]
+    [InlineData("\u200B \u200F")] // format characters around white space
+    [InlineData("\u00AD")] // a soft hyphen alone
     public void ATicketWithNothingVisibleLeft_IsMissing(string? ticket)
     {
         Assert.False(TicketPresence.IsPresent(ticket));
@@ -42,19 +42,19 @@ public class TicketPresenceTests
 
     // 2026-11-09: a ticket carrying an invisible character is not refused; it is recorded with the character removed.
     [Theory]
-    [InlineData("INC​0042", "INC0042")] // a zero-width space inside a ticket
-    [InlineData("INC0042​", "INC0042")]
-    [InlineData("﻿INC0042", "INC0042")] // a byte-order mark
-    [InlineData("INC‮0042", "INC0042")] // bidi marks
-    [InlineData("‎INC0042‏", "INC0042")]
-    [InlineData("INC­0042", "INC0042")] // a soft hyphen
+    [InlineData("INC\u200B0042", "INC0042")] // a zero-width space inside a ticket
+    [InlineData("INC0042\u200B", "INC0042")]
+    [InlineData("\uFEFFINC0042", "INC0042")] // a byte-order mark
+    [InlineData("INC\u202E0042", "INC0042")] // bidi marks
+    [InlineData("\u200EINC0042\u200F", "INC0042")]
+    [InlineData("INC\u00AD0042", "INC0042")] // a soft hyphen
     [InlineData("INC\u00000042", "INC0042")] // control characters
     [InlineData("INC0042\u0007", "INC0042")]
     [InlineData("CHG 0042", "CHG 0042")] // white space inside a ticket is kept
     [InlineData("INC0042 ", "INC0042")] // and trimmed at the ends
     [InlineData("\tINC0042\n", "INC0042")]
-    [InlineData("INC0042 ​", "INC0042")] // trimmed after the strip, so the space the strip exposed goes too
-    [InlineData("é-42", "é-42")] // a combining mark on its base letter is kept
+    [InlineData("INC0042 \u200B", "INC0042")] // trimmed after the strip, so the space the strip exposed goes too
+    [InlineData("e\u0301-42", "e\u0301-42")] // a combining mark on its base letter is kept
     [InlineData("INC-0042/2", "INC-0042/2")]
     public void ATicketIsRecordedSanitized_AndIsPresent(string typed, string recorded)
     {
@@ -76,13 +76,13 @@ public class TicketPresenceTests
         Assert.True(TicketPresence.IsPresent("INC\uD800"));
         Assert.False(TicketPresence.IsPresent("\uDC00"));
         Assert.Equal(TicketPresence.RequiredMessage, TicketPresence.Refusal("\uD800 \uDC00\uDC00")?.Message);
-        Assert.Equal("INC😀", TicketPresence.Sanitize("INC😀")); // a surrogate pair is one character, kept
+        Assert.Equal("INC\uD83D\uDE00", TicketPresence.Sanitize("INC\uD83D\uDE00")); // a surrogate pair is one character, kept
     }
 
     [Theory]
     [InlineData(null, "")]
     [InlineData("", "")]
-    [InlineData("​", "")]
+    [InlineData("\u200B", "")]
     [InlineData("INC0042", "INC0042")]
     public void Sanitize_GivesAStringForEveryInput(string? typed, string recorded) =>
         Assert.Equal(recorded, TicketPresence.Sanitize(typed));
@@ -92,9 +92,9 @@ public class TicketPresenceTests
     [InlineData("REQ1234567")]
     [InlineData("CHG 0042")]
     [InlineData("INC-0042/2")]
-    [InlineData("ÉTÉ-42")] // kd-48: letters beyond ASCII are visible
-    [InlineData("é")] // a combining mark after its base
-    [InlineData("INC😀")] // a surrogate pair is one character
+    [InlineData("\u00C9T\u00C9-42")] // kd-48: letters beyond ASCII are visible
+    [InlineData("e\u0301")] // a combining mark after its base
+    [InlineData("INC\uD83D\uDE00")] // a surrogate pair is one character
     public void ATicketAPersonTyped_IsPresent_AndRecordedAsTyped_PunctuationAndSpacesIncluded(string ticket)
     {
         // Validation off means any typed ticket is plain audit metadata (decision 2026-08-31), so
@@ -110,11 +110,11 @@ public class TicketPresenceTests
     {
         Assert.Equal("A ticket number is required.", TicketPresence.Describe("  ", "A ticket number is required."));
         Assert.Null(TicketPresence.Describe("INC0042", "A ticket number is required."));
-        Assert.Null(TicketPresence.Describe("INC​0042", "A ticket number is required."));
+        Assert.Null(TicketPresence.Describe("INC\u200B0042", "A ticket number is required."));
     }
 
     // For the gates' own tests: a ticket that carries a zero-width space, and the form it must be recorded in.
-    internal const string TypedWithZeroWidthSpace = "INC​0042";
+    internal const string TypedWithZeroWidthSpace = "INC\u200B0042";
     internal const string RecordedSanitized = "INC0042";
 
     // 2026-11-09, the pages: every ticket-gated control is enabled by TicketPresence.IsPresentAsTyped - the check behind
