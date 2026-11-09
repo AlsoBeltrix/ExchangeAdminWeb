@@ -201,7 +201,7 @@
                                             }
                                             else if (key.LastSeenInAdUtc.HasValue)
                                             {
-                                                <span title="An export run saw this key in Active Directory on this date. It does not prove the machine is still there.">
+                                                <span title="An export run saw this key in Active Directory on this date, which does not prove the machine is still there.">
                                                     @key.LastSeenInAdUtc!.Value.ToLocalTime().ToString("yyyy-MM-dd")
                                                 </span>
                                             }

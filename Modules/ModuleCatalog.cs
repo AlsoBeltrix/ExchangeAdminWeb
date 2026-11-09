@@ -1476,7 +1476,8 @@ public sealed class ModuleCatalog
             // 1.3.1: a search runs on, labels and audits the name, recovery value, ticket and live-AD choice it
             // was submitted with - read above its paint yield - and a second submit during one is ignored (kd-72).
             // 1.3.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
+            // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each, and the export-date tip to one
+            // (help is behaviour: Constitution, Code Change Discipline).
             Version = "1.3.3",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new(
