@@ -5,6 +5,20 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-09 - A ticket is sanitized, not refused, for invisible characters
+
+Owner, on the deploy checklist item that pasted a zero-width space into a ticket box: "we do not do any ticket
+validation, there is no connection to SNow, and won't be in the foreseeable future. why would a trailing space stop
+users from working ... what was the reason we didn't just sanitize the text value after entry and before the log?"
+No record (kd-24, kd-48, sweep item 40) weighed stripping against refusing. Ruling: "sanitize."
+
+The ticket a page records and audits is the typed value with every control character, Unicode format character
+(zero-width space, bidi mark, and the rest) and unpaired surrogate removed, then trimmed. The one rule that stays:
+something visible must remain, else "Ticket number is required". The "invisible character" refusal, its message
+beside the box and the button-disable path for it are withdrawn (kd-48 and sweep item 40 superseded in that part;
+kd-24's blank-ticket rule stands). White space inside a ticket stays allowed. Tickets remain plain audit metadata
+(2026-08-31); no ServiceNow shape is enforced. Slice `fix/ticket-sanitize`.
+
 ### 2026-11-09 - In-app help is short; detail lives in README
 
 Owner, on opening the deployed Admin Settings page and finding two paragraphs of accreted help above the Protected
