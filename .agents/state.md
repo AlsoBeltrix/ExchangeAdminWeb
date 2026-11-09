@@ -8,6 +8,21 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 17:40 - codex review J over ticket-sanitize: one finding (rev-j1), fixed and merged
+
+Review J (codex, Portkey; result `.agents/review/rev-j.result.txt`) over 04d1f887..1a0e42db: one finding. rev-j1
+(MEDIUM, fail-closed): Account Lockout's execute predicates judged the raw ticket while the handlers sent the sanitized
+one and the service gate judged raw; the page was exempt from the presence scan. Fixed on guard proof and merged at
+c1a1245f: predicates use `IsPresentAsTyped`, the service sanitizes once at its boundary (dry runs included), the scan
+exemption is gone, 6 tests, AccountLockoutRemediation 1.3.5, no base bump. Master gates green (8904 xUnit). Codex also
+confirmed no ClickGate re-anchor, README consistent, no leftover invisible-character text, bumps line up.
+
+Agent observation left alone (older behaviour, not in the finding): when an Account Lockout execute is refused at the
+ticket gate, the result is still marked executed and the admin notification is still sent, with an empty ticket.
+Candidate finding for the owner to admit or decline; not recorded as one yet.
+
+Dev still runs 2.36.1 (337aaccd). Next: owner redeploys dev (2.36.2 + rev-j1), then checklist E7.
+
 ### 2026-11-09 16:30 - ticket-sanitize merged (base 2.36.2); owner to redeploy dev
 
 Owner ruling "sanitize." landed: `TicketPresence.Sanitize` strips control/format characters and unpaired surrogates and

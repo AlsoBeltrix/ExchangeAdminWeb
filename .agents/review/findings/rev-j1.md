@@ -7,7 +7,7 @@ on the raw value; a ticket of only a zero-width space (or any character Sanitize
 click is refused by the service with "Ticket Number is required for logoff execution." Before 1a0e42db both agreed
 (both raw) and the zero-width ticket was recorded raw. The service's own gate also still judges with
 `IsNullOrWhiteSpace`, so a non-page caller passing a raw invisible-only ticket passes the gate and records it unsanitized.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at c1a1245f (2026-11-09) on guard proof (MEDIUM, no review round); master gates green (8904 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/rev-j1` (worktree `D:\source\ExchangeAdminWeb-wt\rev-j1`, from master)
 **Commit**: fc82e580 (page), ef3323c3 (service), f44e7704 (scan), dcce8044 (tests), 64e9e16a (module 1.3.5), 4b1ef4c8 (call-site pin) | **Implementer**: Claude Fable (supervised agent)
 **Reviewer**: codex (Portkey) / configured model (no `--model`; route obscured by the gateway) / xhigh / standard
