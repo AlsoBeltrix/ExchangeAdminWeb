@@ -88,8 +88,10 @@ public sealed record MembershipRevalidationResult(
 /// one interval plus two lookup timeouts, so the answer the circuit's own previous check recorded is
 /// still there when the next one fails. rev-b5: that window alone does not make two failed checks in a row end a session -
 /// with an interval shorter than two lookup timeouts one answer outlives several failed checks - so each verdict that stood
-/// in for a failed read says so (<see cref="MembershipRevalidationResult.FromRecordedAnswer"/>), and the session's provider
-/// counts them and ends the session at the second in a row; the window stays the outer bound. That answer is
+/// in for a failed read says so (<see cref="MembershipRevalidationResult.FromRecordedAnswer"/>), the failed reads are counted
+/// where the answer is recorded, per account, and the second in a row refuses (<see cref="FailedReadsThatEndTheSession"/>);
+/// the window stays the outer bound. rev-e1: the count is the account's, not a circuit's, so a page request or a reload is
+/// charged and refused by it exactly as an open tab's check is, and a new circuit does not start it again. That answer is
 /// compared exactly as a fresh one: it confirms, or it refuses with its own reason - a removal the
 /// directory reported is never forgiven. Only with no such answer does the failure stand, and the
 /// session ends as before. Every fallback is counted (<see cref="FallbackCount"/>) and logged at
@@ -116,6 +118,11 @@ public sealed class CircuitMembershipRevalidator
     // back is not kept for the app pool's life.
     private readonly ConcurrentDictionary<string, RecordedAnswer> _answers = new(StringComparer.OrdinalIgnoreCase);
 
+    // rev-e1. Every change to _answers, and every charge of a failed read against an answer, under one lock: a page request
+    // and a circuit check (or two tabs) that finish together can neither lose a charge to a read being recorded at the same
+    // moment nor reset a count with a read older than the failure it would forgive. Reads of _answers stay lock-free.
+    private readonly object _answersSync = new();
+
     private readonly ILogger _logger;
     private long _fallbacks;
 
@@ -138,6 +145,14 @@ public sealed class CircuitMembershipRevalidator
     /// always within it, and an answer two checks old never is.
     /// </summary>
     internal TimeSpan FallbackWindow => _options.Interval + _options.LookupTimeout + _options.LookupTimeout;
+
+    /// <summary>
+    /// rev-b5, rev-e1. How many failed directory reads in a row an account's session may have: the second refuses - the
+    /// circuit's check revokes, a page request gets the refusal page - whatever the interval and the lookup timeout, and
+    /// <see cref="FallbackWindow"/> stays the outer bound. Counted per account, beside the recorded answer, so every tab
+    /// and every page request of the session charges and reads the same count; a successful read starts it again.
+    /// </summary>
+    internal const int FailedReadsThatEndTheSession = 2;
 
     /// <summary>sweep-c item 15. How many checks a recorded answer has stood in for since the app started.</summary>
     internal long FallbackCount => Interlocked.Read(ref _fallbacks);
@@ -229,27 +244,42 @@ public sealed class CircuitMembershipRevalidator
         if (!state.Reading || state.UserSid is null || state.Held is null || state.Confirmed is null)
             return failure;
 
-        if (!_answers.TryGetValue(state.UserSid, out var answer))
-            return failure;
-
-        var age = Clock.GetElapsedTime(answer.Started);
-        if (age >= FallbackWindow)
-            return failure;
-
-        var verdict = Compare(answer.Membership, state.Held, state.Confirmed);
-        var outcome = verdict with
+        MembershipRevalidationResult outcome;
+        TimeSpan age;
+        int inARow;
+        lock (_answersSync)
         {
-            Detail = $"{verdict.Detail} (From the answer read {age.TotalSeconds:0} s ago: the fresh lookup failed - {failure.Detail})",
-            FromRecordedAnswer = true,
-        };
+            // rev-e1. One check, one charge: the timeout and the check itself can both get here; the second is given the
+            // first's verdict, so it can neither charge the failed read again nor answer differently.
+            if (state.Outcome is { } settled)
+                return settled;
 
-        if (Interlocked.Exchange(ref state.Settled, 1) == 0)
-        {
-            var count = Interlocked.Increment(ref _fallbacks);
-            _logger.LogWarning(
-                "The directory lookup for {Account} failed ({Failure}); its access was {Outcome} from the answer read {Age:0} s ago. {Count} lookup(s) have fallen back to a recorded answer since the app started",
-                state.AccountName ?? state.UserSid, failure.Detail, outcome.IsValid ? "confirmed" : "refused", age.TotalSeconds, count);
+            if (!_answers.TryGetValue(state.UserSid, out var answer)
+                || (age = Clock.GetElapsedTime(answer.Started)) >= FallbackWindow)
+            {
+                state.Outcome = failure;
+                return failure;
+            }
+
+            inARow = answer.Charge(state.ReadStarted, Clock.GetTimestamp());
+
+            var verdict = Compare(answer.Membership, state.Held, state.Confirmed);
+            var detail = $"{verdict.Detail} (From the answer read {age.TotalSeconds:0} s ago: the fresh lookup failed - {failure.Detail})";
+
+            // rev-b5, rev-e1. The second failed read in a row refuses, on whichever path it was seen - an open tab's
+            // check, a new tab's open check, a page request or a reload.
+            outcome = verdict.IsValid && inARow >= FailedReadsThatEndTheSession
+                ? MembershipRevalidationResult.LookupFailed(
+                    $"The directory could not be read for {FailedReadsThatEndTheSession} access re-checks in a row. {detail}")
+                : verdict with { Detail = detail };
+            outcome = outcome with { FromRecordedAnswer = true };
+            state.Outcome = outcome;
         }
+
+        var count = Interlocked.Increment(ref _fallbacks);
+        _logger.LogWarning(
+            "The directory lookup for {Account} failed ({Failure}); its access was {Outcome} from the answer read {Age:0} s ago ({InARow} failed lookup(s) in a row for this account). {Count} lookup(s) have fallen back to a recorded answer since the app started",
+            state.AccountName ?? state.UserSid, failure.Detail, outcome.IsValid ? "confirmed" : "refused", age.TotalSeconds, inARow, count);
 
         return outcome;
     }
@@ -261,8 +291,11 @@ public sealed class CircuitMembershipRevalidator
         public string? AccountName;
         public IReadOnlyList<string>? Held;
         public IReadOnlySet<AuthorizationGrant>? Confirmed;
+        public long ReadStarted;
         public volatile bool Reading;
-        public int Settled;
+
+        // rev-e1. The verdict FallBackOrFail settled on, written and read under _answersSync.
+        public MembershipRevalidationResult? Outcome;
     }
 
     private async Task<MembershipRevalidationResult> RevalidateCoreAsync(
@@ -345,12 +378,13 @@ public sealed class CircuitMembershipRevalidator
         state.AccountName = accountName;
         state.Held = held;
         state.Confirmed = confirmed;
+        state.ReadStarted = Clock.GetTimestamp();
         state.Reading = true;
 
         OperatorDirectoryMembership? membership;
         try
         {
-            membership = await ReadDirectoryAsync(userSid!, accountName, cancellationToken).ConfigureAwait(false);
+            membership = await ReadDirectoryAsync(userSid!, accountName, state.ReadStarted, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -395,9 +429,8 @@ public sealed class CircuitMembershipRevalidator
     // the answer is what a failed read falls back to, and it expires on its own at FallbackWindow, so a
     // directory that has stopped answering stops confirming anything one window after its last answer.
     private async Task<OperatorDirectoryMembership?> ReadDirectoryAsync(
-        string userSid, string? accountName, CancellationToken cancellationToken)
+        string userSid, string? accountName, long started, CancellationToken cancellationToken)
     {
-        var started = Clock.GetTimestamp();
         var membership = await _directory
             .GetMembershipAsync(userSid, SectionAccessDirectoryReading.NetBiosFromNTAccount(accountName), cancellationToken)
             .ConfigureAwait(false);
@@ -410,8 +443,20 @@ public sealed class CircuitMembershipRevalidator
 
     private void Record(string userSid, OperatorDirectoryMembership membership, long started)
     {
-        var answer = new RecordedAnswer(membership, started);
-        _answers.AddOrUpdate(userSid, answer, (_, existing) => existing.Started > started ? existing : answer);
+        lock (_answersSync)
+            RecordLocked(userSid, membership, started);
+    }
+
+    private void RecordLocked(string userSid, OperatorDirectoryMembership membership, long started)
+    {
+        // A later read replaces the answer, and with it the count of failed reads in a row (rev-e1): the directory has
+        // answered since. An earlier read never replaces a later answer; and a read that started no later than a failed
+        // read the answer was charged with does not show the directory answering after that failure, so its answer
+        // carries the count on.
+        if (!_answers.TryGetValue(userSid, out var existing))
+            _answers[userSid] = new RecordedAnswer(membership, started);
+        else if (existing.Started <= started)
+            _answers[userSid] = existing.CarriedOnBy(membership, started);
 
         // The sweep (aud-a29j). Here, where the dictionary grows and only after a directory read, so
         // one pass over the operators costs nothing beside the read; the page-request path, which reads
@@ -429,14 +474,16 @@ public sealed class CircuitMembershipRevalidator
     internal IReadOnlyCollection<string> RecordedAccountSids => _answers.Keys.ToArray();
 
     // The account's recorded answer if its read started less than one interval ago, else nothing - the page-request
-    // shortcut, which spares a read. An answer past the fallback window is removed here too.
+    // shortcut, which spares a read. An answer past the fallback window is removed here too. rev-e1: never one whose
+    // account has already had the failed reads in a row that end a session - a reload then reads, and is refused unless
+    // the directory answers.
     private OperatorDirectoryMembership? RecordedAnswerFor(string userSid)
     {
         if (!_answers.TryGetValue(userSid, out var answer))
             return null;
 
         var age = Clock.GetElapsedTime(answer.Started);
-        if (age < _options.Interval)
+        if (age < _options.Interval && answer.FailedReadsInARow < FailedReadsThatEndTheSession)
             return answer.Membership;
 
         if (age >= FallbackWindow)
@@ -464,11 +511,60 @@ public sealed class CircuitMembershipRevalidator
     }
 
     // A class, not a record: removal compares by reference, so only the very answer that was read is
-    // ever removed, never one a later read put in its place.
+    // ever removed, never one a later read put in its place. rev-e1: the account's count of failed reads in a row lives
+    // here, beside the answer that stands in for them, so it is per account - every tab, every page request, every new
+    // circuit - and goes with the answer when that expires: past that nothing falls back and the failure itself refuses.
+    // Its state is touched only under _answersSync.
     private sealed class RecordedAnswer(OperatorDirectoryMembership membership, long started)
     {
         public OperatorDirectoryMembership Membership { get; } = membership;
 
         public long Started { get; } = started;
+
+        // How many failed reads in a row this account has had since the directory last answered.
+        private int _failedReads;
+
+        /// <summary>The count in a row, for the lock-free page-request shortcut.</summary>
+        public int FailedReadsInARow => Volatile.Read(ref _failedReads);
+
+        // When the latest charged failed read started, and when the latest charge was made.
+        private long _lastFailedReadStarted = long.MinValue;
+        private long _lastChargedAt = long.MinValue;
+
+        /// <summary>
+        /// Charges one failed read that started at <paramref name="readStarted"/> and returns the count in a row. Every read
+        /// that starts at or after the latest charge - a reload's, a new tab's, the next interval check's - is charged. A
+        /// read that was already in flight when that charge was made is the same outage seen at the same moment by another
+        /// tab or request, and is not charged again, so several tabs held by one directory stall still have that one
+        /// failure forgiven, as a single tab does (sweep-c item 15). A failed read that started before this answer's read
+        /// is no evidence the directory failed after it answered, and is not charged either.
+        /// </summary>
+        public int Charge(long readStarted, long now)
+        {
+            if (readStarted < Started)
+                return _failedReads;
+
+            if (_failedReads > 0 && readStarted < _lastChargedAt)
+                return _failedReads;
+
+            _failedReads++;
+            _lastFailedReadStarted = Math.Max(_lastFailedReadStarted, readStarted);
+            _lastChargedAt = now;
+            return _failedReads;
+        }
+
+        /// <summary>The answer a later successful read records in this one's place, with any count it carries on.</summary>
+        public RecordedAnswer CarriedOnBy(OperatorDirectoryMembership membership, long started)
+        {
+            var next = new RecordedAnswer(membership, started);
+            if (_failedReads > 0 && started <= _lastFailedReadStarted)
+            {
+                next._failedReads = _failedReads;
+                next._lastFailedReadStarted = _lastFailedReadStarted;
+                next._lastChargedAt = _lastChargedAt;
+            }
+
+            return next;
+        }
     }
 }

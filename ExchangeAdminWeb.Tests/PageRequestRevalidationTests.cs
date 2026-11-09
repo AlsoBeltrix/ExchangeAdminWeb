@@ -517,6 +517,239 @@ public class PageRequestRevalidationTests
         Assert.False(revocation.IsRevoked);
     }
 
+    // ------------------------------------------------------------------ rev-e1: page requests share the session's count
+
+    private static Harness ThirtySecondIntervalSixtySecondTimeout() =>
+        new(lookupTimeout: TimeSpan.FromSeconds(60), interval: TimeSpan.FromSeconds(30));
+
+    private static Func<NSubstitute.Core.CallInfo, Task<OperatorDirectoryMembership>> Answers() =>
+        _ => Task.FromResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid));
+
+    private static Func<NSubstitute.Core.CallInfo, Task<OperatorDirectoryMembership>> Fails() =>
+        _ => throw new DirectoryUnavailableException("no domain controller answered");
+
+    [Fact]
+    public async Task ReloadsWhileTheDirectoryIsDown_TheSecondFailedReadRefusesThePage()
+    {
+        // rev-e1. A page request that fell back counted nothing, so reload after reload rendered from the recorded answer
+        // until it aged out (30 + 60 + 60 = 150 s). Now the first failed read renders from it, the second is refused.
+        using var h = ThirtySecondIntervalSixtySecondTimeout();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), Fails(), Fails());
+        await using var host = await h.StartHostAsync(Operator(SectionGroupSid, DomainUsersSid));
+
+        Assert.Equal(HttpStatusCode.OK, (await host.GetAsync(ProbeRoute)).Status);
+        h.Clock.Advance(h.Options.Interval);
+        var first = await host.GetAsync(ProbeRoute);       // the first failed read: rendered from the recorded answer
+        Assert.True(first.Status == HttpStatusCode.OK, h.Log.Explain($"Expected 200, got {(int)first.Status}."));
+        h.Clock.Advance(h.Options.Interval);
+
+        var (status, body, _) = await host.GetAsync(ProbeRoute);   // the second in a row: refused
+
+        Assert.True(status == HttpStatusCode.Forbidden, h.Log.Explain($"Expected 403, got {(int)status}."));
+        Assert.Contains(WebUtility.HtmlEncode(PageRequestRefusalMessages.For(CircuitRevocationReason.LookupFailed)), body, StringComparison.Ordinal);
+        Assert.Equal(2, h.Effects.Initialized);
+        var audit = Assert.Single(h.AuditEvents()).RootElement;
+        Assert.Equal("LookupFailed", audit.GetProperty("reason").GetString());
+        Assert.Equal("PageRequest", audit.GetProperty("trigger").GetString());
+        Assert.Contains("could not be read for 2 access re-checks in a row", audit.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReloadsWithAFreshReadBetweenTwoFailures_StartTheCountAgain()
+    {
+        using var h = ThirtySecondIntervalSixtySecondTimeout();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), Fails(), Answers(), Fails(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).FromRecordedAnswer);   // failed, forgiven
+        h.Clock.Advance(h.Options.Interval);
+        var fresh = await h.Revalidator.RevalidatePageRequestAsync(user, Ct);                         // answered
+        Assert.True(fresh.IsValid);
+        Assert.False(fresh.FromRecordedAnswer);
+        h.Clock.Advance(h.Options.Interval);
+        var again = await h.Revalidator.RevalidatePageRequestAsync(user, Ct);                         // the first again
+        Assert.True(again.IsValid, again.Detail);
+        Assert.True(again.FromRecordedAnswer);
+        h.Clock.Advance(h.Options.Interval);
+
+        var second = await h.Revalidator.RevalidatePageRequestAsync(user, Ct);                        // and the second
+        Assert.Equal(CircuitRevocationReason.LookupFailed, second.Reason);
+    }
+
+    [Fact]
+    public async Task ACircuitFailureThenAPageRequestFailure_RefusesThePage()
+    {
+        // rev-e1. One count for the session, whichever path saw the failure: the open tab's check fails and is forgiven, the
+        // reload's page request fails too, and that is the second in a row.
+        using var h = ThirtySecondIntervalSixtySecondTimeout();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), Fails(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+        await using var host = await h.StartHostAsync(Operator(SectionGroupSid, DomainUsersSid));
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True(await provider.ValidateAsync(user, "Interval", Ct));
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+
+        var (status, _, _) = await host.GetAsync(ProbeRoute);
+
+        Assert.True(status == HttpStatusCode.Forbidden, h.Log.Explain($"Expected 403, got {(int)status}."));
+        Assert.Equal(0, h.Effects.Initialized);
+    }
+
+    [Fact]
+    public async Task APageRequestFailureThenACircuitFailure_EndsTheSession()
+    {
+        using var h = ThirtySecondIntervalSixtySecondTimeout();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), Fails(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var provider = h.Provider(revocation);
+
+        Assert.True(await provider.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+
+        Assert.False(await provider.ValidateAsync(user, "Interval", Ct));
+        Assert.Equal(CircuitRevocationReason.LookupFailed, revocation.Reason);
+    }
+
+    [Fact]
+    public async Task ANewCircuit_DoesNotStartTheCountAgain()
+    {
+        // rev-e1. The count was the circuit provider's, so a reload's new circuit began at zero.
+        using var h = ThirtySecondIntervalSixtySecondTimeout();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), Fails(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        using var firstTab = h.Provider(new CircuitRevocation());
+
+        Assert.True(await firstTab.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        Assert.True(await firstTab.ValidateAsync(user, "Interval", Ct));
+        h.Clock.Advance(TimeSpan.FromSeconds(5));
+
+        var revocation = new CircuitRevocation();
+        using var reloaded = h.Provider(revocation);
+        Assert.False(await reloaded.ValidateAsync(user, "CircuitOpened", Ct));
+        Assert.Equal(CircuitRevocationReason.LookupFailed, revocation.Reason);
+    }
+
+    [Fact]
+    public async Task OnceTheSecondFailureRefused_AReloadIsNotConfirmedWithoutARead()
+    {
+        // rev-e1. The page shortcut (an answer read within the interval) must not confirm an account whose reads have already
+        // failed twice in a row: the reload reads, and the directory still not answering, is refused.
+        using var h = ThirtySecondIntervalSixtySecondTimeout();
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), Fails(), Fails(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        using var tab = h.Provider(new CircuitRevocation());
+        Assert.True(await tab.ValidateAsync(user, "Interval", Ct));
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        using var newTab = h.Provider(new CircuitRevocation());
+        Assert.False(await newTab.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+
+        var reload = await h.Revalidator.RevalidatePageRequestAsync(user, Ct);
+
+        Assert.Equal(CircuitRevocationReason.LookupFailed, reload.Reason);
+        _ = h.Directory.Received(4).GetMembershipAsync(AnySid, AnyDomain, AnyToken);
+    }
+
+    [Fact]
+    public async Task TwoTabsHeldByOneStall_AreChargedOnce()
+    {
+        // rev-e1. Several tabs of one session read at the same moment and fail together: that is one outage, and is forgiven
+        // once, as a single tab's failure is (sweep-c item 15). The next read that fails after it is the second in a row.
+        using var h = new Harness(lookupTimeout: SlowReadLookupTimeout, interval: TimeSpan.FromSeconds(30));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var stall = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), _ => stall.Task, _ => stall.Task, Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        using var tabA = h.Provider(new CircuitRevocation());
+        using var tabB = h.Provider(new CircuitRevocation());
+
+        Assert.True(await tabA.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        var a = tabA.ValidateAsync(user, "Interval", Ct);
+        var b = tabB.ValidateAsync(user, "Interval", Ct);
+        await WaitForReadsAsync(h, 3);
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        stall.SetException(new DirectoryUnavailableException("no domain controller answered"));
+
+        Assert.True(await a);
+        Assert.True(await b);
+        h.Clock.Advance(h.Options.Interval);
+
+        Assert.Equal(CircuitRevocationReason.LookupFailed, (await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).Reason);
+    }
+
+    [Fact]
+    public async Task AFailureOfAReadOlderThanTheAnswer_IsNotCharged()
+    {
+        // rev-e1. The directory answered a read that started after this one: its failure is not a failure in a row.
+        using var h = new Harness(lookupTimeout: SlowReadLookupTimeout, interval: TimeSpan.FromSeconds(30));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var slow = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), _ => slow.Task, Answers(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        var revocation = new CircuitRevocation();
+        using var tab = h.Provider(revocation);
+
+        Assert.True(await tab.ValidateAsync(user, "CircuitOpened", Ct));
+        h.Clock.Advance(h.Options.Interval);
+        var early = h.Revalidator.RevalidatePageRequestAsync(user, Ct);
+        await WaitForReadsAsync(h, 2);
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(await tab.ValidateAsync(user, "Interval", Ct));            // answered, after the slow read started
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        slow.SetException(new DirectoryUnavailableException("no domain controller answered"));
+        Assert.True((await early).IsValid);
+        h.Clock.Advance(h.Options.Interval);
+
+        Assert.True(await tab.ValidateAsync(user, "Interval", Ct));            // the first failed read in a row
+        Assert.False(revocation.IsRevoked);
+    }
+
+    [Fact]
+    public async Task AnAnswerFromAReadThatStartedBeforeAFailure_DoesNotStartTheCountAgain()
+    {
+        // rev-e1. A slow read that started before a failed one, answering after it, is no sign the directory answered after
+        // that failure: its answer replaces the recorded one but carries the count on.
+        using var h = new Harness(lookupTimeout: SlowReadLookupTimeout, interval: TimeSpan.FromSeconds(30));
+        h.Grant("MailboxPermissions", SectionGroupSid);
+        var slow = new TaskCompletionSource<OperatorDirectoryMembership>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Directory.GetMembershipAsync(AnySid, AnyDomain, AnyToken).Returns(Answers(), _ => slow.Task, Fails(), Fails());
+        var user = Operator(SectionGroupSid, DomainUsersSid);
+        using var tab = h.Provider(new CircuitRevocation());
+
+        Assert.True((await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).IsValid);
+        h.Clock.Advance(h.Options.Interval);
+        var early = h.Revalidator.RevalidatePageRequestAsync(user, Ct);
+        await WaitForReadsAsync(h, 2);
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(await tab.ValidateAsync(user, "Interval", Ct));            // the first failed read
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        slow.SetResult(Membership(enabled: true, SectionGroupSid, DomainUsersSid));
+        Assert.True((await early).IsValid);
+        h.Clock.Advance(h.Options.Interval);
+
+        Assert.Equal(CircuitRevocationReason.LookupFailed, (await h.Revalidator.RevalidatePageRequestAsync(user, Ct)).Reason);
+    }
+
     [Fact]
     public async Task ARealDenial_StillEndsTheSessionAtOnce_WhateverWasRecorded()
     {
