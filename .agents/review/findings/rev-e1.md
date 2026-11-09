@@ -4,7 +4,7 @@
 circuit path. A page request or reload while the directory is not answering renders from the recorded answer through
 `RevalidatePageRequestAsync` without counting the fallback, and a fresh circuit starts its counter at zero, so stale
 access can be admitted until the recorded answer ages out (interval + 2 min) instead of ending at the second failure.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 454fa2b7; awaiting review (next codex round)
 **Branch**: fix/rev-e1 (worktree `D:\source\ExchangeAdminWeb-wt\rev-e1`, from master 59522ca6)
 **Commit**: 5b10738e
 **Reviewer**: codex (Portkey) / configured route / xhigh

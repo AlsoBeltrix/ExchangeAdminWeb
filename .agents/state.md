@@ -8,6 +8,30 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 (later) - rev-e1 merged; review F found three deploy-script defects, fix slice running
+
+**Merged:** rev-e1 at 454fa2b7. The consecutive-failed-lookup count now lives on the per-account recorded answer,
+so every tab, page request, reload and new circuit charges and reads the same count; the second failure in a row
+refuses the page (403, audit trigger `PageRequest`) and ends the session. Master gates at 454fa2b7: 8861 xUnit
+passed (8852 + 9), 19 warnings, format, diff-check, ASCII clean. Implementer's departure, accepted by the supervisor
+as keeping sweep-c item 15's one-forgiven-failure rule for multi-tab operators (owner may overrule): failed reads
+that were already in flight when a failure was charged count as the same outage and are not charged again; every
+read that starts after a charge is charged. README "Session Revalidation" describes the rule as built.
+
+**Review F (codex, over 341750c0..59522ca6, `.agents/review/rev-f.result.txt`):** rev-f1 HIGH (the item-12 folder
+verdict does not check the parents of the app folder, so a parent-folder swap defeats it), rev-f2 MEDIUM (an unread
+virtual-directory list of an application elsewhere warns instead of refusing), rev-f3 LOW (deploy.ps1 -PlanOnly ends
+on two unguarded reads instead of printing the refusal and the remaining steps). Fix slice dispatched: branch
+`fix/rev-f`, worktree `D:\source\ExchangeAdminWeb-wt\rev-f`, from 454fa2b7.
+
+**Deploy checks added by rev-e1 (dev):** with the directory blocked, one tab, wait for one failed interval check
+(Warning "1 failed lookup(s) in a row for this account"), reload: expect "This page was not shown" (403) and a
+`SessionRevalidation` audit line with trigger `PageRequest`, reason `LookupFailed`; with two tabs open, one stall
+gives one 1-in-a-row warning per tab and both tabs stay.
+
+**Next:** rev-f hand-back -> merge on guard proof -> PowerShell gates; a codex review G over rev-e1 + rev-f
+(reasonable scope: the two ranges only); then the final state entry and the one dev deploy when the owner declares it.
+
 ### 2026-11-09 - owner back: sweep-g merged, review E done (rev-e1 admitted), reviews move to codex
 
 **Owner clears the blockers:** no permission prompt was ever shown, so the sweep-g stalls were inside a tool call
