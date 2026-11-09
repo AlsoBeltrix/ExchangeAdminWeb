@@ -40,8 +40,21 @@ Notepad.
 > icacls 'D:\inetpub\ExchangeAdminWebDev' /remove:g '*S-1-5-11' /T       # Authenticated Users, folder and contents
 > ```
 >
-> Do the same for the folder above, which a deploy's staging publish inherits from. The folders
-> above the app folder are not checked by the scripts; check them by hand.
+> Do the same for the folder above, which a deploy's staging publish inherits from.
+>
+> **The folders above the app folder are checked too (rev-f1).** Whoever can delete or rename
+> what is in a parent folder can swap the app folder for another between the check and the run.
+> So the scripts also read every folder above the app folder (or above a staging folder not
+> created yet), up to the root of the drive, and **refuse** when anyone outside the same four
+> principals owns one, or holds on it (inherited or not) delete child, delete, change permissions,
+> take ownership or full control - Modify includes delete. Write and append on a parent only add
+> entries beside the app folder and are allowed; so is read. The app pool's identity is not
+> trusted with these rights on a parent either. The refusal names the parent and the principal
+> ("... holds ... on `<parent>`, a folder above the app folder, so can replace it"); a parent whose
+> permissions or owner cannot be read is refused, naming it. A junction or symbolic link in the
+> path is not followed: the folders read are the ones the path names. Fix a parent the same way
+> as the app folder (`icacls <parent> /remove:g <principal>`, after `/inheritance:d` for an
+> inherited grant).
 
 ## Where the database is — read this before anything else
 

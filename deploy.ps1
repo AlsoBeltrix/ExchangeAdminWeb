@@ -428,6 +428,9 @@ if (-not $isUpgrade -and $null -ne $existingApplication -and -not (Test-Path -Li
 # A refusal one of those reads would make is printed (Write-PlanRefusal) and the plan goes on, so it
 # shows every step. Nothing is published, backed up, configured, granted, stopped, copied, started or
 # written, and nothing is prompted for. The real run below is unchanged.
+# rev-f3: a read that fails here - the pool's identity, the db tool, the config database's path - is
+# such a refusal too (the real run stops on it): it is printed and counted, a placeholder stands in for
+# what it would have read, and the plan goes on to print the remaining steps.
 if ($PlanOnly) {
     $script:planRefusals = 0
     $planIsUpgrade = $isUpgrade
@@ -462,17 +465,29 @@ if ($PlanOnly) {
     $planAccount = $ServiceAccount
     $planNeedsPassword = $false
     $planPoolExists = Test-Path "IIS:\AppPools\$AppPoolName"
+    $planPoolRead = $false
     if ($planPoolExists) {
-        # The real run's read, the same rule (cdt-24).
-        $planProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
-        $planExistingUser = $planProcessModel.userName
-        $planRunsAsUser = ("$($planProcessModel.identityType)" -in @('SpecificUser', '3')) -and -not [string]::IsNullOrWhiteSpace($planExistingUser)
+        # The real run's read, the same rule (cdt-24). rev-f3: a read that fails stops the real run
+        # (it is unguarded there, under "Stop"), so here it is that run's refusal.
+        try {
+            $planProcessModel = Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel
+            $planExistingUser = $planProcessModel.userName
+            $planIdentityType = "$($planProcessModel.identityType)"
+            $planPoolRead = $true
+        } catch {
+            Write-PlanRefusal "the identity of app pool $AppPoolName cannot be read ($($_.Exception.Message))."
+        }
+    }
+    if ($planPoolExists -and -not $planPoolRead) {
+        if (-not $planAccount) { $planAccount = "<the identity of app pool $AppPoolName, not read>" }
+    } elseif ($planPoolExists) {
+        $planRunsAsUser = ($planIdentityType -in @('SpecificUser', '3')) -and -not [string]::IsNullOrWhiteSpace($planExistingUser)
         if (-not $planAccount) {
             if ($planRunsAsUser) {
                 $planAccount = $planExistingUser
                 Write-Plan "App pool $AppPoolName exists and runs as $planAccount; that account is kept"
             } else {
-                Write-PlanRefusal "app pool $AppPoolName exists but does not run as a specific user (IIS reports identityType '$($planProcessModel.identityType)'), and no -ServiceAccount was given."
+                Write-PlanRefusal "app pool $AppPoolName exists but does not run as a specific user (IIS reports identityType '$planIdentityType'), and no -ServiceAccount was given."
             }
         } elseif (-not $planRunsAsUser -or $planExistingUser -ne $planAccount) {
             Write-Plan "App pool identity changes: '$planExistingUser' -> $planAccount"
@@ -505,15 +520,34 @@ if ($PlanOnly) {
     Write-Plan "dotnet publish -c Release -o $planStagingPath (from $ProjectRoot)"
     # The tool's paths, and what the sweep item 12 folder check would decide for the staging folder,
     # judged by what it would inherit: nothing is published, so the folder is not there.
-    $planTool = Resolve-ConfigDbTool -AppPath $planStagingPath -PlanOnly
+    # rev-f3: a tool that cannot be located is the real run's refusal; and the folder check's verdict
+    # is counted as one when it says a real run refuses.
+    try {
+        $planTool = Resolve-ConfigDbTool -AppPath $planStagingPath -PlanOnly
+    } catch {
+        Write-PlanRefusal "the config DB tool cannot be located ($($_.Exception.Message))."
+        $planTool = @{ Summary = '<the config DB tool, not located>'; AclSummary = 'App folder permissions: not read, because the tool could not be located.'; AclRefuses = $false }
+    }
     Write-Plan "Confirm the published build carries the config DB tool: $($planTool.Summary)"
-    Write-Plan $planTool.AclSummary
+    if ($planTool.AclRefuses) { Write-PlanRefusal $planTool.AclSummary } else { Write-Plan $planTool.AclSummary }
 
     Write-Step "Backing up the runtime configuration (plan)"
     $planRuntimeConfigDir = Join-Path $servingFolder "config"
-    $planConfigStorePathSetting = Get-ConfigStorePathSetting -PublishPath $servingFolder
-    $planConfigDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
-    $planDbPresent = Test-IsSqliteConfigDbPresent -DbPath $planConfigDbPath
+    # rev-f3: an appsettings.json that cannot be read or parsed is the real run's refusal.
+    $planConfigStorePathSetting = $null
+    $planDbPresent = $false
+    $planStoreRead = $false
+    try {
+        $planConfigStorePathSetting = Get-ConfigStorePathSetting -PublishPath $servingFolder
+        $planConfigDbPath = Resolve-ConfigDbPath -PublishPath $servingFolder
+        $planDbPresent = Test-IsSqliteConfigDbPresent -DbPath $planConfigDbPath
+        $planStoreRead = $true
+    } catch {
+        Write-PlanRefusal "the config database's path cannot be read from $servingFolder ($($_.Exception.Message))."
+        $planConfigStorePathSetting = $null
+        $planConfigDbPath = "<the config database $servingConfigPath names, not read>"
+        $planDbPresent = $false
+    }
     if ($planConfigStorePathSetting -and -not $planDbPresent) {
         Write-PlanRefusal "ConfigStore:Path names '$planConfigDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one)."
     }
@@ -521,7 +555,7 @@ if ($PlanOnly) {
         Write-Plan "Copy $configPath to $planBackupDir\appsettings.${timestamp}.bak"
     }
     if ($planIsUpgrade -or (Test-Path -LiteralPath $servingConfigPath) -or $planDbPresent) {
-        Write-Plan "Verified online backup of the config DB at $planConfigDbPath$(if ($planDbPresent) { '' } else { ' (not there yet: nothing to back up)' }), via $($planTool.Summary) backup, and a copy of the rest of $planRuntimeConfigDir without the live databases"
+        Write-Plan "Verified online backup of the config DB at $planConfigDbPath$(if ($planDbPresent) { '' } elseif (-not $planStoreRead) { ' (its path was not read: see the refusal above)' } else { ' (not there yet: nothing to back up)' }), via $($planTool.Summary) backup, and a copy of the rest of $planRuntimeConfigDir without the live databases"
     }
 
     $planMovesApplication = $false

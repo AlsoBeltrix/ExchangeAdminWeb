@@ -18,6 +18,7 @@ Set-StrictMode -Version Latest
 
 BeforeAll {
     . (Join-Path $PSScriptRoot 'Get-BuiltApp.ps1')
+    Use-TempAncestryStandIn
     $script:AppPath = Get-BuiltApp
 
     $modulePath = Join-Path $PSScriptRoot '..\..\tools\JobStateWarning.psm1'

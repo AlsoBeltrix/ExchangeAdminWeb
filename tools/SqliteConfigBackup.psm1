@@ -65,7 +65,8 @@ $script:ConfigDbToolMinimumVersion = [version]'2.34.0'
     AclExposure holds what it found and AclSummary is a printable line saying what a real run
     would do - for a folder not there yet, from what it would inherit from the folder above it.
 .OUTPUTS
-    A hashtable: Host, Assembly, Missing, Summary, AclExposure, AclSummary. In action mode a
+    A hashtable: Host, Assembly, Missing, Summary, AclExposure, AclSummary, AclRefuses (plan mode:
+    whether a real run would refuse the folder, so a plan can count it - rev-f3). In action mode a
     missing file, an app too old to have the db mode, or an app folder that anyone but the
     administrators, SYSTEM, TrustedInstaller or the current account can change (sweep item 12),
     is a throw naming it.
@@ -100,6 +101,7 @@ function Resolve-ConfigDbTool {
         Summary     = $summary
         AclExposure = @()
         AclSummary  = $null
+        AclRefuses  = $false
     }
 
     if ($PlanOnly) {
@@ -118,9 +120,11 @@ function Resolve-ConfigDbTool {
                 $tool.AclSummary = "App folder permissions: only the administrators, SYSTEM, TrustedInstaller and the account running this script can change the code in $where, so the elevated db tool may run from it."
             } else {
                 $tool.AclSummary = "App folder permissions: a real run REFUSES to run the db tool from ${where}: $(Format-ToolFolderWriteExposure $tool.AclExposure)."
+                $tool.AclRefuses = $true
             }
         } catch {
             $tool.AclSummary = "App folder permissions: a real run REFUSES to run the db tool from ${AppPath}: they cannot be read ($($_.Exception.Message))."
+            $tool.AclRefuses = $true
         }
         return $tool
     }

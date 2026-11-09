@@ -47,6 +47,21 @@ BeforeAll {
     $script:Everyone = 'S-1-1-0'
     $script:Users = 'S-1-5-32-545'
     $script:AuthenticatedUsers = 'S-1-5-11'
+
+    # rev-f1: the folders from the temp directory up are the host's; they are answered as clean so
+    # the fixtures' own parents, created and narrowed here, are what each test judges.
+    Use-TempAncestryStandIn
+
+    # A narrowed parent folder holding a narrowed app folder (the app folder inherits the parent's
+    # narrow entries). Returns both paths.
+    function Initialize-ParentFixture {
+        $parent = Join-Path ([System.IO.Path]::GetTempPath()) ("tfacl_" + [guid]::NewGuid().ToString('N'))
+        Initialize-TightTestFolder -Path $parent | Out-Null
+        $app = Join-Path $parent 'app'
+        New-Item -ItemType Directory -Path $app | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:AppPath 'ExchangeAdminWeb.dll') -Destination $app
+        return [pscustomobject]@{ Parent = $parent; App = $app }
+    }
 }
 
 Describe 'ToolFolderAcl: who besides the administrators can change the code in an app folder' {
@@ -154,9 +169,135 @@ Describe 'ToolFolderAcl: who besides the administrators can change the code in a
             @(Get-ToolFolderInheritedWriteExposure -Path $notYet).Count | Should -Be 0
 
             Grant-TestRight -Path $parent -Sid $script:AuthenticatedUsers -Rights '(OI)(CI)M'
-            @(Get-ToolFolderInheritedWriteExposure -Path $notYet | ForEach-Object Sid) | Should -Be @($script:AuthenticatedUsers)
+            # Modify on the parent itself can also replace the new folder (rev-f1), so it is named twice.
+            @(Get-ToolFolderInheritedWriteExposure -Path $notYet | ForEach-Object { "$($_.Kind)|$($_.Sid)" }) | Should -Be @("ParentGrant|$($script:AuthenticatedUsers)", "Grant|$($script:AuthenticatedUsers)")
             Test-Path -LiteralPath $notYet | Should -BeFalse -Because 'judging it creates nothing'
         } finally { Clear-AppFixture $parent }
+    }
+}
+
+Describe 'ToolFolderAcl: the folders above the app folder (rev-f1)' {
+
+    It 'finds nothing when the folders above only let the trusted set replace it, though others may read' {
+        $f = Initialize-ParentFixture
+        try {
+            Grant-TestRight -Path $f.Parent -Sid $script:Users -Rights '(OI)(CI)RX'
+            @(Get-ToolFolderWriteExposure -Path $f.App).Count | Should -Be 0
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'names a non-inheritable grant on a parent that lets another principal replace the app folder: <Right>' -TestCases @(
+        @{ Right = '(DC)'; Name = 'delete child' }
+        @{ Right = '(DE)'; Name = 'delete' }
+        @{ Right = '(WDAC)'; Name = 'change permissions' }
+        @{ Right = '(WO)'; Name = 'take ownership' }
+        @{ Right = '(M)'; Name = 'Modify' }
+    ) {
+        # THE FINDING: the app folder is narrow and inherits nothing from this grant, which sits on
+        # the parent alone; a real run used to say the folder was safe.
+        $f = Initialize-ParentFixture
+        try {
+            Grant-TestRight -Path $f.Parent -Sid $script:Users -Rights $Right
+            $found = @(Get-ToolFolderWriteExposure -Path $f.App)
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)|$($_.Inherited)" }) -join ',' |
+                Should -BeExactly "ParentGrant|$($script:Users)|$($f.Parent)|False" -Because "$Name on the parent can replace the app folder; the app folder itself carries no grant"
+            Format-ToolFolderWriteExposure $found | Should -BeLike "*Users holds * on $($f.Parent), a folder above the app folder, so can replace it"
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'names an inherited grant on a parent, two folders up' {
+        # The grandparent passes delete child to the parent only (no propagation further down), so
+        # the app folder and its contents carry nothing; the parent does, inherited.
+        $grand = Join-Path ([System.IO.Path]::GetTempPath()) ("tfacl_" + [guid]::NewGuid().ToString('N'))
+        try {
+            Initialize-TightTestFolder -Path $grand | Out-Null
+            Grant-TestRight -Path $grand -Sid $script:Users -Rights '(CI)(NP)(IO)(DC)'
+            $parent = Join-Path $grand 'parent'
+            $app = Join-Path $parent 'app'
+            New-Item -ItemType Directory -Path $app | Out-Null
+            $found = @(Get-ToolFolderWriteExposure -Path $app)
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Path)|$($_.Inherited)" }) -join ',' | Should -BeExactly "ParentGrant|$parent|True"
+        } finally { Clear-AppFixture $grand }
+    }
+
+    It 'does not count rights on a parent that only add entries beside the app folder: <Right>' -TestCases @(
+        @{ Right = '(WD)' }
+        @{ Right = '(AD)' }
+        @{ Right = '(RX)' }
+    ) {
+        $f = Initialize-ParentFixture
+        try {
+            Grant-TestRight -Path $f.Parent -Sid $script:Users -Rights $Right
+            @(Get-ToolFolderWriteExposure -Path $f.App).Count | Should -Be 0
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'names a parent owned by a principal outside the trusted set' {
+        # Taking ownership for another principal needs a privilege this suite does not hold, so the
+        # parent's ACL read is answered with an in-memory one owned by Everyone that grants nothing.
+        $f = Initialize-ParentFixture
+        try {
+            $script:OwnedParent = $f.Parent
+            Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { $LiteralPath -eq $script:OwnedParent } -MockWith {
+                $security = [System.Security.AccessControl.DirectorySecurity]::new()
+                $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-1-0'))
+                $security
+            }
+            $found = @(Get-ToolFolderWriteExposure -Path $f.App)
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)" }) -join ',' | Should -BeExactly "ParentOwner|$($script:Everyone)|$($f.Parent)"
+            Format-ToolFolderWriteExposure $found | Should -BeLike "Everyone is the owner of $($f.Parent), a folder above the app folder*"
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'throws, naming the parent, when a parent''s permissions cannot be read' {
+        $f = Initialize-ParentFixture
+        try {
+            $script:UnreadParent = $f.Parent
+            Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { $LiteralPath -eq $script:UnreadParent } -MockWith { throw 'Attempted to perform an unauthorized operation.' }
+            { Get-ToolFolderWriteExposure -Path $f.App } | Should -Throw -ExpectedMessage "The permissions of $($f.Parent), a folder above $($f.App), cannot be read (Attempted to perform an unauthorized operation.)*"
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'judges a folder not created yet by the folders above it that exist, as well as by what it would inherit' {
+        $f = Initialize-ParentFixture
+        try {
+            $notYet = Join-Path $f.Parent 'staging.1\app'
+            @(Get-ToolFolderInheritedWriteExposure -Path $notYet).Count | Should -Be 0
+            Grant-TestRight -Path $f.Parent -Sid $script:Users -Rights '(DC)'
+            $found = @(Get-ToolFolderInheritedWriteExposure -Path $notYet)
+            ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)" }) -join ',' | Should -BeExactly "ParentGrant|$($script:Users)|$($f.Parent)"
+            Test-Path -LiteralPath (Join-Path $f.Parent 'staging.1') | Should -BeFalse -Because 'judging it creates nothing'
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'Resolve-ConfigDbTool refuses before anything runs, naming the parent and the principal' {
+        $f = Initialize-ParentFixture
+        try {
+            Grant-TestRight -Path $f.Parent -Sid $script:Everyone -Rights '(DC)'
+            $err = $null
+            try { Resolve-ConfigDbTool -AppPath $f.App | Out-Null } catch { $err = "$_" }
+            $err | Should -BeLike "Refusing to run the config DB tool from $($f.App):*Everyone holds * on $($f.Parent), a folder above the app folder, so can replace it*Nothing was changed."
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'Resolve-ConfigDbTool refuses a parent whose permissions cannot be read, naming it' {
+        $f = Initialize-ParentFixture
+        try {
+            $script:UnreadParent = $f.Parent
+            Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { $LiteralPath -eq $script:UnreadParent } -MockWith { throw 'Attempted to perform an unauthorized operation.' }
+            $err = $null
+            try { Resolve-ConfigDbTool -AppPath $f.App | Out-Null } catch { $err = "$_" }
+            $err | Should -BeLike "Refusing to run the config DB tool from $($f.App): the folder's permissions cannot be read (The permissions of $($f.Parent), a folder above*"
+        } finally { Clear-AppFixture $f.Parent }
+    }
+
+    It 'Resolve-ConfigDbTool in plan mode prints the refusal a real run would make, for a folder there and one not there yet' {
+        $f = Initialize-ParentFixture
+        try {
+            Grant-TestRight -Path $f.Parent -Sid $script:Everyone -Rights '(DC)'
+            (Resolve-ConfigDbTool -AppPath $f.App -PlanOnly).AclSummary | Should -BeLike "*a real run REFUSES to run the db tool from $($f.App):*Everyone holds * on $($f.Parent), a folder above the app folder*"
+            (Resolve-ConfigDbTool -AppPath (Join-Path $f.Parent 'staging.1') -PlanOnly).AclSummary | Should -BeLike "*REFUSES*not there yet*Everyone holds * on $($f.Parent), a folder above the app folder*"
+        } finally { Clear-AppFixture $f.Parent }
     }
 }
 
@@ -216,6 +357,18 @@ Describe 'Resolve-ConfigDbTool refuses an app folder others can change (sweep it
             $plan = Resolve-ConfigDbTool -AppPath $dir -PlanOnly
             $plan.AclSummary | Should -BeLike "*a real run REFUSES to run the db tool from ${dir}:*Everyone holds*"
             @($plan.AclExposure).Count | Should -BeGreaterThan 0
+        } finally { Clear-AppFixture $dir }
+    }
+
+    It 'rev-f3: in plan mode says whether a real run refuses, so a plan can count it' {
+        $dir = Initialize-AppFixture
+        try {
+            (Resolve-ConfigDbTool -AppPath $dir -PlanOnly).AclRefuses | Should -BeFalse
+            Grant-TestRight -Path $dir -Sid $script:Everyone -Rights '(OI)(CI)M'
+            (Resolve-ConfigDbTool -AppPath $dir -PlanOnly).AclRefuses | Should -BeTrue
+            $script:UnreadApp = $dir
+            Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { $LiteralPath -eq $script:UnreadApp } -MockWith { throw 'Attempted to perform an unauthorized operation.' }
+            (Resolve-ConfigDbTool -AppPath $dir -PlanOnly).AclRefuses | Should -BeTrue -Because 'unreadable permissions refuse too'
         } finally { Clear-AppFixture $dir }
     }
 
