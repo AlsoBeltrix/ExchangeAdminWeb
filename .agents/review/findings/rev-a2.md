@@ -6,7 +6,7 @@ password rotation under the same secret ID, a busy instance keeps the old passwo
 within five minutes of each other; authentication failures downstream cannot evict it (`Forget` is private). Protection
 reads and module operations keep failing until a five-minute idle period or a restart. The cache itself stays (decision
 2026-11-03, "credential cache stays"; kd-88 addition).
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 8b488bcf
 **Lines** (master `145f513f`): `Services/DelineaService.cs:173-174`, `:281-296`.

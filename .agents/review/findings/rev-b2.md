@@ -4,7 +4,7 @@
 one and otherwise by the stored label (UPN or mail). Licensing Updates and the AD Attribute Editor build their target
 snapshot without `ObjectSid`. Store a protected user, change the user's UPN and mail, and those two modules compare the
 stale label, get NotProtected and write (`Set-ADUser`). The plan's rule is that the new build never matches names.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 76e9a19e
 **Lines** (master `145f513f`): `Services/ProtectedPrincipalService.cs:1934-1936`; `Services/LicensingUpdatesService.cs:262-270`, `:382-387`; `Services/ADAttributeEditorService.cs:1317-1325`.

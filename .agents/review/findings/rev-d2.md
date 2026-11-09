@@ -4,7 +4,7 @@
 with `if (isLoading) return;`, but `isLoading = false` is set before the admin notification is awaited; a second click queued
 during that await is admitted, `listedUpn` is still set, the handler does not require `resetConfirmPending`, and
 `ResetAllMethodsAsync(upn)` runs again.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: e30c115a (and cd088bb6, a test-only warning fix)
 **Lines** (master `dcf13a16`): `Components/Pages/MfaReset.razor:294`, `:483`, `:507-526`.

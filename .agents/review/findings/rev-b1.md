@@ -5,7 +5,7 @@ search covers only the catalog's own domain partition. A module-admin or section
 two tree domains is seen once, converted to that domain's SID and activated, where the verb's rule is to refuse ambiguity.
 The same omission makes the SID binder miss legitimate targets outside that naming context (fail-closed refusals).
 Shares its root with rev-a3.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: eef954d1
 **Lines** (master `145f513f`): `Services/InvokingUserIdentifierDirectory.cs:80-85`, `:106-111`; `Services/PowerShellProtectedGroupDirectory.cs:213-218`.

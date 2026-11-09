@@ -3,7 +3,7 @@
 **Severity**: HIGH - fail-open. For group write targets `CheckOuMatches(..., ouIdsByLabel: true)` compares the target's DN
 against the OU row's stored DN label. Protect an OU by objectGUID, then rename or move it: its groups keep their identities but
 gain new DNs, the label no longer matches, and Group Management's membership write proceeds (`Set-ADGroup`).
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 07005c0d
 **Lines** (master `145f513f`): `Services/ProtectedPrincipalService.cs:514`, `:2001-2005`; `Services/GroupManagementService.cs:671`, `:739`.

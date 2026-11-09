@@ -5,7 +5,7 @@ membership in protected security group S runs through distribution group D (U in
 `ProtectedGroupMembership.TokenAnswers` treats "token read, group is a global/universal security group" as a confirmed
 negative and skips the anchored member-link fallback, so the check returns NotProtected and a write proceeds. The
 pre-kd-88 member-chain walk caught this case.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 536e0e3b
 **Lines** (master `145f513f`): `Services/ProtectedGroupMembership.cs:402-405`, `:492-495`; `Services/ProtectedPrincipalService.cs:447`.

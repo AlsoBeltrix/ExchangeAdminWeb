@@ -5,7 +5,7 @@ queries the GC with `Get-ADObject -LDAPFilter ... -Server <gc>` and no `SearchBa
 domain partition, so a target or group in a separate tree is absent from the answer and
 `ProtectedGroupMembership` (`:588-590`) throws on the missing entry. Microsoft documents that searching all GC partitions
 requires an explicitly empty SearchBase.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: eef954d1
 **Lines** (master `145f513f`): `Services/PowerShellProtectedGroupDirectory.cs:132-141`; `Services/ProtectedGroupMembership.cs:588-590`.

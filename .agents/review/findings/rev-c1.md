@@ -5,7 +5,7 @@ enforcement `FindGroups` query the GC with `-Server <gc>` and no `SearchBase`, s
 separate tree domain is not returned. Verify reports it Missing; an operator Ignores it; enforcement's lookup returns zero
 for the same reason, and because the entry is an ignored SID row with a confirmed-zero result, it is skipped. A member whose
 token does not carry that domain-local SID then passes. Before the ignore list, the zero result failed closed.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: eef954d1
 **Lines** (master `14a94b50`): `Services/PowerShellProtectedGroupDirectory.cs:97-102`, `:244-249`; `Services/ProtectedGroupMembership.cs:360-366`.

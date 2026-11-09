@@ -4,7 +4,7 @@
 the directory; when Verify returns it calls `ShowRules`, `SetRulesBaseline` and `RecountProtected` unconditionally, and a
 successful direct action does the same, so a pattern added or a row removed during the wait vanishes with the dirty count
 cleared. Module Configuration already withholds the snapshot replacement in this situation.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 05342eba
 **Lines** (master `14a94b50`): `Components/Pages/AdminSettings.razor:309`, `:1334-1342`, `:1474-1483`.

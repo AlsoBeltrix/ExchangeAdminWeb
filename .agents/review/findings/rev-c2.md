@@ -4,7 +4,7 @@
 picked one and keeps ignores that still name a row by identifier. Ignore a missing group, restore it, then Replace the row
 by picking the restored group: same SID, so the Missing ignore survives, although the pane says an ignore is "undone by
 Replace or Remove". If the group disappears again, enforcement suppresses the refusal.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 043bfb39
 **Lines** (master `14a94b50`): `Services/Storage/ProtectedPrincipalRepository.cs:285-289`, `:370`, `:436-439`; `Components/Pages/AdminSettings.razor:1184`.

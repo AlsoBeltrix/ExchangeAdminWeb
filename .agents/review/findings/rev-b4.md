@@ -6,7 +6,7 @@ address. If Exchange resolved an alias to protected synced account A and another
 canonical address, the method returns B, whose SID passes A's rule. Blocked Senders' protection gate then allows a
 non-servicer to unblock A's alias. The 2026-11-03 ruling records that the code fails closed for a synced recipient with no
 SID; the fall-through on an unanswered read is the gap.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 44ad5162
 **Lines** (master `145f513f`): `Services/ProtectedPrincipalService.cs:763-777`; `Services/BlockedSenderProtectionGate.cs:160`, `:237`.

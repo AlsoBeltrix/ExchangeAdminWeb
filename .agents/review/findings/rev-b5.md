@@ -4,7 +4,7 @@
 (`Interval + 2 x LookupTimeout`), not a count. With the supported 30-second interval and the 60-second timeout, a
 successful read at t=0 is reused at t=30, 60, 90 and 120 on four consecutive failures; the README says "two failed checks
 in a row ... end the session".
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; PARTLY closed by codex review E 2026-11-09: the circuit path is closed, the page-request path bypasses the counter (rev-e1)
 **Branch**: fix/rev-abc
 **Commit**: e157a7cb
 **Lines** (master `145f513f`): `Authorization/CircuitMembershipRevalidator.cs:137`, `:232-236`.

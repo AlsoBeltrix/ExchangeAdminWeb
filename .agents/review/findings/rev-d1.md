@@ -4,7 +4,7 @@
 `dnsHostName` that answered `Get-ADRootDSE` against the domain and returns it unconditionally. Domain discovery can
 answer from a read-only domain controller: its RootDSE and reads succeed, the fallback never runs, and `Set-ADUser
 -Server <rodc>` fails on every save.
-**Status**: Fixed on branch; awaiting review
+**Status**: Merged 78c03e49; closed by codex review E 2026-11-09 (CLOSED, `.agents/review/rev-e.result.txt`)
 **Branch**: fix/rev-abc
 **Commit**: 86ee0d0b
 **Lines** (master `dcf13a16`): `Services/ADAttributeEditorService.cs:1824-1845`, `:1502`.
