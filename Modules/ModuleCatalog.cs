@@ -993,7 +993,8 @@ public sealed class ModuleCatalog
             // outcome rather than the result banner's field, which its dismiss can clear. Nothing the operator
             // sees changes today - no await sits between the two - but one added there would have skipped the
             // refresh silently (kd-74).
-            Version = "1.14.3",
+            // 1.14.4: help sweep - the paste-list note cut from four sentences to three (help is behaviour: Constitution, Code Change Discipline).
+            Version = "1.14.4",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",
