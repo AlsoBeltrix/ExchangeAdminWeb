@@ -8,6 +8,21 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 14:30 - in-app help sweep merged (base 2.36.1); a second dev deploy is owed for the owner to see it
+
+Owner, on the deployed Admin Settings page: "what the fuck is this screed doing in the ui? ... sweep the app for
+this kind of nonsense." Ruling recorded (decisions 2026-11-09 "In-app help is short"; Known Failure Class 5 amended).
+help-sweep merged at 337aaccd: 397 help blocks surveyed, 58 over the limit cut to 0 (Protected principals note 1613
+-> 160 chars; Verify notes 1064-1378 -> 240-306; 34 catalog descriptions to one sentence; ~30 hover tips to one
+sentence); every cut fact is in README (four sections gained a sentence; a stale 500-row Risky Users bullet
+corrected) or in the refusal message at the moment it matters. 19 module patch bumps; base 2.36.1 because Module
+Config is a shared page and 2.36.0 has shipped to dev. Master gates at 337aaccd: 8861 xUnit, 19 warnings, format,
+diff-check, ASCII clean. New LOW finding from the sweep: `env-neutrality-delinea-banner.md` (Module Config banner
+names a deployment-specific secret template).
+
+**Next:** the owner deploys dev again (`deploy-pipeline.ps1 -Dev`; no conversion step this time) and looks over Admin
+Settings and Module Configuration; then the post-deploy checklist `.agents/review/deploy-checklist-2026-11-09.md`.
+
 ### 2026-11-09 13:00 - dev deployed by the owner ("deployed"); post-deploy test checklist handed over
 
 Dev now runs master at 350c63b5 code (records to 4e2084e7). The consolidated post-deploy checklist (from every
