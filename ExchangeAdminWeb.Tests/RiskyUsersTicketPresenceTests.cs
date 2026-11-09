@@ -94,6 +94,22 @@ public sealed class RiskyUsersTicketPresenceTests : IDisposable
         Assert.DoesNotContain(AuditRows(), row => row.GetProperty("error").GetString() == "Ticket number missing");
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is not refused for it; the handler goes on, and every row
+    // that carries a ticket carries it with the character removed.
+    [Fact]
+    public async Task ATicketTypedWithAZeroWidthSpace_GoesOnToTheWrite_AndIsRecordedSanitized()
+    {
+        var page = PageFor(TicketPresenceTests.TypedWithZeroWidthSpace);
+
+        await Execute(page);
+
+        Assert.Equal(1, _protection.Resolves);
+        Assert.Equal(1, _graphWrites);
+        var withTicket = AuditRows().Where(row => row.TryGetProperty("ticket", out _)).ToList();
+        Assert.NotEmpty(withTicket);
+        Assert.All(withTicket, row => Assert.Equal(TicketPresenceTests.RecordedSanitized, row.GetProperty("ticket").GetString()));
+    }
+
     // ---- the page -----------------------------------------------------------------------------
 
     private static RiskyUser Jo() => new()

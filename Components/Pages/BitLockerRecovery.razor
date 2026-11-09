@@ -298,7 +298,7 @@
         var byKeyId = !string.IsNullOrWhiteSpace(keyId);
         var submittedKeyId = keyId;
         var submittedTerm = searchTerm;
-        var submittedTicket = ticketNumber.Trim();
+        var submittedTicket = TicketPresence.Sanitize(ticketNumber);
         var liveAd = includeLiveAd;
 
         isSearching = true;

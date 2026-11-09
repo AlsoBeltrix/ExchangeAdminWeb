@@ -447,7 +447,7 @@
         // them too, so a keystroke or a tick landing there - or a lookup, which clears all three - changed
         // the account disabled and the ticket and lockdown choice the write and its record carried.
         var principal = resolvedPrincipal;
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var moveToLockdown = moveToLockdownOu;
 
         isDisabling = true;

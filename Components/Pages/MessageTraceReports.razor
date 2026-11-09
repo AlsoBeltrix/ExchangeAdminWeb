@@ -150,7 +150,7 @@
         error = null;
         busy = true;
         busyJobId = jobId;
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         try
         {
             using var activity = Progress.Begin(

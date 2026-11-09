@@ -270,7 +270,7 @@
         await RunAsync("source-execute", async context =>
         {
             logoffResult = await RemediationService.LogoffLockoutSourcesAsync(
-                new AccountLockoutLogoffRequest(ParseList(sourceUsers), withinHours, ParseList(domainControllers), true, ticketNumber.Trim(), throttleLimit),
+                new AccountLockoutLogoffRequest(ParseList(sourceUsers), withinHours, ParseList(domainControllers), true, TicketPresence.Sanitize(ticketNumber), throttleLimit),
                 context);
             return (logoffResult.Success, logoffResult.Message);
         });
@@ -292,7 +292,7 @@
         await RunAsync("sweep-execute", async context =>
         {
             logoffResult = await RemediationService.SweepScopedComputersAsync(
-                new AccountScopedLogoffRequest(ParseList(sweepUsers), searchBase.Trim(), ParseList(extraComputers), true, ticketNumber.Trim(), throttleLimit),
+                new AccountScopedLogoffRequest(ParseList(sweepUsers), searchBase.Trim(), ParseList(extraComputers), true, TicketPresence.Sanitize(ticketNumber), throttleLimit),
                 context);
             return (logoffResult.Success, logoffResult.Message);
         });

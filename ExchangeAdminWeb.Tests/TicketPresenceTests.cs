@@ -117,6 +117,17 @@ public class TicketPresenceTests
     internal const string TypedWithZeroWidthSpace = "INC\u200B0042";
     internal const string RecordedSanitized = "INC0042";
 
+    /// <summary><paramref name="ticket"/> as an operator might paste it: a zero-width space after its first three characters.</summary>
+    internal static string WithZeroWidthSpace(string ticket) => ticket.Insert(3, ((char)0x200B).ToString());
+
+    [Fact]
+    public void WithZeroWidthSpace_CarriesOne_AndSanitizesBack()
+    {
+        Assert.Equal(TypedWithZeroWidthSpace, WithZeroWidthSpace(RecordedSanitized));
+        Assert.Equal(RecordedSanitized.Length + 1, WithZeroWidthSpace(RecordedSanitized).Length);
+        Assert.Equal(RecordedSanitized, TicketPresence.Sanitize(WithZeroWidthSpace(RecordedSanitized)));
+    }
+
     // 2026-11-09, the pages: every ticket-gated control is enabled by TicketPresence.IsPresentAsTyped - the check behind
     // it - never by string.IsNullOrWhiteSpace, which a ticket carrying only a zero-width space passes; no ticket box shows
     // an invisible-character refusal any more; and no handler records its ticket merely trimmed - it reads the box through
@@ -131,6 +142,12 @@ public class TicketPresenceTests
     private static readonly Dictionary<string, string> NotGatedByTicketPresence = new(StringComparer.Ordinal)
     {
         ["AccountLockoutRemediation.razor"] = "its service checks the ticket with IsNullOrWhiteSpace (AccountLockoutRemediationService); not in sweep item 41's list - recorded in sweep-e-40",
+    };
+
+    // Pages whose ticket box is read through TicketPresence.Sanitize somewhere other than the page, each with where.
+    private static readonly Dictionary<string, string> SanitizedOffThePage = new(StringComparer.Ordinal)
+    {
+        ["OutOfOffice.razor"] = "the page hands the box to OutOfOfficeRequest.FromForm, which sanitizes it (Models/LookupModels.cs)",
     };
 
     [Fact]
@@ -154,6 +171,12 @@ public class TicketPresenceTests
                 if (!text.Contains($"IsPresentAsTyped({variable})", StringComparison.Ordinal))
                     continue;
                 gated++;
+                Assert.False(text.Contains($"{variable}.Trim()", StringComparison.Ordinal) || text.Contains($"{variable}?.Trim()", StringComparison.Ordinal),
+                    $"{name}: the ticket {variable} is read trimmed, not through TicketPresence.Sanitize, so the record can carry an invisible character.");
+                if (SanitizedOffThePage.ContainsKey(name))
+                    continue;
+                Assert.True(text.Contains($"TicketPresence.Sanitize({variable})", StringComparison.Ordinal),
+                    $"{name}: the ticket {variable} is never read through TicketPresence.Sanitize.");
             }
         }
 

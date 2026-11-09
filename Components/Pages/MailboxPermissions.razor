@@ -366,7 +366,7 @@
         var isAdd = tabIndex == 0;
         var target = targetMailbox.Trim();
         var user = affectedUser.Trim();
-        var ticket = ticketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(ticketNumber);
         var fullAccess = grantFullAccess;
         var sendAs = grantSendAs;
         var autoMap = autoMapping;
@@ -580,7 +580,7 @@
         if (file is null) return;
 
         var isAdd = bulkIsAdd;
-        var ticket = bulkTicketNumber.Trim();
+        var ticket = TicketPresence.Sanitize(bulkTicketNumber);
         var ipAddress = clientIpAddress;
         string RefusedAt(string refusal, string step) => SelfGrantRefusalRecord.Banner(refusal, () => Audit.LogMailboxPermission(currentUser, ipAddress, isAdd ? "BulkAdd" : "BulkRemove", "Bulk", file.Name, "Multiple", false, ticket, errorDetail: refusal, extra: SelfGrantRefusalRecord.RefusalExtra(step)), Logger, "Bulk", SelfGrantRefusalRecord.RefusedChangeRecord); // kd-40: a refusal before the file is read is the run's own Failed row, nothing attempted
         isLoading = true;
