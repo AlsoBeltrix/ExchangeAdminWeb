@@ -8,6 +8,12 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 15:00 - second dev deploy (help sweep, base 2.36.1) done by the owner; checklist handed over again
+
+Session reset after a host hang; nothing was in flight (master ffa6b822, no worktrees). Owner: "deployed". Dev now
+runs 337aaccd code. Checklist: `.agents/review/deploy-checklist-2026-11-09.md` (F1 done); first look at Admin Settings
+and Module Configuration wording.
+
 ### 2026-11-09 14:30 - in-app help sweep merged (base 2.36.1); a second dev deploy is owed for the owner to see it
 
 Owner, on the deployed Admin Settings page: "what the fuck is this screed doing in the ui? ... sweep the app for
