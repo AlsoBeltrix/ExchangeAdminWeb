@@ -4,7 +4,7 @@
 while IIS gives a stopping worker `processModel.shutdownTimeLimit` (90 s by default); the promotion stopped prod outside its try
 (`tools/promote-dev-to-prod.ps1`), so a stop that took 60-90 s ended the run with prod stopping and not restarted. The two scripts
 also treat a failed copy differently: `deploy.ps1` leaves the pool stopped, the promotion rolls back and restarts.
-**Status**: Fixed on branch (timing and promotion); the `deploy.ps1` half is a reported conflict, not changed; awaiting review
+**Status**: Merged 59522ca6 (timing and promotion); reviewed by codex review F 2026-11-09; the `deploy.ps1` half is an owner question (binaries backup = new functionality), see `.agents/state.md` 2026-11-09
 **Branch**: `fix/sweep-g` (from master `145f513f`)
 **Commit**: `b01bee2c` (`fix(sweep-g, item 38): ...`) | **Reviewer**: implementer (candidate)
 
