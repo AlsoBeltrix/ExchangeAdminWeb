@@ -136,6 +136,9 @@ public sealed class AccountLockoutRemediationService
         AccountLockoutLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
+        // rev-j1: the ticket is sanitized once, here, so the gate, the trace, the audit rows and the notification all
+        // judge and record the same string (decision 2026-11-09).
+        request = request with { TicketNumber = TicketPresence.Sanitize(request.TicketNumber) };
         var result = await LogoffLockoutSourcesCoreAsync(request, context);
         await NotifyLogoffAdminAsync("AccountLockout_LogoffSources", request, null, result, context);
         return result;
@@ -179,6 +182,8 @@ public sealed class AccountLockoutRemediationService
         AccountScopedLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
+        // rev-j1: sanitized once, before the trace scope opens; see LogoffLockoutSourcesAsync.
+        request = request with { TicketNumber = TicketPresence.Sanitize(request.TicketNumber) };
         var result = await SweepScopedComputersCoreAsync(request, context);
         await NotifyLogoffAdminAsync("AccountLockout_SweepScoped", null, request, result, context);
         return result;
@@ -279,7 +284,12 @@ public sealed class AccountLockoutRemediationService
 
     public int GetDefaultThrottleLimit() => ClampThrottle(ReadIntConfig("DefaultThrottleLimit", 32));
 
-    private async Task<AccountLogoffResult> RunLogoffAsync(
+    /// <remarks>
+    /// Internal rather than private as a TEST SEAM (rev-j1): every public path fetches an AD credential before it gets
+    /// here, so no test can reach the ticket gate through them. The gate judges with TicketPresence.IsPresent, which
+    /// sanitizes, so a caller that skipped the public boundary's Sanitize is still judged by the same rule.
+    /// </remarks>
+    internal async Task<AccountLogoffResult> RunLogoffAsync(
         string action,
         Dictionary<string, string[]> machineMap,
         bool execute,
@@ -311,7 +321,7 @@ public sealed class AccountLockoutRemediationService
                 return new AccountLogoffResult(true, message, execute, 0, 0, 0, []);
             }
 
-            if (execute && string.IsNullOrWhiteSpace(ticketNumber))
+            if (execute && !TicketPresence.IsPresent(ticketNumber))
             {
                 const string message = "Ticket Number is required for logoff execution.";
                 scope.Complete(false, message);
