@@ -111,9 +111,12 @@ bumping again. Bumped: Admin Settings 1.3.3, Exchange Online 1.0.7, Migration 1.
 Emergency Disable 1.7.4, True Last Logon 1.0.3, Risky Users 1.6.3, DHCP Authorization 1.9.2, BitLocker
 Recovery 1.3.3, Defender for Endpoint Devices 1.6.20, Intune Devices 1.6.2, Service Health 1.3.4,
 Admin Event Log 1.5.3, Self-Service Groups 1.14.4, Bulk Jobs 1.2.4, Comms-10k 1.4.22. Module
-Configuration is a shared page (no module of its own); its change would bump the base app version,
-which the brief withheld - base stays 2.36.0. Open: the owner decides whether the Module
-Configuration help change takes a base patch bump at close-out.
+Configuration is a shared page (no module of its own), so its help change is a shared change and
+bumps the base app version: 2.36.0 -> 2.36.1 (`<VersionPrefix>`, `AssemblyVersion`, `FileVersion` in
+`ExchangeAdminWeb.csproj`), in its own commit `chore(version): base 2.36.1 for the shared Module Config
+help change`. 2.36.0 was deployed to dev on 2026-11-09 after this branch was cut, so it can no longer
+absorb the change. No test or doc pins 2.36.0 (only history records name it); `docs/AdminModuleSpec.md`
+carries its own spec version (2.0), not the app version, so it needed no edit.
 
 ## Left as is, and kept over the limit
 
