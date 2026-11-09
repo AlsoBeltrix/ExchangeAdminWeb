@@ -138,11 +138,8 @@ public class TicketPresenceTests
         "memberTicketNumber", "formTicketNumber", "singleTicketNumber", "pendingActionTicket", "undoTicket",
     ];
 
-    // Pages whose ticket is not gated by TicketPresence, each with its reason.
-    private static readonly Dictionary<string, string> NotGatedByTicketPresence = new(StringComparer.Ordinal)
-    {
-        ["AccountLockoutRemediation.razor"] = "its service checks the ticket with IsNullOrWhiteSpace (AccountLockoutRemediationService); not in sweep item 41's list - recorded in sweep-e-40",
-    };
+    // Pages whose ticket is not gated by TicketPresence, each with its reason. Empty since rev-j1 gated Account Lockout.
+    private static readonly Dictionary<string, string> NotGatedByTicketPresence = new(StringComparer.Ordinal);
 
     // Pages whose ticket box is read through TicketPresence.Sanitize somewhere other than the page, each with where.
     private static readonly Dictionary<string, string> SanitizedOffThePage = new(StringComparer.Ordinal)

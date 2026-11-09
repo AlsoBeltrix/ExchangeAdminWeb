@@ -212,14 +212,14 @@
     private bool CanExecuteSource =>
         !busy &&
         discoveryResult?.ImplicatedMachines.Count > 0 &&
-        !string.IsNullOrWhiteSpace(ticketNumber) &&
+        TicketPresence.IsPresentAsTyped(ticketNumber) &&
         string.Equals(typedConfirmation, "LOG OFF", StringComparison.Ordinal);
 
     private bool CanExecuteSweep =>
         !busy &&
         !string.IsNullOrWhiteSpace(sweepUsers) &&
         (!string.IsNullOrWhiteSpace(searchBase) || !string.IsNullOrWhiteSpace(extraComputers)) &&
-        !string.IsNullOrWhiteSpace(ticketNumber) &&
+        TicketPresence.IsPresentAsTyped(ticketNumber) &&
         string.Equals(typedConfirmation, "LOG OFF", StringComparison.Ordinal);
 
     protected override async Task OnInitializedAsync()

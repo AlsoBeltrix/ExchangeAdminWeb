@@ -1112,7 +1112,8 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             // 1.3.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.3.4",
+            // 1.3.5: rev-j1 - the execute buttons and the service gate judge the ticket sanitized (TicketPresence), so they agree.
+            Version = "1.3.5",
             MainPermission = new(
                 "Access",
                 "AccountLockoutRemediation",

@@ -183,6 +183,100 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
         Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- Ticket: sanitized, not refused, for invisible characters (rev-j1, decision 2026-11-09) ----------
+
+    private const string ZeroWidthSpace = "\u200B";
+    private const string TypedTicket = "INC\u200B0042";
+
+    [Fact]
+    public async Task RunLogoff_Execute_AnInvisibleOnlyTicket_IsRefusedWithTheServicesOwnWords()
+    {
+        // Through the seam: every public path stops at the credential lookup before it reaches this gate.
+        var service = CreateService(out var authorization);
+
+        var result = await service.RunLogoffAsync(
+            "LogoffFromLockoutSources", new Dictionary<string, string[]> { ["PC1"] = ["jdoe"] },
+            execute: true, ZeroWidthSpace, 0, Context(), []);
+
+        Assert.False(result.Success);
+        Assert.Equal("Ticket Number is required for logoff execution.", result.Message);
+        await authorization.DidNotReceive().AuthorizeAsync(
+            Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), "AccountLockoutRemediationLogoff");
+    }
+
+    [Fact]
+    public async Task RunLogoff_Execute_ATicketCarryingAZeroWidthSpace_IsTakenAndRecordedSanitized()
+    {
+        // Past the gate to the logoff authorization, denied, which writes an audit row carrying the ticket.
+        var service = CreateService(out var authorization);
+        authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), "AccountLockoutRemediationLogoff")
+            .Returns(AuthorizationResult.Failed());
+
+        var result = await service.RunLogoffAsync(
+            "LogoffFromLockoutSources", new Dictionary<string, string[]> { ["PC1"] = ["jdoe"] },
+            execute: true, TypedTicket, 0, Context(), []);
+
+        Assert.Equal("You are not authorized to log users off.", result.Message);
+        var audit = Assert.Single(ReadLogEvents(trace: false), e => e.GetProperty("eventType").GetString() == "audit");
+        Assert.Equal("INC0042", audit.GetProperty("ticket").GetString());
+        AssertTraceTicketsAre("INC0042");
+    }
+
+    [Fact]
+    public async Task Sweep_Execute_ATicketCarryingAZeroWidthSpace_IsTracedSanitized()
+    {
+        var service = CreateService(out _);
+
+        await service.SweepScopedComputersAsync(
+            new AccountScopedLogoffRequest(["jdoe"], "OU=Test,DC=x", [], Execute: true, TypedTicket, 0),
+            Context());
+
+        AssertTraceTicketsAre("INC0042");
+    }
+
+    [Fact]
+    public async Task Execute_TheAdminNotificationCarriesTheTicketSanitized_OnBothPaths()
+    {
+        // Both reach (and fail at) the credential lookup with Executed == true, so each notifies.
+        var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
+
+        await service.LogoffLockoutSourcesAsync(
+            new AccountLockoutLogoffRequest(["jdoe"], 24, ["dc1"], Execute: true, TypedTicket, 0),
+            Context());
+        await service.SweepScopedComputersAsync(
+            new AccountScopedLogoffRequest(["jdoe"], "OU=Test,DC=x", [], Execute: true, TypedTicket, 0),
+            Context());
+
+        await email.Received(1).SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), "AccountLockout_LogoffSources",
+            Arg.Any<bool>(), "INC0042",
+            Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
+        await email.Received(1).SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), "AccountLockout_SweepScoped",
+            Arg.Any<bool>(), "INC0042",
+            Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
+    }
+
+    private void AssertTraceTicketsAre(string expected)
+    {
+        var withTicket = ReadLogEvents(trace: true)
+            .Where(e => e.TryGetProperty("ticket", out var t) && t.ValueKind == System.Text.Json.JsonValueKind.String)
+            .ToList();
+        Assert.NotEmpty(withTicket);
+        Assert.All(withTicket, e => Assert.Equal(expected, e.GetProperty("ticket").GetString()));
+    }
+
+    private List<System.Text.Json.JsonElement> ReadLogEvents(bool trace)
+    {
+        var dir = Path.Combine(_tempDir, "ExchangeAdminWeb");
+        return Directory.GetFiles(dir, "exchangeadmin_*.jsonl")
+            .Where(f => Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase) == trace)
+            .SelectMany(File.ReadAllLines)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement)
+            .ToList();
+    }
+
     // ---- Construction helper ----------------------------------------------------------------
 
     private static AccountLockoutOperatorContext Context()
