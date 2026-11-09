@@ -8,6 +8,19 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 12:22 - dev plan clean (0 refusals) after the owner narrowed the host ACLs; deploy is the owner's to declare
+
+Three plan runs by the owner: (1) refused on Authenticated Users Modify on the drive root (inherited by the web root)
+and a direct admin-group FullControl on the web root; (2) after the first narrowing, refused on Authenticated Users
+Write inherited into a new staging folder; (3) clean: "only the administrators, SYSTEM, TrustedInstaller and the
+account running this script can change the code ... so the elevated db tool may run from it", 0 refusal(s). The rev-i
+message fixes were confirmed live in run (2). Item 12's host half is done.
+
+**Owner-side order at the deploy (docs/ConfigDbOperations.md "convert-identifiers"):** publish the build about to be
+deployed to a scratch folder, run `db convert-identifiers` against a copy of the shared database, then live, then
+`db identifier-status` (exit 0); then `deploy-pipeline.ps1 -Dev`; then the post-deploy checks in the entries above.
+The legacy rows stay beside the new ones, so prod on the old build keeps working (plan B.1).
+
 ### 2026-11-09 (plan run) - the owner ran the dev plan; the ACL refusal fired as designed; host ACLs narrowed
 
 The owner ran `deploy-pipeline.ps1 -Dev -PlanOnly` elevated: every step printed, nothing changed, one refusal: the
