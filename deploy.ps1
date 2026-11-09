@@ -71,10 +71,17 @@ function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; th
 # Sweep item 36: -PlanOnly prints a step instead of running it, and prints a refusal a read would make
 # instead of throwing it, so the plan shows every step.
 function Write-Plan    { param($m) Write-Host "PLAN $m" -ForegroundColor DarkGray }
+# -Verdict (rev-i3): $m is a verdict that already says a real run refuses (Resolve-ConfigDbTool's
+# AclSummary, which the other scripts print as a plain plan line), so it is printed without the
+# "a real run REFUSES here" prefix rather than saying REFUSES twice. Counted either way.
 function Write-PlanRefusal {
-    param([string]$m)
+    param([string]$m, [switch]$Verdict)
     $script:planRefusals++
-    Write-Host "  !  PLAN: a real run REFUSES here: $m" -ForegroundColor Yellow
+    if ($Verdict) {
+        Write-Host "  !  PLAN: $m" -ForegroundColor Yellow
+    } else {
+        Write-Host "  !  PLAN: a real run REFUSES here: $m" -ForegroundColor Yellow
+    }
 }
 
 # icacls is a native exe: $ErrorActionPreference = "Stop" does NOT catch its failures,
@@ -529,7 +536,7 @@ if ($PlanOnly) {
         $planTool = @{ Summary = '<the config DB tool, not located>'; AclSummary = 'App folder permissions: not read, because the tool could not be located.'; AclRefuses = $false }
     }
     Write-Plan "Confirm the published build carries the config DB tool: $($planTool.Summary)"
-    if ($planTool.AclRefuses) { Write-PlanRefusal $planTool.AclSummary } else { Write-Plan $planTool.AclSummary }
+    if ($planTool.AclRefuses) { Write-PlanRefusal -Verdict $planTool.AclSummary } else { Write-Plan $planTool.AclSummary }
 
     Write-Step "Backing up the runtime configuration (plan)"
     $planRuntimeConfigDir = Join-Path $servingFolder "config"
