@@ -1835,6 +1835,10 @@ Describe 'sweep item 34: an unreadable IIS node refuses only when it could reach
     # install stop. Now a node that cannot be read refuses only when its own path is at, inside or
     # above the folder, or cannot be placed, or it runs under the named pool; any other is a warning.
     # Driven through the default probe with stand-ins for the three IIS reads, several sites at once.
+    #
+    # rev-f2: a node whose applications or virtual directories could not be read refuses wherever its
+    # own path is - one of them could point into the folder. The warning stays only for a node a probe
+    # reports with every path it holds read (PathsRead = $true); the default probe reports none.
 
     BeforeAll {
         InModuleScope AppPoolControl {
@@ -1892,33 +1896,55 @@ Describe 'sweep item 34: an unreadable IIS node refuses only when it could reach
         }
     }
 
-    It 'passes, and warns naming it, when another site elsewhere has an application without a root virtual directory' {
+    It 'rev-f2: refuses, naming it, when an application elsewhere has no root virtual directory: its others were not read' {
         Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Tools' -Pool 'OtherPool' -Physical 'D:\other\Tools') } -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') }
-        $run = Invoke-S34Check
-        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
-        ($run.Warnings -join ' ') | Should -BeLike "*Other/Tools at 'D:\other\Tools' under 'OtherPool': its virtual directories cannot be read: IIS listed no root virtual directory for Other/Tools*"
-        ($run.Warnings -join ' ') | Should -BeLike '*do not stop this run*'
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve 'D:\sites\App'*Other/Tools at 'D:\other\Tools' under 'OtherPool': its virtual directories cannot be read: IIS listed no root virtual directory for Other/Tools*(what was not read could point into 'D:\sites\App', under any pool)*"
     }
 
-    It 'passes, and warns, when another site elsewhere has a name holding both quote characters' {
+    It 'rev-f2: refuses when a site elsewhere has a name holding both quote characters: its virtual directories cannot be read' {
         Initialize-S34Server -Sites @(Get-S34Site -Name "Bob's `"Web`"" -Pool 'OtherPool' -Path 'D:\other')
-        $run = Invoke-S34Check
-        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
-        ($run.Warnings -join ' ') | Should -BeLike '*holds both quote characters*'
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage '*Cannot read the IIS sites and applications that could serve*holds both quote characters*'
     }
 
-    It 'passes, and warns, when the applications of another site elsewhere cannot be listed' {
+    It 'rev-f2: refuses when the applications of a site elsewhere cannot be listed: one could be at the folder' {
         Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -AppErrors @{ 'Other' = 'Access denied' }
-        $run = Invoke-S34Check
-        ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
-        ($run.Warnings -join ' ') | Should -BeLike "*Other/ at 'D:\other' under 'OtherPool': its applications cannot be read: Access denied*"
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve*Other/ at 'D:\other' under 'OtherPool': its applications cannot be read: Access denied*"
     }
 
-    It 'passes, and warns, when a virtual-directory read elsewhere reports an error' {
-        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') } -DirErrors @{ (Get-S34DirFilter 'Other' '/') = 'The configuration section cannot be read' }
+    It 'rev-f2: refuses when the virtual-directory read of an application elsewhere fails (THE FINDING)' {
+        # Other/Tools lives at D:\other\Tools under another pool; one of its virtual directories could
+        # be D:\sites\App\assets, and the read that would say so failed.
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Tools' -Pool 'OtherPool' -Physical 'D:\other\Tools') } `
+            -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other') } -DirErrors @{ (Get-S34DirFilter 'Other' '/Tools') = 'The configuration section cannot be read' }
+        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*Cannot read the IIS sites and applications that could serve 'D:\sites\App'*Other/Tools at 'D:\other\Tools' under 'OtherPool': its virtual directories cannot be read: The configuration section cannot be read*"
+    }
+
+    It 'rev-f2: an odd node elsewhere whose paths were all read still only warns' {
+        $probe = {
+            [pscustomobject]@{ Location = 'Web/App'; ApplicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App' }
+            [pscustomobject]@{ Location = 'Other/'; ApplicationPool = 'OtherPool'; PhysicalPath = 'D:\other'; Issue = 'reads oddly'; PathsRead = $true }
+        }
+        $warnings = $null
+        $result = @(Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe $probe -WarningVariable warnings 3>$null)
+        ($result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
+        ($warnings -join ' ') | Should -BeLike "*do not stop this run: Other/ at 'D:\other' under 'OtherPool': reads oddly.*"
+    }
+
+    It 'rev-f2: an odd node a probe does not report as fully read is taken as not read, and refuses' {
+        $probe = {
+            [pscustomobject]@{ Location = 'Web/App'; ApplicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App' }
+            [pscustomobject]@{ Location = 'Other/'; ApplicationPool = 'OtherPool'; PhysicalPath = 'D:\other'; Issue = 'reads oddly' }
+        }
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe $probe 3>$null } |
+            Should -Throw -ExpectedMessage "*Other/ at 'D:\other' under 'OtherPool': reads oddly (what was not read could point*"
+    }
+
+    It 'rev-f2: a fully read application elsewhere is neither a warning nor a refusal' {
+        Initialize-S34Server -Sites @(Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other') -Apps @{ 'Other' = @(Get-S34App -Path '/Tools' -Pool 'OtherPool' -Physical 'D:\other\Tools') } `
+            -Dirs @{ (Get-S34DirFilter 'Other' '/') = @(Get-S34Root 'D:\other'); (Get-S34DirFilter 'Other' '/Tools') = @(Get-S34Root 'D:\other\Tools') }
         $run = Invoke-S34Check
         ($run.Result | ForEach-Object Location) -join ',' | Should -BeExactly 'Web/App'
-        ($run.Warnings -join ' ') | Should -BeLike '*The configuration section cannot be read*'
+        $run.Warnings.Count | Should -Be 0
     }
 
     It 'refuses when the unreadable node runs under the named pool, wherever its files are' {
@@ -1942,12 +1968,15 @@ Describe 'sweep item 34: an unreadable IIS node refuses only when it could reach
         { Invoke-S34Check } | Should -Throw -ExpectedMessage '*Odd/*the site itself cannot be read*'
     }
 
-    It 'cdt-61 holds: another application at the folder under another pool still refuses, with an unreadable site elsewhere' {
-        Initialize-S34Server -Sites @((Get-S34Site -Name 'Twin' -Pool 'TwinPool' -Path 'D:\twin'), (Get-S34Site -Name 'Other' -Pool 'OtherPool' -Path 'D:\other')) `
-            -Apps @{ 'Twin' = @(Get-S34App -Path '/Copy' -Pool 'TwinPool' -Physical 'D:\sites\App') } `
-            -Dirs @{ (Get-S34DirFilter 'Twin' '/') = @(Get-S34Root 'D:\twin'); (Get-S34DirFilter 'Twin' '/Copy') = @(Get-S34Root 'D:\sites\App') } `
-            -AppErrors @{ 'Other' = 'Access denied' }
-        { Invoke-S34Check } | Should -Throw -ExpectedMessage "*served by an app pool other than 'ProdPool'*Twin/Copy runs under 'TwinPool'*"
+    It 'cdt-61 holds: another application at the folder under another pool still refuses, with an odd node elsewhere that only warns' {
+        # rev-f2: the default probe no longer yields a node that only warns, so the odd node comes from a probe.
+        $probe = {
+            [pscustomobject]@{ Location = 'Web/App'; ApplicationPool = 'ProdPool'; PhysicalPath = 'D:\sites\App' }
+            [pscustomobject]@{ Location = 'Twin/Copy'; ApplicationPool = 'TwinPool'; PhysicalPath = 'D:\sites\App' }
+            [pscustomobject]@{ Location = 'Other/'; ApplicationPool = 'OtherPool'; PhysicalPath = 'D:\other'; Issue = 'reads oddly'; PathsRead = $true }
+        }
+        { Assert-AppPoolServesPath -Name 'ProdPool' -PhysicalPath 'D:\sites\App' -NestedNodes Refuse -ApplicationsProbe $probe 3>$null } |
+            Should -Throw -ExpectedMessage "*served by an app pool other than 'ProdPool'*Twin/Copy runs under 'TwinPool'*"
     }
 
     It 'still refuses when the site list itself cannot be read: then nothing can be placed' {

@@ -552,6 +552,15 @@ function Assert-AppPoolServesPath {
         refuses: then nothing can be placed. Another node at the folder under another pool still
         refuses (aud-a38c, cdt-61).
 
+        Finding rev-f2. A node whose applications or virtual directories could not be read refuses
+        wherever its own path is: one of those unread entries could point into the folder, under any
+        pool, and nothing read says it does not. That covers every node the default probe cannot
+        read - a missing root virtual directory, a site name holding both quote characters, a
+        virtual-directory or application read error, a site that cannot be read - and the refusal
+        names the node, what could not be read and why. The item-34 warning stays only for a node a
+        probe reports as odd but with every path it holds read (PathsRead = $true) and elsewhere;
+        the default probe reports none.
+
     .OUTPUTS
         What IIS serves at or inside the folder (Location, ApplicationPool, PhysicalPath) when the
         rule the caller named holds - with Refuse, only what is at the folder. Throws otherwise.
@@ -604,7 +613,7 @@ function Assert-AppPoolServesPath {
                     $sitePool = [string]$site.applicationPool
                     $sitePath = [string]$site.physicalPath
                 } catch {
-                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "the site itself cannot be read: $($_.Exception.Message)" }
+                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "the site itself cannot be read: $($_.Exception.Message)"; PathsRead = $false }
                     continue
                 }
                 [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath }
@@ -615,14 +624,14 @@ function Assert-AppPoolServesPath {
                         $owners += [pscustomobject]@{ Path = [string]$app.path; ApplicationPool = [string]$app.applicationPool; PhysicalPath = [string]$app.PhysicalPath }
                     }
                 } catch {
-                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "its applications cannot be read: $($_.Exception.Message)" }
+                    [pscustomobject]@{ Location = "$siteName/"; ApplicationPool = $sitePool; PhysicalPath = $sitePath; Issue = "its applications cannot be read: $($_.Exception.Message)"; PathsRead = $false }
                     continue
                 }
                 try {
                     $siteXPath = "/system.applicationHost/sites/site[@name=$(ConvertTo-IisXPathLiteral $siteName)]"
                 } catch {
                     foreach ($owner in $owners) {
-                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)" }
+                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)"; PathsRead = $false }
                     }
                     continue
                 }
@@ -638,7 +647,7 @@ function Assert-AppPoolServesPath {
                                 [pscustomobject]@{ Location = "$siteName$($owner.Path.TrimEnd('/'))$($directory.path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $directory.physicalPath }
                             })
                     } catch {
-                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)" }
+                        [pscustomobject]@{ Location = "$siteName$($owner.Path)"; ApplicationPool = $owner.ApplicationPool; PhysicalPath = $owner.PhysicalPath; Issue = "its virtual directories cannot be read: $($_.Exception.Message)"; PathsRead = $false }
                         continue
                     }
                     $found
@@ -687,10 +696,21 @@ function Assert-AppPoolServesPath {
     # it, inside it or above it, by lexical or final path; or with no path that can be placed; or
     # under the named pool. Those refuse, as every unreadable node used to. The rest are elsewhere:
     # they are named in a warning and the run goes on.
+    #
+    # Finding rev-f2. A node whose applications or virtual directories were not read could reach the
+    # folder through one of them, wherever its own path is, so it refuses too. Only a node the probe
+    # reports with every path it holds read (PathsRead = $true) is judged by its own path alone; a
+    # node that does not say so is taken as not fully read.
     $issues = @($applications | Where-Object { $null -ne $_.PSObject.Properties['Issue'] })
     $applications = @($applications | Where-Object { $null -eq $_.PSObject.Properties['Issue'] })
+    $pathsRead = {
+        param($Node)
+        $flag = $Node.PSObject.Properties['PathsRead']
+        return ($null -ne $flag -and $flag.Value -eq $true)
+    }
     $couldReach = {
         param($Node)
+        if (-not (& $pathsRead $Node)) { return $true }
         if ([string]::Equals([string]$Node.ApplicationPool, $Name, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
         $lexical = ConvertTo-ComparablePhysicalPath $Node.PhysicalPath
         if (-not $lexical) { return $true }
@@ -699,7 +719,12 @@ function Assert-AppPoolServesPath {
         $final = & $finalOf $lexical
         return ($null -ne $final -and ((Test-PhysicalPathInside $final $targetFinal) -or (Test-PhysicalPathInside $targetFinal $final)))
     }
-    $describeIssue = { param($Node) "$($Node.Location) at '$($Node.PhysicalPath)' under '$($Node.ApplicationPool)': $($Node.Issue)" }
+    $describeIssue = {
+        param($Node)
+        $text = "$($Node.Location) at '$($Node.PhysicalPath)' under '$($Node.ApplicationPool)': $($Node.Issue)"
+        if (-not (& $pathsRead $Node)) { $text += " (what was not read could point into '$PhysicalPath', under any pool)" }
+        $text
+    }
     $blocking = @($issues | Where-Object { & $couldReach $_ })
     if ($blocking.Count -gt 0) {
         $named = @($blocking | ForEach-Object { & $describeIssue $_ }) -join '; '
@@ -708,7 +733,7 @@ function Assert-AppPoolServesPath {
     $unreadElsewhere = @($issues | Where-Object { -not (& $couldReach $_) })
     if ($unreadElsewhere.Count -gt 0) {
         $named = @($unreadElsewhere | ForEach-Object { & $describeIssue $_ }) -join '; '
-        Write-Warning "IIS could not fully read $($unreadElsewhere.Count) node(s) whose own folders and pools are neither '$PhysicalPath', inside or above it, nor '$Name', so they do not stop this run: $named. Their unread applications or virtual directories were not seen; one pointing into '$PhysicalPath' would not be either. Fix them in IIS to have them checked."
+        Write-Warning "IIS reported $($unreadElsewhere.Count) odd node(s) whose paths were all read and whose own folders and pools are neither '$PhysicalPath', inside or above it, nor '$Name', so they do not stop this run: $named. Fix them in IIS."
     }
 
     $inside = @($applications | Where-Object { & $isInFolder $_ })

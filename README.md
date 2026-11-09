@@ -990,10 +990,12 @@ app folder", for what is checked and how to narrow a folder.
 
 Before each pool stop the scripts ask IIS which pool serves the folder about to be replaced
 (`Assert-AppPoolServesPath` in `tools\AppPoolControl.psm1`) and refuse unless it is the named
-pool alone. A site, application or virtual directory IIS cannot read refuses only when it could
-reach that folder - its own path at, inside or above it, a path that cannot be placed, or the
-named pool. One elsewhere on the server (another team's site with a missing root virtual
-directory, say) is named in a warning and does not stop the run.
+pool alone. A site, application or virtual directory IIS cannot read refuses when it could reach
+that folder - its own path at, inside or above it, a path that cannot be placed, or the named
+pool - and so does any site or application whose applications or virtual directories cannot be
+read, wherever it is (rev-f2): one of those could point into the folder. The refusal names the
+node and the read that failed (another team's site with a missing root virtual directory, say);
+fix it in IIS and retry.
 
 A stop is confirmed, not assumed: the scripts poll IIS until the pool reports Stopped. They wait
 60 seconds, and past that as long as IIS lets the worker exit - the pool's
