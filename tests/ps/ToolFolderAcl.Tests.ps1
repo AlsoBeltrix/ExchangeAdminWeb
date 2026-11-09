@@ -396,6 +396,43 @@ Describe 'ToolFolderAcl: the walk above the app folder stops at the root of the 
     }
 }
 
+Describe 'ToolFolderAcl: generic rights are named, not printed as a number (rev-i1)' {
+    # The live plan run said "Authenticated Users holds -536805376 (inherited) on ...": an inherit-only
+    # entry carrying GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE (0xE0010000), which
+    # FileSystemRights cannot name. Every ACL read of the stand-in drive Q: is answered in memory.
+
+    It 'names the rights in a mask: <Mask>' -TestCases @(
+        @{ Mask = 0xE0010000L; Text = 'GenericRead, GenericWrite, GenericExecute, Delete' }
+        @{ Mask = 0x10000000L; Text = 'GenericAll' }
+        @{ Mask = 0x1301BFL; Text = 'Modify, Synchronize' }
+        @{ Mask = 0x1F01FFL; Text = 'FullControl' }
+        @{ Mask = 0x40000040L; Text = 'GenericWrite, DeleteSubdirectoriesAndFiles' }
+        @{ Mask = 0x01000000L; Text = '0x1000000' }
+    ) {
+        InModuleScope ToolFolderAcl -Parameters @{ M = $Mask } { param($M) ConvertTo-RightsText -Mask $M } | Should -BeExactly $Text
+    }
+
+    It 'reports an inherit-only generic entry a folder not created yet would inherit by name, and counts it as content-changing' {
+        Mock -ModuleName ToolFolderAcl Test-Path -ParameterFilter { ([string]$LiteralPath).StartsWith('Q:', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            ([string]$LiteralPath).TrimEnd('\') -eq 'Q:\EawSites'
+        }
+        Mock -ModuleName ToolFolderAcl Get-Acl -ParameterFilter { ([string]$LiteralPath).StartsWith('Q:', [System.StringComparison]::OrdinalIgnoreCase) } -MockWith {
+            $security = [System.Security.AccessControl.DirectorySecurity]::new()
+            if (([string]$LiteralPath).TrimEnd('\') -eq 'Q:\EawSites') {
+                # GR GW GX SD, object and container inherit, inherit only, inherited.
+                $security.SetSecurityDescriptorSddlForm('O:SYG:SYD:(A;OICIIOID;GRGWGXSD;;;S-1-5-11)')
+            } else {
+                $security.SetOwner([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))
+            }
+            $security
+        }
+        $found = @(Get-ToolFolderInheritedWriteExposure -Path 'Q:\EawSites\staging.1')
+        ($found | ForEach-Object { "$($_.Kind)|$($_.Sid)|$($_.Path)|$($_.Rights)|$($_.Inherited)" }) -join ',' |
+            Should -BeExactly 'Grant|S-1-5-11|Q:\EawSites|GenericRead, GenericWrite, GenericExecute, Delete|True' -Because 'the generic bits change content, and the entry passes them to the new folder'
+        Format-ToolFolderWriteExposure $found | Should -BeExactly 'NT AUTHORITY\Authenticated Users holds GenericRead, GenericWrite, GenericExecute, Delete (inherited) on Q:\EawSites'
+    }
+}
+
 Describe 'Resolve-ConfigDbTool refuses an app folder others can change (sweep item 12)' {
 
     It 'returns the tool for a narrow folder' {

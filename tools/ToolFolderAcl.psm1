@@ -99,6 +99,32 @@ function ConvertTo-PrincipalName {
     }
 }
 
+function ConvertTo-RightsText {
+    # Private (rev-i1). The rights in an access mask as words. FileSystemRights has no names for the
+    # generic bits an inheritable entry can carry (an inherit-only entry often holds them), so its
+    # ToString() prints such a mask as a bare number (-536805376 for GENERIC_READ | GENERIC_WRITE |
+    # GENERIC_EXECUTE | DELETE). The generic bits are named here, then the named FileSystemRights of
+    # the bits that remain; a remainder with no name is shown in hex. Wording only: what a mask
+    # counts as is decided from the mask itself, never from this text.
+    param([Parameter(Mandatory)][int64]$Mask)
+
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($generic in @(
+            @{ Bit = 0x80000000; Name = 'GenericRead' },
+            @{ Bit = 0x40000000; Name = 'GenericWrite' },
+            @{ Bit = 0x20000000; Name = 'GenericExecute' },
+            @{ Bit = 0x10000000; Name = 'GenericAll' })) {
+        if (($Mask -band [int64]$generic.Bit) -ne 0) { $names.Add($generic.Name) }
+    }
+    $rest = $Mask -band 0x0FFFFFFF
+    if ($rest -ne 0) {
+        $named = [System.Enum]::ToObject([System.Security.AccessControl.FileSystemRights], [int]$rest).ToString()
+        if ($named -match '^-?\d+$') { $named = '0x{0:X}' -f $rest }
+        $names.Add($named)
+    }
+    return $names -join ', '
+}
+
 function Get-ObjectWriteExposure {
     # Private. The owner and every allow entry on one file or folder that the trusted set does not
     # cover. -InheritableOnly evaluates what a NEW child of this folder would inherit instead of
@@ -149,7 +175,7 @@ function Get-ObjectWriteExposure {
             Path      = $LiteralPath
             Principal = ConvertTo-PrincipalName $rule.IdentityReference
             Sid       = $sid
-            Rights    = [string]$rule.FileSystemRights
+            Rights    = ConvertTo-RightsText -Mask $mask
             Inherited = [bool]$rule.IsInherited
             Kind      = 'Grant'
         }
@@ -221,7 +247,7 @@ function Get-ParentChainExposure {
                 Path      = $parent
                 Principal = ConvertTo-PrincipalName $rule.IdentityReference
                 Sid       = $sid
-                Rights    = [string]$rule.FileSystemRights
+                Rights    = ConvertTo-RightsText -Mask $mask
                 Inherited = [bool]$rule.IsInherited
                 Kind      = 'ParentGrant'
             }
