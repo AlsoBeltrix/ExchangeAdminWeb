@@ -185,6 +185,31 @@ public sealed class TicketValidationServiceTests : IDisposable
         Assert.Contains("not found", rejected.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Decision 2026-11-09: ServiceNow is asked about the ticket sanitized - a zero-width space pasted into it is removed, not
+    // refused, and the query is the ticket the operator sees.
+    [Fact]
+    public async Task On_EnabledIsAskedAboutTheTicketSanitized()
+    {
+        _handler.NextBody =
+            """{"result":[{"number":"INC0001","state":"2","short_description":"d","sys_id":"s"}]}""";
+        var validator = CreateValidator(ConfigWithSwitch("true"), serviceNowEnabled: true);
+
+        var accepted = await validator.ValidateAsync(ModuleId, TicketPresenceTests.WithZeroWidthSpace("INC0001"));
+
+        Assert.True(accepted.Accepted);
+        Assert.Equal(1, _handler.Requests);
+    }
+
+    [Fact]
+    public async Task Off_ATicketTypedWithAZeroWidthSpace_IsAccepted()
+    {
+        var validator = CreateValidator(CreateModuleConfig());
+
+        var result = await validator.ValidateAsync(ModuleId, TicketPresenceTests.TypedWithZeroWidthSpace);
+
+        Assert.Equal(TicketGateOutcome.Accepted, result.Outcome);
+    }
+
     // --- AC4: per-module isolation, corrupt config, invalid switch ----------
 
     [Fact]

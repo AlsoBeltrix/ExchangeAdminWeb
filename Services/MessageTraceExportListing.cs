@@ -172,7 +172,7 @@ public class MessageTraceExportListing
     /// </summary>
     public async Task<MessageTraceExportDownloadResult> TryDownloadAsync(string jobId, string? ticket)
     {
-        if (TicketPresence.Describe(ticket?.Trim(), TicketRequiredMessage) is { } missing) // sweep item 40: an invisible character said as that
+        if (TicketPresence.Describe(ticket, TicketRequiredMessage) is { } missing) // judged sanitized (decision 2026-11-09)
             return new MessageTraceExportDownloadResult { Error = missing };
 
         var item = Resolve(jobId);

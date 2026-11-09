@@ -75,11 +75,11 @@ public sealed class TicketValidationService : ITicketValidator
         }
 
         // Presence is never waived, in either mode - judged by the one rule every presence gate
-        // shares (kd-24), which also refuses a ticket carrying a control character.
-        // Sweep item 40: an invisible character is said as that, not as a missing ticket.
-        if (!TicketPresence.IsPresent(ticketNumber))
+        // shares (kd-24), on the ticket as it is recorded: sanitized (decision 2026-11-09).
+        var ticket = TicketPresence.Sanitize(ticketNumber);
+        if (!TicketPresence.IsPresent(ticket))
         {
-            return new(TicketGateOutcome.Rejected, TicketPresence.Describe(ticketNumber, "A ticket number is required."));
+            return new(TicketGateOutcome.Rejected, "A ticket number is required.");
         }
 
         var configured = _moduleConfig.GetValue(moduleId, ValidateTicketsKey);
@@ -112,7 +112,7 @@ public sealed class TicketValidationService : ITicketValidator
                 "integration is not enabled on this deployment.");
         }
 
-        var result = await _serviceNow.ValidateTicketAsync(ticketNumber.Trim());
+        var result = await _serviceNow.ValidateTicketAsync(ticket);
         return result.IsValid
             ? new(TicketGateOutcome.Accepted, null)
             : new(TicketGateOutcome.Rejected, result.Message);

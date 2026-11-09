@@ -1131,7 +1131,7 @@ https://admin.exchange.microsoft.com/#/migration";
     }
 
     /// <summary>
-    /// Sweep item 41. A staged batch or mailbox action refused for its ticket - missing, carrying an invisible character, or
+    /// Sweep item 41. A staged batch or mailbox action refused for its ticket - missing, or
     /// rejected by ServiceNow - recorded as <see cref="RecordDenial"/> records an authorization denial: the "_Denied" row, its
     /// target and targets as that row names them, nothing attempted, and the step that refused (refusedAt TicketValidation).
     /// Returns what the operator is shown. Never throws: a failed audit write is logged.
@@ -1169,7 +1169,7 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         refusal = check is null ? "No eligibility check has been run for this mailbox; nothing was created."
             : check.Status != MigrationStatus.Eligible ? $"{check.EmailAddress}'s eligibility check reads {check.Status}, and only an eligible mailbox can be migrated; nothing was created."
-            : TicketPresence.Describe(ticket?.Trim(), "A ticket number is required.") is { } missing ? $"{missing.TrimEnd('.')}; nothing was created." // sweep item 40
+            : TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing ? $"{missing.TrimEnd('.')}; nothing was created."
             : null;
         return refusal is not null;
     }
@@ -1178,7 +1178,7 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         refusal = check is null ? "No eligibility check of a file has been run; nothing was created."
             : check.EligibleUsers == 0 ? "No mailbox in the checked file is eligible; nothing was created."
-            : TicketPresence.Describe(ticket?.Trim(), "A ticket number is required.") is { } missing ? $"{missing.TrimEnd('.')}; nothing was created." // sweep item 40
+            : TicketPresence.Describe(ticket, "A ticket number is required.") is { } missing ? $"{missing.TrimEnd('.')}; nothing was created."
             : null;
         return refusal is not null;
     }

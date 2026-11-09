@@ -82,10 +82,10 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
 
             // A blank ticket is recorded as none; a control-only one as it was captured, which is
             // what a reader of the row needs to see.
-            if (string.IsNullOrWhiteSpace(ticket))
+            if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
                 Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
             else
-                Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+                Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
         }
     }
 

@@ -380,6 +380,18 @@ public sealed class MessageTraceExportListingTests : IDisposable
         Assert.Equal(Path.GetFileName(path), result.FileName);
     }
 
+    // Decision 2026-11-09: a ticket pasted with a zero-width space is a ticket; the download is not refused for it.
+    [Fact]
+    public async Task TicketTypedWithAZeroWidthSpace_Downloads()
+    {
+        var id = SeedExport();
+        WriteExportFile(id);
+
+        var result = await CreateListing().TryDownloadAsync(id, TicketPresenceTests.TypedWithZeroWidthSpace);
+
+        Assert.True(result.Succeeded);
+    }
+
     [Fact]
     public async Task FileRemovedAfterRender_DownloadReportsExpired_DoesNotThrow()
     {

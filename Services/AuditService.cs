@@ -7,6 +7,14 @@ public class AuditService
     private readonly UsageTelemetryService? _usage;
 
     /// <summary>
+    /// The ticket an audit row carries: sanitized as every page sanitizes it (decision 2026-11-09 - control and format
+    /// characters removed, then trimmed), null when nothing is left. Applied here too, so no row records an invisible
+    /// character whichever caller wrote it.
+    /// </summary>
+    private static string? RecordedTicket(string? ticketNumber) =>
+        TicketPresence.Sanitize(ticketNumber) is { Length: > 0 } recorded ? recorded : null;
+
+    /// <summary>
     /// <paramref name="usage"/> is the anonymous usage-telemetry sink
     /// (docs/UsageTelemetry-Plan.md, AC5). It is optional and defaults to null so every
     /// existing construction - the test suites included - compiles and behaves exactly as
@@ -100,7 +108,7 @@ public class AuditService
             ["action"] = action,
             ["category"] = "MailboxPermission",
             ["result"] = result,
-            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["target"] = targetMailbox,
             ["affectedUser"] = affectedUser,
             ["permissionType"] = permissionType,
@@ -137,7 +145,7 @@ public class AuditService
             ["action"] = action,
             ["category"] = "CalendarPermission",
             ["result"] = result,
-            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["target"] = targetMailbox,
             ["affectedUser"] = affectedUser,
             ["accessRight"] = accessRight,
@@ -169,7 +177,7 @@ public class AuditService
             // "Ineligible", so a check that could not decide (aud-a23h's Undetermined) or threw (the page's "Error") read
             // as a verdict against the mailbox. The status field keeps the caller's own word.
             ["result"] = status switch { "Eligible" => "Success", "Ineligible" => "Ineligible", _ => "Undetermined" },
-            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["target"] = emailAddress,
             ["status"] = status,
             ["reasons"] = reasons
@@ -200,7 +208,7 @@ public class AuditService
             ["action"] = $"CreateMigrationBatch_{direction}",
             ["category"] = "MigrationBatch",
             ["result"] = success ? "Success" : "Failed",
-            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["batchName"] = batchName,
             ["direction"] = direction,
             ["userCount"] = userCount,
@@ -239,7 +247,7 @@ public class AuditService
             ["category"] = "MigrationAction",
             ["result"] = result,
             ["target"] = target,
-            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["error"] = result == "Success" ? null : errorDetail
         };
 
@@ -267,7 +275,7 @@ public class AuditService
             ["category"] = category,
             ["result"] = success ? "Success" : "Failed",
             ["target"] = target,
-            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["error"] = success ? null : errorDetail
         };
 
@@ -294,7 +302,7 @@ public class AuditService
             ["category"] = "Lookup",
             ["result"] = success ? "Success" : "Failed",
             ["target"] = target,
-            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["error"] = success ? null : errorDetail
         };
 
@@ -324,7 +332,7 @@ public class AuditService
             ["category"] = "MfaReset",
             ["result"] = success ? "Success" : "Failed",
             ["target"] = target,
-            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["error"] = success ? null : errorDetail,
             ["removedCount"] = removedCount,
             ["totalMethods"] = totalMethods,
@@ -358,7 +366,7 @@ public class AuditService
             ["category"] = "ConferenceRooms",
             ["result"] = success ? "Success" : "Failed",
             ["target"] = target,
-            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["error"] = success ? null : errorDetail
         };
 
@@ -396,7 +404,7 @@ public class AuditService
             ["action"] = "ADAttributeEditor_Update",
             ["category"] = "ADAttributeEditor",
             ["result"] = success ? "Success" : "Failed",
-            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["ticket"] = RecordedTicket(ticketNumber),
             ["target"] = target,
             ["changedAttributes"] = changedAttrs,
             ["error"] = success ? null : errorDetail

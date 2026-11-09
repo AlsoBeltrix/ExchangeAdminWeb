@@ -128,10 +128,10 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         // say what was sent. A blank ticket is still recorded as none, the writer dropping a null field.
         Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
             Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
         else
-            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+            Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
     }
 
     [Fact]
@@ -184,10 +184,10 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
 
         // A blank ticket is recorded as none: the writer leaves a null field out of the row.
-        if (string.IsNullOrWhiteSpace(ticket))
+        if (TicketPresence.Sanitize(ticket).Length == 0) // decision 2026-11-09: recorded sanitized; nothing left is recorded as none
             Assert.False(row.TryGetProperty("ticket", out var recorded) && recorded.ValueKind != JsonValueKind.Null);
         else
-            Assert.Equal(ticket, row.GetProperty("ticket").GetString());
+            Assert.Equal(TicketPresence.Sanitize(ticket), row.GetProperty("ticket").GetString());
 
         Assert.Empty(_authorization.ReceivedCalls());
         var shown = Shown(page);
