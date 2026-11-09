@@ -8,6 +8,12 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 13:00 - dev deployed by the owner ("deployed"); post-deploy test checklist handed over
+
+Dev now runs master at 350c63b5 code (records to 4e2084e7). The consolidated post-deploy checklist (from every
+"deploy check" paragraph in the 2026-11-05 .. 2026-11-09 entries) was handed to the owner in chat and is
+reproduced in `.agents/review/deploy-checklist-2026-11-09.md`; results go there as the owner reports them.
+
 ### 2026-11-09 12:40 - identifier conversion run live by the owner; clean
 
 `db convert-identifiers` with the build about to ship, against a verified copy then the live shared database: 8 rows
