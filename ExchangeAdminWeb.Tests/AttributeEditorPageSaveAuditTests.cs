@@ -119,7 +119,7 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    [InlineData("CHG\u200B0200")]
+    [InlineData("\u200B")]
     public async Task ASaveWithNoUsableTicket_IsRefusedAndRecorded_BeforeTheAuthorizationCheck(string ticket)
     {
         var alex = _h.Ad.AddAlex();
@@ -130,7 +130,7 @@ public sealed class AttributeEditorPageSaveAuditTests : IDisposable
 
         var shown = Shown(page);
         Assert.False(shown.Success);
-        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), shown.Message);
+        Assert.Equal("Ticket validation failed: " + TicketPresence.RequiredMessage, shown.Message);
         var record = Assert.Single(_h.AuditEvents());
         Assert.Equal("ADAttributeEdit_Refused", Text(record, "action"));
         Assert.Equal("TicketValidation", Text(record, "refusedAt"));

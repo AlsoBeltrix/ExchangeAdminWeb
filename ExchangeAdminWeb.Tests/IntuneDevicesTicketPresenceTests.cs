@@ -74,7 +74,7 @@ public sealed class IntuneDevicesTicketPresenceTests : IDisposable
         Assert.Equal("IntuneDevices", row.GetProperty("category").GetString());
         Assert.Equal("Failed", row.GetProperty("result").GetString());
         Assert.Equal("Ticket number missing", row.GetProperty("error").GetString());
-        Assert.Contains(TicketPresenceTests.Said(ticket, "A ticket number is required."), Shown(page, device.Id), StringComparison.Ordinal);
+        Assert.Contains("A ticket number is required.", Shown(page, device.Id), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -210,7 +210,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isSaving" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isSaving" />
                         </div>
                         <button class="btn btn-primary w-100" @onclick="ConfirmSave"
                                 disabled="@(isSaving || !TicketPresence.IsPresentAsTyped(ticketNumber))">

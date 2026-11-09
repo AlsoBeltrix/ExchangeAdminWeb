@@ -73,7 +73,7 @@
                             <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
                             <input id="ticketNumber" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" />
                             <div class="form-text">Service request or incident ticket number</div>
                         </div>
 
@@ -126,7 +126,7 @@
                             <label class="form-label fw-semibold" for="bulkTicket">Ticket Number (applies to all rows) <span class="text-danger">*</span></label>
                             <input id="bulkTicket" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(bulkTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" />
                         </div>
 
                         <div class="mb-3">

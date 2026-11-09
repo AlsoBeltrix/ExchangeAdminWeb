@@ -36,7 +36,7 @@
         <div class="col-md-3">
             <label class="form-label">Ticket Number</label>
             <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput"
-                   placeholder="required to download" disabled="@busy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                   placeholder="required to download" disabled="@busy" />
         </div>
         <div class="col-md-2">
             <button class="btn btn-outline-secondary" type="button" @onclick="Refresh" disabled="@busy">Refresh</button>

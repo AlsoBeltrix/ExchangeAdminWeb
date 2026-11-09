@@ -115,7 +115,7 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         <small class="text-muted">Required for both authorize and deauthorize operations.</small>
                     </div>
                     <button class="btn btn-primary" @onclick="AuthorizeServer"

@@ -337,7 +337,7 @@ public sealed class MigrationDenialTests : IDisposable
     {
         var data = new TheoryData<string, string>();
         foreach (var handler in new[] { "ExecuteBatchAction", "ExecuteUserAction", "ExecuteBulkBatchAction", "ExecuteBulkMailboxAction" })
-            foreach (var ticket in new[] { "", "   ", "INC\u200B0042" })
+            foreach (var ticket in new[] { "", "   ", "\u200B" })
                 data.Add(handler, ticket);
         return data;
     }
@@ -379,7 +379,7 @@ public sealed class MigrationDenialTests : IDisposable
 
         Assert.False(await RunHandler(page, handler, ticket));
 
-        var expected = $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}; nothing was done.";
+        var expected = $"Ticket validation failed: {TicketPresence.RequiredMessage}; nothing was done.";
         var shown = Assert.IsType<PermissionResult>(Field("batchActionResult").GetValue(page));
         Assert.Equal((false, expected), (shown.Success, shown.Message));
         Assert.Equal(expected, OneTicketRefusal().GetProperty("error").GetString() + "; nothing was done.");

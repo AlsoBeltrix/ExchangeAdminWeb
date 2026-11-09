@@ -57,7 +57,7 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         var first = await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var second = await f.Processor.ProcessRowAsync(job, 1, CancellationToken.None);
 
-        var refusal = $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}. Nothing was written."; // sweep item 40
+        var refusal = $"Ticket validation failed: {TicketPresence.RequiredMessage}. Nothing was written."; // sweep item 40
         Assert.Equal(BulkJobRowStatus.Failed, first.Status);
         Assert.Equal(BulkJobRowStatus.Failed, second.Status);
         Assert.Equal(refusal, first.Message);

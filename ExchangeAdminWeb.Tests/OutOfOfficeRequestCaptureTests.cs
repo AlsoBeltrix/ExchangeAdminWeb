@@ -522,7 +522,7 @@ public sealed class OutOfOfficeRequestCaptureTests : IDisposable
         var row = SingleRow(AuditRows(), "OutOfOffice_Denied");
         Assert.Equal("TicketValidation", row.GetProperty("refusedAt").GetString());
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
-        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), row.GetProperty("error").GetString());
+        Assert.Equal("Ticket validation failed: " + TicketPresence.RequiredMessage, row.GetProperty("error").GetString());
         Assert.False(GetField<bool>(page, "isSetting"), "A refusal must not leave the form disabled.");
     }
 

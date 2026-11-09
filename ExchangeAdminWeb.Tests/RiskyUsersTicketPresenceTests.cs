@@ -76,7 +76,7 @@ public sealed class RiskyUsersTicketPresenceTests : IDisposable
         Assert.Equal("Failed", row.GetProperty("result").GetString());
         Assert.Equal(Target, row.GetProperty("target").GetString());
         Assert.Equal("Ticket number missing", row.GetProperty("error").GetString());
-        Assert.Equal(TicketPresenceTests.Said(ticket, "A ticket number is required."), Shown(page));
+        Assert.Equal("A ticket number is required.", Shown(page));
     }
 
     [Fact]

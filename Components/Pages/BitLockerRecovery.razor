@@ -55,7 +55,7 @@
                     <label class="form-label mb-1" for="ticketNumber">Ticket (required)</label>
                     <input id="ticketNumber" class="form-control" @bind="ticketNumber"
                            @bind:event="oninput" @onkeydown="OnSearchKeyDown"
-                           placeholder="INC/REQ number" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                           placeholder="INC/REQ number" />
                 </div>
                 <div class="col-md-2">
                     <button class="btn btn-primary w-100"

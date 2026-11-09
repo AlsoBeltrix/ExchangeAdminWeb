@@ -1792,7 +1792,7 @@ public sealed class PermissionPagesSelfGrantTests : IDisposable
     }
 
     /// <summary>The banner of a ticket refused at its presence check.</summary>
-    private static string NoTicket(string? ticket) => $"Ticket validation failed: {TicketPresenceTests.RefusalSaid(ticket)}. Nothing was written."; // sweep item 40
+    private static string NoTicket(string? ticket) => $"Ticket validation failed: {TicketPresence.RequiredMessage}. Nothing was written."; // sweep item 40
 
     /// <summary>
     /// <paramref name="page"/>'s <c>ProcessBulk</c> over a one-row grant file to someone else - the ticket a test gives, its mail,

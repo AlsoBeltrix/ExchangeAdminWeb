@@ -60,7 +60,7 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required /> @if (TicketPresence.HasInvisibleCharacterAsTyped(singleTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
                     </div>
                 </div>
 
@@ -234,7 +234,7 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required /> @if (TicketPresence.HasInvisibleCharacterAsTyped(bulkTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
                     </div>
                 </div>
 
@@ -1489,7 +1489,7 @@
         <div class="input-group input-group-sm" style="width: 220px;">
             <input type="text" class="form-control" placeholder="Ticket # (required)"
                    @bind="pendingActionTicket" @bind:event="oninput"
-                   @onkeydown="HandleConfirmKeyDown" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(pendingActionTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                   @onkeydown="HandleConfirmKeyDown" disabled="@IsBusy" />
         </div>
         @if (ScheduleTimeIsRequired)
         {

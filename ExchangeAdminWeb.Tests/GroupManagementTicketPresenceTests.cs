@@ -101,7 +101,7 @@ public sealed class GroupManagementTicketPresenceTests : IDisposable
 
         await Run(page, write);
 
-        AssertRefused(page, write, ticket, "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket));
+        AssertRefused(page, write, ticket, "Ticket validation failed: " + TicketPresence.RequiredMessage);
     }
 
     [Theory]

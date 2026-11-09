@@ -129,7 +129,7 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
 
         await Run(page, write);
 
-        AssertRefused(page, write, ticket, TicketPresenceTests.Said(ticket, "A ticket number is required."));
+        AssertRefused(page, write, ticket, "A ticket number is required.");
     }
 
     [Theory]

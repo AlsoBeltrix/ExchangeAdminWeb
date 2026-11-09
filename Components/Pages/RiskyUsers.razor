@@ -335,7 +335,7 @@
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="riskyUsersTicket">Ticket number (required)</label>
                                                     <input id="riskyUsersTicket" class="form-control form-control-sm" @bind="actionTicket"
-                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(actionTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" />
                                                 </div>
                                                 <div class="col-md-8">
                                                     <button class="btn btn-danger btn-sm me-2"

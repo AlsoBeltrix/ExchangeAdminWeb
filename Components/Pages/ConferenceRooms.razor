@@ -120,7 +120,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <button class="btn btn-primary" @onclick="SetupSingleRoom"
                                 disabled="@(IsBusy || string.IsNullOrWhiteSpace(roomEmail) || !TicketPresence.IsPresentAsTyped(ticketNumber))">
@@ -137,7 +137,7 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(csvFinderTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
@@ -307,7 +307,7 @@
                         }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(typeTicketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <button class="btn btn-primary" @onclick="SetSingleRoomType"
                                 disabled="@(IsBusy || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || !TicketPresence.IsPresentAsTyped(typeTicketNumber))">
@@ -324,7 +324,7 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(csvTypeTicket)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>

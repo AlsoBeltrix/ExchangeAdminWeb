@@ -102,7 +102,7 @@ public sealed class BlockedSendersSubmittedUnblockTests : IDisposable
         Assert.Equal("UnblockSender_Denied", Text(row, "action"));
         Assert.Equal("TicketValidation", Text(row, "refusedAt"));
         Assert.False(row.GetProperty("mutationAttempted").GetBoolean());
-        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), Text(row, "error"));
+        Assert.Equal("Ticket validation failed: " + TicketPresence.RequiredMessage, Text(row, "error"));
         Assert.Empty(_authorization.ReceivedCalls());
         Assert.False(Field<bool>(page, "isLoading"));
     }

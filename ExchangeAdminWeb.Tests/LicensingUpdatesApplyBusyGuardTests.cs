@@ -93,7 +93,7 @@ public sealed class LicensingUpdatesApplyBusyGuardTests : IDisposable
 
         await Call(page, "RunApply");
 
-        var expected = "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket);
+        var expected = "Ticket validation failed: " + TicketPresence.RequiredMessage;
         Assert.Equal((false, expected), Field<(bool, string)?>(page, "operationResult"));
         var row = Assert.Single(AuditRows(_temp.Path));
         Assert.Equal("LicensingUpdates_Update", Text(row, "action"));

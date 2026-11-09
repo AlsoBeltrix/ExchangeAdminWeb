@@ -72,7 +72,7 @@ public sealed class DhcpAuthorizationTicketPresenceTests : IDisposable
 
         await Authorize(page);
 
-        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket));
+        AssertRefused(page, ticket, "Ticket validation failed: " + TicketPresence.RequiredMessage);
     }
 
     [Fact]

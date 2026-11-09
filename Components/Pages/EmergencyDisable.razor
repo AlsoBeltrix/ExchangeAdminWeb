@@ -149,7 +149,7 @@
                         <p class="text-danger mb-3"><strong>This is not easily reversible.</strong></p>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isDisabling" /> @if (TicketPresence.HasInvisibleCharacterAsTyped(ticketNumber)) { <div class="form-text text-danger">@TicketPresence.InvisibleCharacterMessage.</div> }
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isDisabling" />
                         </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="chkConfirm" @bind="confirmed" disabled="@isDisabling" />

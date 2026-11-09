@@ -169,7 +169,7 @@ public sealed class EventLogUndoRefusalTests : IDisposable
         await ExecuteUndo(page);
 
         var shown = Field<string?>(page, "undoError");
-        Assert.Equal("Ticket validation failed: " + TicketPresenceTests.RefusalSaid(ticket), shown);
+        Assert.Equal("Ticket validation failed: " + TicketPresence.RequiredMessage, shown);
         var record = Assert.Single(_h.AuditEvents());
         Assert.Equal("ADAttributeEditor_Undo", Text(record, "action"));
         Assert.Equal("TicketValidation", Text(record, "refusedAt"));

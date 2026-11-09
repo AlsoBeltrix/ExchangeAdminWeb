@@ -360,7 +360,7 @@ public sealed class MessageTraceExportListingTests : IDisposable
         var result = await listing.TryDownloadAsync(id, ticket);
 
         Assert.False(result.Succeeded);
-        Assert.Equal(TicketPresenceTests.Said(ticket, MessageTraceExportListing.TicketRequiredMessage), result.Error);
+        Assert.Equal(MessageTraceExportListing.TicketRequiredMessage, result.Error);
         // Assert the filesystem was never touched, not merely that a message came back: a guard that
         // reads first and refuses afterwards would satisfy a message-only assertion.
         Assert.Equal(0, listing.Reads);
