@@ -8,6 +8,14 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-09 12:40 - identifier conversion run live by the owner; clean
+
+`db convert-identifiers` with the build about to ship, against a verified copy then the live shared database: 8 rows
+converted each time (4 protected users, 3 protected groups, 1 module-admin grant); `db identifier-status` on the live
+database: 7 converted, 0 identifier, 0 legacy, 1 grant-sid, 0 grant-name, exit 0. Legacy companions stay for prod's
+old build (plan B.1). Next, owner: `deploy-pipeline.ps1 -Dev`, then remove the scratch publish folder used for the
+conversion, then the post-deploy check list (Graph Directory Read Credential first).
+
 ### 2026-11-09 12:22 - dev plan clean (0 refusals) after the owner narrowed the host ACLs; deploy is the owner's to declare
 
 Three plan runs by the owner: (1) refused on Authenticated Users Modify on the drive root (inherited by the web root)
