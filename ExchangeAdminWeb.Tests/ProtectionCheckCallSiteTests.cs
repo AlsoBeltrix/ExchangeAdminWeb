@@ -55,7 +55,7 @@ public sealed class ProtectionCheckCallSiteTests
         // S11 Account Lockout Remediation: each target user's resolution, check and re-read; the guard and the SID step one operation.
         { "Services/AccountLockoutRemediationService.cs", "GuardTargetUsersAsync(\n",
             "_protectedPrincipals.BeginCheck(user)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(user)" },
-        { "Services/AccountLockoutRemediationService.cs", "private async Task<AccountLogoffResult> RunLogoffAsync(",
+        { "Services/AccountLockoutRemediationService.cs", "internal async Task<AccountLogoffResult> RunLogoffAsync(",
             "DirectoryReadOperation.Begin()", "await GuardTargetUsersAsync(" },
         // S12 Intune Devices: the device's primary user - resolved and checked, or checked unresolved.
         { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction? confirmed)",
