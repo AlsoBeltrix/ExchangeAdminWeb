@@ -8,6 +8,20 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - two audits written; both reviewers blocked; owner rulings recorded
+
+Owner rulings (decisions.md 2026-11-10): shared piece not a copy per module, unwired code wired in or removed;
+ServiceNow possible later, required by nothing now. Audits, read-only, committed: `.agents/review/shared-and-unwired-audit-2026-11-10.md`
+(Opus 5.5 agent: 46 unwired items, 17 copied patterns, 8 possible live bugs) and `.agents/review/llm-slop-audit-2026-11-10.md`
+(Fable 5.2 agent: no new confirmed defect, 4 possible; slop is in comments, page-held logic, ClickGate line pins, catalog
+history, paperwork volume). Owner asked for review by agy Gemini 4 Argon and codex, then one report. NEITHER REVIEW RAN:
+codex (Portkey) failed twice with Cloudflare 403 at api.portkey.ai/v1/responses after reading the reports (cf-ray
+a58546bf8dd2c989, a585481feade38ab; assumption: the gateway's filter trips on the report content, since the short
+review J the day before went through); agy needs `--dangerously-skip-permissions` headless, which this session's
+permission classifier refuses, and plan mode / a session allow-list were both auto-denied by agy. Review prompt:
+scratchpad `cx/review-audit.txt`. Next: owner runs agy himself or clears the block; codex retried when the gateway
+allows; then the combined report and the plan (no code changes before the owner approves the plan).
+
 ### 2026-11-09 17:40 - codex review J over ticket-sanitize: one finding (rev-j1), fixed and merged
 
 Review J (codex, Portkey; result `.agents/review/rev-j.result.txt`) over 04d1f887..1a0e42db: one finding. rev-j1
