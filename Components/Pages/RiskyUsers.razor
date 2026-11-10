@@ -554,9 +554,6 @@
     /// be granted it.</summary>
     private const string ServicerModuleId = "RiskyUsers";
 
-    private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
-        ProtectedPrincipalServicing.NoteFor(Servicers, user, ServicerModuleId, matchedRules, qualifier);
-
     private static Dictionary<string, object?>? ServicedExtra(string? note) =>
         ProtectedPrincipalServicing.Extra(note);
 
@@ -901,95 +898,30 @@
 
             notifyAdmins = true;
 
-            // 4. Protected-principal check, BEFORE the write and never after it.
-            //
-            //    Risky users are CLOUD identities, and the group, OU and SamAccountName-pattern
-            //    rules are all evaluated from an on-premises DN, so they can never match a
-            //    cloud-only principal (Constitution, Protected Principals, final bullet). Such a
-            //    principal is protected by the protected USER rows, by address, or not at all - so
-            //    an unresolved directory lookup must NOT skip the check. That skip is the defect
-            //    MfaReset shipped before 1.1.0, on a module whose normal input is a cloud identity.
+            // 4. Protected-principal check on the Entra user, BEFORE the write and never after it. The user is resolved by
+            //    its object id, so a synced user's account is checked by its on-premises SID in whatever domain holds it.
             try
             {
-                using var directoryCheck = ProtectedPrincipalService.BeginCheck(upn); var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn); // kd-88: one check - one credential fetch, one timing line - for the resolution and the rules
-                if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+                var protection = await ProtectedPrincipalServicing.ForCloudUserAsync(
+                    ProtectedPrincipalService, Servicers, userId, upn, authState.User, ServicerModuleId);
+                if (!protection.Allowed)
                 {
-                    var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                        ? "Identity is ambiguous - it matches multiple directory users."
-                        : "Protection check unavailable.";
-                    Refuse(reason, $"{reason} - blocked");
+                    var reason = protection.Refusal switch
+                    {
+                        ProtectedPrincipalServicing.CloudUserRefusal.Ambiguous => "Identity is ambiguous - it matches multiple directory users.",
+                        ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed => $"Protection check failed: {protection.FailReason}",
+                        ProtectedPrincipalServicing.CloudUserRefusal.Protected => "This user is a protected principal. Risk remediation is not permitted.",
+                        _ => "Protection check unavailable.",
+                    };
+                    Refuse(reason, protection.Refusal switch
+                    {
+                        ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed => reason,
+                        ProtectedPrincipalServicing.CloudUserRefusal.Protected => protection.ProtectedAuditDetail,
+                        _ => $"{reason} - blocked",
+                    });
                     return;
                 }
-
-                if (resolved != null)
-                {
-                    var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
-                    if (protectionCheck.CheckFailed)
-                    {
-                        Refuse($"Protection check failed: {protectionCheck.Reason}",
-                            $"Protection check failed: {protectionCheck.Reason}");
-                        return;
-                    }
-                    if (protectionCheck.IsProtected)
-                    {
-                        // An authorised servicer may proceed; everyone else is refused. Protection
-                        // is evaluated first and never weakened - this only decides whether THIS
-                        // operator may act on a target already known to be protected.
-                        servicedAuditDetail = ServicerNoteFor(authState.User, protectionCheck.MatchedRules);
-                        if (servicedAuditDetail is null)
-                        {
-                            Refuse("This user is a protected principal. Risk remediation is not permitted.",
-                                $"Protected principal - matched rules: {string.Join(", ", protectionCheck.MatchedRules)}");
-                            return;
-                        }
-                    }
-                }
-                else
-                {
-                    // Unresolved is NOT "nothing to protect". This module mutates an Entra user
-                    // that AD and Exchange may both be unaware of, so the protected USER rows are
-                    // checked against the raw identity rather than skipped.
-                    //
-                    // The one improvement over the MfaReset shape this copies: MfaReset only ever
-                    // holds a UPN, so it leaves the Entra object id unpopulated. Here riskyUser.id
-                    // IS the Entra object id, and ProtectedPrincipalService.MatchesIdentity compares
-                    // EntraObjectId against every protected USER row
-                    // (Services/ProtectedPrincipalService.cs:693-710) - verified, not assumed - so
-                    // populating it makes object-id-based protection genuinely effective here.
-                    var unresolved = new ResolvedDirectoryPrincipal(
-                        Source: "RiskyUsers-Unresolved",
-                        DisplayName: string.IsNullOrWhiteSpace(user.UserDisplayName) ? upn : user.UserDisplayName,
-                        UserPrincipalName: upn,
-                        SamAccountName: null,
-                        PrimarySmtpAddress: upn.Contains('@') ? upn : null,
-                        DistinguishedName: null,
-                        ObjectGuid: null,
-                        EntraObjectId: string.IsNullOrWhiteSpace(userId) ? null : userId);
-
-                    var unresolvedCheck = await ProtectedPrincipalService.CheckAsync(unresolved);
-                    if (unresolvedCheck.CheckFailed)
-                    {
-                        Refuse($"Protection check failed: {unresolvedCheck.Reason}",
-                            $"Protection check failed: {unresolvedCheck.Reason}");
-                        return;
-                    }
-                    if (unresolvedCheck.IsProtected)
-                    {
-                        // Both branches honour the servicer grant, or a cloud-only protected
-                        // identity becomes the one case a servicer cannot service - precisely this
-                        // module's population.
-                        servicedAuditDetail = ServicerNoteFor(authState.User, unresolvedCheck.MatchedRules, "directory-unresolved");
-                        if (servicedAuditDetail is null)
-                        {
-                            Refuse("This user is a protected principal. Risk remediation is not permitted.",
-                                $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}");
-                            return;
-                        }
-                    }
-
-                    Logger.LogInformation(
-                        "No such recipient in Active Directory or Exchange Online for {Upn}; protected user rows matched neither the raw identity nor its Entra object id - proceeding", upn);
-                }
+                servicedAuditDetail = protection.ServicedNote;
             }
             catch (Exception ex)
             {

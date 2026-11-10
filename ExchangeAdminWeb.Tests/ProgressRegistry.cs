@@ -148,6 +148,12 @@ public static class ProgressRegistry
     }
 
     /// <summary>Shared reasons, so the same judgement is not re-worded page by page.</summary>
+    private const string CloudUserGateCost =
+        "ProtectedPrincipalServicing.ForCloudUserAsync is the protection gate and the slowest thing the operator waits "
+        + "on: a Graph read of the user's on-premises SID, a global-catalog read by that SID under the directory-read "
+        + "credential fetched from Delinea, and the rules, which read the directory when protected groups or OUs are "
+        + "configured; for a cloud-only user, the Active Directory lookup and the 10-15 second Exchange fallback instead. ";
+
     private const string AuthPreambleOnly =
         "the authorization re-check and the operator/client-IP lookup only. The house rule "
         + "adopted by docs/ProgressCoverage-Plan.md puts that preamble outside the reported "
@@ -2288,8 +2294,7 @@ public static class ProgressRegistry
             new("ExecuteActionAsync",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
-                    "ProtectedPrincipalService.CheckAsync(",
+                    "ProtectedPrincipalServicing.ForCloudUserAsync(",
                     "RiskyUsersService.ApplyActionAsync(",
                     "Email.SendAdminNotificationAsync(",
                 ],
@@ -2300,17 +2305,11 @@ public static class ProgressRegistry
                 + "not the smaller one - the operator watches the same idle bar either way. The "
                 + "Begin already dominated everything, opening above the try so the "
                 + "authorization, ticket and protection refusals are covered, so only the closing "
-                + "end moved. FIVE calls are named, every remote call in the handler's own body, "
+                + "end moved. FOUR calls are named, every remote call in the handler's own body, "
                 + "each measured by reading the callee. ServiceNow.ValidateTicketAsync is the "
                 + "OPENING pin, an HttpClient GET against the ServiceNow table API and the first "
-                + "call that leaves the machine. ResolveWithExchangeFallbackAsync is the 10-15 "
-                + "second Exchange round trip, and on this module it is the normal case rather "
-                + "than the exception: a risky user is a CLOUD identity, so the AD half routinely "
-                + "misses and the Exchange fallback routinely runs. CheckAsync is named at BOTH "
-                + "its occurrences, the resolved and the directory-unresolved branch, and is "
-                + "remote CONDITIONALLY: it answers from the config store unless protected GROUP "
-                + "rules are configured, in which case CheckGroupMembershipAsync queries the "
-                + "directory. RiskyUsersService.ApplyActionAsync is the Graph write, the "
+                + "call that leaves the machine. " + CloudUserGateCost
+                + "RiskyUsersService.ApplyActionAsync is the Graph write, the "
                 + "operation itself, and unlike IntuneDevices it is called directly rather than "
                 + "through a per-action switch. Email.SendAdminNotificationAsync is the CLOSING "
                 + "pin and sits in the handler's own body, so it is named directly. Two calls "

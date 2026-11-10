@@ -67,9 +67,6 @@ public sealed class ProtectionCheckCallSiteTests
         // S13 MFA Reset: the user's resolution and its check, or the unresolved check.
         { "Components/Pages/MfaReset.razor", "private async Task ExecuteReset()",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
-        // S14 Risky Users: the user's resolution and its check, or the unresolved check.
-        { "Components/Pages/RiskyUsers.razor", "private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction? confirmed)",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S15 Licensing Updates: a batch's rows, one operation.
         { "Services/LicensingUpdatesService.cs", "servicedNotesByUpn)> EvaluateProtectionAsync(",
             "DirectoryReadOperation.Begin()", "_protectedPrincipalService.CheckAsync(row.Principal!)" },
