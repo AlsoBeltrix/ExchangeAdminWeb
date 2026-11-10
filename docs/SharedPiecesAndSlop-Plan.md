@@ -207,7 +207,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
 | #8 | Environment address as a placeholder in MFA Reset | open |
 | #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
-| G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | open |
+| G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done on branch 9fed5b96 |
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
 | G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
 | G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | open |
