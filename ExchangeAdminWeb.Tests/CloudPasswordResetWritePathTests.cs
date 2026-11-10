@@ -165,19 +165,6 @@ public class CloudPasswordResetWritePathTests
     }
 
     [Fact]
-    public void Protection_uses_the_exchange_fallback_and_passes_the_real_entra_object_id()
-    {
-        // The AD-only resolve reports every cloud-only object as NotFound, which for this module
-        // is every target. And unlike MfaReset, this module HAS resolved the object id by the time
-        // protection runs, so the unresolved branch must not copy MfaReset's null.
-        var page = Page();
-
-        Assert.Contains("ResolveWithExchangeFallbackAsync(upn)", page);
-        Assert.Contains("EntraObjectId: entraObjectId", page);
-        Assert.DoesNotContain("EntraObjectId: null", page);
-    }
-
-    [Fact]
     public void An_audit_failure_does_not_change_the_operation_result()
     {
         var page = Page();

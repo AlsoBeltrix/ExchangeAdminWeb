@@ -230,14 +230,24 @@ internal sealed class CloudPasswordResetPageRun : IDisposable
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
 
-    /// <summary>The protection gate, answering as for an account no rule protects.</summary>
+    /// <summary>The protection gate, answering as for an account no rule protects, and recording whom it was asked about.</summary>
     internal sealed class StandInProtection(
         IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
         ProtectedPrincipalRepository repository, DelineaService delinea)
         : ProtectedPrincipalService(env, config, moduleConfig, repository, delinea, NullLogger<ProtectedPrincipalService>.Instance)
     {
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity) =>
-            Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>((null, ResolutionStatus.NotFound));
+        /// <summary>Each user the gate resolved: its object id and UPN.</summary>
+        public List<(string? ObjectId, string Upn)> Asked { get; } = [];
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudUserAsync(
+            string? entraObjectId, string userPrincipalName)
+        {
+            lock (Asked)
+                Asked.Add((entraObjectId, userPrincipalName));
+            return Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus, bool)>((new ResolvedDirectoryPrincipal(
+                "Test-Unresolved", userPrincipalName, userPrincipalName, null, userPrincipalName, null, null, entraObjectId),
+                ResolutionStatus.Resolved, true));
+        }
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>
             Task.FromResult(ProtectedPrincipalResult.NotProtected());

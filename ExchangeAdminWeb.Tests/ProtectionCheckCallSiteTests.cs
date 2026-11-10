@@ -48,9 +48,6 @@ public sealed class ProtectionCheckCallSiteTests
         // user's resolution by object id and its check (one fetch, proved in CloudUserProtectionTests).
         { "Services/ProtectedPrincipalServicing.cs", "public static async Task<CloudUserDecision> ForCloudUserAsync(",
             "protection.BeginCheck(userPrincipalName)", "protection.ResolveCloudUserAsync(" },
-        // S6 Cloud Password Reset: the admin account's resolution and its check.
-        { "Components/Pages/CloudPasswordReset.razor", "CheckProtectionAsync(System.Security.Claims.ClaimsPrincipal user, string upn, string entraObjectId)",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S7 Conference Rooms: no longer a protection call site - protected principals do not apply to it (owner ruling
         // 2026-11-03); see ConferenceRoomBinder_RunsNoProtectionCheck below.
         // S8 Blocked Senders: the sender's resolution and its check, or the raw address's check.

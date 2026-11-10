@@ -140,6 +140,17 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
     }
 
     [Fact]
+    public void CloudPasswordReset_ChecksTheAccountByTheObjectIdGraphRead()
+    {
+        using var run = new CloudPasswordResetPageRun(new StandInForest("a.example.test", "b.example.test"));
+
+        run.Preflight();
+        run.Confirm();
+
+        Assert.Contains((CloudPasswordResetPageRun.AccountObjectId, CloudPasswordResetPageRun.AccountUpn), run.Protection.Asked);
+    }
+
+    [Fact]
     public async Task RiskyUsers_GraphNotAnswered_RefusesAsUnavailable_BeforeTheWrite()
     {
         _h.GraphSids.Remove(FarObjectId);
