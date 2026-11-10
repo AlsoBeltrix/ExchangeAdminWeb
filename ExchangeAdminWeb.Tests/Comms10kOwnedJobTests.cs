@@ -286,7 +286,7 @@ public sealed class Comms10kOwnedJobTests
         }
         public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal) =>
             new() { Target = "unused", Status = BulkJobRowStatus.Failed };
-        public Task OnJobCompletedAsync(BulkJob job)
+        public Task OnJobCompletedAsync(BulkJob job, JobRefusal? refusal)
         {
             Completions++;
             Finished.TrySetResult();

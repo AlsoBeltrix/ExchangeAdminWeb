@@ -1325,13 +1325,14 @@ internal sealed class ExchangeWriteHarness : IDisposable
         function global:Find-StandInGroups($Reach) {
             foreach ($g in @($global:DirectoryGroupGuids)) { if (Test-StandInReaches $Reach (Get-StandInGroupDomain "$g")) { "$g" } }
         }
-        # aud-a2k. A search answers with the groups its -Filter matches, not every group it reaches: the filter
-        # is read as the clauses the service builds - "<attribute> -eq '<value>'", single quotes doubled
-        # inside, joined by -or - and a group matches when any clause equals its attribute (DirectoryGroupAttributes,
-        # or the default mail and the CN as both names), case-insensitively as Active Directory compares these
-        # attributes; an attribute the group lacks reads as empty, so "mail -eq ''" finds every group without
-        # one - the worst a search by a blank address could do. A filter in any other shape is an error, so a
-        # test cannot pass through a filter the stand-in did not evaluate.
+        # A search answers with the groups its -LDAPFilter matches, not every group it reaches: the filter is
+        # read as the clauses the service builds - "(<attribute>=<value>)", alone or inside "(|...)" - by
+        # StandInLdapFilter, which reads a value as a directory does: \XX is that one character, a bare * is a
+        # wildcard. A group matches when any clause matches its attribute (DirectoryGroupAttributes, or the
+        # default mail and the CN as both names), case-insensitively as Active Directory compares these
+        # attributes; an attribute the group lacks reads as empty, so "(mail=)" finds every group without
+        # one - the worst a search by a blank address could do. A filter in any other shape is an error, and
+        # so is a search by -Filter, so a test cannot pass through a filter the stand-in did not evaluate.
         function global:Get-StandInGroupAttribute([string] $Guid, [string] $Name) {
             $attributes = $global:DirectoryGroupAttributes[$Guid]
             if ($null -eq $attributes) {
@@ -1341,21 +1342,13 @@ internal sealed class ExchangeWriteHarness : IDisposable
             foreach ($key in @($attributes.Keys)) { if ("$key" -ieq $Name) { return "$($attributes[$key])" } }
             return ''
         }
-        function global:Read-StandInFilter([string] $Filter) {
-            $clauses = New-Object System.Collections.ArrayList
-            foreach ($clause in ($Filter -split '\s+-or\s+')) {
-                if ($clause -notmatch "^\s*(\w+)\s+-eq\s+'((?:[^']|'')*)'\s*$") { return $null }
-                [void]$clauses.Add(@($Matches[1], ($Matches[2] -replace "''", "'")))
-            }
-            , $clauses
-        }
         function global:Test-StandInGroupMatches($Clauses, [string] $Guid) {
             foreach ($clause in $Clauses) {
-                if ((Get-StandInGroupAttribute $Guid $clause[0]) -ieq $clause[1]) { return $true }
+                if ((Get-StandInGroupAttribute $Guid $clause[0]) -imatch $clause[1]) { return $true }
             }
             return $false
         }
-        # aud-a2i, aud-a2j, aud-a2k. A search answers with every group the call reaches that its filter matches,
+        # A search answers with every group the call reaches that its filter matches,
         # by objectGUID and DN. A read
         # by -Identity (a DN or an objectGUID) answers with that group when the call reaches it - as another
         # object when DirectoryGroupReadBack names the identity, or, for a read of the member attribute,
@@ -1366,14 +1359,15 @@ internal sealed class ExchangeWriteHarness : IDisposable
         # cannot reach, failing the group's re-read before it; and FailuresAfterSetPlace holds either key for the calls
         # made after a Set-Place.
         function global:Get-ADGroup {
-            [CmdletBinding()] param($Filter, $Identity, $Properties, $Server, $Credential)
+            [CmdletBinding()] param($Filter, $LDAPFilter, $Identity, $Properties, $Server, $Credential)
             Write-StandInCall 'Get-ADGroup' $PSBoundParameters
             $reach = Get-StandInReach $PSBoundParameters
             if ($null -eq $reach) { Write-Error "Unable to contact the server '$Server'."; return }
             $reached = @(Find-StandInGroups $reach)
             if (-not $PSBoundParameters.ContainsKey('Identity')) {
-                $clauses = Read-StandInFilter "$Filter"
-                if ($null -eq $clauses) { Write-Error "stand-in: cannot read the filter '$Filter'."; return }
+                if ($PSBoundParameters.ContainsKey('Filter')) { Write-Error "stand-in: a group search by -Filter ('$Filter') is not evaluated."; return }
+                $clauses = [ExchangeAdminWeb.Tests.StandInLdapFilter]::Read("$LDAPFilter")
+                if ($null -eq $clauses) { Write-Error "stand-in: cannot read the filter '$LDAPFilter'."; return }
                 foreach ($group in $reached) {
                     if (Test-StandInGroupMatches $clauses "$group") {
                         [pscustomobject]@{ ObjectGUID = [guid]"$group"; DistinguishedName = (Get-StandInGroupDn "$group") }

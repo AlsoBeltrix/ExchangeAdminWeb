@@ -614,7 +614,7 @@ public sealed class ModuleCatalog
             // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
             // 1.8.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.8.9: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.8.11",
+            Version = "1.8.13",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -811,7 +811,7 @@ public sealed class ModuleCatalog
             // 2.16.1: the manager notice reaches the manager - objectClass is read as the string the AD
             // module returns, not as characters - and a group with no manager files no Failed row (kd-92).
             // 2.16.3: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "2.16.6",
+            Version = "2.16.7",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -1234,7 +1234,7 @@ public sealed class ModuleCatalog
             // directory runspace for all its AD steps (the two preflights, the City/State/Country write, the on-prem room-list add).
             // 2.20.2: help sweep - its settings' help cut to one sentence each, and the job-removal tip to one (help is
             // behaviour: Constitution, Code Change Discipline).
-            Version = "2.20.4",
+            Version = "2.20.5",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

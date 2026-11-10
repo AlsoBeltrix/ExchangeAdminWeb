@@ -277,7 +277,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     /// The admin notification, moved off the browser circuit and into the job - which is the
     /// point of running here at all, since the circuit may be long gone by now.
     /// </summary>
-    public async Task OnJobCompletedAsync(BulkJob job)
+    public async Task OnJobCompletedAsync(BulkJob job, JobRefusal? refusal)
     {
         ArgumentNullException.ThrowIfNull(job);
 

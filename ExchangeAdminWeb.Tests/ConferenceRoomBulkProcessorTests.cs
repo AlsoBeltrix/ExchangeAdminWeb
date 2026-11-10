@@ -711,7 +711,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         job.Status = BulkJobStatus.Completed;
         job.TotalRows = 2; job.SuccessCount = 2; job.ProcessedRows = 2;
 
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received().SendAdminNotificationAsync("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             true, "INC1", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
@@ -727,7 +727,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         job.Status = BulkJobStatus.Completed;
         job.TotalRows = 2; job.ProcessedRows = 2; job.SuccessCount = 0; job.PartialCount = 2; job.FailedCount = 0;
 
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received().SendAdminNotificationAsync("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             false, "INC1", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
@@ -741,7 +741,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         job.Status = BulkJobStatus.Cancelled;
         job.TotalRows = 2; job.ProcessedRows = 1; job.SuccessCount = 1; job.PartialCount = 0; job.FailedCount = 0;
 
-        await f.Processor.OnJobCompletedAsync(job);
+        await f.Processor.OnJobCompletedAsync(job, null);
 
         await f.Email.Received().SendAdminNotificationAsync("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             false, "INC1", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());

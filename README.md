@@ -53,7 +53,7 @@ Check migration eligibility and create move batches between Exchange Online and 
 
 Analyze message headers and search mail flow across Exchange Online and on-premises transport logs.
 
-- Trace queries both Exchange Online message trace and on-premises message tracking logs
+- Trace queries both Exchange Online message trace and on-premises message tracking logs. On-premises, every transport server's log is searched. If the list of transport servers cannot be read or names none, the search still runs against the connected server alone, the result carries the warning "On-prem message tracking searched one server only", and the application log has the reason. Like any warning on a trace, it files that search's audit row as Failed with the warning as its detail
 - **Any range up to 90 days is searched in the app and rendered on the page.** Exchange Online accepts a maximum span of 10 days per call, so a wider range is split into contiguous windows and queried in sequence; on-premises is queried once for the whole range. The operator never sees the limit. 90 days is the hard ceiling because that is Exchange Online's retention
 - If one window fails, the whole Exchange Online result is reported as failed rather than returned with an invisible hole in the middle of the range
 - Optional ticket number is recorded in audit logs only; it does not call ServiceNow
@@ -72,7 +72,7 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
   Delivery detail costs one Exchange lookup per message, so the 50 is a **ceiling rather than a page**: there is no way to obtain detail for every result in one export, and narrowing the search is how to cover more. Live download is capped lower still, at 10
 - Subject and Message ID filters work on every range, including a 90-day one
 - Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
-- A queued detail export is checked again before every message (see Background Jobs under Session Revalidation). If it is refused part-way, no export is produced and no email is sent, and Downloadable Reports lists it as Not produced
+- A queued detail export is checked again before every message and once more as it ends (see Background Jobs under Session Revalidation). If it is refused at either point, no export is produced and no email is sent, and Downloadable Reports lists it as Not produced. That includes a job cancelled before it started or interrupted by a restart: if still allowed, it produces its export with every message marked not processed, as before
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
 - Exports are kept for 30 days. The app deletes expired ones itself at startup, in the same pass that prunes old job records — there is nothing to install and no scheduled task. A row whose export could not be saved shows as Failed, distinct from an expired one
@@ -1206,7 +1206,11 @@ groups that authorized its operator when it was queued. Before every row the job
 that the job's module is still enabled and that one of those groups is still allowed for the
 module. If not - or if the job carries no such record, or either setting cannot be read - the row
 is refused, recorded as Failed with the reason, and audited; the rows after it are refused the
-same way. This re-reads the app's settings, not the operator's Windows group membership.
+same way. The same check is made once more as a job ends, however it ended - cancelled while
+queued and interrupted by a restart included, which run no row - and a job refused then hands
+over no export and no link. The outcome mail a Comms-10k or Conference Rooms job sends its
+administrators is not a result and is still sent. This re-reads the app's settings, not the
+operator's Windows group membership.
 
 ### Session Revalidation
 

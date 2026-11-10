@@ -583,7 +583,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     {
         ps.Commands.Clear();
         ps.Streams.Error.Clear();
-        var search = ps.AddCommand("Get-ADGroup").AddParameter("Filter", filter ?? $"mail -eq '{ExchangeWriteHarness.DefaultListAddress}'");
+        var search = ps.AddCommand("Get-ADGroup").AddParameter("LDAPFilter", filter ?? $"(mail={ExchangeWriteHarness.DefaultListAddress})");
         if (server is not null)
             search.AddParameter("Server", server);
         search.AddParameter("ErrorAction", "Stop");
@@ -791,7 +791,36 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         Assert.Equal(SyncedGroupGuid, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Set-ADGroup")), "Identity"));
         var searches = _h.CallsTo("Get-ADGroup").Where(IsGroupSearch).ToList();
         Assert.Equal(2, searches.Count);
-        Assert.All(searches, c => Assert.Equal($"mail -eq '{ListAddress}'", ExchangeWriteHarness.Bound(c, "Filter")));
+        Assert.All(searches, c => Assert.Equal($"(mail={ListAddress})", ExchangeWriteHarness.Bound(c, "LDAPFilter")));
+        Assert.All(searches, c => Assert.Null(ExchangeWriteHarness.Bound(c, "Filter")));
+    }
+
+    [Theory]
+    [InlineData("o'brien-rooms@contoso.test", "(mail=o'brien-rooms@contoso.test)")]
+    [InlineData("$rooms@contoso.test", "(mail=$rooms@contoso.test)")]
+    [InlineData(@"b1\rooms@contoso.test", @"(mail=b1\5crooms@contoso.test)")]
+    [InlineData("b1(rooms)@contoso.test", @"(mail=b1\28rooms\29@contoso.test)")]
+    [InlineData("b1*@contoso.test", @"(mail=b1\2a@contoso.test)")]
+    [InlineData("b1\0rooms@contoso.test", @"(mail=b1\00rooms@contoso.test)")]
+    public async Task AListAddressWithACharacterAFilterGivesMeaningTo_FindsOnlyTheGroupCarryingExactlyIt(string address, string filter)
+    {
+        // The list's address is a value in the search's filter, so each character a filter gives a meaning to
+        // is written as its escape and the address is matched as it stands. The other group's address is one
+        // a wildcard in the list's would match too: two matches refuse, so the row completes only if it did not.
+        SyncedListTheRoomIsNotOnInExchange();
+        _h.ListAddresses[List] = address;
+        OnlyTheseGroups(NamesakeGroupGuid, SyncedGroupGuid);
+        _h.SetDirectoryGroupAttributes(NamesakeGroupGuid, mail: "b1-rooms@contoso.test", displayName: List, name: List);
+        _h.SetDirectoryGroupAttributes(SyncedGroupGuid, mail: address, displayName: List, name: List);
+
+        var result = await Apply(new Service(_h), Room());
+
+        Assert.True(result.Success, result.Message);
+        Assert.False(result.Partial);
+        Assert.Equal(SyncedGroupGuid, ExchangeWriteHarness.Bound(Assert.Single(_h.CallsTo("Set-ADGroup")), "Identity"));
+        var searches = _h.CallsTo("Get-ADGroup").Where(IsGroupSearch).ToList();
+        Assert.Equal(2, searches.Count);
+        Assert.All(searches, c => Assert.Equal(filter, ExchangeWriteHarness.Bound(c, "LDAPFilter")));
     }
 
     [Fact]
@@ -863,10 +892,10 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
     public void TheHarness_AGroupSearchMatchesOnlyTheAttributesItsFilterNames()
     {
         // The stand-in search evaluates its filter, so the tests above pass or fail on what the service asks
-        // for, as Active Directory would answer it: an address finds only the group carrying it (quotes
-        // doubled, any case); a name finds a group only through a name attribute; any clause of an -or
-        // matches; a missing attribute reads as empty; and a filter it cannot read is an error, never every
-        // group.
+        // for, as Active Directory would answer it: an address finds only the group carrying it (any case); a
+        // name finds a group only through a name attribute; any clause of an or matches; a missing attribute
+        // reads as empty; a bare * is a wildcard and an escaped one a character; and a filter it cannot read
+        // is an error, never every group.
         _h.SetDirectoryGroupAttributes(ExchangeWriteHarness.DefaultDirectoryGroupGuid, mail: "o'brien-rooms@contoso.test", displayName: List, name: "Rooms-B1");
         _h.DirectoryGroupGuids.Add(NamesakeGroupGuid);
         _h.SetDirectoryGroupAttributes(NamesakeGroupGuid, mail: null, displayName: "Facilities", name: "Facilities");
@@ -876,15 +905,20 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         string[] theGroup = [ExchangeWriteHarness.DefaultDirectoryGroupGuid];
         var catalog = ExchangeWriteHarness.GlobalCatalogEndpoint;
 
-        Assert.Equal(theGroup, SearchGroups(ps, catalog, "mail -eq 'o''brien-rooms@contoso.test'"));
-        Assert.Equal(theGroup, SearchGroups(ps, catalog, "mail -eq 'O''BRIEN-ROOMS@CONTOSO.TEST'"));
-        Assert.Empty(SearchGroups(ps, catalog, $"mail -eq '{List}'"));
-        Assert.Empty(SearchGroups(ps, catalog, $"mail -eq '{ExchangeWriteHarness.DefaultListAddress}'"));
-        Assert.Equal(theGroup, SearchGroups(ps, catalog, $"displayName -eq '{List}'"));
-        Assert.Equal(theGroup, SearchGroups(ps, catalog, "name -eq 'Rooms-B1'"));
-        Assert.Equal(theGroup, SearchGroups(ps, catalog, $"mail -eq 'facilities@contoso.test' -or displayName -eq '{List}'"));
-        Assert.Equal([NamesakeGroupGuid], SearchGroups(ps, catalog, "mail -eq ''"));
-        Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, catalog, "mail -like '*'"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "(mail=o'brien-rooms@contoso.test)"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "(mail=O'BRIEN-ROOMS@CONTOSO.TEST)"));
+        Assert.Empty(SearchGroups(ps, catalog, $"(mail={List})"));
+        Assert.Empty(SearchGroups(ps, catalog, $"(mail={ExchangeWriteHarness.DefaultListAddress})"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, $"(displayName={List})"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "(name=Rooms-B1)"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, $"(|(mail=facilities@contoso.test)(displayName={List}))"));
+        Assert.Equal([NamesakeGroupGuid], SearchGroups(ps, catalog, "(mail=)"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, "(mail=o*@contoso.test)"));
+        Assert.Empty(SearchGroups(ps, catalog, @"(mail=o\2a@contoso.test)"));
+        Assert.Equal(theGroup, SearchGroups(ps, catalog, @"(mail=o\27brien-rooms@contoso.test)"));
+        Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, catalog, "(mail=o(brien)"));
+        Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, catalog, @"(mail=o\brien)"));
+        Assert.ThrowsAny<RuntimeException>(() => SearchGroups(ps, catalog, "mail -eq 'o''brien-rooms@contoso.test'"));
     }
 
     // aud-a2l. The on-prem add took "Set-ADGroup raised no error" as success, so a write that changed nothing
@@ -1578,7 +1612,7 @@ public sealed class ConferenceRoomRoomListPreflightTests : IDisposable
         // is recorded and its own call after one - Get-ADForest, the search (any Get-ADGroup), a read by identity, a member
         // read - and the member key and the read-by-identity key no other read.
         const string Later = "The failure after Set-Place.";
-        (string Name, object Value)[] search = [("Filter", $"mail -eq '{ExchangeWriteHarness.DefaultListAddress}'"), ("Server", ExchangeWriteHarness.GlobalCatalogEndpoint)];
+        (string Name, object Value)[] search = [("LDAPFilter", $"(mail={ExchangeWriteHarness.DefaultListAddress})"), ("Server", ExchangeWriteHarness.GlobalCatalogEndpoint)];
         (string Name, object Value)[] reRead = [("Identity", GroupDn), ("Server", "contoso.test")];
         (string Name, object Value)[] memberRead = [("Identity", GroupDn), ("Properties", new[] { "member" }), ("Server", "contoso.test")];
         void SetPlaceRecorded() => _h.Calls.Add(new Hashtable { ["__Command"] = "Set-Place" });

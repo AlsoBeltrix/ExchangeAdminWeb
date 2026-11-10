@@ -55,8 +55,14 @@ public interface IBulkJobProcessor
     /// final aggregated counts. Default no-op so processors that need no completion hook opt out.
     /// Per the fail-safe rule, a notification failure here must not change the job result - the
     /// runner has already persisted the terminal state before calling this, and swallows throws.
+    ///
+    /// <paramref name="refusal"/> is the runner's check of the job as it ends
+    /// (<see cref="IJobAuthorization"/>): null when the job may still run, otherwise why it may not.
+    /// The runner makes it for every ended job, including one that never ran a row (interrupted by
+    /// a restart, cancelled while queued). A hook that hands the job's result to anyone - a file,
+    /// a mail pointing at one - must hand over nothing when it is not null.
     /// </summary>
-    Task OnJobCompletedAsync(BulkJob job) => Task.CompletedTask;
+    Task OnJobCompletedAsync(BulkJob job, JobRefusal? refusal) => Task.CompletedTask;
 }
 
 /// <summary>The outcome of one processed row, returned by <see cref="IBulkJobProcessor.ProcessRowAsync"/>.</summary>

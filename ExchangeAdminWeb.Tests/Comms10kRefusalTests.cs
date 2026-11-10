@@ -106,7 +106,7 @@ public sealed partial class Comms10kRefusalTests
         Assert.Equal(BulkJobRowStatus.Failed, replaceRow.Status);
         Assert.Equal(expectedReason, replaceRow.Message);
         await service.DidNotReceive().ExecuteReplaceAsync(Arg.Any<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(), Arg.Any<string>(), Arg.Any<Func<string?>>());
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
         fixture.AssertAudit(expectedReason, Comms10kOutcome.RefusedBeforeAnyChange);
         fixture.AssertNotification(expectedReason, Comms10kOutcome.RefusedBeforeAnyChange);
     }
@@ -121,7 +121,7 @@ public sealed partial class Comms10kRefusalTests
         const string reason = "Addresses were not resolved, so nothing was written.";
 
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         Assert.Equal(reason, row.Message);
@@ -143,7 +143,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, 0, CancellationToken.None)).Status);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         var reason = Assert.IsType<string>(row.Message);
@@ -175,7 +175,7 @@ public sealed partial class Comms10kRefusalTests
 
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Failed, row.Status);
         fixture.AssertAudit(reason, Comms10kOutcome.RefusedBeforeAnyChange);
@@ -195,7 +195,7 @@ public sealed partial class Comms10kRefusalTests
 
         await processor.ProcessRowAsync(job, 0, CancellationToken.None);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Partial, row.Status);
         Assert.Equal(reason, row.Message);
@@ -221,7 +221,7 @@ public sealed partial class Comms10kRefusalTests
 
         Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(job, 0, CancellationToken.None)).Status);
         var row = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
-        await processor.OnJobCompletedAsync(job);
+        await processor.OnJobCompletedAsync(job, null);
 
         Assert.Equal(BulkJobRowStatus.Success, row.Status);
         await service.Received(1).ExecuteReplaceAsync(Arg.Is<IReadOnlyList<Comms10kAddressResolver.ResolvedMember>>(members => members.SequenceEqual(CompleteResolution().ResolvedMembers)), job.SubmittedBy, Arg.Any<Func<string?>>());

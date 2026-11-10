@@ -171,7 +171,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         return Failed(target, "Authorization denied.");
     }
 
-    public async Task OnJobCompletedAsync(BulkJob job)
+    public async Task OnJobCompletedAsync(BulkJob job, JobRefusal? refusal)
     {
         // Completion admin notification fires from the job (moves the email off the closed circuit).
         // Fail-safe: the runner has already persisted the terminal state and swallows any throw here.

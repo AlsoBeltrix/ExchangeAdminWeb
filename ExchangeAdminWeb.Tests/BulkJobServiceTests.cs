@@ -24,6 +24,9 @@ public class BulkJobServiceTests
         /// <summary>kd-85. The job each completion hook was given - its id and its status - in the order given.</summary>
         public readonly List<(string Id, BulkJobStatus Status)> CompletedJobs = new();
 
+        /// <summary>What the runner's check said of the job each completion hook was given, in the order given.</summary>
+        public readonly List<JobRefusal?> CompletionRefusals = new();
+
         public readonly List<string> ScopeIds = new();
         public readonly Guid ScopeMarker;
 
@@ -77,11 +80,14 @@ public class BulkJobServiceTests
             return new BulkJobRowOutcome { Target = $"row{rowIndex}@x", Status = BulkJobRowStatus.Success };
         }
 
-        public Task OnJobCompletedAsync(BulkJob job)
+        public Task OnJobCompletedAsync(BulkJob job, JobRefusal? refusal)
         {
             Interlocked.Increment(ref CompletionCalls);
             lock (CompletedJobs)
+            {
                 CompletedJobs.Add((job.Id, job.Status));
+                CompletionRefusals.Add(refusal);
+            }
             return Task.CompletedTask;
         }
     }
@@ -583,6 +589,50 @@ public class BulkJobServiceTests
         Assert.Equal(3, job.ProcessedRows);
         Assert.Equal(2, job.SuccessCount);
         Assert.Equal(1, job.FailedCount);
+    }
+
+    // A completion hook is told what the runner's check says of the job as it ends, however it ended - a job cancelled
+    // while it waited or found unfinished at start-up ran no row, so this is the only check it gets.
+    [Theory]
+    [InlineData("ran", "allowed")]
+    [InlineData("ran", "refused")]
+    [InlineData("ran", "throws")]
+    [InlineData("cancelled-queued", "allowed")]
+    [InlineData("cancelled-queued", "refused")]
+    [InlineData("cancelled-queued", "throws")]
+    [InlineData("start-up", "allowed")]
+    [InlineData("start-up", "refused")]
+    [InlineData("start-up", "throws")]
+    public async Task TheCompletionHook_IsToldWhatTheCheckSaysOfTheJobAsItEnds(string ended, string check)
+    {
+        using var h = new Harness();
+        if (check == "refused")
+            h.Authorization.Refusal = JobRefusal.AccessRemoved;
+        else if (check == "throws")
+            h.Authorization.Failure = new InvalidOperationException("check blew up");
+        h.Repository.Insert(h.NewJob("j1", "SS"));
+
+        if (ended == "ran")
+            await h.Service.DrainQueueAsync(CancellationToken.None);
+        else if (ended == "cancelled-queued")
+            h.Service.CancelJob("j1");
+        else
+            h.Service.InitializeAsync();
+
+        // The start-up hooks run off the start-up path, with no handle to await.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (HookedJobs(h).Length == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+
+        var status = ended == "ran" ? BulkJobStatus.Completed : ended == "cancelled-queued" ? BulkJobStatus.Cancelled : BulkJobStatus.Interrupted;
+        Assert.Equal(new[] { ("j1", status) }, HookedJobs(h));
+        JobRefusal? expected = check == "allowed" ? null : check == "refused" ? JobRefusal.AccessRemoved : JobRefusal.Unverifiable;
+        JobRefusal?[] told;
+        lock (h.CreatedProcessors)
+            told = h.CreatedProcessors.SelectMany(p => p.CompletionRefusals).ToArray();
+        Assert.Equal(new[] { expected }, told);
+        if (ended != "ran")
+            Assert.Equal(0, h.CreatedProcessors.Sum(p => p.RowsProcessed + p.RowsRefused));
     }
 
     [Fact]
