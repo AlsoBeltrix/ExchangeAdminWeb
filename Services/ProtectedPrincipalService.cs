@@ -835,27 +835,31 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// Resolves an identity through Active Directory, falling back to Exchange Online when AD
     /// answers "no such object". This is the entry point protection gates should use for a target
     /// the write binds by DN or UPN; a gate whose write hands the operator's string to EXCHANGE
-    /// uses <see cref="ResolveExchangeTargetAsync"/> instead (aud-a2b).
+    /// uses <see cref="ResolveExchangeTargetAsync"/> instead.
     /// </summary>
     /// <remarks>
-    /// AD alone cannot see three legitimate kinds of target: a mailbox addressed by a secondary
-    /// SMTP alias, a mail-enabled group, and a cloud-only recipient. The first is a protection
-    /// bypass, not just a usability gap - protected rows are stored as primary addresses, so an
-    /// alias-addressed protected principal does not match. Exchange normalizes any alias to the
-    /// canonical primary address, so re-resolving through that address is what closes it.
+    /// AD's lookup by address reads one domain and cannot see four legitimate kinds of target: a
+    /// mailbox addressed by a secondary SMTP alias, an account in another domain of the forest, a
+    /// mail-enabled group, and a cloud-only recipient. The first is a protection bypass, not just
+    /// a usability gap - an alias names no account in AD. Exchange names the recipient under any
+    /// of its addresses, and a synced recipient is then bound to the account it is synced from,
+    /// by SID, as <see cref="ResolveExchangeTargetAsync"/> binds it.
     ///
     /// Fail-closed rules, in order of importance:
     /// - Only <c>NotFound</c> falls through to Exchange. Resolved / Ambiguous / Unavailable are
     ///   returned exactly as AD produced them, so no path that denies today starts allowing.
     /// - An Exchange lookup that could not run returns <c>Unavailable</c>, never <c>NotFound</c>.
     ///   An unreachable directory is not evidence of absence.
+    /// - A synced recipient whose account cannot be bound - its SID not read, no account or
+    ///   several holding it, or no SID reported and nothing in AD under the canonical address -
+    ///   is <c>Unavailable</c> or <c>Ambiguous</c>, never a cloud-only principal.
     /// See docs/ProtectedPrincipalResolution-Plan.md.
     /// </remarks>
     // virtual: same test seam as ResolveWithStatusAsync - gate tests substitute outcomes without
     // a live directory.
     public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
     {
-        // kd-88: its two directory lookups share the operation's one credential fetch.
+        // Its directory lookups share the operation's one credential fetch.
         using var operation = DirectoryReadOperation.Begin();
 
         var (principal, status) = await ResolveWithStatusAsync(identity);
@@ -875,74 +879,17 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (null, ResolutionStatus.NotFound);
         }
 
-        // Branch on whether the recipient has an on-premises object, NOT on whether the typed
-        // address happened to differ from the canonical one. Those are independent: a cloud-only
-        // mailbox can have secondary aliases too. Testing address equality first sent that
-        // intersection down the alias path, where the AD re-query necessarily returned NotFound
-        // (a cloud-only object is in AD under no address), which the gates that allow on NotFound
-        // then read as "not protected" - reinstating the alias bypass for exactly the principals
-        // this method exists to protect. Review finding ppv-1.
+        // Branch on whether the recipient has an on-premises object, not on whether the typed address differs from the
+        // canonical one: a cloud-only mailbox can have secondary aliases too.
         if (recipient.ExistsOnPrem)
         {
-            if (!string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase))
-            {
-                // The alias case. Re-resolve against the canonical address so the principal
-                // carries a DN and the group / OU / pattern rules apply normally.
-                // docs/ProtectedPrincipalIdentifiers-Plan.md C.2: when the SID source reports the recipient's on-premises
-                // SID, the principal is the one account holding it, read at the global catalog (steps 3-4), not whatever
-                // AD holds under the address. rev-b4: only a source that ANSWERED with no SID (NoneReported) leaves the
-                // address re-resolve below; one that could not be asked - Graph unreachable, the Graph Directory Read
-                // Credential blank, no source at all - is Unavailable, which every caller refuses (C.2 step 6, as
-                // BindSyncedAsync reads it). Re-resolving by address then could bind another local account that carries
-                // the canonical address while Exchange resolved the alias to a protected one.
-                var sid = await ReadOnPremisesSidAsync(identity, recipient.ExternalDirectoryObjectId);
-                if (sid.Outcome == OnPremisesSidOutcome.NotAnswered)
-                {
-                    _logger.LogWarning(
-                        "{Identity} is an alias of a directory-synced recipient whose on-premises SID could not be read - failing closed",
-                        identity);
-                    return (null, ResolutionStatus.Unavailable);
-                }
-                if (sid.Outcome == OnPremisesSidOutcome.Reported)
-                {
-                    var (bySid, bySidStatus) = await BindBySidAsync(identity, recipient with { OnPremisesSid = sid.Sid }, sid.Sid!);
-                    // ExchangeGuid stays ResolveExchangeTargetAsync's alone (aud-a2d, ValidatedMailbox.From).
-                    return bySidStatus == ResolutionStatus.Resolved && bySid is not null
-                        ? (bySid with { ExchangeGuid = null }, ResolutionStatus.Resolved)
-                        : (null, bySidStatus == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : bySidStatus);
-                }
-                _logger.LogWarning("no on-premises SID reported for {Identity}; bound by address", identity);
-
-                _logger.LogInformation(
-                    "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
-                    identity, recipient.PrimarySmtpAddress);
-                var (canonical, canonicalStatus) = await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
-
-                // aud-a2b. Exchange says this recipient is synced and names its canonical
-                // address, and AD holds no object under it: the directories disagree, exactly as
-                // in the same-address case below. Passing AD's NotFound through was not only the
-                // wrong message - the gates that ALLOW on NotFound let the operation through.
-                if (canonicalStatus == ResolutionStatus.NotFound)
-                {
-                    _logger.LogWarning(
-                        "Exchange reports {Identity} as directory-synced with canonical address {Canonical}, "
-                        + "but Active Directory holds no object under it - directories disagree, failing closed",
-                        identity, recipient.PrimarySmtpAddress);
-                    return (null, ResolutionStatus.Unavailable);
-                }
-
-                return (canonical, canonicalStatus);
-            }
-
-            // Exchange says this recipient IS on-prem-backed, yet AD just missed it under the very
-            // same address. The two directories disagree, so nothing here is established: treat it
-            // as an unavailable lookup rather than inventing a cloud-only principal that would
-            // skip the group and OU rules this synced object is subject to.
-            _logger.LogWarning(
-                "Exchange reports {Identity} as directory-synced but Active Directory did not "
-                + "resolve it - directories disagree, failing closed",
-                identity);
-            return (null, ResolutionStatus.Unavailable);
+            // The account the recipient is synced from, whichever of its addresses was typed: the one holding the
+            // on-premises SID Graph reports, read at the global catalog, so an account in another domain of the forest
+            // is found and one that merely carries the address is never it. Active Directory holds nothing under the
+            // typed string, which is why Exchange was asked. The mailbox GUID is ResolveExchangeTargetAsync's alone,
+            // for the writes that are bound to a mailbox.
+            var (bound, boundStatus) = await BindSyncedAsync(identity, recipient, adPrincipal: null, ResolutionStatus.NotFound);
+            return (bound is null ? null : bound with { ExchangeGuid = null }, boundStatus);
         }
 
         // Cloud-only: no on-premises object, under this or any address. Group and OU rules are
@@ -1061,7 +1008,8 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
 
     /// <summary>
     /// C.2 steps 3-6 and the aud-a2b agreement for a synced recipient, given Active Directory's reading of the typed string.
-    /// Shared by <see cref="ResolveExchangeTargetAsync"/> and <see cref="BindSyncedRecipientAsync"/>.
+    /// Shared by <see cref="ResolveExchangeTargetAsync"/>, <see cref="BindSyncedRecipientAsync"/> and
+    /// <see cref="ResolveWithExchangeFallbackAsync"/>, which reaches it only when Active Directory holds nothing under the string.
     /// </summary>
     private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedAsync(
         string identity, ResolvedRecipient recipient, ResolvedDirectoryPrincipal? adPrincipal, ResolutionStatus adStatus)
