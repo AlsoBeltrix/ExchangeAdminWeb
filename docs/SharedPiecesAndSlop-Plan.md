@@ -207,7 +207,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #6 | Migration and Out of Office admin mail uses the mailbox-permission template | done on branch 9e422005 |
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
 | #8 | Environment address as a placeholder in MFA Reset | done on branch 23d55c9a |
-| #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
+| #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | done on branch d6be8b2b |
 | G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done, merged 8b0fbb28 |
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
 | G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
@@ -252,7 +252,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | A38 | `AdminEventLog.razor` unused `Config` inject | open |
 | A39 | `Home.razor` unused `AuthorizationService`, `Navigation` injects | open |
 | A40 | Legacy appsettings fallback keys (eight) | open |
-| A41 | `deploy.ps1 -HybridEndpoint` | open |
+| A41 | `deploy.ps1 -HybridEndpoint` | done on branch d6be8b2b (with #9) |
 | A42 | Unread PowerShell function parameters | open |
 | A43 | `ModulePermission.Name` | open |
 | A44 | `ConfigFieldType.AdUser` | open |
