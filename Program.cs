@@ -123,7 +123,7 @@ try
 
     builder.Services.AddAuthorization(options =>
     {
-        catalog.ConfigureAuthorizationPolicies(options, allowedGroups, adminGroups);
+        catalog.ConfigureAuthorizationPolicies(options, adminGroups);
     });
 
     builder.Services.AddCascadingAuthenticationState();
