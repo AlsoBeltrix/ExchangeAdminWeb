@@ -136,8 +136,8 @@ public sealed class AccountLockoutRemediationService
         AccountLockoutLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
-        // rev-j1: the ticket is sanitized once, here, so the gate, the trace, the audit rows and the notification all
-        // judge and record the same string (decision 2026-11-09).
+        // The ticket is sanitized once, here, so the gate, the trace, the audit rows and the notification all
+        // judge and record the same string.
         request = request with { TicketNumber = TicketPresence.Sanitize(request.TicketNumber) };
         var result = await LogoffLockoutSourcesCoreAsync(request, context);
         await NotifyLogoffAdminAsync("AccountLockout_LogoffSources", request, null, result, context);
@@ -148,12 +148,26 @@ public sealed class AccountLockoutRemediationService
         AccountLockoutLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
+        const string action = "LogoffFromLockoutSources";
+        if (request.Execute)
+        {
+            var refusal = await RefuseBeforeDirectoryWorkAsync(action, true, request.TicketNumber, context);
+            if (refusal != null)
+            {
+                using var scope = _operationTrace.BeginOperation(
+                    ModuleId, action, context.DisplayName, context.IpAddress, ticket: request.TicketNumber,
+                    details: new Dictionary<string, object?> { ["execute"] = true });
+                scope.Complete(false, refusal);
+                return EmptyLogoffResult(refusal);
+            }
+        }
+
         var discovery = await DiscoverLockoutSourcesAsync(
             new AccountLockoutSourceRequest(request.Users, request.WithinHours, request.DomainControllers, request.ThrottleLimit),
             context);
 
         if (!discovery.Success || discovery.Events.Count == 0)
-            return new AccountLogoffResult(false, discovery.Message, request.Execute, 0, 0, discovery.ReadFailures.Count, []);
+            return new AccountLogoffResult(false, discovery.Message, false, 0, 0, discovery.ReadFailures.Count, []);
 
         var machineMap = discovery.Events
             .Where(e => e.Actionable)
@@ -169,7 +183,7 @@ public sealed class AccountLockoutRemediationService
         }
 
         return await RunLogoffAsync(
-            "LogoffFromLockoutSources",
+            action,
             machineMap,
             request.Execute,
             request.TicketNumber,
@@ -182,7 +196,7 @@ public sealed class AccountLockoutRemediationService
         AccountScopedLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
-        // rev-j1: sanitized once, before the trace scope opens; see LogoffLockoutSourcesAsync.
+        // Sanitized once, before the trace scope opens; see LogoffLockoutSourcesAsync.
         request = request with { TicketNumber = TicketPresence.Sanitize(request.TicketNumber) };
         var result = await SweepScopedComputersCoreAsync(request, context);
         await NotifyLogoffAdminAsync("AccountLockout_SweepScoped", null, request, result, context);
@@ -214,29 +228,21 @@ public sealed class AccountLockoutRemediationService
             {
                 const string message = "At least one target user is required.";
                 scope.Complete(false, message);
-                return EmptyLogoffResult(message, request.Execute);
+                return EmptyLogoffResult(message);
             }
 
             if (string.IsNullOrWhiteSpace(request.SearchBase) && request.ExtraComputers.Length == 0)
             {
                 const string message = "Supply a search base, extra computer list, or both.";
                 scope.Complete(false, message);
-                return EmptyLogoffResult(message, request.Execute);
+                return EmptyLogoffResult(message);
             }
 
-            var access = await _authorization.AuthorizeAsync(context.Principal, AccessPolicy);
-            if (!access.Succeeded)
+            var refusal = await RefuseBeforeDirectoryWorkAsync("SweepScopedComputers", request.Execute, request.TicketNumber, context);
+            if (refusal != null)
             {
-                const string message = "You are not authorized to access account lockout remediation.";
-                scope.Complete(false, message);
-                return EmptyLogoffResult(message, request.Execute);
-            }
-
-            if (_moduleConfig.IsModuleCorrupt(ModuleId))
-            {
-                const string message = "Module configuration is corrupt. Account lockout remediation is unavailable.";
-                scope.Complete(false, message);
-                return EmptyLogoffResult(message, request.Execute);
+                scope.Complete(false, refusal);
+                return EmptyLogoffResult(refusal);
             }
 
             var credentials = await GetCredentialsAsync("enumerate scoped computers");
@@ -245,7 +251,7 @@ public sealed class AccountLockoutRemediationService
                 const string message = "Module credentials are not configured or unavailable.";
                 _operationTrace.Step("CredentialLookup", "Failed", backend: "Delinea");
                 scope.Complete(false, message);
-                return EmptyLogoffResult(message, request.Execute);
+                return EmptyLogoffResult(message);
             }
 
             _operationTrace.Step("ResolveScopedComputers", backend: "ActiveDirectory", command: "Get-ADComputer");
@@ -255,7 +261,7 @@ public sealed class AccountLockoutRemediationService
             {
                 var message = $"Scoped sweep resolved {computers.Length} computers, above the configured limit of {maxTargets}.";
                 scope.Complete(false, message);
-                return EmptyLogoffResult(message, request.Execute);
+                return EmptyLogoffResult(message);
             }
 
             var machineMap = computers.ToDictionary(c => c, _ => users, StringComparer.OrdinalIgnoreCase);
@@ -276,18 +282,50 @@ public sealed class AccountLockoutRemediationService
             _logger.LogWarning(ex, "Scoped account logoff sweep failed");
             _operationTrace.Step("SweepScopedComputers", "Failed", backend: "ActiveDirectory", exception: ex);
             scope.Complete(false, message, ex);
-            return new AccountLogoffResult(false, message, request.Execute, 0, 0, 1, [
+            return new AccountLogoffResult(false, message, false, 0, 0, 1, [
                 new ComputerSessionActionRow("", "", "", "", "failed", false, SafeError(ex))
             ]);
         }
     }
 
+    /// <summary>
+    /// The refusals that need no directory, in the order an operator is told them: module access, a readable
+    /// configuration and, for an execute request, the ticket and the permission to log users off. Both logoff
+    /// paths ask this before they fetch a credential. Returns the refusal, or null to go on.
+    /// </summary>
+    private async Task<string?> RefuseBeforeDirectoryWorkAsync(
+        string action,
+        bool execute,
+        string ticketNumber,
+        AccountLockoutOperatorContext context)
+    {
+        var access = await _authorization.AuthorizeAsync(context.Principal, AccessPolicy);
+        if (!access.Succeeded)
+            return "You are not authorized to access account lockout remediation.";
+
+        if (_moduleConfig.IsModuleCorrupt(ModuleId))
+            return "Module configuration is corrupt. Account lockout remediation is unavailable.";
+
+        if (!execute)
+            return null;
+
+        if (!TicketPresence.IsPresent(ticketNumber))
+            return TicketRequiredMessage;
+
+        var logoff = await _authorization.AuthorizeAsync(context.Principal, LogoffPolicy);
+        if (logoff.Succeeded)
+            return null;
+
+        AuditLogoff(context, action, "(multiple)", false, ticketNumber, "Authorization denied.", new Dictionary<string, object?> { ["execute"] = true });
+        return LogoffDeniedMessage;
+    }
+
     public int GetDefaultThrottleLimit() => ClampThrottle(ReadIntConfig("DefaultThrottleLimit", 32));
 
     /// <remarks>
-    /// Internal rather than private as a TEST SEAM (rev-j1): every public path fetches an AD credential before it gets
-    /// here, so no test can reach the ticket gate through them. The gate judges with TicketPresence.IsPresent, which
-    /// sanitizes, so a caller that skipped the public boundary's Sanitize is still judged by the same rule.
+    /// Internal rather than private as a TEST SEAM: a test reaches the guard and the SID step here without a live
+    /// credential. The ticket gate judges with TicketPresence.IsPresent, which sanitizes, so a caller that skipped
+    /// the public boundary's Sanitize is still judged by the same rule.
     /// </remarks>
     internal async Task<AccountLogoffResult> RunLogoffAsync(
         string action,
@@ -311,6 +349,9 @@ public sealed class AccountLockoutRemediationService
                 ["blankSourceRows"] = includeBlankSourceRows.Count
             });
 
+        // Set once the remote step is reached on an execute request: what the result's Executed reports.
+        var logoffAttempted = false;
+
         try
         {
             var realMachines = machineMap.Where(kvp => kvp.Key != "(unknown)").ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
@@ -318,14 +359,13 @@ public sealed class AccountLockoutRemediationService
             {
                 const string message = "No actionable machines were found.";
                 scope.Complete(true, message);
-                return new AccountLogoffResult(true, message, execute, 0, 0, 0, []);
+                return new AccountLogoffResult(true, message, false, 0, 0, 0, []);
             }
 
             if (execute && !TicketPresence.IsPresent(ticketNumber))
             {
-                const string message = "Ticket Number is required for logoff execution.";
-                scope.Complete(false, message);
-                return EmptyLogoffResult(message, execute);
+                scope.Complete(false, TicketRequiredMessage);
+                return EmptyLogoffResult(TicketRequiredMessage);
             }
 
             if (execute)
@@ -333,11 +373,10 @@ public sealed class AccountLockoutRemediationService
                 var auth = await _authorization.AuthorizeAsync(context.Principal, LogoffPolicy);
                 if (!auth.Succeeded)
                 {
-                    const string message = "You are not authorized to log users off.";
                     AuditLogoff(context, action, "(multiple)", false, ticketNumber, "Authorization denied.", new Dictionary<string, object?> { ["execute"] = true });
                     _operationTrace.Step("AuthorizeMutation", "Failed", details: new Dictionary<string, object?> { ["policy"] = LogoffPolicy });
-                    scope.Complete(false, message);
-                    return EmptyLogoffResult(message, execute);
+                    scope.Complete(false, LogoffDeniedMessage);
+                    return EmptyLogoffResult(LogoffDeniedMessage);
                 }
             }
 
@@ -347,11 +386,11 @@ public sealed class AccountLockoutRemediationService
                 const string message = "Module credentials are not configured or unavailable.";
                 _operationTrace.Step("CredentialLookup", "Failed", backend: "Delinea");
                 scope.Complete(false, message);
-                return EmptyLogoffResult(message, execute);
+                return EmptyLogoffResult(message);
             }
 
-            // kd-88: one operation for the guard and the SID step - every target user's resolution, check and re-read
-            // share one fetch of the directory-read credential, where each fetched it for itself.
+            // One operation for the guard and the SID step: every target user's resolution, check and re-read
+            // share one fetch of the directory-read credential.
             using var directoryRead = DirectoryReadOperation.Begin();
 
             // Null on the dry-run path, which never runs the guard. The SID step then has no
@@ -369,21 +408,20 @@ public sealed class AccountLockoutRemediationService
                     var blocked = guard.rows.Count(r => !r.Success);
                     var message = $"All target users were blocked before logoff. {blocked} blocked row(s).";
                     scope.Complete(false, message);
-                    return new AccountLogoffResult(false, message, true, 0, 0, blocked, guard.rows);
+                    return new AccountLogoffResult(false, message, false, 0, 0, blocked, guard.rows);
                 }
 
                 var writeAuth = await _authorization.AuthorizeAsync(context.Principal, LogoffPolicy);
                 if (!writeAuth.Succeeded)
                 {
-                    const string message = "You are not authorized to log users off.";
                     AuditLogoff(context, action, "(multiple)", false, ticketNumber, "Authorization denied before remote logoff.", new Dictionary<string, object?> { ["execute"] = true });
                     _operationTrace.Step("AuthorizeBeforeRemoteLogoff", "Failed", details: new Dictionary<string, object?> { ["policy"] = LogoffPolicy });
-                    scope.Complete(false, message);
-                    return EmptyLogoffResult(message, execute);
+                    scope.Complete(false, LogoffDeniedMessage);
+                    return EmptyLogoffResult(LogoffDeniedMessage);
                 }
             }
 
-            // Audit finding A5. Both paths, not just the destructive one: a dry run that named
+            // Both paths, not just the destructive one: a dry run that named
             // the wrong person's session is what an operator reads before deciding to execute.
             _operationTrace.Step("ResolveTargetSids", backend: "ActiveDirectory", command: "Get-ADUser");
             var sidMapping = await MapTargetsToSidsAsync(
@@ -392,21 +430,19 @@ public sealed class AccountLockoutRemediationService
 
             if (realMachines.Count == 0)
             {
-                // Review of aud-a5, finding 5. This return used to hand back sidMapping.rows
-                // alone, which skipped the blank-source explanations appended below - so a
-                // discovery run that found only events with no caller computer reported
-                // nothing at all to explain itself. The rows are assembled the same way the
-                // main path assembles them.
+                // The rows are assembled the way the main path assembles them, so a run that found only
+                // events with no caller computer still explains itself with its blank-source rows.
                 var earlyRows = sidMapping.rows.ToList();
                 earlyRows.AddRange(includeBlankSourceRows.Select(BlankSourceRow));
                 var blocked = earlyRows.Count(r => !r.Success);
                 var message = $"No target user could be matched to a directory SID. {blocked} blocked row(s).";
                 scope.Complete(false, message);
-                return new AccountLogoffResult(false, message, execute, 0, 0, blocked, earlyRows);
+                return new AccountLogoffResult(false, message, false, 0, 0, blocked, earlyRows);
             }
 
             _operationTrace.Step(execute ? "RemoteLogoff" : "RemoteSessionQuery", backend: "WinRM", command: execute ? "logoff.exe" : "quser.exe");
             var throttle = ClampThrottle(requestedThrottle <= 0 ? GetDefaultThrottleLimit() : requestedThrottle);
+            logoffAttempted = execute;
             var rows = await Task.Run(() => QueryAndMaybeLogoff(realMachines, execute, throttle, credentials.Value, sidMapping.sidNames));
             var allRows = rows.ToList();
             allRows.AddRange(sidMapping.rows);
@@ -438,7 +474,7 @@ public sealed class AccountLockoutRemediationService
             _operationTrace.Step(action, "Failed", backend: "WinRM", exception: ex);
             AuditLogoff(context, action, "(multiple)", false, ticketNumber, SafeError(ex), new Dictionary<string, object?> { ["execute"] = execute });
             scope.Complete(false, message, ex);
-            return new AccountLogoffResult(false, message, execute, machineMap.Count, 0, 1, [
+            return new AccountLogoffResult(false, message, logoffAttempted, machineMap.Count, 0, 1, [
                 new ComputerSessionActionRow("", "", "", "", "failed", false, SafeError(ex))
             ]);
         }
@@ -1154,13 +1190,17 @@ if (-not $found) {
     private static ComputerSessionActionRow BlankSourceRow(AccountLockoutEventRow blank)
         => new("(unknown)", blank.UserRaw, "", "", "blank-source", false, blank.Detail);
 
-    private static AccountLogoffResult EmptyLogoffResult(string message, bool execute)
-        => new(false, message, execute, 0, 0, 0, []);
+    private const string TicketRequiredMessage = "Ticket Number is required for logoff execution.";
+    private const string LogoffDeniedMessage = "You are not authorized to log users off.";
 
-    // Mandatory admin notification on every executed logoff operation (Constitution
-    // Section Notifications) - session-state change. One summary notification per operation
-    // (counts), not one per session row. Dry-runs (Executed == false) do not notify.
-    // Fail-safe: a send failure logs but never changes the returned result.
+    // A request that stopped before any logoff was attempted.
+    private static AccountLogoffResult EmptyLogoffResult(string message)
+        => new(false, message, false, 0, 0, 0, []);
+
+    // Mandatory admin notification for every execute request (Constitution Section Notifications),
+    // whether it logged anyone off, failed or was refused - except one refused for its missing ticket,
+    // which never started. One summary notification per operation (counts), not one per session row.
+    // A dry run does not notify. Fail-safe: a send failure logs but never changes the returned result.
     private async Task NotifyLogoffAdminAsync(
         string action,
         AccountLockoutLogoffRequest? sourceRequest,
@@ -1168,7 +1208,8 @@ if (-not $found) {
         AccountLogoffResult result,
         AccountLockoutOperatorContext context)
     {
-        if (!result.Executed)
+        var executeRequested = sourceRequest?.Execute ?? scopedRequest?.Execute ?? false;
+        if (!executeRequested || result.Message == TicketRequiredMessage)
             return;
 
         var users = sourceRequest?.Users ?? scopedRequest?.Users ?? [];

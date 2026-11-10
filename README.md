@@ -693,6 +693,9 @@ implicated or scoped domain computers. Disabled by default; both permissions fai
 - Scoped sweep: log accounts off every machine in an OU/computer list (with a
   `MaxSweepTargets` cap and a WinRM fan-out throttle)
 - Dry-run by default; execution requires a ticket number and typed "LOG OFF" confirmation
+- An execute request is checked for its ticket and for the `Logoff` permission before any credential is
+  fetched or directory read. Administrators are mailed for every execute request - one refused for the
+  permission included - except one refused for a missing ticket; a dry run mails nobody
 - Targets are re-resolved through Protected Principals with an immutable-GUID re-check
   immediately before logoff; all paths audited and traced
 - Granular `Logoff` permission gates execution separately from `Access`
