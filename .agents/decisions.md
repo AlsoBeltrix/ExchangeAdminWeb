@@ -5,6 +5,19 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - What several modules do the same way is one shared piece, not a copy per module
+
+Owner, after rev-j1 (Account Lockout was the one page whose hand-written ticket check had drifted from the other 22):
+"everything common to multiple modules should be a shared function so we're not introducing drift across the app."
+And on `Components/Shared/TicketNumberInput.razor`, written 2026-05-04 and never referenced: "what other things have
+been written but 'not wired in'? why? audit, then make a plan to actually do the work and not be AI slop."
+
+Ruling: behaviour that more than one module needs (the ticket box and its rule are the first case) lives in one shared
+component or service that the modules call; a per-module copy of it is a defect. Code that is written but referenced by
+nothing is either wired in or removed, never left. Scope and order are set by the audit
+(`.agents/review/shared-and-unwired-audit-2026-11-10.md`) and the plan that follows it; no code changes before the
+owner approves that plan. Intended functionality does not change (standing mandate).
+
 ### 2026-11-09 - A ticket is sanitized, not refused, for invisible characters
 
 Owner, on the deploy checklist item that pasted a zero-width space into a ticket box: "we do not do any ticket
