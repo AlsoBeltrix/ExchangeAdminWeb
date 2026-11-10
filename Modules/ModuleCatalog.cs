@@ -1036,7 +1036,7 @@ public sealed class ModuleCatalog
             // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
             // before, and a second submit during a listing is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.5",
+            Version = "1.6.6",
             MainPermission = new(
                 "Access",
                 "MfaReset",
