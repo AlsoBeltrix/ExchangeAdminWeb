@@ -549,28 +549,30 @@ internal sealed class MigrationStubExchange : IDisposable
 
     internal sealed class RecordingEmail(IConfiguration config, bool throws) : EmailService(config, NullLogger<EmailService>.Instance)
     {
-        private readonly List<string> _sent = [];
-        private readonly List<string> _notes = [];
+        private readonly List<AdminMail> _mails = [];
 
-        public IReadOnlyList<string> Sent
+        /// <summary>One administrators' notification as the page asked for it: its rows in the order given.</summary>
+        public sealed record AdminMail(string Action, bool Success, string Ticket, IReadOnlyList<string> Rows, string? Error);
+
+        /// <summary>Every notification, in the order sent.</summary>
+        public IReadOnlyList<AdminMail> Mails
         {
-            get { lock (_sent) return _sent.ToList(); }
+            get { lock (_mails) return _mails.ToList(); }
         }
 
-        /// <summary>aud-a23p. Each notification's note (its permissionType argument), in the order sent.</summary>
-        public IReadOnlyList<string> Notes
-        {
-            get { lock (_sent) return _notes.ToList(); }
-        }
+        public IReadOnlyList<string> Sent => Mails.Select(mail => mail.Action).ToList();
 
-        public override Task SendAdminNotificationAsync(string performedBy, string ipAddress, string action, string targetMailbox,
-            string affectedUser, string permissionType, bool success, string ticketNumber, string? errorDetail = null)
+        /// <summary>Each notification's Options row (empty when it has none), in the order sent.</summary>
+        public IReadOnlyList<string> Notes => Mails
+            .Select(mail => mail.Rows.FirstOrDefault(row => row.StartsWith("Options=", StringComparison.Ordinal))?["Options=".Length..] ?? "")
+            .ToList();
+
+        // Only the row-shaped notification is recorded: a page that sent the mailbox-permission shape sends nothing here.
+        public override Task SendAdminNotificationAsync(string performedBy, string ipAddress, string action, bool success,
+            string ticketNumber, IReadOnlyDictionary<string, string> details, string? errorDetail = null)
         {
-            lock (_sent)
-            {
-                _sent.Add(action);
-                _notes.Add(permissionType);
-            }
+            lock (_mails)
+                _mails.Add(new AdminMail(action, success, ticketNumber, details.Select(row => $"{row.Key}={row.Value}").ToList(), errorDetail));
             return throws
                 ? Task.FromException(new InvalidOperationException("the mail relay refused the message"))
                 : Task.CompletedTask;

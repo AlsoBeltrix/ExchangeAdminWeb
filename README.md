@@ -1553,6 +1553,9 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 **Admin Notifications (always sent):**
 - Every permission operation (success or failure)
 - Includes full details: who, what, when, IP address, ticket number
+- Migration and Out of Office mails carry rows named for what they hold (Mailbox, Batch, CSV File, Eligibility,
+  Mailboxes, Options, Succeeded) under a subject starting `[Admin]`. The mailbox-permission mail (`[Exchange Admin]`,
+  with Target Mailbox, Affected User and Permission Type rows) is sent by the permission modules only
 
 **User Notifications (optional):**
 - Set `NotifyUsersOnPermissionGrant: true` to enable
