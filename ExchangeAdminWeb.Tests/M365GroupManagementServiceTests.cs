@@ -11,9 +11,9 @@ namespace ExchangeAdminWeb.Tests;
 /// Guards the in-service protected-principal gate on M365 group member/owner writes.
 /// The Constitution requires the check "immediately before the write" and forbids
 /// relying on UI hiding, so the service must enforce protection independently and fail
-/// closed when the directory resolver is unavailable. The gate runs before any Graph
-/// client is constructed, so these refusal-path tests need no Graph seam: when the
-/// resolver is unavailable the write is denied before any outward call.
+/// closed when the protection lookup is unavailable. The stand-in Graph names every user, and
+/// the protection service has no on-premises SID source, so it cannot be asked: the write is
+/// denied, and the stand-in records that no write was sent.
 /// (Plan: docs/M365MemberOwnerManagement-Plan.md, slice 1.)
 /// </summary>
 public class M365GroupManagementServiceTests : IDisposable
@@ -33,9 +33,9 @@ public class M365GroupManagementServiceTests : IDisposable
         catch { }
     }
 
-    // Builds a service whose ProtectedPrincipalService has NO directory-read secret
-    // configured. ResolveWithStatusAsync therefore returns Unavailable, which the
-    // in-service gate must treat as fail-closed (deny before any Graph write).
+    // Builds a service whose ProtectedPrincipalService has no on-premises SID source, so the
+    // member's protection cannot be read - which the in-service gate must treat as fail-closed
+    // (deny before any Graph write).
     private M365GroupManagementService CreateServiceWithUnavailableResolver()
     {
         var config = new ConfigurationBuilder()
@@ -72,7 +72,32 @@ public class M365GroupManagementServiceTests : IDisposable
 
         return new M365GroupManagementService(
             moduleConfig, delinea, httpClientFactory, operationTrace, audit, protectedPrincipals, servicers,
-            Substitute.For<ILogger<M365GroupManagementService>>());
+            Substitute.For<ILogger<M365GroupManagementService>>())
+        {
+            GraphClientForTests = () => new GraphTokenClient("tenant", "client", "secret", new HttpClient(_graph, disposeHandler: false)),
+        };
+    }
+
+    private readonly EveryUserGraph _graph = new();
+
+    /// <summary>A Graph that names every user it is asked about, and records each write it is sent.</summary>
+    private sealed class EveryUserGraph : HttpMessageHandler
+    {
+        public int Writes;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var token = request.RequestUri!.AbsoluteUri.Contains("/oauth2/v2.0/token", StringComparison.Ordinal);
+            if (!token && request.Method != HttpMethod.Get)
+                Interlocked.Increment(ref Writes);
+            var body = token
+                ? """{"access_token":"t","expires_in":3600}"""
+                : """{"id":"00000000-0000-0000-0000-0000000000aa"}""";
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            });
+        }
     }
 
     [Theory]
@@ -87,6 +112,7 @@ public class M365GroupManagementServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
+        Assert.Equal(0, _graph.Writes);
     }
 
     [Theory]
@@ -101,6 +127,7 @@ public class M365GroupManagementServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
+        Assert.Equal(0, _graph.Writes);
     }
 
     [Theory]
@@ -119,6 +146,7 @@ public class M365GroupManagementServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
+        Assert.Equal(0, _graph.Writes);
     }
 
     [Theory]
@@ -137,5 +165,6 @@ public class M365GroupManagementServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
+        Assert.Equal(0, _graph.Writes);
     }
 }

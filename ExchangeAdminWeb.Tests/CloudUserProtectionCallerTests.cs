@@ -198,7 +198,98 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
         Assert.Equal("Protection check unavailable for the device's primary user. - blocked", RefusalError());
     }
 
+    // ----- Microsoft 365 groups -----
+
+    [Fact]
+    public async Task M365_AddingTheProtectedUserByUpn_ChecksTheObjectGraphResolved_AndRefuses()
+    {
+        var graph = new StandInGraph { [$"/users/{FarUpn}?$select=id"] = (HttpStatusCode.OK, $$"""{"id":"{{FarObjectId}}"}""") };
+        var service = M365(graph);
+
+        var result = await service.AddMemberAsync("group-1", FarUpn, _h.Operator);
+
+        Assert.False(result.Success);
+        Assert.Equal("This member is a protected principal. Operation not permitted.", result.Message);
+        Assert.DoesNotContain(graph.Requests, r => r.StartsWith("POST", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task M365_RemovingTheProtectedUser_ChecksTheObjectIdItDeletes_WhateverStringNamesIt()
+    {
+        var graph = new StandInGraph { [$"/users/{FarObjectId}?$select=id"] = (HttpStatusCode.OK, $$"""{"id":"{{FarObjectId}}"}""") };
+        var service = M365(graph);
+
+        var result = await service.RemoveMemberAsync("group-1", FarObjectId, FarUpn, _h.Operator);
+
+        Assert.False(result.Success);
+        Assert.Equal("This member is a protected principal. Operation not permitted.", result.Message);
+        Assert.DoesNotContain(graph.Requests, r => r.StartsWith("DELETE", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task M365_ABlankIdentity_Refuses_WithNoGraphCall()
+    {
+        var graph = new StandInGraph();
+        var service = M365(graph);
+
+        var added = await service.AddMemberAsync("group-1", "  ", _h.Operator);
+        var removed = await service.RemoveMemberAsync("group-1", "", "", _h.Operator);
+
+        Assert.False(added.Success);
+        Assert.False(removed.Success);
+        Assert.Contains("Protection check unavailable", added.Message, StringComparison.Ordinal);
+        Assert.Contains("Protection check unavailable", removed.Message, StringComparison.Ordinal);
+        Assert.Empty(graph.Requests);
+    }
+
+    [Fact]
+    public async Task M365_AnIdentityGraphDoesNotFind_NeverProceeds()
+    {
+        var graph = new StandInGraph();
+        var service = M365(graph);
+
+        var result = await service.AddMemberAsync("group-1", "nobody", _h.Operator);
+
+        Assert.False(result.Success);
+        Assert.Contains("was not found in the directory", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(graph.Requests, r => r.StartsWith("POST", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task M365_AnObjectThatIsNoUser_HasNoUserToProtect_AndIsRemoved()
+    {
+        const string device = "aaaaaaaa-1111-4222-8333-444444444444";
+        var graph = new StandInGraph { [$"/groups/group-1/members/{device}/$ref"] = (HttpStatusCode.NoContent, "") };
+        var service = M365(graph);
+
+        var result = await service.RemoveMemberAsync("group-1", device, "", _h.Operator);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Contains($"DELETE /groups/group-1/members/{device}/$ref", graph.Requests);
+        Assert.Equal(0, _h.GraphSidReads);
+    }
+
+    [Fact]
+    public async Task M365_AnObjectGraphCannotClassify_Refuses()
+    {
+        const string member = "bbbbbbbb-1111-4222-8333-444444444444";
+        var graph = new StandInGraph { [$"/users/{member}?$select=id"] = (HttpStatusCode.Forbidden, "") };
+        var service = M365(graph);
+
+        var result = await service.RemoveMemberAsync("group-1", member, "someone@contoso.test", _h.Operator);
+
+        Assert.False(result.Success);
+        Assert.Contains("Protection check unavailable", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(graph.Requests, r => r.StartsWith("DELETE", StringComparison.Ordinal));
+    }
+
     // ----- fixtures -----
+
+    private M365GroupManagementService M365(StandInGraph graph) =>
+        new(_moduleConfig, _delinea, _http, _h.Trace, _audit, _protection, _servicers, NullLogger<M365GroupManagementService>.Instance)
+        {
+            GraphClientForTests = () => new GraphTokenClient("tenant", "client", "secret", new HttpClient(graph, disposeHandler: false)),
+        };
 
     private Components.Pages.MfaReset MfaPage()
     {
@@ -262,5 +353,35 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
             .Where(row => row.TryGetProperty("result", out var result) && result.GetString() == "Failed")
             .ToList();
         return Assert.Single(rows).GetProperty("error").GetString()!;
+    }
+
+    /// <summary>A Graph that answers the paths it is given and 404 to every other; it records each request.</summary>
+    private sealed class StandInGraph : HttpMessageHandler
+    {
+        private readonly Dictionary<string, (HttpStatusCode Status, string Body)> _answers = new(StringComparer.Ordinal);
+
+        public List<string> Requests { get; } = [];
+
+        public (HttpStatusCode Status, string Body) this[string path]
+        {
+            set => _answers[path] = value;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsoluteUri.Contains("/oauth2/v2.0/token", StringComparison.Ordinal))
+                return Task.FromResult(Answer(HttpStatusCode.OK, """{"access_token":"t","expires_in":3600}"""));
+
+            var path = Uri.UnescapeDataString(uri.PathAndQuery).Replace("/v1.0", "", StringComparison.Ordinal);
+            lock (Requests)
+                Requests.Add($"{request.Method} {path}");
+            return Task.FromResult(_answers.TryGetValue(path, out var answer)
+                ? Answer(answer.Status, answer.Body)
+                : Answer(HttpStatusCode.NotFound, "{}"));
+        }
+
+        private static HttpResponseMessage Answer(HttpStatusCode status, string body) =>
+            new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     }
 }

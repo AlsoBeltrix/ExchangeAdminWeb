@@ -21,10 +21,8 @@ namespace ExchangeAdminWeb.Tests;
 /// has to survive the trip back on M365GroupResult.ServicedNote. A note that never leaves the
 /// service is a bypass with no record.
 ///
-/// The allow cases stop at the Graph write: no Graph credential is configured here, so an
-/// authorised servicer gets past the gate and then THROWS from GetGraphClientAsync. A refusal
-/// returns a result and never throws, so the exception is itself the proof the gate was passed -
-/// a sharper signal than any message match, since it can only come from code beyond the gate.
+/// The stand-in Graph names every member and accepts every write, so an authorised servicer's
+/// change is sent and returns its note; a refusal sends nothing.
 /// </remarks>
 public sealed class M365GroupManagementServicerTests : IDisposable
 {
@@ -75,12 +73,9 @@ public sealed class M365GroupManagementServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        // Past the gate: it reaches the Graph client and throws there. A gate refusal would have
-        // returned a result instead, so reaching this exception is the pass.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.AddMemberAsync(GroupId, ProtectedMember, UserIn(ServicerSid)));
+        var result = await service.AddMemberAsync(GroupId, ProtectedMember, UserIn(ServicerSid));
 
-        Assert.Contains("not configured", ex.Message, StringComparison.OrdinalIgnoreCase);
+        AssertServiced(result);
     }
 
     [Fact]
@@ -88,8 +83,7 @@ public sealed class M365GroupManagementServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.AddOwnerAsync(GroupId, ProtectedMember, UserIn(ServicerSid)));
+        AssertServiced(await service.AddOwnerAsync(GroupId, ProtectedMember, UserIn(ServicerSid)));
     }
 
     [Fact]
@@ -97,8 +91,7 @@ public sealed class M365GroupManagementServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.RemoveMemberAsync(GroupId, ObjectId, ProtectedMember, UserIn(ServicerSid)));
+        AssertServiced(await service.RemoveMemberAsync(GroupId, ObjectId, ProtectedMember, UserIn(ServicerSid)));
     }
 
     [Fact]
@@ -106,8 +99,15 @@ public sealed class M365GroupManagementServicerTests : IDisposable
     {
         var service = CreateService(servicerGroups: [ServicerSid]);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.RemoveOwnerAsync(GroupId, ObjectId, ProtectedMember, UserIn(ServicerSid)));
+        AssertServiced(await service.RemoveOwnerAsync(GroupId, ObjectId, ProtectedMember, UserIn(ServicerSid)));
+    }
+
+    // Past the gate: the write was sent, and the note naming the override travels back for the page's audit.
+    private void AssertServiced(M365GroupResult result)
+    {
+        Assert.True(result.Success, result.Message);
+        Assert.Contains("ceo-user-rule", result.ServicedNote, StringComparison.Ordinal);
+        Assert.Equal(1, _graph.Writes);
     }
 
     [Fact]
@@ -188,7 +188,31 @@ public sealed class M365GroupManagementServicerTests : IDisposable
 
         return new M365GroupManagementService(
             moduleConfig, delinea, httpClientFactory, trace, audit, pp, servicers,
-            NullLogger<M365GroupManagementService>.Instance);
+            NullLogger<M365GroupManagementService>.Instance)
+        {
+            GraphClientForTests = () => new GraphTokenClient("tenant", "client", "secret", new HttpClient(_graph, disposeHandler: false)),
+        };
+    }
+
+    private readonly AcceptingGraph _graph = new();
+
+    /// <summary>A Graph that names every user it is asked about, accepts every write, and counts the writes.</summary>
+    private sealed class AcceptingGraph : HttpMessageHandler
+    {
+        public int Writes;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("/oauth2/v2.0/token", StringComparison.Ordinal))
+                return Task.FromResult(Json("""{"access_token":"t","expires_in":3600}"""));
+            if (request.Method == HttpMethod.Get)
+                return Task.FromResult(Json($$"""{"id":"{{ObjectId}}"}"""));
+            Interlocked.Increment(ref Writes);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NoContent));
+        }
+
+        private static HttpResponseMessage Json(string body) =>
+            new(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }
 
     /// <summary>Resolves any identity and reports it protected, so the servicer path is reachable.</summary>
@@ -199,10 +223,11 @@ public sealed class M365GroupManagementServicerTests : IDisposable
             : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
         { }
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
-            => Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>(
-                (new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null),
-                 ResolutionStatus.Resolved));
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudUserAsync(
+            string? entraObjectId, string userPrincipalName)
+            => Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus, bool)>(
+                (new ResolvedDirectoryPrincipal("AD", userPrincipalName, userPrincipalName, userPrincipalName, userPrincipalName, null, "guid",
+                    entraObjectId), ResolutionStatus.Resolved, false));
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
             => Task.FromResult(ProtectedPrincipalResult.Protected("protected for test", "ceo-user-rule"));
