@@ -202,7 +202,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #1b | A job that never ran a row (cancelled while queued, interrupted at start-up) delivers at completion with no check (slice 0.3b) | done, merged 4d2bf4cf |
 | #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | done, merged 4d2bf4cf |
 | #3 | Three AD `-Filter` strings built by quote-doubling | done, merged 4d2bf4cf |
-| #4 | Attribute legend read returns empty on any failure with no log | open |
+| #4 | Attribute legend read returns empty on any failure with no log | done on branch d942d1d1 |
 | #5 | Four ticket boxes (and the Migration email box) bind on change | open |
 | #6 | Migration and Out of Office admin mail uses the mailbox-permission template | open |
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
