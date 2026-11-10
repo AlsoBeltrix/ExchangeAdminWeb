@@ -220,63 +220,6 @@ public class IntuneDevicesPageTests
     }
 
     [Fact]
-    public void IntuneDevices_ExecuteAction_ChecksProtectionBeforeTheWrite()
-    {
-        // T4, the load-bearing ordering of the whole slice: a protected-principal check that runs
-        // after the write has already deleted a protected user's device record.
-        var body = MethodBody("ExecuteActionAsync");
-
-        var resolveIndex = body.IndexOf("ProtectedPrincipalService.ResolveWithExchangeFallbackAsync", StringComparison.Ordinal);
-        var firstCheck = body.IndexOf("ProtectedPrincipalService.CheckAsync", StringComparison.Ordinal);
-        var lastCheck = body.LastIndexOf("ProtectedPrincipalService.CheckAsync", StringComparison.Ordinal);
-
-        Assert.True(resolveIndex >= 0, "ExecuteActionAsync does not resolve the device's primary user for protection.");
-        Assert.True(firstCheck > resolveIndex, "the protection check does not follow resolution.");
-        Assert.True(WriteIndex(body) > lastCheck, "a protection check runs AFTER the Graph write.");
-    }
-
-    [Fact]
-    public void IntuneDevices_ExecuteAction_ProtectionBindsToTheDevicesPrimaryUser()
-    {
-        // T4: a device is not a principal, so the guard binds to the device's userPrincipalName -
-        // not to the device id, and not to the acting operator.
-        var body = MethodBody("ExecuteActionAsync");
-
-        Assert.Contains("var upn = device.UserPrincipalName;", body);
-        Assert.Contains("ResolveWithExchangeFallbackAsync(upn)", body);
-    }
-
-    [Fact]
-    public void IntuneDevices_ExecuteAction_ChecksProtectionOnBothResolutionBranches()
-    {
-        // T4: Intune devices belong to CLOUD identities, so the DN-based rules structurally cannot
-        // match them and an unresolved lookup means "check the protected USER rows against the raw
-        // identity", never "nothing to protect". Skipping that branch is the defect MfaReset shipped
-        // before 1.1.0.
-        var body = MethodBody("ExecuteActionAsync");
-
-        Assert.Equal(2, Regex.Matches(body, @"ProtectedPrincipalService\.CheckAsync\(").Count);
-        Assert.Contains("Source: \"IntuneDevices-Unresolved\"", body);
-        // T4's one improvement over MfaReset: managedDevice.userId IS the primary user's Entra
-        // object id, so object-id-based protection is genuinely effective here.
-        Assert.Contains("EntraObjectId: string.IsNullOrWhiteSpace(device.UserId) ? null : device.UserId", body);
-        Assert.DoesNotContain("EntraObjectId: null", body);
-    }
-
-    [Fact]
-    public void IntuneDevices_ExecuteAction_RefusesWhenResolutionOrTheCheckItselfFails()
-    {
-        // AC9 / Known Failure Class 3: an unavailable, ambiguous, failed or throwing protection
-        // check must refuse, never fall through to the write. Fail closed outranks servicing.
-        var body = MethodBody("ExecuteActionAsync");
-        var gate = body[..WriteIndex(body)];
-
-        Assert.Contains("ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous", gate);
-        Assert.Equal(2, Regex.Matches(gate, @"\.CheckFailed\)").Count);
-        Assert.Contains("Protection check exception:", gate);
-    }
-
-    [Fact]
     public void IntuneDevices_ExecuteAction_DeviceWithNoPrimaryUserIsDeterminateNotFailClosed()
     {
         // T4 / AC10: an empty userPrincipalName on a SUCCESSFULLY read device (shared, kiosk, or
@@ -328,7 +271,7 @@ public class IntuneDevicesPageTests
         // (kd-4), unavailable-or-ambiguous resolution, CheckFailed and unserviced-protected on each of
         // the two resolution branches, and the fail-closed catch for a throwing check.
         var returns = Regex.Matches(gate, @"\breturn;");
-        Assert.Equal(10, returns.Count);
+        Assert.Equal(6, returns.Count);
 
         var previousExit = 0;
         foreach (Match exit in returns)
@@ -348,18 +291,6 @@ public class IntuneDevicesPageTests
         Assert.Matches(
             new Regex(@"LogModuleAction\([^;]*?""IntuneDevices"",\s*target,\s*false,\s*ticket", RegexOptions.Singleline),
             refuse);
-    }
-
-    [Fact]
-    public void IntuneDevices_ExecuteAction_HonoursTheServicerGrantOnBothBranches()
-    {
-        // T5: both gates honour servicing, or a cloud-only protected identity becomes the one case a
-        // servicer cannot service - precisely this module's population.
-        var body = MethodBody("ExecuteActionAsync");
-
-        Assert.Equal(2, Regex.Matches(body, @"ServicerNoteFor\(authState\.User,").Count);
-        Assert.Contains("ProtectedPrincipalServicing.NoteFor", PageSource());
-        Assert.Contains("ServicerModuleId = \"IntuneDevices\"", PageSource());
     }
 
     [Fact]
@@ -497,7 +428,7 @@ public class IntuneDevicesPageTests
 
         // The pairing, asserted in both directions: the page's gate calls the servicing helper, so
         // the id must be in that set.
-        Assert.Contains("ProtectedPrincipalServicing.NoteFor", PageSource());
+        Assert.Contains("ProtectedPrincipalServicing.ForCloudUserAsync(", PageSource());
     }
 
     [Fact]

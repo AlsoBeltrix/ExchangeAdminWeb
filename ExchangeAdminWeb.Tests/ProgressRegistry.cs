@@ -148,6 +148,12 @@ public static class ProgressRegistry
     }
 
     /// <summary>Shared reasons, so the same judgement is not re-worded page by page.</summary>
+    private const string CloudUserGateCost =
+        "ProtectedPrincipalServicing.ForCloudUserAsync is the protection gate and the slowest thing the operator waits "
+        + "on: a Graph read of the user's on-premises SID, a global-catalog read by that SID under the directory-read "
+        + "credential fetched from Delinea, and the rules, which read the directory when protected groups or OUs are "
+        + "configured; for a cloud-only user, the Active Directory lookup and the 10-15 second Exchange fallback instead. ";
+
     private const string AuthPreambleOnly =
         "the authorization re-check and the operator/client-IP lookup only. The house rule "
         + "adopted by docs/ProgressCoverage-Plan.md puts that preamble outside the reported "
@@ -1483,8 +1489,7 @@ public static class ProgressRegistry
             new("ExecuteActionAsync",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
-                    "ProtectedPrincipalService.CheckAsync(",
+                    "ProtectedPrincipalServicing.ForCloudUserAsync(",
                     "PerformActionAsync(",
                     "RemoveEntraObjectAsync(",
                     "NotifyPrimaryUserAsync(",
@@ -1499,16 +1504,11 @@ public static class ProgressRegistry
                 + "scope admin-email latency out. The Begin already dominated everything - it "
                 + "opens above the try, so the authorization, ticket and protection refusals were "
                 + "covered - so the fix is the closing end alone: the Complete moved below both "
-                + "sends. SEVEN calls are named, which is every remote call in the handler's own "
+                + "sends. SIX calls are named, which is every remote call in the handler's own "
                 + "body, and each was measured by reading the callee rather than inferred from "
                 + "its shape. ServiceNow.ValidateTicketAsync is the OPENING pin: an HttpClient GET "
                 + "against the ServiceNow table API, and the first call here that leaves the "
-                + "machine. ResolveWithExchangeFallbackAsync is the 10-15 second Exchange round "
-                + "trip BlockedSenders.ConfirmUnblock and OutOfOffice.SetOof both name, and is the "
-                + "slowest thing the operator waits on. CheckAsync is named at BOTH its "
-                + "occurrences, the resolved and the directory-unresolved branch, and is remote "
-                + "CONDITIONALLY: it answers from the config store unless protected GROUP rules "
-                + "are configured, in which case CheckGroupMembershipAsync queries the directory. "
+                + "machine. " + CloudUserGateCost
                 + "PerformActionAsync is the Graph write, the operation itself, and is named "
                 + "through the helper because condition 1 needs the fragment in the method's own "
                 + "code - the switch inside it reaches DeleteDeviceAsync, RetireDeviceAsync, "
@@ -1836,8 +1836,7 @@ public static class ProgressRegistry
             new("ExecuteReset",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
-                    "ProtectedPrincipalService.CheckAsync(",
+                    "ProtectedPrincipalServicing.ForCloudUserAsync(",
                     "MfaService.ResetAllMethodsAsync(",
                     "Email.SendAdminNotificationAsync(",
                 ],
@@ -1846,29 +1845,13 @@ public static class ProgressRegistry
                 + "ticket call and the whole protected-principal preamble, and the Complete sat "
                 + "immediately after that reset, above the administrator email in the finally - "
                 + "so the window covered the one call on this page that is NOT the slow part. "
-                + "FIVE calls are named, every remote call in the handler's own body, each "
+                + "FOUR calls are named, every remote call in the handler's own body, each "
                 + "measured by reading the callee. ServiceNow.ValidateTicketAsync is named first "
                 + "and holds the top of the window at the first call that CAN be remote, but it "
                 + "is NOT the argument for the window: Services/ServiceNowService.cs returns a "
                 + "local IsValid = true without opening a socket when ServiceNow:Enabled is "
                 + "false, so an argument resting on it is an argument about one deployment's "
-                + "configuration. ResolveWithExchangeFallbackAsync is the pin that holds "
-                + "regardless, and it is three waits in a trench coat: "
-                + "ProtectedPrincipalService.ResolveWithStatusAsync fetches the directory-read "
-                + "credential from Delinea over HTTP, then waits on a 2-permit AD throttle for up "
-                + "to 30 seconds, then runs a DirectorySearcher on a thread-pool thread; only on "
-                + "NotFound does the Exchange fallback - the 10-15 second trip BlockedSenders and "
-                + "OutOfOffice both name - run on top. It short-circuits locally in exactly one "
-                + "configuration, no DirectoryReadSecretId, and that configuration returns "
-                + "Unavailable, which this handler treats as a refusal - so there is no "
-                + "configuration in which this handler does work and this call is fast. And on "
-                + "THIS module the Exchange half is the normal case rather than the exception, "
-                + "for the reason PageAuthorizationRecheckTests pins the resolver choice: a Graph "
-                + "MFA target is a cloud identity, so the AD half routinely misses. "
-                + "ProtectedPrincipalService.CheckAsync is named once and pinned at BOTH its "
-                + "occurrences, the resolved and the directory-unresolved branch, and is remote "
-                + "CONDITIONALLY: it answers from the config store unless protected GROUP rules "
-                + "are configured, in which case CheckGroupMembershipAsync queries the directory. "
+                + "configuration. " + CloudUserGateCost
                 + "MfaService.ResetAllMethodsAsync is the operation itself, one Graph DELETE per "
                 + "registered method. Email.SendAdminNotificationAsync is the CLOSING pin and "
                 + "sits in the handler's own finally, so it is named directly. Two calls were "
@@ -2288,8 +2271,7 @@ public static class ProgressRegistry
             new("ExecuteActionAsync",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
-                    "ProtectedPrincipalService.CheckAsync(",
+                    "ProtectedPrincipalServicing.ForCloudUserAsync(",
                     "RiskyUsersService.ApplyActionAsync(",
                     "Email.SendAdminNotificationAsync(",
                 ],
@@ -2300,17 +2282,11 @@ public static class ProgressRegistry
                 + "not the smaller one - the operator watches the same idle bar either way. The "
                 + "Begin already dominated everything, opening above the try so the "
                 + "authorization, ticket and protection refusals are covered, so only the closing "
-                + "end moved. FIVE calls are named, every remote call in the handler's own body, "
+                + "end moved. FOUR calls are named, every remote call in the handler's own body, "
                 + "each measured by reading the callee. ServiceNow.ValidateTicketAsync is the "
                 + "OPENING pin, an HttpClient GET against the ServiceNow table API and the first "
-                + "call that leaves the machine. ResolveWithExchangeFallbackAsync is the 10-15 "
-                + "second Exchange round trip, and on this module it is the normal case rather "
-                + "than the exception: a risky user is a CLOUD identity, so the AD half routinely "
-                + "misses and the Exchange fallback routinely runs. CheckAsync is named at BOTH "
-                + "its occurrences, the resolved and the directory-unresolved branch, and is "
-                + "remote CONDITIONALLY: it answers from the config store unless protected GROUP "
-                + "rules are configured, in which case CheckGroupMembershipAsync queries the "
-                + "directory. RiskyUsersService.ApplyActionAsync is the Graph write, the "
+                + "call that leaves the machine. " + CloudUserGateCost
+                + "RiskyUsersService.ApplyActionAsync is the Graph write, the "
                 + "operation itself, and unlike IntuneDevices it is called directly rather than "
                 + "through a per-action switch. Email.SendAdminNotificationAsync is the CLOSING "
                 + "pin and sits in the handler's own body, so it is named directly. Two calls "

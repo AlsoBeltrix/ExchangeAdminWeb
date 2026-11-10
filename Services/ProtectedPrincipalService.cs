@@ -895,7 +895,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
                 // Credential blank, no source at all - is Unavailable, which every caller refuses (C.2 step 6, as
                 // BindSyncedAsync reads it). Re-resolving by address then could bind another local account that carries
                 // the canonical address while Exchange resolved the alias to a protected one.
-                var sid = await ReadOnPremisesSidAsync(identity, recipient);
+                var sid = await ReadOnPremisesSidAsync(identity, recipient.ExternalDirectoryObjectId);
                 if (sid.Outcome == OnPremisesSidOutcome.NotAnswered)
                 {
                     _logger.LogWarning(
@@ -1068,7 +1068,7 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     {
         // C.2 step 3: the on-premises SID of the account the recipient is synced from. Step 6: a source that could not be
         // asked refuses; only an answer with no SID falls to the address (step 5).
-        var sid = await ReadOnPremisesSidAsync(identity, recipient);
+        var sid = await ReadOnPremisesSidAsync(identity, recipient.ExternalDirectoryObjectId);
         if (sid.Outcome == OnPremisesSidOutcome.NotAnswered)
         {
             _logger.LogWarning(
@@ -1105,10 +1105,114 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     }
 
     /// <summary>
-    /// C.2 step 3. Asks the SID source for the on-premises SID of the account <paramref name="recipient"/> is synced from,
-    /// counted and timed for the check's timing line. No source - a service built without one - could not be asked.
+    /// Resolves the Entra user a write will touch, named by its object id, to the principal its protection is checked
+    /// against. <paramref name="userPrincipalName"/> names it in the log, and is the string a cloud-only user is resolved by;
+    /// with no object id - a write that names its user by UPN - Graph is asked for the user by that UPN, and a UPN Graph
+    /// holds no user for is <c>NotFound</c>.
     /// </summary>
-    private async Task<OnPremisesSidAnswer> ReadOnPremisesSidAsync(string identity, ResolvedRecipient recipient)
+    /// <remarks>
+    /// Graph is asked for the object's on-premises SID, under this service's own Graph credential:
+    /// - a SID: the one user object in the forest holding it, read at a global catalog, whatever domain it is in - so the
+    ///   user, group, OU and pattern rules all apply to it. Several, or a read that cannot run, refuse; none refuses unless
+    ///   Graph says the object is not synced, when it has no on-premises account left and is checked as cloud-only.
+    /// - no SID, and Graph says the object is not synced: a cloud-only user, resolved by its UPN through Active Directory
+    ///   and Exchange as every cloud-identity module resolved it before; when neither knows it, a principal of its UPN and
+    ///   object id, <c>unresolved</c>, so the protected rows that compare an address or an Entra object id still apply.
+    /// - no SID for an object Graph says is synced, a sync flag Graph did not answer, or Graph not asked at all (no
+    ///   credential, throttled, failed): <c>Unavailable</c>. An unreadable answer is never "not protected".
+    /// Its directory reads share the operation's one directory-read credential fetch.
+    /// </remarks>
+    // virtual: a test seam, as ResolveWithExchangeFallbackAsync is - callers' tests substitute outcomes.
+    public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudUserAsync(
+        string? entraObjectId, string userPrincipalName)
+    {
+        using var operation = DirectoryReadOperation.Begin();
+
+        var byName = string.IsNullOrWhiteSpace(entraObjectId);
+        var sid = await ReadOnPremisesSidAsync(userPrincipalName, entraObjectId, byUserPrincipalName: byName);
+        if (byName)
+            entraObjectId = sid.ObjectId;
+        if (sid.Outcome == OnPremisesSidOutcome.NotAnswered || string.IsNullOrWhiteSpace(entraObjectId))
+        {
+            _logger.LogWarning(
+                "The on-premises SID of the Entra user {Upn} ({ObjectId}) could not be read - failing closed",
+                userPrincipalName, entraObjectId);
+            return (null, sid.UserNotFound ? ResolutionStatus.NotFound : ResolutionStatus.Unavailable, false);
+        }
+
+        if (sid.Outcome == OnPremisesSidOutcome.Reported)
+        {
+            var (answered, found) = await FindObjectsBySidAsync(sid.Sid!);
+            if (!answered)
+                return (null, ResolutionStatus.Unavailable, false);
+
+            // A user Graph says is not synced, whose SID no account in the forest holds, has no on-premises account left to
+            // protect it: it is checked as a cloud-only user. One Graph says is synced, or does not say, refuses below.
+            if (found.Count == 0 && sid.Synced == false)
+            {
+                _logger.LogInformation(
+                    "The Entra user {Upn} ({ObjectId}) is not synced and no account in the forest holds its on-premises SID - checking it as cloud-only",
+                    userPrincipalName, entraObjectId);
+                return await ResolveCloudOnlyUserAsync(entraObjectId, userPrincipalName);
+            }
+
+            // The account's own mail, so a protected row stored as the address it is known by still names it.
+            var address = found.Count == 1 && !string.IsNullOrWhiteSpace(found[0].Mail) ? found[0].Mail! : userPrincipalName;
+            var (bound, status, refusal) = SelectSidObject(
+                sid.Sid!, new ResolvedRecipient(address, entraObjectId, null, ExistsOnPrem: true), found);
+            if (status != ResolutionStatus.Resolved || bound is null)
+            {
+                _logger.LogWarning("The Entra user {Upn} ({ObjectId}): {Refusal} - failing closed",
+                    userPrincipalName, entraObjectId, refusal);
+                return (null, status == ResolutionStatus.Resolved ? ResolutionStatus.Unavailable : status, false);
+            }
+            return (bound, ResolutionStatus.Resolved, false);
+        }
+
+        if (sid.Synced != false)
+        {
+            _logger.LogWarning(
+                sid.Synced == true
+                    ? "Graph reports the Entra user {Upn} ({ObjectId}) as synced from on-premises but gives no on-premises SID - failing closed"
+                    : "Graph did not say whether the Entra user {Upn} ({ObjectId}) is synced from on-premises - failing closed",
+                userPrincipalName, entraObjectId);
+            return (null, ResolutionStatus.Unavailable, false);
+        }
+
+        return await ResolveCloudOnlyUserAsync(entraObjectId, userPrincipalName);
+    }
+
+    /// <summary>
+    /// A cloud-only Entra user, resolved by its UPN through Active Directory and Exchange; when neither knows it, a principal
+    /// of its UPN and object id, <c>unresolved</c>, so the rows that compare an address or an Entra object id still apply.
+    /// </summary>
+    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudOnlyUserAsync(
+        string entraObjectId, string userPrincipalName)
+    {
+        var (principal, resolution) = await ResolveWithExchangeFallbackAsync(userPrincipalName);
+        if (resolution != ResolutionStatus.NotFound)
+            return (principal, resolution, false);
+
+        _logger.LogInformation(
+            "No such recipient in Active Directory or Exchange Online for the cloud-only Entra user {Upn}; checking its UPN and object id",
+            userPrincipalName);
+        return (new ResolvedDirectoryPrincipal(
+            Source: "ProtectedPrincipalService-Unresolved",
+            DisplayName: userPrincipalName,
+            UserPrincipalName: userPrincipalName,
+            SamAccountName: null,
+            PrimarySmtpAddress: userPrincipalName.Contains('@') ? userPrincipalName : null,
+            DistinguishedName: null,
+            ObjectGuid: null,
+            EntraObjectId: entraObjectId), ResolutionStatus.Resolved, true);
+    }
+
+    /// <summary>
+    /// Asks the SID source for the on-premises SID of the account the Entra object <paramref name="entraObjectId"/> is synced
+    /// from - or, <paramref name="byUserPrincipalName"/>, the Entra user <paramref name="identity"/> names - counted and timed
+    /// for the check's timing line. No source - a service built without one - could not be asked.
+    /// </summary>
+    private async Task<OnPremisesSidAnswer> ReadOnPremisesSidAsync(string identity, string? entraObjectId, bool byUserPrincipalName = false)
     {
         var source = OnPremisesSidSource;
         if (source is null)
@@ -1122,7 +1226,9 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
         OnPremisesSidAnswer answer;
         try
         {
-            answer = await source.ReadAsync(recipient.ExternalDirectoryObjectId ?? "");
+            answer = byUserPrincipalName
+                ? await source.ReadByUserPrincipalNameAsync(identity)
+                : await source.ReadAsync(entraObjectId ?? "");
         }
         catch (Exception ex)
         {

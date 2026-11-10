@@ -36,11 +36,12 @@ public sealed class MfaResetNotificationGuardTests : IDisposable
     {
         public int Resolutions;
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudUserAsync(
+            string? entraObjectId, string userPrincipalName)
         {
             Interlocked.Increment(ref Resolutions);
             // Unavailable refuses the reset: no Graph call is needed for the attempt to count, and the notification still goes.
-            return Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>((null, ResolutionStatus.Unavailable));
+            return Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus, bool)>((null, ResolutionStatus.Unavailable, false));
         }
     }
 

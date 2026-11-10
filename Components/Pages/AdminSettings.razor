@@ -378,7 +378,7 @@
                            value="@ppGraphReadSecretId"
                            disabled="@ppSecretUnreadable"
                            @oninput="(e) => SetPpGraphReadSecretId(e.Value?.ToString() ?? string.Empty)"
-                           placeholder="Required for every write to a synced mailbox" />
+                           placeholder="Required for every write to a synced mailbox or Entra user" />
                     @if (ppSecretUnreadable)
                     {
                         <small class="text-danger d-block">@SecretUnreadableText</small>
@@ -759,7 +759,7 @@
     // Known Failure Class 5: what the field is for, what it needs, and what an empty one does.
     private const string GraphSecretHelpText =
         "Secret Server secret (Tenant ID, Application ID, Client Secret) of an Entra app holding User.Read.All; while it is "
-        + "empty, every protection-checked change to a synced mailbox is refused.";
+        + "empty, every protection-checked change to a synced mailbox or to an Entra user is refused.";
 
     private string SecretUnreadableText =>
         "The directory-read credential's setting could not be read, so it is not shown and cannot be changed here. "

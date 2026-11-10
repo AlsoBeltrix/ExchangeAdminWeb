@@ -489,55 +489,6 @@ public class RiskyUsersPageTests
     }
 
     [Fact]
-    public void RiskyUsers_ExecuteAction_ChecksProtectionBeforeTheWrite()
-    {
-        // The load-bearing ordering of the whole slice: a protected-principal check that runs after
-        // the write has already changed the risk state of a protected account.
-        var body = MethodBody("ExecuteActionAsync");
-
-        var resolveIndex = body.IndexOf("ProtectedPrincipalService.ResolveWithExchangeFallbackAsync", StringComparison.Ordinal);
-        var firstCheck = body.IndexOf("ProtectedPrincipalService.CheckAsync", StringComparison.Ordinal);
-        var lastCheck = body.LastIndexOf("ProtectedPrincipalService.CheckAsync", StringComparison.Ordinal);
-
-        Assert.True(resolveIndex >= 0, "ExecuteActionAsync does not resolve the target for protection.");
-        Assert.True(firstCheck > resolveIndex, "the protection check does not follow resolution.");
-        Assert.True(WriteIndex(body) > lastCheck, "a protection check runs AFTER the Graph write.");
-    }
-
-    [Fact]
-    public void RiskyUsers_ExecuteAction_ChecksProtectionOnBothResolutionBranches()
-    {
-        // AC11. Risky users are cloud identities, so the DN-based rules structurally cannot match
-        // them and an unresolved lookup means "check the protected USER rows against the raw
-        // identity", never "nothing to protect". Skipping that branch is the exact defect MfaReset
-        // shipped before 1.1.0 and leaves protection inert for this module's normal population.
-        var body = MethodBody("ExecuteActionAsync");
-
-        var checks = Regex.Matches(body, @"ProtectedPrincipalService\.CheckAsync\(");
-        Assert.Equal(2, checks.Count);
-
-        // The unresolved branch builds its own principal, and populates the Entra object id, which
-        // ProtectedPrincipalService.MatchesIdentity does compare against every protected USER row.
-        Assert.Contains("Source: \"RiskyUsers-Unresolved\"", body);
-        Assert.Contains("EntraObjectId: string.IsNullOrWhiteSpace(userId) ? null : userId", body);
-        Assert.DoesNotContain("EntraObjectId: null", body);
-    }
-
-    [Fact]
-    public void RiskyUsers_ExecuteAction_RefusesWhenResolutionOrTheCheckItselfFails()
-    {
-        // Fail-closed outranks everything (Known Failure Class 3): an unavailable, ambiguous,
-        // failed or throwing protection check must refuse, never fall through to the write.
-        var body = MethodBody("ExecuteActionAsync");
-        var gate = body[..WriteIndex(body)];
-
-        Assert.Contains("ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous", gate);
-        Assert.Equal(2, Regex.Matches(gate, @"\.CheckFailed\)").Count);
-        // The wrapping catch is the fail-closed backstop for a throwing check.
-        Assert.Contains("Protection check exception:", gate);
-    }
-
-    [Fact]
     public void RiskyUsers_ExecuteAction_EveryEarlyExitBeforeTheWriteIsAnAuditedRefusal()
     {
         // The shape that makes "every path audits" structural rather than remembered: Refuse() is
@@ -560,7 +511,7 @@ public class RiskyUsersPageTests
         var gate = view[(guardReturn + "return;".Length)..];
 
         var returns = Regex.Matches(gate, @"\breturn;");
-        Assert.Equal(9, returns.Count);
+        Assert.Equal(5, returns.Count);
 
         // Each exit must have its OWN Refuse between it and the previous exit - not merely a
         // Refuse somewhere nearby, which a neighbouring gate's refusal would satisfy.
@@ -582,19 +533,6 @@ public class RiskyUsersPageTests
         Assert.Matches(
             new Regex(@"LogModuleAction\([^;]*?""RiskyUsers"",\s*upn,\s*false,\s*ticket", RegexOptions.Singleline),
             refuse);
-    }
-
-    [Fact]
-    public void RiskyUsers_ExecuteAction_HonoursTheServicerGrantOnBothBranches()
-    {
-        // AC12. Both sites, or a cloud-only protected identity becomes the one case a servicer
-        // cannot service - precisely this module's population (S6, Servicer override).
-        var body = MethodBody("ExecuteActionAsync");
-
-        Assert.Equal(2, Regex.Matches(body, @"ServicerNoteFor\(authState\.User,").Count);
-        Assert.Contains("qualifier", MethodBody("ServicerNoteFor"));
-        Assert.Contains("ProtectedPrincipalServicing.NoteFor", PageSource());
-        Assert.Contains("ServicerModuleId = \"RiskyUsers\"", PageSource());
     }
 
     [Fact]

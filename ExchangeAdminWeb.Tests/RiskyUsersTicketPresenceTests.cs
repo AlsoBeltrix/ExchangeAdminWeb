@@ -196,10 +196,13 @@ public sealed class RiskyUsersTicketPresenceTests : IDisposable
 
         public int Resolves => _resolves;
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudUserAsync(
+            string? entraObjectId, string userPrincipalName)
         {
             Interlocked.Increment(ref _resolves);
-            return Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus)>((null, ResolutionStatus.NotFound));
+            return Task.FromResult<(ResolvedDirectoryPrincipal?, ResolutionStatus, bool)>((new ResolvedDirectoryPrincipal(
+                "Test-Unresolved", userPrincipalName, userPrincipalName, null, userPrincipalName, null, null, entraObjectId),
+                ResolutionStatus.Resolved, true));
         }
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target) =>

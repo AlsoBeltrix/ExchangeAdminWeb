@@ -37,8 +37,14 @@ public class M365GroupManagementService
         _logger = logger;
     }
 
+    /// <summary>Test seam: the Graph client the service uses, in place of one built from its secret.</summary>
+    internal Func<GraphTokenClient>? GraphClientForTests { get; set; }
+
     private async Task<GraphTokenClient> GetGraphClientAsync()
     {
+        if (GraphClientForTests is { } forTests)
+            return forTests();
+
         var secretIdStr = _moduleConfig.GetValue("M365GroupManagement", "GraphDelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
             throw new InvalidOperationException("M365 Group Management module is not configured. Set Graph App Delinea Secret ID in Module Config.");
@@ -181,17 +187,6 @@ public class M365GroupManagementService
     public Task<M365GroupResult> RemoveOwnerAsync(string groupId, string ownerObjectId, string ownerIdentityForCheck, ClaimsPrincipal? actingUser) =>
         RemoveDirectoryObjectAsync(groupId, "owners", ownerObjectId, ownerIdentityForCheck, actingUser);
 
-    // Protected-principal gate, enforced in-service immediately before the Graph write
-    // regardless of caller, mirroring GroupManagementService.CheckProtectedAsync. The page
-    // also checks, but "UI hiding is not security" (Constitution). Resolves the identity
-    // against on-prem AD; fails closed on Unavailable/Ambiguous/CheckFailed and refuses
-    // protected principals. Returns null when clear to mutate, or a Fail result to abort.
-    // FORMER known limitation, now CLOSED: a cloud-only account that AD could not resolve
-    // returned NotFound and was treated as not protected. That was accepted 2026-06-29 because no
-    // resolver could see cloud-only objects; ResolveWithExchangeFallbackAsync (added 2026-07-30 for
-    // the alias bypass, GAP 4) can, so the acceptance was stale rather than deliberate. The gap
-    // mattered most here of all places: this module manages CLOUD groups, so cloud-only members are
-    // its ordinary input. docs/ProtectedPrincipalGapFix-Plan.md GAP B.
     /// <summary>
     /// Outcome of the gate: a <paramref name="Denial"/> to return to the caller, or null to
     /// proceed. <paramref name="ServicedNote"/> is set only when the identity was protected and an
@@ -199,52 +194,54 @@ public class M365GroupManagementService
     /// </summary>
     private readonly record struct ProtectionGate(M365GroupResult? Denial, string? ServicedNote);
 
-    private async Task<ProtectionGate> CheckProtectedAsync(string identity, ClaimsPrincipal? actingUser)
-    {
-        if (string.IsNullOrWhiteSpace(identity))
-            return new(null, null);
+    private const string ProtectionUnavailable = "Protection check unavailable. Cannot verify if this member is protected.";
 
+    /// <summary>
+    /// The protected-principal gate, in the service immediately before the Graph write whoever the caller is ("UI hiding is
+    /// not security", Constitution). It checks the directory object the write names, <paramref name="objectId"/>:
+    /// a user through the shared cloud-user gate, by its object id; an object Graph says is no user - a device, a service
+    /// principal, a group - has no user to protect and proceeds. <paramref name="identity"/> names the member in messages.
+    /// Fail closed: an object Graph could not classify, an unavailable or ambiguous resolution, a failed or throwing check.
+    /// </summary>
+    /// <param name="mayBeAnotherKind">
+    /// False when <paramref name="objectId"/> was resolved through Graph's user lookup, so it is a user; true when it came
+    /// from the caller, and Graph is asked whether a user holds it.
+    /// </param>
+    private async Task<ProtectionGate> CheckProtectedAsync(
+        GraphTokenClient client, string objectId, string identity, bool mayBeAnotherKind, ClaimsPrincipal? actingUser)
+    {
         try
         {
-            // kd-88: one protected-principal check for the member's resolution and the read of its rules - one credential
-            // fetch, one timing line - where each fetched the directory-read credential for itself.
-            using var directoryCheck = _protectedPrincipals.BeginCheck(identity);
-            var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(identity);
-            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
-                       or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            if (mayBeAnotherKind)
             {
-                return new(new M365GroupResult
+                var (user, status) = await client.GetWithStatusAsync($"/users/{Uri.EscapeDataString(objectId)}?$select=id");
+                user?.Dispose();
+                if (status == System.Net.HttpStatusCode.NotFound)
                 {
-                    Success = false,
-                    Message = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                        ? "Identity is ambiguous - matches multiple AD users."
-                        : "Protection check unavailable. Cannot verify if this member is protected."
-                }, null);
-            }
-
-            if (resolved != null)
-            {
-                var check = await _protectedPrincipals.CheckAsync(resolved);
-                if (check.CheckFailed)
-                    return new(new M365GroupResult { Success = false, Message = $"Protection check failed: {check.Reason}" }, null);
-
-                // An authorised servicer may proceed. Protection is evaluated first and never
-                // weakened - this only decides whether THIS operator may act on an identity
-                // already known to be protected. A null actingUser refuses, so any caller that
-                // does not supply one is safe.
-                if (check.IsProtected)
+                    _logger.LogInformation(
+                        "{Identity} ({ObjectId}) is not a user in the directory - no user to protect; proceeding", identity, objectId);
+                    return new(null, null);
+                }
+                if (status != System.Net.HttpStatusCode.OK)
                 {
-                    var servicedNote = ProtectedPrincipalServicing.NoteFor(
-                        _servicers, actingUser, ServicerModuleId, check.MatchedRules);
-
-                    if (servicedNote is null)
-                        return new(new M365GroupResult { Success = false, Message = "This member is a protected principal. Operation not permitted." }, null);
-
-                    return new(null, servicedNote);
+                    _logger.LogWarning("Could not read whether {ObjectId} is a user ({Status}) - blocking", objectId, (int)status);
+                    return new(new M365GroupResult { Success = false, Message = ProtectionUnavailable }, null);
                 }
             }
 
-            return new(null, null);
+            var decision = await ProtectedPrincipalServicing.ForCloudUserAsync(
+                _protectedPrincipals, _servicers, objectId, identity, actingUser, ServicerModuleId);
+            var message = decision.Refusal switch
+            {
+                ProtectedPrincipalServicing.CloudUserRefusal.None => null,
+                ProtectedPrincipalServicing.CloudUserRefusal.Ambiguous => "Identity is ambiguous - matches multiple AD users.",
+                ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed => $"Protection check failed: {decision.FailReason}",
+                ProtectedPrincipalServicing.CloudUserRefusal.Protected => "This member is a protected principal. Operation not permitted.",
+                _ => ProtectionUnavailable,
+            };
+            return message is null
+                ? new(null, decision.ServicedNote)
+                : new(new M365GroupResult { Success = false, Message = message }, null);
         }
         catch (Exception ex)
         {
@@ -255,19 +252,21 @@ public class M365GroupManagementService
 
     private async Task<M365GroupResult> AddDirectoryObjectAsync(string groupId, string relationship, string identity, ClaimsPrincipal? actingUser)
     {
-        var gate = await CheckProtectedAsync(identity, actingUser);
-        if (gate.Denial is not null)
-            return gate.Denial;
+        if (string.IsNullOrWhiteSpace(identity))
+            return new M365GroupResult { Success = false, Message = ProtectionUnavailable };
 
         var client = await GetGraphClientAsync();
 
-        // Audit finding A10. `directoryObjects/{id}` wants an OBJECT ID, and the identity that
-        // reaches here is whatever the operator typed - a UPN or an email. Interpolating that
-        // produced a reference Graph cannot resolve, so every add through the UI failed, and
-        // the message below blamed the app's permissions for what was a malformed request.
+        // `directoryObjects/{id}` wants an object id, and the identity that reaches here is whatever the operator typed - a
+        // UPN or an email - so it is resolved to one first.
         var (objectId, resolveError) = await ResolveDirectoryObjectIdAsync(client, identity);
         if (objectId is null)
             return new M365GroupResult { Success = false, Message = resolveError };
+
+        // The object checked is the object written: resolved first, then checked, then added.
+        var gate = await CheckProtectedAsync(client, objectId, identity, mayBeAnotherKind: Guid.TryParse(identity.Trim(), out _), actingUser);
+        if (gate.Denial is not null)
+            return gate.Denial;
 
         var body = new Dictionary<string, object>
         {
@@ -402,11 +401,14 @@ public class M365GroupManagementService
 
     private async Task<M365GroupResult> RemoveDirectoryObjectAsync(string groupId, string relationship, string objectId, string identityForCheck, ClaimsPrincipal? actingUser)
     {
-        var gate = await CheckProtectedAsync(identityForCheck, actingUser);
+        if (string.IsNullOrWhiteSpace(objectId))
+            return new M365GroupResult { Success = false, Message = ProtectionUnavailable };
+
+        var client = await GetGraphClientAsync();
+        var gate = await CheckProtectedAsync(client, objectId, identityForCheck, mayBeAnotherKind: true, actingUser);
         if (gate.Denial is not null)
             return gate.Denial;
 
-        var client = await GetGraphClientAsync();
         var ok = await client.DeleteAsync($"/groups/{Uri.EscapeDataString(groupId)}/{relationship}/{Uri.EscapeDataString(objectId)}/$ref");
         if (!ok)
             return new M365GroupResult { Success = false, Message = $"Failed to remove {identityForCheck}. Verify the Graph app has Group.ReadWrite.All." };

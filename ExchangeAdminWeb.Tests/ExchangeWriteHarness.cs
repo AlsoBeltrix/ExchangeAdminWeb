@@ -646,9 +646,29 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public int GraphSidReads => Volatile.Read(ref _graphSidReads);
     private int _graphSidReads;
 
+    /// <summary>
+    /// What the stand-in Graph says of an object's sync from on-premises, by object id: true
+    /// synced, false not synced. An object not listed answers with no sync flag.
+    /// </summary>
+    public Hashtable GraphSyncFlags { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The users the stand-in Graph holds by user principal name: UPN to object id. Any other UPN is a 404.</summary>
+    public Hashtable GraphUsersByUpn { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
     private sealed class StandInSidSource(ExchangeWriteHarness harness) : IOnPremisesSidSource
     {
         public string Name => "Graph";
+
+        public async Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName)
+        {
+            if (harness.GraphUsersByUpn[userPrincipalName] is not string objectId)
+            {
+                Interlocked.Increment(ref harness._graphSidReads);
+                return OnPremisesSidAnswer.NotAnswered("Graph answered 404") with { UserNotFound = true };
+            }
+            var answer = await ReadAsync(objectId);
+            return answer.Outcome == OnPremisesSidOutcome.NotAnswered ? answer : answer with { ObjectId = objectId };
+        }
 
         public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId)
         {
@@ -656,8 +676,9 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if (!harness.GraphSids.ContainsKey(externalDirectoryObjectId))
                 return Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
             return Task.FromResult(harness.GraphSids[externalDirectoryObjectId] is string sid
-                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid)
-                : new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported));
+                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid, Synced: harness.GraphSyncFlags[externalDirectoryObjectId] as bool?)
+                : new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported,
+                    Synced: harness.GraphSyncFlags[externalDirectoryObjectId] as bool?));
         }
     }
 

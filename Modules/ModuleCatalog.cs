@@ -841,7 +841,7 @@ public sealed class ModuleCatalog
             // 1.9.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
             // 1.9.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.9.3",
+            Version = "1.9.4",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
@@ -1036,7 +1036,7 @@ public sealed class ModuleCatalog
             // 1.6.1: the UPN box binds on input, so Enter lists the user it shows rather than the one it held
             // before, and a second submit during a listing is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.4",
+            Version = "1.6.5",
             MainPermission = new(
                 "Access",
                 "MfaReset",
@@ -1080,7 +1080,7 @@ public sealed class ModuleCatalog
             // 1.2.1: the module card and the Access permission say one thing each again; the employee-ID detail
             // lives in the settings' own hints and the README (owner, 2026-10-30).
             // 1.2.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.2.4",
+            Version = "1.2.5",
             MainPermission = new(
                 "Access",
                 "CloudPasswordReset",
@@ -1406,7 +1406,7 @@ public sealed class ModuleCatalog
             // their yield, and a second submit during one is ignored (kd-72).
             // 1.6.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.6.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.6.4",
+            Version = "1.6.5",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
@@ -1633,7 +1633,7 @@ public sealed class ModuleCatalog
             // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.6.2: help sweep - its settings' and permissions' help cut to one sentence each, and the page's audit note to three
             // (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.6.3",
+            Version = "1.6.4",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",

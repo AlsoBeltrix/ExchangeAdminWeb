@@ -192,10 +192,8 @@ public sealed class M365GroupManagementTicketGateTests : IDisposable
         AssertTarget(write, row);
         Assert.False(row.TryGetProperty("mutationAttempted", out _));
         Assert.False(row.TryGetProperty("refusedAt", out _));
-        Assert.Contains(
-            IsMembership(write) ? "Protection check unavailable" : "not configured",
-            row.GetProperty("error").GetString(),
-            StringComparison.Ordinal);
+        // Every write, a membership change included, reaches the service and its Graph client, which is not configured here.
+        Assert.Contains("not configured", row.GetProperty("error").GetString(), StringComparison.Ordinal);
         Assert.Equal(1, AdminEmails());
     }
 

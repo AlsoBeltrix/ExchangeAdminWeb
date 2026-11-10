@@ -131,6 +131,9 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
                 ? new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported)
                 : new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid));
         }
+
+        public Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName) =>
+            Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
     }
 
     private static DirectorySidObject SidObject(ResolvedDirectoryPrincipal p, string sid, string objectClass = "user") =>

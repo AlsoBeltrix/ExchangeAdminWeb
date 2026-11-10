@@ -44,9 +44,10 @@ public sealed class ProtectionCheckCallSiteTests
         // S5 Emergency Disable: the lookup's resolution and its check (the disable's own re-check is one check of its own).
         { "Components/Pages/EmergencyDisable.razor", "private async Task PerformLookup()",
             "ProtectedPrincipalService.BeginCheck(identity)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity)" },
-        // S6 Cloud Password Reset: the admin account's resolution and its check.
-        { "Components/Pages/CloudPasswordReset.razor", "CheckProtectionAsync(System.Security.Claims.ClaimsPrincipal user, string upn, string entraObjectId)",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
+        // The Entra-user gate MFA Reset, Risky Users, Intune Devices, Microsoft 365 groups and Cloud Password Reset share: the
+        // user's resolution by object id and its check (one fetch, proved in CloudUserProtectionTests).
+        { "Services/ProtectedPrincipalServicing.cs", "public static async Task<CloudUserDecision> ForCloudUserAsync(",
+            "protection.BeginCheck(userPrincipalName)", "protection.ResolveCloudUserAsync(" },
         // S7 Conference Rooms: no longer a protection call site - protected principals do not apply to it (owner ruling
         // 2026-11-03); see ConferenceRoomBinder_RunsNoProtectionCheck below.
         // S8 Blocked Senders: the sender's resolution and its check, or the raw address's check.
@@ -57,24 +58,12 @@ public sealed class ProtectionCheckCallSiteTests
             "_protectedPrincipals.BeginCheck(user)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(user)" },
         { "Services/AccountLockoutRemediationService.cs", "internal async Task<AccountLogoffResult> RunLogoffAsync(",
             "DirectoryReadOperation.Begin()", "await GuardTargetUsersAsync(" },
-        // S12 Intune Devices: the device's primary user - resolved and checked, or checked unresolved.
-        { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction? confirmed)",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
-        // S13 MFA Reset: the user's resolution and its check, or the unresolved check.
-        { "Components/Pages/MfaReset.razor", "private async Task ExecuteReset()",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
-        // S14 Risky Users: the user's resolution and its check, or the unresolved check.
-        { "Components/Pages/RiskyUsers.razor", "private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction? confirmed)",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S15 Licensing Updates: a batch's rows, one operation.
         { "Services/LicensingUpdatesService.cs", "servicedNotesByUpn)> EvaluateProtectionAsync(",
             "DirectoryReadOperation.Begin()", "_protectedPrincipalService.CheckAsync(row.Principal!)" },
         // S16 Self-Service Groups: the write's DACL re-check (its resource-domain Deny reads are the evaluator's, item 1).
         { "Services/SelfServiceGroups/SelfServiceGroupService.cs", "private async Task<MembershipChangeResult> ApplyMembershipChangeAsync(",
             "DirectoryReadOperation.BeginCheck(_logger, ", "CallerCanManageMembers(ps, credential, groupDn, callerSid, callerGroupSids, denyOnlySids)" },
-        // S9 Microsoft 365 group management: the member's or owner's resolution and its check.
-        { "Services/M365GroupManagementService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
-            "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
         // S10 Migration: each mailbox's resolution and its check, and one operation for a batch's targets.
         { "Services/MigrationService.cs", "private async Task<ProtectionGate> CheckProtectedAsync(string identity,",
             "_protectedPrincipals.BeginCheck(identity)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(identity)" },
