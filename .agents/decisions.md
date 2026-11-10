@@ -5,6 +5,13 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - ASSUMPTION for plan slice 0.6: a refused Account Lockout execute mails only for "not allowed"
+
+Not an owner ruling. Plan owner question 1 (does a refused execute still mail the administrators) was never
+answered; the owner then said "go for all phases" with a standing instruction not to pause. Slice 0.6 is built on
+the plan's own recommendation: mail for "not allowed to log users off", none for a missing ticket. Listed for the
+end-of-work dev check; the owner's to overturn.
+
 ### 2026-11-10 - All phases of SharedPiecesAndSlop authorised; one dev deployment at the end
 
 Owner: "go for all phases. once all are done, I'll do a dev deployment." Answers the open question in the entry
