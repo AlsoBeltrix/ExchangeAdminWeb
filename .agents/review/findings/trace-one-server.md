@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - each on-premises transport server holds its own tracking log, so a search of one server misses
 every message the others handled, and the result looked complete: no warning, no log line. An operator could conclude
 a message did not exist. Read-only; nothing is written anywhere, which is why it is not HIGH.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 4d2bf4cf (2026-11-10) on guard proof (MEDIUM, no review round); master gates green (9045 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-b-phase0-mediums` (worktree `D:\source\ExchangeAdminWeb-wt\p0-b`, from master 4cb7942b)
 **Commit**: 7bd72e0a (the warning and the log line, tests, page note, README), a2e27252 (version) |
 **Implementer**: Claude (supervised agent)

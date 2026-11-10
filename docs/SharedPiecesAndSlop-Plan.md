@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Approved 2026-11-10 (owner: "approved"); all phases 0 to 5 authorised 2026-11-10 (owner: "go for all phases. once all are done, I'll do a dev deployment."). No dev deploy between slices or phases. In progress: phase 0; slices 0.1 (adfb2a89), 0.2 (8b0fbb28), 0.3 (5896bae9) merged.
+Status: Approved 2026-11-10 (owner: "approved"); all phases 0 to 5 authorised 2026-11-10 (owner: "go for all phases. once all are done, I'll do a dev deployment."). No dev deploy between slices or phases. In progress: phase 0; slices 0.1 (adfb2a89), 0.2 (8b0fbb28), 0.3 (5896bae9), 0.3b, 0.4, 0.5 (4d2bf4cf) merged.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),
@@ -199,9 +199,9 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | Item | Name | Status |
 |---|---|---|
 | #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | done, merged 5896bae9 |
-| #1b | A job that never ran a row (cancelled while queued, interrupted at start-up) delivers at completion with no check (slice 0.3b) | done on branch db21fd3e |
-| #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | done on branch 7bd72e0a |
-| #3 | Three AD `-Filter` strings built by quote-doubling | done on branch 2e687204 |
+| #1b | A job that never ran a row (cancelled while queued, interrupted at start-up) delivers at completion with no check (slice 0.3b) | done, merged 4d2bf4cf |
+| #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | done, merged 4d2bf4cf |
+| #3 | Three AD `-Filter` strings built by quote-doubling | done, merged 4d2bf4cf |
 | #4 | Attribute legend read returns empty on any failure with no log | open |
 | #5 | Four ticket boxes (and the Migration email box) bind on change | open |
 | #6 | Migration and Out of Office admin mail uses the mailbox-permission template | open |

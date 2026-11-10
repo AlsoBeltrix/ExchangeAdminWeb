@@ -4,7 +4,7 @@
 start-up, wrote an export of the selected messages' summary lines (sender, recipient, subject, status) and mailed the
 link after the module was disabled or the operator's access was removed. Read-only data the operator was authorised
 for when the job was queued, nothing written to Exchange or the directory; that is why it is not HIGH.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 4d2bf4cf (2026-11-10) on guard proof (MEDIUM, no review round); master gates green (9045 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-b-phase0-mediums` (worktree `D:\source\ExchangeAdminWeb-wt\p0-b`, from master 4cb7942b)
 **Commit**: db21fd3e (runner check at completion, Message Trace refusal, tests, README), 32a091a7 (versions) |
 **Implementer**: Claude (supervised agent)

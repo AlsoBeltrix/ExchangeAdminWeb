@@ -8,6 +8,19 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - plan slices 0.3b, 0.4, 0.5 merged (4d2bf4cf); 0.6 and 0.7 close phase 0
+
+On master at 4d2bf4cf, not pushed, not deployed. Base 2.36.6. Master gates: 9045 xUnit, 19 warnings,
+format/diff-check/ASCII clean. 0.3b (job-runner-auth-b): the runner checks a job as it completes and hands the
+answer to the completion hook; a refused Message Trace job delivers nothing. 0.4 (ad-filter-ldap): three AD
+lookups use -LDAPFilter with the existing escaper. 0.5 (trace-one-server): on-prem trace warns when it searched
+one server only. For the owner's end dev check (supervisor accepted, his to overturn): Comms-10k and Conference
+Rooms completion notices to the administrators are still sent for a refused job; `*` typed in a Group Management
+search is now a literal character, not a wildcard; a one-server fallback trace is now audited Failed with the
+warning (as the existing trace warnings are), where it was Success. Debt noted: `ResolveGroupForWrite` builds the
+same by-name LDAP filter inline (second copy); the transport-server lookup still uses -ErrorAction
+SilentlyContinue. Next: 0.6 (Account Lockout check order) and 0.7 (lows), then the phase 0 Gemini review.
+
 ### 2026-11-10 - all phases authorised, one dev deploy at the end; slice 0.3 merged (5896bae9)
 
 Owner: "go for all phases. once all are done, I'll do a dev deployment." (decisions 2026-11-10). Slice 0.3

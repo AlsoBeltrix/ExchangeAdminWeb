@@ -6,7 +6,7 @@ in `SectionAccessGroupDirectory.cs` says so), and an asterisk in a search term w
 group or no group: a wrong answer to a lookup, in two modules. Not HIGH: each write that follows re-reads the group it
 resolved (Group Management's write path does not use these two filters; Conference Rooms requires exactly one match
 and re-reads it in its own domain), and no input reached a second command.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 4d2bf4cf (2026-11-10) on guard proof (MEDIUM, no review round); master gates green (9045 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-b-phase0-mediums` (worktree `D:\source\ExchangeAdminWeb-wt\p0-b`, from master 4cb7942b)
 **Commit**: 2e687204 (the three filters, tests), 851c10db (versions) | **Implementer**: Claude (supervised agent)
 **Reviewer**: Fable 5.2 audit 2026-11-10, confirmed by Gemini 4 Argon (High) through agy; orchestrator triage
