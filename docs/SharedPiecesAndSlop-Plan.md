@@ -211,7 +211,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done, merged 8b0fbb28 |
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
 | G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
-| G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | open |
+| G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | done on branch d8aee0a6 |
 | A1 | `TicketNumberInput.razor` | open |
 | A2 | `AuthorizationCheck.razor` | open |
 | A3 | `"GroupPolicy"` authorization policy | open |
