@@ -117,6 +117,29 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
     }
 
     [Fact]
+    public async Task MfaReset_ChecksTheUserGraphNamesByItsUpn_AndRefusesTheProtectedUserInTheOtherDomain()
+    {
+        _h.GraphUsersByUpn[FarUpn] = FarObjectId;
+        var page = MfaPage();
+
+        await (Task)page.GetType().GetMethod("ExecuteReset", PrivateInstance)!.Invoke(page, null)!;
+
+        Assert.Equal("This user is a protected principal. MFA reset is not permitted.", MfaMessage(page));
+        Assert.Equal($"Protected principal - matched rules: User:{FarUpn}", RefusalError());
+    }
+
+    [Fact]
+    public async Task MfaReset_AUserGraphDoesNotHold_IsRefusedAsNotFound_BeforeAnyWrite()
+    {
+        var page = MfaPage();
+
+        await (Task)page.GetType().GetMethod("ExecuteReset", PrivateInstance)!.Invoke(page, null)!;
+
+        Assert.Equal("Could not read MFA methods - nothing was reset. Graph request for far@fabrikam.test failed: 404 NotFound.", MfaMessage(page));
+        Assert.Equal(MfaMessage(page), RefusalError());
+    }
+
+    [Fact]
     public async Task RiskyUsers_GraphNotAnswered_RefusesAsUnavailable_BeforeTheWrite()
     {
         _h.GraphSids.Remove(FarObjectId);
@@ -165,6 +188,20 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
     }
 
     // ----- fixtures -----
+
+    private Components.Pages.MfaReset MfaPage()
+    {
+        var page = new Components.Pages.MfaReset();
+        InjectCommon(page);
+        Inject(page, "MfaService", new MfaResetService(NullLogger<MfaResetService>.Instance, _moduleConfig, _delinea, _http));
+        SetField(page, "listedUpn", FarUpn);
+        SetField(page, "ticketNumber", "INC0042");
+        SetField(page, "resetConfirmPending", true);
+        return page;
+    }
+
+    private static string MfaMessage(object page) =>
+        ((MfaResetResult)page.GetType().GetField("result", PrivateInstance)!.GetValue(page)!).Message;
 
     private void InjectCommon(object page)
     {

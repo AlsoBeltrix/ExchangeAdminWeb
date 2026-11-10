@@ -285,9 +285,6 @@
     /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
     private const string ServicerModuleId = "MfaReset";
 
-    private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
-        ProtectedPrincipalServicing.NoteFor(Servicers, user, ServicerModuleId, matchedRules, qualifier);
-
     private static Dictionary<string, object?>? ServicedExtra(string? note) =>
         ProtectedPrincipalServicing.Extra(note);
 
@@ -374,109 +371,36 @@
 
             notifyAdmins = true;
 
-            // Protected principal check — fail closed unless AD lookup confirms no AD object (cloud-only)
+            // Protected principal check, of the Entra user the reset names: Graph is asked for the user by its UPN, so a synced
+            // user's account is checked by its on-premises SID in whatever domain holds it. A user Graph does not hold is refused
+            // in the words a reset that cannot read the user's methods uses.
             try
             {
-                // Exchange fallback, NOT the AD-only resolve. This module operates on cloud
-                // identities, so a cloud-only target is its NORMAL input - and an AD-only lookup
-                // reports every cloud-only object as NotFound. The old code read that miss as
-                // "no AD object, therefore nothing to protect" and skipped the check entirely,
-                // which left protection close to inert here: a protected user row naming a
-                // cloud-only mailbox was never compared against the target.
-                // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
-                using var directoryCheck = ProtectedPrincipalService.BeginCheck(upn); var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn); // kd-88: one check - one credential fetch, one timing line - for the resolution and the rules
-                if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+                var protection = await ProtectedPrincipalServicing.ForCloudUserAsync(
+                    ProtectedPrincipalService, Servicers, null, upn, authState.User, ServicerModuleId);
+                if (!protection.Allowed)
                 {
-                    var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                        ? "Identity is ambiguous — matches multiple AD users."
-                        : "Protection check unavailable.";
+                    var reason = protection.Refusal switch
+                    {
+                        ProtectedPrincipalServicing.CloudUserRefusal.Ambiguous => "Identity is ambiguous — matches multiple AD users.",
+                        ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed => $"Protection check failed: {protection.FailReason}",
+                        ProtectedPrincipalServicing.CloudUserRefusal.Protected => "This user is a protected principal. MFA reset is not permitted.",
+                        ProtectedPrincipalServicing.CloudUserRefusal.NotFound =>
+                            $"Could not read MFA methods - nothing was reset. Graph request for {upn} failed: 404 NotFound.",
+                        _ => "Protection check unavailable.",
+                    };
                     result = new MfaResetResult { Success = false, Message = reason };
                     Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                        errorDetail: $"{reason} — blocked",
+                        errorDetail: protection.Refusal switch
+                        {
+                            ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed or ProtectedPrincipalServicing.CloudUserRefusal.NotFound => reason,
+                            ProtectedPrincipalServicing.CloudUserRefusal.Protected => protection.ProtectedAuditDetail,
+                            _ => $"{reason} — blocked",
+                        },
                         methodTypes: methodTypesBeforeReset);
                     return;
                 }
-                if (resolved != null)
-                {
-                    var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
-                    if (protectionCheck.CheckFailed)
-                    {
-                        result = new MfaResetResult { Success = false, Message = $"Protection check failed: {protectionCheck.Reason}" };
-                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                            errorDetail: $"Protection check failed: {protectionCheck.Reason}",
-                            methodTypes: methodTypesBeforeReset);
-                        return;
-                    }
-                    if (protectionCheck.IsProtected)
-                    {
-                        // An authorised servicer may proceed; everyone else is refused. Protection
-                        // is evaluated first and never weakened - this only decides whether THIS
-                        // operator may act on a target already known to be protected.
-                        servicedAuditDetail = ServicerNoteFor(authState.User, protectionCheck.MatchedRules);
-                        if (servicedAuditDetail is null)
-                        {
-                            result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
-                            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                                errorDetail: $"Protected principal - matched rules: {string.Join(", ", protectionCheck.MatchedRules)}",
-                                methodTypes: methodTypesBeforeReset);
-                            return;
-                        }
-                    }
-                }
-                else
-                {
-                    // Neither AD nor Exchange knows this address - but THIS MODULE MUTATES A GRAPH
-                    // USER, and AD+EXO absence does not prove Entra absence. An Entra-only account
-                    // with no mailbox (unlicensed, or a cloud identity that never had one) resolves
-                    // NotFound here while /users/{upn}/authentication/methods still finds a real
-                    // user whose MFA this page is about to reset. Proceeding on NotFound would
-                    // leave exactly that population unprotected - the gap the AD-only resolve had,
-                    // narrowed but not closed.
-                    //
-                    // So check the protected rows against the raw identity instead of skipping.
-                    // Group, OU and SamAccountName-pattern rules cannot apply to an object with no
-                    // on-prem DN and no SAM - they are inapplicable, not skipped - but the USER
-                    // rows can and do match an address, and those are what protect a cloud
-                    // identity. Same shape PermissionValidator uses when full resolution is not
-                    // required.
-                    var unresolved = new ResolvedDirectoryPrincipal(
-                        Source: "MfaReset-Unresolved",
-                        DisplayName: upn,
-                        UserPrincipalName: upn,
-                        SamAccountName: null,
-                        PrimarySmtpAddress: upn.Contains('@') ? upn : null,
-                        DistinguishedName: null,
-                        ObjectGuid: null,
-                        EntraObjectId: null);
-
-                    var unresolvedCheck = await ProtectedPrincipalService.CheckAsync(unresolved);
-                    if (unresolvedCheck.CheckFailed)
-                    {
-                        result = new MfaResetResult { Success = false, Message = $"Protection check failed: {unresolvedCheck.Reason}" };
-                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                            errorDetail: $"Protection check failed: {unresolvedCheck.Reason}",
-                            methodTypes: methodTypesBeforeReset);
-                        return;
-                    }
-                    if (unresolvedCheck.IsProtected)
-                    {
-                        // Same servicer rule as the resolved branch. Both sites must honour it, or
-                        // a cloud-only protected identity would be the one case a servicer cannot
-                        // service - which is precisely the population this module exists for.
-                        servicedAuditDetail = ServicerNoteFor(authState.User, unresolvedCheck.MatchedRules, "directory-unresolved");
-                        if (servicedAuditDetail is null)
-                        {
-                            result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
-                            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                                errorDetail: $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}",
-                                methodTypes: methodTypesBeforeReset);
-                            return;
-                        }
-                    }
-
-                    Logger.LogInformation(
-                        "No such recipient in Active Directory or Exchange Online for {Upn}; protected user rows did not match the raw identity - proceeding", upn);
-                }
+                servicedAuditDetail = protection.ServicedNote;
             }
             catch (Exception ex)
             {
