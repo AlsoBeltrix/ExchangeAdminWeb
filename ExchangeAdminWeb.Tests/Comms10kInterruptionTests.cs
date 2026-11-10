@@ -221,6 +221,7 @@ public sealed class Comms10kInterruptionTests
             enablementRepository.SaveAll(new Dictionary<string, bool> { ["Comms10k"] = true });
             var sections = new SectionAccessService(config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), sectionsRepository);
             var enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, enablementRepository, config, NullLogger<ModuleEnablementService>.Instance);
+            var authorization = new JobAuthorization(new ModuleCatalog(), enablement, sections, NullLogger<JobAuthorization>.Instance);
             _log = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
             var trace = new OperationTraceService(config, _log);
             var audit = new AuditService(_log, trace);
@@ -248,14 +249,13 @@ public sealed class Comms10kInterruptionTests
             var services = new ServiceCollection();
             services.AddScoped(_ =>
             {
-                var processor = new Comms10kReplaceProcessor(Service, audit, email, sections, enablement, NullLogger<Comms10kReplaceProcessor>.Instance);
+                var processor = new Comms10kReplaceProcessor(Service, audit, email, authorization, NullLogger<Comms10kReplaceProcessor>.Instance);
                 Processors.Add(processor);
                 return processor;
             });
             _provider = services.BuildServiceProvider();
             var registry = new BulkJobProcessorRegistry([new(Comms10kReplaceProcessor.ModuleName, typeof(Comms10kReplaceProcessor))]);
-            Runner = new BulkJobService(_provider.GetRequiredService<IServiceScopeFactory>(), Repository, registry,
-                new JobAuthorization(new ModuleCatalog(), enablement, sections, NullLogger<JobAuthorization>.Instance), config, NullLogger<BulkJobService>.Instance);
+            Runner = new BulkJobService(_provider.GetRequiredService<IServiceScopeFactory>(), Repository, registry, authorization, config, NullLogger<BulkJobService>.Instance);
         }
 
         public BulkJob Job(bool hasApproval = true) => new()

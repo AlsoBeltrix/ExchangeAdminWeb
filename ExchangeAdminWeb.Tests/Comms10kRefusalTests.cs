@@ -410,7 +410,13 @@ public sealed partial class Comms10kRefusalTests
         }
 
         public Comms10kReplaceProcessor Processor(Comms10kService service) =>
-            new(service, _audit, _email, Sections, Enablement, NullLogger<Comms10kReplaceProcessor>.Instance);
+            new(service, _audit, _email, Authorization, NullLogger<Comms10kReplaceProcessor>.Instance);
+
+        /// <summary>One row as the runner runs it: its authorization check, then the processor's refusal or its work.</summary>
+        public async Task<BulkJobRowOutcome> RowAsync(Comms10kReplaceProcessor processor, BulkJob job, int row) =>
+            Authorization.Check(job) is { } refusal
+                ? processor.RefuseRow(job, row, refusal)
+                : await processor.ProcessRowAsync(job, row, CancellationToken.None);
 
         public void C2BreakStore(bool enablement)
         {

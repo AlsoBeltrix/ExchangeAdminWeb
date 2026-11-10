@@ -44,13 +44,13 @@ public sealed partial class Comms10kRefusalTests
     [InlineData("removed", 1)]
     [InlineData("replacement-claim", 1)]
     [InlineData("disabled", 1)]
-    public async Task C2EveryStageRequiresTheOriginalExactSectionGrantAndEnabledModule(string mode, int stage)
+    public async Task TheRunnersCheckRefusesEveryStageWithoutTheOriginalExactSectionGrantAndEnabledModule(string mode, int stage)
     {
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
         var processor = fixture.Processor(service);
         if (stage == 1)
-            Assert.Equal(BulkJobRowStatus.Success, (await processor.ProcessRowAsync(Job(), 0, CancellationToken.None)).Status);
+            Assert.Equal(BulkJobRowStatus.Success, (await fixture.RowAsync(processor, Job(), 0)).Status);
 
         var snapshot = mode switch
         {
@@ -70,8 +70,8 @@ public sealed partial class Comms10kRefusalTests
         if (mode.StartsWith("unreadable-", StringComparison.Ordinal)) fixture.C2BreakStore(mode == "unreadable-enablement");
         var job = C2Job(snapshot);
 
-        var refused = await processor.ProcessRowAsync(job, stage, CancellationToken.None);
-        var continued = stage == 0 ? await processor.ProcessRowAsync(job, 1, CancellationToken.None) : refused;
+        var refused = await fixture.RowAsync(processor, job, stage);
+        var continued = stage == 0 ? await fixture.RowAsync(processor, job, 1) : refused;
         await processor.OnJobCompletedAsync(job);
 
         var reason = mode is "missing" or "malformed" ? C2SnapshotDenied
@@ -302,21 +302,76 @@ public sealed partial class Comms10kRefusalTests
         fixture.AssertNotification(C2SnapshotDenied, Comms10kOutcome.RefusedBeforeAnyChange);
     }
 
+    // The same refusals through the real runner: what a job loses after its resolve stage stops
+    // the replace stage, and a job that loses nothing runs both.
+    [Theory]
+    [InlineData("disabled")]
+    [InlineData("access-removed")]
+    [InlineData("unreadable-enablement")]
+    [InlineData("unreadable-sections")]
+    [InlineData("allowed")]
+    public async Task TheRunnerStopsAJobThatMayNoLongerRunBeforeItsReplaceStage(string mode)
+    {
+        using var fixture = new Fixture();
+        var directory = new C2Directory();
+        fixture.Service.ReplaceState = directory.State;
+        var processor = fixture.Processor(fixture.Service);
+        var (_, repository) = fixture.JobQueue();
+        using var provider = new ServiceCollection().AddScoped(_ => processor).BuildServiceProvider();
+        var runner = new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), repository,
+            new BulkJobProcessorRegistry([new("Comms10k", typeof(Comms10kReplaceProcessor))]), fixture.Authorization, fixture.Config,
+            NullLogger<BulkJobService>.Instance);
+        var job = Job();
+        repository.Insert(job);
+        var taken = false;
+        runner.JobChanged += id =>
+        {
+            if (taken || mode == "allowed" || repository.Get(id)!.ProcessedRows != 1)
+                return;
+            taken = true;
+            if (mode.StartsWith("unreadable-", StringComparison.Ordinal)) fixture.C2BreakStore(mode == "unreadable-enablement");
+            else C2Revoke(fixture, disableModule: mode == "disabled");
+        };
+
+        await runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var finished = Assert.IsType<BulkJob>(repository.Get(job.Id));
+        var rows = runner.GetRows(job.Id);
+        Assert.Equal((BulkJobStatus.Completed, 2), (finished.Status, finished.ProcessedRows));
+        Assert.Equal(BulkJobRowStatus.Success, rows[0].Status);
+        if (mode == "allowed")
+        {
+            Assert.Equal(BulkJobRowStatus.Success, rows[1].Status);
+            Assert.Equal(["clear", "add"], directory.Writes);
+            fixture.AssertAudit(null, Comms10kOutcome.Succeeded, true);
+            fixture.AssertNotification(rows[1].Message!, Comms10kOutcome.Succeeded, true);
+            return;
+        }
+
+        var reason = mode is "disabled" or "unreadable-enablement" ? C2Disabled : C2GroupDenied;
+        Assert.True(taken);
+        Assert.Equal((BulkJobRowStatus.Failed, reason), (rows[1].Status, rows[1].Message));
+        Assert.Equal((1, 1), (finished.SuccessCount, finished.FailedCount));
+        Assert.Empty(directory.Calls);
+        fixture.AssertAudit(reason, Comms10kOutcome.RefusedBeforeAnyChange);
+        fixture.AssertNotification(reason, Comms10kOutcome.RefusedBeforeAnyChange);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task C2RestoredConfigurationCannotOverwriteTheFirstAuthorizationRefusal(bool disableModule)
+    public async Task RestoredConfigurationCannotOverwriteTheRunnersFirstRefusal(bool disableModule)
     {
         using var fixture = new Fixture();
         var service = fixture.ResolvingSubstitute();
         var processor = fixture.Processor(service);
         var job = Job();
         C2Revoke(fixture, disableModule);
-        var first = await processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        var first = await fixture.RowAsync(processor, job, 0);
         C2Groups(fixture, [C5GroupSid]);
         fixture.EnablementRepository.SaveAll(new Dictionary<string, bool> { ["Comms10k"] = true });
 
-        var continued = await processor.ProcessRowAsync(job, 1, CancellationToken.None);
+        var continued = await fixture.RowAsync(processor, job, 1);
         await processor.OnJobCompletedAsync(job);
 
         var reason = disableModule ? C2Disabled : C2GroupDenied;

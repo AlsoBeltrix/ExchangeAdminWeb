@@ -1,5 +1,4 @@
 using System.Text.Json;
-using ExchangeAdminWeb.Authorization;
 
 namespace ExchangeAdminWeb.Services.Jobs;
 
@@ -43,8 +42,7 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
     private readonly Comms10kService _comms;
     private readonly AuditService _audit;
     private readonly EmailService _email;
-    private readonly SectionAccessService _sectionAccess;
-    private readonly ModuleEnablementService _enablement;
+    private readonly IJobAuthorization _authorization;
     private readonly ILogger<Comms10kReplaceProcessor> _logger;
 
     // Carried from the resolve stage to the replace stage. Safe because the runner resolves ONE
@@ -58,15 +56,13 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         Comms10kService comms,
         AuditService audit,
         EmailService email,
-        SectionAccessService sectionAccess,
-        ModuleEnablementService enablement,
+        IJobAuthorization authorization,
         ILogger<Comms10kReplaceProcessor> logger)
     {
         _comms = comms;
         _audit = audit;
         _email = email;
-        _sectionAccess = sectionAccess;
-        _enablement = enablement;
+        _authorization = authorization;
         _logger = logger;
     }
 
@@ -87,9 +83,6 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         ArgumentNullException.ThrowIfNull(job);
 
         var payload = Payload(job);
-
-        if (rowIndex is ResolveRow or ReplaceRow && AuthorizationDenial(job) is { } denial)
-            return Refuse(job, payload, denial);
 
         return rowIndex switch
         {
@@ -190,8 +183,11 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         Comms10kUpdateResult result;
         try
         {
+            // The runner checked the job before this stage. The service asks once more, after its
+            // asynchronous write preparation and immediately before the clear - never between
+            // batches - and gets the runner's own check.
             result = await _comms.ExecuteReplaceAsync(
-                _resolvedMembers, job.SubmittedBy, () => AuthorizationDenial(job));
+                _resolvedMembers, job.SubmittedBy, () => _authorization.Check(job) is { } refusal ? Denial(refusal) : null);
         }
         catch (Exception ex)
         {
@@ -226,35 +222,6 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
             Status = status,
             Message = result.Message,
         };
-    }
-
-    // Re-read the live stores on every call: at each stage, and once more by the service after
-    // asynchronous write preparation, immediately before the clear (never between batches,
-    // sweep-d item 20). This checks configuration, not Windows-token membership refresh.
-    private string? AuthorizationDenial(BulkJob job)
-    {
-        var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
-        if (snapshot is null)
-            return "The Comms-10k job authorization snapshot is missing or unreadable.";
-        if (!string.Equals(snapshot.Section, ModuleName, StringComparison.Ordinal))
-            return "The job authorization snapshot is not for Comms10k.";
-
-        try
-        {
-            if (!_enablement.IsModuleEnabled(ModuleName))
-                return "Comms-10k is currently disabled.";
-            var groups = _sectionAccess.GetGroupsForSection(ModuleName)
-                .Where(SectionAccessGroupIdentity.IsUsableGroupSid).ToArray();
-            // Only an original AuthorizedGroups grant may survive. A newly allowed RoleClaims
-            // SID is not a replacement for the decision captured when the job was submitted.
-            return snapshot.IsStillAuthorized(groups) ? null
-                : "The group that authorized this Comms-10k job is no longer allowed or section access is unavailable.";
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Comms-10k job authorization could not be verified for {JobId}", job.Id);
-            return "Comms-10k job authorization could not be verified.";
-        }
     }
 
     // Also used by the later authorization and approved-set gates. The runner proceeds after
