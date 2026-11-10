@@ -234,17 +234,55 @@ public sealed class CloudUserProtectionTests : IDisposable
         Assert.Equal(CloudUserRefusal.Ambiguous, decision.Refusal);
     }
 
-    [Theory]
-    [InlineData("", FarUpn)]
-    [InlineData(FarObjectId, " ")]
-    public async Task ABlankObjectIdOrUpn_Refuses_AsUnavailable_AskingNothing(string objectId, string upn)
+    [Fact]
+    public async Task ABlankUpn_Refuses_AsUnavailable_AskingNothing()
     {
         var protection = Protection(SomeoneElseProtected());
 
-        var decision = await Decide(protection, objectId: objectId, upn: upn);
+        var decision = await Decide(protection, upn: " ");
 
         Assert.Equal(CloudUserRefusal.Unavailable, decision.Refusal);
         Assert.Equal(0, _h.GraphSidReads);
+    }
+
+    // ----- a write that names its user by UPN alone -----
+
+    [Fact]
+    public async Task AUserNamedByUpnAlone_IsReadFromGraphByThatUpn_AndItsAccountIsChecked()
+    {
+        _h.GraphUsersByUpn[FarUpn] = FarObjectId;
+        var protection = Protection(new ProtectedPrincipalConfig { Users = [FarUpn], UserIds = [$"{_far.Sid}|{FarUpn}"] });
+
+        var decision = await Decide(protection, objectId: "");
+
+        Assert.Equal(CloudUserRefusal.Protected, decision.Refusal);
+        Assert.Equal(1, _h.GraphSidReads);
+    }
+
+    [Fact]
+    public async Task AUpnGraphHoldsNoUserFor_IsNotFound()
+    {
+        var protection = Protection(SomeoneElseProtected());
+
+        var decision = await Decide(protection, objectId: "");
+
+        Assert.Equal(CloudUserRefusal.NotFound, decision.Refusal);
+        Assert.DoesNotContain(_h.Forest.Searches, read => read.Contains("(objectSid=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ACloudOnlyUserNamedByUpnAlone_IsCheckedByTheObjectIdGraphGave()
+    {
+        _h.GraphUsersByUpn[FarUpn] = FarObjectId;
+        _h.GraphSids[FarObjectId] = null;
+        _h.GraphSyncFlags[FarObjectId] = false;
+        _h.ModuleConfig.SaveModuleConfig("MailboxPermissions", new Dictionary<string, string> { ["ExcludedUsers"] = FarObjectId });
+        var protection = Protection(new ProtectedPrincipalConfig());
+
+        var decision = await Decide(protection, objectId: "");
+
+        Assert.Equal(CloudUserRefusal.Protected, decision.Refusal);
+        Assert.Equal([$"LegacyExclusion:{FarObjectId}"], decision.MatchedRules);
     }
 
     // ----- cloud-only: checked as the cloud-identity modules checked it -----

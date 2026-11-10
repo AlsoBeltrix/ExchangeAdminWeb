@@ -652,9 +652,23 @@ internal sealed class ExchangeWriteHarness : IDisposable
     /// </summary>
     public Hashtable GraphSyncFlags { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
 
+    /// <summary>The users the stand-in Graph holds by user principal name: UPN to object id. Any other UPN is a 404.</summary>
+    public Hashtable GraphUsersByUpn { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
     private sealed class StandInSidSource(ExchangeWriteHarness harness) : IOnPremisesSidSource
     {
         public string Name => "Graph";
+
+        public async Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName)
+        {
+            if (harness.GraphUsersByUpn[userPrincipalName] is not string objectId)
+            {
+                Interlocked.Increment(ref harness._graphSidReads);
+                return OnPremisesSidAnswer.NotAnswered("Graph answered 404") with { UserNotFound = true };
+            }
+            var answer = await ReadAsync(objectId);
+            return answer.Outcome == OnPremisesSidOutcome.NotAnswered ? answer : answer with { ObjectId = objectId };
+        }
 
         public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId)
         {

@@ -44,6 +44,10 @@ public sealed class ProtectionCheckCallSiteTests
         // S5 Emergency Disable: the lookup's resolution and its check (the disable's own re-check is one check of its own).
         { "Components/Pages/EmergencyDisable.razor", "private async Task PerformLookup()",
             "ProtectedPrincipalService.BeginCheck(identity)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(identity)" },
+        // The Entra-user gate MFA Reset, Risky Users, Intune Devices, Microsoft 365 groups and Cloud Password Reset share: the
+        // user's resolution by object id and its check (one fetch, proved in CloudUserProtectionTests).
+        { "Services/ProtectedPrincipalServicing.cs", "public static async Task<CloudUserDecision> ForCloudUserAsync(",
+            "protection.BeginCheck(userPrincipalName)", "protection.ResolveCloudUserAsync(" },
         // S6 Cloud Password Reset: the admin account's resolution and its check.
         { "Components/Pages/CloudPasswordReset.razor", "CheckProtectionAsync(System.Security.Claims.ClaimsPrincipal user, string upn, string entraObjectId)",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },

@@ -284,6 +284,9 @@ public sealed class ConferenceRoomBinderTests : IDisposable
 
             public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId) =>
                 Task.FromResult(new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid));
+
+            public Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName) =>
+                Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
         }
 
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> BindSyncedRecipientAsync(

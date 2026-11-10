@@ -147,6 +147,36 @@ public sealed class GraphOnPremisesSidSourceTests : IDisposable
         Assert.Equal(synced, answer.Synced);
     }
 
+    [Fact]
+    public async Task AReadByUpn_AsksForTheUserByItsUpn_AndCarriesItsObjectId()
+    {
+        SetGraphSecret("4242");
+        _graph.Answer = (HttpStatusCode.OK, $$"""{"id":"{{ObjectId}}","onPremisesSecurityIdentifier":"{{Sid}}"}""");
+
+        var answer = await Source().ReadByUserPrincipalNameAsync("jo@contoso.test");
+
+        Assert.Equal(OnPremisesSidOutcome.Reported, answer.Outcome);
+        Assert.Equal(Sid, answer.Sid);
+        Assert.Equal(ObjectId, answer.ObjectId);
+        Assert.Contains(_graph.Requests, uri => uri.AbsoluteUri.Contains("/users/jo%40contoso.test?", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, "{}", true)]
+    [InlineData(HttpStatusCode.TooManyRequests, "{}", false)]
+    [InlineData(HttpStatusCode.OK, """{"onPremisesSecurityIdentifier":null,"onPremisesSyncEnabled":false}""", false)]
+    public async Task AReadByUpn_ThatCannotNameTheUser_IsNotAnswered_AndOnlyA404IsNoSuchUser(HttpStatusCode status, string body, bool notFound)
+    {
+        SetGraphSecret("4242");
+        _graph.Answer = (status, body);
+
+        var answer = await Source().ReadByUserPrincipalNameAsync("jo@contoso.test");
+
+        Assert.Equal(OnPremisesSidOutcome.NotAnswered, answer.Outcome);
+        Assert.Equal(notFound, answer.UserNotFound);
+        Assert.Null(answer.ObjectId);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.TooManyRequests, "{}")]
     [InlineData(HttpStatusCode.InternalServerError, "{}")]

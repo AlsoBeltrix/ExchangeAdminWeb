@@ -27,7 +27,11 @@ public enum OnPremisesSidOutcome
 /// <c>onPremisesSyncEnabled</c> is true; false when it is false or null, which is how Graph reports a cloud-only object;
 /// null when the flag was absent or not a boolean, so the question is unanswered.
 /// </param>
-public sealed record OnPremisesSidAnswer(OnPremisesSidOutcome Outcome, string? Sid = null, string? Reason = null, bool? Synced = null)
+/// <param name="ObjectId">For a read by user principal name that Graph answered, the user's Entra object id.</param>
+/// <param name="UserNotFound">For a read by user principal name, true when Graph holds no such user (a 404).</param>
+public sealed record OnPremisesSidAnswer(
+    OnPremisesSidOutcome Outcome, string? Sid = null, string? Reason = null, bool? Synced = null, string? ObjectId = null,
+    bool UserNotFound = false)
 {
     public static OnPremisesSidAnswer NotAnswered(string reason) => new(OnPremisesSidOutcome.NotAnswered, Reason: reason);
 }
@@ -48,6 +52,12 @@ public interface IOnPremisesSidSource
     /// <see cref="OnPremisesSidOutcome.NotAnswered"/>.
     /// </summary>
     Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId);
+
+    /// <summary>
+    /// The on-premises SID of the Entra user <paramref name="userPrincipalName"/> names, with its object id
+    /// (<see cref="OnPremisesSidAnswer.ObjectId"/>), for a write that names its user by UPN. Never throws.
+    /// </summary>
+    Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName);
 }
 
 /// <summary>
@@ -104,24 +114,41 @@ public sealed class GraphOnPremisesSidSource : IOnPremisesSidSource
 
     public string Name => "Graph";
 
-    public async Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId)
+    public Task<OnPremisesSidAnswer> ReadAsync(string externalDirectoryObjectId)
     {
         if (!Guid.TryParse(externalDirectoryObjectId?.Trim(), out var objectId) || objectId == Guid.Empty)
-            return NotAnswered("Exchange reported no usable ExternalDirectoryObjectId for the recipient");
+            return Task.FromResult(NotAnswered("Exchange reported no usable ExternalDirectoryObjectId for the recipient"));
 
+        return ReadUserAsync($"/users/{objectId:D}?$select=onPremisesSecurityIdentifier,onPremisesSyncEnabled", byName: false);
+    }
+
+    public Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName)
+    {
+        if (string.IsNullOrWhiteSpace(userPrincipalName))
+            return Task.FromResult(NotAnswered("no user principal name was given"));
+
+        return ReadUserAsync(
+            $"/users/{Uri.EscapeDataString(userPrincipalName.Trim())}?$select=id,onPremisesSecurityIdentifier,onPremisesSyncEnabled",
+            byName: true);
+    }
+
+    private async Task<OnPremisesSidAnswer> ReadUserAsync(string path, bool byName)
+    {
         var (client, secretId, why) = await ClientAsync();
         if (client is null)
             return NotAnswered(why!);
 
         try
         {
-            var (doc, status) = await client.GetWithStatusAsync(
-                $"/users/{objectId:D}?$select=onPremisesSecurityIdentifier,onPremisesSyncEnabled");
+            var (doc, status) = await client.GetWithStatusAsync(path);
             if (doc is null)
             {
                 if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                     Drop(secretId);
-                return NotAnswered($"Graph answered {(int)status} for the recipient's directory object");
+                return NotAnswered($"Graph answered {(int)status} for the recipient's directory object") with
+                {
+                    UserNotFound = byName && status == HttpStatusCode.NotFound,
+                };
             }
 
             using (doc)
@@ -129,10 +156,21 @@ public sealed class GraphOnPremisesSidSource : IOnPremisesSidSource
                 if (doc.RootElement.ValueKind != JsonValueKind.Object)
                     return NotAnswered("Graph's answer for the recipient's directory object could not be read");
 
+                string? id = null;
+                if (byName)
+                {
+                    id = doc.RootElement.TryGetProperty("id", out var idValue) && idValue.ValueKind == JsonValueKind.String
+                        && Guid.TryParse(idValue.GetString(), out var parsed) && parsed != Guid.Empty
+                            ? parsed.ToString("D")
+                            : null;
+                    if (id is null)
+                        return NotAnswered("Graph's answer for the user carries no object id");
+                }
+
                 if (!doc.RootElement.TryGetProperty("onPremisesSecurityIdentifier", out var value)
                     || value.ValueKind == JsonValueKind.Null)
                 {
-                    return NoneReported(doc.RootElement);
+                    return NoneReported(doc.RootElement) with { ObjectId = id };
                 }
 
                 if (value.ValueKind != JsonValueKind.String)
@@ -140,14 +178,14 @@ public sealed class GraphOnPremisesSidSource : IOnPremisesSidSource
 
                 var text = value.GetString();
                 if (string.IsNullOrWhiteSpace(text))
-                    return NoneReported(doc.RootElement);
+                    return NoneReported(doc.RootElement) with { ObjectId = id };
 
                 var sid = ProtectedPrincipalIdEntry.CanonicalSid(text);
                 if (sid is null)
                     return NotAnswered("Graph's onPremisesSecurityIdentifier for the recipient is not a SID");
 
                 LogFirstRead(sid);
-                return new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid);
+                return new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid, ObjectId: id);
             }
         }
         catch (Exception ex)

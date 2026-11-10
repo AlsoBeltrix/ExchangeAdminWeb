@@ -79,6 +79,9 @@ public static class ProtectedPrincipalServicing
 
         /// <summary>The user is protected and this operator may not service it.</summary>
         Protected,
+
+        /// <summary>Asked for the user by its UPN, Graph holds no such user.</summary>
+        NotFound,
     }
 
     /// <summary>
@@ -92,19 +95,25 @@ public static class ProtectedPrincipalServicing
         CloudUserRefusal Refusal, string? FailReason, IReadOnlyList<string> MatchedRules, bool Unresolved, string? ServicedNote)
     {
         public bool Allowed => Refusal == CloudUserRefusal.None;
+
+        /// <summary>The audit detail of a <see cref="CloudUserRefusal.Protected"/> refusal, naming the rules that matched.</summary>
+        public string ProtectedAuditDetail =>
+            $"Protected principal{(Unresolved ? " (directory-unresolved)" : "")} - matched rules: {string.Join(", ", MatchedRules)}";
     }
 
     /// <summary>
     /// The one protected-principal gate for a write to an Entra user: may <paramref name="actingUser"/> change the user
-    /// whose object id is <paramref name="entraObjectId"/>? <paramref name="userPrincipalName"/> names it.
+    /// whose object id is <paramref name="entraObjectId"/>? <paramref name="userPrincipalName"/> names it; a write that names
+    /// its user by UPN alone passes no object id, and the user is read from Graph by that UPN.
     /// </summary>
     /// <remarks>
     /// The user is resolved by its object id (<see cref="ProtectedPrincipalService.ResolveCloudUserAsync"/>), so the object
     /// checked is the object the write touches, and a synced user's account is found by its on-premises SID in whatever domain
-    /// holds it. Fail closed: a blank id or UPN, an ambiguous or unavailable resolution and a failed check each refuse. A
-    /// protected user proceeds only for an authorised servicer, with the note naming the group and the rules it overrode -
-    /// qualified "directory-unresolved" when the user was checked by UPN and object id alone. One timed check, one
-    /// directory-read credential fetch. An exception is the caller's to catch: it says nothing about the user, so it refuses.
+    /// holds it. Fail closed: a blank UPN, a user Graph does not hold, an ambiguous or unavailable resolution and a failed
+    /// check each refuse. A protected user proceeds only for an authorised servicer, with the note naming the group and the
+    /// rules it overrode - qualified "directory-unresolved" when the user was checked by UPN and object id alone. One timed
+    /// check, one directory-read credential fetch. An exception is the caller's to catch: it says nothing about the user, so
+    /// it refuses.
     /// </remarks>
     public static async Task<CloudUserDecision> ForCloudUserAsync(
         ProtectedPrincipalService protection,
@@ -114,13 +123,15 @@ public static class ProtectedPrincipalServicing
         ClaimsPrincipal? actingUser,
         string moduleId)
     {
-        if (string.IsNullOrWhiteSpace(entraObjectId) || string.IsNullOrWhiteSpace(userPrincipalName))
+        if (string.IsNullOrWhiteSpace(userPrincipalName))
             return new(CloudUserRefusal.Unavailable, null, [], false, null);
 
         using var check = protection.BeginCheck(userPrincipalName);
-        var (principal, status, unresolved) = await protection.ResolveCloudUserAsync(entraObjectId.Trim(), userPrincipalName);
+        var (principal, status, unresolved) = await protection.ResolveCloudUserAsync(entraObjectId?.Trim(), userPrincipalName);
         if (status == ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             return new(CloudUserRefusal.Ambiguous, null, [], false, null);
+        if (status == ProtectedPrincipalService.ResolutionStatus.NotFound)
+            return new(CloudUserRefusal.NotFound, null, [], false, null);
         if (status != ProtectedPrincipalService.ResolutionStatus.Resolved || principal is null)
             return new(CloudUserRefusal.Unavailable, null, [], false, null);
 

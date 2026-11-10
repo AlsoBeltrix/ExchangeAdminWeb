@@ -66,6 +66,9 @@ public sealed class ConferenceRoomAmbiguityMessageTests : IDisposable
             Task.FromResult(sid is null
                 ? new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported)
                 : new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid));
+
+        public Task<OnPremisesSidAnswer> ReadByUserPrincipalNameAsync(string userPrincipalName) =>
+            Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
     }
 
     private const string RoomSid = "S-1-5-21-1000000001-1000000002-1000000003-5001";
