@@ -72,6 +72,7 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
   Delivery detail costs one Exchange lookup per message, so the 50 is a **ceiling rather than a page**: there is no way to obtain detail for every result in one export, and narrowing the search is how to cover more. Live download is capped lower still, at 10
 - Subject and Message ID filters work on every range, including a 90-day one
 - Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
+- A queued detail export is checked again before every message (see Background Jobs under Session Revalidation). If it is refused part-way, no export is produced and no email is sent, and Downloadable Reports lists it as Not produced
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
 - Exports are kept for 30 days. The app deletes expired ones itself at startup, in the same pass that prunes old job records — there is nothing to install and no scheduled task. A row whose export could not be saved shows as Failed, distinct from an expired one
@@ -1196,6 +1197,16 @@ Each application feature is independently gated by AD group membership via its s
 - **Migration hierarchy:** `MigrationCreate` requires MigrationCheck groups AND MigrationCreate groups; `MigrationManage` requires MigrationCheck groups AND MigrationManage groups
 - NavMenu links and Home page cards are hidden for unauthorized sections
 - Section access is managed per-module via `/module-config/{ModuleId}` (collapsible tree in sidebar)
+
+### Background Jobs
+
+A background job - a Conference Rooms bulk CSV, a Comms-10k replace, a Message Analysis detail
+export, a Migration report export - runs with no browser behind it, so it carries the section's
+groups that authorized its operator when it was queued. Before every row the job runner checks
+that the job's module is still enabled and that one of those groups is still allowed for the
+module. If not - or if the job carries no such record, or either setting cannot be read - the row
+is refused, recorded as Failed with the reason, and audited; the rows after it are refused the
+same way. This re-reads the app's settings, not the operator's Windows group membership.
 
 ### Session Revalidation
 
