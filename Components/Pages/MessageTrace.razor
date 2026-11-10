@@ -663,6 +663,8 @@
             return;
         }
 
+        operatorPrincipal = user;
+
         // The Negotiate token carries no mail, email, or UPN claim - only the account name and
         // SIDs - so the address has to be looked up. The SID is the key, never the account name:
         // see docs/OperatorEmailResolution-Plan.md ("Why the SID"). Read it the same way
@@ -1276,10 +1278,15 @@
         }
     }
 
+    // The principal this page was authorized for, kept for the snapshot a detail-export job carries:
+    // the runner has no principal, so it re-checks that snapshot before every message.
+    private System.Security.Claims.ClaimsPrincipal? operatorPrincipal;
+    [Inject] private SectionAccessService SectionAccess { get; set; } = default!;
+
     private Task EmailSelectedDetails()
     {
         var messages = SelectedMessages();
-        if (messages.Count == 0)
+        if (messages.Count == 0 || operatorPrincipal is null)
             return Task.CompletedTask;
         if (messages.Count > MessageTraceDetailReport.EmailMax)
         {
@@ -1340,6 +1347,8 @@
                 SubmittedByDisplay = currentUser,
                 SubmittedIp = clientIpAddress,
                 Ticket = TicketPresence.Sanitize(ticketNumber),
+                AuthSnapshotJson = ExchangeAdminWeb.Services.Jobs.JobAuthorizationSnapshot.Capture(
+                    operatorPrincipal, "MessageTrace", SectionAccess.GetGroupsForSection("MessageTrace")).ToJson(),
                 PayloadJson = System.Text.Json.JsonSerializer.Serialize(payload),
                 SubmittedAtUtc = DateTime.UtcNow,
             };

@@ -41,6 +41,8 @@ internal sealed class JobAuthorizationStores : IDisposable
 
     public JobAuthorization Authorization { get; }
 
+    public SectionAccessService Sections { get; }
+
     public JobAuthorizationStores(string moduleId, string section)
     {
         _moduleId = moduleId;
@@ -54,10 +56,11 @@ internal sealed class JobAuthorizationStores : IDisposable
         _sections.SaveAll(new Dictionary<string, string[]> { [section] = [GroupSid] });
         _enablement = TestConfigStore.CreateModuleEnablement(_temp.Path);
         _enablement.SaveAll(Enabled(true));
+        Sections = new SectionAccessService(config, NullLogger<SectionAccessService>.Instance, env, catalog, _sections);
         Authorization = new JobAuthorization(
             catalog,
             new ModuleEnablementService(catalog, env, moduleConfig, _enablement, config, NullLogger<ModuleEnablementService>.Instance),
-            new SectionAccessService(config, NullLogger<SectionAccessService>.Instance, env, catalog, _sections),
+            Sections,
             NullLogger<JobAuthorization>.Instance);
     }
 
