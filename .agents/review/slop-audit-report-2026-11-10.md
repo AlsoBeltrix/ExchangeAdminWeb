@@ -11,7 +11,7 @@ Nothing was built or run by any of the three; all findings are from reading. No 
 The inventory holds: Gemini re-counted every headline number and confirmed all five verdict points (one understated).
 The auditors' "no new confirmed behavioural defect" does not hold: Gemini confirmed nine defects from the two reports
 and claims four more the auditors missed, two of them HIGH. Those four are one model's reading and are NOT yet
-verified by anyone else.
+verified by anyone else. UPDATE (round 1 triage): three of the four are admitted, one declined - see the triage section.
 
 ## Confirmed by Gemini (auditor finding, reviewer agrees)
 
@@ -35,14 +35,81 @@ verified by anyone else.
 - "Invented cmdlet `Complete-MigrationUser`": wrong; the cmdlet exists.
 - "The three OData escapers behave identically": wrong; see new claim 4.
 
-## Claimed by Gemini only - NOT verified (candidates, not findings)
+## Gemini's four new claims - assessed by the orchestrator against the code (round 1 triage)
 
-| # | Sev claimed | Claim | Where | Caution |
-|---|---|---|---|---|
-| G1 | HIGH | Protected-principal resolution runs `Get-ADUser` with no `-Server`, so only one domain is searched; a synced user in another domain of the forest with no mailbox resolves NotFound and is treated as cloud-only, skipping SID, group, OU and pattern rules. Also: a primary address skips the bind-by-SID path that an alias takes | `ProtectedPrincipalService.cs:1570-1575, 861-945` | The rev-abc slices (2026-11-05..09) reworked forest scope and runtime discovery; Gemini may have read one path and not the one that serves it. Must be traced before it is believed |
-| G2 | HIGH | M365 Groups protection check returns "allow" for a blank identity (remove member/owner with empty UPN and mail), and checks the raw typed string before Graph resolution, so a typed Entra object id for a mailbox-less synced user is not protected | `M365GroupManagementService.cs:202-205, 256-270, 306-311, 403-411`, `M365GroupManagement.razor:734-746` | Sibling fix exists in `GroupManagementService` (gmn-1/gmn-6); whether Graph can return a member with both fields empty is unverified |
-| G3 | MEDIUM | Account Lockout fetches credentials and queries AD before the logoff-policy and ticket checks; every early refusal is marked Executed and mails the administrator as a failed execution | `AccountLockoutRemediationService.cs:151-189, 227-269, 324-342, 1157-1173` | Extends the observation the rev-j1 agent left alone on 2026-11-09 |
-| G4 | LOW | M365 Groups and Risky Users percent-encode the whole OData filter, the form `IntuneDeviceService.cs:672` records as a shipped defect (200 with an empty result) | `M365GroupManagementService.cs:74, 353`, `RiskyUsersService.cs:113` | If true these searches would return nothing today; live behaviour says otherwise or nobody noticed |
+Each was traced by reading the cited lines and the paths around them at master 769c422e. Nothing was run.
+
+### G1 - protected-principal resolution by address reads one domain: ACCEPTED, split in two
+
+Evidence. `ProtectedPrincipalService.ResolveViaActiveDirectory` (`:1560-1575`) runs `Get-ADUser -LDAPFilter ... -Credential`
+with no `-Server`, so it reads the default domain only. The global catalog is used only by the read by SID
+(`:1318-1392`, `FindObjectsBySidAsync`, `BindBySidAsync`). `ResolveWithExchangeFallbackAsync` (`:856-960`) reaches the
+SID bind only in the alias branch (`:887`).
+
+- **G1a, MEDIUM, wrong refusal (fail-closed).** Target: a synced user whose account is in another domain of the forest,
+  typed by its PRIMARY address. AD by address: NotFound. Exchange: synced recipient, same address. Code falls to `:941-945`
+  "directories disagree, failing closed" - Unavailable, refused. The same user typed by an alias is bound by SID at the
+  global catalog and resolves. So the primary address of an out-of-domain user is refused by every module that uses the
+  fallback resolve. Not a bypass. The comment at `:878-884` explains why the branch is on ExistsOnPrem; nothing explains
+  why the SID bind is inside the alias test, and `ResolveExchangeTargetAsync` (`:994-1029`) binds by SID in both cases.
+- **G1b, HIGH, protection not applied (fail-open by absence).** Target: a synced user in another domain of the forest
+  with NO Exchange recipient (no mailbox, not a mail user). AD by address: NotFound. Exchange: no recipient. `:869-875`
+  returns NotFound. The cloud-user callers then build an unresolved principal with no SID, DN or sAMAccountName
+  (`CloudPasswordReset.razor:697-705`, `MfaReset.razor:442-450`, and the M365 Groups gate at
+  `M365GroupManagementService.cs:226` skips the check entirely when nothing resolved), so no user-SID, group, OU or
+  pattern rule can match and the write proceeds. Precondition is real but narrow: more than one domain in the forest AND
+  the target outside the domain the lookup defaults to AND no Exchange recipient object. It is HIGH because the only thing
+  that makes it safe today is the shape of this forest and of who has mailboxes, which Architectural Invariant 7 forbids
+  as a safety argument. The modules that reach this path hold the target's Graph object, and Graph reports its
+  on-premises SID; the SID source (`IOnPremisesSidSource`) already exists and is not consulted on this path.
+
+Gemini's wording "aud-a2c address-spoofing gap still open" is NOT accepted: the rev-b4 comment at `:890-896` and the
+NotAnswered refusal at `:898-904` close it for the alias branch, and the same-address branch refuses.
+
+### G2 - M365 Groups protection gate: ACCEPTED at MEDIUM, narrower than claimed
+
+Evidence. `M365GroupManagementService.CheckProtectedAsync` `:204-205`: a blank identity returns "proceed". `:226`:
+when resolution returns NotFound (`resolved == null`) the gate returns "proceed" with no `CheckAsync` at all, so not even
+the legacy exclusions by Entra id or address are consulted - the sibling pages at least check an unresolved principal.
+`RemoveDirectoryObjectAsync` `:403-409` checks `identityForCheck` (a UPN or mail string) and deletes `objectId`: the
+object checked and the object written are named by different values, the class aud-a2b closed for Exchange writes.
+`ResolveDirectoryObjectIdAsync` `:310-311` accepts a typed GUID as the object id after the gate ran on the string.
+
+Narrowing. A member with both UPN and mail empty is a non-user object (device, service principal), which no protected
+row can name, so the blank-identity remove is fail-open in form more than in reach. A typed Entra object id is resolved
+by Exchange when the user has a recipient object. What remains reachable is G1b's population (no recipient) plus any
+caller that passes an empty string. Fail-open on blank is still a Known Failure Class 3 violation regardless of reach.
+One fix serves G1b and G2: bind the Graph object the write will touch to its on-premises SID and check that.
+
+### G3 - Account Lockout order of checks and refusal mail: ACCEPTED IN PART at LOW
+
+Evidence. `EmptyLogoffResult(message, execute)` (`:1157`) sets `Executed` from the REQUEST flag, and
+`NotifyLogoffAdminAsync` (`:1171`) mails whenever it is true. So an execute request refused for a missing ticket
+(`:324-328`), a denied logoff policy (`:333-342`), corrupt config or missing credentials mails the administrators as a
+failed execution with zero machines. Discovery, the credential fetch and `Get-ADComputer` (`:151`, `:242`, `:252`) run
+before the ticket and logoff-policy checks.
+
+Not accepted: "unauthorized pre-check side effects". Those reads run after the access-policy check (`:227`) and are what
+that policy grants; the dry run performs the same reads. The defects are (1) cheap refusals placed after directory work,
+and (2) `Executed` meaning "was asked to execute", which makes a refusal read as a failed logoff in the admin mail.
+Whether a refused execute should mail at all is an owner question, not a bug. This is the item the rev-j1 agent left
+alone on 2026-11-09.
+
+### G4 - whole-filter OData encoding: DECLINED as a defect; kept as debt
+
+Evidence. `M365GroupManagementService.cs:75, :353` and `RiskyUsersService.cs:113` percent-encode the whole filter;
+`IntuneDeviceService.cs:672-678` and Defender encode only the value and record that the whole-filter form returned an
+empty array on that endpoint. The inconsistency is real (three shapes for one job - already a copied-pattern item).
+The predicted failure is not established: percent-encoded parentheses, commas and quotes in a query string are valid
+and are decoded by the server, M365 group search and the Risky Users filter are in routine use and return rows, and
+the Intune note describes one endpoint. A claim that these calls return nothing needs a failing call to show, and the
+live behaviour contradicts it. Listed for one live check (group search by a name with a space and an apostrophe).
+
+### Effect on the verdict
+
+Admitted from the Gemini-only set: G1a (MEDIUM), G1b (HIGH), G2 (MEDIUM), G3 (LOW). Declined: G4. With the nine
+confirmed above, the audit stands at 13 admitted defects: 1 high, 5 medium, 7 low. None has a finding record or a fix
+yet; that is the plan's first section, pending the round-2 review of this triage.
 
 ## Slop (not defects) - all counts re-measured by Gemini
 
@@ -72,4 +139,5 @@ factories (churn for no gain), mass-stripping finding IDs from comments (fix onl
 
 ## Open
 
-G1-G4 need an independent trace before they are admitted or declined. No second outside reviewer has run.
+Round 2: this triage goes back to Gemini to confirm or dispute the G1-G4 rulings. No second outside reviewer exists
+(codex gateway shut down). No finding records are opened until round 2 returns.
