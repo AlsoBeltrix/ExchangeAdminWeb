@@ -140,6 +140,22 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
     }
 
     [Fact]
+    public async Task MfaReset_ACloudOnlyUserNobodyElseKnows_IsCheckedWithItsObjectId_SoALegacyExclusionByObjectIdRefuses()
+    {
+        // The unresolved principal the page used to build carried no object id, so an exclusion listed by it never matched.
+        _h.GraphUsersByUpn[FarUpn] = FarObjectId;
+        _h.GraphSids[FarObjectId] = null;
+        _h.GraphSyncFlags[FarObjectId] = false;
+        _h.ModuleConfig.SaveModuleConfig("MailboxPermissions", new Dictionary<string, string> { ["ExcludedUsers"] = FarObjectId });
+        var page = MfaPage();
+
+        await (Task)page.GetType().GetMethod("ExecuteReset", PrivateInstance)!.Invoke(page, null)!;
+
+        Assert.Equal("This user is a protected principal. MFA reset is not permitted.", MfaMessage(page));
+        Assert.Equal($"Protected principal (directory-unresolved) - matched rules: LegacyExclusion:{FarObjectId}", RefusalError());
+    }
+
+    [Fact]
     public void CloudPasswordReset_ChecksTheAccountByTheObjectIdGraphRead()
     {
         using var run = new CloudPasswordResetPageRun(new StandInForest("a.example.test", "b.example.test"));
