@@ -49,7 +49,7 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label class="form-label">Email Address</label>
-                        <input type="email" class="form-control" @bind="singleEmail" placeholder="user@example.com" disabled="@isLoading" />
+                        <input type="email" class="form-control" @bind="singleEmail" @bind:event="oninput" placeholder="user@example.com" disabled="@isLoading" />
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Migration Direction</label>
@@ -60,7 +60,7 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                        <input type="text" class="form-control" @bind="singleTicketNumber" @bind:event="oninput" placeholder="INC0000000" disabled="@isLoading" required />
                     </div>
                 </div>
 
@@ -234,7 +234,7 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                        <input type="text" class="form-control" @bind="bulkTicketNumber" @bind:event="oninput" placeholder="INC0000000" disabled="@isLoading" required />
                     </div>
                 </div>
 
