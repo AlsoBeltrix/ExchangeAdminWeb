@@ -309,6 +309,8 @@ Reset user MFA authentication methods via Microsoft Graph API.
 - Lists all registered authentication methods for a user (phone, FIDO2, authenticator app, etc.)
 - Confirmation step before deletion
 - Deletes all non-password authentication methods in one operation
+- Before the reset, the user is read from Graph and the protected-principal check is of that object (see "Entra
+  users" under Security & Compliance)
 - **Requires:** Separate Graph app registration with `UserAuthenticationMethod.ReadWrite.All` application permission (per-module registration pattern)
 - Section access key: `MfaReset`
 
@@ -373,6 +375,9 @@ Create, modify, and delete Microsoft 365 groups via Graph API.
   not a UPN - a guest's own address, or a member's alias - is looked up by `mail` and
   `proxyAddresses` and must match exactly one user: none reads "not found" naming the address,
   several refuse with the count (sweep-d item 30)
+- Each user added or removed as a member or owner is checked for protection by the object id the write names - an
+  add resolves it first (see "Entra users" under Security & Compliance); an object Graph holds no user for, such as a
+  service principal owner, has no user to protect; a blank entry is refused
 - **Requires:** Graph app registration with `Group.ReadWrite.All` permission, and
   `User.Read.All` to resolve a typed name or address to its object id
 - Section access key: `M365GroupManagement`
@@ -522,10 +527,9 @@ Review and act on Microsoft Entra ID Protection risky users via Microsoft Graph 
   - **Account was breached** -- Graph's `confirmCompromised`. Raises the user to high
     risk; their sign-in is blocked or forced to reset their password, immediately
 - A ticket number is required before any remediation action runs
-- A protected-principal check runs before every write, using the two-branch model
-  (resolved and unresolved) and the risky user's Entra object id, since risky users
-  are cloud identities with no on-prem AD object; the `ProtectedServicer:RiskyUsers`
-  override applies on both branches
+- A protected-principal check runs before every write, on the risky user's Entra object
+  id (see "Entra users" under Security & Compliance); the `ProtectedServicer:RiskyUsers`
+  override applies
 - Every remediation action produces a named per-user outcome and an admin
   notification
 - Reads are audited but never alert-emailed (owner ruling 2026-08-31): a triage
@@ -784,6 +788,12 @@ sign-in logs, and the answer says how far it can be trusted.
     protection check of a synced recipient addressed by an alias Active Directory does not hold (Blocked Senders
     included) - never re-resolved by its address, which another account could carry. Cloud-only mailboxes
     do not need it; a synced mailbox Graph reports no SID for is checked by its address and logged ("bound by address")
+  - **Entra users** - MFA Reset, Risky Users, Intune Devices (the device's primary user), Microsoft 365 group members
+    and owners, Cloud Password Reset - are checked by the object id the write touches: Graph is asked for that user's
+    on-premises SID with the Graph Directory Read Credential, and the account holding it is checked in whichever domain
+    of the forest holds it. A cloud-only user is checked by its address and object id. While the credential is empty or
+    Graph cannot be read, or Graph reports the user synced but gives no SID, every such write is refused as
+    unavailable, cloud-only users included
   - A dynamic distribution group is checked against the members Exchange Online last calculated for it - Exchange
     refreshes them about every 24 hours, and within about two hours of a change to the group's filter - so a recipient
     its filter matches only since then is not compared. One Exchange reports no member of is refused as incomplete,
