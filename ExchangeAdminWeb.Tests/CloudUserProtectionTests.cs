@@ -33,7 +33,9 @@ public sealed class CloudUserProtectionTests : IDisposable
             rid: SelfGrantDirectoryStandIn.DomainUsersRid);
         _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
         {
-            Dn = "OU=Staff," + SelfGrantDirectoryStandIn.OtherDomainDn, Class = "organizationalUnit", Guid = StaffOuGuid,
+            Dn = "OU=Staff," + SelfGrantDirectoryStandIn.OtherDomainDn,
+            Class = "organizationalUnit",
+            Guid = StaffOuGuid,
         });
         _far = _h.Forest.AddUser("far", upn: FarUpn, domainDn: SelfGrantDirectoryStandIn.OtherDomainDn, domainSid: FabrikamSid);
         _h.GraphSids[FarObjectId] = _far.Sid;
@@ -225,7 +227,10 @@ public sealed class CloudUserProtectionTests : IDisposable
     {
         _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry
         {
-            Dn = "CN=twin,OU=Staff," + SelfGrantDirectoryStandIn.DomainDn, Class = "user", Sam = "twin", Sid = _far.Sid,
+            Dn = "CN=twin,OU=Staff," + SelfGrantDirectoryStandIn.DomainDn,
+            Class = "user",
+            Sam = "twin",
+            Sid = _far.Sid,
         });
         var protection = Protection(SomeoneElseProtected());
 

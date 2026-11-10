@@ -104,7 +104,10 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
         }));
         var device = new IntuneDevice
         {
-            Id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", DeviceName = "LAPTOP-0042", UserPrincipalName = FarUpn, UserId = FarObjectId,
+            Id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+            DeviceName = "LAPTOP-0042",
+            UserPrincipalName = FarUpn,
+            UserId = FarObjectId,
         };
         page.GetType().GetMethod("BeginAction", PrivateInstance)!.Invoke(page, [device, IntuneDeviceAction.Retire]);
         SetField(page, "actionTicket", "INC0042");
@@ -202,7 +205,10 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
         }));
         var device = new IntuneDevice
         {
-            Id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", DeviceName = "LAPTOP-0042", UserPrincipalName = FarUpn, UserId = FarObjectId,
+            Id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+            DeviceName = "LAPTOP-0042",
+            UserPrincipalName = FarUpn,
+            UserId = FarObjectId,
         };
         page.GetType().GetMethod("BeginAction", PrivateInstance)!.Invoke(page, [device, IntuneDeviceAction.Retire]);
         SetField(page, "actionTicket", "INC0042");
