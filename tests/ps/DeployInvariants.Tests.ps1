@@ -740,6 +740,15 @@ Describe 'deploy.ps1' {
         $defaults['PublishPath'] | Should -Be 'D:\inetpub\ExchangeAdminWebDev'
     }
 
+    It 'reads every parameter it accepts' {
+        # A parameter that is declared and never read is taken from an operator and ignored.
+        $read = $s.Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true) |
+            Where-Object { $_.Parent -isnot [System.Management.Automation.Language.ParameterAst] } |
+            ForEach-Object { $_.VariablePath.UserPath }
+        $unread = @($s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Where-Object { $_ -notin $read })
+        $unread | Should -BeNullOrEmpty -Because 'a parameter nothing reads is accepted and silently ignored'
+    }
+
     It 'refuses a fresh install without explicit consent (incident fix #6)' {
         $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'ConfirmFreshInstall'
         $s.Text | Should -Match '-not \$isUpgrade -and -not \$Force -and -not \$ConfirmFreshInstall' `

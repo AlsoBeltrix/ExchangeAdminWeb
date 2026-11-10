@@ -28,7 +28,6 @@ param(
     [string]$PathBase,
     [string]$PublicBaseUrl,
     [string]$CloudTargetDomain,
-    [string]$HybridEndpoint      = "hybrid1",
 
     [switch]$Force,
     [switch]$ConfirmFreshInstall,
