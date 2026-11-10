@@ -92,6 +92,31 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
     }
 
     [Fact]
+    public async Task IntuneDevices_RefusesTheProtectedPrimaryUserInTheOtherDomain_BeforeTheWrite()
+    {
+        var writes = 0;
+        var page = new Components.Pages.IntuneDevices();
+        InjectCommon(page);
+        Inject(page, "IntuneDeviceService", new IntuneDeviceService(() =>
+        {
+            Interlocked.Increment(ref writes);
+            return Task.FromResult<GraphTokenClient?>(null);
+        }));
+        var device = new IntuneDevice
+        {
+            Id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", DeviceName = "LAPTOP-0042", UserPrincipalName = FarUpn, UserId = FarObjectId,
+        };
+        page.GetType().GetMethod("BeginAction", PrivateInstance)!.Invoke(page, [device, IntuneDeviceAction.Retire]);
+        SetField(page, "actionTicket", "INC0042");
+
+        await (Task)page.GetType().GetMethod("ExecuteActionAsync", PrivateInstance)!.Invoke(page, [device, IntuneDeviceAction.Retire])!;
+
+        Assert.Equal(0, writes);
+        Assert.StartsWith("The primary user of this device is a protected principal.", Outcome(page, "deviceOutcomes", device.Id));
+        Assert.Equal($"Protected principal - matched rules: User:{FarUpn}", RefusalError());
+    }
+
+    [Fact]
     public async Task RiskyUsers_GraphNotAnswered_RefusesAsUnavailable_BeforeTheWrite()
     {
         _h.GraphSids.Remove(FarObjectId);
@@ -111,6 +136,32 @@ public sealed class CloudUserProtectionCallerTests : IDisposable
         Assert.Equal(0, writes);
         Assert.Equal("Protection check unavailable.", Outcome(page, "rowOutcomes", FarObjectId));
         Assert.Equal("Protection check unavailable. - blocked", RefusalError());
+    }
+
+    [Fact]
+    public async Task IntuneDevices_GraphNotAnswered_RefusesAsUnavailable_BeforeTheWrite()
+    {
+        _h.GraphSids.Remove(FarObjectId);
+        var writes = 0;
+        var page = new Components.Pages.IntuneDevices();
+        InjectCommon(page);
+        Inject(page, "IntuneDeviceService", new IntuneDeviceService(() =>
+        {
+            Interlocked.Increment(ref writes);
+            return Task.FromResult<GraphTokenClient?>(null);
+        }));
+        var device = new IntuneDevice
+        {
+            Id = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", DeviceName = "LAPTOP-0042", UserPrincipalName = FarUpn, UserId = FarObjectId,
+        };
+        page.GetType().GetMethod("BeginAction", PrivateInstance)!.Invoke(page, [device, IntuneDeviceAction.Retire]);
+        SetField(page, "actionTicket", "INC0042");
+
+        await (Task)page.GetType().GetMethod("ExecuteActionAsync", PrivateInstance)!.Invoke(page, [device, IntuneDeviceAction.Retire])!;
+
+        Assert.Equal(0, writes);
+        Assert.Equal("Protection check unavailable for the device's primary user.", Outcome(page, "deviceOutcomes", device.Id));
+        Assert.Equal("Protection check unavailable for the device's primary user. - blocked", RefusalError());
     }
 
     // ----- fixtures -----

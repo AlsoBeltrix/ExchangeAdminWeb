@@ -61,9 +61,6 @@ public sealed class ProtectionCheckCallSiteTests
             "_protectedPrincipals.BeginCheck(user)", "_protectedPrincipals.ResolveWithExchangeFallbackAsync(user)" },
         { "Services/AccountLockoutRemediationService.cs", "internal async Task<AccountLogoffResult> RunLogoffAsync(",
             "DirectoryReadOperation.Begin()", "await GuardTargetUsersAsync(" },
-        // S12 Intune Devices: the device's primary user - resolved and checked, or checked unresolved.
-        { "Components/Pages/IntuneDevices.razor", "private async Task ExecuteActionAsync(IntuneDevice device, IntuneDeviceAction? confirmed)",
-            "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },
         // S13 MFA Reset: the user's resolution and its check, or the unresolved check.
         { "Components/Pages/MfaReset.razor", "private async Task ExecuteReset()",
             "ProtectedPrincipalService.BeginCheck(upn)", "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn)" },

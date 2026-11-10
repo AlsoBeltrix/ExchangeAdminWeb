@@ -733,9 +733,6 @@
         notifyPrimaryUser = false;
     }
 
-    private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
-        ProtectedPrincipalServicing.NoteFor(Servicers, user, ServicerModuleId, matchedRules, qualifier);
-
     private static Dictionary<string, object?>? ServicedExtra(string? note) =>
         ProtectedPrincipalServicing.Extra(note);
 
@@ -1066,13 +1063,9 @@
 
             // 3. Protected-principal check on the device's PRIMARY USER, BEFORE the write and never
             //    after it (T4). A device is not a principal, but wiping the CEO's laptop is exactly
-            //    the harm the rule exists for, and the guard binds to the target of the write.
-            //
-            //    Intune devices belong to CLOUD identities, so an unresolved directory lookup must
-            //    NOT skip the check: the group, OU and SamAccountName-pattern rules are evaluated
-            //    from an on-premises DN and can never match a cloud-only principal, which is
-            //    protected by the protected USER rows or not at all (Constitution, Protected
-            //    Principals, final bullet). That skip is the defect MfaReset shipped before 1.1.0.
+            //    the harm the rule exists for, and the guard binds to the target of the write. The
+            //    user is resolved by its Entra object id, so a synced user's account is checked by its
+            //    on-premises SID in whatever domain holds it.
             try
             {
                 if (string.IsNullOrWhiteSpace(upn))
@@ -1087,81 +1080,26 @@
                 }
                 else
                 {
-                    using var directoryCheck = ProtectedPrincipalService.BeginCheck(upn); var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn); // kd-88: one check - one credential fetch, one timing line - for the resolution and the rules
-                    if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+                    var protection = await ProtectedPrincipalServicing.ForCloudUserAsync(
+                        ProtectedPrincipalService, Servicers, device.UserId, upn, authState.User, ServicerModuleId);
+                    if (!protection.Allowed)
                     {
-                        var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                            ? "The device's primary user is ambiguous - the identity matches multiple directory users."
-                            : "Protection check unavailable for the device's primary user.";
-                        Refuse(reason, $"{reason} - blocked");
+                        var reason = protection.Refusal switch
+                        {
+                            ProtectedPrincipalServicing.CloudUserRefusal.Ambiguous => "The device's primary user is ambiguous - the identity matches multiple directory users.",
+                            ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed => $"Protection check failed: {protection.FailReason}",
+                            ProtectedPrincipalServicing.CloudUserRefusal.Protected => $"The primary user of this device is a protected principal. {ActionLabel(action)} is not permitted.",
+                            _ => "Protection check unavailable for the device's primary user.",
+                        };
+                        Refuse(reason, protection.Refusal switch
+                        {
+                            ProtectedPrincipalServicing.CloudUserRefusal.CheckFailed => reason,
+                            ProtectedPrincipalServicing.CloudUserRefusal.Protected => protection.ProtectedAuditDetail,
+                            _ => $"{reason} - blocked",
+                        });
                         return;
                     }
-
-                    if (resolved != null)
-                    {
-                        var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
-                        if (protectionCheck.CheckFailed)
-                        {
-                            Refuse($"Protection check failed: {protectionCheck.Reason}",
-                                $"Protection check failed: {protectionCheck.Reason}");
-                            return;
-                        }
-                        if (protectionCheck.IsProtected)
-                        {
-                            // An authorised servicer may proceed; everyone else is refused.
-                            // Protection is evaluated first and never weakened - this only decides
-                            // whether THIS operator may act on a target already known protected.
-                            servicedAuditDetail = ServicerNoteFor(authState.User, protectionCheck.MatchedRules);
-                            if (servicedAuditDetail is null)
-                            {
-                                Refuse($"The primary user of this device is a protected principal. {ActionLabel(action)} is not permitted.",
-                                    $"Protected principal - matched rules: {string.Join(", ", protectionCheck.MatchedRules)}");
-                                return;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Unresolved is NOT "nothing to protect". The protected USER rows are checked
-                        // against the raw identity, and the one improvement over the MfaReset shape
-                        // this copies: the managedDevice carries userId, the Entra object id of the
-                        // primary user, and ProtectedPrincipalService.MatchesIdentity compares
-                        // EntraObjectId against every protected USER row - so populating it makes
-                        // object-id-based protection genuinely effective for a cloud-only user.
-                        var unresolved = new ResolvedDirectoryPrincipal(
-                            Source: "IntuneDevices-Unresolved",
-                            DisplayName: string.IsNullOrWhiteSpace(device.UserDisplayName) ? upn : device.UserDisplayName,
-                            UserPrincipalName: upn,
-                            SamAccountName: null,
-                            PrimarySmtpAddress: upn.Contains('@') ? upn : null,
-                            DistinguishedName: null,
-                            ObjectGuid: null,
-                            EntraObjectId: string.IsNullOrWhiteSpace(device.UserId) ? null : device.UserId);
-
-                        var unresolvedCheck = await ProtectedPrincipalService.CheckAsync(unresolved);
-                        if (unresolvedCheck.CheckFailed)
-                        {
-                            Refuse($"Protection check failed: {unresolvedCheck.Reason}",
-                                $"Protection check failed: {unresolvedCheck.Reason}");
-                            return;
-                        }
-                        if (unresolvedCheck.IsProtected)
-                        {
-                            // Both branches honour the servicer grant, or a cloud-only protected
-                            // identity becomes the one case a servicer cannot service - precisely
-                            // this module's population.
-                            servicedAuditDetail = ServicerNoteFor(authState.User, unresolvedCheck.MatchedRules, "directory-unresolved");
-                            if (servicedAuditDetail is null)
-                            {
-                                Refuse($"The primary user of this device is a protected principal. {ActionLabel(action)} is not permitted.",
-                                    $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}");
-                                return;
-                            }
-                        }
-
-                        Logger.LogInformation(
-                            "No such recipient in Active Directory or Exchange Online for {Upn}; protected user rows matched neither the raw identity nor its Entra object id - proceeding", upn);
-                    }
+                    servicedAuditDetail = protection.ServicedNote;
                 }
             }
             catch (Exception ex)

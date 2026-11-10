@@ -1489,8 +1489,7 @@ public static class ProgressRegistry
             new("ExecuteActionAsync",
                 [
                     "ServiceNow.ValidateTicketAsync(",
-                    "ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(",
-                    "ProtectedPrincipalService.CheckAsync(",
+                    "ProtectedPrincipalServicing.ForCloudUserAsync(",
                     "PerformActionAsync(",
                     "RemoveEntraObjectAsync(",
                     "NotifyPrimaryUserAsync(",
@@ -1505,16 +1504,11 @@ public static class ProgressRegistry
                 + "scope admin-email latency out. The Begin already dominated everything - it "
                 + "opens above the try, so the authorization, ticket and protection refusals were "
                 + "covered - so the fix is the closing end alone: the Complete moved below both "
-                + "sends. SEVEN calls are named, which is every remote call in the handler's own "
+                + "sends. SIX calls are named, which is every remote call in the handler's own "
                 + "body, and each was measured by reading the callee rather than inferred from "
                 + "its shape. ServiceNow.ValidateTicketAsync is the OPENING pin: an HttpClient GET "
                 + "against the ServiceNow table API, and the first call here that leaves the "
-                + "machine. ResolveWithExchangeFallbackAsync is the 10-15 second Exchange round "
-                + "trip BlockedSenders.ConfirmUnblock and OutOfOffice.SetOof both name, and is the "
-                + "slowest thing the operator waits on. CheckAsync is named at BOTH its "
-                + "occurrences, the resolved and the directory-unresolved branch, and is remote "
-                + "CONDITIONALLY: it answers from the config store unless protected GROUP rules "
-                + "are configured, in which case CheckGroupMembershipAsync queries the directory. "
+                + "machine. " + CloudUserGateCost
                 + "PerformActionAsync is the Graph write, the operation itself, and is named "
                 + "through the helper because condition 1 needs the fragment in the method's own "
                 + "code - the switch inside it reaches DeleteDeviceAsync, RetireDeviceAsync, "
