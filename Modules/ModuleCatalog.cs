@@ -512,7 +512,7 @@ public sealed class ModuleCatalog
             // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
             // 1.27.4: help sweep - its settings' and permissions' help cut to one sentence each, and four two-sentence button tips
             // to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.27.7",
+            Version = "1.27.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -706,7 +706,7 @@ public sealed class ModuleCatalog
             // by its on-premises SID (ppi S3).
             // 1.1.5: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.1.6: Check Status - a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
-            Version = "1.1.7",
+            Version = "1.1.8",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
