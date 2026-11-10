@@ -21,7 +21,7 @@ verified by anyone else. UPDATE (round 1 triage): three of the four are admitted
 | 2 | MEDIUM | On-prem message trace silently narrows to one server when the transport-server lookup fails or is empty; no warning, no log | `Services/MessageTraceService.cs:570-572, 675, 686-691` |
 | 3 | MEDIUM | Three AD `-Filter` strings built by quote-doubling; `$name` in a group name expands as a PowerShell variable (the repo's own comment at `SectionAccessGroupDirectory.cs:136` says so). Wrong or no group found | `GroupManagementService.cs:135, 1552`, `ConferenceRoomService.cs:2666` |
 | 4 | LOW | Attribute legend read returns empty on any failure with no log; choices vanish from the editor | `Services/Storage/AttributeEditorRepository.cs:183, 208` |
-| 5 | LOW | Four ticket boxes bind on change, so the gated button stays disabled until blur and the first click is lost | `AdminEventLog.razor:436`, `Migration.razor:63, 237`, `NamedLocations.razor:187` |
+| 5 | LOW | Four ticket boxes bind on change, so the gated button stays disabled until blur and the first click is lost | `AdminEventLog.razor:436`, `Migration.razor:63, 237` (and the email box at `:52` gating the same button), `NamedLocations.razor:187` |
 | 6 | LOW | Migration and Out of Office admin mail uses the mailbox-permission template ("Permission Change Notification", "Affected User: N/A") | `EmailService.cs:82-137`, `Migration.razor:2006, 3402`, `OutOfOffice.razor:562` |
 | 7 | LOW | MFA Reset passes a null Entra object id to the protection check for an unresolved user; a legacy exclusion listed by Entra id is not matched | `MfaReset.razor:442-450` |
 | 8 | LOW | `placeholder="user@analog.com"` in shipped UI (Invariant 7) | `MfaReset.razor:53` |
@@ -55,7 +55,7 @@ SID bind only in the alias branch (`:887`).
 - **G1b, HIGH, protection not applied (fail-open by absence).** Target: a synced user in another domain of the forest
   with NO Exchange recipient (no mailbox, not a mail user). AD by address: NotFound. Exchange: no recipient. `:869-875`
   returns NotFound. The cloud-user callers then build an unresolved principal with no SID, DN or sAMAccountName
-  (`CloudPasswordReset.razor:697-705`, `MfaReset.razor:442-450`, and the M365 Groups gate at
+  (`MfaReset.razor:442-450`, `RiskyUsers.razor:959-969`, `IntuneDevices.razor:1131-1141` - round 2 correction: Cloud Password Reset is NOT affected, `CloudPasswordResetService.cs:401-405` refuses every synced account before any write - and the M365 Groups gate at
   `M365GroupManagementService.cs:226` skips the check entirely when nothing resolved), so no user-SID, group, OU or
   pattern rule can match and the write proceeds. Precondition is real but narrow: more than one domain in the forest AND
   the target outside the domain the lookup defaults to AND no Exchange recipient object. It is HIGH because the only thing
@@ -137,7 +137,18 @@ factories (churn for no gain), mass-stripping finding IDs from comments (fix onl
 5. Shared ticket, audit-refusal and notification pieces; delete the 46 unwired items; archive implemented plans and
    closed findings; cut state.md.
 
+## Round 2 (Gemini, 2026-11-10, at 1fd96c8e) - triage confirmed
+
+Result file `audit-review-gemini-r2.result.txt` (gitignored). Gemini re-traced each ruling and AGREES with all five:
+G1a MEDIUM, G1b HIGH, G2 MEDIUM, G3 LOW, G4 declined as a defect and kept as debt (it could not show a failing call;
+`CloudSignInService.cs:237` uses the whole-filter form on `/users` deliberately). It found no path that resolves G1a
+(no default `-Server`, no session default parameter, no referral) and confirmed no caller reads the on-premises SID
+from Graph on the not-found path. Tally confirmed: 13 admitted defects - 1 high, 5 medium, 7 low. Two corrections,
+both checked against the files and applied above: Cloud Password Reset is not in G1b's reach (it refuses synced
+accounts first) while Risky Users and Intune Devices are; the Migration email box at `:52` has the same bind-on-change
+defect as the ticket box beside it.
+
 ## Open
 
-Round 2: this triage goes back to Gemini to confirm or dispute the G1-G4 rulings. No second outside reviewer exists
-(codex gateway shut down). No finding records are opened until round 2 returns.
+No disputes remain between the orchestrator and the reviewer. No second outside reviewer exists (codex gateway shut
+down). Finding records and fixes follow the plan: `docs/SharedPiecesAndSlop-Plan.md`.
