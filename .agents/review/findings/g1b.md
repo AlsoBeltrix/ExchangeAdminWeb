@@ -6,7 +6,7 @@ Users and Intune Devices then checked a stand-in principal with no SID, DN or sA
 pattern rule could match, and the write went ahead. The only thing keeping it safe was the shape of one forest and of
 who has a mailbox, which Architectural Invariant 7 forbids as a safety argument. Report 2 bug 8 (MFA Reset's stand-in
 carried a null Entra object id) is closed here too.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at adfb2a89 (2026-11-10) on guard proof; master gates green (8937 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-1-cloud-user-protection` (worktree `D:\source\ExchangeAdminWeb-wt\p0-1`, from master 6758e796)
 **Commit**: 5725b83b, 4b589d26 (shared gate), da6fdc42 (Risky Users), 2aa05d21 (Intune Devices), 7511b091 and b9d5ac91
 (MFA Reset), 9bea9590 (Cloud Password Reset), f0da22cc (help), 49f86af3 (versions) | **Implementer**: Claude (supervised agent)

@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0, slice 0.1.
+Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0; slice 0.1 merged at adfb2a89, slice 0.2 next.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),
@@ -204,12 +204,12 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #4 | Attribute legend read returns empty on any failure with no log | open |
 | #5 | Four ticket boxes (and the Migration email box) bind on change | open |
 | #6 | Migration and Out of Office admin mail uses the mailbox-permission template | open |
-| #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done on branch 5725b83b..b9d5ac91 |
+| #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
 | #8 | Environment address as a placeholder in MFA Reset | open |
 | #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
 | G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | open |
-| G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done on branch 5725b83b..b9d5ac91 |
-| G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done on branch 5725b83b..b9d5ac91 |
+| G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
+| G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done, merged adfb2a89 |
 | G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | open |
 | A1 | `TicketNumberInput.razor` | open |
 | A2 | `AuthorizationCheck.razor` | open |
@@ -259,7 +259,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | A46 | `tools/test-plan-bulk-csv.md` | open |
 | B1 | Ticket box and its gate | open |
 | B2 | Audit rows: refusal shape and result values | open |
-| B3 | Protected-principal check for a cloud (Graph) user | done on branch 5725b83b..b9d5ac91 |
+| B3 | Protected-principal check for a cloud (Graph) user | done, merged adfb2a89 |
 | B4 | Authorization of a queued job when it runs | open |
 | B5 | Admin and user notifications | open |
 | B6 | Operation trace scopes | open |

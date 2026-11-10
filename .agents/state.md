@@ -8,6 +8,19 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - plan slice 0.1 merged (adfb2a89): one protection check for Entra users; slice 0.2 next
+
+`docs/SharedPiecesAndSlop-Plan.md` slice 0.1 (g1b HIGH, g2 MEDIUM, bug 8, pattern B3) is on master at adfb2a89, not
+pushed, not deployed. MFA Reset, Risky Users, Intune Devices, M365 Groups and Cloud Password Reset now share
+`ProtectedPrincipalServicing.ForCloudUserAsync` / `ProtectedPrincipalService.ResolveCloudUserAsync`, which binds the
+account holding the Entra user's on-premises SID at the global catalog. Base 2.36.3. Master gates: 8937 xUnit, 19
+warnings, format/diff-check/ASCII clean. Owner ruling in the slice (decisions 2026-11-10): a not-synced user whose
+SID no account holds proceeds as cloud-only. Deploy prerequisite: all five modules now need the Graph Directory Read
+Credential filled in; when empty every such write is refused "Protection check unavailable". Dev check list is in
+`.agents/review/findings/g1b.md`. Open housekeeping for the owner: `stash@{0}` ("WIP on
+fix/p0-1-cloud-user-protection: 5725b83b") is an obsolete leftover of the slice agent; dropping it needs a go.
+Next: slice 0.2 (bind by SID for the primary-address branch) on a Fable 5.2 agent.
+
 ### 2026-11-10 - audit reviewed twice by Gemini, triage agreed; plan drafted, awaiting owner approval
 
 Combined report `.agents/review/slop-audit-report-2026-11-10.md`: 13 admitted defects (1 high, 5 medium, 7 low), none
