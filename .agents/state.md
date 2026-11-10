@@ -16,7 +16,7 @@ unresolved principal with no SID by MFA Reset, Risky Users, Intune Devices, and 
 Round 1: Gemini confirmed 9 audit defects, struck 5 claims, raised 4 new. Orchestrator traced the 4: G1 split and
 accepted, G2 and G3 accepted (narrowed), G4 declined. Round 2: Gemini agreed with all five rulings; two corrections
 applied. Codex did not review (corporate gateway shut down). Plan drafted: `docs/SharedPiecesAndSlop-Plan.md`
-(Status: Draft). NO CODE CHANGES are authorised until the owner approves it; approval covers phases 0-2, later phases
+(Status: Approved 2026-11-10, owner "approved": phases 0-2 authorised; slice 0.1 dispatched in worktree `p0-1`); later phases
 need a go each. Owner runs agy himself: `! bash ~/g2.sh`-style one-line wrappers only (machines.md).
 
 ### 2026-11-10 - two audits written; both reviewers blocked; owner rulings recorded

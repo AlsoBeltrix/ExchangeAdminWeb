@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Draft 2026-11-10 - awaiting owner approval. Nothing in it is authorised until then.
+Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0, slice 0.1.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),
