@@ -194,8 +194,99 @@ Asked one at a time, each when its slice is next.
 ## 8. Ledger
 
 Kept in this section as slices land: one row per audit item (13 defects; A1-A46; B1-B17; slop categories 1-13) with
-status `open`, `done <commit>`, or `declined <reason>`. Seeded from the three evidence files by the first slice of
-phase 0; not copied here now, because the evidence files are the source and a copy would drift before work starts.
+status `open`, `done <commit>`, or `declined <reason>`. Names are one line each; the evidence files hold the evidence.
+
+| Item | Name | Status |
+|---|---|---|
+| #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | open |
+| #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | open |
+| #3 | Three AD `-Filter` strings built by quote-doubling | open |
+| #4 | Attribute legend read returns empty on any failure with no log | open |
+| #5 | Four ticket boxes (and the Migration email box) bind on change | open |
+| #6 | Migration and Out of Office admin mail uses the mailbox-permission template | open |
+| #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done on branch 5725b83b..b9d5ac91 |
+| #8 | Environment address as a placeholder in MFA Reset | open |
+| #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
+| G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | open |
+| G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done on branch 5725b83b..b9d5ac91 |
+| G2 | M365 Groups gate: blank identity and NotFound proceed unchecked; remove checks a string and deletes an id | done on branch 5725b83b..b9d5ac91 |
+| G3 | Account Lockout: cheap refusals after directory work; `Executed` means "asked to execute" | open |
+| A1 | `TicketNumberInput.razor` | open |
+| A2 | `AuthorizationCheck.razor` | open |
+| A3 | `"GroupPolicy"` authorization policy | open |
+| A4 | `PermissionType`, `PermissionAction` enums | open |
+| A5 | `RoomTypeDefinition`, `CalendarPermissionEntry` | open |
+| A6 | `IExoRecipientCommands`, `PooledExoCommands` | open |
+| A7 | `NamedLocationsService.GetByIdAsync` | open |
+| A8 | `BulkJobProcessorRegistry.IsRegistered` | open |
+| A9 | `BulkJobService.IsStalled` | open |
+| A10 | `AuthorizationGroupInventory.GetConsultedSids` | open |
+| A11 | `BulkJobService.GetRecentJobsBySubmitter` | open |
+| A12 | `ProtectedPrincipalService.MatchesDnToProtectedGroup` | open |
+| A13 | `ProtectedPrincipalService.ResolveDirectoryPrincipalAsync` | open |
+| A14 | `ADDirectorySearchService.SearchUsers` | open |
+| A15 | `MigrationReportStore.DeleteAll` | open |
+| A16 | `ModuleAdminService.GetUnusableGrants` | open |
+| A17 | `ModuleAdminService.IsModuleAdminForAny` | open |
+| A18 | `AdminPageDirtyState.ClearSection` | open |
+| A19 | `ModuleAdminRepository.GetForModule` | open |
+| A20 | `SectionAccessService.GetSectionAccess` | open |
+| A21 | `LicensingUpdatesService.ParseCsv` | open |
+| A22 | `AttributeEditorRepository.TryReadAllowlist` | open |
+| A23 | `ADAttributeEditorService.PreviewAsync` | open |
+| A24 | `AuditFirstMerge.Merge` | open |
+| A25 | `PermissionValidator.IsUserExcludedAsync` | open |
+| A26 | `ADAttributeEditorService.IsAllowlistCorrupt` | open |
+| A27 | `AdSiteSubnetMap.FindSite` | open |
+| A28 | `IActivityHandle.AsProgress` | open |
+| A29 | Test-seeding seams (five) | open (plan section 3: to be declined by the owner) |
+| A30 | `Comms10kService._config` | open |
+| A31 | `EmergencyDisableService._env` | open |
+| A32 | `GroupManagementService._moduleConfig` | open |
+| A33 | `M365GroupManagementService._audit`, `_operationTrace` | open |
+| A34 | `ProtectedPrincipalService._env` | open |
+| A35 | `RiskyUsersService._logger` | open |
+| A36 | `ServiceHealthService._logger` | open |
+| A37 | `ADAttributeEditor.razor` unused `OperationTrace` inject | open |
+| A38 | `AdminEventLog.razor` unused `Config` inject | open |
+| A39 | `Home.razor` unused `AuthorizationService`, `Navigation` injects | open |
+| A40 | Legacy appsettings fallback keys (eight) | open |
+| A41 | `deploy.ps1 -HybridEndpoint` | open |
+| A42 | Unread PowerShell function parameters | open |
+| A43 | `ModulePermission.Name` | open |
+| A44 | `ConfigFieldType.AdUser` | open |
+| A45 | Route `/message-trace` | open |
+| A46 | `tools/test-plan-bulk-csv.md` | open |
+| B1 | Ticket box and its gate | open |
+| B2 | Audit rows: refusal shape and result values | open |
+| B3 | Protected-principal check for a cloud (Graph) user | done on branch 5725b83b..b9d5ac91 |
+| B4 | Authorization of a queued job when it runs | open |
+| B5 | Admin and user notifications | open |
+| B6 | Operation trace scopes | open |
+| B7 | Graph client and secret setup | open |
+| B8 | PSCredential from a vault secret | open |
+| B9 | Importing the ActiveDirectory module | open |
+| B10 | Bulk upload limits, CSV reading, results | open |
+| B11 | Module config defaults written twice | open |
+| B12 | Typed date and time and its zone | open |
+| B13 | Looking up a Graph user by UPN | open |
+| B14 | Confirm before write | open |
+| B15 | Result banners, errors and "No change" | open |
+| B16 | Identity entry | open |
+| B17 | Verify metadata held beside the catalog | open |
+| S1 | History comments | open |
+| S2 | Defensive code | open |
+| S3 | Over-engineering | open |
+| S4 | Size and sprawl (logic in pages) | open |
+| S5 | Sibling inconsistency | open |
+| S6 | Correctness smells | open |
+| S7 | Hallucination residue | open |
+| S8 | Tests that cannot fail (source scans) | open |
+| S9 | Implementation pins (ClickGate line keys) | open |
+| S10 | PowerShell | open |
+| S11 | Docs and process | open |
+| S12 | User-facing text | open |
+| S13 | Version noise | open |
 
 ## 9. Versions
 
