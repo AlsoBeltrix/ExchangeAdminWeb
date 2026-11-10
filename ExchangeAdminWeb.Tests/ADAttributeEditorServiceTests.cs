@@ -148,6 +148,69 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.True(service.GetLegend().ContainsKey("department"));
     }
 
+    private static readonly EditableAttribute DepartmentChoice =
+        new("department", "Department", "Choice", ["HR"], false, true, null, null, 1);
+
+    private void SeedLegend()
+        => new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).ImportLegendIfMissing(
+            new Dictionary<string, Dictionary<string, ExchangeAdminWeb.Services.Storage.AttributeLegendRow>>
+            {
+                ["department"] = new() { ["IT"] = new("Information Technology", null, null) },
+            });
+
+    private int LegendErrorsLogged()
+        => _logger.ReceivedCalls().Count(c =>
+            c.GetMethodInfo().Name == nameof(ILogger.Log)
+            && c.GetArguments()[0] is LogLevel.Error
+            && (c.GetArguments()[2]?.ToString() ?? "").Contains("legend could not be read", StringComparison.OrdinalIgnoreCase));
+
+    [Fact]
+    public void Legend_ThatCannotBeRead_IsLoggedAndReported_AndTheAttributesOwnChoicesAreStillOffered()
+    {
+        var service = CreateService();
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+        SeedLegend();
+        Assert.Equal(["HR", "IT"], service.GetEffectiveChoices(DepartmentChoice).Order());
+        Assert.False(service.IsLegendUnreadable());
+
+        _attrStore!.Write((connection, transaction) =>
+        {
+            using var drop = connection.CreateCommand();
+            drop.Transaction = transaction;
+            drop.CommandText = "DROP TABLE attribute_legend;";
+            drop.ExecuteNonQuery();
+        }, TestContext.Current.CancellationToken);
+
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+
+        Assert.True(service.IsLegendUnreadable());
+        Assert.Empty(service.GetLegend());
+        Assert.Equal(["HR"], service.GetEffectiveChoices(DepartmentChoice));
+        Assert.Equal("IT", service.GetChoiceDisplayText("department", "IT"));
+        // One failed load, logged once: the readers after it are answered from that load.
+        Assert.Equal(1, LegendErrorsLogged());
+    }
+
+    [Fact]
+    public void Legend_ThatIsEmptyOrPresent_IsNotReportedUnreadable_AndLogsNothing()
+    {
+        var service = CreateService();
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+
+        Assert.Empty(service.GetLegend());
+        Assert.False(service.IsLegendUnreadable());
+
+        SeedLegend();
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+
+        Assert.True(service.GetLegend().ContainsKey("department"));
+        Assert.False(service.IsLegendUnreadable());
+        Assert.Equal("IT - Information Technology", service.GetChoiceDisplayText("department", "IT"));
+        Assert.Equal(0, LegendErrorsLogged());
+    }
+
     private void WriteAllowlistConfig(object config)
     {
         var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });

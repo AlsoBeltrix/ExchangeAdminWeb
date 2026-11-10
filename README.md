@@ -437,6 +437,9 @@ View and edit allowlisted Active Directory attributes for on-premises user accou
   **missing**. **Remove now** takes that one semicolon entry out and keeps the others; removing the last one asks for a
   confirmation, because no search-base boundary will remain: the editor may then search the whole directory
 - Uses Delinea credentials for Active Directory operations
+- Choice attributes take extra choices and their descriptions from the legend in the config database
+  (`attribute_legend`). A legend that cannot be read is logged as an error and the editor says, above the
+  attribute table, that choices are missing; an attribute's own configured choices are still offered
 - **A save is done when it reads back as written.** The re-read before the write, the write and the read-back all go to one
   writable domain controller of the object's domain, located at the time of the save and confirmed by its RootDSE
   (logged) - never a read-only one, whose writes would all be refused. Each value
