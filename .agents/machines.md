@@ -62,6 +62,10 @@ _First recorded 2026-07-21._
   `gemini-4-argon-high` reviewed the 2026-10-20 backlog batch 3, assumed through this CLI. It
   runs headlessly only with `--dangerously-skip-permissions` (owner authorised 2026-10-20):
   print mode soft-denies every tool confirmation regardless of the allow-list.
+  2026-11-10: the Claude Code session cannot start agy with that flag (its permission classifier refuses it) and
+  agy denies its own tools without it, so the owner runs agy. Hand the owner ONE short line - a wrapper script, e.g.
+  `! bash ~/g2.sh` - never a long or multi-line command: the harness hard-wraps pasted lines, and `!` runs bash,
+  not PowerShell.
 
 ### Deploy
 
