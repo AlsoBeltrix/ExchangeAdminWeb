@@ -5,6 +5,14 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - A formerly synced user whose AD account is gone is cloud-only for protection
+
+Owner, on plan slice 0.1's stop item: "so a cloud user that is no longer on-prem is never going to be protected."
+Rule for the shared cloud-user check: when Graph reports the user is not synced but still carries an on-premises
+SID, bind by that SID. One account holds it: check that account. No account holds it: proceed on the cloud-only
+path, as before the slice. Lookup unavailable or ambiguous: refuse. A user Graph reports as synced whose SID no
+account holds is still refused. Follows Constitution line 95 (a cloud-only principal cannot be protected).
+
 ### 2026-11-10 - Implementation agents run on Fable 5.2 from plan slice 0.2 on
 
 Owner, during `docs/SharedPiecesAndSlop-Plan.md` slice 0.1 (running on Opus 5.5): "move to fable 5.2 for all slices
