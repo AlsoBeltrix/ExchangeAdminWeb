@@ -422,7 +422,7 @@ public sealed class ConferenceRoomDirectoryAuditTests : IDisposable
             return Assert.Single(_h.AuditRows(), r => r.GetProperty("action").GetString() == "ConferenceRooms_SetMetadata");
         }
 
-        var processor = new ConferenceRoomBulkProcessor(service, Binder(), _sectionAccess, _h.Enablement, _h.Trace, _h.Audit,
+        var processor = new ConferenceRoomBulkProcessor(service, Binder(), _h.Trace, _h.Audit,
             Substitute.For<EmailService>(_h.Config, NullLogger<EmailService>.Instance), NullLogger<ConferenceRoomBulkProcessor>.Instance,
             Substitute.For<IBulkJobCancelRequests>());
         _bulkRow = await processor.ProcessRowAsync(FinderJob(city), 0, CancellationToken.None);

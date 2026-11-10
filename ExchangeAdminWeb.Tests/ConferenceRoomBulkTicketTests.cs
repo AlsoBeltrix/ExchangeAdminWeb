@@ -188,7 +188,7 @@ public sealed class ConferenceRoomBulkTicketTests : IDisposable
         });
 
         var rooms = new FakeRoomOps();
-        var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, enablement, trace,
+        var processor = new ConferenceRoomBulkProcessor(rooms, gate, trace,
             new AuditService(log, trace), Substitute.For<EmailService>(config, NullLogger<EmailService>.Instance),
             NullLogger<ConferenceRoomBulkProcessor>.Instance, Substitute.For<IBulkJobCancelRequests>());
         return new Fixture(rooms, pp, processor);
