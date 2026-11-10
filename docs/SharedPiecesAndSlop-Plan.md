@@ -206,7 +206,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #5 | Four ticket boxes (and the Migration email box) bind on change | done on branch 91f7f3b5 |
 | #6 | Migration and Out of Office admin mail uses the mailbox-permission template | done on branch 9e422005 |
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
-| #8 | Environment address as a placeholder in MFA Reset | open |
+| #8 | Environment address as a placeholder in MFA Reset | done on branch 23d55c9a |
 | #9 | `deploy.ps1 -HybridEndpoint` accepted and ignored | open |
 | G1a | Synced out-of-domain user typed by its primary address is refused (fallback resolve binds by SID only for an alias) | done, merged 8b0fbb28 |
 | G1b | Synced out-of-domain user with no Exchange recipient: protection rules not applied by the cloud-user modules | done, merged adfb2a89 |
