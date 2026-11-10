@@ -143,7 +143,7 @@ public sealed class ConferenceRoomPageTests : IDisposable
             new JobStoreMigrator(factory).Migrate();
         var store = new BulkJobRepository(factory);
         var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-        var jobs = new BulkJobService(scopes, store, new BulkJobProcessorRegistry([]), _h.Config, NullLogger<BulkJobService>.Instance);
+        var jobs = new BulkJobService(scopes, store, new BulkJobProcessorRegistry([]), new StubJobAuthorization(), _h.Config, NullLogger<BulkJobService>.Instance);
         return (jobs, store);
     }
 

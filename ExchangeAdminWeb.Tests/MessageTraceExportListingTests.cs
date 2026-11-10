@@ -46,7 +46,7 @@ public sealed class MessageTraceExportListingTests : IDisposable
         _jobs = new BulkJobService(
             _provider.GetRequiredService<IServiceScopeFactory>(),
             _repository,
-            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()),
+            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()), new StubJobAuthorization(),
             config,
             NullLogger<BulkJobService>.Instance);
         _store = new MessageTraceExportStore(config);
@@ -232,6 +232,19 @@ public sealed class MessageTraceExportListingTests : IDisposable
         Assert.Equal(MessageTraceExportState.Failed, items[failedId].State);
         Assert.NotEqual(items[expiredId].State, items[failedId].State);
         Assert.False(items[failedId].CanDownload);
+    }
+
+    [Fact]
+    public void ARefusedJob_IsNotProduced_NotExpired()
+    {
+        // A job the runner refused wrote no export. Without its marker the missing file would read
+        // as ordinary retention.
+        var refusedId = SeedExport(message: $"{MessageTraceExportListing.RefusedMarker}: Authorization denied.");
+
+        var item = CreateListing().GetExports().Single(i => i.JobId == refusedId);
+
+        Assert.Equal(MessageTraceExportState.NotProduced, item.State);
+        Assert.False(item.CanDownload);
     }
 
     [Fact]

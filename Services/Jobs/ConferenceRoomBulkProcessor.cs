@@ -78,11 +78,8 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     {
         var payload = Deserialize(job);
         var isFinder = payload.Kind == ConferenceRoomJobPayload.FinderJobType;
-        var target = isFinder
-            ? payload.FinderRows![rowIndex].Email
-            : payload.TypeRows![rowIndex].Email;
+        var (target, actionAudit) = RowIdentity(payload, rowIndex);
         var ticket = job.Ticket ?? "";
-        var actionAudit = isFinder ? "ConferenceRooms_SetMetadata_Bulk" : "ConferenceRooms_SetType_Bulk";
 
         // 1) Off-circuit authorization re-check (option (a)): the submitter's captured claims must
         // still satisfy the section's allowed groups. Fail closed - a job whose snapshot lacks
@@ -106,21 +103,8 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         // kd-7, but a job submitted before that, while ServiceNow was dormant and passed one, can still
         // be queued or persisted, and this is the writer that runs it. Same check as the page
         // (ConferenceRoomService.RequireTicket); the row's audit says nothing was attempted.
-        if (ConferenceRoomService.RequireTicket(job.Ticket) is { } missingTicket)
-        {
-            var refusal = $"Ticket validation failed: {missingTicket.Message}. Nothing was written.";
-            try
-            {
-                _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, actionAudit, target, false, ticket,
-                    errorDetail: refusal, extra: ConferenceRoomService.WithRefusal(null, ConferenceRoomService.TicketRefusalStep));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Audit failed for bulk job {Job} target {Target}", job.Id, target);
-            }
-
-            return Failed(target, refusal);
-        }
+        if (RefuseWithoutTicket(job, actionAudit, target) is { } noTicket)
+            return noTicket;
 
         var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
         var allowed = _sectionAccess.GetGroupsForSection(Section);
@@ -200,6 +184,26 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             });
     }
 
+    public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
+    {
+        var (target, actionAudit) = RowIdentity(Deserialize(job), rowIndex);
+
+        // "The module is off" is true regardless of who submitted the job, and saying so is a
+        // better audit record than "authorization denied".
+        if (refusal == JobRefusal.ModuleDisabled)
+        {
+            Audit(job, actionAudit, target, success: false, job.Ticket ?? "", "Conference Rooms is currently disabled.");
+            return Failed(target, "Conference Rooms is currently disabled.");
+        }
+
+        // A job with no ticket says so before it says its access is gone - the page's order.
+        if (RefuseWithoutTicket(job, actionAudit, target) is { } noTicket)
+            return noTicket;
+
+        Audit(job, actionAudit, target, success: false, job.Ticket ?? "", "Authorization denied (captured snapshot lacks access).");
+        return Failed(target, "Authorization denied.");
+    }
+
     public async Task OnJobCompletedAsync(BulkJob job)
     {
         // Completion admin notification fires from the job (moves the email off the closed circuit).
@@ -252,6 +256,32 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    private static (string Target, string AuditAction) RowIdentity(ConferenceRoomJobPayload payload, int rowIndex) =>
+        payload.Kind == ConferenceRoomJobPayload.FinderJobType
+            ? (payload.FinderRows![rowIndex].Email, "ConferenceRooms_SetMetadata_Bulk")
+            : (payload.TypeRows![rowIndex].Email, "ConferenceRooms_SetType_Bulk");
+
+    // A job with no ticket is refused row by row, with the page's own check, and its audit row says
+    // nothing was attempted. Null when the job carries a ticket.
+    private BulkJobRowOutcome? RefuseWithoutTicket(BulkJob job, string actionAudit, string target)
+    {
+        if (ConferenceRoomService.RequireTicket(job.Ticket) is not { } missingTicket)
+            return null;
+
+        var refusal = $"Ticket validation failed: {missingTicket.Message}. Nothing was written.";
+        try
+        {
+            _audit.LogConferenceRoomAction(job.SubmittedBy, job.SubmittedIp, actionAudit, target, false, job.Ticket ?? "",
+                errorDetail: refusal, extra: ConferenceRoomService.WithRefusal(null, ConferenceRoomService.TicketRefusalStep));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit failed for bulk job {Job} target {Target}", job.Id, target);
+        }
+
+        return Failed(target, refusal);
+    }
 
     private void Audit(BulkJob job, string action, string target, bool success, string ticket,
         string? error = null, Dictionary<string, object?>? newValues = null, ValidatedMailbox? room = null,

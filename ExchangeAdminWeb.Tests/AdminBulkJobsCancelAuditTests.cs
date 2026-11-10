@@ -469,7 +469,7 @@ public sealed class AdminBulkJobsCancelAuditTests : IDisposable
     {
         var store = new BulkJobRepository(factory);
         var scopes = new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
-        return (new BulkJobService(scopes, store, new BulkJobProcessorRegistry([]), _h.Config, NullLogger<BulkJobService>.Instance), store);
+        return (new BulkJobService(scopes, store, new BulkJobProcessorRegistry([]), new StubJobAuthorization(), _h.Config, NullLogger<BulkJobService>.Instance), store);
     }
 
     private Page BuildPage(BulkJobService jobs, bool authorized = true, ILogger<Page>? logger = null)

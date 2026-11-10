@@ -18,6 +18,7 @@ public class BulkJobServiceTests
     {
         public string ModuleId => "Test";
         public int RowsProcessed;
+        public int RowsRefused;
         public int CompletionCalls;
 
         /// <summary>kd-85. The job each completion hook was given - its id and its status - in the order given.</summary>
@@ -61,6 +62,15 @@ public class BulkJobServiceTests
             };
         }
 
+        // A refused 'T' row throws from the refusal itself; any other says why it was refused.
+        public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
+        {
+            Interlocked.Increment(ref RowsRefused);
+            if (job.PayloadJson[rowIndex] == 'T')
+                throw new InvalidOperationException("refusal blew up");
+            return new BulkJobRowOutcome { Target = $"row{rowIndex}@x", Status = BulkJobRowStatus.Failed, Message = $"refused: {refusal}" };
+        }
+
         private static async Task<BulkJobRowOutcome> BlockUntilCancelled(CancellationToken ct, int rowIndex)
         {
             await Task.Delay(Timeout.Infinite, ct);
@@ -88,6 +98,7 @@ public class BulkJobServiceTests
         public readonly TempDir Temp = new();
         public readonly BulkJobRepository Repository;
         public readonly BulkJobService Service;
+        public readonly StubJobAuthorization Authorization = new();
         public readonly ServiceProvider Provider;
         public readonly List<FakeProcessor> CreatedProcessors = new();
 
@@ -130,7 +141,7 @@ public class BulkJobServiceTests
                 .Build();
             Service = new BulkJobService(
                 Provider.GetRequiredService<IServiceScopeFactory>(),
-                Repository, registry, config, logger);
+                Repository, registry, Authorization, config, logger);
         }
 
         public BulkJob NewJob(string id, string payload, string status = "Queued", string moduleId = "Test") => new()
@@ -263,6 +274,71 @@ public class BulkJobServiceTests
         Assert.Equal(3, job.ProcessedRows);
         Assert.Equal(2, job.SuccessCount);
         Assert.Equal(1, job.FailedCount);
+    }
+
+    // -------------------------------------------------------------------------
+    // The authorization check before every row
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task DrainQueue_ARefusedJob_RunsNoRow_AndCountsEveryRowFailed()
+    {
+        using var h = new Harness();
+        h.Authorization.Refusal = JobRefusal.ModuleDisabled;
+        h.Repository.Insert(h.NewJob("j1", "SPS"));
+
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        var job = h.Repository.Get("j1")!;
+        var processor = Assert.Single(h.CreatedProcessors);
+        Assert.Equal(0, processor.RowsProcessed);
+        Assert.Equal(3, processor.RowsRefused);
+        Assert.Equal(BulkJobStatus.Completed, job.Status);
+        Assert.Equal((3, 0, 0, 3), (job.ProcessedRows, job.SuccessCount, job.PartialCount, job.FailedCount));
+        Assert.All(h.Repository.GetRows("j1"), row => Assert.Equal("refused: ModuleDisabled", row.Message));
+        Assert.Equal(1, processor.CompletionCalls);
+    }
+
+    [Fact]
+    public async Task DrainQueue_AJobRefusedAfterItsFirstRow_RunsNoRowAfterIt()
+    {
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("j1", "SSS"));
+        h.Service.JobChanged += id =>
+        {
+            if (h.Repository.Get(id)!.ProcessedRows == 1)
+                h.Authorization.Refusal = JobRefusal.AccessRemoved;
+        };
+
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        var job = h.Repository.Get("j1")!;
+        var processor = Assert.Single(h.CreatedProcessors);
+        Assert.Equal(1, processor.RowsProcessed);
+        Assert.Equal(2, processor.RowsRefused);
+        Assert.Equal((3, 1, 2), (job.ProcessedRows, job.SuccessCount, job.FailedCount));
+        Assert.Equal(["did row 0", "refused: AccessRemoved", "refused: AccessRemoved"], h.Repository.GetRows("j1").Select(row => row.Message));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DrainQueue_ACheckOrARefusalThatThrows_IsAFailedRow_NeverARunOne(bool theCheckThrows)
+    {
+        using var h = new Harness();
+        if (theCheckThrows)
+            h.Authorization.Failure = new InvalidOperationException("check blew up");
+        else
+            h.Authorization.Refusal = JobRefusal.Unverifiable;
+        h.Repository.Insert(h.NewJob("j1", "T"));
+
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        var job = h.Repository.Get("j1")!;
+        Assert.Equal(0, Assert.Single(h.CreatedProcessors).RowsProcessed);
+        Assert.Equal(BulkJobStatus.Completed, job.Status);
+        Assert.Equal((1, 0, 1), (job.ProcessedRows, job.SuccessCount, job.FailedCount));
+        Assert.Equal(theCheckThrows ? "check blew up" : "refusal blew up", Assert.Single(h.Repository.GetRows("j1")).Message);
     }
 
     [Fact]
@@ -848,6 +924,9 @@ public class BulkJobServiceTests
         public int CountRows(BulkJob job) => throw new InvalidOperationException("The processor was built after all.");
 
         public Task<BulkJobRowOutcome> ProcessRowAsync(BulkJob job, int rowIndex, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The processor was built after all.");
+
+        public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal) =>
             throw new InvalidOperationException("The processor was built after all.");
     }
 

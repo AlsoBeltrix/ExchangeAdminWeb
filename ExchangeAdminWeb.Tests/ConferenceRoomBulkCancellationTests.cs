@@ -193,7 +193,7 @@ public sealed class ConferenceRoomBulkCancellationTests : IDisposable
         var provider = services.BuildServiceProvider();
         var registry = new BulkJobProcessorRegistry(
             [new KeyValuePair<string, Type>(ConferenceRoomBulkProcessor.ModuleName, typeof(ConferenceRoomBulkProcessor))]);
-        return new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), _jobs, registry,
+        return new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), _jobs, registry, new StubJobAuthorization(),
             new ConfigurationBuilder().Build(), NullLogger<BulkJobService>.Instance);
     }
 

@@ -396,7 +396,7 @@ public sealed class ConfigValueTests : IDisposable
             ("BulkJobs:RetentionDays", retention));
 
         BulkJobService? runner = null;
-        Assert.Null(Record.Exception(() => runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), config, logger)));
+        Assert.Null(Record.Exception(() => runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), new StubJobAuthorization(), config, logger)));
 
         Assert.Equal(TimeSpan.FromMinutes(5), Field<TimeSpan>(runner!, "_staleHeartbeat"));
         Assert.Equal(25, Field<int>(runner!, "_recentJobLimit"));
@@ -430,7 +430,7 @@ public sealed class ConfigValueTests : IDisposable
             ("BulkJobs:RetentionDays", retention));
 
         BulkJobService? runner = null;
-        Assert.Null(Record.Exception(() => runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), config, logger)));
+        Assert.Null(Record.Exception(() => runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), new StubJobAuthorization(), config, logger)));
 
         Assert.Equal(TimeSpan.FromMinutes(5), Field<TimeSpan>(runner!, "_staleHeartbeat"));
         Assert.Equal(25, Field<int>(runner!, "_recentJobLimit"));
@@ -450,7 +450,7 @@ public sealed class ConfigValueTests : IDisposable
             ("BulkJobs:RecentJobLimit", "1000"),
             ("BulkJobs:RetentionDays", "1"));
 
-        var runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), config, logger);
+        var runner = new BulkJobService(null!, null!, new BulkJobProcessorRegistry([]), new StubJobAuthorization(), config, logger);
 
         Assert.Equal(TimeSpan.FromMinutes(1440), Field<TimeSpan>(runner, "_staleHeartbeat"));
         Assert.Equal(1000, Field<int>(runner, "_recentJobLimit"));

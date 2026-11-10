@@ -332,6 +332,7 @@ public sealed partial class Comms10kRefusalTests
         public TestService Service { get; }
         public SectionAccessService Sections { get; }
         public ModuleEnablementService Enablement { get; }
+        public JobAuthorization Authorization { get; }
         public ExchangeAdminWeb.Services.Storage.SectionAccessRepository SectionRepository { get; }
         public ExchangeAdminWeb.Services.Storage.ModuleEnablementRepository EnablementRepository { get; }
         public Func<Task>? BeforeCredentialResponse { get; set; }
@@ -349,7 +350,7 @@ public sealed partial class Comms10kRefusalTests
                 Path.Combine(_root, "exchangeadmin-jobs.db"));
             new JobStoreMigrator(factory).Migrate();
             var repository = new BulkJobRepository(factory);
-            var queue = new BulkJobService(null!, repository, new BulkJobProcessorRegistry([]), Config,
+            var queue = new BulkJobService(null!, repository, new BulkJobProcessorRegistry([]), new StubJobAuthorization(), Config,
                 NullLogger<BulkJobService>.Instance);
             // Test the real persistence boundary without dispatching a background worker.
             SetField(queue, "_pumpRunning", true);
@@ -375,6 +376,7 @@ public sealed partial class Comms10kRefusalTests
             EnablementRepository.SaveAll(new Dictionary<string, bool> { ["Comms10k"] = true });
             Sections = new SectionAccessService(Config, NullLogger<SectionAccessService>.Instance, env, new ModuleCatalog(), SectionRepository);
             Enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, EnablementRepository, Config, NullLogger<ModuleEnablementService>.Instance);
+            Authorization = new JobAuthorization(new ModuleCatalog(), Enablement, Sections, NullLogger<JobAuthorization>.Instance);
             _log = new JsonlLogService(Config, NullLogger<JsonlLogService>.Instance);
             var trace = new OperationTraceService(Config, _log);
             _audit = new AuditService(_log, trace);

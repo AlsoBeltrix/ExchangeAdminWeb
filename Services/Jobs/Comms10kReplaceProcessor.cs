@@ -104,6 +104,21 @@ public sealed class Comms10kReplaceProcessor : IBulkJobProcessor
         };
     }
 
+    public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        return Refuse(job, Payload(job), Denial(refusal));
+    }
+
+    private static string Denial(JobRefusal refusal) => refusal switch
+    {
+        JobRefusal.SnapshotMissing => "The Comms-10k job authorization snapshot is missing or unreadable.",
+        JobRefusal.SnapshotForAnotherSection => "The job authorization snapshot is not for Comms10k.",
+        JobRefusal.ModuleDisabled => "Comms-10k is currently disabled.",
+        JobRefusal.AccessRemoved => "The group that authorized this Comms-10k job is no longer allowed or section access is unavailable.",
+        _ => "Comms-10k job authorization could not be verified.",
+    };
+
     private async Task<BulkJobRowOutcome> ResolveAsync(BulkJob job, Comms10kReplaceJobPayload payload)
     {
         var target = payload.SourceFileName ?? "uploaded list";

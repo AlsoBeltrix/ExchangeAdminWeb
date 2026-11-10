@@ -254,7 +254,8 @@ public sealed class Comms10kInterruptionTests
             });
             _provider = services.BuildServiceProvider();
             var registry = new BulkJobProcessorRegistry([new(Comms10kReplaceProcessor.ModuleName, typeof(Comms10kReplaceProcessor))]);
-            Runner = new BulkJobService(_provider.GetRequiredService<IServiceScopeFactory>(), Repository, registry, config, NullLogger<BulkJobService>.Instance);
+            Runner = new BulkJobService(_provider.GetRequiredService<IServiceScopeFactory>(), Repository, registry,
+                new JobAuthorization(new ModuleCatalog(), enablement, sections, NullLogger<JobAuthorization>.Instance), config, NullLogger<BulkJobService>.Instance);
         }
 
         public BulkJob Job(bool hasApproval = true) => new()

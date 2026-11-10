@@ -84,7 +84,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var jobs = new BulkJobService(
             _provider.GetRequiredService<IServiceScopeFactory>(),
             repository,
-            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()),
+            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()), new StubJobAuthorization(),
             config,
             NullLogger<BulkJobService>.Instance);
 
@@ -387,7 +387,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
             new BulkJobService(
                 _provider!.GetRequiredService<IServiceScopeFactory>(),
                 f.Repository,
-                new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()),
+                new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()), new StubJobAuthorization(),
                 new ConfigurationBuilder().AddInMemoryCollection(
                     new Dictionary<string, string?> { ["Audit:LogRoot"] = _tempDir }).Build(),
                 NullLogger<BulkJobService>.Instance),
@@ -445,6 +445,143 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var stored = f.Repository.Get(job.Id);
         Assert.DoesNotContain(MessageTraceExportListing.SaveFailedMarker, stored!.Message ?? "",
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -------------------------------------------------------------------------
+    // Through the real runner, over the real authorization check and its stores
+    // -------------------------------------------------------------------------
+
+    private const string Disabled = "Message Analysis is currently disabled.";
+    private const string Denied = "Authorization denied.";
+
+    /// <summary>The real runner over the fixture's job store, its one processor the fixture's.</summary>
+    private BulkJobService Runner(Fixture f, JobAuthorizationStores stores)
+    {
+        var provider = new ServiceCollection().AddScoped(_ => f.Processor).BuildServiceProvider();
+        return new BulkJobService(provider.GetRequiredService<IServiceScopeFactory>(), f.Repository,
+            new BulkJobProcessorRegistry([new(MessageTraceDetailJobProcessor.ModuleName, typeof(MessageTraceDetailJobProcessor))]),
+            stores.Authorization, new ConfigurationBuilder().Build(), NullLogger<BulkJobService>.Instance);
+    }
+
+    private static BulkJob QueuedJob(string? snapshot)
+    {
+        var job = MakeJob("user@contoso.com", Message("m1"), Message("m2"), Message("m3"));
+        return new BulkJob
+        {
+            Id = job.Id,
+            ModuleId = job.ModuleId,
+            JobType = job.JobType,
+            Status = BulkJobStatus.Queued,
+            SubmittedBy = job.SubmittedBy,
+            SubmittedIp = job.SubmittedIp,
+            Ticket = job.Ticket,
+            AuthSnapshotJson = snapshot,
+            PayloadJson = job.PayloadJson,
+            SubmittedAtUtc = job.SubmittedAtUtc,
+        };
+    }
+
+    /// <summary>The one audit row of the job's export: whether it is filed a success, and its error.</summary>
+    private (bool Success, string? Error) ExportAudit()
+    {
+        var row = Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories)
+            .Where(path => path.EndsWith(".jsonl", StringComparison.Ordinal) && !path.EndsWith("_trace.jsonl", StringComparison.Ordinal))
+            .SelectMany(File.ReadAllLines)
+            .Single(line => line.Contains("\"MessageTrace_DetailExport\"", StringComparison.Ordinal));
+        using var document = JsonDocument.Parse(row);
+        return (document.RootElement.GetProperty("result").GetString() == "Success",
+            document.RootElement.TryGetProperty("error", out var error) ? error.GetString() : null);
+    }
+
+    private string[] ExportFiles()
+    {
+        var directory = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
+        return Directory.Exists(directory) ? Directory.GetFiles(directory, "*.csv") : [];
+    }
+
+    private async Task AssertNothingDelivered(Fixture f, BulkJob job, string reason)
+    {
+        Assert.Empty(ExportFiles());
+        await f.Email.DidNotReceiveWithAnyArgs().SendMessageTraceResultAsync(default!, default, default!, default!, default);
+        await f.Email.DidNotReceiveWithAnyArgs().SendMessageTraceFailureAsync(default!, default, default!, default!);
+        var refused = $"{MessageTraceExportListing.RefusedMarker}: {reason}";
+        Assert.Equal(refused, f.Repository.Get(job.Id)!.Message);
+        Assert.Equal((false, $"3 message(s); {refused}"), ExportAudit());
+    }
+
+    [Theory]
+    [InlineData("disabled", Disabled)]
+    [InlineData("access-removed", Denied)]
+    [InlineData("unreadable-enablement", Disabled)]
+    [InlineData("unreadable-sections", Denied)]
+    public async Task Runner_AJobThatMayNoLongerRunAfterItsFirstRow_FetchesNoMore_AndDeliversNothing(string mode, string reason)
+    {
+        using var stores = new JobAuthorizationStores("MessageTrace", "MessageTrace");
+        var f = CreateFixture();
+        var runner = Runner(f, stores);
+        var job = QueuedJob(stores.Snapshot());
+        f.Repository.Insert(job);
+        var taken = false;
+        runner.JobChanged += id =>
+        {
+            if (taken || f.Repository.Get(id)!.ProcessedRows != 1)
+                return;
+            taken = true;
+            if (mode == "disabled") stores.DisableModule();
+            else if (mode == "access-removed") stores.RemoveAccess();
+            else stores.BreakStore(enablement: mode == "unreadable-enablement");
+        };
+
+        await runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = f.Repository.Get(job.Id)!;
+        Assert.True(taken);
+        Assert.Equal(["m1"], f.Details.Fetched);
+        Assert.Equal((BulkJobStatus.Completed, 3, 1, 2), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        Assert.Equal([null, reason, reason], runner.GetRows(job.Id).Select(row => row.Message));
+        await AssertNothingDelivered(f, job, reason);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("{not-json")]
+    [InlineData("{\"Section\":\"Migration\",\"RoleClaims\":[\"S-1-5-21-100-200-300-4001\"],\"AuthorizedGroups\":[\"S-1-5-21-100-200-300-4001\"]}")]
+    public async Task Runner_AJobWithNoUsableSnapshot_IsRefusedOnEveryRow(string? snapshot)
+    {
+        using var stores = new JobAuthorizationStores("MessageTrace", "MessageTrace");
+        var f = CreateFixture();
+        var runner = Runner(f, stores);
+        var job = QueuedJob(snapshot);
+        f.Repository.Insert(job);
+
+        await runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = f.Repository.Get(job.Id)!;
+        Assert.Empty(f.Details.Fetched);
+        Assert.Equal((BulkJobStatus.Completed, 3, 0, 3), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        Assert.All(runner.GetRows(job.Id), row => Assert.Equal(Denied, row.Message));
+        await AssertNothingDelivered(f, job, Denied);
+    }
+
+    [Fact]
+    public async Task Runner_AnAllowedJob_FetchesEveryMessage_AndDeliversTheExport()
+    {
+        using var stores = new JobAuthorizationStores("MessageTrace", "MessageTrace");
+        var f = CreateFixture();
+        var runner = Runner(f, stores);
+        var job = QueuedJob(stores.Snapshot());
+        f.Repository.Insert(job);
+
+        await runner.DrainQueueAsync(TestContext.Current.CancellationToken);
+
+        var done = f.Repository.Get(job.Id)!;
+        Assert.Equal(["m1", "m2", "m3"], f.Details.Fetched);
+        Assert.Equal((BulkJobStatus.Completed, 3, 3, 0), (done.Status, done.ProcessedRows, done.SuccessCount, done.FailedCount));
+        Assert.Null(done.Message);
+        Assert.Single(ExportFiles());
+        await f.Email.Received(1).SendMessageTraceResultAsync(
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "user@contoso.com"), 3, "INC1", "jdoe", Arg.Any<DateTime>());
+        Assert.Equal((true, null), ExportAudit());
     }
 
     [Fact]

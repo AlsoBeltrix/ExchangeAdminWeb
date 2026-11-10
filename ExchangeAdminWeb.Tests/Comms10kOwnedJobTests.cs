@@ -219,7 +219,7 @@ public sealed class Comms10kOwnedJobTests
             Repository = new BulkJobRepository(Factory);
             _provider = new ServiceCollection().AddSingleton(Processor).BuildServiceProvider();
             Service = new BulkJobService(_provider.GetRequiredService<IServiceScopeFactory>(), Repository,
-                new BulkJobProcessorRegistry([new(Module, typeof(CancelProcessor))]),
+                new BulkJobProcessorRegistry([new(Module, typeof(CancelProcessor))]), new StubJobAuthorization(),
                 new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["BulkJobs:RecentJobLimit"] = "1" }).Build(),
                 NullLogger<BulkJobService>.Instance);
         }
@@ -284,6 +284,8 @@ public sealed class Comms10kOwnedJobTests
             catch (OperationCanceledException) { TokenCancelled = cancellationToken.IsCancellationRequested; throw; }
             return new BulkJobRowOutcome { Target = "unused", Status = BulkJobRowStatus.Success };
         }
+        public BulkJobRowOutcome RefuseRow(BulkJob job, int rowIndex, JobRefusal refusal) =>
+            new() { Target = "unused", Status = BulkJobRowStatus.Failed };
         public Task OnJobCompletedAsync(BulkJob job)
         {
             Completions++;
