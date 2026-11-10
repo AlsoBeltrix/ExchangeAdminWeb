@@ -2617,35 +2617,31 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // and the add (aud-a2f), so they resolve the same group. Also reports the group's DN, by which
     // its membership is read (aud-a2i). Assumes the ActiveDirectory module is already imported.
     //
-    // aud-a2k. Found by the list's address and nothing else: the one group whose mail is the
-    // primary SMTP address Exchange holds for the list (listAddress, read with its sync state before
-    // any write). It used to be matched by the list's NAME as displayName or name - the mail clause
-    // compared an address attribute with a name and could never match - so one unrelated group
-    // carrying that name, with the synced group out of the result, was written in its place. Names
-    // are not identities (aud-a2b, aud-a2c, aud-a2d), and Exchange exposes no immutable attribute
-    // tying a synced group to its on-prem object, so the address is the binding. When it finds no
-    // group or several, the refusal names the list and the address searched, and what to put right;
-    // it does not offer a likely-looking group to choose: the data is the operator's to correct, not
-    // the app's to guess at (owner, .agents/decisions.md 2026-10-15).
+    // Found by the list's address and nothing else: the one group whose mail is the primary SMTP
+    // address Exchange holds for the list (listAddress, read with its sync state before any write).
+    // A group that only shares the list's name is not the list's group: names are not identities,
+    // and Exchange exposes no immutable attribute tying a synced group to its on-prem object, so the
+    // address is the binding. It is a value in an LDAP filter, escaped, so it is matched as it stands
+    // whatever characters it holds. When the search finds no group or several, the refusal names the
+    // list and the address searched, and what to put right; it does not offer a likely-looking group
+    // to choose: the data is the operator's to correct, not the app's to guess at.
     //
-    // aud-a2j. Searched in the forest's global catalog, not in one domain. Without -Server,
-    // Get-ADGroup is answered by a domain controller of the domain the cmdlet binds to by default
-    // and sees only that domain's groups, so a room list synced from a group in any other domain of
-    // the forest came back "No on-prem AD group found" and a legitimate row was refused. The
-    // catalog widens what can match, and the exactly-one rule holds across all of it: an address
+    // Searched in the forest's global catalog, not in one domain. Without -Server, Get-ADGroup is
+    // answered by a domain controller of the domain the cmdlet binds to by default and sees only
+    // that domain's groups, so a list synced from a group in any other domain would not be found.
+    // The catalog widens what can match, and the exactly-one rule holds across all of it: an address
     // that a group in each of two domains carries refuses. No catalog refuses too, before any write -
-    // never a fallback to one domain, which is the shape this replaced. The one match is re-read
-    // in its own domain (ReadAdGroupInItsDomain), and that read's objectGUID and DN are what the
-    // membership read and the write use, so the preflight and the add resolve the same object the
-    // same way.
+    // never a fallback to one domain. The one match is re-read in its own domain
+    // (ReadAdGroupInItsDomain), and that read's objectGUID and DN are what the membership read and
+    // the write use, so the preflight and the add resolve the same object the same way.
     //
-    // aud-a2s. Its three steps - the catalog, the search, the re-read - are one call to the preflight
-    // and the add, so it names each in the caller's step, by ref, before running it: a throw from the
-    // search or the re-read reaches the caller's catch, which names the step under way. The catalog's
+    // Its three steps - the catalog, the search, the re-read - are one call to the preflight and the
+    // add, so it names each in the caller's step, by ref, before running it: a throw from the search
+    // or the re-read reaches the caller's catch, which names the step under way. The catalog's
     // failure never throws - ResolveForestGlobalCatalog catches it - and is refused here in words
     // naming it.
     //
-    // aud-a2t. It logs nothing: each caller logs a refusal it returns where that refuses the row, once.
+    // It logs nothing: each caller logs a refusal it returns where that refuses the row, once.
     private static (string? error, string? objectGuid, string? distinguishedName) ResolveAdGroupGuid(PowerShell ps, string roomListName, string? listAddress, PSCredential credential, ref string step)
     {
         // A list Exchange reports no address for has nothing to find its group by. Refused before the
@@ -2661,9 +2657,9 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return ($"The forest's global catalog could not be resolved ({catalogError}), so the on-prem group for room list '{roomListName}' cannot be looked up across the forest. Refusing rather than searching one domain.", null, null);
 
         step = "searching the forest's global catalog for the list's group";
-        var escaped = address.Replace("'", "''");
+        var escaped = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(address);
         ps.AddCommand("Get-ADGroup")
-          .AddParameter("Filter", $"mail -eq '{escaped}'")
+          .AddParameter("LDAPFilter", $"(mail={escaped})")
           .AddParameter("Server", catalog)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");

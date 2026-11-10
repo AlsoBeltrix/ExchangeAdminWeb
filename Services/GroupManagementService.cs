@@ -105,8 +105,8 @@ public class GroupManagementService
 
     public virtual async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
     {
-        // aud-a2y. The refusal names why there is no credential, from the lookup's own answer: it told the operator to
-        // check the secret ID when the ID was set and Delinea returned nothing, or the module's config could not be read.
+        // The refusal names why there is no credential, from the lookup's own answer: no secret ID, an ID Delinea
+        // returned nothing for, or a module configuration that could not be read.
         var lookup = await LookupCredentialsAsync("on-prem AD group search");
         var creds = lookup.Credentials;
         if (creds is null)
@@ -123,16 +123,18 @@ public class GroupManagementService
             ActiveDirectoryModuleImport.Import(ps);
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var escaped = searchTerm.Replace("'", "''");
+            // The term is a value in an LDAP filter, escaped: it is matched as typed, and a * in it is
+            // a character, not a wildcard.
+            var escaped = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(searchTerm);
 
             // Search the whole forest via the global catalog, never just the credential's home
             // domain: without -Server the same filter silently returns one domain's groups and
-            // a bare "Domain Admins" row is ambiguous on its face (owner, 2026-08-31). Null
+            // a bare "Domain Admins" row is ambiguous on its face. Null
             // catalog falls back to the local domain - a degraded search beats a broken one.
             var catalog = ResolveSearchGlobalCatalog(ps, credential);
 
             ps.AddCommand("Get-ADGroup")
-              .AddParameter("Filter", $"Name -like '*{escaped}*' -or SamAccountName -like '*{escaped}*' -or Mail -like '*{escaped}*'")
+              .AddParameter("LDAPFilter", $"(|(name=*{escaped}*)(sAMAccountName=*{escaped}*)(mail=*{escaped}*))")
               .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description", "ManagedBy" })
               .AddParameter("Credential", credential)
               // Fetch wider than we display so ranking sees more than the shown set -
@@ -1547,9 +1549,9 @@ public class GroupManagementService
 
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            var escaped = candidate.Replace("'", "''");
+            var escaped = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(candidate);
             ps.AddCommand("Get-ADGroup")
-              .AddParameter("Filter", $"SamAccountName -eq '{escaped}' -or Name -eq '{escaped}' -or Mail -eq '{escaped}'")
+              .AddParameter("LDAPFilter", $"(|(sAMAccountName={escaped})(name={escaped})(mail={escaped}))")
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "SilentlyContinue");
             var groups = ps.Invoke();
