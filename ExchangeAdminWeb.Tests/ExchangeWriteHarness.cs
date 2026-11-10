@@ -646,6 +646,12 @@ internal sealed class ExchangeWriteHarness : IDisposable
     public int GraphSidReads => Volatile.Read(ref _graphSidReads);
     private int _graphSidReads;
 
+    /// <summary>
+    /// What the stand-in Graph says of an object's sync from on-premises when it reports no SID for it, by object id: true
+    /// synced, false not synced. An object not listed answers with no sync flag.
+    /// </summary>
+    public Hashtable GraphSyncFlags { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
+
     private sealed class StandInSidSource(ExchangeWriteHarness harness) : IOnPremisesSidSource
     {
         public string Name => "Graph";
@@ -657,7 +663,8 @@ internal sealed class ExchangeWriteHarness : IDisposable
                 return Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
             return Task.FromResult(harness.GraphSids[externalDirectoryObjectId] is string sid
                 ? new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid)
-                : new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported));
+                : new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported,
+                    Synced: harness.GraphSyncFlags[externalDirectoryObjectId] as bool?));
         }
     }
 

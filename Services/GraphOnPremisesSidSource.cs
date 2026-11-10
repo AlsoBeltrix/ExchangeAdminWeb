@@ -22,7 +22,12 @@ public enum OnPremisesSidOutcome
 
 /// <summary>One read of a synced recipient's on-premises SID.</summary>
 /// <param name="Reason">For <see cref="OnPremisesSidOutcome.NotAnswered"/>, why - for the log; never a secret.</param>
-public sealed record OnPremisesSidAnswer(OnPremisesSidOutcome Outcome, string? Sid = null, string? Reason = null)
+/// <param name="Synced">
+/// For <see cref="OnPremisesSidOutcome.NoneReported"/>, what Graph says of the object's sync from on-premises: true when
+/// <c>onPremisesSyncEnabled</c> is true; false when it is false or null, which is how Graph reports a cloud-only object;
+/// null when the flag was absent or not a boolean, so the question is unanswered.
+/// </param>
+public sealed record OnPremisesSidAnswer(OnPremisesSidOutcome Outcome, string? Sid = null, string? Reason = null, bool? Synced = null)
 {
     public static OnPremisesSidAnswer NotAnswered(string reason) => new(OnPremisesSidOutcome.NotAnswered, Reason: reason);
 }
@@ -127,7 +132,7 @@ public sealed class GraphOnPremisesSidSource : IOnPremisesSidSource
                 if (!doc.RootElement.TryGetProperty("onPremisesSecurityIdentifier", out var value)
                     || value.ValueKind == JsonValueKind.Null)
                 {
-                    return new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported);
+                    return NoneReported(doc.RootElement);
                 }
 
                 if (value.ValueKind != JsonValueKind.String)
@@ -135,7 +140,7 @@ public sealed class GraphOnPremisesSidSource : IOnPremisesSidSource
 
                 var text = value.GetString();
                 if (string.IsNullOrWhiteSpace(text))
-                    return new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported);
+                    return NoneReported(doc.RootElement);
 
                 var sid = ProtectedPrincipalIdEntry.CanonicalSid(text);
                 if (sid is null)
@@ -155,6 +160,16 @@ public sealed class GraphOnPremisesSidSource : IOnPremisesSidSource
     }
 
     private OnPremisesSidAnswer NotAnswered(string reason) => OnPremisesSidAnswer.NotAnswered(reason);
+
+    private static OnPremisesSidAnswer NoneReported(JsonElement user) =>
+        new(OnPremisesSidOutcome.NoneReported, Synced: !user.TryGetProperty("onPremisesSyncEnabled", out var flag)
+            ? null
+            : flag.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False or JsonValueKind.Null => false,
+                _ => null,
+            });
 
     /// <summary>
     /// The deploy's check list confirms the attribute is populated in this tenant from this one line: the first SID Graph

@@ -130,6 +130,24 @@ public sealed class GraphOnPremisesSidSourceTests : IDisposable
     }
 
     [Theory]
+    [InlineData("""{"onPremisesSecurityIdentifier":null,"onPremisesSyncEnabled":true}""", true)]
+    [InlineData("""{"onPremisesSecurityIdentifier":null,"onPremisesSyncEnabled":false}""", false)]
+    [InlineData("""{"onPremisesSecurityIdentifier":null,"onPremisesSyncEnabled":null}""", false)]
+    [InlineData("""{"onPremisesSecurityIdentifier":null}""", null)]
+    [InlineData("""{"onPremisesSecurityIdentifier":null,"onPremisesSyncEnabled":"yes"}""", null)]
+    public async Task AnAnswerWithNoSid_SaysWhetherGraphReportsTheObjectSynced(string body, bool? synced)
+    {
+        // Null or false is how Graph reports a cloud-only object; a flag that is absent or not a boolean is no answer.
+        SetGraphSecret("4242");
+        _graph.Answer = (HttpStatusCode.OK, body);
+
+        var answer = await Source().ReadAsync(ObjectId);
+
+        Assert.Equal(OnPremisesSidOutcome.NoneReported, answer.Outcome);
+        Assert.Equal(synced, answer.Synced);
+    }
+
+    [Theory]
     [InlineData(HttpStatusCode.TooManyRequests, "{}")]
     [InlineData(HttpStatusCode.InternalServerError, "{}")]
     [InlineData(HttpStatusCode.NotFound, "{}")]

@@ -63,6 +63,79 @@ public static class ProtectedPrincipalServicing
             ? null
             : new Dictionary<string, object?> { [AuditKey] = servicedNote };
 
+    /// <summary>Why <see cref="ForCloudUserAsync"/> refused, or <see cref="None"/> when it did not.</summary>
+    public enum CloudUserRefusal
+    {
+        None,
+
+        /// <summary>The user's on-premises account could not be told apart from another.</summary>
+        Ambiguous,
+
+        /// <summary>What protection depends on could not be read: refused, never read as "not protected".</summary>
+        Unavailable,
+
+        /// <summary>The rules could not be evaluated; <see cref="CloudUserDecision.FailReason"/> says why.</summary>
+        CheckFailed,
+
+        /// <summary>The user is protected and this operator may not service it.</summary>
+        Protected,
+    }
+
+    /// <summary>
+    /// Outcome of <see cref="ForCloudUserAsync"/>. The caller words the refusal for its audience; <paramref name="FailReason"/>
+    /// is the check's own reason for <see cref="CloudUserRefusal.CheckFailed"/>. <paramref name="MatchedRules"/> are the rules
+    /// that matched a protected user; <paramref name="Unresolved"/> is true when neither Active Directory nor Exchange knew the
+    /// user, so it was checked by its UPN and object id alone. <paramref name="ServicedNote"/> is set only when an authorised
+    /// servicer overrode the refusal and must reach the audit call's extra.
+    /// </summary>
+    public sealed record CloudUserDecision(
+        CloudUserRefusal Refusal, string? FailReason, IReadOnlyList<string> MatchedRules, bool Unresolved, string? ServicedNote)
+    {
+        public bool Allowed => Refusal == CloudUserRefusal.None;
+    }
+
+    /// <summary>
+    /// The one protected-principal gate for a write to an Entra user: may <paramref name="actingUser"/> change the user
+    /// whose object id is <paramref name="entraObjectId"/>? <paramref name="userPrincipalName"/> names it.
+    /// </summary>
+    /// <remarks>
+    /// The user is resolved by its object id (<see cref="ProtectedPrincipalService.ResolveCloudUserAsync"/>), so the object
+    /// checked is the object the write touches, and a synced user's account is found by its on-premises SID in whatever domain
+    /// holds it. Fail closed: a blank id or UPN, an ambiguous or unavailable resolution and a failed check each refuse. A
+    /// protected user proceeds only for an authorised servicer, with the note naming the group and the rules it overrode -
+    /// qualified "directory-unresolved" when the user was checked by UPN and object id alone. One timed check, one
+    /// directory-read credential fetch. An exception is the caller's to catch: it says nothing about the user, so it refuses.
+    /// </remarks>
+    public static async Task<CloudUserDecision> ForCloudUserAsync(
+        ProtectedPrincipalService protection,
+        ProtectedPrincipalServicerService servicers,
+        string? entraObjectId,
+        string? userPrincipalName,
+        ClaimsPrincipal? actingUser,
+        string moduleId)
+    {
+        if (string.IsNullOrWhiteSpace(entraObjectId) || string.IsNullOrWhiteSpace(userPrincipalName))
+            return new(CloudUserRefusal.Unavailable, null, [], false, null);
+
+        using var check = protection.BeginCheck(userPrincipalName);
+        var (principal, status, unresolved) = await protection.ResolveCloudUserAsync(entraObjectId.Trim(), userPrincipalName);
+        if (status == ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            return new(CloudUserRefusal.Ambiguous, null, [], false, null);
+        if (status != ProtectedPrincipalService.ResolutionStatus.Resolved || principal is null)
+            return new(CloudUserRefusal.Unavailable, null, [], false, null);
+
+        var result = await protection.CheckAsync(principal);
+        if (result.CheckFailed)
+            return new(CloudUserRefusal.CheckFailed, result.Reason, [], unresolved, null);
+        if (!result.IsProtected)
+            return new(CloudUserRefusal.None, null, [], unresolved, null);
+
+        var note = NoteFor(servicers, actingUser, moduleId, result.MatchedRules, unresolved ? "directory-unresolved" : null);
+        return note is null
+            ? new(CloudUserRefusal.Protected, null, result.MatchedRules, unresolved, null)
+            : new(CloudUserRefusal.None, null, result.MatchedRules, unresolved, note);
+    }
+
     /// <summary>
     /// Outcome of the shared write-target gate (docs/ProtectedGroupWriteTarget-Plan.md T1).
     /// <paramref name="Allowed"/> false with a null <paramref name="FailReason"/> means the
