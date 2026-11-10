@@ -106,6 +106,7 @@ public sealed class JobSnapshotAtQueueTests : IDisposable
 
     [Theory]
     [InlineData("MessageTrace", "MessageTrace")]
+    [InlineData("Migration", "MigrationCheck")]
     public void TheJobAnAuthorizedOperatorQueues_CarriesASnapshotTheRunnerAccepts(string module, string section)
     {
         using var stores = new JobAuthorizationStores(module, section);
@@ -121,6 +122,7 @@ public sealed class JobSnapshotAtQueueTests : IDisposable
 
     [Theory]
     [InlineData("MessageTrace", "MessageTrace")]
+    [InlineData("Migration", "MigrationCheck")]
     public void TheJobOfAnOperatorNoAllowedGroupAuthorizes_CarriesASnapshotTheRunnerRefuses(string module, string section)
     {
         using var stores = new JobAuthorizationStores(module, section);
@@ -134,6 +136,7 @@ public sealed class JobSnapshotAtQueueTests : IDisposable
 
     [Theory]
     [InlineData("MessageTrace", "MessageTrace")]
+    [InlineData("Migration", "MigrationCheck")]
     public void APageThatHoldsNoAuthorizedPrincipal_QueuesNothing(string module, string section)
     {
         using var stores = new JobAuthorizationStores(module, section);
