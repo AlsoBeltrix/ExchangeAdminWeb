@@ -614,7 +614,7 @@ public sealed class ModuleCatalog
             // waited its turn and ran first. A read already sent finishes. The leave prompt says so.
             // 1.8.8: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
             // 1.8.9: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.8.11",
+            Version = "1.8.12",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
