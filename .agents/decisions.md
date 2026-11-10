@@ -5,6 +5,13 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - Implementation agents run on Fable 5.2 from plan slice 0.2 on
+
+Owner, during `docs/SharedPiecesAndSlop-Plan.md` slice 0.1 (running on Opus 5.5): "move to fable 5.2 for all slices
+after this." Supersedes the standing "one Opus 5.5 agent at a time" as to the MODEL only: still one agent at a time,
+one compile at a time, supervisor thin. Slice 0.1 finishes on Opus 5.5. Log the model per slice in
+`.agents/token-log.md` as before.
+
 ### 2026-11-10 - ServiceNow ticket validation: possible later, required by nothing now
 
 The audit (`.agents/review/shared-and-unwired-audit-2026-11-10.md`, B1) found the 2026-08-31 decision (ServiceNow
