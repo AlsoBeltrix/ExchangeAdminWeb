@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0; slices 0.1 (adfb2a89) and 0.2 (8b0fbb28) merged, slice 0.3 next.
+Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0; slices 0.1 (adfb2a89) and 0.2 (8b0fbb28) merged, slice 0.3 next. Dev deploys held until the work is done (decisions 2026-11-10); the go for phases 3 to 5 is an open owner question.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),

@@ -5,6 +5,14 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - Dev deployments are held until the SharedPiecesAndSlop work is done
+
+Owner: "I want to hold dev deployments until all the work is done". No dev deploy is asked for between slices or
+phases of `docs/SharedPiecesAndSlop-Plan.md`; each slice's dev check is kept in its finding record and run together
+at the end. This removes the "seen on dev" half of the plan's gate for phases 3, 4 and 5. OPEN (asked 2026-11-10):
+whether those phases still each need an owner go, or are authorised now. Until answered, only phases 0 to 2 are
+authorised, as before.
+
 ### 2026-11-10 - A formerly synced user whose AD account is gone is cloud-only for protection
 
 Owner, on plan slice 0.1's stop item, after the two outcomes were laid out: "okay, proceed" (earlier: "so a cloud
