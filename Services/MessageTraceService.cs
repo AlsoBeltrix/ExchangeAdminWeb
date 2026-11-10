@@ -543,7 +543,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             return response;
         }
 
-        var creds = await GetModuleCredentialsAsync("on-prem message tracking", cancellationToken); // kd-59: the search's token, so a cancel stops the vault request
+        var creds = await GetModuleCredentialsAsync("on-prem message tracking", cancellationToken); // the search's token, so a cancel stops the vault request
         if (creds is null)
         {
             response.Error = "On-prem message tracking failed: Message Analysis DelineaSecretId is not configured or credentials are unavailable.";
@@ -553,23 +553,34 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         return await ThrottledAsync(() => Task.Run(() =>
         {
             var result = new MessageTraceResponse();
-            using var runspace = OpenOnPremRunspace(cancellationToken); // kd-58 A10 (E7): a look before the open and once it has opened
+            using var runspace = OpenOnPremRunspace(cancellationToken); // a look before the open and once it has opened
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
             try
             {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // kd-58 A10 (E7): before each attempt and through each pause
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain, cancellationToken: cancellationToken); // before each attempt and through each pause
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
                 var normalizedMessageId = NormalizeMessageId(messageId);
                 var messageIdValues = MessageIdFilterValues(messageId);
                 if (messageIdValues.Length == 0)
                     messageIdValues = [string.Empty];
 
-                cancellationToken.ThrowIfCancellationRequested(); // kd-58 A10 (E7): a look before each read
-                var servers = GetOnPremTransportServers(ps, session);
+                cancellationToken.ThrowIfCancellationRequested(); // a look before each read
+                var servers = GetOnPremTransportServers(ps, session, out var noServersBecause);
                 if (servers.Length == 0)
+                {
+                    // With no list of transport servers the search still runs, against the connected server
+                    // alone - and the result says so, since messages other servers handled are not in it.
                     servers = [string.Empty];
+                    if (noServersBecause is not null)
+                    {
+                        _logger.LogWarning(
+                            "The on-prem transport servers could not be listed ({Reason}); message tracking searched the connected server only",
+                            noServersBecause);
+                        result.Warnings.Add("On-prem message tracking searched one server only: the list of transport servers could not be read. Messages handled by other servers may be missing.");
+                    }
+                }
 
                 var tracking = new List<PSObject>();
                 var queryFailures = new List<string>();
@@ -578,7 +589,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                 {
                     foreach (var messageIdValue in messageIdValues)
                     {
-                        cancellationToken.ThrowIfCancellationRequested(); // kd-58 A10 (E7): a look before each read, outside its catch
+                        cancellationToken.ThrowIfCancellationRequested(); // a look before each read, outside its catch
                         try
                         {
                             tracking.AddRange(InvokeOnPremMessageTrackingQuery(
@@ -651,7 +662,7 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                     result.Warnings.Add($"Some on-prem message tracking queries failed ({queryFailures.Count}): {sample}");
                 }
             }
-            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // kd-58 A10: the search's cancel is no failed search
+            catch (Exception ex) when (!(ex is OperationCanceledException && cancellationToken.IsCancellationRequested)) // the search's cancel is no failed search
             {
                 result.Error = $"On-prem message tracking failed: {ex.Message}";
                 _logger.LogError(ex, "Error running on-prem message tracking log search");
@@ -662,11 +673,17 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             }
 
             return result;
-        }), _onPremThrottle, cancellationToken); // kd-58 A10 (E7): the wait for one of the server's two slots takes the token
+        }), _onPremThrottle, cancellationToken); // the wait for one of the server's two slots takes the token
     }
 
-    private static string[] GetOnPremTransportServers(PowerShell ps, object? session)
+    /// <summary>
+    /// The names of the on-premises transport servers, each of which holds its own tracking log. Empty
+    /// when the lookup fails or names none, with <paramref name="noServersBecause"/> saying which: the
+    /// failure's text, or "no servers returned". With no session there is nothing to ask and no reason.
+    /// </summary>
+    private static string[] GetOnPremTransportServers(PowerShell ps, object? session, out string? noServersBecause)
     {
+        noServersBecause = null;
         if (session is null)
             return Array.Empty<string>();
 
@@ -677,16 +694,20 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
               .AddParameter("Session", session)
               .AddParameter("ScriptBlock", script);
 
-            return InvokeOptional(ps)
+            var servers = InvokeOptional(ps)
                 .Select(r => r.BaseObject?.ToString() ?? r.ToString())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            if (servers.Length == 0)
+                noServersBecause = "no servers returned";
+            return servers;
         }
-        catch
+        catch (Exception ex)
         {
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
+            noServersBecause = ex.Message;
             return Array.Empty<string>();
         }
     }

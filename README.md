@@ -53,7 +53,7 @@ Check migration eligibility and create move batches between Exchange Online and 
 
 Analyze message headers and search mail flow across Exchange Online and on-premises transport logs.
 
-- Trace queries both Exchange Online message trace and on-premises message tracking logs
+- Trace queries both Exchange Online message trace and on-premises message tracking logs. On-premises, every transport server's log is searched. If the list of transport servers cannot be read or names none, the search still runs against the connected server alone, the result carries the warning "On-prem message tracking searched one server only", and the application log has the reason. Like any warning on a trace, it files that search's audit row as Failed with the warning as its detail
 - **Any range up to 90 days is searched in the app and rendered on the page.** Exchange Online accepts a maximum span of 10 days per call, so a wider range is split into contiguous windows and queried in sequence; on-premises is queried once for the whole range. The operator never sees the limit. 90 days is the hard ceiling because that is Exchange Online's retention
 - If one window fails, the whole Exchange Online result is reported as failed rather than returned with an invisible hole in the middle of the range
 - Optional ticket number is recorded in audit logs only; it does not call ServiceNow
