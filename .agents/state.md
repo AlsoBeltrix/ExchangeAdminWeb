@@ -8,6 +8,19 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - all phases authorised, one dev deploy at the end; slice 0.3 merged (5896bae9)
+
+Owner: "go for all phases. once all are done, I'll do a dev deployment." (decisions 2026-11-10). Slice 0.3
+(job-runner-auth MEDIUM, pattern B4) is on master at 5896bae9, not pushed, not deployed: `IJobAuthorization.Check`
+runs in `BulkJobService.ExecuteRowsAsync` before every row of every job; Message Trace and Migration enqueuers save
+a snapshot; Comms-10k and Conference Rooms lost their private copies. Base 2.36.5. Master gates: 8997 xUnit, 19
+warnings, format/diff-check/ASCII clean. Supervisor triage: four stricter Conference Rooms corner cases accepted
+(unreachable through the app, listed in the finding). OPEN, to fix as slice 0.3b: the completion hook of a Message
+Trace job that never ran a row (interrupted at start-up, cancelled while queued) still writes a summary export and
+mails the link with no enablement or access check. For the owner's end dev check: a stopped Message Analysis
+export delivers nothing (no file, no mail) - merged as built on the supervisor's recommendation, his to overturn.
+Next: 0.3b, then 0.4 to 0.7.
+
 ### 2026-11-10 - plan slice 0.2 merged (8b0fbb28): synced recipient typed by primary address is bound by SID; 0.3 next
 
 Slice 0.2 (g1a MEDIUM) is on master at 8b0fbb28, not pushed, not deployed. `ResolveWithExchangeFallbackAsync` now

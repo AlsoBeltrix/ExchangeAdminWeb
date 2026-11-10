@@ -4,7 +4,7 @@
 was disabled or the operator's access was removed. Both jobs only read (delivery detail; migration reports), nothing is
 written to Exchange or the directory, and the operator was authorised when the job was queued; that is why it is not
 HIGH.
-**Status**: Fixed on branch; awaiting merge
+**Status**: Merged to master at 5896bae9 (2026-11-10) on guard proof (MEDIUM, no review round); master gates green (8997 xUnit, 19 warnings, format/diff-check/ASCII clean)
 **Branch**: `fix/p0-3-job-runner-authorization` (worktree `D:\source\ExchangeAdminWeb-wt\p0-3`, from master 2250b66e)
 **Commit**: 0805ef11 (runner check, the four processors' refusal, tests), 5005cbf9 (Message Trace enqueuer), b275a4fd
 (Migration enqueuer), 3a01e139 (Comms-10k private copy removed), 7047690e (Conference Rooms private copy removed),
