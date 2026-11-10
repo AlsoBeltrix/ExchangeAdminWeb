@@ -203,7 +203,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | done, merged 4d2bf4cf |
 | #3 | Three AD `-Filter` strings built by quote-doubling | done, merged 4d2bf4cf |
 | #4 | Attribute legend read returns empty on any failure with no log | done on branch d942d1d1 |
-| #5 | Four ticket boxes (and the Migration email box) bind on change | open |
+| #5 | Four ticket boxes (and the Migration email box) bind on change | done on branch 91f7f3b5 |
 | #6 | Migration and Out of Office admin mail uses the mailbox-permission template | open |
 | #7 | MFA Reset passes a null Entra object id to the protection check (bug 8) | done, merged adfb2a89 |
 | #8 | Environment address as a placeholder in MFA Reset | open |
