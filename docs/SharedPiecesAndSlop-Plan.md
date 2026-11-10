@@ -1,6 +1,6 @@
 # One shared piece per shared behaviour; fix what the audit found; stop the slop at its sources
 
-Status: Approved 2026-11-10 (owner: "approved") - phases 0 to 2 authorised; phases 3, 4 and 5 each need an owner go after the phase before is seen on dev. In progress: phase 0; slices 0.1 (adfb2a89) and 0.2 (8b0fbb28) merged, slice 0.3 next. Dev deploys held until the work is done (decisions 2026-11-10); the go for phases 3 to 5 is an open owner question.
+Status: Approved 2026-11-10 (owner: "approved"); all phases 0 to 5 authorised 2026-11-10 (owner: "go for all phases. once all are done, I'll do a dev deployment."). No dev deploy between slices or phases. In progress: phase 0; slices 0.1 (adfb2a89), 0.2 (8b0fbb28), 0.3 (5896bae9) merged.
 Owner: Michael
 Last verified against code: `7aa3dd19` / 2026-11-10
 Evidence: `.agents/review/slop-audit-report-2026-11-10.md` (combined report, two Gemini review rounds),
@@ -198,7 +198,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 
 | Item | Name | Status |
 |---|---|---|
-| #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | done on branch 7859d929 |
+| #1 | Message Trace detail and Migration report export jobs run with no enablement or authorization check | done, merged 5896bae9 |
 | #2 | On-prem message trace narrows to one server silently when the transport-server lookup fails | open |
 | #3 | Three AD `-Filter` strings built by quote-doubling | open |
 | #4 | Attribute legend read returns empty on any failure with no log | open |
@@ -260,7 +260,7 @@ status `open`, `done <commit>`, or `declined <reason>`. Names are one line each;
 | B1 | Ticket box and its gate | open |
 | B2 | Audit rows: refusal shape and result values | open |
 | B3 | Protected-principal check for a cloud (Graph) user | done, merged adfb2a89 |
-| B4 | Authorization of a queued job when it runs | done on branch 7859d929 |
+| B4 | Authorization of a queued job when it runs | done, merged 5896bae9 |
 | B5 | Admin and user notifications | open |
 | B6 | Operation trace scopes | open |
 | B7 | Graph client and secret setup | open |

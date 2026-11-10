@@ -5,6 +5,15 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-11-10 - All phases of SharedPiecesAndSlop authorised; one dev deployment at the end
+
+Owner: "go for all phases. once all are done, I'll do a dev deployment." Answers the open question in the entry
+below: phases 3, 4 and 5 no longer each need a separate go. The rest of the plan's rules stand (one finding per
+commit, one agent at a time, guard proof, Gemini review per phase when the owner starts it). ASSUMPTION, not an
+owner ruling: slice 0.3's refusal behaviour for a Message Analysis detail-export job stopped partway (no file, no
+mail, "Not produced" on Downloadable Reports) was put to the owner with a recommendation and merged as built when
+the go arrived without an answer on it; it is listed for the end-of-work dev check and is his to overturn.
+
 ### 2026-11-10 - Dev deployments are held until the SharedPiecesAndSlop work is done
 
 Owner: "I want to hold dev deployments until all the work is done". No dev deploy is asked for between slices or
