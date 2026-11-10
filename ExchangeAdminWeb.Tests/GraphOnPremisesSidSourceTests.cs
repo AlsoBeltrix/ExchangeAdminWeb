@@ -88,7 +88,7 @@ public sealed class GraphOnPremisesSidSourceTests : IDisposable
         var first = await source.ReadAsync(ObjectId);
         var second = await source.ReadAsync(ObjectId);
 
-        Assert.Equal(new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, Sid), first);
+        Assert.Equal(new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, Sid, Synced: true), first);
         Assert.Equal(OnPremisesSidOutcome.Reported, second.Outcome);
         Assert.All(_graph.Requests.Where(r => r.Host == "graph.microsoft.com"), r => Assert.Equal(
             $"/v1.0/users/{ObjectId}?$select=onPremisesSecurityIdentifier,onPremisesSyncEnabled", r.PathAndQuery));
@@ -144,6 +144,20 @@ public sealed class GraphOnPremisesSidSourceTests : IDisposable
         var answer = await Source().ReadAsync(ObjectId);
 
         Assert.Equal(OnPremisesSidOutcome.NoneReported, answer.Outcome);
+        Assert.Equal(synced, answer.Synced);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task AnAnswerWithASid_SaysWhetherGraphReportsTheObjectSynced(bool flag, bool synced)
+    {
+        SetGraphSecret("4242");
+        _graph.Answer = (HttpStatusCode.OK, $$"""{"onPremisesSecurityIdentifier":"{{Sid}}","onPremisesSyncEnabled":{{(flag ? "true" : "false")}}}""");
+
+        var answer = await Source().ReadAsync(ObjectId);
+
+        Assert.Equal(OnPremisesSidOutcome.Reported, answer.Outcome);
         Assert.Equal(synced, answer.Synced);
     }
 

@@ -31,10 +31,12 @@ carried a null Entra object id) is closed here too.
   applies whatever domain holds it; the principal carries the account's mail (or the UPN) and the Entra object id. No
   SID and Graph says not synced: resolved exactly as the modules resolved a cloud identity before (AD, then Exchange,
   then a principal of the UPN and object id, "unresolved"). Refused: Graph not asked or failed, a synced user with no
-  SID, a sync flag Graph did not answer, no or several holders of the SID; a UPN Graph holds no user for is NotFound.
+  SID, a sync flag Graph did not answer, several holders of the SID, or none for a user Graph does not report as not
+  synced (a not-synced user whose SID no account holds is checked as cloud-only, owner ruling below); a UPN Graph
+  holds no user for is NotFound.
 - `ProtectedPrincipalServicing.ForCloudUserAsync` (beside `ForWriteTargetAsync`): one timed check, the rules, and the
   servicer rule unchanged (note qualified "directory-unresolved" as before); returns a refusal kind the caller words.
-- `GraphOnPremisesSidSource`: the answer also carries Graph's sync flag (true; false or null = cloud-only; absent or not
+- `GraphOnPremisesSidSource`: the answer also carries Graph's sync flag, with or without a SID (true; false or null = not synced; absent or not
   a boolean = unanswered) and, for a read by UPN, the object id and whether Graph answered 404. One Graph request per
   check, under the protection service's own Graph Directory Read Credential, inside the check's operation.
 - Callers: Risky Users (risky user id), Intune Devices (the device's `userId`; by UPN when blank), MFA Reset (by the
@@ -60,9 +62,9 @@ failed: {reason}" unchanged. The audit detail of a protected refusal keeps "Prot
 
 ## Tests
 
-New: `CloudUserProtectionTests` (19, the gate end to end over `ExchangeWriteHarness`: the user in the other domain with
+New: `CloudUserProtectionTests` (23, the gate end to end over `ExchangeWriteHarness`: the user in the other domain with
 no recipient, protected by user row, group and OU; not protected; servicer; cloud-only as before; every fail-closed
-case), `CloudUserProtectionCallerTests` (14, handlers and the M365 service), 9 cases in `GraphOnPremisesSidSourceTests`.
+case), `CloudUserProtectionCallerTests` (14, handlers and the M365 service), 11 cases in `GraphOnPremisesSidSourceTests`.
 Deleted source scans and their replacements:
 
 | Deleted | Replaced by |
@@ -92,17 +94,23 @@ new resolve (`RiskyUsersTicketPresenceTests`, `MfaResetNotificationGuardTests`, 
 | `ResolveCloudUserAsync` to the old pages' resolve (AD, Exchange, stand-in) | 14 of 19 | user row, group, OU, servicer, outsider, synced no SID, sync flag unanswered, Graph not answered, catalog failing, SID nobody holds, two holders, by-UPN, by-UPN cloud-only, UPN not found |
 | Sync flag and by-UPN object id in the SID source; the blank-UPN guard | 5 | three `AnAnswerWithNoSid_SaysWhetherGraphReportsTheObjectSynced` cases, `AReadByUpn_AsksForTheUserByItsUpn_AndCarriesItsObjectId`, `ABlankUpn_Refuses_AsUnavailable_AskingNothing` |
 | MFA Reset page to master, and the 404 flag | 4 | `MfaReset_ACloudOnlyUserNobodyElseKnows_IsCheckedWithItsObjectId_SoALegacyExclusionByObjectIdRefuses` (bug 8), the other two MFA Reset caller tests, the 404 case of `AReadByUpn_ThatCannotNameTheUser...` |
+| Not-synced branch disabled in `ResolveCloudUserAsync`, and the sync flag dropped from a SID answer | 5 | `ANotSyncedUserWhoseSidNoAccountHolds_IsCheckedAsCloudOnly_AndProceeds`, `ANotSyncedUserWhoseSidNoAccountHolds_IsStillRefusedByALegacyExclusionOfItsObjectId`, both `AnAnswerWithASid_SaysWhetherGraphReportsTheObjectSynced` cases, `AReportedSid_IsReturnedCanonical...` |
+| The sync condition dropped (any SID no account holds proceeds) | 2 | `ASyncedUserWhoseSidNoAccountHolds_Refuses_AsUnavailable`, `ASidNoAccountHolds_Refuses_AsUnavailable` (sync flag not given) |
 
 Not biting by design (behaviour kept, pass both ways): the allow case, the two cloud-only "as before" tests, the
-unresolved servicer qualifier. Restored: the full suite passes (gates in the hand-back).
+unresolved servicer qualifier, and `ANotSyncedUserWhoseSidAnAccountStillHolds_IsCheckedAsThatAccount` (pins the bind for a not-synced
+user whose account still exists). Restored: the full suite passes (gates in the hand-back).
 
 ## Behaviour that changes beyond the defect (for the owner)
 
 - The Graph Directory Read Credential is now needed by all five modules for every target, cloud-only users included:
   while it is empty or Graph cannot be read, every such write is refused as unavailable. A deploy prerequisite.
-- STOP item, not chosen by the agent: an account whose Graph object is no longer synced (`onPremisesSyncEnabled` false)
-  but still reports an on-premises SID that no account in the forest holds is refused (the plan's rule: a bind by SID
-  that finds nothing refuses). Today such a user resolves as cloud-only and proceeds. Owner to rule.
+- Owner ruling 2026-11-10 ("so a cloud user that is no longer on-prem is never going to be protected", Constitution
+  Protected Principals, cloud-only bullet): a user Graph reports NOT synced that still carries an on-premises SID is
+  bound by that SID; if one account holds it, that account is checked; if the catalog definitely holds none, the user
+  is checked as cloud-only (AD, then Exchange, then the stand-in carrying its object id, legacy exclusions applying),
+  as today. A catalog read that fails or finds several holders still refuses; a synced user (or one whose sync flag
+  Graph does not give) whose SID no account holds still refuses.
 - A legacy exclusion listed by Entra object id now also matches a synced user (the bound principal carries the id).
 - A synced user whose address another account in the default domain also carries is checked as the account holding
   its SID, not that other account (the object checked is the object written).

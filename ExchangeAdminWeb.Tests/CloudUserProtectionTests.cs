@@ -223,6 +223,57 @@ public sealed class CloudUserProtectionTests : IDisposable
     }
 
     [Fact]
+    public async Task ASyncedUserWhoseSidNoAccountHolds_Refuses_AsUnavailable()
+    {
+        _h.GraphSids[FarObjectId] = FabrikamSid + "-9999";
+        _h.GraphSyncFlags[FarObjectId] = true;
+        var protection = Protection(SomeoneElseProtected());
+
+        var decision = await Decide(protection);
+
+        Assert.Equal(CloudUserRefusal.Unavailable, decision.Refusal);
+    }
+
+    [Fact]
+    public async Task ANotSyncedUserWhoseSidNoAccountHolds_IsCheckedAsCloudOnly_AndProceeds()
+    {
+        _h.GraphSids[FarObjectId] = FabrikamSid + "-9999";
+        _h.GraphSyncFlags[FarObjectId] = false;
+        var protection = Protection(SomeoneElseProtected());
+
+        var decision = await Decide(protection);
+
+        Assert.True(decision.Allowed);
+        Assert.True(decision.Unresolved);
+    }
+
+    [Fact]
+    public async Task ANotSyncedUserWhoseSidNoAccountHolds_IsStillRefusedByALegacyExclusionOfItsObjectId()
+    {
+        _h.GraphSids[FarObjectId] = FabrikamSid + "-9999";
+        _h.GraphSyncFlags[FarObjectId] = false;
+        _h.ModuleConfig.SaveModuleConfig("MailboxPermissions", new Dictionary<string, string> { ["ExcludedUsers"] = FarObjectId });
+        var protection = Protection(new ProtectedPrincipalConfig());
+
+        var decision = await Decide(protection);
+
+        Assert.Equal(CloudUserRefusal.Protected, decision.Refusal);
+        Assert.Equal([$"LegacyExclusion:{FarObjectId}"], decision.MatchedRules);
+    }
+
+    [Fact]
+    public async Task ANotSyncedUserWhoseSidAnAccountStillHolds_IsCheckedAsThatAccount()
+    {
+        _h.GraphSyncFlags[FarObjectId] = false;
+        var protection = Protection(new ProtectedPrincipalConfig { Users = [FarUpn], UserIds = [$"{_far.Sid}|{FarUpn}"] });
+
+        var decision = await Decide(protection);
+
+        Assert.Equal(CloudUserRefusal.Protected, decision.Refusal);
+        Assert.Equal([$"User:{FarUpn}"], decision.MatchedRules);
+    }
+
+    [Fact]
     public async Task TwoObjectsHoldingTheSid_Refuse_AsAmbiguous()
     {
         _h.Forest.Add(new SelfGrantDirectoryStandIn.Entry

@@ -647,7 +647,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
     private int _graphSidReads;
 
     /// <summary>
-    /// What the stand-in Graph says of an object's sync from on-premises when it reports no SID for it, by object id: true
+    /// What the stand-in Graph says of an object's sync from on-premises, by object id: true
     /// synced, false not synced. An object not listed answers with no sync flag.
     /// </summary>
     public Hashtable GraphSyncFlags { get; } = Hashtable.Synchronized(new Hashtable(StringComparer.OrdinalIgnoreCase));
@@ -676,7 +676,7 @@ internal sealed class ExchangeWriteHarness : IDisposable
             if (!harness.GraphSids.ContainsKey(externalDirectoryObjectId))
                 return Task.FromResult(OnPremisesSidAnswer.NotAnswered("not scripted"));
             return Task.FromResult(harness.GraphSids[externalDirectoryObjectId] is string sid
-                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid)
+                ? new OnPremisesSidAnswer(OnPremisesSidOutcome.Reported, sid, Synced: harness.GraphSyncFlags[externalDirectoryObjectId] as bool?)
                 : new OnPremisesSidAnswer(OnPremisesSidOutcome.NoneReported,
                     Synced: harness.GraphSyncFlags[externalDirectoryObjectId] as bool?));
         }

@@ -1113,7 +1113,8 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
     /// <remarks>
     /// Graph is asked for the object's on-premises SID, under this service's own Graph credential:
     /// - a SID: the one user object in the forest holding it, read at a global catalog, whatever domain it is in - so the
-    ///   user, group, OU and pattern rules all apply to it. None, several, or a read that cannot run refuse.
+    ///   user, group, OU and pattern rules all apply to it. Several, or a read that cannot run, refuse; none refuses unless
+    ///   Graph says the object is not synced, when it has no on-premises account left and is checked as cloud-only.
     /// - no SID, and Graph says the object is not synced: a cloud-only user, resolved by its UPN through Active Directory
     ///   and Exchange as every cloud-identity module resolved it before; when neither knows it, a principal of its UPN and
     ///   object id, <c>unresolved</c>, so the protected rows that compare an address or an Entra object id still apply.
@@ -1145,6 +1146,16 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             if (!answered)
                 return (null, ResolutionStatus.Unavailable, false);
 
+            // A user Graph says is not synced, whose SID no account in the forest holds, has no on-premises account left to
+            // protect it: it is checked as a cloud-only user. One Graph says is synced, or does not say, refuses below.
+            if (found.Count == 0 && sid.Synced == false)
+            {
+                _logger.LogInformation(
+                    "The Entra user {Upn} ({ObjectId}) is not synced and no account in the forest holds its on-premises SID - checking it as cloud-only",
+                    userPrincipalName, entraObjectId);
+                return await ResolveCloudOnlyUserAsync(entraObjectId, userPrincipalName);
+            }
+
             // The account's own mail, so a protected row stored as the address it is known by still names it.
             var address = found.Count == 1 && !string.IsNullOrWhiteSpace(found[0].Mail) ? found[0].Mail! : userPrincipalName;
             var (bound, status, refusal) = SelectSidObject(
@@ -1168,6 +1179,16 @@ public class ProtectedPrincipalService : IVerifyDirectoryAccess
             return (null, ResolutionStatus.Unavailable, false);
         }
 
+        return await ResolveCloudOnlyUserAsync(entraObjectId, userPrincipalName);
+    }
+
+    /// <summary>
+    /// A cloud-only Entra user, resolved by its UPN through Active Directory and Exchange; when neither knows it, a principal
+    /// of its UPN and object id, <c>unresolved</c>, so the rows that compare an address or an Entra object id still apply.
+    /// </summary>
+    private async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status, bool unresolved)> ResolveCloudOnlyUserAsync(
+        string entraObjectId, string userPrincipalName)
+    {
         var (principal, resolution) = await ResolveWithExchangeFallbackAsync(userPrincipalName);
         if (resolution != ResolutionStatus.NotFound)
             return (principal, resolution, false);
