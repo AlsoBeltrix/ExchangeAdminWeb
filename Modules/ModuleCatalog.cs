@@ -512,7 +512,7 @@ public sealed class ModuleCatalog
             // 1.27.3: a reported time of Kind Local (what the remoting deserializer makes of a time with an offset) is shown as the instant it names; only one that names no zone reads "(time zone not reported)" (sweep-f item 26).
             // 1.27.4: help sweep - its settings' and permissions' help cut to one sentence each, and four two-sentence button tips
             // to one (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.27.6",
+            Version = "1.27.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
@@ -1277,7 +1277,7 @@ public sealed class ModuleCatalog
             // 1.6.0: nor a ticket with nothing visible in it, or a zero-width or bidi character anywhere
             // - the shared TicketPresence rule (kd-48).
             // 1.6.1: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal.
-            Version = "1.6.2",
+            Version = "1.6.3",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
@@ -1832,7 +1832,7 @@ public sealed class ModuleCatalog
             // such a row could be found only under All (kd-71).
             // 1.5.2: sweep-e item 40 - ticket buttons enabled by the rule of the check behind them (TicketPresence.IsPresentAsTyped), and an invisible character in a ticket said as that, beside the box and in the refusal. Sweep-e item 41: the ticket is checked behind the button too (presence, then ServiceNow where enabled), and a refusal recorded.
             // 1.5.3: help sweep - its settings' and permissions' help cut to one sentence each (help is behaviour: Constitution, Code Change Discipline).
-            Version = "1.5.4",
+            Version = "1.5.5",
             MainPermission = new(
                 "Access",
                 "EventLog",
