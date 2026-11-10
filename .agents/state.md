@@ -8,6 +8,17 @@ the latest sweep is Archived 2026-10-23).
 
 ## Now
 ### 2026-11-07 00:25 - weekend run paused: two blockers only the owner can clear
+### 2026-11-10 - audit reviewed twice by Gemini, triage agreed; plan drafted, awaiting owner approval
+
+Combined report `.agents/review/slop-audit-report-2026-11-10.md`: 13 admitted defects (1 high, 5 medium, 7 low), none
+fixed. HIGH (G1b): a synced user in another domain of the forest with no Exchange recipient is checked as an
+unresolved principal with no SID by MFA Reset, Risky Users, Intune Devices, and not checked at all by M365 Groups.
+Round 1: Gemini confirmed 9 audit defects, struck 5 claims, raised 4 new. Orchestrator traced the 4: G1 split and
+accepted, G2 and G3 accepted (narrowed), G4 declined. Round 2: Gemini agreed with all five rulings; two corrections
+applied. Codex did not review (corporate gateway shut down). Plan drafted: `docs/SharedPiecesAndSlop-Plan.md`
+(Status: Draft). NO CODE CHANGES are authorised until the owner approves it; approval covers phases 0-2, later phases
+need a go each. Owner runs agy himself: `! bash ~/g2.sh`-style one-line wrappers only (machines.md).
+
 ### 2026-11-10 - two audits written; both reviewers blocked; owner rulings recorded
 
 Owner rulings (decisions.md 2026-11-10): shared piece not a copy per module, unwired code wired in or removed;
